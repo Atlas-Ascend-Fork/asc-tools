@@ -61,7 +61,7 @@ npu-check --tool memcheck --log-file <report-path> -- <application> [application
 | 参数 | 含义 |
 | --- | --- |
 | `--tool <name>` | 选择 `memcheck` 或 `synccheck`，可重复指定；未指定时默认启用 `memcheck` |
-| `--log-file <path>` | 将检查报告和应用输出写入指定文件；检查报告不再在终端显示，应用输出仍显示；父目录必须已存在，同名文件会被覆盖 |
+| `--log-file <path>` | 仅将检查报告与工具消息写入文件，报告不再打屏；应用 stdout/stderr 仍输出到终端；父目录须已存在，同名文件会被覆盖 |
 | `--` | 分隔 `npu-check` 选项与被检查应用命令；应用路径或参数以 `-` 开头时不可省略 |
 | `-h`、`--help` | 显示当前版本的命令帮助 |
 | `<application> [application-args...]` | 可独立运行的目标应用及其原有参数 |

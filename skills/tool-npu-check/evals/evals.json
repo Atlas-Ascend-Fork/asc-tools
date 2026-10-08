@@ -75,15 +75,16 @@
     {
       "id": 5,
       "title": "log-file-output-semantics",
-      "prompt": "使用 `npu-check --log-file reports/check.log` 时，检查报告和应用的标准输出、标准错误分别写到哪里？终端和日志文件中的重复内容应如何处理？",
-      "expected_output": "检查报告只写入 `--log-file` 指定文件，不再显示在终端；应用的标准输出和标准错误仍显示在终端，同时写入该文件。因此该文件是检查报告和应用输出组成的混合日志，终端应用输出只是重复副本。应分别保留两者，但不得重新拼接或重复计算应用输出，也不能把它们当作两份独立检查报告。",
+      "prompt": "使用 `npu-check --log-file reports/check.log` 时，检查报告和应用 stdout/stderr 分别写到哪里？应保留哪些证据？",
+      "expected_output": "检查报告只写入指定文件，不再显示在终端；文件仅含检查报告与工具消息。应用 stdout/stderr 只输出到终端，不写入该文件。分别保留工具日志文件和终端原始捕获，关联同一次执行的命令、环境与退出状态。",
       "expectations": [
-        {"type": "contains", "pattern": "只写入", "description": "说明检查报告只写入指定文件"},
-        {"type": "contains", "pattern": "不再显示", "description": "说明检查报告不再显示在终端"},
-        {"type": "contains", "pattern": "同时写入", "description": "说明应用输出也进入日志文件"},
-        {"type": "contains", "pattern": "混合日志", "description": "准确描述日志文件内容"},
-        {"type": "contains", "pattern": "重复副本", "description": "说明终端应用输出与日志文件内容重复"},
-        {"type": "contains", "pattern": "不得", "description": "禁止拼接或重复计算重复输出"},
+        {"type": "contains", "pattern": "只写入", "description": "报告只写文件"},
+        {"type": "contains", "pattern": "不再显示", "description": "报告不再打屏"},
+        {"type": "contains", "pattern": "检查报告与工具消息", "description": "文件内容"},
+        {"type": "contains", "pattern": "stdout/stderr 只输出到终端", "description": "应用输出去向"},
+        {"type": "contains", "pattern": "不写入该文件", "description": "应用输出不入文件"},
+        {"type": "contains", "pattern": "分别保留", "description": "保留两份原始输出"},
+        {"type": "contains", "pattern": "同一次执行", "description": "关联运行上下文"},
         {"type": "skill_activated", "pattern": "tool-npu-check", "description": "确认激活设备检查 Skill"}
       ]
     }
