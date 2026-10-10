@@ -98,6 +98,10 @@ enum class InstructionId : uint32_t {
     LoadCbufToCaMx = 151,
     LoadCbufToCbMx = 152,
     CopyCbufToUbuf = 158,
+    CopyCbufToBtF32 = 423, // LocalMemoryTransferParamField: L1 READ
+    CopyCbufToBtS32 = 424,
+    CopyCbufToBtF16 = 425,
+    CopyCbufToBtBf16 = 426,
     MadS8 = 400,
     MadF16F32 = 401,
     MadBf16F32 = 402,
@@ -157,7 +161,7 @@ enum class InstructionId : uint32_t {
     // FIX
     FixL0cToOutF32 = 91,   // 已完成：FixL0cToOutParamField
     FixL0cToOutS32 = 92,   // 已完成：FixL0cToOutParamField
-    CopyCbufToFbuf = 167,  // 已完成：LocalMemoryTransferParamField（仅访问片上存储，不生成 GM CBData）
+    CopyCbufToFbuf = 167,  // LocalMemoryTransferParamField: L1 READ
     FixL0cToCbufF32 = 168, // LocalMemoryTransferParamField：L0C READ、L1 WRITE
     FixL0cToCbufS32 = 169, // LocalMemoryTransferParamField：L0C READ、L1 WRITE
     FixL0cToUbufF32 = 170, // LocalMemoryTransferParamField：L0C READ
@@ -254,6 +258,10 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::FixL0cToOutF32:
         case InstructionId::FixL0cToOutS32:
         case InstructionId::CopyCbufToFbuf:
+        case InstructionId::CopyCbufToBtF32:
+        case InstructionId::CopyCbufToBtS32:
+        case InstructionId::CopyCbufToBtF16:
+        case InstructionId::CopyCbufToBtBf16:
         case InstructionId::FixL0cToCbufF32:
         case InstructionId::FixL0cToCbufS32:
         case InstructionId::FixL0cToUbufF32:

@@ -252,6 +252,19 @@ DecodedInstruction DecodeLocalMemoryTransfer(
     params.config0 = record.args[2];
     params.config1 = record.args[3];
     params.kind = kind;
+    if (kind == LocalMemoryTransferKind::CopyCbufToFbuf || kind == LocalMemoryTransferKind::CopyCbufToBt) {
+        params.nBurst = static_cast<uint16_t>(ExtractBitRange(record.args[2], {4, 15}));
+        params.lenBurst = static_cast<uint16_t>(ExtractBitRange(record.args[2], {16, 31}));
+    }
+    if (kind == LocalMemoryTransferKind::CopyCbufToFbuf) {
+        params.srcStride = static_cast<uint16_t>(ExtractBitRange(record.args[2], {32, 47}));
+        params.dstStride = static_cast<uint16_t>(ExtractBitRange(record.args[2], {48, 63}));
+        params.dstMemBlock = static_cast<uint8_t>(ExtractBitRange(record.args[0], {16, 19}));
+    } else if (kind == LocalMemoryTransferKind::CopyCbufToBt) {
+        params.srcGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], {32, 47}));
+        params.dstGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], {48, 63}));
+        params.cvtEnable = ExtractBitRange(record.args[2], {3, 3}) != 0;
+    }
     return DecodedInstruction{DeviceInstructionKind::LocalMemoryTransfer, params};
 }
 
@@ -566,6 +579,11 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
             return DecodeFixL0c<FixL0cToOutParamField>(record, DATA_BITS_B32, DeviceInstructionKind::FixL0cToOut);
         case RawId(InstructionId::CopyCbufToFbuf):
             return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToFbuf);
+        case RawId(InstructionId::CopyCbufToBtF32):
+        case RawId(InstructionId::CopyCbufToBtS32):
+        case RawId(InstructionId::CopyCbufToBtF16):
+        case RawId(InstructionId::CopyCbufToBtBf16):
+            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToBt);
         case RawId(InstructionId::FixL0cToCbufF32):
             return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToCbufF32);
         case RawId(InstructionId::FixL0cToCbufS32):

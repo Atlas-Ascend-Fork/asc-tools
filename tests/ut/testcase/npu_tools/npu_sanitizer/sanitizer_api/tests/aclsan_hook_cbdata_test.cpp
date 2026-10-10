@@ -28,6 +28,7 @@
 #include "acl_san/aclsan_api.h"
 #include "acl_san/aclsan_cbdata.h"
 #include "device_instr/arch/dav_3510/register_state_manager.h"
+#include "device_instr/arch/dav_3510/decoder.h"
 #include "device_instr/common/instruction_id.h"
 #include "device_instr/decoder_registry.h"
 #include "aclsan_trace_buffer.h"
@@ -1277,4 +1278,31 @@ TEST(AclsanHookCbdata, Main)
     TestArgsArrayUsesCallerPointerStorage();
     TestTraceArgumentModes();
     TestDisabledCallbackIsNotInvoked();
+}
+
+TEST(AclsanHookCbdata, L1ToBtAndFbDispatchSourceReads)
+{
+    aclsan_test::Boundary boundary;
+    boundary.invokeCallback = &aclsan::CaptureInvokeCallback;
+    const aclsan_test::BoundaryGuard boundaryGuard{boundary};
+    const auto& decoder = aclsan::dav3510::GetDeviceInstructionDecoder();
+    for (uint32_t id : {167u, 423u, 424u, 425u, 426u}) {
+        SCOPED_TRACE(id);
+        ResetCapture();
+        aclsan::ParsedTraceRecord parsed{};
+        parsed.record.instrId = id;
+        parsed.record.pipeline = id == 167 ? ACLSAN_DEVICE_PIPE_FIXPIPE : ACLSAN_DEVICE_PIPE_MTE1;
+        parsed.record.pc = 0x5678;
+        parsed.record.args[1] = 0x7ff00;
+        parsed.record.args[2] = (1ULL << 4) | (2ULL << 16);
+        parsed.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        aclsan::DispatchTraceRecords({parsed}, decoder);
+        ASSERT_EQ(g_deviceMemoryCallbackCount, 1u);
+        const auto& access = g_deviceMemoryCallbacks[0];
+        EXPECT_EQ(access.header.pc, 0x5678u);
+        EXPECT_EQ(access.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
+        EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+        EXPECT_EQ(access.address, 0x7ff00u);
+        EXPECT_EQ(access.layout.range.bytes, id == 167 ? 128u : 64u);
+    }
 }

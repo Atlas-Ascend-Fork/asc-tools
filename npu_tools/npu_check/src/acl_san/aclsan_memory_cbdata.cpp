@@ -1442,7 +1442,24 @@ public:
     MemoryCbdataResult operator()(const LocalMemoryTransferParamField& f) const noexcept
     {
         if (f.kind == LocalMemoryTransferKind::CopyCbufToFbuf) {
-            return {MemoryCbdataStatus::NO_ACCESS, {}};
+            if (f.dstMemBlock >= 2 || (f.dstMemBlock == 0 && (f.lenBurst % 2 != 0 || f.dstStride % 2 != 0))) {
+                return {MemoryCbdataStatus::INVALID_FIELD, {}};
+            }
+            // MOV_L1_TO_FB uses 64-byte lengths and absolute 32-byte source strides.
+            return Linear(
+                f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.nBurst,
+                uint64_t(f.lenBurst) * 64, uint64_t(f.srcStride) * 32);
+        }
+        if (f.kind == LocalMemoryTransferKind::CopyCbufToBt) {
+            const bool source32 = f.instrId == uint32_t(InstructionId::CopyCbufToBtF32) ||
+                                  f.instrId == uint32_t(InstructionId::CopyCbufToBtS32);
+            if ((source32 && (f.lenBurst % 2 != 0 || f.cvtEnable)) || f.dstGap % 2 != 0) {
+                return {MemoryCbdataStatus::INVALID_FIELD, {}};
+            }
+            // BT conversion changes the destination footprint, not the L1 read footprint.
+            return Linear(
+                f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.nBurst,
+                uint64_t(f.lenBurst) * 32, (uint64_t(f.lenBurst) + f.srcGap) * 32);
         }
         if (f.kind == LocalMemoryTransferKind::CopyUbufToCbuf || f.kind == LocalMemoryTransferKind::CopyCbufToUbuf) {
             const bool write = f.kind == LocalMemoryTransferKind::CopyUbufToCbuf;

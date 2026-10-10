@@ -49,10 +49,11 @@ enum class LocalMemoryTransferKind : uint32_t {
     FixL0cToUbufS32,
     CopyUbufToCbuf,
     CopyCbufToUbuf,
+    CopyCbufToBt,
 };
 
 // These CCE intrinsics transfer data only between on-chip memory spaces:
-// MOV_L1_TO_FB, FIX_L0C_TO_L1/UB.<f32/s32>, and MOV_UB_TO_L1.
+// MOV_L1_TO_FB/BT/UB, FIX_L0C_TO_L1/UB.<f32/s32>, and MOV_UB_TO_L1.
 struct LocalMemoryTransferParamField {
     uint32_t instrId = 0;
     uint64_t dstAddr = 0;
@@ -60,6 +61,15 @@ struct LocalMemoryTransferParamField {
     uint64_t config0 = 0;
     uint64_t config1 = 0;
     LocalMemoryTransferKind kind = LocalMemoryTransferKind::CopyCbufToFbuf;
+    // Decoded MOV_L1_TO_FB/BT fields; raw configs remain available for other transfers.
+    uint16_t nBurst = 0;
+    uint16_t lenBurst = 0;   // FB: 64-byte units; BT: 32-byte units.
+    uint16_t srcStride = 0;  // FB: absolute source stride in 32-byte units.
+    uint16_t dstStride = 0;  // FB: destination stride in 64-byte units.
+    uint8_t dstMemBlock = 0; // FB: destination block selector.
+    uint16_t srcGap = 0;     // BT: source gap in 32-byte units.
+    uint16_t dstGap = 0;     // BT: destination gap in 32-byte units.
+    bool cvtEnable = false;  // BT: conversion control.
 };
 
 // 对应 CCE 指令：MOV_L1_TO_FB_V2

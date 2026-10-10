@@ -518,6 +518,10 @@ void TestDecodesDav3510LocalMemoryTransfersWithoutLosingRawConfig()
     };
     constexpr ExpectedLocalTransfer EXPECTED[] = {
         {167, aclsan::LocalMemoryTransferKind::CopyCbufToFbuf},
+        {423, aclsan::LocalMemoryTransferKind::CopyCbufToBt},
+        {424, aclsan::LocalMemoryTransferKind::CopyCbufToBt},
+        {425, aclsan::LocalMemoryTransferKind::CopyCbufToBt},
+        {426, aclsan::LocalMemoryTransferKind::CopyCbufToBt},
         {168, aclsan::LocalMemoryTransferKind::FixL0cToCbufF32},
         {169, aclsan::LocalMemoryTransferKind::FixL0cToCbufS32},
         {170, aclsan::LocalMemoryTransferKind::FixL0cToUbufF32},
@@ -548,6 +552,25 @@ void TestDecodesDav3510LocalMemoryTransfersWithoutLosingRawConfig()
         assert(params->config0 == record.args[2]);
         assert(params->config1 == record.args[3]);
         assert(params->kind == expected.kind);
+        if (expected.kind == aclsan::LocalMemoryTransferKind::CopyCbufToFbuf ||
+            expected.kind == aclsan::LocalMemoryTransferKind::CopyCbufToBt) {
+            assert(params->nBurst == 0x334u);
+            assert(params->lenBurst == 0x1122u);
+        }
+        if (expected.kind == aclsan::LocalMemoryTransferKind::CopyCbufToFbuf) {
+            assert(params->srcStride == 0x5a5au);
+            assert(params->dstStride == 0xa5a5u);
+            assert(params->dstMemBlock == 0xcu);
+        }
+        if (expected.kind == aclsan::LocalMemoryTransferKind::CopyCbufToBt) {
+            assert(params->srcGap == 0x5a5au);
+            assert(params->dstGap == 0xa5a5u);
+            assert(!params->cvtEnable);
+            record.args[2] |= UINT64_C(1) << 3;
+            const auto converted = decoder->decode(record);
+            assert(converted.has_value());
+            assert(std::get<aclsan::LocalMemoryTransferParamField>(converted->params).cvtEnable);
+        }
     }
 }
 

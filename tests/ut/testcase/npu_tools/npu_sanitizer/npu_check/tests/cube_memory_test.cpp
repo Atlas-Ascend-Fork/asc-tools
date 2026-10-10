@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 #include "aclsan_memory_cbdata.h"
 #include "device_instr/arch/dav_3510/decoder.h"
+#include "device_instr/common/instruction_id.h"
 #include "checker/memcheck.h"
 #include "aclsan_device_data.h"
 #include "aclsan_active_probe_plan.h"
@@ -671,5 +672,128 @@ TEST(CubeMemory, Img2ColRegisterFieldsDecodeExplicitly)
         EXPECT_TRUE(fields.repeatAlongK);
         EXPECT_EQ(fields.dstStride, 0x12u);
         EXPECT_EQ(fields.dstOffset, 0xABu);
+    }
+}
+
+TEST(CubeMemory, L1ToBtAndFbSourceFootprintsAndBounds)
+{
+    for (uint32_t id : {167u, 423u, 424u, 425u, 426u}) {
+        SCOPED_TRACE(id);
+        EXPECT_TRUE(IsDefinedInstructionId(id));
+        const uint64_t bytes = id == 167 ? 128 : 64;
+        auto r = ConvertRaw(id, {0, 0x80000 - bytes, (1ULL << 4) | (2ULL << 16), 0});
+        ASSERT_EQ(r.status, MemoryCbdataStatus::SUCCESS);
+        ASSERT_EQ(r.data.size(), 1u);
+        EXPECT_EQ(r.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
+        EXPECT_EQ(r.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+        ASSERT_EQ(r.data[0].layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
+        EXPECT_EQ(r.data[0].layout.range.bytes, bytes);
+        npucheck::Memcheck checker;
+        checker.QueueDeviceMemoryAccess(r.data[0]);
+        EXPECT_TRUE(checker.OnSynchronization().empty());
+        r.data[0].address += 32;
+        checker.QueueDeviceMemoryAccess(r.data[0]);
+        EXPECT_EQ(checker.OnSynchronization().size(), 1u);
+    }
+}
+
+TEST(CubeMemory, L1ToBtAndFbSourceGapVersusAbsoluteStride)
+{
+    for (uint32_t id : {167u, 423u, 424u, 425u, 426u}) {
+        SCOPED_TRACE(id);
+        const uint64_t bytes = id == 167 ? 128 : 64;
+        const uint64_t strideField = id == 167 ? 6 : 2;
+        const uint64_t stride = id == 167 ? 192 : 128;
+        const auto r =
+            ConvertRaw(id, {0, 0x80000 - bytes, (3ULL << 4) | (2ULL << 16) | (strideField << 32) | (10ULL << 48), 0});
+        ASSERT_EQ(r.status, MemoryCbdataStatus::SUCCESS);
+        ASSERT_EQ(r.data.size(), 1u);
+        npucheck::Memcheck checker;
+        checker.QueueDeviceMemoryAccess(r.data[0]);
+        const auto reports = checker.OnSynchronization();
+        ASSERT_EQ(reports.size(), 2u);
+        EXPECT_EQ(reports[0].access.address, 0x80000 - bytes + stride);
+        EXPECT_EQ(reports[1].access.address, 0x80000 - bytes + 2 * stride);
+    }
+    const auto repeated = ConvertRaw(167, {0, 0x7ff80, (3ULL << 4) | (2ULL << 16), 0});
+    ASSERT_EQ(repeated.status, MemoryCbdataStatus::SUCCESS);
+    ASSERT_EQ(repeated.data.size(), 1u);
+    EXPECT_EQ(repeated.data[0].layout.range.bytes, 128u);
+}
+
+TEST(CubeMemory, L1ToBtAndFbZeroTransfersAndOverflow)
+{
+    for (uint32_t id : {167u, 423u, 424u, 425u, 426u}) {
+        SCOPED_TRACE(id);
+        for (uint64_t config : {2ULL << 16, 1ULL << 4}) {
+            const auto r = ConvertRaw(id, {0, 0, config, 0});
+            EXPECT_EQ(r.status, MemoryCbdataStatus::NO_ACCESS);
+            EXPECT_TRUE(r.data.empty());
+        }
+        const auto r = ConvertRaw(id, {0, UINT64_MAX - 31, (1ULL << 4) | (2ULL << 16), 0});
+        EXPECT_EQ(r.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
+        EXPECT_TRUE(r.data.empty());
+    }
+}
+
+TEST(CubeMemory, L1ToBtAndFbReferenceConfigurationValidation)
+{
+    for (uint32_t id : {423u, 424u}) {
+        for (uint64_t config : {(1ULL << 4) | (1ULL << 16), (1ULL << 4) | (2ULL << 16) | 8ULL}) {
+            EXPECT_EQ(ConvertRaw(id, {0, 0, config, 0}).status, MemoryCbdataStatus::PARTIAL_COVERAGE);
+        }
+    }
+    for (uint32_t id : {423u, 424u, 425u, 426u}) {
+        EXPECT_EQ(
+            ConvertRaw(id, {0, 0, (1ULL << 4) | (2ULL << 16) | (1ULL << 48), 0}).status,
+            MemoryCbdataStatus::PARTIAL_COVERAGE);
+    }
+    for (uint32_t id : {425u, 426u}) {
+        const auto r = ConvertRaw(id, {0, 0, (1ULL << 4) | (1ULL << 16) | 8ULL, 0});
+        ASSERT_EQ(r.status, MemoryCbdataStatus::SUCCESS);
+        ASSERT_EQ(r.data.size(), 1u);
+        EXPECT_EQ(r.data[0].layout.range.bytes, 32u);
+    }
+    EXPECT_EQ(ConvertRaw(167, {0, 0, (1ULL << 4) | (1ULL << 16), 0}).status, MemoryCbdataStatus::PARTIAL_COVERAGE);
+    EXPECT_EQ(
+        ConvertRaw(167, {0, 0, (1ULL << 4) | (2ULL << 16) | (1ULL << 48), 0}).status,
+        MemoryCbdataStatus::PARTIAL_COVERAGE);
+    EXPECT_EQ(
+        ConvertRaw(167, {2ULL << 16, 0, (1ULL << 4) | (2ULL << 16), 0}).status, MemoryCbdataStatus::PARTIAL_COVERAGE);
+    const auto fb = ConvertRaw(167, {1ULL << 16, 0, (1ULL << 4) | (1ULL << 16) | (1ULL << 48), 0});
+    ASSERT_EQ(fb.status, MemoryCbdataStatus::SUCCESS);
+    ASSERT_EQ(fb.data.size(), 1u);
+    EXPECT_EQ(fb.data[0].layout.range.bytes, 64u);
+}
+
+TEST(CubeMemory, L1ToBtAndFbCallbackToMemcheck)
+{
+    for (uint32_t id : {167u, 423u, 424u, 425u, 426u}) {
+        SCOPED_TRACE(id);
+        ParsedTraceRecord parsed{};
+        parsed.record.instrId = id;
+        parsed.record.pipeline = id == 167 ? ACLSAN_DEVICE_PIPE_FIXPIPE : ACLSAN_DEVICE_PIPE_MTE1;
+        parsed.record.pc = 0x1234;
+        parsed.record.args[1] = 0x80000;
+        parsed.record.args[2] = (1ULL << 4) | (2ULL << 16);
+        parsed.instrExecId = 23;
+        parsed.launchId = 5;
+        parsed.phyCoreId = 7;
+        parsed.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
+        ASSERT_TRUE(decoded);
+        const auto callback = TranslateDecodedTraceToCallbackData(parsed, *decoded);
+        ASSERT_TRUE(callback);
+        const auto& accesses = std::get<DeviceMemoryAccessDataList>(*callback);
+        ASSERT_EQ(accesses.size(), 1u);
+        EXPECT_EQ(accesses[0].accessCount, 1u);
+        EXPECT_EQ(accesses[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+        npucheck::Memcheck checker;
+        checker.QueueDeviceMemoryAccess(accesses[0]);
+        const auto reports = checker.OnSynchronization();
+        ASSERT_EQ(reports.size(), 1u);
+        EXPECT_EQ(reports[0].common.exec.pc, 0x1234u);
+        EXPECT_EQ(reports[0].access.memorySpace, npucheck::NpuCheckReportMemorySpace::L1);
+        EXPECT_EQ(reports[0].access.address, 0x80000u);
     }
 }
