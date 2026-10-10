@@ -56,10 +56,12 @@
         <file value="include/kernel_bf16.h" />
         <file value="include/kernel_vectorized.h" />
         <file value="include/kernel_fp8_e5m2.h" />
+        <file value="include/kernel_fp8_e6m2.h" />
         <file value="include/kernel_fp8_e4m3.h" />
         <file value="include/kernel_fp8_e8m0.h" />
         <file value="include/kernel_fp4_e2m1.h" />
         <file value="include/kernel_fp4_e1m2.h" />
+        <file value="include/kernel_hif4.h" />
         <file value="include/kernel_hif8.h" />
         <file value="include/kernel_print_lock.h" />
         <file value="include/kern_fwk.h" />
