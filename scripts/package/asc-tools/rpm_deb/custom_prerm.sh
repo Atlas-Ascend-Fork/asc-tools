@@ -62,7 +62,7 @@ remove_empty_delivery_dir() {
     return 0
 }
 
-for pkg in mindstudio_opgen mindstudio_opst msobjdump show_kernel_debug_data optype_collector; do
+for pkg in mindstudio_opgen mindstudio_opst msobjdump show_kernel_debug_data optype_collector npu_emulate; do
     pip3 uninstall -y "${pkg}" >/dev/null 2>&1 || true
 done
 
@@ -89,12 +89,14 @@ remove_package_leftovers "${WHL_INSTALL_DIR_PATH}/msopgen"
 remove_package_leftovers "${WHL_INSTALL_DIR_PATH}/msopst"
 remove_package_leftovers "${WHL_INSTALL_DIR_PATH}/show_kernel_debug_data"
 remove_package_leftovers "${WHL_INSTALL_DIR_PATH}/optype_collector"
+remove_package_leftovers "${WHL_INSTALL_DIR_PATH}/npu_emulate"
 
 rm -fr "${WHL_INSTALL_DIR_PATH}"/mindstudio_opgen-*.dist-info 2>/dev/null
 rm -fr "${WHL_INSTALL_DIR_PATH}"/mindstudio_opst-*.dist-info 2>/dev/null
 rm -fr "${WHL_INSTALL_DIR_PATH}"/msobjdump-*.dist-info 2>/dev/null
 rm -fr "${WHL_INSTALL_DIR_PATH}"/show_kernel_debug_data-*.dist-info 2>/dev/null
 rm -fr "${WHL_INSTALL_DIR_PATH}"/optype_collector-*.dist-info 2>/dev/null
+rm -fr "${WHL_INSTALL_DIR_PATH}"/npu_emulate-*.dist-info 2>/dev/null
 
 rmdir "${WHL_INSTALL_DIR_PATH}/bin" 2>/dev/null || true
 rmdir "${WHL_INSTALL_DIR_PATH}" 2>/dev/null || true

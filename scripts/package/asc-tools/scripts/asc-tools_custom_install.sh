@@ -146,6 +146,11 @@ installOpPython() {
         return 1
     fi
 
+    installWhlPackage "${install_path}/tools/npu_emulate-0.1.0-py3-none-any.whl"
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
     local _opgen_whl=$(find_whl_file "${install_path}/tools" "mindstudio_opgen-*-py3-none-any.whl")
     if [ -n "$_opgen_whl" ]; then
         installWhlPackage "$_opgen_whl"
@@ -194,6 +199,11 @@ installAllPython() {
     fi
 
     installWhlPackage "${install_path}/tools/optype_collector-0.1.0-py3-none-any.whl"
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    installWhlPackage "${install_path}/tools/npu_emulate-0.1.0-py3-none-any.whl"
     if [ $? -ne 0 ]; then
         return 1
     fi
@@ -309,6 +319,9 @@ installOpPythonLocal() {
     installPyWhlLocal "optype_collector-0.1.0-py3-none-any.whl"
     [ $? -ne 0 ] && return 1
 
+    installPyWhlLocal "npu_emulate-0.1.0-py3-none-any.whl"
+    [ $? -ne 0 ] && return 1
+
     installPyWhlLocal "mindstudio_opgen-*-py3-none-any.whl"
     [ $? -ne 0 ] && return 1
 
@@ -327,6 +340,9 @@ installAllPythonLocal() {
     [ $? -ne 0 ] && return 1
 
     installPyWhlLocal "optype_collector-0.1.0-py3-none-any.whl"
+    [ $? -ne 0 ] && return 1
+
+    installPyWhlLocal "npu_emulate-0.1.0-py3-none-any.whl"
     [ $? -ne 0 ] && return 1
 
     installPyWhlLocal "mindstudio_opgen-*-py3-none-any.whl"

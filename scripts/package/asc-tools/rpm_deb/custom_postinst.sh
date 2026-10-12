@@ -198,6 +198,7 @@ install_whl "show_kernel_debug_data-0.1.0-py3-none-any.whl"
 install_whl "optype_collector-0.1.0-py3-none-any.whl"
 install_whl "mindstudio_opgen-*-py3-none-any.whl"
 install_whl "mindstudio_opst-*-py3-none-any.whl"
+install_whl "npu_emulate-0.1.0-py3-none-any.whl"
 
 create_softlink "msopgen"
 create_softlink "msopst"
