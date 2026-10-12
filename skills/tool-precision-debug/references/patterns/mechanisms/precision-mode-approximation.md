@@ -6,7 +6,7 @@
 
 ## 建立实际路径
 
-架构的数据类型能力、编程模型和条件编译含义使用 `/npu-arch` 查询；具体 API 是否支持该 dtype、模式及误差保证仍按目标版本通过 `/ascendc-docs-search` 确认，不能仅凭架构具备某种能力就认定当前调用采用了它。
+架构的数据类型能力、编程模型和条件编译含义调用 CANNBOT `npu-arch` 技能查询；具体 API 是否支持该 dtype、模式及误差保证仍按目标版本调用 CANNBOT `ascendc-docs-search` 技能确认，不能仅凭架构具备某种能力就认定当前调用采用了它。
 
 记录精确 CANN、SoC、编程模型、API 重载、输入/中间/输出 dtype、显式模式、编译分支和生成物身份。API 是否支持某 dtype、采用何种算法以及误差保证属于版本强事实，只能从对应版本 API 文档获得；不能从历史案例症状、编译成功或另一个 dtype 的行为反推。
 
@@ -16,7 +16,7 @@
 
 ## 算术替换与近似路径
 
-设备 Div 改成 Host 求倒数后 Muls、标量广播改成另一种算术接口，可能改变舍入位置和调用路径。固定输入、dtype 与后续消费者，先比较替换点的局部输出，再看最终误差。Reciprocal/Rsqrt 的误差略超容差时，使用 `/ascendc-docs-search` skill 取得当前算法模式的精度说明，再选择对照；Div、Sqrt 等替代组合也要满足原验收要求。
+设备 Div 改成 Host 求倒数后 Muls、标量广播改成另一种算术接口，可能改变舍入位置和调用路径。固定输入、dtype 与后续消费者，先比较替换点的局部输出，再看最终误差。Reciprocal/Rsqrt 的误差略超容差时，调用 CANNBOT `ascendc-docs-search` 技能取得当前算法模式的精度说明，再选择对照；Div、Sqrt 等替代组合也要满足原验收要求。
 
 大输入下 Sqrt 变成 0、Rsqrt 变成 Inf，先查所用重载和算法模式的输入范围。只在合法输入内做模式对照，不用截断合法输入掩盖错误。次正规值变零与整型溢出另查[特殊值机制](special-values.md)；半精度小增量丢失则继续按下方 Cast 阶段图定位。
 
@@ -37,7 +37,7 @@ GM half → CopyIn/UB half → Cast#in → FP32 stage 1 → ... → FP32 stage n
         → Cast#out → UB half → CopyOut/GM half
 ```
 
-为 `Cast#in` 前后、每个敏感 FP32 stage、`Cast#out` 前后保存 dtype、API 重载、有效区、数值和位模式。入口 half→float 与出口 float→half 的支持模式须使用 `/ascendc-docs-search` skill 核对；“入口无损”不等于后续 FP32 算法与高精度 oracle 位级一致，“出口只差一次舍入”也须由 Cast 前已经一致来证明。
+为 `Cast#in` 前后、每个敏感 FP32 stage、`Cast#out` 前后保存 dtype、API 重载、有效区、数值和位模式。入口 half→float 与出口 float→half 的支持模式须调用 CANNBOT `ascendc-docs-search` 技能核对；“入口无损”不等于后续 FP32 算法与高精度 oracle 位级一致，“出口只差一次舍入”也须由 Cast 前已经一致来证明。
 
 用单变量 Cast 时机实验定位：一次只把一个 Cast 边界跨过一个操作，例如比较“操作 P 前升 FP32”与 “P 后才升 FP32”，或比较“操作 Q 前降 half”与“Q 后再降 half”；输入位模式、shape、tiling、mask、其余 dtype、模式和输出比较规则全部冻结，并为两条逐操作链各算局部 oracle。若移动边界同时改变 API 重载、tiling、UB 容量或生成物分支，结果标为混杂证据，不写成 Cast 时机根因。一次把整条链全部改成 FP32 只能证明组合路径改善。
 

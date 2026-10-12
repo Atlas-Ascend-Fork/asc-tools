@@ -10,15 +10,18 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "固定输入和同一比较合同下，Ascend C 算子的语义 checkpoint 连续多轮都是：CopyIn PASS、Cast PASS、Reduce FAIL、CopyOut FAIL；各点都有独立且可比的 oracle，插桩也没有改变结果。请加载 tool-precision-debug 技能说明下一步该选语义二分还是逐层分析，以及怎样继续更新根因判断。",
       "expected_output": "应保留稳定的已测 PASS/FAIL 序列，将 Cast→Reduce 作为当前判据的可疑转变区间，但不能仅由重复稳定和已测点无倒序推断未测区间单调。继续核对实际依赖链、参考用途及该段是否可能抵消、截断或恢复；有依据支持局部单调假设且仍需缩区时再选语义中点。范围已足够时可直接检查归约输入、参与集合、dtype 与实现机制，按预测和有效观察验证候选；不强制继续二分，不把 Reduce 的首个 FAIL 直接当作根因。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 2,
@@ -28,33 +31,39 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "同一个 Ascend C 算子、同一份输入数据，多次运行有时通过有时失败，失败位置和误差幅度还会漂移。怀疑是精度问题但无法稳定复现。请加载 tool-precision-debug 技能说明第一步应该怎么做。",
       "expected_output": "回复应先处理复现性而不是解释普通舍入误差：冻结输入、产物和比较合同，量化失败率、坏点与幅度漂移，把基线标注为 UNSTABLE；怀疑点应优先考虑并发/同步、未初始化、缓冲区生命周期或状态复用，再用能区分这些候选的触发条件或观察点继续收敛。单次通过不能证明问题已修复，也不能在本阶段锁定根因。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 3,
-      "title": "CPU 通过 NPU 失败的差分定位（正向）",
+      "title": "局部数值模型与 NPU 实测差异的定位（正向）",
       "config": {
         "max_tokens": 100000,
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
-      "prompt": "我的 Ascend C 算子在 CPU Debug 孪生环境输出与 golden 一致，但上 NPU 后 FP16 输出现系统性偏差，累计到后半段明显放大。请加载 tool-precision-debug 技能帮我分析 CPU 与 NPU 的差分应该怎么定位。",
-      "expected_output": "回复应先确认 CPU、NPU 与可信 reference 使用同一输入、有效区、dtype/layout 和容差语义；在可比前提下降低公共公式/reference 的优先级，提高指令/API 精度、Cast、tiling、padding、搬运、同步和硬件路径等 NPU 侧怀疑点的优先级。CPU 只是观察面，CPU 通过不能证明 NPU 实现正确；仍需用 NPU 中间观察和单变量实验继续支持或证伪候选。",
+      "prompt": "我的 Ascend C 算子在目标 NPU 上能稳定复现 FP16 系统性偏差，后半段误差明显放大，已有原始输入、golden 和设备输出。我用同一输入建立了两个 NumPy 局部模型，分别模拟不同的舍入点；其中一个更接近 NPU 输出，但两者仍不能解释全部误差。请加载 tool-precision-debug 技能，帮我选择下一步定位方法。",
+      "expected_output": "回复应先核对模型与 NPU 的实际输入、有效区、dtype/layout、计算分支及已确认的舍入点，保留项目 golden 和原验收口径；模型更接近 actual 只提高相应候选的优先级，不直接证明设备行为或根因。根据候选预测不同的位置选择少量 NPU 中间观察，区分误差产生和传播；关键设备语义无法由适用文档或已有观察确定时，再考虑最小 NPU 探针，结论回到原始 Kernel 验证。利用已有现场继续定位，不额外搭建 Kernel 的其他执行环境。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 4,
@@ -64,15 +73,18 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "我为一个非对齐 Reduce 算子先列了两个候选：A 是 FP16 累加，预测只把累加器改成 FP32 后所有 shape 都恢复；B 是尾块搬运，预测坏点仍集中在非对齐尾部。单变量实验确认新产物已加载后，FP32 只降低了误差幅度，非对齐 shape 仍在同一尾部失败，对齐 shape 仍通过。请加载 tool-precision-debug 技能告诉我怎样更新判断和设计下一步。",
       "expected_output": "回复应按事前预测解释结果：FP32 改善支持累加精度是误差贡献因素，但与 A 的“所有 shape 恢复”预测不符，不能将 A 锁定为根因；应降低 A 作为独占解释的优先级，把尾块搬运/有效区提升为残差主候选，同时保留仍无法区分的机制。下一步应固定 FP32 等其它条件，只操纵对齐/尾块或隔离 CopyIn-CopyOut，并预先写明各候选预测，再用新证据更新怀疑点。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 5,
@@ -82,15 +94,18 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "FP16 大长度归约算子逐元素误差都在阈值内，但整行求和结果误差超标，且误差随归约长度增加持续放大；把累加器改成 FP32 后有所改善但仍有残余。请加载 tool-precision-debug 技能分析这是不是精度问题以及下一步实验怎么设计。",
       "expected_output": "应保留原验收结果，当前信息不足以建立稳定且有依据的单调边界，不强行二分。沿相关阶段区分首次已观察到差异与首次超差，核对参与集合、累加 dtype 和归约顺序；需要区分传播与本段新增差异时，将实际阶段输入和可信参考输入分别送入同一独立局部参考。误差摘要的差值或倍率不能直接作为本段贡献，缺参考或观察时保留未知。FP32 改善用于选择候选，需核对实际路径和联动，不直接宣布根因或要求全链贡献排名。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 6,
@@ -100,9 +115,6 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "我的 Ascend C 算子计算结果完全正确，但 AIC 利用率只有 20%，运行时间比基线实现慢 3 倍。请帮我分析流水瓶颈并给出性能优化建议。",
@@ -118,9 +130,6 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "我的 Ascend C 算子一运行就 core dump，栈信息显示非法内存访问，输出根本没有产生。请帮我定位崩溃原因。",
@@ -136,9 +145,6 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "新机器上 CANN 9.0.0 安装后 npu-smi 能看到 910C 卡，但编译 Ascend C 工程时报头文件找不到，环境变量也配不齐。请帮我修好安装和环境配置。",
@@ -154,13 +160,10 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "帮我查一下 Ascend C 里 DataCopyPad 的完整参数说明和官方示例，我不是在调试任何精度问题，只需要 API 文档。",
-      "expected_output": "回复不应进入精度调试工作流：通用 API 文档检索属于 ascendc-docs-search 的职责；本 Skill 仅在精度诊断中组织 API 查询。应说明边界并移交，不输出与精度调试无关的通用文档汇编。",
+      "expected_output": "回复不应进入精度调试工作流：通用 API 文档检索应调用 CANNBOT `ascendc-docs-search` 技能；本 Skill 仅在精度诊断中组织 API 查询。应说明边界并移交，不输出与精度调试无关的通用文档汇编。",
       "files": [],
       "expectations": []
     },
@@ -172,15 +175,18 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "我在 CANN 9.1.0、Ascend950PR 上调试一个 SIMT 精度问题，让 tool-precision-debug 技能给出该环境已验证的结论和修复方法，越具体越好，最好直接给出根因。",
       "expected_output": "应按当前版本、产品、架构、编程形态及具体调用核对资料的适用条件，区分通用诊断方法、文档或源码依据与实机观察。9.1.0/950PR/SIMT 组合没有对应实机证据时，如实说明设备验证缺口，不编造已验证修复或直接宣称根因；仍可使用适用的方法和已确认资料形成候选、设计区分实验。配套 Skill 不可用时说明缺口并继续不依赖它的分析，不要求返回固定的 coverage_gap 标签。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 11,
@@ -190,15 +196,18 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "一个 Ascend C 精度修复已经让全部 visible case 通过，但代码审计仍发现两个当前可执行、visible 未触发的风险：大负输入会进入另一条稳定计算分支，H 超过 8192 且带 weight 时会切换归约实现。时间还足够运行针对性 case。请加载 tool-precision-debug 技能判断现在能否报告 PASS，以及下一步怎么做。",
       "expected_output": "应优先验证题设中两个明确且可执行的风险，选择实际命中大负分支和 H>8192+weight 路径的输入，复用项目 evaluator，并回放原失败和相关回归。只报告已验证的范围；影响当前修复成立的风险尚未确认时，不宣称整体修复完成。验证计划围绕这些已知问题，不扩展无关组合。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 12,
@@ -208,15 +217,18 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "需求规定按 FP32 顺序计算 `(grad * z) / (1 + z)`，补丁却实现成 `grad * (z / (1 + z))`。现有 visible 输入上二者都有限且在容差内。请加载 tool-precision-debug 技能说明如何判断这个重排是否安全，并设计能区分两种实现的最小测试。",
       "expected_output": "应识别题设明确规定了 FP32 求值顺序，实数等价不能证明补丁保持该语义。给出能区分两种实现的最小测试，例如选择有限 grad、z 使 grad*z 溢出而 z/(1+z) 仍有限，按逐步 FP32 计算预测前式的 Inf 与后式的有限结果。可用可靠的操作链分析支持预测，不能用高精度整式掩盖中间溢出；未实际执行时说明只是测试设计。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 13,
@@ -226,15 +238,18 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "一个算子对外只有一套公式，但源码会按 H 是否超过 8192 选择常规路径或分块归约路径，weight 是否存在还会改变分派；当前测试只有 H=4096、无 weight。修复发生在常规路径，两条实现理论上应共享相同数值语义。请加载 tool-precision-debug 技能规划回归覆盖。",
       "expected_output": "应根据补丁和实际分派选择相关回归：优先原失败、常规路径及 H 分派边界，并保留分块归约路径的代表性对照；weight 会改变路由时加入相关组合。说明各用例覆盖的影响和预期路径，路径不明确时再用日志或探针确认。复用项目比较规则和仍适用的验证记录，注明未覆盖范围，不要求固定覆盖矩阵或为每个用例新增探针。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 14,
@@ -244,15 +259,18 @@
         "max_tokens_by_model": {
           "glm-5.3": 110000
         },
-        "ascend_platforms": [
-          "A3"
-        ],
         "eval_mode": "text"
       },
       "prompt": "算子的 grad_input 采用容差验收，但 grad_weight 合同要求与 FP32 oracle 逐位一致。当前数值比较显示全部通过；抽样却发现某些位置是 +0 对 -0，另一些位置两侧都是 NaN 但 payload 或符号可能不同。请加载 tool-precision-debug 技能说明应怎样验证和报告。",
-      "expected_output": "回复应按输出分别冻结比较合同，不能用 grad_input 的 tolerance 结论覆盖 grad_weight。对 grad_weight 应要求同 dtype 并按原始位模式比较，可调用 `precision_compare.py --mode bitwise`，单独检查符号零、NaN payload、NaN 符号和普通数值位差，并保留代表位置的十六进制位模式；普通 exact 数值相等或 `allclose` 会把 +0/-0 及 NaN 编码差异隐藏。任何位模式失配都应按 bitwise 合同判失败，辅助工具结论仍需与任务真实 evaluator 对齐。",
+      "expected_output": "回复应按输出分别冻结比较合同，不能用 grad_input 的 tolerance 结论覆盖 grad_weight。对 grad_weight 应要求同 dtype 并按原始位模式比较，单独检查符号零、NaN payload、NaN 符号和普通数值位差，并保留代表位置的十六进制位模式；普通 exact 数值相等或 `allclose` 会把 +0/-0 及 NaN 编码差异隐藏。任何位模式失配都应按 bitwise 合同判失败，辅助工具结论仍需与任务真实 evaluator 对齐。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 15,
@@ -265,9 +283,15 @@
         "eval_mode": "text"
       },
       "prompt": "目标运行端为 CANN 9.1、950PR，Agent 本机没有 NPU。FP32 矩阵乘输出超差，需要确认实际 HF32 控制入口。请加载 tool-precision-debug，仅定位问题，说明如何查询并继续取证。",
-      "expected_output": "使用 `/ascendc-docs-search` skill 查阅 API 文档，按实际目标环境和精确调用核对控制入口，不能拿 Agent 本机代替运行端。原文限制只用来筛选候选，结合实际模式状态和局部输入输出设计实验，不直接认定 HF32 根因。只定位时不实施正式修复。",
+      "expected_output": "调用 CANNBOT `ascendc-docs-search` 技能查阅 API 文档，按实际目标环境和精确调用核对控制入口，不能拿 Agent 本机代替运行端。原文限制只用来筛选候选，结合实际模式状态和局部输入输出设计实验，不直接认定 HF32 根因。只定位时不实施正式修复。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 16,
@@ -280,9 +304,15 @@
         "eval_mode": "text"
       },
       "prompt": "正在按 tool-precision-debug 调试分组矩阵乘的组间错位。单组通过，多组时第二组开始出错，希望参考官方示例和类似算子来理解分组地址与缓冲复用。请说明怎样搜索、比较，并据此选择下一项实验。",
-      "expected_output": "使用 `/ascendc-docs-search` skill 搜索示例代码、查找类似算子，并查阅涉及的 API 文档。对齐产品、版本、分组 shape、布局、scale 与同步形态，再对比组偏移、结果完成和缓冲复用。差异只提供候选，用组指纹或隔离缓冲等单变量对照验证，不能直接搬用样例中的常量、核配比或宣布根因。",
+      "expected_output": "调用 CANNBOT `ascendc-docs-search` 技能搜索示例代码、查找类似算子，并查阅涉及的 API 文档。对齐产品、版本、分组 shape、布局、scale 与同步形态，再对比组偏移、结果完成和缓冲复用。差异只提供候选，用组指纹或隔离缓冲等单变量对照验证，不能直接搬用样例中的常量、核配比或宣布根因。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 17,
@@ -295,9 +325,15 @@
         "eval_mode": "text"
       },
       "prompt": "用 tool-precision-debug 定位 CANN 9.0、Atlas A2 上的 DataCopyPad 尾块误差，目前找到的资料只说明 CANN 9.1、950 的 Compact 模式。随后算子开发协作给出了一个补丁，但尚未回放。请说明怎样使用资料，以及补丁能否收口。",
-      "expected_output": "使用 `/ascendc-docs-search` skill 查询目标版本、产品、方向和重载的文档，不能把 9.1/950 的模式规则直接套到 9.0/A2。未查明的支持条件保留未知。取得补丁后仍核对修改语义与影响范围、原失败回放及必要回归；未执行时不能报告修复完成。",
+      "expected_output": "调用 CANNBOT `ascendc-docs-search` 技能查询目标版本、产品、方向和重载的文档，不能把 9.1/950 的模式规则直接套到 9.0/A2。未查明的支持条件保留未知。取得补丁后仍核对修改语义与影响范围、原失败回放及必要回归；未执行时不能报告修复完成。",
       "files": [],
-      "expectations": []
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
+        }
+      ]
     },
     {
       "id": 18,
@@ -306,8 +342,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C 算子能够正常运行，但固定输入与 golden 比较时 rtol/atol 不达标，精度验证失败。请说明如何开始定位，暂不修改代码。",
@@ -339,8 +375,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C 算子输出全零，但相同非零输入下 golden 明显非零，程序没有报错。请帮我选择第一轮定位检查。",
@@ -372,8 +408,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C 算子固定输入反复运行，输出却像随机值，坏点位置也变化。请帮我定位这种数值异常，先给出可执行的排查路线。",
@@ -405,8 +441,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C 算子的输入均有限，golden 也有限，实际输出却出现 NaN/Inf。请说明下一步如何定位，不要直接改公式。",
@@ -438,8 +474,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C 算子的 FP16 输出误差明显超过项目容差，而同一公式的 FP32 实现通过。请帮我规划精度问题的定位实验。",
@@ -471,8 +507,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C 中同一份 FP32 数据经过 Cast 到 FP16 后出现与参考不一致的数值，后续阶段只是原样拷贝。目前还未确定 CANN 版本和具体重载，请只列出下一步要核对的条件与证据；具体 API 参数和官方样例等环境明确后再查。",
@@ -504,8 +540,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C 算子使用 DataCopy 搬运后尾部数值错误，对齐长度通过，非对齐长度失败。请帮我规划定位步骤。",
@@ -537,8 +573,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C ReduceSum 已确认输入、参与元素、搬运和尾块处理一致，数据范围也排除了溢出。FP16 累加的误差随归约长度增加而超过既定容差，FP32 对照的误差更小。请只围绕累加 dtype 与归约顺序，设计下一项最小区分实验，说明固定条件及不同结果如何更新判断。",
@@ -570,8 +606,8 @@
         "max_tokens": 100000,
         "eval_mode": "text",
         "distractor_skills": [
-          "ascendc-docs-search",
-          "ops-precision-standard"
+          "tool-npu-check",
+          "tool-npu-compute"
         ]
       },
       "prompt": "Ascend C 双缓冲算子偶发错值，临时增加同步后错值消失，怀疑 EnQue/DeQue 或缓冲复用。请帮我验证具体根因。",
@@ -598,51 +634,45 @@
     },
     {
       "id": 36,
-      "title": "外链保护：msSanitizer 使用与编译配置",
+      "title": "外链保护：msSanitizer 官方仓库",
       "config": {
         "max_tokens": 100000,
         "eval_mode": "text"
       },
-      "prompt": "请使用 tool-precision-debug。Ascend C 精度问题怀疑设备侧竞争，想查 msSanitizer。请给出 CPU/NPU 差分指南中引用的官方使用指南和编译配置链接，并说明适用条件需要核对什么。",
-      "expected_output": "给出两份官方指南的完整链接，提醒能力取决于实际芯片、版本与编译配置，告警需关联原始错值。",
+      "prompt": "请使用 tool-precision-debug。Ascend C 精度问题怀疑设备侧竞争，想查 msSanitizer。请给出“工具选用”中的官方仓库入口，说明去哪里查当前版本的详细用法。",
+      "expected_output": "给出 msSanitizer 官方仓库完整链接，从仓库 README 查找使用指南，并按工程实际使用的工具版本核对用法。",
       "files": [],
       "expectations": [
         {
           "type": "contains",
-          "pattern": "https://github.com/Ascend/mssanitizer/blob/master/docs/zh/user_guide/compile_option_config.md"
+          "pattern": "https://gitcode.com/Ascend/mssanitizer"
         },
         {
-          "type": "contains",
-          "pattern": "https://github.com/Ascend/mssanitizer/blob/master/docs/zh/user_guide/mssanitizer_user_guide.md"
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
     {
       "id": 37,
-      "title": "外链保护：DumpTensor 接口与开关",
+      "title": "外链保护：DumpTensor 官方仓库",
       "config": {
         "max_tokens": 100000,
         "eval_mode": "text"
       },
-      "prompt": "请使用 tool-precision-debug。要给 Ascend C 精度问题加 DumpTensor 观察，请给出本 Skill 引用的 9.0、9.1 接口文档、打印开关说明和 NPU 调试指南链接。",
-      "expected_output": "保留四个完整链接及对应用途，按目标版本核对重载与支持范围。",
+      "prompt": "请使用 tool-precision-debug。要给 Ascend C 精度问题加 DumpTensor 观察，应在什么位置插桩，当前接口和编译条件去哪里查？请给出本 Skill 提供的官方仓库入口。",
+      "expected_output": "在数据就绪且有区分力的位置选择少量观察点，核对有效范围、构建采用和插桩影响；给出 asc-devkit 官方仓库完整链接，从 README 查找 DumpTensor 与 NPU 调试说明，具体条件按当前环境核对。",
       "files": [],
       "expectations": [
         {
           "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-devkit/blob/c8c1b9df6bb9cd61c09751c7ef414b89e06af274/docs/api/context/DumpTensor.md"
+          "pattern": "https://gitcode.com/cann/asc-devkit"
         },
         {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/SIMD-API/基础API/调试接口/上板打印/DumpTensor.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/SIMD-API/基础API/调试接口/关闭ASCENDC_DUMP说明.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/guide/编程指南/调试调优/功能调试/NPU域上板调试.md"
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
@@ -660,6 +690,11 @@
         {
           "type": "contains",
           "pattern": "https://github.com/pytorch/pytorch/blob/v2.9.0/aten/src/ATen/native/cpu/SumKernel.cpp"
+        },
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
@@ -681,6 +716,11 @@
         {
           "type": "contains",
           "pattern": "https://gitcode.com/cann/asc-devkit/blob/c8c1b9df6bb9cd61c09751c7ef414b89e06af274/docs/api/context/通用说明和约束.md"
+        },
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
@@ -698,6 +738,11 @@
         {
           "type": "contains",
           "pattern": "https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/guide/跨代迁移兼容性指南/3510架构迁移指导/2201到3510架构变更.md"
+        },
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
@@ -731,6 +776,11 @@
         {
           "type": "contains",
           "pattern": "https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/guide/编程指南/高级编程/高级AI-Core编程模型/SIMD与SIMT混合编程/抽象硬件架构.md"
+        },
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
@@ -756,6 +806,11 @@
         {
           "type": "contains",
           "pattern": "https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/Utils-API/平台信息获取/PlatformAscendC/GetCoreMemSize.md"
+        },
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
@@ -773,6 +828,11 @@
         {
           "type": "contains",
           "pattern": "https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/guide/算子实践参考/优秀实践/GroupedMatmul算子性能调优案例.md"
+        },
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
@@ -794,159 +854,55 @@
         {
           "type": "contains",
           "pattern": "https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/impl/basic_api/kernel_operator_proposal_intf_impl.h"
+        },
+        {
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
     {
       "id": 45,
-      "title": "外链保护：CPU Debug 与多进程调试",
+      "title": "外链保护：Kernel 调测数据工具用法",
       "config": {
         "max_tokens": 100000,
         "eval_mode": "text"
       },
-      "prompt": "请使用 tool-precision-debug。为 Ascend C 精度问题设置 CPU Debug，请列出本 Skill 工具用法中的 9.0、9.1 调试文档、样例 CMake、样例说明以及多子进程调试章节链接。",
-      "expected_output": "给出五个完整链接，保留多子进程章节锚点，按实际工程选择入口，说明断点可能扰动调度。",
+      "prompt": "请使用 tool-precision-debug。已有 Ascend C Kernel 调测 dump，需要选择解析工具并判断解析是否完整。请说明适用场景、解析命令、输出解读和判断要点，并给出本 Skill 提供的官方仓库入口，说明如何查找完整用法与 Add 样例。",
+      "expected_output": "选择 show_kernel_debug_data，说明单文件或目录输入及输出目录的调用方式；结合退出状态、异常输出与实际产物，核对核标识、desc 标签、记录序号与元素数，不把返回成功或文件存在当作完整解析。目录解析结果放在输入目录之外，loop 不能直接当作源码循环变量，核标识不能直接当作 GetBlockIdx。给出 asc-tools 官方仓库完整链接，以 show_kernel_debug_data 查找使用说明与 Add 样例，版本差异查配套工具帮助与官方说明。",
       "files": [],
       "expectations": [
         {
           "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-devkit/blob/cdb4d800e937499d8fae2073099ccf61d1a44fc0/docs/zh/guide/programming_guide/debug_and_tuning/functional_debug/cpu_twin_debug.md#section13838280458"
+          "pattern": "https://gitcode.com/cann/asc-tools"
         },
         {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/46a5b4d9ad924e5432e155cb62eea7585b448e62/docs/01_cpu_debug.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/docs/01_cpu_debug.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/examples/02_cpudebug/CMakeLists.txt"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/examples/02_cpudebug/README.md"
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     },
     {
       "id": 46,
-      "title": "外链保护：Kernel dump 解析器",
+      "title": "外链保护：msobjdump 官方仓库",
       "config": {
         "max_tokens": 100000,
         "eval_mode": "text"
       },
-      "prompt": "请使用 tool-precision-debug。解析 Ascend C 调测 dump 时怀疑退出码不能代表解析成功。请给出本 Skill 解析器用法中 9.0、9.1 的使用文档、dump_parser 实现及命令入口链接。",
-      "expected_output": "给出两版本的六个链接，区分返回码、异常输出与部分产物，不能只看退出码或文件存在。",
+      "prompt": "请使用 tool-precision-debug。分析 Ascend C 精度问题时怀疑使用了错误的融合 ELF 产物。请说明如何用 msobjdump 查看元数据、列出和提取设备文件，何时可使用反汇编，以及如何判断操作结果；给出本 Skill 的官方仓库入口。",
+      "expected_output": "按目标选择 --dump-elf、--list-elf、--extract-elf；提取目录先创建并检查实际文件。安装版无法处理融合封装时，确认 .aicore_binary 存在后可用配套 llvm-objcopy 提取设备 ELF。--sass 以当前帮助和后端能力为前提，--verbose 不是反汇编；无有效指令不能称为成功。核类型、TilingKey 和元数据不能证明实际执行路径或精度根因，BLOCK_NUM 占位值不是核数。给出 asc-tools 官方仓库完整链接，按 msobjdump 查找当前说明。",
       "files": [],
       "expectations": [
         {
           "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/46a5b4d9ad924e5432e155cb62eea7585b448e62/docs/04_show_kernel_debug_data.md"
+          "pattern": "https://gitcode.com/cann/asc-tools"
         },
         {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/46a5b4d9ad924e5432e155cb62eea7585b448e62/utils/show_kernel_debug_data/show_kernel_debug_data/__main__.py"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/46a5b4d9ad924e5432e155cb62eea7585b448e62/utils/show_kernel_debug_data/show_kernel_debug_data/dump_parser.py"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/docs/04_show_kernel_debug_data.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/utils/show_kernel_debug_data/show_kernel_debug_data/__main__.py"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/utils/show_kernel_debug_data/show_kernel_debug_data/dump_parser.py"
-        }
-      ]
-    },
-    {
-      "id": 47,
-      "title": "外链保护：Dump 表示、布局与配置",
-      "config": {
-        "max_tokens": 100000,
-        "eval_mode": "text"
-      },
-      "prompt": "请使用 tool-precision-debug。Ascend C 精度调试中要区分 msaccucmp 的文件表示、Tensor 布局和 dump_kernel_data。请给出本 Skill msaccucmp 用法引用的三份 CANN 9.0 官方文档链接。",
-      "expected_output": "给出查看 Dump 数据、Dump Format 转换、Runtime Dump 配置的三个完整链接，区分输入输出 Dump 和 Kernel 调测数据。",
-      "files": [],
-      "expectations": [
-        {
-          "type": "contains",
-          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0022.html"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/devaids/ModelAccuracyAnalyzer/atlasaccuracy_16_0054.html"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/devaids/ModelAccuracyAnalyzer/atlasaccuracy_16_0055.html"
-        }
-      ]
-    },
-    {
-      "id": 48,
-      "title": "外链保护：msobjdump 文档与入口",
-      "config": {
-        "max_tokens": 100000,
-        "eval_mode": "text"
-      },
-      "prompt": "请使用 tool-precision-debug。分析 Ascend C 精度问题的实际 ELF 时，想核对 msobjdump 参数。请给出本 Skill msobjdump 用法引用的 9.0、9.1 使用文档及命令实现链接。",
-      "expected_output": "给出两版本的四个链接，ELF 结构信息只用于核对实际产物，不单独证明精度根因。",
-      "files": [],
-      "expectations": [
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/46a5b4d9ad924e5432e155cb62eea7585b448e62/docs/03_msobjdump.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/46a5b4d9ad924e5432e155cb62eea7585b448e62/utils/msobjdump/msobjdump/msobjdump_main.py"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/docs/03_msobjdump.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/utils/msobjdump/msobjdump/msobjdump_main.py"
-        }
-      ]
-    },
-    {
-      "id": 49,
-      "title": "外链保护：npu check 文档与报告解析",
-      "config": {
-        "max_tokens": 100000,
-        "eval_mode": "text"
-      },
-      "prompt": "请使用 tool-precision-debug。Ascend C 精度问题可能涉及 CPU 域同步告警。请给出本 Skill npu check 用法引用的 9.0、9.1 文档及报告解析脚本链接。",
-      "expected_output": "给出两版本的四个链接；原始告警是观察，需结合源码与数值异常验证。",
-      "files": [],
-      "expectations": [
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/46a5b4d9ad924e5432e155cb62eea7585b448e62/docs/02_npu_check.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/46a5b4d9ad924e5432e155cb62eea7585b448e62/npuchk/ascendc_npuchk_report.py"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/docs/02_npu_check.md"
-        },
-        {
-          "type": "contains",
-          "pattern": "https://gitcode.com/cann/asc-tools/blob/950ab9eecf759dab94e546d0c8cc8c766d5d7716/npuchk/ascendc_npuchk_report.py"
+          "type": "skill_activated",
+          "pattern": "tool-precision-debug",
+          "description": "确认加载精度调试 Skill"
         }
       ]
     }

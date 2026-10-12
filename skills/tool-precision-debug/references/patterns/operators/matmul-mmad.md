@@ -41,7 +41,7 @@ physC(g,i,j) = C_base[g] + i*ldc+j
 
 然后每次只增加一个维度：第二个非空组、一个空组、M/N 尾块、第二个 K-block、transpose、非紧致 leading dimension、token scale，最后才恢复完整 epilogue。若加入第二组后首错恰好等于前组 span，优先反解 prefix/leading-dimension 候选；若 CO1/workspace 正确而 Vector 后首次错，再查 scale 索引、workspace epoch 和 Cast。随机大 shape 一次通过不能反证这些边界问题。
 
-具体数组长度、offset 公式、分核公式、同步 flag 和量化 API 必须按当前实现与版本核对。使用 `/ascendc-docs-search` skill 查当前 Matmul/Mmad 接口与样例；可变 `M/N/K` 的 GMM 合同、transpose/NZ span 和 leading-dimension 约束缺少该版本权威依据时保持 `UNKNOWN`。
+具体数组长度、offset 公式、分核公式、同步 flag 和量化 API 必须按当前实现与版本核对。调用 CANNBOT `ascendc-docs-search` 技能查当前 Matmul/Mmad 接口与样例；可变 `M/N/K` 的 GMM 合同、transpose/NZ span 和 leading-dimension 约束缺少该版本权威依据时保持 `UNKNOWN`。
 
 ## 敏感 checkpoint
 
@@ -51,7 +51,7 @@ physC(g,i,j) = C_base[g] + i*ldc+j
 
 ## K-block 参与集合与分段定位
 
-按当前实现串起 `GM 输入 → A1/B1 → A2/B2 → CO1 → GM 输出` 的相关路径，在所选边界比较对应的逻辑数据；使用 `/ascendc-docs-search` skill 取得目标版本的矩阵装载与 Matmul/Mmad 原文，再核对具体调用、布局和字段。
+按当前实现串起 `GM 输入 → A1/B1 → A2/B2 → CO1 → GM 输出` 的相关路径，在所选边界比较对应的逻辑数据；调用 CANNBOT `ascendc-docs-search` 技能取得目标版本的矩阵装载与 Matmul/Mmad 原文，再核对具体调用、布局和字段。
 
 - A1/B1：确认输入有效区是否完整进入 L1，并能由坐标编码反解回原逻辑位置。
 - A2/B2：按实际 ZZ/ZN/NZ 分形比较坐标，不把两个不同布局的线性 dump 直接逐元素相减。
@@ -72,7 +72,7 @@ physC(g,i,j) = C_base[g] + i*ldc+j
 
 ## 装载布局与 scale 配对
 
-换成 fp8/fp4 后出现 NaN、首个 N-segment 正常而后续出错，先分别推导数据与 scale 的地址。逻辑元素数、打包载体和字节数不是同一个单位；fp4 尤其不能把载体 sizeof 当作单个逻辑元素大小。逐个 K-pass、N-segment 记录两类地址与有效范围，使用 `/ascendc-docs-search` skill 核对所用装载接口的字段单位。
+换成 fp8/fp4 后出现 NaN、首个 N-segment 正常而后续出错，先分别推导数据与 scale 的地址。逻辑元素数、打包载体和字节数不是同一个单位；fp4 尤其不能把载体 sizeof 当作单个逻辑元素大小。逐个 K-pass、N-segment 记录两类地址与有效范围，调用 CANNBOT `ascendc-docs-search` 技能核对所用装载接口的字段单位。
 
 multi-head 只有奇数或偶数 head 异常时，分别比较单 head、双 head 的物理起点、容量和生命周期。数据与 scale 可能有不同的布局与打包方式；每一类都应独立推导偏移，不能因为症状相似就套某个 head-offset 公式。共享区还要检查上一 head 是否已经消费结束，见[多层分段状态](../mechanisms/tiling-tail-state.md#多层分段状态rowheadn-segment-与-k-pass)。
 
@@ -89,13 +89,13 @@ UB→L1 的注册或同步异常，先确认目标产品支持当前接口，再
 | 只有 M=1、特定 K 或小块失败 | GEMV、K 对齐或相邻 Mmad 依赖是否改变实际路径；先展开调用与地址，不套历史阈值 |
 | CO1 正确、最终输出错位或变值 | Fixpipe 的目的布局、转换/量化与有效范围；特殊值按原输出要求比较 |
 
-使用 `/ascendc-docs-search` skill 查实际矩阵计算接口的类型组合、异步完成与搬出规则。int8/int4/MX 路径分别核对累加、Bias、模式配置和写回类型，不能从最终 C 类型倒推内部计算。
+调用 CANNBOT `ascendc-docs-search` 技能查实际矩阵计算接口的类型组合、异步完成与搬出规则。int8/int4/MX 路径分别核对累加、Bias、模式配置和写回类型，不能从最终 C 类型倒推内部计算。
 
 ## HF32 与中间精度
 
 fp32 矩阵乘误差偏大时，可在其他条件不变的情况下关闭当前接口支持的 HF32 开关做对照。误差改善只支持精度路径相关的解释，还需比较局部输入输出、算法和实际生效状态，不能直接认定根因。Host、框架、Kernel 三处的配置要和每次局部参考一起记录；开关无效果时检查配置时机与上层覆盖。
 
-使用 `/ascendc-docs-search` skill 核对各 HF32 控制入口的枚举取值、关闭能力和执行形态，不能照搬 mode 数字。是否接受降精或改用另一计算路径，由原输出要求决定。
+调用 CANNBOT `ascendc-docs-search` 技能核对各 HF32 控制入口的枚举取值、关闭能力和执行形态，不能照搬 mode 数字。是否接受降精或改用另一计算路径，由原输出要求决定。
 
 HF32、SetMadType 和 C 接口的 asc_set_fp32_mode 分别确认使能方向和支持条件，不能按相似名称互换。CANN 9.1 SetMadType 中存在 HF32 枚举但标为暂不支持的说明；查询具体控制入口后，再用固定输入与局部观察确认模式真正生效。
 
@@ -113,4 +113,4 @@ GMM 更新时分别核对 SetSingleShape 的当前计算范围与 SetOrgShape �
 
 ## 版本路由与边界
 
-矩阵装载与 Matmul/Mmad 的接口资料使用 `/ascendc-docs-search` skill 获取。Mmad 参数、矩阵格式和对齐要求应根据所查官方页面并结合当前实现核对；本页不代表任一具体实现或 NPU case 已验证。
+矩阵装载与 Matmul/Mmad 的接口资料调用 CANNBOT `ascendc-docs-search` 技能获取。Mmad 参数、矩阵格式和对齐要求应根据所查官方页面并结合当前实现核对；本页不代表任一具体实现或 NPU case 已验证。

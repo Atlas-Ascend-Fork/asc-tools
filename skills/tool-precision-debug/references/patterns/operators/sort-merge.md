@@ -25,13 +25,13 @@ Sort 生成有序 score/index 记录，MrgSort 合并最多若干有序队列；
 - **何时查**：排序值正确但 index 丢失、尾部出现旧记录、日志把 `record` 与 `proposal` 混称，或 CopyOut 长度和 TopK 长度不一致时查询。
 - **查什么**：对每个阶段分开记录 `capacity`、`produced`、`logical_valid`、`consumed`、`emitted`、`compared`，并记录物理记录跨度和字段解码依据。`capacity` 不能替代有效记录数；旧材料叫 proposal 只作为检索标签，当前记录是否为 score/index、Region Proposal 或其它布局必须由真实重载与版本 API 裁决。
 - **怎么证伪**：保持容量不变，只改变有效长度，并让有效记录带唯一指纹；仅当无效区已分配且允许诊断写入时才改变其内容，否则只做有效长度对照。若最终输出严格跟随有效长度、允许的无效区变化不影响有效结果，且每阶段计数守恒，就降低有效区泄漏候选。
-- **反串线**：无效区出现任意值不等于越界，只有它进入 `consumed/emitted/compared` 才形成证据；记录字节数、字段偏移、Extract/ProposalExtract 含义和产品支持均使用 `/ascendc-docs-search` skill 核对当前原文，未知即 `UNKNOWN`。
+- **反串线**：无效区出现任意值不等于越界，只有它进入 `consumed/emitted/compared` 才形成证据；记录字节数、字段偏移、Extract/ProposalExtract 含义和产品支持均调用 CANNBOT `ascendc-docs-search` 技能核对当前原文，未知即 `UNKNOWN`。
 
 ## 多路归并守恒账本
 
 每轮归并为每一路记录 `offset_before`、`remaining_before`、`consumed`、`remaining_after`，并记录本轮 `emitted` 和输出有效区。必须满足：每路 `remaining_after = remaining_before - consumed`，所有路的消耗总数与本轮真实输出数按接口语义对账，offset 只前进已消费记录的物理距离。一路耗尽后仍出现重复记录，先查有效路集合、紧凑返回计数与 offset 更新；总条数减少则查漏消费、过早退出或 TopK 截断合同，不先归因数值排序。
 
-守恒通过仍不证明顺序正确；顺序通过也不证明 value-index 配对和截断正确。分别使用每路不同量级的 value/index 指纹、单路耗尽、两路同时耗尽、只剩一路和恰好跨 TopK 边界的输入。`validBit`、返回数组含义、proposal 布局、偏移单位及产品支持使用 `/ascendc-docs-search` skill 从当前版本的排序与归并原文确认。
+守恒通过仍不证明顺序正确；顺序通过也不证明 value-index 配对和截断正确。分别使用每路不同量级的 value/index 指纹、单路耗尽、两路同时耗尽、只剩一路和恰好跨 TopK 边界的输入。`validBit`、返回数组含义、proposal 布局、偏移单位及产品支持调用 CANNBOT `ascendc-docs-search` 技能从当前版本的排序与归并原文确认。
 
 ### 归并进度量与截断边界
 
@@ -47,7 +47,7 @@ Sort 生成有序 score/index 记录，MrgSort 合并最多若干有序队列；
 - proposal 地址差一个固定倍数时，检查字节、元素、记录跨度是否重复换算。GetSortLen/GetSortOffset 的文档与实现存在单位分歧时，按[排序单位说明](sort-merge.md#排序偏移的单位分歧)做小规模地址对照，不统一套倍数。
 - half/BF16 score 已经相等时，扩大为 float 不能恢复窄化前的区别。需要更高分辨率，应在首次窄化前保留；输入只剩低精度值时按其真实值和任务的并列规则排序。
 
-不同重载的 repeat、零次数、有效路编码与补齐要求使用 `/ascendc-docs-search` skill 逐项核对，本页继续检查有序范围、进度和数量是否正确。
+不同重载的 repeat、零次数、有效路编码与补齐要求调用 CANNBOT `ascendc-docs-search` 技能逐项核对，本页继续检查有序范围、进度和数量是否正确。
 
 ## 排序偏移的单位分歧
 
@@ -55,4 +55,4 @@ CANN 9.1 的 [GetSortOffset 文档](https://gitcode.com/cann/asc-devkit/blob/e54
 
 ## 版本路由与边界
 
-排序与归并的接口资料使用 `/ascendc-docs-search` skill 获取。本页为诊断模型，不代表任一具体实现或 NPU case 已验证。
+排序与归并的接口资料调用 CANNBOT `ascendc-docs-search` 技能获取。本页为诊断模型，不代表任一具体实现或 NPU case 已验证。

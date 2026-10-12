@@ -46,7 +46,7 @@
 
 卷积共享维由合同决定，通常可由输入通道和核窗口展开为若干贡献。用单块激活、多个完整块激活、尾段单独激活和全零 control 建立参与集合；每组保持输出窗口、权重布局和后处理不变。漏块会让对应唯一贡献消失，低精度累加更常表现为贡献都存在但偏差随参与项增加。这里的 tail 只指合同内逻辑有效 tail，不把物理补齐当贡献。两类现象都可能随共享维增长，只有局部 checkpoint 才能区分。单 K 块通过不能外推多块合并，尾段失败也不能在未验证 padding poison 是否进入计算前宣布是尾 K 参数。
 
-本页用阶段链、窗口 checkpoint、坐标编码、参与集合和预测表组织实验。接口签名、单位和产品支持使用 `/ascendc-docs-search` skill 查当前原文；普通方法页或 CPU 行为不升级为强事实。Load3D 要核对 `padList`、`padValue`；对使用 `IsResetLoad3dConfig` 的重载，分别确认 `isSetFMatrix`、`isSetPadding` 是否让本次配置生效，或要求调用前另行设置状态。Mmad 与基础 Fixpipe 分别核对类型组合和 L0C→GM/UB/L1 通路。文档分支与当前头文件不一致时，保留两边来源并做最小实验。
+本页用阶段链、窗口 checkpoint、坐标编码、参与集合和预测表组织实验。接口签名、单位和产品支持调用 CANNBOT `ascendc-docs-search` 技能查当前原文；普通方法页或 CPU 行为不升级为强事实。Load3D 要核对 `padList`、`padValue`；对使用 `IsResetLoad3dConfig` 的重载，分别确认 `isSetFMatrix`、`isSetPadding` 是否让本次配置生效，或要求调用前另行设置状态。Mmad 与基础 Fixpipe 分别核对类型组合和 L0C→GM/UB/L1 通路。文档分支与当前头文件不一致时，保留两边来源并做最小实验。
 
 ## 修复与回归边界
 

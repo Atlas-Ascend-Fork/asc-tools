@@ -107,7 +107,7 @@ inv_std = rsqrt(max(var, 0) + epsilon)
 | epsilon 主导 | 构造方差分别低于、接近和高于合同 epsilon 的组 | epsilon 位置/量化、`sqrt` 与 `rsqrt` 顺序 | 三个点保持 shape/tiling 一致 |
 | 统计边界 | 归一化长度 `B-1/B/B+1`、group 尾块、允许观测的 padding | count、mask、尾块、分支和跨核合并 | 保持数值分布只改 shape |
 
-每组同时记录逻辑轴/分组、有效 count、实际 tiling 分支、partial 归约顺序和中间 dtype。若改 dtype 同时改变 tiling，按 [dtype 变化的分层对照](../../diagnosis/cpu-npu-differential.md#改变-dtype-时核对哪些变化)区分相关候选，不用该结果单独证明累加精度。
+每组同时记录逻辑轴/分组、有效 count、实际 tiling 分支、partial 归约顺序和中间 dtype。若改 dtype 同时改变 tiling，按 [dtype 变化的分层对照](../../diagnosis/numerical-modeling.md#改变-dtype-时核对哪些变化)区分相关候选，不用该结果单独证明累加精度。
 
 ## 版本路由与边界
 

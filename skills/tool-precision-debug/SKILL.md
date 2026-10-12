@@ -1,6 +1,6 @@
 ---
 name: tool-precision-debug
-description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回归与报告的全流程引导。触发：精度验证失败、输出全零或随机、NaN/Inf、低精度误差超预期，以及 Cast、DataCopy、归约或同步相关的数值异常。非目标：纯性能调优、纯崩溃、环境安装和非精度目的的全量 API 文档代查与汇编。
+description: 提供 Ascend C 算子精度异常定位、修复、回归与报告的全流程引导。触发：精度验证失败、输出全零或随机、NaN/Inf、低精度误差超预期，以及 Cast、DataCopy、归约或同步相关的数值异常。非目标：性能调优、崩溃与编译异常、环境安装、API 查询等。
 ---
 
 # Ascend C Precision Debug
@@ -8,8 +8,6 @@ description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回�
 按任务目标使用以下六阶段流程，已有可信结果可复用。只定位的任务在阶段 3 后进入阶段 6 交付，不进入修复与回归；知识问答按问题查阅资料，不启动完整调试流程。
 
 开始定位或修复时，按[任务产物目录](references/diagnosis/reporting.md#任务产物目录)确定 `<artifact-dir>`，本次新增的调试文件和留存输出统一放入其中。报告沿用同一文件，随关键证据更新；实验前记录预期，执行后补充结果。仅在对话中交付时不另建报告文件，需保存的运行产物仍遵循目录约定。
-
-各阶段列出可能用到的工具及用途，由 Agent 根据当前情况灵活选用或不用，优先复用已有工具。完整工具说明见[工具选用](scripts/README.md)。
 
 ## 六阶段调试流程
 
@@ -19,27 +17,20 @@ description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回�
 - 固定并记录本次复现使用的实际输入或可复验生成方式、shape/axis/dtype、源码与实际执行产物、构建运行命令、被测输出与参考结果的来源、比较器及参与比较的元素范围，保留可获得的输出与失败日志；缺失信息注明，不猜测补齐。
 
 - 记录复现状态、已确认的失败用例与失败输出，以及已有比较结果中的误差指标和异常表现。可获得时记录异常输出元素的索引或分布，不要求在本阶段定位计算链中的首个异常点或根因。多输出时，核对各输出的判定结果与整体判定规则，尚不能区分失败项时注明。
-- 需要确定或核对精度比对标准时使用 `/ops-precision-standard`；比较对象、有效区或比较器的实际判据不明确时读[比较与验收](references/diagnosis/baseline.md)；重编无变化、结果漂移、未复现或现场不完整时读[复现性方法](references/diagnosis/reproducibility.md)。
+- 需要确定或核对精度比对标准时调用 CANNBOT `ops-precision-standard` 技能；比较对象、有效区或比较器的实际判据不明确时读[比较与验收](references/diagnosis/baseline.md)；重编无变化、结果漂移、未复现或现场不完整时读[复现性方法](references/diagnosis/reproducibility.md)。
 
 **判断与产物**：形成报告第 2 节“原始问题与可信基线”。比较无效先修正口径；不稳定时收敛触发条件，优先检查并发/同步、初始化、生命周期、越界和随机源。无法运行或未复现时，可继续不依赖该观察的分析，保留运行证据缺口。
-
-**可用工具**
-
-- [run_with_evidence.py](scripts/usage/run-with-evidence.md)：执行命令，保存日志、耗时和退出码。
-- [precision_compare.py](scripts/usage/precision-compare.md)：查看输出的错值位置、误差指标和位模式差异。
-- [repeatability_analyzer.py](scripts/usage/repeatability-analyzer.md)：统计固定输入下的失败率和结果变化。
-- [detect_profile.py](scripts/detect_profile.py)：查看实际运行端可见的 CANN、SoC 和架构信息。
 
 ### 阶段 2：理解算子与计算链
 
 - 沿相关调用链明确每个输出的验收要求、实际执行路径和数值约定，画出与异常有关的计算、搬运及同步链，标记 dtype、Cast、归约、有效区、地址与所有权等敏感点。
-- 按需读[算子建模方法](references/diagnosis/operator-modeling.md)和[算子线索](references/patterns/operators/index.md)；芯片映射、架构能力与编程模型使用 `/npu-arch`，具体 API 语义、示例与类似算子使用 `/ascendc-docs-search`。
+- 按需读[算子建模方法](references/diagnosis/operator-modeling.md)和[算子线索](references/patterns/operators/index.md)；芯片映射、架构能力与编程模型调用 CANNBOT `npu-arch` 技能查询，具体 API 语义、示例与类似算子调用 CANNBOT `ascendc-docs-search` 技能查询。
 
 **判断与产物**：形成报告第 3 节“相关计算链与数值约定”，据此选择候选原因或观察点。区分可达路径与本次实际采用的路径，确认比较器能发现相关违约；现有测试不代替需求，未确认路径和未覆盖要求继续保留。
 
 **可用工具**
 
-- [msobjdump](scripts/usage/msobjdump-inspect.md#直接使用-msobjdump)：查看 ELF 中的 Kernel、架构和结构信息。
+- [msobjdump](references/tools/msobjdump.md)：查看 Kernel 元数据、提取设备 ELF，工具支持时反汇编设备指令。
 
 ### 阶段 3：定位问题与验证根因
 
@@ -58,7 +49,7 @@ description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回�
 | 具体实现错误与原始异常对应，已有证据支持 | 进入 3.3 确认根因，不必继续初筛或系统定位 |
 | 已排除当前候选，首批仍有可低成本验证的候选 | 可继续验证首批剩余候选，不增加新猜测延长初筛 |
 | 仅误差改善、仍无法区分原因，或首轮后没有明确方向 | 带着已有线索进入 3.2 系统定位 |
-| 没有有依据的候选、同类检查不再增加有效信息，或需要大范围插桩、重写参考、反复扫参 | 直接或提前进入 3.2，不耗尽预算继续尝试 |
+| 缺少有依据的候选、同类检查不再增加有效信息，或需要大范围插桩、重写参考、反复扫参 | 直接或提前进入 3.2，不耗尽预算继续尝试 |
 
 #### 3.2 系统定位
 
@@ -69,11 +60,11 @@ description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回�
 - **同一依赖链上已有可比、稳定的 PASS/FAIL 端点，且有依据支持局部单调假设** → 用[语义二分](references/diagnosis/semantic-bisection.md)缩小当前判据的转变区间；缩区不直接证明范围外代码正确。
 - **误差逐步累积、放大，或出现“正常→异常→正常”** → 用[逐层误差分析](references/diagnosis/progressive-error-analysis.md)区分误差产生、传播与放大。
 
-需要进一步观察时，可按疑点选用[CPU/NPU 差分](references/diagnosis/cpu-npu-differential.md)、[DumpTensor](references/diagnosis/dumptensor.md)等方法，也可直接分析已有中间数据。结合可观测范围和实验成本选择，按实际执行域解释结果。
+已有局部数值模型时，按[数值对照与设备探针](references/diagnosis/numerical-modeling.md)衔接“可比条件 → 区分候选的设备观察 → 原 Kernel 验证”。给出下一步定位建议时，也交代实际输入、有效区、dtype/layout、执行分支和已确认舍入点的核对，保留项目 golden 与原验收口径；已有可信条件直接复用。关键设备语义无法由适用文档或已有观察确定时才考虑最小探针，其结果仍回到原始 Kernel 验证，不能省略为“采集中间值后汇总”。需要观察 Kernel 计算过程中的 Tensor 值时，可在选定位置调用 [DumpTensor](references/diagnosis/dumptensor.md) 输出，也可直接分析已有中间数据，结合可观测范围和实验成本安排。
 
 #### 3.3 验证具体根因
 
-- 围绕初筛支持的机制或系统定位取得的新观察、源码事实，核对具体实现及数据依赖；按需再次查阅相关经验，架构能力疑点使用 `/npu-arch`，具体 API 及调用语义使用 `/ascendc-docs-search`。按[假设与实验方法](references/diagnosis/hypothesis-experiment.md)做针对性验证，不重新扩展成全算子范围的猜测；已有充分证据时不另做实验。
+- 围绕初筛支持的机制或系统定位取得的新观察、源码事实，核对具体实现及数据依赖；按需再次查阅相关经验，架构能力疑点调用 CANNBOT `npu-arch` 技能核对，具体 API 及调用语义调用 CANNBOT `ascendc-docs-search` 技能核对。按[假设与实验方法](references/diagnosis/hypothesis-experiment.md)做针对性验证，不重新扩展成全算子范围的猜测；已有充分证据时不另做实验。
 
 - 解释结果前确认实际产物被采用、输出新鲜且比较有效，干预实验还需确认修改生效。比较前提被破坏的结果不能支持或排除候选；观察受扰动时说明结论适用范围，有效反证出现时更新判断。仍无法区分原因时，回到 3.2 补充能区分它们的观察，不重复同类改动。
 
@@ -83,24 +74,15 @@ description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回�
 
 **可用工具**
 
-- [precision_compare.py](scripts/usage/precision-compare.md)：比较局部 Tensor 的数值和位模式。
-- [DumpTensor](references/diagnosis/dumptensor.md)：采集 Kernel 内指定位置的 Tensor。
-- [show_kernel_debug_data](scripts/usage/kernel-debug-data-parse.md#采集与直接解析)：解析 Kernel 的 Tensor、printf 等调测输出。
-- [CPU Debug / gdb](scripts/usage/asc-tools-probe.md#cpu-debug)：跟踪 CPU 执行路径，查看断点处的变量。
-- [npu check](scripts/usage/npuchk-parser.md#npu-check)：检查 CPU 调试中的访存、Tensor 生命周期和同步关系。
-- [msSanitizer](references/diagnosis/cpu-npu-differential.md#cpu-与设备检查)：检查设备执行中的访存、竞争或同步问题。
-- [repeatability_analyzer.py](scripts/usage/repeatability-analyzer.md)：分析多轮结果的稳定性、偶发与漂移。
-- [checkpoint_analyzer.py](scripts/usage/checkpoint-analyzer.md)：汇总中间点比较结果、状态和误差趋势。
+- [DumpTensor](references/diagnosis/dumptensor.md)：在 Kernel 内主动调用，输出指定 Tensor 的值。
+- [show_kernel_debug_data](references/tools/kernel-debug-data.md)：解析 Kernel 的 Tensor、printf 等调测输出。
+- [msSanitizer](https://gitcode.com/Ascend/mssanitizer)：检查设备执行中的访存、竞争或同步问题。
 
 ### 阶段 4：实施最小修复（仅修复任务）
 
 - 根据根因实施针对性修改，明确预期变化，清理仅用于定位的临时改动。修改公式、dtype、归约顺序或替换实现时，核对相关数值语义；临时串行化、清零或升精度若要保留，确认符合项目的功能、数值和运行要求。
 
 **判断与产物**：将实际改动、影响范围和临时探针恢复情况写入报告第 5.1 节“正式修复”，随后进入阶段 5。新发现动摇根因时返回阶段 3。
-
-**可用工具**
-
-- [run_with_evidence.py](scripts/usage/run-with-evidence.md)：执行构建或定向验证，保留运行结果。
 
 ### 阶段 5：原失败回放与必要回归（仅修复任务）
 
@@ -109,12 +91,6 @@ description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回�
 - 共享函数或分派有改动时，选受影响路径、边界和相关条件组合的代表用例。偶发或漂移按[复现性方法](references/diagnosis/reproducibility.md)在同条件下重复比较，避免以单次通过作结论；精确相等的判据不清时查[数值相等与逐位一致](references/diagnosis/baseline.md#数值相等与逐位一致)。
 
 **判断与产物**：将最终执行对象、实际结果和验证范围写入报告第 5.2 节“回放与回归”。原失败或相关回归仍失败时，返回阶段 3 定位或阶段 4 调整修复；无法继续时进入阶段 6，说明未完成项。通过后进入阶段 6，区分已验证结果与额外未验证范围。
-
-**可用工具**
-
-- [run_with_evidence.py](scripts/usage/run-with-evidence.md)：保存回放、回归的日志和退出状态。
-- [precision_compare.py](scripts/usage/precision-compare.md)：查看残余错值及修复前后的差异。
-- [repeatability_analyzer.py](scripts/usage/repeatability-analyzer.md)：检查固定输入重复运行时的结果变化。
 
 ### 阶段 6：报告与交付
 
@@ -128,14 +104,14 @@ description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回�
 | --- | --- |
 | 无法定位根因 | [诊断方法](references/diagnosis/index.md) |
 | 根据异常特征查候选机制、算子经验和历史案例 | [故障模式与案例](references/patterns/index.md) |
-| 需要确定或核对精度比对标准、构造 golden | 使用 `/ops-precision-standard` skill |
-| 不确定芯片映射、架构差异、存储与执行模型或条件编译含义 | 使用 `/npu-arch` skill |
-| 不确定具体 API 或调用语义，需要示例或类似算子 | 使用 `/ascendc-docs-search` skill |
-| 选择并使用采集、比较、运行检查或分析工具 | [调试工具选用](scripts/README.md) |
+| 需要确定或核对精度比对标准、构造 golden | 调用 CANNBOT `ops-precision-standard` 技能 |
+| 不确定芯片映射、架构差异、存储与执行模型或条件编译含义 | 调用 CANNBOT `npu-arch` 技能 |
+| 不确定具体 API 或调用语义，需要示例或类似算子 | 调用 CANNBOT `ascendc-docs-search` 技能 |
+| 选择 CANN 工具或调试 API | [工具选用](references/tools/index.md) |
 
 配套 Skill 不可用时，复用已有可信资料，继续不依赖该缺口的分析，并说明尚未核实的内容；不猜测验收阈值或硬件能力。
 
-把当前 `SKILL.md` 所在目录记为 `<skill-root>`，执行工具命令前先解析它的绝对路径。资料可直接按链接阅读，也可在 `references/` 中查找；已有可信资料可复用。采用 API 结论或对比官方实现时，核对目标 CANN、产品、具体重载和输入条件，相似代码或单次通过不能代替本次验证。
+采用 API 结论或对比官方实现时，核对目标 CANN、产品、具体重载和输入条件，相似代码或单次通过不能代替本次验证。
 
 ## 关键提醒
 
@@ -143,7 +119,7 @@ description: 本 Skill 提供 Ascend C 算子精度异常定位、修复、回�
 
 - [ ] **观察可信**：比较口径、产物采用与输出新鲜度已确认，未复现与无法运行如实保留。
 - [ ] **知识进入判断**：相关资料的条件、反例或观察方法实际用于当前判断，未仅凭摘要采用 API 结论。
-- [ ] **证据支持因果**：实验有区分力，异常位置、相似症状或 CPU 通过未被直接当作根因。
+- [ ] **证据支持因果**：实验有区分力，异常位置、相似症状或局部模型吻合未被直接当作根因。
 - [ ] **修复与验证对应**：受本次修改影响的关键验证已更新，诊断绕过与正式修复分别说明。
 - [ ] **结论与交付一致**：具体缺口未被可见套件通过掩盖，报告及补丁对应实际完成的工作。
 - [ ] **产物与报告**：交付产物目录、内容明确，交付报告按照要求完成。

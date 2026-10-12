@@ -6,7 +6,7 @@
 
 ## 所有权账本
 
-对每个 `blockIdx` 写出输入区间、输出区间、有效长度、尾块、读集合、写集合和跨核共享状态。验证所有合法输出元素恰好由合同要求的核写入：普通写通常要求不重叠且无遗漏；原子或归约写则需另列合并算子、初值和完成条件。核类型、配比与架构差异使用 `/npu-arch` 查询，实际核数从运行端确认；启动和同步 API 的支持范围使用 `/ascendc-docs-search` 核对。
+对每个 `blockIdx` 写出输入区间、输出区间、有效长度、尾块、读集合、写集合和跨核共享状态。验证所有合法输出元素恰好由合同要求的核写入：普通写通常要求不重叠且无遗漏；原子或归约写则需另列合并算子、初值和完成条件。核类型、配比与架构差异调用 CANNBOT `npu-arch` 技能查询，实际核数从运行端确认；启动和同步 API 的支持范围调用 CANNBOT `ascendc-docs-search` 技能核对。
 
 把每核区间写成半开集合并检查三项：所有 required 输出的并集完整、普通写集合两两不交、每次读都落在当前核拥有或由明确跨核依赖发布的区域。只验证 `offset = blockIdx * length` 的一行公式不足以覆盖尾核、空核、二维 stride 和输入输出分区不同的情况。
 
@@ -36,7 +36,7 @@ AIC reuse:    wait released → 下一 epoch 才能覆盖 slot
 
 逐槽验证 producer、consumer、逻辑 tile、有效 M/N、地址范围和 ready/released 次数一一对应。AIC 结果正确而 AIV 输入错误支持 workspace offset/epoch/发布候选；AIV 输入正确而最终输出错误则转查 epilogue 公式、scale 索引与 Cast。只增加 barrier 后“偶尔好了”不能证明所有权或同步公式；普通高层 Matmul 的对象生命周期也不能证明 GMM 的 workspace/跨核合同。
 
-固定来源中的 QuantGroupMatmul 样例只说明其自身实现，当前 Matmul/Mmad 接口使用 `/ascendc-docs-search` skill 核对；其它分核公式、空核同步参与集和 workspace slot 数量须按当前 Kernel 与 API 合同确认。
+固定来源中的 QuantGroupMatmul 样例只说明其自身实现，当前 Matmul/Mmad 接口调用 CANNBOT `ascendc-docs-search` 技能核对；其它分核公式、空核同步参与集和 workspace slot 数量须按当前 Kernel 与 API 合同确认。
 
 ## 启动核、参与核与空核
 
@@ -55,10 +55,10 @@ AIC reuse:    wait released → 下一 epoch 才能覆盖 slot
 ## 跨核通知与等待范围
 
 - 消费者依赖其他核写入 GM 时，等待应覆盖所有实际贡献者和同一轮数据；先查漏核、重复贡献与提前退出，再调整通知。
-- 等待只约束指定流水的形态下，随后标量操作未必一起等待。分别记录真正消费者与被阻塞的流水，使用 `/ascendc-docs-search` skill 核对 CrossCoreWaitFlag 的产品和重载；插全局停顿后恢复只支持时序相关。
+- 等待只约束指定流水的形态下，随后标量操作未必一起等待。分别记录真正消费者与被阻塞的流水，调用 CANNBOT `ascendc-docs-search` 技能核对 CrossCoreWaitFlag 的产品和重载；插全局停顿后恢复只支持时序相关。
 - 无界 tile 序号直接作为 flagId 时，检查实际编码是否与另一通道或保留资源碰撞。编码、次数、区域与轮次都要对应，不能只比较源码字面值。
 - 通知计数范围不直接等于循环总轮次上限。若一次发布已被消费，资源可能再次使用；按当前事件规则检查未消费通知与首尾轮，不用总迭代数代替配对分析。
-- 纯 Vector/Mix 或多流并发挂起时，列出实际参与核、可达退出和等待环。等待尚未获得执行资源的任务，可能形成调度上的循环依赖；使用 `/ascendc-docs-search` skill 核对当前 SyncAll 的执行形态与调度条件。
+- 纯 Vector/Mix 或多流并发挂起时，列出实际参与核、可达退出和等待环。等待尚未获得执行资源的任务，可能形成调度上的循环依赖；调用 CANNBOT `ascendc-docs-search` 技能核对当前 SyncAll 的执行形态与调度条件。
 
 ## 跨卡通信的缓冲所有权
 
@@ -74,14 +74,14 @@ AIC reuse:    wait released → 下一 epoch 才能覆盖 slot
 
 跨卡路径中，Prepare、Commit 与 Wait 各自的职责按所用对象协议确认，下发不等于完成。启用 SetSkipLocalRankCopy 时还要核对本 rank 数据段由谁写入、是否会被消费以及产品支持；只改变该设置的对照必须保持缓冲容量、传输计数和参与 rank 一致。
 
-Device 通信的接口支持与提交/等待语义使用 `/ascendc-docs-search` skill 核对，Host 上下文另见[通信上下文的身份与生命周期](golden-host-contract.md#通信上下文的身份与生命周期)。Hcomm/URMA 的 Drain、通知和工作区含义需按实际实现确认；这里只使用读写与完成关系排查，不假定统一的容量、原子类型或等待范围。
+Device 通信的接口支持与提交/等待语义调用 CANNBOT `ascendc-docs-search` 技能核对，Host 上下文另见[通信上下文的身份与生命周期](golden-host-contract.md#通信上下文的身份与生命周期)。Hcomm/URMA 的 Drain、通知和工作区含义需按实际实现确认；这里只使用读写与完成关系排查，不假定统一的容量、原子类型或等待范围。
 
 ## 支持与反证
 
 - 错误索引与核区间端点一致，或地址集合能证明重叠/遗漏，支持所有权候选。
 - `blockDim=1` 改善只说明并发或分区相关，不能区分重叠、同步和每核状态初始化。
 - 单核仍在第二行或第二 tile 出错，优先检查跨 tile 状态，而不是继续归因于核间竞态。
-- npu check 的读写或同步观察用于定位指令和核，不直接证明逻辑所有权公式。
+- 结合[msSanitizer](https://gitcode.com/Ascend/mssanitizer)的读写或同步告警核对相关指令和核，不直接据此证明逻辑所有权公式。
 
 ## 区分实验
 

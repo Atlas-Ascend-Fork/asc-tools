@@ -50,8 +50,8 @@ Transpose 后再做一组 view 与连续 staging Tensor 的对照：两者逻辑
 
 小通道场景可把“装载槽位是否完整”和“输出哪些通道有效”分开检查。历史 C 不超过 16 的 TransDataTo5HD 组合写法，会为未用输入行提供合法的已有行，并在转置后只提取逻辑有效通道；采用前应核对当前重载和真实布局，不能让补齐值进入有效输出。偏移表按输入与输出坐标推导，先用坐标编码核对一整个周期。
 
-FP32→half→转置→Gather(half)→uint8 的组合还可能在转置之前丢失量化边界信息。整数输出相差 1 时，在每次转换前后比较边界两侧输入；按原算法规定的取整方式和时机修复，不能直接加一个 round。布局接口、临时空间、重叠方式与产品支持使用 `/ascendc-docs-search` skill 核对，有效数与掩码状态见[筛选后的有效区](../mechanisms/data-movement-alignment.md#筛选后的有效区与状态)。
+FP32→half→转置→Gather(half)→uint8 的组合还可能在转置之前丢失量化边界信息。整数输出相差 1 时，在每次转换前后比较边界两侧输入；按原算法规定的取整方式和时机修复，不能直接加一个 round。布局接口、临时空间、重叠方式与产品支持调用 CANNBOT `ascendc-docs-search` 技能核对，有效数与掩码状态见[筛选后的有效区](../mechanisms/data-movement-alignment.md#筛选后的有效区与状态)。
 
 ## 版本路由与边界
 
-转置与排布转换的接口资料使用 `/ascendc-docs-search` skill 获取。本页不代表任一具体实现或 NPU case 已验证。
+转置与排布转换的接口资料调用 CANNBOT `ascendc-docs-search` 技能获取。本页不代表任一具体实现或 NPU case 已验证。

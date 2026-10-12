@@ -12,4 +12,4 @@
 
 融合算子的逐元素输出正常、仅 bias 超差，或主列通过而尾列的 NaN/Inf 失配时，可直接读 [GRU bias 归约案例](cases/thnn-fused-gru-bias-reduction.md)。它连接参考求和树、未收窄分支与尾列分派；修复后出现新的分段漏写时，还需查[可变计数副作用](mechanisms/tiling-tail-state.md#可变计数被消费后续输出漏写与清零不完整)。
 
-快速验证的范围与退出条件见 [SKILL.md 阶段 3](../../SKILL.md#阶段-3定位问题与验证根因)，实验及系统定位的操作方法见 [diagnosis](../diagnosis/index.md)。接口参数、产品支持和官方示例使用 `/ascendc-docs-search` skill 查询；经验中的 CANN/NPU 或输入条件只覆盖正文明确说明的范围。
+快速验证的范围与退出条件见 [SKILL.md 阶段 3](../../SKILL.md#阶段-3定位问题与验证根因)，实验及系统定位的操作方法见 [diagnosis](../diagnosis/index.md)。接口参数、产品支持和官方示例调用 CANNBOT `ascendc-docs-search` 技能查询；经验中的 CANN/NPU 或输入条件只覆盖正文明确说明的范围。

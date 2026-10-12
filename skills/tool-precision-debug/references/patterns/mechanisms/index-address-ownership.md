@@ -45,4 +45,4 @@
 
 修正最早错误的坐标或单位换算，不用扩大 buffer 掩盖越界。回归覆盖首尾位置、跨行、跨块、负索引或非法索引合同、不同 dtype 字节宽度和多核边界。API 参数单位和合法范围须在官方 API 文档中核对当前 CANN 的相关差异。
 
-SIMT 的线程层级与共享范围直接查 `/npu-arch`；将线程索引映射到本次数据的步骤见[建模中的线程范围](../../diagnosis/operator-modeling.md#simt-的线程与共享范围)，具体 API 使用 `/ascendc-docs-search` 查询。
+SIMT 的线程层级与共享范围直接调用 CANNBOT `npu-arch` 技能查询；将线程索引映射到本次数据的步骤见[建模中的线程范围](../../diagnosis/operator-modeling.md#simt-的线程与共享范围)，具体 API 调用 CANNBOT `ascendc-docs-search` 技能查询。

@@ -18,7 +18,7 @@
 | 分块或跨核合并 | 区分 chunk 内归约、partial 存储 dtype 和最终合并；局部结果正确不代表完整合并正确 |
 | 消减或特殊值传播 | 选择对顺序敏感的输入，追踪首次差异；必要时查[特殊值](special-values.md) |
 
-怀疑 pairwise 顺序，或项目要求复现该顺序时，从实际 reference 查 leaf、split、对齐与取整方式，不能仅凭 `n/2` 或库名推断。具体 CANN 重载的归约层级与支持条件使用 `/ascendc-docs-search` skill 查询。
+怀疑 pairwise 顺序，或项目要求复现该顺序时，从实际 reference 查 leaf、split、对齐与取整方式，不能仅凭 `n/2` 或库名推断。具体 CANN 重载的归约层级与支持条件调用 CANNBOT `ascendc-docs-search` 技能查询。
 
 ## 框架参考的分层归约与主尾列分派
 

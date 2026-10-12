@@ -56,7 +56,7 @@ token_global(g, i) = token_base[g] + i
 scale_used(g, i, j) = per_token_scale[token_global(g,i)] * channel_scale(g,j)
 ```
 
-这是待验证的数据流公式，不是所有 GMM 的通用合同。固定 9.0.0 QuantGroupMatmul 样例确实使用累计 M offset 取得 per-token scale，当前 Matmul/Mmad 接口使用 `/ascendc-docs-search` skill 核对；其它 GMM 若采用累计 groupList、per-group scale、per-block scale 或不同布局，应按其权威合同重建，缺证据保持 UNKNOWN。
+这是待验证的数据流公式，不是所有 GMM 的通用合同。固定 9.0.0 QuantGroupMatmul 样例确实使用累计 M offset 取得 per-token scale，当前 Matmul/Mmad 接口调用 CANNBOT `ascendc-docs-search` 技能核对；其它 GMM 若采用累计 groupList、per-group scale、per-block scale 或不同布局，应按其权威合同重建，缺证据保持 UNKNOWN。
 
 验证时为不同 group/token/column 赋予互不相同且可精确表示的 scale 哨兵，令单位基 Matmul 只激活一个 `(g,i,j)`，同时保存读取的 token index、scale 位模式、workspace 值和最终倍率。依次测试首行、组内末行、下一组首行、空组之后首行和尾组末行。若错值稳定等于相邻 token 的预测倍率，支持索引候选；若 Cube/workspace 已错，则该实验不能归因于 scale。把 channel scale 与 token scale 同时改成 1 只是一项组合观察，不能区分两条索引链。
 

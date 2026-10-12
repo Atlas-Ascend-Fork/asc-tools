@@ -17,7 +17,7 @@
 
 Host 算出的工作量、tiling 字段保存值和调用实参分别记录。若实参确为 uint8_t，256 转换为 0 是表示范围问题；该接口如何解释 0 还要另查。字段范围与接口自身调用上限是两层条件，超限时按当前规则分批，不能只把总量截小。
 
-分批后逐段核对输入地址、有效长度、输出推进、partial 合并、筛选有效数和 mask 状态。使用不同位置的输入指纹比较单次合法调用与分批路径，确认每个合法元素恰好按算法要求处理。归约、排序、转置和 GatherMask 不共用一套 repeat 上限或零值语义，使用 `/ascendc-docs-search` skill 分别核对调用粒度。
+分批后逐段核对输入地址、有效长度、输出推进、partial 合并、筛选有效数和 mask 状态。使用不同位置的输入指纹比较单次合法调用与分批路径，确认每个合法元素恰好按算法要求处理。归约、排序、转置和 GatherMask 不共用一套 repeat 上限或零值语义，调用 CANNBOT `ascendc-docs-search` 技能分别核对调用粒度。
 
 若零长度 tail 没有写目的区，而消费者仍沿用旧长度，就会读到上一轮结果。错误 tiling 修正计算；合法空任务按[Shape 与空输入要求](shape-boundary-contract.md#修复与回归)处理初始化和同步参与，不把零强改为正值。
 
@@ -25,7 +25,7 @@ Host 算出的工作量、tiling 字段保存值和调用实参分别记录。�
 
 同一 tile 的前几个输出段正确、后面的段未写，或者新增归约缓存后出现旧值时，检查 API 是否通过引用修改 count/remaining。把三种量分开：跨输出段复用的 `validLen`、当前段可消耗的 `remaining`、当前段的地址 offset。API 推进了剩余量，不代表已经推进地址；地址循环递增，也不代表应该再次扣减 remaining。
 
-在已核对的 950 Reg/SIMD VectorFunction 路径中，`UpdateMask<T>(uint32_t& count)` 会按本轮可处理量更新 count。默认单寄存器配置令 `C=VL字节数/sizeof(T)`：本轮 mask 覆盖前 `min(count,C)` 个元素，随后 count 变为 `max(count-C,0)`。若直接传后续输出还要用的 `aLen`，一个尾段可能将它消耗到零；下一段便形成零 mask 或跳过写入。若随后又手工扣减一次，则可能提前耗尽 mask 或发生无符号下溢，留下未初始化的有效区。[MaskReg 文档](https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/SIMD-API/基础API/Reg矢量计算/寄存器数据类型/MaskReg.md)也包含双寄存器配置；具体产品、dtype 和 regTrait 仍通过 `/ascendc-docs-search` 核对，不把每轮处理量写成跨配置固定常量。
+在已核对的 950 Reg/SIMD VectorFunction 路径中，`UpdateMask<T>(uint32_t& count)` 会按本轮可处理量更新 count。默认单寄存器配置令 `C=VL字节数/sizeof(T)`：本轮 mask 覆盖前 `min(count,C)` 个元素，随后 count 变为 `max(count-C,0)`。若直接传后续输出还要用的 `aLen`，一个尾段可能将它消耗到零；下一段便形成零 mask 或跳过写入。若随后又手工扣减一次，则可能提前耗尽 mask 或发生无符号下溢，留下未初始化的有效区。[MaskReg 文档](https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/SIMD-API/基础API/Reg矢量计算/寄存器数据类型/MaskReg.md)也包含双寄存器配置；具体产品、dtype 和 regTrait 仍调用 CANNBOT `ascendc-docs-search` 技能核对，不把每轮处理量写成跨配置固定常量。
 
 当前 API 确认具有这种副作用后，可采用如下状态分工；这是循环组织示意，load/store 的对齐、mask 和同步条件需按实际代码填写：
 
@@ -116,7 +116,7 @@ UB 预算必须按物理字节、对齐开销、buffer 个数和生命周期计�
 
 ## 平台容量与库预留
 
-存储层次、核类型和跨产品容量差异使用 `/npu-arch` 查询；典型硬件参数不能代替本次运行端的可用容量。这里继续检查当前算子的分配、预留和生命周期，具体 API 的单位与约束仍查 `/ascendc-docs-search`。
+存储层次、核类型和跨产品容量差异调用 CANNBOT `npu-arch` 技能查询；典型硬件参数不能代替本次运行端的可用容量。这里继续检查当前算子的分配、预留和生命周期，具体 API 的单位与约束仍调用 CANNBOT `ascendc-docs-search` 技能查询。
 
 换设备或增加高阶 API 后开始 tile 超预算时，分别记录平台总容量、库内部预留、当前算子的物理分配和活跃数据峰值。Host 与 Kernel 查询值不同时，先比较查询入口、单位、执行形态和预留阶段；多次配置还要确认最终采用的状态。容量、核数与预留入口查[Host 运行时](tiling-tail-state.md#查询容量时区分阶段与用途)，不沿用旧设备常量。
 
@@ -132,6 +132,6 @@ CalcTschNumBlocks 等入口的 AIC/AIV 配置与 blockDim 会改变每核工作�
 
 ### 查询容量时区分阶段与用途
 
-GetCoreMemSize 的平台容量、ReserveLocalMemory 的预留与 GetRuntimeUBSize 的运行时可用量服务于不同阶段，不能要求它们无条件相等。记录查询位置、单位、执行形态和预留状态，再判断当前物理分配与活跃数据是否超限。具体入口查[平台容量](https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/Utils-API/平台信息获取/PlatformAscendC/GetCoreMemSize.md)和[运行时 UB](https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/SIMD-API/基础API/工具接口/系统资源与变量/GetRuntimeUBSize.md)，当前版本差异通过`/ascendc-docs-search` skill确认。
+GetCoreMemSize 的平台容量、ReserveLocalMemory 的预留与 GetRuntimeUBSize 的运行时可用量服务于不同阶段，不能要求它们无条件相等。记录查询位置、单位、执行形态和预留状态，再判断当前物理分配与活跃数据是否超限。具体入口查[平台容量](https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/Utils-API/平台信息获取/PlatformAscendC/GetCoreMemSize.md)和[运行时 UB](https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/api/SIMD-API/基础API/工具接口/系统资源与变量/GetRuntimeUBSize.md)，当前版本差异调用 CANNBOT `ascendc-docs-search` 技能确认。
 
 系统 workspace 与用户 workspace 分别核对容量和起点；总量正确但用户指针偏移不对，仍可能覆盖系统区。资源账本与对照方法见[平台容量与库预留](tiling-tail-state.md#平台容量与库预留)和[workspace 分区](buffer-lifetime-alias.md#系统与用户-workspace-的分区)。核数、启动参数和编译形态属于实际执行身份，应从运行端取得，不能用 Agent 本机代替。

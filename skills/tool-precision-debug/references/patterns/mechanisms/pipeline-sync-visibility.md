@@ -10,7 +10,7 @@
 | 缩小到单个流水屏障后再次失败 | 该细化处置未保留原探针的效果 | 原先的具体依赖解释是否成立，细化是否实际生效，是否还有其他被全局停顿掩盖的边 |
 | 两个子块使用同一个 event 数字 | 存在需要审阅的资源身份线索 | 封装最终调用的 API、执行侧、依赖类型和资源作用域；不能直接假定子块共享事件 |
 
-对当前 profile 的 subblock、Set/Wait 或 PipeBarrier 语义有疑问时，使用 `/ascendc-docs-search` skill 取得对应接口正文，并展开工程的同步封装；源码中的 wrapper 名称不一定是公开 API。不要在尚未确认作用域时先给所有 event 重新编号。
+对当前 profile 的 subblock、Set/Wait 或 PipeBarrier 语义有疑问时，调用 CANNBOT `ascendc-docs-search` 技能取得对应接口正文，并展开工程的同步封装；源码中的 wrapper 名称不一定是公开 API。不要在尚未确认作用域时先给所有 event 重新编号。
 
 按三层审计依赖：编译器可能提供的自动同步、队列/资源框架表达的 producer-consumer 协议、开发者显式维护的 event/barrier/cache 可见性。任一层是否覆盖当前边都属于具体版本和编程范式事实，不能从另一工程或同名 API 外推。
 
@@ -30,7 +30,7 @@
 | 分离模式下跨核计数通知 | CrossCore Set/Wait flag | 同核 event ID、普通流水 barrier |
 | 多个 contributor 向共享 GM 累加 | 先区分 DMA Atomic 状态与直接标量 Atomic | 核间 barrier 不定义数值累加顺序 |
 
-该表只做诊断路由，数值、产品支持、workspace、mode、flag/event 范围和 dtype 均使用 `/ascendc-docs-search` skill 查目标环境的原文。对每次实验记录 producer/consumer、地址、流水或核、event/flag generation、参与核集合，以及 Atomic 开启和关闭点。编译器可能自动插入某类同步时，仍须从生成物或同步日志证明它覆盖的是这条真实数据边。
+该表只做诊断路由，数值、产品支持、workspace、mode、flag/event 范围和 dtype 均调用 CANNBOT `ascendc-docs-search` 技能查目标环境的原文。对每次实验记录 producer/consumer、地址、流水或核、event/flag generation、参与核集合，以及 Atomic 开启和关闭点。编译器可能自动插入某类同步时，仍须从生成物或同步日志证明它覆盖的是这条真实数据边。
 
 还要区分 LocalTensor 上的 Scalar 写后由 DMA 消费，与 GlobalTensor 标量写后要求 GM 可见；两者的地址空间和依赖边不同。若现象是“上一轮旧数据”，检查多 tile 复用边是否形成循环闭环；若现象只在多核，先证明跨核地址或依赖，再使用 [多核分区、所有权与核间协同](multicore-ownership.md)。
 
@@ -38,7 +38,7 @@
 
 ## 从执行单元检查依赖
 
-不清楚目标架构的执行单元、指令队列、数据通路或 VF 形态时，先使用 `/npu-arch` 建立对应关系；本页据此检查实际 producer-consumer 依赖，具体同步接口继续查 `/ascendc-docs-search`。
+不清楚目标架构的执行单元、指令队列、数据通路或 VF 形态时，先调用 CANNBOT `npu-arch` 技能建立对应关系；本页据此检查实际 producer-consumer 依赖，具体同步接口继续调用 CANNBOT `ascendc-docs-search` 技能查询。
 
 Scalar 发射的计算和搬运指令进入不同队列，各执行单元可以异步工作。**代码先写搬入、后写计算，并不单独证明计算开始前搬入已完成。** 即使在同一流水内，指令按顺序进入，也不意味着前一条的全部读写已经结束。[硬件基本架构][sync-source-9]、[同步控制简介][sync-source-6]
 
@@ -62,7 +62,7 @@ Scalar 发射的计算和搬运指令进入不同队列，各执行单元可以�
 | SIMT Block 内 | 同步屏障用于线程间阶段协作；内存栅栏约束当前线程的访存顺序和可见性，不等待其他线程到齐 |
 | 不同 Block 或不同核 | 需要该范围的通信与同步设计，核内流水同步和 Block 内屏障不能扩展为全局同步 |
 
-前三行依据[核内同步说明][sync-source-6]和[Reg 矢量计算编程][sync-source-10]；SIMT 的屏障、栅栏与 Block 边界见[SIMT 同步机制][sync-source-14]。具体核内、SIMT 或跨核接口使用 `/ascendc-docs-search` skill核对。同步只解决相应依赖；索引、布局、类型或计算公式错误仍需分别核对。
+前三行依据[核内同步说明][sync-source-6]和[Reg 矢量计算编程][sync-source-10]；SIMT 的屏障、栅栏与 Block 边界见[SIMT 同步机制][sync-source-14]。具体核内、SIMT 或跨核接口调用 CANNBOT `ascendc-docs-search` 技能核对。同步只解决相应依赖；索引、布局、类型或计算公式错误仍需分别核对。
 
 [sync-source-9]: https://gitcode.com/cann/asc-devkit/blob/e5451c7feba11f9e259f4fbc19c4bf82f8c0496c/docs/guide/编程指南/高级编程/硬件实现/基本架构.md
 [sync-source-6]: https://gitcode.com/cann/asc-devkit/blob/c8c1b9df6bb9cd61c09751c7ef414b89e06af274/docs/api/context/同步控制简介.md
@@ -75,7 +75,7 @@ Scalar 发射的计算和搬运指令进入不同队列，各执行单元可以�
 
 对 Global 标量写可做三组单变量对照：保持地址不变只改变消费者通路，保持通路不变只改变可见性处理，保持每核数据不变只隔离 Cache Line 所有权。只有观察变化符合事前预测，才能区分 Cache 可见性、核间覆盖和批量搬运路径问题；诊断用全 Cache 操作不能直接成为正式修复。
 
-对 event 类候选记录每次获取、Set、Wait、释放和循环复用点，核对方向与生命周期，而不是只搜索相同数字。单 tile/多 tile、单次/重复运行、一个 producer/多个 consumer 三组对照可区分缺少依赖、事件复用和资源别名。npu check 或编译日志提供原始观察，不把错误码直接映射成根因。
+对 event 类候选记录每次获取、Set、Wait、释放和循环复用点，核对方向与生命周期，而不是只搜索相同数字。单 tile/多 tile、单次/重复运行、一个 producer/多个 consumer 三组对照可区分缺少依赖、事件复用和资源别名。[msSanitizer](https://gitcode.com/Ascend/mssanitizer)报告或编译日志提供原始观察，不把错误码直接映射成根因。
 
 event ledger 至少包含资源身份、依赖方向、申请/获取点、Set、Wait、释放和下一次复用；同一个数字出现在不同依赖类型中不自动代表同一资源，也不能用一次成功运行证明生命周期始终合法。
 
@@ -91,7 +91,7 @@ event ledger 至少包含资源身份、依赖方向、申请/获取点、Set、
 
 例如，只在多 region 时卡住而单 region 通过，先比较两者展开后的配对与可达路径；只在后续轮出现旧值，则比较发布/回收对应的 region 和 generation。增加 event 数字或延长超时不会自动修复这些关系。超时本身也不能证明事件配对有误，仍需保留最后有进展的阶段、可达发布点和相邻 control。
 
-展开嵌套循环时，以 SetFlag/WaitFlag 的配对要求检查事件类型与轮次；目标为 CANN 9.0.0 时，使用 `/ascendc-docs-search` skill 取得该版本要求。是否可在循环外等待，仍取决于当前工程的依赖关系与事件族的计数、广播语义。
+展开嵌套循环时，以 SetFlag/WaitFlag 的配对要求检查事件类型与轮次；目标为 CANN 9.0.0 时，调用 CANNBOT `ascendc-docs-search` 技能取得该版本要求。是否可在循环外等待，仍取决于当前工程的依赖关系与事件族的计数、广播语义。
 
 ### 先证明同步对象保护了真实数据区域
 
@@ -113,13 +113,13 @@ event ledger 至少包含资源身份、依赖方向、申请/获取点、Set、
 
 TPipe/TQue 路径在 AllocTensor 后直接消费、漏过 EnQue/DeQue 交接，或手动路径少了一条事件依赖，都可能读到尚未完成的搬运结果。先确认当前编程形态下由谁建立就绪边，再检查真实读写流水；仅有 `PipeBarrier<PIPE_V>` 不能据此说明已保护 Vector 写与搬出之间的跨流水消费。
 
-相同事件连续发布、条件分支多等一次、两条搬运写同一区域时，按首轮、中间轮和收尾展开数据就绪与缓冲回收；不要机械要求每个循环内部 Set/Wait 相邻。合法跨轮配对和条件遗漏见[同步案例](../cases/sync-dataflow-handshake.md)，具体事件、保留 ID 和接口支持使用 `/ascendc-docs-search` skill 查当前原文。
+相同事件连续发布、条件分支多等一次、两条搬运写同一区域时，按首轮、中间轮和收尾展开数据就绪与缓冲回收；不要机械要求每个循环内部 Set/Wait 相邻。合法跨轮配对和条件遗漏见[同步案例](../cases/sync-dataflow-handshake.md)，具体事件、保留 ID 和接口支持调用 CANNBOT `ascendc-docs-search` 技能查当前原文。
 
 ## 缓存可见性
 
 GlobalTensor 标量访问与 DMA 可能经过不同的数据通路。地址和生产者结果都正确、消费者仍读到旧值时，分别检查写回、失效和读取的顺序与范围；跨核屏障不能自动替代当前通路需要的缓存操作。多核标量写相邻位置，还要考虑缓存维护单位相交造成覆盖，用分离写区的对照定位。
 
-使用 `/ascendc-docs-search` skill 核对 DataCacheCleanAndInvalid、GlobalTensor GetValue/SetValue 的缓存条件与实际搬运通路。批量 DMA 可以作为不同访问路径的对照，但它会改变同步与布局；不能把官方的谨慎使用提示扩大成一律禁用标量访问。
+调用 CANNBOT `ascendc-docs-search` 技能核对 DataCacheCleanAndInvalid、GlobalTensor GetValue/SetValue 的缓存条件与实际搬运通路。批量 DMA 可以作为不同访问路径的对照，但它会改变同步与布局；不能把官方的谨慎使用提示扩大成一律禁用标量访问。
 
 **混合 VF。** 在 CANN 9.1.0 的 950 模型中，Scalar 把 VF 发射到 Vector Function Queue，各 VF 串行执行，并与 MTE 异步工作。SIMD VF 与 SIMT VF 对应不同的计算方式；相邻 VF 的顺序不等于外部搬运已经完成。SIMD Reg VF 内的 Aux Scalar 与外层 Main Scalar 也属于不同执行域，函数标签和允许调用的 API 受此影响。[混合编程模型][vf-source-4]、[Reg 矢量计算编程][vf-source-10]
 

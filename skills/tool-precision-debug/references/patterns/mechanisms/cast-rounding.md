@@ -37,11 +37,11 @@ FP32 有 24 位有效二进制精度：绝对值不超过 `2^24` 的整数都可
 
 ## 比例偏差与舍入配置
 
-整数转 half 后出现固定倍率偏差时，先确认实际走普通 Cast 还是反量化路径，并记录当前 scale；不要按历史倍率直接修正。跨产品移植后 float→half 的误差方向改变，则分别核对重载、支持的 RoundMode 和真实配置，用正负半整数附近的样本比较转换前后值。接口被拒或枚举存在但组合不支持时，使用 `/ascendc-docs-search` skill 查类型转换规则，不能用 ReinterpretCast 代替数值转换。
+整数转 half 后出现固定倍率偏差时，先确认实际走普通 Cast 还是反量化路径，并记录当前 scale；不要按历史倍率直接修正。跨产品移植后 float→half 的误差方向改变，则分别核对重载、支持的 RoundMode 和真实配置，用正负半整数附近的样本比较转换前后值。接口被拒或枚举存在但组合不支持时，调用 CANNBOT `ascendc-docs-search` 技能查类型转换规则，不能用 ReinterpretCast 代替数值转换。
 
 ### 量化中间精度与参考结果
 
-AscendQuant 的 float→int8 路径可能在内部先把输入、scale、offset 转成 half，具体过程使用 `/ascendc-docs-search` skill 查所用量化重载。若比原 CPU 参考误差大，可以建立含 half 中间量的模型来找首次分叉；这个模型用于解释实现，不自动替代任务的验收基准。只有算子定义证明原基准有误时才更正，否则应修复计算路径。
+AscendQuant 的 float→int8 路径可能在内部先把输入、scale、offset 转成 half，具体过程调用 CANNBOT `ascendc-docs-search` 技能查所用量化重载。若比原 CPU 参考误差大，可以建立含 half 中间量的模型来找首次分叉；这个模型用于解释实现，不自动替代任务的验收基准。只有算子定义证明原基准有误时才更正，否则应修复计算路径。
 
 量化输出集中在最大值附近时，分别检查 scale 的解码值、量化前数值和实际饱和模式；不要直接调整 scale 的取整方向。动态统计、scale 与倒数混用等问题见[动态量化](../operators/dynamic-quant.md)，MX/E8M0 另见[精度模式](precision-mode-approximation.md#mxe8m0-边界)。
 
@@ -64,4 +64,4 @@ SIMT 转换按精确函数查询，不把 Tensor Cast 的 RoundMode 表或 FP8 �
 
 枚举值存在不代表某个重载、dtype 组合和产品支持它；编译通过也不能替代输出位模式验证。
 
-Cast 的源目的重叠约束使用 `/ascendc-docs-search` skill 查目标产品与具体重载，涉及版本差异时再查当前头文件或做最小实验。
+Cast 的源目的重叠约束调用 CANNBOT `ascendc-docs-search` 技能查目标产品与具体重载，涉及版本差异时再查当前头文件或做最小实验。

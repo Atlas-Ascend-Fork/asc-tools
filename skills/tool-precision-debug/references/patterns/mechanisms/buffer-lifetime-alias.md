@@ -21,7 +21,7 @@ Ascend C 用 `TPosition` 表达张量的逻辑用途，再映射到物理存储�
 | `A2` / `B2` | L0A / L0B | 送入 Cube 的左、右矩阵分块 |
 | `CO1` | L0C | Cube 输出和累加结果 |
 
-例如，输入队列和输出队列都可能占用 UB，但具体缓冲区是否重叠由分配和复用方式决定。`LocalTensor` 的逻辑位置也不能单独说明 layout、dtype 或当前内容是否就绪。需要确认分配与队列用法时，使用 `/ascendc-docs-search` skill查当前 Buffer、Tensor 与队列接口。
+例如，输入队列和输出队列都可能占用 UB，但具体缓冲区是否重叠由分配和复用方式决定。`LocalTensor` 的逻辑位置也不能单独说明 layout、dtype 或当前内容是否就绪。需要确认分配与队列用法时，调用 CANNBOT `ascendc-docs-search` 技能查当前 Buffer、Tensor 与队列接口。
 
 [buffer-source-5]: https://gitcode.com/cann/asc-devkit/blob/c8c1b9df6bb9cd61c09751c7ef414b89e06af274/docs/api/context/TPosition.md
 [buffer-source-11]: https://gitcode.com/cann/asc-devkit/blob/c8c1b9df6bb9cd61c09751c7ef414b89e06af274/docs/api/context/通用说明和约束.md
@@ -98,11 +98,11 @@ epoch i+1: 只允许在另一个空闲slot上重叠，或在slot i完成回收�
 | 只在后续 stage 或非零偏移出现 NaN/Inf | 各 stage 对同一 slot 的元素数、字节数和对齐后跨度是否一致；首槽 offset 为零可能掩盖大小错配 |
 | 混用多个队列与手动事件后异常 | 分别记录队列和 TPipe 事件的申请、释放及同时存活数量，再查当前资源限制；不能先假定统一池或统一上限 |
 
-实际分配的补齐、偏移、队列 depth、绑定和支持通路使用 `/ascendc-docs-search` skill 查所用 Buffer 接口。未写满的输入应补齐有效写入；归约临时区的初值由具体操作决定，不能一律清零。
+实际分配的补齐、偏移、队列 depth、绑定和支持通路调用 CANNBOT `ascendc-docs-search` 技能查所用 Buffer 接口。未写满的输入应补齐有效写入；归约临时区的初值由具体操作决定，不能一律清零。
 
 ### 系统与用户 workspace 的分区
 
-直调与框架入口的初始化责任可能不同。使用 Matmul 等高阶接口时，分别列出系统区、用户区的容量和半开地址范围，核对传给 Kernel 的指针如何到达实际读写点；把整个 workspace 头指针当用户区，会与系统状态重叠。概念边界见[Host 资源口径](tiling-tail-state.md#查询容量时区分阶段与用途)；所需初始化、取址和编译选项使用 `/ascendc-docs-search` skill 查当前调用，不能假定直调自动完成框架步骤。
+直调与框架入口的初始化责任可能不同。使用 Matmul 等高阶接口时，分别列出系统区、用户区的容量和半开地址范围，核对传给 Kernel 的指针如何到达实际读写点；把整个 workspace 头指针当用户区，会与系统状态重叠。概念边界见[Host 资源口径](tiling-tail-state.md#查询容量时区分阶段与用途)；所需初始化、取址和编译选项调用 CANNBOT `ascendc-docs-search` 技能查当前调用，不能假定直调自动完成框架步骤。
 
 容量足够也不保证复用安全；给各区写入不同的合法诊断标记，追踪首次覆盖发生在哪个调用。跨 stage 的字节常量应来自同一布局推导，修复时同步更新全部分支和消费者。
 
@@ -123,4 +123,4 @@ epoch i+1: 只允许在另一个空闲slot上重叠，或在slot i完成回收�
 
 ## 事实边界
 
-VF 调用模型、接口支持和同步语义必须查询当前版本 API 文档，缺少权威来源时保持 `UNKNOWN`。查询 CANN 9.0.0 的 TQue、depth、实例数与事件语义时，使用 `/ascendc-docs-search` skill 选择对应版本与接口。
+VF 调用模型、接口支持和同步语义必须查询当前版本 API 文档，缺少权威来源时保持 `UNKNOWN`。查询 CANN 9.0.0 的 TQue、depth、实例数与事件语义时，调用 CANNBOT `ascendc-docs-search` 技能选择对应版本与接口。

@@ -57,7 +57,7 @@ y = reduce(x, axis)；sum 的结合顺序、累加 dtype、尾部有效元素和
 | 复算时输入已改变 | 是否启用了源空间复用，或临时区覆盖了输入；用合法的独立缓冲路径对照 |
 | ReduceAll 或特殊值结果不符 | 原输入是否满足该接口的布尔编码或特殊值要求；只有算子定义要求时才做输入转换 |
 
-使用 `/ascendc-docs-search` skill 分别查基础归约和按轴归约的原型、类型、对齐与临时空间；更名调用同时查接口变更与参数顺序。repeat 截断、分批漏项和零工作量见[调用计数与分批状态](../mechanisms/tiling-tail-state.md#调用计数与分批状态)。
+调用 CANNBOT `ascendc-docs-search` 技能分别查基础归约和按轴归约的原型、类型、对齐与临时空间；更名调用同时查接口变更与参数顺序。repeat 截断、分批漏项和零工作量见[调用计数与分批状态](../mechanisms/tiling-tail-state.md#调用计数与分批状态)。
 
 一个历史对照记录了 CANN 9.0.0 / Ascend910B1 上的 `whole_reduce_sum_unalign`：half 输入 shape 为 `[13,123]`，容差 0.001 的验收通过，但有 3 行与参考值相差 1 ULP。它说明容差通过不代表逐位相等；当前差异是否来自归约顺序，仍要检查参与元素、具体求值路径和中间 dtype。
 
@@ -73,13 +73,13 @@ y = reduce(x, axis)；sum 的结合顺序、累加 dtype、尾部有效元素和
 
 把 Atomic 当作影响后续搬出的显式状态，而不是某一行调用的局部注释。沿所有分支和 early return 画出状态机：普通写状态 → 仅在目标合并搬出前开启 → 执行目标写入 → 立即恢复普通写状态。再核对目标 GM/workspace 初值、受 Atomic 影响的精确写集合，以及恢复后第一条普通写。若某条路径漏恢复，后续本应覆盖的搬出可能变成累加候选；若过早恢复，目标 partial 可能退化为互相覆盖候选。
 
-历史样例中出现过 `SetAtomicAdd` 与 `SetAtomicNone` 成对包住一次搬出，也记录过“未恢复后结果偏大”的排查线索。这只是一种历史观察。当前 profile 下具体 Atomic API 名、支持 dtype、作用于哪类搬运、恢复接口、所需核内流水依赖、跨核可见性与同步参与规则均为 UNKNOWN，必须使用 `/ascendc-docs-search` skill 读取对应版本的 DMA 原子及相关搬运文档后才能下结论。
+历史样例中出现过 `SetAtomicAdd` 与 `SetAtomicNone` 成对包住一次搬出，也记录过“未恢复后结果偏大”的排查线索。这只是一种历史观察。当前 profile 下具体 Atomic API 名、支持 dtype、作用于哪类搬运、恢复接口、所需核内流水依赖、跨核可见性与同步参与规则均为 UNKNOWN，必须调用 CANNBOT `ascendc-docs-search` 技能读取对应版本的 DMA 原子及相关搬运文档后才能下结论。
 
-模板声明的原子类型还要与真实输出 dtype 对齐。初始化覆盖与浮点合并乱序可能同时造成运行间波动，先分别对照 GM 初值、贡献集合和普通写/原子写的生效区间；DMA 原子的具体同步插入点及特殊值模式使用 `/ascendc-docs-search` skill 核对，不跨版本照搬。
+模板声明的原子类型还要与真实输出 dtype 对齐。初始化覆盖与浮点合并乱序可能同时造成运行间波动，先分别对照 GM 初值、贡献集合和普通写/原子写的生效区间；DMA 原子的具体同步插入点及特殊值模式调用 CANNBOT `ascendc-docs-search` 技能核对，不跨版本照搬。
 
 ### 跨卡归约对照
 
-AllReduce 与单卡参考有微小位差时，先核对每个 rank 的贡献及通信前后 dtype，再固定通信域、进程级确定性配置和执行形态做对照。配置相同不独立保证两个实现采用相同求和顺序，逐位要求也不能自行放宽成容差。若结果是旧值或缺少某个分段，先查[通信缓冲与完成范围](../mechanisms/multicore-ownership.md#跨卡通信的缓冲所有权)。Host 通信的配置入口使用 `/ascendc-docs-search` skill 确认。
+AllReduce 与单卡参考有微小位差时，先核对每个 rank 的贡献及通信前后 dtype，再固定通信域、进程级确定性配置和执行形态做对照。配置相同不独立保证两个实现采用相同求和顺序，逐位要求也不能自行放宽成容差。若结果是旧值或缺少某个分段，先查[通信缓冲与完成范围](../mechanisms/multicore-ownership.md#跨卡通信的缓冲所有权)。Host 通信的配置入口调用 CANNBOT `ascendc-docs-search` 技能确认。
 
 ## Partial 参与集合账本
 
@@ -129,6 +129,6 @@ first/last、NaN、符号零及索引遍历顺序都按任务合同确定，不�
 
 ## 版本路由与边界
 
-基础归约与 DMA 原子的接口资料使用 `/ascendc-docs-search` skill 获取。API 的 mask、repeat、临时空间、Atomic 与同步支持范围应根据所查官方页面并结合当前产品核对；本页不代表任一具体实现或 NPU case 已验证。
+基础归约与 DMA 原子的接口资料调用 CANNBOT `ascendc-docs-search` 技能获取。API 的 mask、repeat、临时空间、Atomic 与同步支持范围应根据所查官方页面并结合当前产品核对；本页不代表任一具体实现或 NPU case 已验证。
 
-带索引 partial 的局部索引必须转换为最终输出的位置；具体 ReduceMax 索引示例使用 `/ascendc-docs-search` skill 读取。其它 API 的索引坐标系与 tie 语义须单独确认。
+带索引 partial 的局部索引必须转换为最终输出的位置；具体 ReduceMax 索引示例调用 CANNBOT `ascendc-docs-search` 技能读取。其它 API 的索引坐标系与 tie 语义须单独确认。

@@ -56,7 +56,7 @@ DataCopy/DataCopyPad 为 DMA 对齐形成的 padding/dummy 与 Conv/Load3D 的�
 
 ## 筛选后的有效区与状态
 
-GatherMask 后的物理 Tensor 容量不等于本轮筛选结果长度。记录返回的有效数（如当前接口的 rsvdCnt），只把有效元素交给搬出、统计与下一次计算；尾部随机值只有被消费时才影响结果。自定义掩码编码不匹配 dtype、多 repeat 读取范围重叠，也会表现为选出的元素或数量不对；使用 `/ascendc-docs-search` skill 核对掩码规则，再展开实际读取位置。
+GatherMask 后的物理 Tensor 容量不等于本轮筛选结果长度。记录返回的有效数（如当前接口的 rsvdCnt），只把有效元素交给搬出、统计与下一次计算；尾部随机值只有被消费时才影响结果。自定义掩码编码不匹配 dtype、多 repeat 读取范围重叠，也会表现为选出的元素或数量不对；调用 CANNBOT `ascendc-docs-search` 技能核对掩码规则，再展开实际读取位置。
 
 若第一轮正确、后续轮次异常，同时检查掩码模式与输入复用：当前 GatherMask 是否改变了后续计算依赖的模式，DropOut 是否修改了随后还要使用的 mask。分别保存调用前后状态与掩码内容，在确需的段落设置/恢复模式，或为可变输入保留正确副本。DropOut 的保留位、缩放位置与 dtype 仍按原算法核对。
 
@@ -82,7 +82,7 @@ Gather/Scatter 的 offset 先换算为真实字节地址，再检查边界与目
 
 - 非对齐 shape 失败只说明路径依赖 shape；它不证明接口不支持非对齐。
 - 尾部出现旧值可能来自 CopyOut 长度、计算 mask、目标容量或同步，不能只归因于 padding。
-- npu check 的越界观察可以定位地址指令，但不能替代逻辑 offset 与有效区证明。
+- 结合[msSanitizer](https://gitcode.com/Ascend/mssanitizer)的访存告警核对实际访问，仍需证明逻辑 offset 与有效区是否正确。
 - 搬运后值正确而首次消费后错误时，应降低搬运候选，转向计算 mask、别名或同步消费边。
 - 布局转换前后逻辑坐标一致而物理地址不同是正常现象；只有实际坐标映射与合同不符才构成缺陷。
 
