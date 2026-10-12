@@ -49,6 +49,8 @@ constexpr const char* kUdsNameEnv = "NPU_CHECK_UDS_NAME";
 constexpr const char* kSessionIdEnv = "NPU_CHECK_SESSION_ID";
 constexpr const char* kCliPidEnv = "NPU_CHECK_CLI_PID";
 constexpr const char* kHandshakeTimeoutEnv = "NPU_CHECK_HANDSHAKE_TIMEOUT_MS";
+constexpr int MIN_HANDSHAKE_TIMEOUT_MS = 100;
+constexpr int MAX_HANDSHAKE_TIMEOUT_MS = 120000;
 // 工作目录：probe 缓存落在这里。改用注册表编码之后，
 // Configure 只承载工具与子选项，不再承载路径，因此这类字段改由环境变量传递。
 constexpr const char* kWorkDirEnv = "NPU_CHECK_WORK_DIR";
@@ -154,7 +156,7 @@ enum class ToolId : uint16_t {
     INITCHECK = 3, // 持久化寄存器首次使用前初始化检查
 };
 
-// TODO: 作用是什么，没用是否应该删除
+// Configure 中工具子选项的稳定线路标识，由共享注册表映射到名称和值编码。
 enum class OptionId : uint16_t {
     MEMCHECK_CHECK_CACHE_CONTROL = 0x0101,
     SYNCCHECK_MISSING_BARRIER_INIT_IS_FATAL = 0x0201,

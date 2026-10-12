@@ -32,12 +32,15 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <system_error>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <unistd.h>
 
 namespace npucheck {
 namespace {
+
+constexpr std::string_view SIGNAL_EXIT_PREFIX = "signal:";
 
 volatile sig_atomic_t g_childProcessGroup = -1;
 
@@ -126,8 +129,8 @@ private:
         good_ = false;
     }
 
-    const std::array<int, 3> signals_{SIGINT, SIGTERM, SIGHUP};
-    std::array<struct sigaction, 3> previous_{};
+    inline static constexpr std::array signals_{SIGINT, SIGTERM, SIGHUP};
+    std::array<struct sigaction, signals_.size()> previous_{};
     size_t installed_ = 0;
     bool good_ = false;
 };
@@ -345,34 +348,35 @@ bool RandomBytes(void* output, size_t size)
 // 唯一用途是 UDS 抽象地址的随机段；会话 nonce 已随协议简化删除。
 std::string HexRandom()
 {
-    std::array<unsigned char, 16> bytes{};
+    constexpr size_t UDS_RANDOM_BYTES = 16;
+    constexpr size_t HEX_DIGITS_PER_BYTE = 2;
+    std::array<unsigned char, UDS_RANDOM_BYTES> bytes{};
     if (!RandomBytes(bytes.data(), bytes.size())) {
         return {};
     }
     constexpr char kHexDigits[] = "0123456789abcdef";
-    std::string text(bytes.size() * 2, '0');
+    std::string text(bytes.size() * HEX_DIGITS_PER_BYTE, '0');
     for (size_t index = 0; index < bytes.size(); ++index) {
-        text[index * 2] = kHexDigits[bytes[index] >> 4u];
-        text[index * 2 + 1] = kHexDigits[bytes[index] & 0x0fu];
+        text[index * HEX_DIGITS_PER_BYTE] = kHexDigits[bytes[index] >> 4u];
+        text[index * HEX_DIGITS_PER_BYTE + 1] = kHexDigits[bytes[index] & 0x0fu];
     }
     return text;
 }
 
 bool CreateSessionDirectory(std::string& directory, std::string& error)
 {
-    char pattern[] = "/tmp/npu_check-XXXXXX";
-    char* created = mkdtemp(pattern);
-    if (created == nullptr) {
+    std::string pattern = "/tmp/npu_check-XXXXXX";
+    if (mkdtemp(pattern.data()) == nullptr) {
         error = std::string("mkdtemp: ") + std::strerror(errno);
         return false;
     }
-    if (chmod(created, 0700) != 0) {
+    if (chmod(pattern.c_str(), S_IRWXU) != 0) {
         const int chmodError = errno;
-        (void)rmdir(created);
+        (void)rmdir(pattern.c_str());
         error = std::string("chmod session directory: ") + std::strerror(chmodError);
         return false;
     }
-    directory = created;
+    directory = std::move(pattern);
     return true;
 }
 
@@ -387,12 +391,12 @@ bool EnsureDirectory(const std::string& path, std::string& error)
     return true;
 }
 
-std::vector<char*> BuildArgv(const std::vector<std::string>& arguments)
+std::vector<char*> BuildArgv(std::vector<std::string>& arguments)
 {
     std::vector<char*> argv;
     argv.reserve(arguments.size() + 1);
-    for (const auto& argument : arguments) {
-        argv.push_back(const_cast<char*>(argument.c_str()));
+    for (auto& argument : arguments) {
+        argv.push_back(argument.data());
     }
     argv.push_back(nullptr);
     return argv;
@@ -400,10 +404,11 @@ std::vector<char*> BuildArgv(const std::vector<std::string>& arguments)
 
 int ChildExitCode(int status)
 {
+    constexpr int SIGNAL_EXIT_CODE_BASE = 128;
     if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
+        return SIGNAL_EXIT_CODE_BASE + WTERMSIG(status);
     }
-    return WIFEXITED(status) ? WEXITSTATUS(status) : 125;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : INFRASTRUCTURE_ERROR_EXIT_CODE;
 }
 
 // 摘要行里的 child_exit 字段。被信号杀死与正常退出必须能区分开：两者映射到同一个
@@ -411,7 +416,7 @@ int ChildExitCode(int status)
 std::string FormatChildExit(int status)
 {
     if (WIFSIGNALED(status)) {
-        return "signal:" + std::to_string(WTERMSIG(status));
+        return std::string(SIGNAL_EXIT_PREFIX) + std::to_string(WTERMSIG(status));
     }
     return WIFEXITED(status) ? std::to_string(WEXITSTATUS(status)) : "unknown";
 }
@@ -480,8 +485,9 @@ std::string ScreenNotice(const ResultSummary& summary)
         case Outcome::INFRA_FAILED:
             return "npu_check: tool execution failed; check the plog for details";
         case Outcome::APP_FAILED:
-            if (summary.childExit.rfind("signal:", 0) == 0) {
-                return "npu_check: application terminated by signal " + summary.childExit.substr(7);
+            if (summary.childExit.compare(0, SIGNAL_EXIT_PREFIX.size(), SIGNAL_EXIT_PREFIX) == 0) {
+                return "npu_check: application terminated by signal " +
+                       summary.childExit.substr(SIGNAL_EXIT_PREFIX.size());
             }
             if (summary.childExit != "none" && summary.childExit != "unknown") {
                 return "npu_check: application exited with non-zero status (exit=" + summary.childExit + ")";
@@ -515,7 +521,7 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     std::string error;
     if (!CreateSessionDirectory(sessionDirectory, error)) {
         LogInfraDetail(error);
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
 
     // 会话标识：它在每一帧都被校验，覆盖面严格大于原先只在 Hello 校验一次的 nonce，
@@ -523,35 +529,36 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     uint64_t sessionId = 0;
     if (!RandomBytes(&sessionId, sizeof(sessionId)) || sessionId == 0) {
         LogInfraDetail("cannot generate session identity");
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
 
     // --work-dir 只控制 CLI 会话日志。DBI 使用自己管理的私有 runtime/cache 目录。
     const std::string workDir = options.workDir.empty() ? sessionDirectory : options.workDir;
     if (!EnsureDirectory(workDir, error)) {
         LogInfraDetail(error);
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
 
     const std::string& logPath = options.logFile;
     if (!logPath.empty() && !ValidateLogFilePath(logPath, error)) {
         LogInfraDetail(error);
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
 
     // UDS 地址走抽象命名空间，不在文件系统里创建 socket 文件。前导 '@' 是与注入库之间
     // 的书写约定，两端填 sockaddr_un 时会把它换成 '\0'（见 BuildAbstractAddress）。
     // 随机部分保证并发实例之间不撞车；它不是秘密 —— /proc/net/unix 任何 UID 都能读到，
     // 身份校验完全由 SO_PEERCRED 承担。
-    const std::string udsName = "@npu_check-" + HexRandom();
-    if (udsName.size() <= 11) {
+    const std::string udsSuffix = HexRandom();
+    if (udsSuffix.empty()) {
         LogInfraDetail("cannot generate a UDS address");
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
+    const std::string udsName = "@npu_check-" + udsSuffix;
     OutputSink output(logPath);
     if (!output.Good()) {
         LogInfraDetail("cannot open '" + logPath + "' for writing");
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
 
     const auto configure = BuildConfigureRequest(options);
@@ -565,14 +572,14 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     int consolePipe[2] = {-1, -1};
     if (pipe2(consolePipe, O_CLOEXEC) != 0) {
         output.Detail(std::string("pipe2: ") + std::strerror(errno));
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
     UniqueFd consoleRead(consolePipe[0]);
     UniqueFd consoleWrite(consolePipe[1]);
     SignalBlocker signalBlocker(error);
     if (!signalBlocker.Good()) {
         output.Detail(error);
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
 
     // T0 必须取在 fork 之前的最后一步。
@@ -585,20 +592,21 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     const pid_t child = fork();
     if (child < 0) {
         output.Detail(std::string("fork: ") + std::strerror(errno));
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
     if (child == 0) {
+        constexpr int CHILD_SETUP_ERROR_EXIT_CODE = 127;
         if (setpgid(0, 0) != 0) {
             dprintf(STDERR_FILENO, "npu_check: setpgid failed: %s\n", std::strerror(errno));
-            _exit(127);
+            _exit(CHILD_SETUP_ERROR_EXIT_CODE);
         }
         if (!signalBlocker.Restore()) {
             dprintf(STDERR_FILENO, "npu_check: cannot restore child signal mask\n");
-            _exit(127);
+            _exit(CHILD_SETUP_ERROR_EXIT_CODE);
         }
         consoleRead.Reset();
         if (dup2(consoleWrite.Get(), STDOUT_FILENO) < 0 || dup2(consoleWrite.Get(), STDERR_FILENO) < 0) {
-            _exit(127);
+            _exit(CHILD_SETUP_ERROR_EXIT_CODE);
         }
         consoleWrite.Reset();
         const std::string sessionText = std::to_string(sessionId);
@@ -612,17 +620,18 @@ int RunApplication(const Options& options, const std::string& libraryPath)
         // 工作目录经环境变量下发：Configure 改用注册表编码后只承载工具与子选项，
         // 路径这类与协议无关的部署信息不再占线路。
         (void)setenv(npucheck::ipc::kWorkDirEnv, workDir.c_str(), 1);
-        auto argv = BuildArgv(options.application);
+        auto arguments = options.application;
+        auto argv = BuildArgv(arguments);
         execvp(argv[0], argv.data());
         dprintf(STDERR_FILENO, "npu_check: execvp failed: %s\n", std::strerror(errno));
-        _exit(127);
+        _exit(CHILD_SETUP_ERROR_EXIT_CODE);
     }
     consoleWrite.Reset();
     if (setpgid(child, child) != 0 && errno != EACCES && errno != ESRCH) {
         output.Detail(std::string("setpgid: ") + std::strerror(errno));
         (void)kill(child, SIGKILL);
         (void)waitpid(child, nullptr, 0);
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
     SignalForwarder signalForwarder(child, error);
     if (!signalForwarder.Good()) {
@@ -631,7 +640,7 @@ int RunApplication(const Options& options, const std::string& libraryPath)
             (void)kill(child, SIGKILL);
         }
         (void)waitpid(child, nullptr, 0);
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
     if (!signalBlocker.Restore(error)) {
         output.Detail(error);
@@ -639,7 +648,7 @@ int RunApplication(const Options& options, const std::string& libraryPath)
             (void)kill(child, SIGKILL);
         }
         (void)waitpid(child, nullptr, 0);
-        return summary.exit = 125;
+        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
 
     ASCTOOL_DEBUG(
@@ -647,7 +656,9 @@ int RunApplication(const Options& options, const std::string& libraryPath)
         toolNames.c_str(), static_cast<int>(child), static_cast<int>(child));
     std::atomic<bool> childExited{false};
     std::thread consoleReader([&output, &childExited, fd = std::move(consoleRead)] {
-        std::array<char, 8192> buffer{};
+        constexpr size_t CONSOLE_BUFFER_SIZE = 8192;
+        constexpr int CONSOLE_POLL_INTERVAL_MS = 100;
+        std::array<char, CONSOLE_BUFFER_SIZE> buffer{};
         std::chrono::steady_clock::time_point drainDeadline{};
         while (true) {
             pollfd descriptor{};
@@ -655,7 +666,7 @@ int RunApplication(const Options& options, const std::string& libraryPath)
             descriptor.events = POLLIN;
             int pollResult = 0;
             do {
-                pollResult = poll(&descriptor, 1, 100);
+                pollResult = poll(&descriptor, 1, CONSOLE_POLL_INTERVAL_MS);
             } while (pollResult < 0 && errno == EINTR);
             if (pollResult < 0 || (descriptor.revents & (POLLERR | POLLNVAL)) != 0) {
                 break;
@@ -775,9 +786,11 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     }
 
     int childStatus = 0;
+    bool childStatusAvailable = true;
     while (waitpid(child, &childStatus, 0) < 0) {
         if (errno != EINTR) {
-            childStatus = 125 << 8;
+            output.Detail(std::string("waitpid: ") + std::strerror(errno));
+            childStatusAvailable = false;
             break;
         }
     }
@@ -786,7 +799,7 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     if (receiver.joinable()) {
         receiver.join();
     }
-    const int childExit = ChildExitCode(childStatus);
+    const int childExit = childStatusAvailable ? ChildExitCode(childStatus) : INFRASTRUCTURE_ERROR_EXIT_CODE;
 
     // 判定顺序是固定的：先看有没有收到 MORE=0 的末帧，再看是不是被 Error 打断，
     // 最后才是"连接断了但报告没收全"。
@@ -809,13 +822,13 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     }
 
     summary.truncated = resultTruncated;
-    summary.childExit = FormatChildExit(childStatus);
+    summary.childExit = childStatusAvailable ? FormatChildExit(childStatus) : "unknown";
     int exitCode = 0;
-    if (!handshake || !protocolComplete || !resultComplete) {
+    if (!handshake || !protocolComplete || !resultComplete || !childStatusAvailable) {
         // 基础设施失败：拿不到可信结论，退 125 与应用自身的退出码区分开。
         // has_errors 保持 unknown —— 没收到完整 Result 就没有结论可言。
         summary.outcome = Outcome::INFRA_FAILED;
-        exitCode = 125;
+        exitCode = INFRASTRUCTURE_ERROR_EXIT_CODE;
     } else {
         summary.hasErrors = resultHasErrors ? 1 : 0;
         // 默认透传应用退出码：检出问题不等于运行失败，是否要让 CI 挂掉由调用方决定。

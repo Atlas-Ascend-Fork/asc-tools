@@ -13,11 +13,12 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
-#include <ctime>
 #include <poll.h>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 
 namespace npucheck::ipc {
@@ -57,9 +58,8 @@ bool EnsureSocketBuffer(int fd, int optionName, const char* optionText, const ch
 
 int64_t MonotonicNowMs()
 {
-    timespec now{};
-    (void)clock_gettime(CLOCK_MONOTONIC, &now);
-    return static_cast<int64_t>(now.tv_sec) * 1000 + now.tv_nsec / 1000000;
+    const auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 }
 
 int CreateSeqpacketSocket(std::string& error)
@@ -81,11 +81,15 @@ bool BuildAbstractAddress(const std::string& name, sockaddr_un& address, socklen
 {
     // 约定：环境变量取值以 '@' 开头表示抽象命名空间。'@' 只是便于人读，也与 ss -x、
     // /proc/net/unix 的显示保持一致；落到 sun_path 时必须换成 '\0'，不能字面写入。
-    if (name.size() < 2 || name.front() != '@') {
+    if (name.empty() || name.front() != '@') {
         error = "UDS address must start with '@' to denote the abstract namespace";
         return false;
     }
-    const std::string body = name.substr(1);
+    const std::string_view body(name.data() + 1, name.size() - 1);
+    if (body.empty()) {
+        error = "UDS abstract address must have a non-empty name after '@'";
+        return false;
+    }
     // 前导的 '\0' 也占一个字节。
     if (body.size() + 1 > sizeof(address.sun_path)) {
         error = "UDS abstract address exceeds the sockaddr_un limit";
@@ -95,7 +99,7 @@ bool BuildAbstractAddress(const std::string& name, sockaddr_un& address, socklen
     address = {};
     address.sun_family = AF_UNIX;
     address.sun_path[0] = '\0';
-    std::memcpy(address.sun_path + 1, body.data(), body.size());
+    std::copy(body.begin(), body.end(), address.sun_path + 1);
 
     // 抽象地址不以 NUL 结尾，其长度完全由 addrLen 决定。若图省事传 sizeof(sockaddr_un)，
     // 实际绑定的名字会带上上百个尾随 '\0'；bind 与 connect 两侧算法但凡不一致就永远连

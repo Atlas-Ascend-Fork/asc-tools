@@ -17,6 +17,8 @@
 
 namespace npucheck {
 
+constexpr int INFRASTRUCTURE_ERROR_EXIT_CODE = 125;
+
 // 三类结果。分类只服务于两件事：plog 里摘要行的日志级别，以及终端上是否给出、给出
 // 哪条人类可读提示（ScreenNotice）。机器格式的摘要行一律不打屏，只落 plog。
 enum class Outcome {
@@ -30,7 +32,7 @@ struct ResultSummary {
     int hasErrors = -1;             // <0 表示 unknown（未收到完整 Result）
     bool truncated = false;         // 报告因触及总长上限被截断
     std::string childExit = "none"; // 退出码、"signal:N"，或没有子进程时的 "none"
-    int exit = 125;
+    int exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
 };
 
 // 机器格式的结果摘要行。只用于 plog 落盘，不属于终端输出契约。

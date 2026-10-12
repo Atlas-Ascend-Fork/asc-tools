@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
@@ -64,6 +65,40 @@ struct ResultClientResult {
     std::vector<Frame> frames;
     std::string error;
 };
+
+TEST(UdsTransportTest, ValidatesAbstractAddressLengthWithoutAddingTrailingBytes)
+{
+    sockaddr_un address{};
+    socklen_t length = 0;
+    std::string error;
+    for (const std::string name : {"", "@", "plain-name"}) {
+        EXPECT_FALSE(BuildAbstractAddress(name, address, length, error));
+    }
+    const std::string body(sizeof(address.sun_path) - 1, 'x');
+    ASSERT_TRUE(BuildAbstractAddress("@" + body, address, length, error)) << error;
+    EXPECT_EQ(address.sun_family, AF_UNIX);
+    EXPECT_EQ(address.sun_path[0], '\0');
+    EXPECT_EQ(std::string(address.sun_path + 1, body.size()), body);
+    EXPECT_EQ(length, offsetof(sockaddr_un, sun_path) + sizeof(address.sun_path));
+    EXPECT_FALSE(BuildAbstractAddress("@" + body + "x", address, length, error));
+
+    ASSERT_TRUE(BuildAbstractAddress("@a", address, length, error)) << error;
+    EXPECT_EQ(length, offsetof(sockaddr_un, sun_path) + 2);
+    EXPECT_EQ(address.sun_path[1], 'a');
+}
+
+TEST(UdsServerTest, SendFailureMarksTransportIncomplete)
+{
+    UdsServer server;
+    EXPECT_TRUE(server.TransportComplete());
+    std::string error;
+    EXPECT_FALSE(server.SendReady(error));
+    EXPECT_FALSE(error.empty());
+    EXPECT_FALSE(server.TransportComplete());
+    EXPECT_FALSE(server.Publish(MessageType::DIAGNOSTIC_STREAM, "after failure"));
+    EXPECT_EQ(server.DroppedMessages(), 1U);
+    server.Shutdown();
+}
 
 bool SendClientFrame(
     int fd, MessageType type, uint64_t sessionId, uint64_t sequence, std::vector<uint8_t> payload, std::string& error)

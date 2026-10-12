@@ -60,7 +60,7 @@ private:
     bool ConfigureSanitizer(std::string& error);
     bool EnableCallbacks(std::string& error);
     void RollbackSanitizer();
-    void LogHandshakeFailure(const std::string& reason) noexcept;
+    static void LogHandshakeFailure(const std::string& reason) noexcept;
     void StoreReports(CheckerReportList reports);
     bool NormalizeAndStoreReportRecord(
         const npucheck::NpuCheckReportRecord& report, uint64_t reportId, const char* what);

@@ -13,7 +13,6 @@
 
 #include "diagnostic/report_renderer.h"
 
-#include <cstdint>
 #include <map>
 
 namespace npucheck::detail {

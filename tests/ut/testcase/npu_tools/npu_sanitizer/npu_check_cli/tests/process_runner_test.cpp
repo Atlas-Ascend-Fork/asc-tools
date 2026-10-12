@@ -10,10 +10,32 @@
 #include "../../common/tests/plog_capture.h"
 #include <gtest/gtest.h>
 #include <boost/filesystem.hpp>
+#include <csignal>
 #include <fstream>
 #include <sstream>
 
 namespace npucheck {
+TEST(ProcessRunnerTest, UnavailableChildStatusIsNotReportedAsAnApplicationExitCode)
+{
+    struct sigaction ignore {};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    struct sigaction previous {};
+    ASSERT_EQ(sigaction(SIGCHLD, &ignore, &previous), 0);
+    struct RestoreSignal {
+        struct sigaction previous;
+        ~RestoreSignal() { (void)sigaction(SIGCHLD, &previous, nullptr); }
+    } restore{previous};
+
+    Options options;
+    options.application = {"/bin/true"};
+    options.handshakeTimeoutMs = 100;
+    PlogCapture capture;
+    EXPECT_EQ(RunApplication(options, "/missing/libnpu_check_processor.so"), INFRASTRUCTURE_ERROR_EXIT_CODE);
+    EXPECT_NE(capture.Text().find("waitpid:"), std::string::npos);
+    EXPECT_NE(capture.Text().find("child_exit=unknown"), std::string::npos);
+}
+
 TEST(ProcessRunnerTest, InternalDiagnosticsUsePlogWithoutContaminatingCheckOutput)
 {
     const auto directory =

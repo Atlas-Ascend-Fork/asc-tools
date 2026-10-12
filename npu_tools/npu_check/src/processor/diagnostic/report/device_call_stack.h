@@ -14,7 +14,7 @@
 #include "diagnostic/report_message.h"
 
 namespace npucheck {
-std::string FormatCallStackReport(AclsanStatus status, const AclsanDeviceCallStack& callStack);
+std::string FormatCallStackReport(AclsanStatus status, const AclsanDeviceCallStack& stack);
 void PopulateDeviceCallStack(NpuCheckMemcheckReport& report) noexcept;
 void PopulateDeviceCallStack(NpuCheckInitcheckReport& report) noexcept;
 void PopulateDeviceCallStack(NpuCheckSynccheckReport& report) noexcept;

@@ -18,27 +18,29 @@
 namespace npucheck::ipc {
 namespace {
 
+constexpr unsigned BITS_PER_WIRE_BYTE = 8;
+
 class Encoder {
 public:
     void PutU8(uint8_t value) { data_.push_back(value); }
 
     void PutU16(uint16_t value)
     {
-        data_.push_back(static_cast<uint8_t>(value >> 8u));
+        data_.push_back(static_cast<uint8_t>(value >> BITS_PER_WIRE_BYTE));
         data_.push_back(static_cast<uint8_t>(value));
     }
 
     void PutU32(uint32_t value)
     {
-        for (int shift = 24; shift >= 0; shift -= 8) {
-            data_.push_back(static_cast<uint8_t>(value >> static_cast<unsigned>(shift)));
+        for (size_t remaining = sizeof(value); remaining > 0; --remaining) {
+            data_.push_back(static_cast<uint8_t>(value >> ((remaining - 1) * BITS_PER_WIRE_BYTE)));
         }
     }
 
     void PutU64(uint64_t value)
     {
-        for (int shift = 56; shift >= 0; shift -= 8) {
-            data_.push_back(static_cast<uint8_t>(value >> static_cast<unsigned>(shift)));
+        for (size_t remaining = sizeof(value); remaining > 0; --remaining) {
+            data_.push_back(static_cast<uint8_t>(value >> ((remaining - 1) * BITS_PER_WIRE_BYTE)));
         }
     }
 
@@ -75,39 +77,39 @@ public:
 
     bool GetU16(uint16_t& value)
     {
-        if (!Need(2)) {
+        if (!Need(sizeof(value))) {
             return false;
         }
         value = static_cast<uint16_t>(
-            (static_cast<uint16_t>(data_[offset_]) << 8u) | static_cast<uint16_t>(data_[offset_ + 1]));
-        offset_ += 2;
+            (static_cast<uint16_t>(data_[offset_]) << BITS_PER_WIRE_BYTE) | static_cast<uint16_t>(data_[offset_ + 1]));
+        offset_ += sizeof(value);
         return true;
     }
 
     bool GetU32(uint32_t& value)
     {
-        if (!Need(4)) {
+        if (!Need(sizeof(value))) {
             return false;
         }
         uint32_t result = 0;
-        for (size_t i = 0; i < 4; ++i) {
-            result = (result << 8u) | data_[offset_ + i];
+        for (size_t i = 0; i < sizeof(value); ++i) {
+            result = (result << BITS_PER_WIRE_BYTE) | data_[offset_ + i];
         }
-        offset_ += 4;
+        offset_ += sizeof(value);
         value = result;
         return true;
     }
 
     bool GetU64(uint64_t& value)
     {
-        if (!Need(8)) {
+        if (!Need(sizeof(value))) {
             return false;
         }
         uint64_t result = 0;
-        for (size_t i = 0; i < 8; ++i) {
-            result = (result << 8u) | data_[offset_ + i];
+        for (size_t i = 0; i < sizeof(value); ++i) {
+            result = (result << BITS_PER_WIRE_BYTE) | data_[offset_ + i];
         }
-        offset_ += 8;
+        offset_ += sizeof(value);
         value = result;
         return true;
     }
@@ -572,13 +574,8 @@ const OptionRegistryEntry* LookupOptionById(OptionId optionId)
 
 bool IsKnownTool(uint16_t toolId)
 {
-    switch (static_cast<ToolId>(toolId)) {
-        case ToolId::MEMCHECK:
-        case ToolId::SYNCCHECK:
-        case ToolId::INITCHECK:
-            return true;
-    }
-    return false;
+    const auto tool = static_cast<ToolId>(toolId);
+    return tool == ToolId::MEMCHECK || tool == ToolId::SYNCCHECK || tool == ToolId::INITCHECK;
 }
 
 } // namespace npucheck::ipc

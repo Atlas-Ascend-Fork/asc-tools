@@ -445,7 +445,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
     }
 
     std::vector<NpuCheckMemcheckReport> reports;
-    auto appendAccess = [&](uint64_t address, uint64_t bytes) {
+    auto appendAccess = [this, &data, &accessModes, &reports, groupId](uint64_t address, uint64_t bytes) {
         for (const NpuCheckReportAccessMode accessMode : accessModes) {
             auto found = CheckAccess(data, accessMode, address, bytes, groupId);
             reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));

@@ -16,6 +16,7 @@
 #include <fstream>
 #include <ostream>
 #include <sstream>
+#include <string_view>
 
 namespace npucheck {
 namespace {
@@ -94,27 +95,30 @@ ReportRenderStatus ParseTemplateKey(const std::string& text, ReportTemplateKey* 
 
 ReportRenderStatus AppendTemplate(const ReportTemplate& tpl, const ReportFields& fields, std::string* out)
 {
+    constexpr std::string_view FIELD_OPEN = "{{";
+    constexpr std::string_view FIELD_CLOSE = "}}";
     if (out == nullptr) {
         return ReportRenderStatus::INVALID_ARGUMENT;
     }
     std::size_t pos = 0;
     while (pos < tpl.text.size()) {
-        const std::size_t open = tpl.text.find("{{", pos);
+        const std::size_t open = tpl.text.find(FIELD_OPEN, pos);
         if (open == std::string::npos) {
             out->append(tpl.text, pos, std::string::npos);
             return ReportRenderStatus::SUCCESS;
         }
         out->append(tpl.text, pos, open - pos);
-        const std::size_t close = tpl.text.find("}}", open + 2);
+        const std::size_t fieldBegin = open + FIELD_OPEN.size();
+        const std::size_t close = tpl.text.find(FIELD_CLOSE, fieldBegin);
         if (close == std::string::npos) {
             return ReportRenderStatus::MALFORMED_TEMPLATE;
         }
-        const auto field = fields.find(tpl.text.substr(open + 2, close - open - 2));
+        const auto field = fields.find(tpl.text.substr(fieldBegin, close - fieldBegin));
         if (field == fields.end()) {
             return ReportRenderStatus::MISSING_FIELD;
         }
         out->append(field->second);
-        pos = close + 2;
+        pos = close + FIELD_CLOSE.size();
     }
     return ReportRenderStatus::SUCCESS;
 }

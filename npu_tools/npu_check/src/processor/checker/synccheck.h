@@ -31,7 +31,6 @@ struct SynccheckStats {
     uint64_t unconsumedOpens = 0;
     uint64_t pendingOpens = 0;
 };
-// TODO: 放进log中
 
 class Synccheck final : public npucheck::Checker {
 public:

@@ -23,34 +23,37 @@ const std::vector<npucheck::CallbackSpec>& Synccheck::GetSubscribedID() const
     return callbacks;
 }
 bool Synccheck::OnCallback(
-    AclsanCallbackDomain domain, AclsanCallbackId, const void* cbdata, npucheck::CheckerReportList& reports)
+    AclsanCallbackDomain domain, [[maybe_unused]] AclsanCallbackId cbid, const void* data,
+    npucheck::CheckerReportList& reports)
 {
     if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
-        const auto* data = static_cast<const AclsanDeviceSyncData*>(cbdata);
-        OnDeviceSync(*data);
+        const auto* syncData = static_cast<const AclsanDeviceSyncData*>(data);
+        OnDeviceSync(*syncData);
     } else if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
         npucheck::AppendCheckerReports(OnSynchronization(), reports);
     } else if (domain == ACLSAN_CB_DOMAIN_LAUNCH) {
-        const auto* data = static_cast<const AclsanLaunchData*>(cbdata);
-        const npucheck::KernelAttributes attributes = npucheck::QueryKernelAttributes(data->function);
-        const char* functionName = data->functionName == nullptr ? "<unknown>" : data->functionName;
+        const auto* launchData = static_cast<const AclsanLaunchData*>(data);
+        const npucheck::KernelAttributes attributes = npucheck::QueryKernelAttributes(launchData->function);
+        const char* functionName = launchData->functionName == nullptr ? "<unknown>" : launchData->functionName;
         ASCTOOL_DEBUG(
             "kernel attributes launch=%llu function=%p function_name=%s num_blocks=%u "
             "kernel_type=%lld kernel_type_status=%d aic_ratio=%u aiv_ratio=%u kernel_ratio_status=%d "
             "kernel_sched_mode=%lld kernel_sched_mode_status=%d launch_result=%d",
-            static_cast<unsigned long long>(data->launchId), data->function, functionName,
-            static_cast<unsigned>(data->numBlocks), static_cast<long long>(attributes.kernelType),
+            static_cast<unsigned long long>(launchData->launchId), launchData->function, functionName,
+            static_cast<unsigned>(launchData->numBlocks), static_cast<long long>(attributes.kernelType),
             attributes.kernelTypeStatus, static_cast<unsigned>(attributes.aicRatio),
             static_cast<unsigned>(attributes.aivRatio), attributes.kernelRatioStatus,
-            static_cast<long long>(attributes.kernelSchedMode), attributes.kernelSchedModeStatus, data->common.result);
+            static_cast<long long>(attributes.kernelSchedMode), attributes.kernelSchedModeStatus,
+            launchData->common.result);
 
-        const auto logFailure = [data, functionName](const char* attribute, aclError status) {
+        const auto logFailure = [launchData, functionName](const char* attribute, aclError status) {
             if (status == ACL_SUCCESS) {
                 return;
             }
             ASCTOOL_WARNING(
                 "kernel attribute query failed launch=%llu function=%p function_name=%s attribute=%s result=%d",
-                static_cast<unsigned long long>(data->launchId), data->function, functionName, attribute, status);
+                static_cast<unsigned long long>(launchData->launchId), launchData->function, functionName, attribute,
+                status);
         };
         logFailure("ACL_FUNC_ATTR_KERNEL_TYPE", attributes.kernelTypeStatus);
         logFailure("ACL_FUNC_ATTR_KERNEL_RATIO", attributes.kernelRatioStatus);

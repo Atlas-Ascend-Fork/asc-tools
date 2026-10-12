@@ -101,7 +101,7 @@ void Synccheck::HandleFlagEvent(
         state.pending.erase(open);
         ++stats_.matchedPairs;
         --stats_.pendingOpens;
-    } // TODO: set/wait open/close对
+    }
 }
 
 void Synccheck::HandleSyncBufEvent(

@@ -15,6 +15,7 @@
 
 int main(int argc, char** argv)
 {
+    constexpr int USAGE_ERROR_EXIT_CODE = 64;
     npucheck::Options options{};
     std::string error;
     // 早期失败不再向终端打机器格式的结果摘要，只落 plog。用法错误已有专属报错和用法
@@ -33,7 +34,7 @@ int main(int argc, char** argv)
 
     if (!npucheck::ParseOptions(argc, argv, options, error)) {
         std::cerr << "npu_check: " << error << "\n\n" << npucheck::Usage();
-        return reportEarlyFailure(64, false);
+        return reportEarlyFailure(USAGE_ERROR_EXIT_CODE, false);
     }
     if (options.showHelp) {
         std::cout << npucheck::Usage();
@@ -47,7 +48,7 @@ int main(int argc, char** argv)
     std::string libraryPath;
     if (!npucheck::ResolveLibraryPath(std::string{}, libraryPath, error)) {
         std::cerr << "npu_check: " << error << '\n';
-        return reportEarlyFailure(125, true);
+        return reportEarlyFailure(npucheck::INFRASTRUCTURE_ERROR_EXIT_CODE, true);
     }
     return npucheck::RunApplication(options, libraryPath);
 }

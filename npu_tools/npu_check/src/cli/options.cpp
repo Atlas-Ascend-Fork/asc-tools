@@ -21,6 +21,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -158,6 +159,7 @@ bool ValidateLogFilePath(const std::string& path, std::string& error)
 
 bool ParseOptions(int argc, char** argv, Options& options, std::string& error)
 {
+    constexpr std::string_view LONG_OPTION_PREFIX = "--";
     options = {};
 
     // --tool 显式指定的集合。std::set 天然去重（重复指定同一工具即幂等）且按 toolId
@@ -225,7 +227,8 @@ bool ParseOptions(int argc, char** argv, Options& options, std::string& error)
             if (!NeedValue(argc, argv, i, value, error)) {
                 return false;
             }
-            const auto parsed = ParseBoundedInt(value, 100, 120000);
+            const auto parsed = ParseBoundedInt(
+                value, npucheck::ipc::MIN_HANDSHAKE_TIMEOUT_MS, npucheck::ipc::MAX_HANDSHAKE_TIMEOUT_MS);
             if (!parsed) {
                 error = "--handshake-timeout-ms must be in [100, 120000]";
                 return false;
@@ -247,8 +250,10 @@ bool ParseOptions(int argc, char** argv, Options& options, std::string& error)
         }
         // 工具子选项：名称在 CLI 中全局唯一，归属由共享注册表决定，因此可以出现在
         // 所属 --tool 之前或之后，这里不依赖"当前工具"状态，也不按参数相邻关系推断。
-        if (argument.rfind("--", 0) == 0 && argument.size() > 2) {
-            if (const auto* entry = npucheck::ipc::LookupOption(argument.substr(2)); entry != nullptr) {
+        if (argument.compare(0, LONG_OPTION_PREFIX.size(), LONG_OPTION_PREFIX) == 0 &&
+            argument.size() > LONG_OPTION_PREFIX.size()) {
+            if (const auto* entry = npucheck::ipc::LookupOption(argument.substr(LONG_OPTION_PREFIX.size()));
+                entry != nullptr) {
                 seenOptions[entry->optionId] = entry;
                 continue;
             }

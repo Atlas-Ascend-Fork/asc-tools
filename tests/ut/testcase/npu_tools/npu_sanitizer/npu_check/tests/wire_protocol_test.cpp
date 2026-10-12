@@ -180,6 +180,27 @@ TEST(WireProtocolTest, RejectsOptionsAboveNegotiatedMinor)
     EXPECT_TRUE(ValidateConfigureMinor(ConfigureRequest{}, 0, error)) << error;
 }
 
+TEST(WireProtocolTest, PreservesBigEndianWireRepresentation)
+{
+    Frame frame{};
+    frame.type = MessageType::RESULT;
+    frame.flags = kFlagHasErrors;
+    frame.sessionId = 0x0123456789abcdefULL;
+    frame.sequence = 0xfedcba9876543210ULL;
+    frame.payload = {0x80, 0xff};
+    const std::vector<uint8_t> expected = {0x4e, 0x53, 0x41, 0x4e, 0x00, 0x01, 0x00, 0x00, 0x00, 0x05, 0x00, 0x02, 0x00,
+                                           0x00, 0x00, 0x26, 0x00, 0x00, 0x00, 0x02, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
+                                           0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10, 0x80, 0xff};
+    EXPECT_EQ(EncodeFrame(frame), expected);
+    Frame decoded{};
+    std::string error;
+    ASSERT_TRUE(DecodeFrame(expected.data(), expected.size(), decoded, error)) << error;
+    EXPECT_EQ(decoded.flags, frame.flags);
+    EXPECT_EQ(decoded.sessionId, frame.sessionId);
+    EXPECT_EQ(decoded.sequence, frame.sequence);
+    EXPECT_EQ(decoded.payload, frame.payload);
+}
+
 TEST(WireProtocolTest, RoundTripsFrame)
 {
     Frame frame{};

@@ -68,8 +68,8 @@ bool UdsServer::LoadEnvironment(std::string& error)
 
     const char* timeout = std::getenv(npucheck::ipc::kHandshakeTimeoutEnv);
     if (timeout != nullptr) {
-        const auto parsedTimeout = ParseUnsigned(timeout, 120000);
-        if (!parsedTimeout || *parsedTimeout < 100) {
+        const auto parsedTimeout = ParseUnsigned(timeout, MAX_HANDSHAKE_TIMEOUT_MS);
+        if (!parsedTimeout || *parsedTimeout < MIN_HANDSHAKE_TIMEOUT_MS) {
             error = "invalid handshake timeout environment";
             return false;
         }
@@ -256,19 +256,21 @@ bool UdsServer::SendSynchronous(
     npucheck::ipc::MessageType type, const std::vector<uint8_t>& payload, uint16_t flags,
     npucheck::ipc::DeadlineMs deadline, std::string& error)
 {
-    std::lock_guard<std::mutex> sendLock(sendMutex_);
-    npucheck::ipc::Frame frame{};
-    frame.type = type;
-    frame.flags = flags;
-    frame.sessionId = sessionId_;
-    frame.sequence = sendSequence_++;
-    frame.payload = payload;
-    if (npucheck::ipc::SendFrame(clientFd_, frame, deadline, error) != npucheck::ipc::IoStatus::OK) {
-        std::lock_guard<std::mutex> lock(queueMutex_);
-        transportComplete_ = false;
-        return false;
+    {
+        std::lock_guard<std::mutex> sendLock(sendMutex_);
+        npucheck::ipc::Frame frame{};
+        frame.type = type;
+        frame.flags = flags;
+        frame.sessionId = sessionId_;
+        frame.sequence = sendSequence_++;
+        frame.payload = payload;
+        if (npucheck::ipc::SendFrame(clientFd_, frame, deadline, error) == npucheck::ipc::IoStatus::OK) {
+            return true;
+        }
     }
-    return true;
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    transportComplete_ = false;
+    return false;
 }
 
 bool UdsServer::SendReady(std::string& error)

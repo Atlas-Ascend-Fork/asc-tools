@@ -31,7 +31,7 @@ enum class IoStatus : uint8_t {
     PROTOCOL_ERROR,
 };
 
-// 绝对截止时刻，单位毫秒，取自 CLOCK_MONOTONIC。
+// 绝对截止时刻，单位毫秒，取自 std::chrono::steady_clock。
 //
 // 这里刻意用"时刻"而不是"时长"：若往下传的是剩余毫秒数，被调函数内部一旦有重试循环
 // （EINTR、EAGAIN 都会触发），每一轮都会拿到同一个完整时长，超时上限就随重试次数无限
