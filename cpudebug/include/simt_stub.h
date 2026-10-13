@@ -16,7 +16,7 @@
 #define ASCENDC_SIMT_STUB_H
 
 #if defined(ASCENDC_CPU_DEBUG)
-#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) || (__NPU_ARCH__ == 9201))
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102))
 #include <cmath>
 #include <cfenv>
 #include "stub_fun.h"

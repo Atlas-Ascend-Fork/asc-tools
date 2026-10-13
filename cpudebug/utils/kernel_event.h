@@ -333,10 +333,9 @@ __aicore__ constexpr TPosition GetPosition(TPosition srcPos, TPosition dstPos)
     if (dstPos == TPosition::GM || ((dstPos == TPosition::CO2) && (srcPos == TPosition::CO1))) {
         return srcPos;
     }
-#elif defined(__NPU_ARCH__) &&                                                                               \
-    ((__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) || (__NPU_ARCH__ == 3102) || (__NPU_ARCH__ == 3510) || \
-     (__NPU_ARCH__ == 5102) || (__NPU_ARCH__ == 2103) || (__NPU_ARCH__ == 3003) || (__NPU_ARCH__ == 3103) || \
-     (__NPU_ARCH__ == 3113) || (__NPU_ARCH__ == 9201))
+#elif defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) || (__NPU_ARCH__ == 3102) || \
+                                (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) || (__NPU_ARCH__ == 2103) || \
+                                (__NPU_ARCH__ == 3003) || (__NPU_ARCH__ == 3103) || (__NPU_ARCH__ == 3113))
     if ((dstPos == TPosition::GM) || (dstPos == TPosition::CO2)) {
         return srcPos;
     }
@@ -344,7 +343,7 @@ __aicore__ constexpr TPosition GetPosition(TPosition srcPos, TPosition dstPos)
     return dstPos;
 }
 
-#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) || (__NPU_ARCH__ == 9201))
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102))
 #ifdef ASCENDC_CPU_DEBUG
 class BufIdTracker {
 public:

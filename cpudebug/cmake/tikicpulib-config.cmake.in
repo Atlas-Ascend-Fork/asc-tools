@@ -13,9 +13,6 @@ set(PRODUCT_TYPE_LIST_C310_ ascend950pr_9599;
                             Ascend950DT_9588;Ascend950DT_9571;Ascend950DT_9572;Ascend950DT_9573;
                             Ascend950DT_9574;Ascend950DT_9575;Ascend950DT_9576;Ascend950DT_9577;
                             Ascend950DT_9578)
-set(PRODUCT_TYPE_LIST_920R1_ ascend960DT_968B7;
-                            Ascend960DT_969B5;Ascend960DT;Ascend960DT_968B7;Ascend960DT_966B7;
-                            Ascend960DT_969B6;Ascend960DT_966B8;Ascend960DT_961BZ;Ascend960DT_961BY)
 set(PRODUCT_TYPE_LIST_KIRINX90_ kirinx90;KirinX90)
 set(PRODUCT_TYPE_LIST_KIRIN9030_ kirin9030;Kirin9030)
 
@@ -30,8 +27,6 @@ function(product_map str newstr)
     set(${newstr} "ascend310B1" PARENT_SCOPE)
   elseif("${str}" IN_LIST PRODUCT_TYPE_LIST_C310_)
     set(${newstr} "ascend950pr_9599" PARENT_SCOPE)
-  elseif("${str}" IN_LIST PRODUCT_TYPE_LIST_920R1_)
-    set(${newstr} "ascend960DT_968B7" PARENT_SCOPE)
   elseif("${str}" IN_LIST PRODUCT_TYPE_LIST_KIRINX90_)
     set(${newstr} "kirinx90" PARENT_SCOPE)
   elseif("${str}" IN_LIST PRODUCT_TYPE_LIST_KIRIN9030_)
@@ -39,7 +34,7 @@ function(product_map str newstr)
   endif()
 endfunction()
 
-foreach(product_type ${PRODUCT_TYPE_LIST_V100_} ${PRODUCT_TYPE_LIST_V200_} ${PRODUCT_TYPE_LIST_V220_} ${PRODUCT_TYPE_LIST_M300_} ${PRODUCT_TYPE_LIST_C310_} ${PRODUCT_TYPE_LIST_920R1_} ${PRODUCT_TYPE_LIST_MC62_} ${PRODUCT_TYPE_LIST_KIRINX90_} ${PRODUCT_TYPE_LIST_KIRIN9030_})
+foreach(product_type ${PRODUCT_TYPE_LIST_V100_} ${PRODUCT_TYPE_LIST_V200_} ${PRODUCT_TYPE_LIST_V220_} ${PRODUCT_TYPE_LIST_M300_} ${PRODUCT_TYPE_LIST_C310_} ${PRODUCT_TYPE_LIST_MC62_} ${PRODUCT_TYPE_LIST_KIRINX90_} ${PRODUCT_TYPE_LIST_KIRIN9030_})
   product_map(${product_type} product_type_series)
   if (NOT TARGET tikicpulib_${product_type_series}_interpreter)
     add_library(tikicpulib_${product_type_series}_interpreter INTERFACE)

@@ -18,11 +18,7 @@
 #include "stub_def.h"
 #include "stub_fun.h"
 
-#if defined(CANN_CHIP_EXT) && (CANN_CHIP_EXT == ascend960)
-#define INTRI_FMT_NUM 5928
-#else
 #define INTRI_FMT_NUM 5149
-#endif
 
 struct IntriFmt {
     int32_t fid;
