@@ -10,11 +10,11 @@
 
 ## 参数取值
 
-**参数值：**配置文件路径及文件名。
+**参数值**：配置文件路径及文件名。
 
-**参数值格式：**路径和文件名：支持大小写字母（a-z，A-Z）、数字（0-9）、下划线（\_）、短横线（-）、句点（.）、中文汉字。
+**参数值格式**：路径和文件名：支持大小写字母（a-z，A-Z）、数字（0-9）、下划线（\_）、短横线（-）、句点（.）、中文汉字。
 
-**参数值约束：**
+**参数值约束**：
 
 配置文件中支持配置如下选项，多个选项使用英文逗号分隔。
 
@@ -73,20 +73,20 @@
 
 > [!NOTE]说明
 >
->- 配置ccec编译选项（即ccec\_O0、ccec\_g选项）时，会导致算子Kernel（\*.o文件）大小增大。动态Shape场景下，由于算子编译时会遍历可能的Shape场景，因此可能会导致算子Kernel文件过大而无法进行编译，此种场景下，建议不要配置ccec编译选项。
-> 由于算子Kernel文件过大而无法编译的报错日志示例如下：
+> - 配置ccec编译选项（即ccec\_O0、ccec\_g选项）时，会导致算子Kernel（\*.o文件）大小增大。动态Shape场景下，由于算子编译时会遍历可能的Shape场景，因此可能会导致算子Kernel文件过大而无法进行编译，此种场景下，建议不要配置ccec编译选项。
+>   由于算子Kernel文件过大而无法编译的报错日志示例如下：
 >
-> ```text
-> message:link error ld.lld: error: InputSection too large for range extension thunk ./kernel_meta_xxxxx.o:
->    ```
+>   ```text
+>   message:link error ld.lld: error: InputSection too large for range extension thunk ./kernel_meta_xxxxx.o:
+>   ```
 >
->- ccec编译选项ccec\_O0和oom选项不可同时开启，会导致AICore Error报错，报错信息示例如下：
+> - ccec编译选项ccec\_O0和oom选项不可同时开启，会导致AICore Error报错，报错信息示例如下：
 >
-> ```text
-> ...there is an aivec error exception, core id is 49, error code = 0x4 ...
->    ```
+>   ```text
+>   ...there is an aivec error exception, core id is 49, error code = 0x4 ...
+>   ```
 >
->- oom配置选项不支持和NPU\_COLLECT\_PATH环境变量同时使用，否则编译出的算子Kernel包在使用过程中会出现报错。
+> - oom配置选项不支持和NPU\_COLLECT\_PATH环境变量同时使用，否则编译出的算子Kernel包在使用过程中会出现报错。
 
 ## 推荐配置及收益
 
@@ -109,16 +109,16 @@ op_compiler --kernel_name=<kernel_name>  --op_debug_config=gm_debug.cfg --soc_ve
 ## 支持的型号
 
 <!-- npu="310p" id1 -->
-- Atlas 推理系列产品，支持该参数
+- Atlas推理系列产品，支持该参数
 <!-- end id1 -->
 <!-- npu="910" id2 -->
-- Atlas 训练系列产品，支持该参数
+- Atlas训练系列产品，支持该参数
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 训练系列产品/Atlas A2 推理系列产品，支持该参数
+- Atlas A2系列产品，支持该参数
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT，不支持该参数
+- Ascend 950PR&950DT系列产品，不支持该参数
 <!-- end id4 -->
 
 ## 使用约束

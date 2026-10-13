@@ -2,7 +2,7 @@
 
 ## 环境准备
 
-1. 安装软件包。请参考《CANN软件安装》完成驱动、固件、CANN软件包的安装。
+1. 安装软件包。请参考《[CANN软件安装](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/softwareinst/instg/instg_0000.html?OS=openEuler&InstallType=netyum)》完成驱动、固件、CANN软件包的安装。
 2. 配置环境变量。
 
     CANN提供进程级环境变量设置脚本，供用户在进程中引用，以自动完成环境变量设置。执行命令参考如下，以下示例均为root或非root用户默认安装路径，请以实际安装路径为准。

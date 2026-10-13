@@ -6,9 +6,9 @@
 
 - **日志落盘**
 
-    日志默认落盘到如下路径：$HOME/ascend/log/**debug**/plog/plog-_pid_\_\*.log
+    日志默认落盘到如下路径：`$HOME/ascend/log/debug/plog/plog-pid_*.log`
 
-    _pid_代表进程ID，“\*”表示该日志文件创建时的时间戳。
+    pid代表进程ID，“\*”表示该日志文件创建时的时间戳。
 
 - **日志打印**
 
@@ -24,7 +24,7 @@
 
 ## 参数取值
 
-**参数值：**
+**参数值**：
 
 - debug：输出debug/info/warning/error/event级别的运行信息。
 - info：输出info/warning/error/event级别的运行信息。
@@ -46,16 +46,16 @@ op_compiler --op_params_dir=<dump_dir>  --soc_version=<soc_version> --log=debug
 ## 支持的型号
 
 <!-- npu="310p" id1 -->
-- Atlas 推理系列产品
+- Atlas推理系列产品
 <!-- end id1 -->
 <!-- npu="910" id2 -->
-- Atlas 训练系列产品
+- Atlas训练系列产品
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 训练系列产品/Atlas A2 推理系列产品
+- Atlas A2系列产品
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT
+- Ascend 950PR&950DT系列产品
 <!-- end id4 -->
 
 ## 依赖约束

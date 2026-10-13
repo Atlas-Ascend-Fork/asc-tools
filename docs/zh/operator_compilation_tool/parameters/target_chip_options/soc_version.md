@@ -12,7 +12,7 @@
 
 算子编译时AI处理器的型号。
 
-如果无法确定当前AI处理器的型号，则在安装NPU驱动包的服务器执行**npu-smi info**命令进行查询，在查询到的“Name”前增加Ascend信息，例如“Name”对应取值为_xxxyy_，实际配置的soc\_version值为Ascend_xxxyy_。
+如果无法确定当前AI处理器的型号，则在安装NPU驱动包的服务器执行**npu-smi info**命令进行查询，在查询到的“Name”前增加Ascend信息，例如“Name”对应取值为xxxyy，实际配置的soc\_version值为Ascendxxxyy。
 
 ## 推荐配置及收益
 
@@ -21,16 +21,16 @@
 ## 支持的型号
 
 <!-- npu="310p" id1 -->
-- Atlas 推理系列产品
+- Atlas推理系列产品
 <!-- end id1 -->
 <!-- npu="910" id2 -->
-- Atlas 训练系列产品
+- Atlas训练系列产品
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 训练系列产品/Atlas A2 推理系列产品
+- Atlas A2系列产品
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT
+- Ascend 950PR&950DT系列产品
 <!-- end id4 -->
 
 ## 依赖约束

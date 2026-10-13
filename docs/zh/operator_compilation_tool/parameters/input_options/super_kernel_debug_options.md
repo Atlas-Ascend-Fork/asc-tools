@@ -27,7 +27,7 @@
 --super_kernel_debug_options="{'debug_sync_all':0}"
 ```
 
-可输入option请参见《TorchAir使用指南》。
+可输入option请参见《[TorchAir使用指南](https://www.hiascend.com/document/detail/zh/Pytorch/latest/devguide/TorchAir/docs/zh/overview.md)》。
 
 ## 推荐配置及收益
 
@@ -42,16 +42,16 @@ op_compiler --op_params_dir=<dump_dir>  --soc_version=<soc_version>  --enable_su
 ## 支持的型号
 
 <!-- npu="310p" id1 -->
-- Atlas 推理系列产品，不支持该参数
+- Atlas推理系列产品，不支持该参数
 <!-- end id1 -->
 <!-- npu="910" id2 -->
-- Atlas 训练系列产品，不支持该参数
+- Atlas训练系列产品，不支持该参数
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 训练系列产品/Atlas A2 推理系列产品，支持该参数
+- Atlas A2系列产品，支持该参数
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT，不支持该参数
+- Ascend 950PR&950DT系列产品，不支持该参数
 <!-- end id4 -->
 
 ## 依赖约束
