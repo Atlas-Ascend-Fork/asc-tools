@@ -4,7 +4,7 @@
 
 和[--op\_params\_dir](op_params_dir.md)二选一必选，设置需要编译的调试版本的算子kernel\_name。简写为-k。
 
-kernel\_name的获取方式如下：算子执行过程中出现报错，根据报错日志可以获取到出错算子的kernel\_name（搜索kernel\_name关键字）。报错日志的获取方式请参考《日志参考》。
+kernel\_name的获取方式如下：算子执行过程中出现报错，根据报错日志可以获取到出错算子的kernel\_name（搜索kernel\_name关键字）。报错日志的获取方式请参考《[日志参考](https://gitcode.com/cann/runtime/blob/9.2.0/docs/zh/log_ref/README.md)》。
 
 ## 关联参数
 
@@ -27,16 +27,16 @@ op_compiler --kernel_name=xxx  --soc_version=<soc_version>
 ## 支持的型号
 
 <!-- npu="310p" id1 -->
-- Atlas 推理系列产品
+- Atlas推理系列产品
 <!-- end id1 -->
 <!-- npu="910" id2 -->
-- Atlas 训练系列产品
+- Atlas训练系列产品
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 训练系列产品/Atlas A2 推理系列产品
+- Atlas A2系列产品
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT
+- Ascend 950PR&950DT系列产品
 <!-- end id4 -->
 
 ## 依赖约束

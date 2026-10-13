@@ -4,7 +4,7 @@
 
 1. 安装静态Kernel包。
 
-    进入static\_kernel\_$\{datetime\}\_$\{pid\}.run包所在目录，以运行用户（如HwHiAiUser）身份运行run包：
+    进入`static_kernel_${datetime}_${pid}.run`包所在目录，以运行用户（如HwHiAiUser）身份运行run包：
 
     ```bash
     ./static_kernel_${datetime}_${pid}.run
@@ -19,12 +19,12 @@
 
     支持默认安装和指定目录安装。
 
-    - 默认安装：run包默认安装到$\{INSTALL\_DIR\}/opp/static\_kernel路径下，其中$\{INSTALL\_DIR\}为CANN软件安装后文件存储路径，请根据实际情况source CANN软件环境变量再执行默认安装
+    - 默认安装：run包默认安装到`${INSTALL_DIR}/opp/static_kernel`路径下，其中`${INSTALL_DIR}`为CANN软件安装后文件存储路径，请根据实际情况source CANN软件环境变量再执行默认安装
 
     - 指定目录安装：支持通过参数--install-path=<path\>自定义安装目标路径。
 
     > [!NOTE]说明
-    >- run包默认安装路径$\{INSTALL\_DIR\}/opp/static\_kernel的默认权限为770（本用户、同组用户访问）。如果权限不足导致静态Kernel包安装失败，可联系CANN软件包的安装用户修改static\_kernel目录权限来解决。
+    >- run包默认安装路径`${INSTALL_DIR}/opp/static_kernel`的默认权限为770（本用户、同组用户访问）。如果权限不足导致静态Kernel包安装失败，可联系CANN软件包的安装用户修改`static_kernel`目录权限来解决。
     >- run包支持静默安装，可通过参数--quiet（简写-q）启用。
 
     run包安装后的目录结构样例如下，
@@ -67,22 +67,22 @@
 2. （可选）当不再需要静态Kernel包时，可以单包卸载或全量卸载。
     - 单包卸载
 
-        进入static\_kernel\_$\{datetime\}\_$\{pid\}.run包的安装目录，以运行用户（如HwHiAiUser）身份运行uninstall.sh。
+        进入`static_kernel_${datetime}_${pid}.run`包的安装目录，以运行用户（如HwHiAiUser）身份运行uninstall.sh。
 
         ```bash
         cd ${install_path}/opp/static_kernel/ai_core/static_kernel_${datetime}_${pid}
         ./uninstall.sh
         ```
 
-        卸载成功，ai\_core目录下static\_kernel\_$\{datetime\}\_$\{pid\}文件夹将会被删除。
+        卸载成功，`ai_core`目录下`static_kernel_${datetime}_${pid}`文件夹将会被删除。
 
     - 全量卸载
 
-        进入$\{install\_path\}/opp/static\_kernel/ai\_core目录下，以运行用户（如HwHiAiUser）身份运行uninstall.sh。
+        进入`${install_path}/opp/static_kernel/ai_core`目录下，以运行用户（如HwHiAiUser）身份运行uninstall.sh。
 
         ```bash
         cd ${install_path}/opp/static_kernel/ai_core/
         ./uninstall.sh
         ```
 
-        卸载成功，ai\_core目录下除config/static\_kernel.lock文件外，其他所有内容将会被删除，所有已安装的Kernel包均被卸载。
+        卸载成功，`ai_core`目录下除`config/static_kernel.lock`文件外，其他所有内容将会被删除，所有已安装的Kernel包均被卸载。

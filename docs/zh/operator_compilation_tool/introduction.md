@@ -2,11 +2,11 @@
 
 算子编译工具（op\_compiler）是昇腾CANN提供的编译算子生成算子二进制文件的命令行工具。该工具的具体功能和使用约束如下：
 
-**具体功能：**
+**具体功能**：
 
 - **静态shape编译功能**：通过单算子API执行的方式调用算子，算子shape固定时，可以使用该工具编译静态Kernel包并安装，提升算子调用的性能。
 
-    本文档仅介绍算子编译工具的使用方法，具体的场景样例请参见《[算子库](https://gitcode.com/cann/docs/blob/master/docs/zh/ops-lib/0_README.md)》中的[使用静态Kernel提升算子执行性能](https://gitcode.com/cann/docs/blob/master/docs/zh/ops-lib/appendix/performance_improve_by_staticKernel.md)章节。
+    本文档仅介绍算子编译工具的使用方法，具体的场景样例请参见《[算子库](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/920/API/aolapi/docs/zh/ops-lib/introduction.md)》中的[使用静态Kernel提升算子执行性能](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/920/API/aolapi/docs/zh/ops-lib/appendix/performance_improve_by_staticKernel.md)章节。
 
 - **调试版本编译功能**。定位算子问题时，可以使用该工具编译调试版本的二进制，用于问题复现和定位。
 
@@ -17,16 +17,16 @@
     支持的产品型号：
 
     <!-- npu="310p" id1 -->
-    - Atlas 推理系列产品
+    - Atlas推理系列产品
     <!-- end id1 -->
     <!-- npu="910" id2 -->
-    - Atlas 训练系列产品
+    - Atlas训练系列产品
     <!-- end id2 -->
     <!-- npu="910b" id3 -->
-    - Atlas A2 训练系列产品/Atlas A2 推理系列产品
+    - Atlas A2系列产品
     <!-- end id3 -->
     <!-- npu="950" id4 -->
-    - Ascend 950PR/Ascend 950DT
+    - Ascend 950PR&950DT系列产品
     <!-- end id4 -->
 
 - **调试版本编译**
@@ -34,16 +34,16 @@
     支持的产品型号：
 
     <!-- npu="310p" id5 -->
-    - Atlas 推理系列产品，支持
+    - Atlas推理系列产品，支持
     <!-- end id5 -->
     <!-- npu="910" id6 -->
-    - Atlas 训练系列产品，支持
+    - Atlas训练系列产品，支持
     <!-- end id6 -->
     <!-- npu="910b" id7 -->
-    - Atlas A2 训练系列产品/Atlas A2 推理系列产品，支持
+    - Atlas A2系列产品，支持
     <!-- end id7 -->
     <!-- npu="950" id8 -->
-    - Ascend 950PR/Ascend 950DT，不支持
+    - Ascend 950PR&950DT系列产品，不支持
     <!-- end id8 -->
 
 ## 工具功能架构
