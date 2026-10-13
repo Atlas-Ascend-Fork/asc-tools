@@ -58,15 +58,10 @@
     <file_info value="npu_tools_bin" copy_type="delivery" src_path="" dst_path="tools/npu_tools/bin" install_path="tools/npu_tools/bin" install_mod="550">
         <file value="npu-check"/>
         <file value="npu-compute"/>
-        <file value="npu-emulate"/>
     </file_info>
     <file_info value="npu_tools_entry" copy_type="delivery" src_path="" dst_path="$(TARGET_ENV)/bin" install_path="$(TARGET_ENV)/bin" install_mod="550">
         <file value="npu-check"/>
         <file value="npu-compute"/>
-        <file value="npu-emulate"/>
-    </file_info>
-    <file_info value="npu_emulate_whl" copy_type="delivery" src_path="" dst_path="tools/" install_path="tools/" install_mod="440">
-        <file value="npu_emulate-0.1.0-py3-none-any.whl" file_type="whl"/>
     </file_info>
 
     <block_info dependtree="false" dst_path="" install_path="" block_conf_path="ascend" install_mod="550">

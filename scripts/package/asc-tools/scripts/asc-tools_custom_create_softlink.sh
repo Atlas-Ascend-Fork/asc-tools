@@ -62,8 +62,6 @@ createPythonSoftLink()
     createSoftLink "$_src_dir" "$_dst_dir" "show_kernel_debug_data-0.1.0.dist-info"
     createSoftLink "$_src_dir" "$_dst_dir" "optype_collector"
     createSoftLink "$_src_dir" "$_dst_dir" "optype_collector-0.1.0.dist-info"
-    createSoftLink "$_src_dir" "$_dst_dir" "npu_emulate"
-    createSoftLink "$_src_dir" "$_dst_dir" "npu_emulate-0.1.0.dist-info"
 }
 
 get_arch_name() {

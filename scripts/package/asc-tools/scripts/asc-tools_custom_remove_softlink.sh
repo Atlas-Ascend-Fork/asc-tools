@@ -43,8 +43,6 @@ removePythonSoftLink()
     removeSoftLink "$_dst_dir" "show_kernel_debug_data-0.1.0.dist-info"
     removeSoftLink "$_dst_dir" "optype_collector"
     removeSoftLink "$_dst_dir" "optype_collector-0.1.0.dist-info"
-    removeSoftLink "$_dst_dir" "npu_emulate"
-    removeSoftLink "$_dst_dir" "npu_emulate-0.1.0.dist-info"
 
     isDirEmpty "$_dst_dir"
     if [ $? -eq 0 ]; then

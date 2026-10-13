@@ -170,9 +170,6 @@ uninstallOpPython() {
 
     whlUninstallPackage optype_collector ${install_path}/python/site-packages
     [ $? -ne 0 ] && return 1
-
-    whlUninstallPackage npu_emulate ${install_path}/python/site-packages
-    [ $? -ne 0 ] && return 1
     return 0
 }
 
@@ -208,20 +205,15 @@ uninstallAllPython() {
     whlUninstallPackage optype_collector ${install_path}/python/site-packages
     [ $? -ne 0 ] && return 1
 
-    whlUninstallPackage npu_emulate ${install_path}/python/site-packages
-    [ $? -ne 0 ] && return 1
-
     remove_package_leftovers ${install_path}/python/site-packages/msobjdump
     remove_package_leftovers ${install_path}/python/site-packages/msopgen
     remove_package_leftovers ${install_path}/python/site-packages/msopst
     remove_package_leftovers ${install_path}/python/site-packages/show_kernel_debug_data
     remove_package_leftovers ${install_path}/python/site-packages/optype_collector
-    remove_package_leftovers ${install_path}/python/site-packages/npu_emulate
 
     # remove .dist-info directories
     for dist_info in "${install_path}/python/site-packages"/mindstudio_opst-*.dist-info \
-                     "${install_path}/python/site-packages"/mindstudio_opgen-*.dist-info \
-                     "${install_path}/python/site-packages"/npu_emulate-*.dist-info; do
+                     "${install_path}/python/site-packages"/mindstudio_opgen-*.dist-info; do
         if [ -d "${dist_info}" ]; then
             rm -rf "${dist_info}"
             log ${LEVEL_INFO} "Remove ${dist_info} succeed."
