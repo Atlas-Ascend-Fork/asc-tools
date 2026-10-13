@@ -32,6 +32,8 @@
 #include "ascend950pr_9599_ini.h"
 #elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 5102)
 #include "mc62cm12aa_ini.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "ascend960DT_968B7_ini.h"
 #endif
 
 namespace AscendC {

@@ -14,6 +14,7 @@
         <path value="tools/cpudebug/lib64/Ascend950PR_9599" chip="Ascend950"/>
         <path value="tools/cpudebug/lib64/KirinX90" chip="KirinX90"/>
         <path value="tools/cpudebug/lib64/Kirin9030" chip="Kirin9030"/>
+        <path value="tools/cpudebug/lib64/Ascend960DT_968B7" chip="Ascend960DT_968B7"/>
     </dir_info>
     <!-- tikcpp simulator -->
     <file_info value="tikcpp_simulator_ascend910" chip="Ascend910" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64/Ascend910A" install_path="tools/cpudebug/lib64/Ascend910A">
@@ -36,6 +37,9 @@
     </file_info>
     <file_info value="tikcpp_simulator_kirin9030" chip="Kirin9030" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64/Kirin9030" install_path="tools/cpudebug/lib64/Kirin9030">
         <file value="kirin9030/libcpudebug.so" file_type="shared" install_mod="555" install_softlink="tools/cpudebug/lib64/Kirin9030/libtikcpp_debug.so" optional="true"/>
+    </file_info>
+    <file_info value="tikcpp_simulator_ascend960DT_968B7" chip="Ascend960DT_968B7" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64/Ascend960DT_968B7" install_path="tools/cpudebug/lib64/Ascend960DT_968B7">
+        <file value="ascend960DT_968B7/libcpudebug.so" file_type="shared" install_mod="555" install_softlink="tools/cpudebug/lib64/Ascend960DT_968B7/libtikcpp_debug.so" optional="true"/>
     </file_info>
     <!-- tikcpp simulator libs -->
     <file_info value="tikcpp_simulator_libs" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64" install_path="tools/cpudebug/lib64/">
