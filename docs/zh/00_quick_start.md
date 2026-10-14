@@ -220,17 +220,20 @@ source /usr/local/Ascend/cann/set_env.sh
 
   | 开源软件 | 版本 | 下载地址 |
   |---|---|---|
-  | makeself | 2.5.0 | [makeself-2.5.0.tar.gz](https://gitcode.com/cann-src-third-party/makeself/releases/download/release-2.5.0-patch1.0/makeself-release-2.5.0-patch1.tar.gz) |
+  | makeself | 2.5.0 | [makeself-release-2.5.0.tar.gz](https://cann-3rd.obs.cn-north-4.myhuaweicloud.com/makeself/makeself-release-2.5.0.tar.gz) |
+  | makeself_patch | 2.5.0 | [patch/makeself-2.5.0.patch](https://cann-3rd.obs.cn-north-4.myhuaweicloud.com/makeself/fix/makeself-2.5.0.patch) |
   | boost | 1.87.0 | [boost-1_87_0.tar.gz](https://gitcode.com/cann-src-third-party/boost/releases/download/v1.87.0/boost_1_87_0.tar.gz) |
   | googletest | 1.14.0 | [googletest-1.14.0.tar.gz](https://gitcode.com/cann-src-third-party/googletest/releases/download/v1.14.0/googletest-1.14.0.tar.gz) |
   | mockcpp | 2.7 | [mockcpp-2.7.tar.gz](https://gitcode.com/cann-src-third-party/mockcpp/releases/download/v2.7-h2/mockcpp-2.7.tar.gz) |
   | mockcpp_patch | 2.7 | [mockcpp-2.7.patch](https://gitcode.com/cann-src-third-party/mockcpp/releases/download/v2.7-h3/mockcpp-2.7_py3-h3.patch) |
-  | cann-cmake | master-003 | [cmake-master-003.tar.gz](https://cann-3rd.obs.cn-north-4.myhuaweicloud.com/cmake/cmake-master-003.tar.gz) |
+  | cann-cmake | master-059 | [cmake-master-059.tar.gz](https://raw.gitcode.com/cann/cmake/archive/refs/heads/master-059.tar.gz) |
 
-  其中，对于依赖的开源第三方软件，提供一键式下载脚本`install_dep_tar.py`，用户可以通过执行如下命令，下载所有开源第三方软件依赖。
+  其中，对于依赖的开源第三方软件，提供一键式下载脚本`install_dep_tar.sh`，用户可以通过执行如下命令，下载所有开源第三方软件依赖。
   ```bash
-  python3 install_dep_tar.py --dest_dir=${your_3rd_party_path} # 其中，${your_3rd_party_path}为下载开源第三方软件的存放路径
+  bash install_dep_tar.sh --dest_dir=${your_3rd_party_path} # 其中，${your_3rd_party_path}为下载开源第三方软件的存放路径
   ```
+
+  默认下载到当前目录的 `third_party`，补丁保存在下载目录的 `patch` 子目录。下载文件均进行 SHA256 校验，有效缓存会跳过，下载或校验失败时返回非零退出码。编译时请将 `--cann_3rd_lib_path` 设置为同一目录。
 
 ## 安装依赖
 
