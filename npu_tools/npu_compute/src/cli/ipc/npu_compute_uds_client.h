@@ -19,11 +19,13 @@ public:
         const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled);
     size_t ArtifactCount() const { return artifact_count_; }
     bool Complete() const { return complete_; }
+    const std::vector<std::string>& Issues() const { return issues_; }
     bool InterruptAttempted() const { return interrupt_attempted_; }
 
 private:
     size_t artifact_count_ = 0;
     bool complete_ = false;
+    std::vector<std::string> issues_;
     std::atomic<bool> interrupt_attempted_{false};
 };
 } // namespace npucompute::cli

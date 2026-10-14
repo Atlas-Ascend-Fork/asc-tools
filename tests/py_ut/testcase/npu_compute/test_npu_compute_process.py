@@ -28,10 +28,11 @@ NESTED_COLLECTION_ERROR = "nested npu-compute collection is not supported"
 NESTED_COLLECTION_DETECTION_ERROR = "nested collection detection failed"
 COLLECTION_ACTIVE_ENVIRONMENT = "NPU_COMPUTE_COLLECTION_ACTIVE"
 NESTED_COLLECTION_MARKER = ".npu-compute-nested-collection"
-HARDWARE_INFO_STATEMENT = (
-    "pathlib.Path(os.environ['NPU_COMPUTE_OUTPUT'], 'HardwareInfo.jsonl')"
-    ".write_text('{}\\n' * 5, encoding='utf-8'); "
-)
+FIXTURE = BIN_DIR / "npu_compute_rep_fixture_app"
+
+
+def collecting_program(*arguments):
+    return [str(FIXTURE), "--mode", "exec", "--", *arguments]
 
 
 def run_tool(*arguments, cwd=None, env=None):
@@ -46,7 +47,9 @@ def run_tool(*arguments, cwd=None, env=None):
     )
 
 
-def run_cli(*program_and_arguments, cwd=None, env=None):
+def run_cli(*program_and_arguments, cwd=None, env=None, collect=False):
+    if collect:
+        program_and_arguments = collecting_program(*program_and_arguments)
     return run_tool(*BASE_COMMAND[1:], *program_and_arguments, cwd=cwd, env=env)
 
 
@@ -63,17 +66,17 @@ def wait_for_file(path, process, timeout=5.0):
 
 def process_identity_program(identity_path, sleep_seconds):
     code = (
-        "import os, pathlib, sys, time; "
-        + HARDWARE_INFO_STATEMENT
-        + "pathlib.Path(sys.argv[1]).write_text("
+        "import os, pathlib, sys, time; " + "pathlib.Path(sys.argv[1]).write_text("
         "f'{os.getpid()} {os.getppid()}', encoding='utf-8'); "
         "time.sleep(float(sys.argv[2]))"
     )
-    return [sys.executable, "-c", code, str(identity_path), str(sleep_seconds)]
+    return collecting_program(
+        sys.executable, "-c", code, str(identity_path), str(sleep_seconds)
+    )
 
 
 def nested_collection_command():
-    code = "import os, pathlib; " + HARDWARE_INFO_STATEMENT
+    code = "pass"
     return [str(CLI), "--section", "Memory", sys.executable, "-c", code]
 
 
@@ -125,7 +128,7 @@ def test_app_exit_status_is_preserved():
     result = run_cli("/bin/sh", "-c", "exit 7")
 
     assert result.returncode == 7
-    assert "exited with code 7" in result.stderr
+    assert "exited with status 7" in result.stderr
 
 
 def test_program_not_found_returns_127():
@@ -160,50 +163,46 @@ def test_directory_keeps_permission_denied_error(tmp_path):
 
 
 def test_child_environment_is_overridden_without_changing_parent(monkeypatch):
-    monkeypatch.setenv("NPU_COMPUTE_SECTIONS", "parent-value")
     monkeypatch.setenv("NPU_COMPUTE_REPLAY_MODE", "parent-value")
     code = (
-        "import json, os, pathlib; " + HARDWARE_INFO_STATEMENT + "print(json.dumps({"
-        "'sections': os.environ['NPU_COMPUTE_SECTIONS'], "
-        "'replay': os.environ['NPU_COMPUTE_REPLAY_MODE'], "
+        "import json, os; print(json.dumps({"
+        "'replay': os.environ.get('NPU_COMPUTE_REPLAY_MODE'), "
         "'injection': os.environ['ACL_API_INJECTION']}))"
     )
-
-    result = run_cli(sys.executable, "-c", code, env=os.environ.copy())
-
-    assert result.returncode == 0
+    result = run_cli(sys.executable, "-c", code, env=os.environ.copy(), collect=True)
+    assert result.returncode == 0, result.stderr
     child_environment = json.loads(result.stdout)
-    assert child_environment["sections"] == "Memory"
-    assert child_environment["replay"] == "kernel"
+    assert child_environment["replay"] is None
     assert Path(child_environment["injection"]).is_absolute()
-    assert os.environ["NPU_COMPUTE_SECTIONS"] == "parent-value"
     assert os.environ["NPU_COMPUTE_REPLAY_MODE"] == "parent-value"
 
 
 def test_program_is_found_through_path(tmp_path):
     program = tmp_path / "npu-compute-path-probe"
     program.write_text(
-        "#!/bin/sh\nprintf '{}\\n{}\\n{}\\n{}\\n{}\\n' > \"$NPU_COMPUTE_OUTPUT/HardwareInfo.jsonl\"\n",
+        "#!/bin/sh\nexit 0\n",
         encoding="utf-8",
     )
     program.chmod(0o755)
     environment = os.environ.copy()
     environment["PATH"] = os.pathsep.join((str(tmp_path), environment.get("PATH", "")))
 
-    result = run_cli(program.name, env=environment)
+    result = run_cli(program.name, env=environment, collect=True)
 
     assert result.returncode == 0
 
 
 def test_direct_nested_collection_is_rejected(tmp_path):
-    result = run_cli(*nested_collection_command(), cwd=tmp_path)
+    result = run_cli(*nested_collection_command(), cwd=tmp_path, collect=True)
 
     assert_nested_collection_rejected(result, tmp_path)
 
 
 @pytest.mark.parametrize("swallow_failure", (False, True))
 def test_nested_collection_started_by_script_is_rejected(swallow_failure, tmp_path):
-    result = run_cli(*nested_collection_script(tmp_path, swallow_failure), cwd=tmp_path)
+    result = run_cli(
+        *nested_collection_script(tmp_path, swallow_failure), cwd=tmp_path, collect=True
+    )
 
     assert_nested_collection_rejected(result, tmp_path)
 
@@ -213,12 +212,12 @@ def test_nested_collection_removes_nonempty_data_directory(tmp_path):
     script.write_text(
         "import os, pathlib, subprocess\n"
         f"subprocess.run({json.dumps(nested_collection_command())}, check=False)\n"
-        "pathlib.Path(os.environ['NPU_COMPUTE_OUTPUT'], 'partial.csv').write_text("
+        "pathlib.Path(pathlib.Path(os.environ['NPU_COMPUTE_NESTED_MARKER_PATH']).parent, 'partial.csv').write_text("
         "'name,value\\npartial,1\\n', encoding='utf-8')\n",
         encoding="utf-8",
     )
 
-    result = run_cli(sys.executable, str(script), cwd=tmp_path)
+    result = run_cli(sys.executable, str(script), cwd=tmp_path, collect=True)
 
     assert result.returncode == 3
     assert NESTED_COLLECTION_ERROR in result.stderr
@@ -230,7 +229,6 @@ def test_nested_collection_removes_nonempty_data_directory(tmp_path):
 def test_non_collection_commands_ignore_active_collection_marker(arguments, tmp_path):
     environment = os.environ.copy()
     environment[COLLECTION_ACTIVE_ENVIRONMENT] = "1"
-    environment["NPU_COMPUTE_OUTPUT"] = str(tmp_path)
 
     result = run_tool(*arguments, cwd=tmp_path, env=environment)
 
@@ -242,7 +240,7 @@ def test_nested_marker_creation_failure_prevents_app_launch(tmp_path):
     app_marker = tmp_path / "app-ran"
     environment = os.environ.copy()
     environment[COLLECTION_ACTIVE_ENVIRONMENT] = "1"
-    environment["NPU_COMPUTE_OUTPUT"] = str(tmp_path / "missing")
+    environment["NPU_COMPUTE_NESTED_MARKER_PATH"] = str(tmp_path / "missing/marker")
 
     result = run_cli("/usr/bin/touch", str(app_marker), cwd=tmp_path, env=environment)
 
@@ -255,11 +253,10 @@ def test_nested_marker_creation_failure_prevents_app_launch(tmp_path):
 def test_nested_marker_removal_failure_prevents_report_packaging(tmp_path):
     code = (
         "import os, pathlib; "
-        + HARDWARE_INFO_STATEMENT
-        + f"pathlib.Path(os.environ['NPU_COMPUTE_OUTPUT'], '{NESTED_COLLECTION_MARKER}').mkdir()"
+        + "pathlib.Path(os.environ['NPU_COMPUTE_NESTED_MARKER_PATH']).mkdir()"
     )
 
-    result = run_cli(sys.executable, "-c", code, cwd=tmp_path)
+    result = run_cli(sys.executable, "-c", code, cwd=tmp_path, collect=True)
 
     assert result.returncode == 5
     assert NESTED_COLLECTION_DETECTION_ERROR in result.stderr
@@ -283,7 +280,7 @@ def test_sigterm_is_forwarded_and_child_is_reaped(tmp_path):
         stdout, stderr = process.communicate(timeout=5)
         assert stdout == ""
         assert process.returncode == 128 + signal.SIGTERM
-        assert "terminated by signal 15" in stderr
+        assert "signal 15" in stderr
         with pytest.raises(ProcessLookupError):
             os.kill(app_pid, 0)
     finally:

@@ -318,7 +318,7 @@ int TestMissingHardwareInfoRemovesEmptyDataAndDoesNotPublishReport()
     return 0;
 }
 
-int TestMissingHardwareInfoRemovesDataAndDoesNotPublishReport()
+int TestMissingHardwareInfoPublishesPartialReport()
 {
     TestDirectory workDirectory;
     CHECK(!workDirectory.Path().empty());
@@ -330,14 +330,14 @@ int TestMissingHardwareInfoRemovesDataAndDoesNotPublishReport()
     std::string error;
 
     CHECK(LaunchTarget(config, &report, &error) == 3);
-    CHECK(report.empty());
+    CHECK(report == output.string());
     CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(!boost::filesystem::exists(output));
-    CHECK(error.find("required artifact missing") != std::string::npos);
+    CHECK(boost::filesystem::is_regular_file(output));
+    CHECK(error.find("collection incomplete") != std::string::npos);
     return 0;
 }
 
-int TestIncompleteResultRemovesDataAndDoesNotPublishReport()
+int TestIncompleteResultPublishesPartialReport()
 {
     TestDirectory workDirectory;
     CHECK(!workDirectory.Path().empty());
@@ -349,10 +349,10 @@ int TestIncompleteResultRemovesDataAndDoesNotPublishReport()
     std::string error;
 
     CHECK(LaunchTarget(config, &report, &error) == 3);
-    CHECK(report.empty());
+    CHECK(report == output.string());
     CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(!boost::filesystem::exists(output));
-    CHECK(error.find("incomplete result") != std::string::npos);
+    CHECK(boost::filesystem::is_regular_file(output));
+    CHECK(error.find("collection incomplete") != std::string::npos);
     return 0;
 }
 
@@ -386,8 +386,7 @@ int main()
         TestInvalidTmpdirDoesNotAffectCollection() != 0 || TestInvalidExportIsRejectedBeforeAppLaunch() != 0 ||
         TestFailedAppRemovesEmptyDataAndDoesNotPublishReport() != 0 ||
         TestMissingHardwareInfoRemovesEmptyDataAndDoesNotPublishReport() != 0 ||
-        TestMissingHardwareInfoRemovesDataAndDoesNotPublishReport() != 0 ||
-        TestIncompleteResultRemovesDataAndDoesNotPublishReport() != 0 ||
+        TestMissingHardwareInfoPublishesPartialReport() != 0 || TestIncompleteResultPublishesPartialReport() != 0 ||
         TestPublishingFailureRemovesCollectionDataDirectory() != 0) {
         return 1;
     }

@@ -134,10 +134,10 @@ def test_cli_profapi_callback_collector_and_jsonl_end_to_end(tmp_path):
         check=False,
     )
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 3, result.stderr
     assert "[demo] completed" in result.stderr
     assert result.stderr.count("[acl_pti_callback_stub] subscribe") == 1
-    hardware_info_trigger_cbids = (13, 0, 16, 17, 18, 3, 15, 14)
+    hardware_info_trigger_cbids = (13, 0, 16, 17, 18, 3, 15, 14, 12)
     assert result.stderr.count("[acl_pti_callback_stub] enable=1") == len(
         hardware_info_trigger_cbids
     )

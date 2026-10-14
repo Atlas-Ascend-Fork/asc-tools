@@ -162,7 +162,8 @@ int CollectionSession::Run(
         *error = appError;
         return appResult;
     }
-    outcome_.outcome = "success";
+    outcome_.issues = client.Issues();
+    outcome_.outcome = client.Complete() ? "success" : "collection_failed";
     return 0;
 }
 } // namespace npucompute::cli

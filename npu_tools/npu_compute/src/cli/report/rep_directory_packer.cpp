@@ -13,12 +13,15 @@
 #include "report/rep_encoder.h"
 
 #include <boost/filesystem.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <boost/system/error_code.hpp>
 
 #include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <new>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -78,7 +81,8 @@ bool ReadFile(const boost::filesystem::path& path, std::vector<uint8_t>* payload
 }
 
 bool CollectDirectoryItems(
-    const boost::filesystem::path& directory, std::vector<DirectoryItem>* items, std::string* error)
+    const boost::filesystem::path& directory, std::vector<DirectoryItem>* items, std::string* error,
+    std::vector<std::string>& issues)
 {
     boost::system::error_code iterator_error;
     boost::filesystem::directory_iterator iterator(directory, iterator_error);
@@ -89,28 +93,36 @@ bool CollectDirectoryItems(
 
     for (; iterator != end; iterator.increment(iterator_error)) {
         if (iterator_error) {
-            return Fail(
-                "iterate collection directory failed: " + directory.string() + ": " + iterator_error.message(), error);
+            break;
         }
         const boost::filesystem::path path = iterator->path();
         const std::string name = path.filename().string();
         boost::system::error_code status_error;
         const boost::filesystem::file_status status = boost::filesystem::symlink_status(path, status_error);
         if (status_error) {
-            return Fail(
-                "inspect collection directory item failed: " + path.string() + ": " + status_error.message(), error);
+            issues.push_back("inspect collection item failed: " + path.string() + ": " + status_error.message());
+            continue;
         }
         if (boost::filesystem::is_symlink(status)) {
-            return Fail("symbolic link is not allowed in collection directory: " + path.string(), error);
+            issues.push_back("symbolic link is not allowed in collection directory: " + path.string());
+            continue;
         }
         if (name == kHardwareInfoLockName) {
             if (!boost::filesystem::is_regular_file(status)) {
-                return Fail("HardwareInfo lock path is not a regular file: " + path.string(), error);
+                issues.push_back("HardwareInfo lock path is not a regular file: " + path.string());
             }
             continue;
         }
+        if (name == ".biu-staging") {
+            continue;
+        }
+        if (name == "HardwareInfo.jsonl" && !boost::filesystem::is_regular_file(status)) {
+            issues.push_back("HardwareInfo path is not a regular file: " + path.string());
+            continue;
+        }
         if (IsTemporaryName(name)) {
-            return Fail("temporary collection item remains: " + path.string(), error);
+            issues.push_back("temporary collection item remains: " + path.string());
+            continue;
         }
 
         DirectoryItem item;
@@ -121,31 +133,51 @@ bool CollectDirectoryItems(
         } else if (boost::filesystem::is_regular_file(status)) {
             item.stored_name = name;
         } else {
-            return Fail("unsupported collection directory item: " + path.string(), error);
+            issues.push_back("unsupported collection directory item: " + path.string());
+            continue;
+        }
+        if (item.stored_name.size() >= kNpuRepFileNameSize || item.stored_name.find('\\') != std::string::npos ||
+            name == "collection-status.json") {
+            issues.push_back("invalid or reserved collection name: " + path.string());
+            continue;
         }
         items->push_back(std::move(item));
     }
     if (iterator_error) {
-        return Fail(
-            "iterate collection directory failed: " + directory.string() + ": " + iterator_error.message(), error);
+        issues.push_back(
+            "iterate collection directory failed: " + directory.string() + ": " + iterator_error.message());
     }
 
     std::unordered_set<std::string> stored_names;
     stored_names.reserve(items->size());
+    std::unordered_set<std::string> conflicts;
     for (const DirectoryItem& item : *items) {
         if (!stored_names.insert(item.stored_name).second) {
-            return Fail("collection stored name conflict: " + item.stored_name, error);
+            conflicts.insert(item.stored_name);
+            issues.push_back("collection stored name conflict: " + item.stored_name);
         }
     }
+    items->erase(
+        std::remove_if(
+            items->begin(), items->end(),
+            [&](const DirectoryItem& item) { return conflicts.count(item.stored_name) != 0; }),
+        items->end());
     std::sort(items->begin(), items->end(), StoredNameLess);
     return true;
 }
 
-bool PackDirectoryInternal(const boost::filesystem::path& directory, std::vector<uint8_t>* encoded, std::string* error)
+bool PackDirectoryInternal(
+    const boost::filesystem::path& directory, std::vector<uint8_t>* encoded, std::string* error,
+    std::vector<std::string>& issues, std::size_t& fileCount, bool root, bool includeStatus)
 {
     std::vector<DirectoryItem> items;
-    if (!CollectDirectoryItems(directory, &items, error)) {
-        return false;
+    std::string itemError;
+    if (!CollectDirectoryItems(directory, &items, &itemError, issues)) {
+        if (root) {
+            return Fail(itemError, error);
+        }
+        issues.push_back(itemError);
+        return true;
     }
 
     std::vector<RepEntry> entries;
@@ -155,17 +187,43 @@ bool PackDirectoryInternal(const boost::filesystem::path& directory, std::vector
         entry.file_name = item.stored_name;
         if (item.is_directory) {
             entry.file_type = NpuRepFileType::NpuRep;
-            if (!PackDirectoryInternal(item.path, &entry.payload, error)) {
+            if (!PackDirectoryInternal(item.path, &entry.payload, error, issues, fileCount, false, false)) {
                 return false;
+            }
+            if (entry.payload.empty()) {
+                continue;
             }
         } else {
-            if (!ResolveCollectionFileType(item.path, &entry.file_type, error) ||
-                !ValidateCollectionFile(item.path, entry.file_type, error) ||
-                !ReadFile(item.path, &entry.payload, error)) {
-                return false;
+            if (!ResolveCollectionFileType(item.path, &entry.file_type, &itemError) ||
+                !ValidateCollectionFile(item.path, entry.file_type, &itemError) ||
+                !ReadFile(item.path, &entry.payload, &itemError)) {
+                issues.push_back(itemError);
+                continue;
             }
+            ++fileCount;
         }
         entries.push_back(std::move(entry));
+    }
+    if (root && fileCount == 0) {
+        Fail("no valid collection files" + (issues.empty() ? std::string() : ": " + issues.front()), error);
+        return true;
+    }
+    if (root && includeStatus && !issues.empty()) {
+        boost::property_tree::ptree status;
+        boost::property_tree::ptree messages;
+        for (const auto& issue : issues) {
+            boost::property_tree::ptree message;
+            message.put_value(issue);
+            messages.push_back({"", message});
+        }
+        status.add_child("issues", messages);
+        std::ostringstream json;
+        boost::property_tree::write_json(json, status, false);
+        const std::string bytes = "{\"complete\":false," + json.str().substr(1);
+        entries.push_back({"collection-status.json", NpuRepFileType::Json, {bytes.begin(), bytes.end()}});
+        std::sort(entries.begin(), entries.end(), [](const RepEntry& left, const RepEntry& right) {
+            return left.file_name < right.file_name;
+        });
     }
 
     std::vector<uint8_t> complete_rep;
@@ -178,7 +236,9 @@ bool PackDirectoryInternal(const boost::filesystem::path& directory, std::vector
 
 } // namespace
 
-bool PackDirectoryToRep(const boost::filesystem::path& directory, std::vector<uint8_t>* encoded, std::string* error)
+bool PackDirectoryToRep(
+    const boost::filesystem::path& directory, std::vector<uint8_t>* encoded, std::string* error,
+    std::vector<std::string>* issues)
 {
     if (error != nullptr) {
         error->clear();
@@ -198,7 +258,10 @@ bool PackDirectoryToRep(const boost::filesystem::path& directory, std::vector<ui
         if (!boost::filesystem::is_directory(status)) {
             return Fail("collection path is not a directory: " + directory.string(), error);
         }
-        return PackDirectoryInternal(directory, encoded, error);
+        std::vector<std::string> localIssues;
+        std::size_t fileCount = 0;
+        return PackDirectoryInternal(
+            directory, encoded, error, issues ? *issues : localIssues, fileCount, true, issues != nullptr);
     } catch (const std::bad_alloc&) {
         encoded->clear();
         return Fail("allocate recursive rep buffer failed", error);

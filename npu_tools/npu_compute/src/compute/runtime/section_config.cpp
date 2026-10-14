@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 #include <utility>
 
 namespace npucompute {
@@ -36,61 +35,6 @@ bool IsSupportedSection(const std::string& section)
 }
 
 } // namespace
-
-bool SectionConfig::LoadFromEnvironment(const char* name, std::string* error)
-{
-    Reset();
-    if (name == nullptr || name[0] == '\0') {
-        return Fail("environment variable name is empty", error);
-    }
-
-    const char* value = std::getenv(name);
-    if (value == nullptr) {
-        return Fail(std::string(name) + " is not set", error);
-    }
-    const std::string encoded(value);
-    if (encoded.empty()) {
-        return Fail(std::string(name) + " is empty", error);
-    }
-
-    std::vector<std::string> parsed_sections;
-    std::size_t start = 0;
-    while (start <= encoded.size()) {
-        const std::size_t separator = encoded.find(',', start);
-        const std::size_t length = separator == std::string::npos ? encoded.size() - start : separator - start;
-        const std::string section = encoded.substr(start, length);
-        if (section.empty()) {
-            return Fail("section list contains an empty value", error);
-        }
-        if (!IsSupportedSection(section)) {
-            return Fail("unknown section: " + section, error);
-        }
-        if (std::find(parsed_sections.begin(), parsed_sections.end(), section) == parsed_sections.end()) {
-            parsed_sections.push_back(section);
-        }
-        if (separator == std::string::npos) {
-            break;
-        }
-        start = separator + 1;
-    }
-
-    if (!Load(parsed_sections, error)) {
-        return false;
-    }
-    const char* pipeline = std::getenv("NPU_COMPUTE_PIPELINE");
-    if (pipeline == nullptr || pipeline[0] == '\0') {
-        return true;
-    }
-    if (std::string(pipeline) == "0") {
-        params_.collectPipeline = false;
-    } else if (std::string(pipeline) == "1") {
-        params_.collectPipeline = true;
-    } else {
-        Reset();
-        return Fail("NPU_COMPUTE_PIPELINE must be 0 or 1", error);
-    }
-    return true;
-}
 
 bool SectionConfig::Load(const std::vector<std::string>& parsed_sections, std::string* error)
 {

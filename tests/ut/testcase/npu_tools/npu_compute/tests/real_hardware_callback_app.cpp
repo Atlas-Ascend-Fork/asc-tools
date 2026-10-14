@@ -98,8 +98,7 @@ bool PrepareEnvironment(const boost::filesystem::path& outputDirectory)
         std::perror("[real_hardware_callback_app] output directory is not writable");
         return false;
     }
-    return ::setenv("NPU_COMPUTE_OUTPUT", outputDirectory.c_str(), 1) == 0 &&
-           ::setenv("NPU_COMPUTE_SECTIONS", kSections, 1) == 0;
+    return true;
 }
 
 bool EmitSuccessfulExit(aclptiCallbackId cbid)
@@ -202,6 +201,12 @@ int main(int argc, char** argv)
             symbolError == nullptr ? "acltoolInitialize is null" : symbolError);
         return 7;
     }
+    using ConfigureFunction = void (*)(const char*, const char*);
+    const auto configure = ToFunction<ConfigureFunction>(::dlsym(injectionHandle, "NpuComputeTestConfigure"));
+    if (configure == nullptr) {
+        return 7;
+    }
+    configure(outputDirectory.c_str(), kSections);
     const int initializeResult = initialize();
     if (initializeResult != ACLPTI_SUCCESS) {
         std::fprintf(stderr, "[real_hardware_callback_app] acltoolInitialize failed: %d\n", initializeResult);

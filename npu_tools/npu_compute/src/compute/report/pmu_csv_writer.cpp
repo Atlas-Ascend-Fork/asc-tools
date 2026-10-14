@@ -203,57 +203,6 @@ boost::filesystem::path ResolveCsvWriteDirectory(const boost::filesystem::path& 
     return CreateUniqueCollectionDirectory(outputDirectory);
 }
 
-void MirrorCsvFiles(
-    const boost::filesystem::path& rootDirectory, const boost::filesystem::path& writeDirectory,
-    const std::vector<std::string>& sections, const std::string& mirrorOutputDirectory)
-{
-    if (mirrorOutputDirectory.empty()) {
-        return;
-    }
-
-    const boost::filesystem::path mirrorRoot(mirrorOutputDirectory);
-    if (!mirrorRoot.is_absolute()) {
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV mirror skipped: output path must be absolute path=%s", mirrorRoot.c_str());
-        return;
-    }
-
-    const boost::filesystem::path relativeWriteDirectory = writeDirectory.lexically_relative(rootDirectory);
-    const boost::filesystem::path mirrorWriteDirectory =
-        relativeWriteDirectory.empty() || relativeWriteDirectory == "." ? mirrorRoot :
-                                                                          mirrorRoot / relativeWriteDirectory;
-
-    boost::system::error_code filesystemError;
-    boost::filesystem::create_directories(mirrorWriteDirectory, filesystemError);
-    if (filesystemError) {
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV mirror failed: create output directory failed path=%s code=%d reason=%s",
-            mirrorWriteDirectory.c_str(), filesystemError.value(), filesystemError.message().c_str());
-        return;
-    }
-
-    for (const auto& section : sections) {
-        const boost::filesystem::path source = writeDirectory / (section + ".csv");
-        const boost::filesystem::path destination = mirrorWriteDirectory / (section + ".csv");
-        if (source.lexically_normal() == destination.lexically_normal()) {
-            npucompute::detail::DebugLog(
-                "npu-compute", "CSV mirror skipped: source and destination match path=%s", source.c_str());
-            continue;
-        }
-        boost::filesystem::copy_file(
-            source, destination, boost::filesystem::copy_options::overwrite_existing, filesystemError);
-        if (filesystemError) {
-            npucompute::detail::DebugLog(
-                "npu-compute", "CSV mirror failed: copy source=%s destination=%s code=%d reason=%s", source.c_str(),
-                destination.c_str(), filesystemError.value(), filesystemError.message().c_str());
-            filesystemError.clear();
-            continue;
-        }
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV mirror complete: source=%s destination=%s", source.c_str(), destination.c_str());
-    }
-}
-
 aclptiResult EnsureCsvOutputDirectory(const boost::filesystem::path& outputDirectory)
 {
     if (outputDirectory.empty()) {
@@ -437,9 +386,6 @@ aclptiResult WritePmuCsv(
                 stats.mismatchedRows, missingColumns.c_str(), missingReasons.c_str(), missingColumnReasons.c_str());
             npucompute::detail::DebugLog(
                 "npu-compute", "CSV section write complete: section=%s path=%s", section.c_str(), path.c_str());
-        }
-        if (sink == nullptr) {
-            MirrorCsvFiles(rootDirectory, writeDirectory, sections, config.mirrorOutputDirectory);
         }
     } catch (const boost::filesystem::filesystem_error& error) {
         if (artifactStarted) {

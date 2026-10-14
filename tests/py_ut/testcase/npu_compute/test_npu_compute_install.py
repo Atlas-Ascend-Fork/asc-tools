@@ -123,14 +123,20 @@ def test_public_cli_symlink_uses_the_architecture_injection_library(
 ):
     cli = public_install_root / "bin/npu-compute"
     assert cli.is_file()
-    program = (
-        "import os, pathlib; "
-        "pathlib.Path(os.environ['NPU_COMPUTE_OUTPUT'], 'HardwareInfo.jsonl')"
-        ".write_text('{}\\n' * 5, encoding='utf-8'); "
-        "print('ACL_API_INJECTION=' + os.environ['ACL_API_INJECTION'])"
-    )
+    program = "import os; print('ACL_API_INJECTION=' + os.environ['ACL_API_INJECTION'])"
     result = subprocess.run(
-        [str(cli), "--section", "PipeUtilization", sys.executable, "-c", program],
+        [
+            str(cli),
+            "--section",
+            "PipeUtilization",
+            str(BIN_DIR / "npu_compute_rep_fixture_app"),
+            "--mode",
+            "exec",
+            "--",
+            sys.executable,
+            "-c",
+            program,
+        ],
         cwd=public_install_root,
         text=True,
         capture_output=True,
@@ -185,6 +191,8 @@ def test_installed_layout_runs_the_minimal_stub_chain(install_root, tmp_path):
         check=False,
     )
 
-    assert result.returncode == 0, result.stderr
+    # The stub exercises initialization and teardown without producing PMU rows.
+    assert result.returncode == 3, result.stderr
+    assert "valid results were packaged" in result.stderr
     assert "[libnpu-compute] subscriber initialized" in result.stderr
     assert "[demo] completed" in result.stderr

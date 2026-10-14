@@ -135,10 +135,11 @@ void TestRoundTripAndManifest()
     Reject([&] { receiver.Validate(broken, config); });
     broken = result;
     broken.complete = false;
-    Reject([&] { receiver.Validate(broken, config); });
+    broken.status = broken.code = 1;
+    Check(!receiver.Validate(broken, config));
     broken = result;
     broken.droppedCount = 1;
-    Reject([&] { receiver.Validate(broken, config); });
+    Check(!receiver.Validate(broken, config));
     Reject([&] { Begin(receiver, 3, "MemoryL0.csv"); });
     Reject([&] { Begin(receiver, 1, "Memory.csv"); });
 }

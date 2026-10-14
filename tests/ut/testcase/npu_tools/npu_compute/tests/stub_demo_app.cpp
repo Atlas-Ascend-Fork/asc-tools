@@ -38,12 +38,6 @@ bool ParseInteger(const char* value, int* result)
     return true;
 }
 
-const char* EnvironmentValue(const char* name)
-{
-    const char* value = std::getenv(name);
-    return value == nullptr ? "" : value;
-}
-
 int ReleaseAndReturn(void* devPtr, int result)
 {
     const int freeResult = aclrtFree(devPtr);
@@ -59,10 +53,6 @@ int main(int argc, char** argv)
 {
     int sleepMilliseconds = 0;
     int requestedExitCode = 0;
-    std::fprintf(
-        stderr, "[demo] sections=%s replay=%s\n", EnvironmentValue("NPU_COMPUTE_SECTIONS"),
-        EnvironmentValue("NPU_COMPUTE_REPLAY_MODE"));
-    std::fprintf(stderr, "[demo] output=%s\n", EnvironmentValue("NPU_COMPUTE_OUTPUT"));
     for (int index = 1; index < argc; ++index) {
         std::fprintf(stderr, "[demo] argv[%d]=%s\n", index, argv[index]);
         if (std::strcmp(argv[index], "--sleep-ms") == 0 && index + 1 < argc) {

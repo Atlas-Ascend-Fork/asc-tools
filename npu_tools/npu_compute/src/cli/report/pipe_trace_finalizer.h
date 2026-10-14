@@ -13,11 +13,13 @@
 #include <boost/filesystem/path.hpp>
 
 #include <string>
+#include <vector>
 
 namespace npucompute::cli {
 
 bool FinalizePipeTrace(
-    const boost::filesystem::path& collectionDirectory, bool pipelineEnabled, std::string* error = nullptr);
+    const boost::filesystem::path& collectionDirectory, bool pipelineEnabled, std::string* error = nullptr,
+    std::vector<std::string>* issues = nullptr);
 
 } // namespace npucompute::cli
 

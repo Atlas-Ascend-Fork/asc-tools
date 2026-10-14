@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -54,7 +55,7 @@ int main(int argc, char** argv)
     std::string mode;
     std::vector<std::string> applicationArguments;
     for (int index = 1; index < argc; ++index) {
-        if (mode == "cli-echo" && std::strcmp(argv[index], "--") == 0) {
+        if ((mode == "cli-echo" || mode == "exec") && std::strcmp(argv[index], "--") == 0) {
             while (++index < argc) {
                 applicationArguments.emplace_back(argv[index]);
             }
@@ -72,8 +73,7 @@ int main(int argc, char** argv)
     }
 
     try {
-        for (const char* legacy :
-             {"NPU_COMPUTE_OUTPUT", "NPU_COMPUTE_CSV_OUTPUT_DIR", "NPU_COMPUTE_SECTIONS", "NPU_COMPUTE_REPLAY_MODE"}) {
+        for (const char* legacy : {"NPU_COMPUTE_REPLAY_MODE"}) {
             if (std::getenv(legacy) != nullptr) {
                 throw std::runtime_error(std::string("legacy configuration leaked: ") + legacy);
             }
@@ -117,7 +117,8 @@ int main(int argc, char** argv)
                     continue;
                 }
                 publish(
-                    section + ".csv", section == "PipeUtilization" ? kPipeCsv :
+                    section + ".csv", mode == "invalid-csv"        ? "header\n" :
+                                      section == "PipeUtilization" ? kPipeCsv :
                                       section == "L2Cache"         ? kL2CacheCsv :
                                                                      kMemoryCsv);
             }
@@ -127,8 +128,19 @@ int main(int argc, char** argv)
         result.sections = hello.config.sections;
         result.rowCount = mode == "empty" ? 0 : 1;
         result.complete = mode != "incomplete";
+        result.status = result.code = result.complete ? 0 : 1;
         if (!publisher.Finish(std::move(result)) && exit_code == 0) {
             return 3;
+        }
+        if (mode == "exec" && !applicationArguments.empty()) {
+            std::vector<char*> arguments;
+            for (auto& argument : applicationArguments) {
+                arguments.push_back(argument.data());
+            }
+            arguments.push_back(nullptr);
+            ::execvp(arguments.front(), arguments.data());
+            std::perror("[rep-fixture] exec application failed");
+            return 127;
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[rep-fixture] %s\n", error.what());

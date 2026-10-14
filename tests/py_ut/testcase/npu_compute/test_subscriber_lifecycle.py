@@ -44,14 +44,12 @@ call_count = int(sys.argv[2])
 sections = sys.argv[3]
 output = sys.argv[4]
 os.environ["ACL_API_INJECTION"] = os.path.join(bin_dir, "libnpu_compute_processor.so")
-os.environ["NPU_COMPUTE_SECTIONS"] = sections
-os.environ["NPU_COMPUTE_OUTPUT"] = output
 
 ctypes.CDLL(os.path.join(bin_dir, "libprofapi.so"), mode=ctypes.RTLD_GLOBAL)
 compute = ctypes.CDLL(
     os.path.join(bin_dir, "libnpu_compute_processor.so"), mode=ctypes.RTLD_GLOBAL
 )
-runtime = ctypes.CDLL(os.path.join(bin_dir, "libruntime.so"))
+runtime = ctypes.CDLL(os.path.join(os.environ["NPU_COMPUTE_TEST_RUNTIME_DIR"], "libruntime.so"))
 
 aclrt_init = runtime.aclrtInit
 aclrt_init.argtypes = []
@@ -95,6 +93,12 @@ def execute_probe(sections, call_count=16):
     with tempfile.TemporaryDirectory(prefix="npu-compute-subscriber-test-") as output:
         result = subprocess.run(
             [
+                str(BIN_DIR / "npu-compute"),
+                *[
+                    value
+                    for section in sections.split(",")
+                    for value in ("--section", section)
+                ],
                 sys.executable,
                 "-c",
                 PROBE,
@@ -108,8 +112,13 @@ def execute_probe(sections, call_count=16):
             capture_output=True,
             check=False,
         )
-    assert result.returncode == 0, result.stderr
-    return result, json.loads(result.stdout)
+    if result.stdout:
+        assert result.returncode == 3, (
+            result.stderr
+        )  # Initialization alone produces no PMU data.
+        return result, json.loads(result.stdout)
+    assert result.returncode == 2, result.stderr
+    return result, None
 
 
 def run_probe(sections, call_count=16):
@@ -122,15 +131,15 @@ def test_concurrent_entry_returns_cached_success():
 
     assert probe["initial_result"] == 0
     assert probe["results"] == [0] * 16
-    assert probe["shutdown_results"] == [0, 0]
-    assert probe["initialize_after_shutdown"] != 0
+    # Final draining belongs to ACLPTI teardown, so early shutdown is rejected.
+    assert probe["shutdown_results"] == [-1, -1]
+    assert probe["initialize_after_shutdown"] == 0
 
 
 def test_concurrent_entry_returns_cached_configuration_failure():
     probe = run_probe("Unknown", call_count=8)
 
-    assert probe["initial_result"] != 0
-    assert probe["results"] == [probe["initial_result"]] * 8
+    assert probe is None
 
 
 @pytest.mark.parametrize("section", SUPPORTED_SECTIONS)
@@ -140,8 +149,8 @@ def test_each_supported_section_initializes_successfully(section):
     assert probe == {
         "initial_result": 0,
         "results": [0],
-        "shutdown_results": [0, 0],
-        "initialize_after_shutdown": -1,
+        "shutdown_results": [-1, -1],
+        "initialize_after_shutdown": 0,
     }
     assert result.stderr.count(f"[aclpti] selected section name={section}") == 1
     assert f"[libnpu-compute] configured sections={section}" in result.stderr
@@ -151,11 +160,10 @@ def test_each_supported_section_initializes_successfully(section):
     "sections",
     ("", "HardwareInfo", "Unknown", ",Memory", "Memory,,L2Cache", "Memory,"),
 )
-def test_invalid_section_environment_fails_before_subscribe(sections):
+def test_invalid_sections_fail_before_subscribe(sections):
     result, probe = execute_probe(sections, call_count=1)
 
-    assert probe["initial_result"] != 0
-    assert probe["results"] == [probe["initial_result"]]
+    assert probe is None
     assert "[aclpti] subscribe result=" not in result.stderr
     assert "[libnpu-compute] subscriber initialized" not in result.stderr
 
@@ -166,8 +174,8 @@ def test_duplicate_sections_are_forwarded_once_in_first_occurrence_order():
     assert probe == {
         "initial_result": 0,
         "results": [0],
-        "shutdown_results": [0, 0],
-        "initialize_after_shutdown": -1,
+        "shutdown_results": [-1, -1],
+        "initialize_after_shutdown": 0,
     }
     memory = "[aclpti] selected section name=Memory"
     l2_cache = "[aclpti] selected section name=L2Cache"

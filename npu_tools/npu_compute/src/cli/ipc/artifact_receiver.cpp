@@ -194,11 +194,21 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
         throw;
     }
 }
-void ArtifactReceiver::Validate(const ipc::Result& result, const ipc::Config& config) const
+bool ArtifactReceiver::Validate(
+    const ipc::Result& result, const ipc::Config& config, std::vector<std::string>* issues) const
 {
-    Require(
-        file_ < 0 && result.status == 0 && result.code == 0 && result.complete && result.errorCount == 0 &&
-            result.droppedCount == 0,
+    Require(file_ < 0, "ARTIFACT: unfinished artifact");
+    bool complete = true;
+    const auto checkCollection = [&](bool condition, const std::string& message) {
+        if (!condition) {
+            complete = false;
+            if (issues != nullptr) {
+                issues->push_back(message);
+            }
+        }
+    };
+    checkCollection(
+        result.status == 0 && result.code == 0 && result.complete && result.errorCount == 0 && result.droppedCount == 0,
         "PROFILING: incomplete result");
     Require(
         result.sections == config.sections && result.manifest.size() == manifest_.size(),
@@ -244,18 +254,20 @@ void ArtifactReceiver::Validate(const ipc::Result& result, const ipc::Config& co
             Require(pmuGroups[parent].insert(base).second, "ARTIFACT: duplicate PMU artifact");
         }
     }
-    Require(hardwareFound, "ARTIFACT: required artifact missing");
-    Require(
+    checkCollection(hardwareFound, "HardwareInfo.jsonl: required artifact missing");
+    checkCollection(
         pipelineExpected == (pipelineManifestFound && pipelineFragments > 0),
         "ARTIFACT: required Pipeline artifact missing");
     if (!expectedPmu.empty()) {
-        Require(!pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
+        checkCollection(!pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
         for (const auto& [parent, files] : pmuGroups) {
-            static_cast<void>(parent);
-            Require(files == expectedPmu, "ARTIFACT: incomplete PMU artifact group");
+            for (const auto& name : expectedPmu) {
+                checkCollection(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
+            }
         }
     } else {
         Require(pmuGroups.empty(), "ARTIFACT: unexpected PMU artifact");
     }
+    return complete;
 }
 } // namespace npucompute::cli

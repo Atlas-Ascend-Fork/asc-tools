@@ -18,7 +18,11 @@
 
 namespace npucompute::cli {
 
-bool PackDirectoryToRep(const boost::filesystem::path& directory, std::vector<uint8_t>* encoded, std::string* error);
+// File failures are collected in issues; only directory/encoding errors return false.
+// An empty encoded result means that no valid collection file was found.
+bool PackDirectoryToRep(
+    const boost::filesystem::path& directory, std::vector<uint8_t>* encoded, std::string* error,
+    std::vector<std::string>* issues = nullptr);
 
 } // namespace npucompute::cli
 

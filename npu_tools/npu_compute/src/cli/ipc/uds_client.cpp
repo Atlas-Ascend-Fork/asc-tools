@@ -71,7 +71,7 @@ void UdsClient::Run(
                 receiver.Receive(frame);
                 artifact_count_ = receiver.Count();
             } else if (frame.type == ipc::Type::Result) {
-                receiver.Validate(ipc::DecodeResult(frame.payload), config);
+                const bool complete = receiver.Validate(ipc::DecodeResult(frame.payload), config, &issues_);
                 channel.Send(ipc::Type::ResultAck, {}, ipc::After(ipc::kIoTimeout));
                 const auto closeDeadline = ipc::After(ipc::kIoTimeout);
                 for (;;) {
@@ -95,7 +95,7 @@ void UdsClient::Run(
                         throw std::runtime_error("PROTOCOL: unexpected data after RESULT_ACK");
                     }
                 }
-                complete_ = true;
+                complete_ = complete;
                 return;
             } else if (frame.type == ipc::Type::Error) {
                 const auto error = ipc::DecodeError(frame.payload);

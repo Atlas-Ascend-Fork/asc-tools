@@ -8,8 +8,10 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute/acl_pti_callback_stub.h"
+#include "aclpti/aclpti_data.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -42,6 +44,8 @@ std::vector<std::string> g_sections;
 aclptiBlockResultMode g_blockResult = ACLPTI_BLOCK_RESULT_DISABLED;
 bool g_collectPipeline = false;
 bool g_collectPcSampling = false;
+aclptiDataModuleShutdownCallback g_shutdownCallback = nullptr;
+void* g_shutdownUserData = nullptr;
 
 uint64_t CallbackKey(aclptiCallbackDomain domain, aclptiCallbackId cbid)
 {
@@ -49,6 +53,17 @@ uint64_t CallbackKey(aclptiCallbackDomain domain, aclptiCallbackId cbid)
 }
 
 } // namespace
+
+extern "C" aclptiResult aclptiRegisterDataModuleShutdownCallback(
+    aclptiDataModuleShutdownCallback callback, void* userData)
+{
+    if (callback == nullptr || g_shutdownCallback != nullptr) {
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    g_shutdownCallback = callback;
+    g_shutdownUserData = userData;
+    return std::atexit([] { g_shutdownCallback(g_shutdownUserData); }) == 0 ? ACLPTI_SUCCESS : ACLPTI_ERROR_INTERNAL;
+}
 
 namespace npucompute::test {
 

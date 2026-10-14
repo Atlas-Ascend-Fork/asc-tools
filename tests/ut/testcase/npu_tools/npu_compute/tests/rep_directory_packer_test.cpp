@@ -97,8 +97,8 @@ bool ExpectPackFailure(const boost::filesystem::path& directory, std::string_vie
 {
     std::vector<uint8_t> encoded = {1U, 2U, 3U};
     std::string error;
-    if (PackDirectoryToRep(directory, &encoded, &error) || !encoded.empty() ||
-        error.find(error_fragment) == std::string::npos) {
+    PackDirectoryToRep(directory, &encoded, &error);
+    if (!encoded.empty() || error.find(error_fragment) == std::string::npos) {
         std::fprintf(stderr, "unexpected pack result: error=%s\n", error.c_str());
         return false;
     }
@@ -176,7 +176,15 @@ int TestRejectsSymlink()
     boost::system::error_code error;
     boost::filesystem::create_symlink(temporary.Path() / "target.csv", temporary.Path() / "link.csv", error);
     CHECK(!error);
-    CHECK(ExpectPackFailure(temporary.Path(), "link.csv"));
+    std::vector<uint8_t> encoded;
+    std::vector<std::string> issues;
+    std::string detail;
+    CHECK(PackDirectoryToRep(temporary.Path(), &encoded, &detail, &issues));
+    CHECK(issues.size() == 1 && issues[0].find("link.csv") != std::string::npos);
+    DecodedRep decoded;
+    CHECK(DecodeRep(encoded, &decoded, &detail));
+    CHECK(decoded.entries.size() == 2);
+    CHECK(decoded.entries.back().file_name == "target.csv");
     return 0;
 }
 
@@ -228,4 +236,27 @@ static int RunSuiteMain()
 TEST(NpuComputeRepDirectoryPacker, Main)
 {
     ASSERT_EQ(RunSuiteMain(), 0) << "NpuComputeRepDirectoryPacker reported failure";
+}
+
+TEST(NpuComputeRepDirectoryPacker, KeepsValidFilesWhenOneCollectionFileFails)
+{
+    TempDirectory temporary;
+    const auto nested = temporary.Path() / "collection";
+    ASSERT_TRUE(boost::filesystem::create_directory(nested));
+    const std::string csv = "header\nvalue\n";
+    ASSERT_TRUE(WriteFile(temporary.Path() / "Memory.csv", csv));
+    ASSERT_TRUE(WriteFile(nested / "L2Cache.csv", csv));
+    ASSERT_TRUE(WriteFile(nested / "MemoryUB.csv", "header\n"));
+    std::vector<uint8_t> encoded;
+    std::string error;
+    ASSERT_TRUE(PackDirectoryToRep(temporary.Path(), &encoded, &error)) << error;
+    DecodedRep top;
+    ASSERT_TRUE(DecodeRep(encoded, &top, &error)) << error;
+    ASSERT_EQ(top.entries.size(), 2U);
+    EXPECT_EQ(top.entries[0].payload, Bytes(csv));
+    DecodedRep child;
+    ASSERT_TRUE(DecodeRep(top.entries[1].payload, &child, &error)) << error;
+    ASSERT_EQ(child.entries.size(), 1U);
+    EXPECT_EQ(child.entries[0].file_name, "L2Cache.csv");
+    EXPECT_EQ(child.entries[0].payload, Bytes(csv));
 }

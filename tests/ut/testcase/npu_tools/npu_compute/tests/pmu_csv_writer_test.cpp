@@ -577,47 +577,6 @@ static int RunSuiteMain()
     CHECK(CsvValue(sparseDirectory / "L2Cache.csv", "cube5", "aic_read_close_miss") == "0");
     boost::filesystem::remove_all(sparseDirectory);
 
-    const auto mirrorPrimaryDirectory = boost::filesystem::temp_directory_path() /
-                                        ("npu_compute_csv_mirror_primary_test_" +
-                                         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    const auto mirrorDirectory =
-        boost::filesystem::temp_directory_path() /
-        ("npu_compute_csv_mirror_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    config.outputDirectory = mirrorPrimaryDirectory.string();
-    config.mirrorOutputDirectory = mirrorDirectory.string();
-    CHECK(npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config) == ACLPTI_SUCCESS);
-    CHECK(boost::filesystem::exists(mirrorPrimaryDirectory / "L2Cache.csv"));
-    CHECK(boost::filesystem::exists(mirrorDirectory / "L2Cache.csv"));
-    CHECK(ReadFile(mirrorDirectory / "L2Cache.csv") == ReadFile(mirrorPrimaryDirectory / "L2Cache.csv"));
-    boost::filesystem::remove_all(mirrorPrimaryDirectory);
-    boost::filesystem::remove_all(mirrorDirectory);
-    config.mirrorOutputDirectory.clear();
-
-    const auto mirrorFailurePrimaryDirectory =
-        boost::filesystem::temp_directory_path() /
-        ("npu_compute_csv_mirror_failure_primary_test_" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    const auto blockedMirrorDirectory = boost::filesystem::temp_directory_path() /
-                                        ("npu_compute_csv_blocked_mirror_test_" +
-                                         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    {
-        std::ofstream blockedOutput(blockedMirrorDirectory.string());
-        blockedOutput << "not a directory\n";
-    }
-    config.outputDirectory = mirrorFailurePrimaryDirectory.string();
-    config.mirrorOutputDirectory = blockedMirrorDirectory.string();
-    CHECK(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
-    std::string mirrorFailureLog;
-    aclptiResult mirrorFailureStatus = ACLPTI_ERROR_INTERNAL;
-    CHECK(CaptureStderr(
-        [&] { mirrorFailureStatus = npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config); }, &mirrorFailureLog));
-    CHECK(mirrorFailureStatus == ACLPTI_SUCCESS);
-    CHECK(boost::filesystem::exists(mirrorFailurePrimaryDirectory / "L2Cache.csv"));
-    CHECK(mirrorFailureLog.find("CSV mirror") != std::string::npos);
-    boost::filesystem::remove_all(mirrorFailurePrimaryDirectory);
-    boost::filesystem::remove(blockedMirrorDirectory);
-    config.mirrorOutputDirectory.clear();
-
     const auto blockedDirectory =
         boost::filesystem::temp_directory_path() /
         ("npu_compute_csv_blocked_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

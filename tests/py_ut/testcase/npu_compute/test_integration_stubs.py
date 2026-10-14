@@ -33,11 +33,9 @@ import sys
 bin_dir = sys.argv[1]
 output = sys.argv[2]
 os.environ["ACL_API_INJECTION"] = os.path.join(bin_dir, "libnpu_compute_processor.so")
-os.environ["NPU_COMPUTE_SECTIONS"] = "PipeUtilization"
-os.environ["NPU_COMPUTE_OUTPUT"] = output
 
 ctypes.CDLL(os.path.join(bin_dir, "libprofapi.so"), mode=ctypes.RTLD_GLOBAL)
-runtime = ctypes.CDLL(os.path.join(bin_dir, "libruntime.so"))
+runtime = ctypes.CDLL(os.path.join(os.environ["NPU_COMPUTE_TEST_RUNTIME_DIR"], "libruntime.so"))
 
 aclrt_init = runtime.aclrtInit
 aclrt_init.argtypes = []
@@ -105,14 +103,24 @@ def test_prof_api_constants_are_private_to_the_stub():
 def test_runtime_registers_and_runs_through_connected_backends():
     with tempfile.TemporaryDirectory(prefix="npu-compute-stub-test-") as output:
         result = subprocess.run(
-            [sys.executable, "-c", PROBE, str(BIN_DIR), output],
+            [
+                str(BIN_DIR / "npu-compute"),
+                "--section",
+                "PipeUtilization",
+                sys.executable,
+                "-c",
+                PROBE,
+                str(BIN_DIR),
+                output,
+            ],
             env=os.environ.copy(),
             text=True,
             capture_output=True,
             check=False,
         )
 
-    assert result.returncode == 0, result.stderr
+    # No kernel is launched; the session ends normally with no report data.
+    assert result.returncode == 3, result.stderr
     assert json.loads(result.stdout) == {
         "init_result": 0,
         "malloc_result": 0,

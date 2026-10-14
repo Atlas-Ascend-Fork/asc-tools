@@ -53,31 +53,11 @@ aclptiResult WritePmuReport(
         ReportConfig outputConfig = config;
         outputConfig.outputDirectory = directory.string();
         outputConfig.fixedOutputDirectory = true;
-        if (!config.mirrorOutputDirectory.empty() && directory != root) {
-            outputConfig.mirrorOutputDirectory =
-                (boost::filesystem::path(config.mirrorOutputDirectory) / directory.filename()).string();
-        }
         const auto status = WritePmuCsv(result, sections, outputConfig, nullptr, {}, degraded);
         if (status != ACLPTI_SUCCESS) {
             return status;
         }
-        const auto summaryStatus = WriteSummaryJsonl(result, sections, outputConfig, metadata);
-        if (summaryStatus == ACLPTI_SUCCESS && !outputConfig.mirrorOutputDirectory.empty()) {
-            const boost::filesystem::path mirror(outputConfig.mirrorOutputDirectory);
-            if (mirror.is_absolute() && mirror.lexically_normal() != directory.lexically_normal()) {
-                boost::system::error_code error;
-                boost::filesystem::create_directories(mirror, error);
-                if (!error) {
-                    boost::filesystem::copy_file(
-                        directory / "summary.jsonl", mirror / "summary.jsonl",
-                        boost::filesystem::copy_options::overwrite_existing, error);
-                }
-                if (error) {
-                    detail::DebugLog("npu-compute", "summary mirror failed: %s", error.message().c_str());
-                }
-            }
-        }
-        return summaryStatus;
+        return WriteSummaryJsonl(result, sections, outputConfig, metadata);
     } catch (const std::exception& error) {
         detail::DebugLog("npu-compute", "report failed: %s", error.what());
         return ACLPTI_ERROR_INTERNAL;

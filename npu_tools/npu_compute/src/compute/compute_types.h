@@ -22,7 +22,6 @@ enum class PmuDataLevel {
 
 struct ReportConfig {
     std::string outputDirectory;
-    std::string mirrorOutputDirectory;
     double frequencyMhz = 1000.0;
     double aicFrequencyMhz = 0.0;
     double aivFrequencyMhz = 0.0;

@@ -35,17 +35,10 @@ class ArtifactSink;
 
 inline constexpr int kInitializeFailed = -1;
 
-namespace detail {
-
-bool LoadPmuDataLevelFromEnvironment(const char* variableName, PmuDataLevel* level, std::string* error);
-
-} // namespace detail
-
 class NpuComputeRuntime {
 public:
     static NpuComputeRuntime& Instance();
 
-    int Initialize();
     int Initialize(const RuntimeConfig& config, ArtifactSink& sink, std::function<int(int)> onDrained);
     void Stop() noexcept;
     int ShutdownAfterPtiDrain();
@@ -80,7 +73,6 @@ private:
     std::vector<PipeTraceFragmentInfo> pipeline_fragments_;
     HardwareInfoCollector hardware_info_collector_;
     KernelMetadataCollector kernel_metadata_collector_;
-    const RuntimeConfig* initialization_config_ = nullptr;
     ArtifactSink* artifact_sink_ = nullptr;
     std::function<int(int)> on_drained_;
     std::uint64_t row_count_ = 0;

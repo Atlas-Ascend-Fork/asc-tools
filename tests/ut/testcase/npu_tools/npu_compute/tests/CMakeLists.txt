@@ -516,7 +516,7 @@ add_test(NAME npu_compute.acl_pti_callback_stub
 )
 
 set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
-  ${CMAKE_CURRENT_SOURCE_DIR}/runtime_legacy_entry.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/runtime_test_entry.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/biu/biu_pipeline.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_device_api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_collector.cpp
@@ -578,8 +578,10 @@ if(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS)
     Boost::filesystem
   )
   set(NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT
-    "${NPU_COMPUTE_SOURCE_DIR}/src/compute/libnpu_compute.map"
+    "${CMAKE_CURRENT_BINARY_DIR}/runtime_test.map"
   )
+  file(WRITE "${NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT}"
+    "{ global: acltoolInitialize; acltoolShutdown; NpuComputeTestConfigure; local: *; };\n")
   target_link_options(npu_compute_real_hardware_test_library PRIVATE
     "LINKER:--version-script=${NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT}"
   )

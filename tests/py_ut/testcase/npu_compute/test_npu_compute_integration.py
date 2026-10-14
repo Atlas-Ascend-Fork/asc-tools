@@ -30,27 +30,23 @@ import os
 import pathlib
 import sys
 
-output = pathlib.Path(os.environ["NPU_COMPUTE_OUTPUT"])
+output = pathlib.Path(os.environ["NPU_COMPUTE_NESTED_MARKER_PATH"]).parent
 mode = sys.argv[1]
 exit_code = int(sys.argv[2])
 hardware_info = output / "HardwareInfo.jsonl"
 
 if mode == "regular":
-    hardware_info.write_text(
-        '{"category":"Host Info"}\n'
-        '{"category":"Device Info"}\n'
-        '{"category":"CPU Information"}\n'
-        '{"category":"AI Core Information"}\n'
-        '{"category":"Memory Information"}\n',
-        encoding="utf-8",
-    )
-elif mode == "directory":
+    pass
+else:
+    hardware_info.unlink()
+
+if mode == "directory":
     hardware_info.mkdir()
 elif mode == "symlink":
     target = output / "HardwareInfo.target"
     target.write_text('{"category":"Host Info"}\n', encoding="utf-8")
     hardware_info.symlink_to(target)
-elif mode != "missing":
+elif mode not in ("missing", "regular"):
     raise SystemExit(f"unknown HardwareInfo test mode: {mode}")
 
 raise SystemExit(exit_code)
@@ -93,7 +89,7 @@ def assert_markers_in_order(output, markers):
 
 
 def extract_output_path(stderr):
-    prefix = "[demo] output="
+    prefix = "npu-compute: report= "
     for line in stderr.splitlines():
         if line.startswith(prefix):
             return Path(line[len(prefix) :])
@@ -111,6 +107,10 @@ def run_hardware_info_result_app(mode, work_directory, exit_code=0):
             str(CLI),
             "--section",
             "PipeUtilization",
+            str(BIN_DIR / "npu_compute_rep_fixture_app"),
+            "--mode",
+            "exec",
+            "--",
             sys.executable,
             "-c",
             HARDWARE_INFO_TEST_APP,
@@ -134,23 +134,24 @@ def test_cli_accepts_regular_hardware_info_file(tmp_path):
     assert len(list(tmp_path.glob("*.npu-rep"))) == 1
 
 
-def test_cli_rejects_missing_hardware_info_file(tmp_path):
+def test_cli_packages_remaining_files_without_hardware_info(tmp_path):
     result = run_hardware_info_result_app("missing", tmp_path)
 
     assert result.returncode == 3
     assert "npu-compute: data-directory=" not in result.stderr
-    assert list(tmp_path.iterdir()) == []
-    assert "hardware information was not generated" in result.stderr
+    assert len(list(tmp_path.glob("*.npu-rep"))) == 1
+    assert "HardwareInfo.jsonl" in result.stderr
 
 
 @pytest.mark.parametrize("mode", ("directory", "symlink"))
-def test_cli_rejects_non_regular_hardware_info_path(mode, tmp_path):
+def test_cli_skips_non_regular_hardware_info_path(mode, tmp_path):
     result = run_hardware_info_result_app(mode, tmp_path)
 
     assert result.returncode == 3
     assert "npu-compute: data-directory=" not in result.stderr
     assert list(tmp_path.glob("npu-compute-*")) == []
-    assert "hardware information path is not a regular file" in result.stderr
+    assert len(list(tmp_path.glob("*.npu-rep"))) == 1
+    assert "HardwareInfo.jsonl" in result.stderr
 
 
 def test_app_failure_takes_priority_over_missing_hardware_info(tmp_path):
@@ -159,23 +160,25 @@ def test_app_failure_takes_priority_over_missing_hardware_info(tmp_path):
     assert result.returncode == 7
     assert "npu-compute: data-directory=" not in result.stderr
     assert list(tmp_path.iterdir()) == []
-    assert "exited with code 7" in result.stderr
+    assert "exited with status 7" in result.stderr
     assert "hardware information was not generated" not in result.stderr
 
 
-def test_each_collection_receives_unique_writable_output_directory():
+def test_each_collection_publishes_unique_report():
     first, _ = run_collection()
     second, _ = run_collection()
 
-    assert first.returncode == 0, first.stderr
-    assert second.returncode == 0, second.stderr
+    assert first.returncode == 3, first.stderr
+    assert second.returncode == 3, second.stderr
     first_output = extract_output_path(first.stderr)
     second_output = extract_output_path(second.stderr)
     assert first_output.is_absolute()
     assert second_output.is_absolute()
     assert first_output != second_output
-    assert not first_output.exists()
-    assert not second_output.exists()
+    assert first_output.is_file()
+    assert second_output.is_file()
+    first_output.unlink()
+    second_output.unlink()
 
 
 def test_collection_runs_the_connected_replay_chain():
@@ -186,8 +189,7 @@ def test_collection_runs_the_connected_replay_chain():
         "200",
     )
 
-    assert result.returncode == 0, result.stderr
-    assert "[demo] sections=PipeUtilization replay=kernel" in result.stderr
+    assert result.returncode == 3, result.stderr
     assert "[demo] argv[1]=--app-value" in result.stderr
     assert "[demo] argv[2]=value-from-user" in result.stderr
     assert result.stderr.count("[aclpti] subscribe result=0") == 1
@@ -229,14 +231,13 @@ def test_app_nonzero_exit_is_preserved_after_successful_collection():
     assert result.returncode == 7
     assert "[libnpu-compute] subscriber initialized" in result.stderr
     assert "[demo] exiting with requested status 7" in result.stderr
-    assert "exited with code 7" in result.stderr
+    assert "exited with status 7" in result.stderr
 
 
 def test_multiple_sections_reach_aclpti_in_order():
     result, _ = run_collection(sections=("Memory", "L2Cache"))
 
-    assert result.returncode == 0, result.stderr
-    assert "[demo] sections=Memory,L2Cache replay=kernel" in result.stderr
+    assert result.returncode == 3, result.stderr
     assert_markers_in_order(
         result.stderr,
         [
@@ -259,8 +260,7 @@ def test_all_supported_sections_reach_aclpti_in_order():
 
     result, _ = run_collection(sections=sections)
 
-    assert result.returncode == 0, result.stderr
-    assert f"[demo] sections={joined_sections} replay=kernel" in result.stderr
+    assert result.returncode == 3, result.stderr
     assert result.stderr.count("[aclpti] subscribe result=0") == 1
     assert result.stderr.count("[aclpti] range config result=0") == 1
     assert (

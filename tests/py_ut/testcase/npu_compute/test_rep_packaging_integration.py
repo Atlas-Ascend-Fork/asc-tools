@@ -8,12 +8,15 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 import os
+import json
 import re
 import struct
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
+
+import pytest
 
 
 CLI = Path(os.environ["NPU_COMPUTE_TEST_CLI"])
@@ -112,6 +115,7 @@ def run_fixture(
     exit_code: Optional[int] = None,
     export_path: Optional[Path] = None,
     work_directory: Optional[Path] = None,
+    mode: Optional[str] = None,
 ):
     if work_directory is None:
         work_directory = tmp_path / "work"
@@ -127,6 +131,8 @@ def run_fixture(
     if export_path is not None:
         command.extend(("--export", str(export_path)))
     command.append(str(FIXTURE_APP))
+    if mode is not None:
+        command.extend(("--mode", mode))
     if exit_code is not None:
         command.extend(("--exit-code", str(exit_code)))
     result = subprocess.run(
@@ -138,6 +144,35 @@ def run_fixture(
         check=False,
     )
     return result, work_directory
+
+
+@pytest.mark.parametrize("mode", ("missing-hardware", "incomplete", "invalid-csv"))
+def test_partial_collection_preserves_valid_files_and_imports(tmp_path, mode):
+    result, work = run_fixture(tmp_path, mode=mode)
+    assert result.returncode == 3, result.stderr
+    report = extract_path(result.stderr, "report")
+    entries = {entry.name: entry for entry in decode_rep(report.read_bytes()).entries}
+    assert entries["summary.jsonl"].payload == SUMMARY
+    assert ("HardwareInfo.jsonl" in entries) == (mode != "missing-hardware")
+    assert ("PipeUtilization.csv" in entries) == (mode != "invalid-csv")
+    assert json.loads(entries["collection-status.json"].payload)["complete"] is False
+    assert_no_collection_data_directories(work)
+    imported = subprocess.run(
+        [str(CLI), "--import", str(report)],
+        cwd=work,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert imported.returncode == 0, imported.stderr
+    restored = extract_path(imported.stderr, "unpacked")
+    assert (restored / "summary.jsonl").read_bytes() == SUMMARY
+
+
+def test_empty_collection_does_not_publish_status_only_report(tmp_path):
+    result, work = run_fixture(tmp_path, mode="empty")
+    assert result.returncode == 3, result.stderr
+    assert list(work.glob("*.npu-rep")) == []
 
 
 def assert_no_collection_data_directories(work_directory: Path):

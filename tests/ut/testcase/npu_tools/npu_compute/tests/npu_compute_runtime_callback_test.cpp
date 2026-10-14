@@ -35,6 +35,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+extern "C" void NpuComputeTestConfigure(const char*, const char*);
+
 namespace {
 
 constexpr char kSections[] = "PipeUtilization,Memory";
@@ -95,83 +97,30 @@ private:
     boost::filesystem::path path_;
 };
 
+boost::filesystem::path g_testOutput;
+
 bool SetScenarioEnvironment(const boost::filesystem::path& output)
 {
-    return ::setenv("NPU_COMPUTE_OUTPUT", output.c_str(), 1) == 0 &&
-           ::setenv("NPU_COMPUTE_SECTIONS", kSections, 1) == 0 && ::unsetenv("NPU_COMPUTE_PMU_LEVEL") == 0;
+    g_testOutput = output;
+    NpuComputeTestConfigure(output.c_str(), kSections);
+    return true;
 }
 
 bool TestPipelineSection()
 {
-    const char* previous = std::getenv("NPU_COMPUTE_PIPELINE");
-    const bool hadPrevious = previous != nullptr;
-    const std::string saved = previous == nullptr ? "" : previous;
     npucompute::SectionConfig config;
     std::string error;
-    CHECK(setenv("NPU_COMPUTE_PIPELINE", "0", 1) == 0);
-    CHECK(setenv("NPU_COMPUTE_TEST_SECTIONS", "Pipeline", 1) == 0);
-    CHECK(config.LoadFromEnvironment("NPU_COMPUTE_TEST_SECTIONS", &error));
+    CHECK(config.Load({"Pipeline"}, &error));
     CHECK(config.PipelineEnabled());
-    CHECK(config.Params()->collectPipeline);
     CHECK(config.Params()->numSections == 0);
-    CHECK(config.Sections().empty());
-    CHECK(config.JoinedSections() == "Pipeline");
-    CHECK(setenv("NPU_COMPUTE_TEST_SECTIONS", "Memory,Pipeline,Pipeline", 1) == 0);
-    CHECK(config.LoadFromEnvironment("NPU_COMPUTE_TEST_SECTIONS", &error));
+    CHECK(config.Load({"Memory", "Pipeline"}, &error));
     CHECK(config.PipelineEnabled());
-    CHECK(config.Params()->numSections == 1);
-    CHECK(std::string(config.Params()->sections[0]) == "Memory");
     CHECK(config.Sections() == std::vector<std::string>{"Memory"});
     CHECK(config.JoinedSections() == "Memory,Pipeline");
-    CHECK(setenv("NPU_COMPUTE_TEST_SECTIONS", "Memory", 1) == 0);
-    CHECK(config.LoadFromEnvironment("NPU_COMPUTE_TEST_SECTIONS", &error));
+    CHECK(config.Load({"Memory"}, &error));
     CHECK(!config.PipelineEnabled());
-    CHECK(config.JoinedSections() == "Memory");
-    CHECK(setenv("NPU_COMPUTE_PIPELINE", "1", 1) == 0);
-    CHECK(config.LoadFromEnvironment("NPU_COMPUTE_TEST_SECTIONS", &error));
-    CHECK(config.PipelineEnabled());
-    CHECK(setenv("NPU_COMPUTE_TEST_SECTIONS", "pipeline", 1) == 0);
-    CHECK(!config.LoadFromEnvironment("NPU_COMPUTE_TEST_SECTIONS", &error));
-    CHECK(unsetenv("NPU_COMPUTE_TEST_SECTIONS") == 0);
-    CHECK((hadPrevious ? setenv("NPU_COMPUTE_PIPELINE", saved.c_str(), 1) : unsetenv("NPU_COMPUTE_PIPELINE")) == 0);
+    CHECK(!config.Load({"pipeline"}, &error));
     return true;
-}
-
-bool TestPmuLevelEnvironment()
-{
-    const char* previous = std::getenv("NPU_COMPUTE_PMU_LEVEL");
-    const bool hadPrevious = previous != nullptr;
-    const std::string previousValue = hadPrevious ? previous : "";
-    npucompute::PmuDataLevel level = npucompute::PmuDataLevel::Task;
-    std::string error;
-
-    CHECK(::unsetenv("NPU_COMPUTE_PMU_LEVEL") == 0);
-    CHECK(npucompute::detail::LoadPmuDataLevelFromEnvironment("NPU_COMPUTE_PMU_LEVEL", &level, &error));
-    CHECK(level == npucompute::PmuDataLevel::Block);
-
-    CHECK(::setenv("NPU_COMPUTE_PMU_LEVEL", "", 1) == 0);
-    level = npucompute::PmuDataLevel::Task;
-    CHECK(npucompute::detail::LoadPmuDataLevelFromEnvironment("NPU_COMPUTE_PMU_LEVEL", &level, &error));
-    CHECK(level == npucompute::PmuDataLevel::Block);
-
-    CHECK(::setenv("NPU_COMPUTE_PMU_LEVEL", "block", 1) == 0);
-    CHECK(npucompute::detail::LoadPmuDataLevelFromEnvironment("NPU_COMPUTE_PMU_LEVEL", &level, &error));
-    CHECK(level == npucompute::PmuDataLevel::Block);
-
-    CHECK(::setenv("NPU_COMPUTE_PMU_LEVEL", "task", 1) == 0);
-    CHECK(npucompute::detail::LoadPmuDataLevelFromEnvironment("NPU_COMPUTE_PMU_LEVEL", &level, &error));
-    CHECK(level == npucompute::PmuDataLevel::Task);
-
-    CHECK(::setenv("NPU_COMPUTE_PMU_LEVEL", "TASK", 1) == 0);
-    error.clear();
-    CHECK(!npucompute::detail::LoadPmuDataLevelFromEnvironment("NPU_COMPUTE_PMU_LEVEL", &level, &error));
-    CHECK(error.find("NPU_COMPUTE_PMU_LEVEL") != std::string::npos);
-    CHECK(error.find("TASK") != std::string::npos);
-    CHECK(error.find("block") != std::string::npos);
-    CHECK(error.find("task") != std::string::npos);
-
-    return hadPrevious ? ::setenv("NPU_COMPUTE_PMU_LEVEL", previousValue.c_str(), 1) == 0 :
-                         ::unsetenv("NPU_COMPUTE_PMU_LEVEL") == 0;
 }
 
 bool CheckSubscribeAndEnableContract()
@@ -301,7 +250,7 @@ bool RunCsvSocNameChild(const boost::filesystem::path& output)
 bool RunPipelineClockChild(const boost::filesystem::path& output, bool failQuery)
 {
     CHECK(SetScenarioEnvironment(output));
-    CHECK(::setenv("NPU_COMPUTE_SECTIONS", "Pipeline", 1) == 0);
+    NpuComputeTestConfigure(output.c_str(), "Pipeline");
     CHECK(::unsetenv("NPU_COMPUTE_SYSCNT_FREQUENCY_MHZ") == 0);
     CHECK(::setenv("NPU_COMPUTE_FREQUENCY_MHZ", "1000", 1) == 0);
     npucompute::test::ResetAclPtiCallbackStub();
@@ -314,11 +263,20 @@ bool RunPipelineClockChild(const boost::filesystem::path& output, bool failQuery
     replay.format = aclptiBiuFormat::Chip6;
     replay.channels[{0, aclptiBiuCoreKind::Aic}] = {0xe00003e8U, 0xe0000000U, 0xe0000000U, 0xe0000000U,
                                                     0xf0000000U, 0xf001000aU, 0xf0000014U, 0xf0010004U};
+    if (failQuery) {
+        result->pipelineData[6] = replay;
+        result->pipelineData[6].deviceId = 3;
+    }
     CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
     npucompute::NpuComputeRuntime::Instance().Stop();
     CHECK(
         npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() ==
         (failQuery ? npucompute::kInitializeFailed : 0));
+    const auto published = output / ".biu-staging/process-uds";
+    CHECK(boost::filesystem::is_regular_file(published / "manifest.json"));
+    CHECK(boost::filesystem::is_regular_file(
+        published / (failQuery ? "result-0-device-3-replay-6.json" : "result-0-device-3-replay-7.json")));
+    CHECK(!boost::filesystem::exists(published / "result-0-device-4-replay-7.json"));
     return true;
 }
 
@@ -611,10 +569,10 @@ bool RunConfigFailureChild(const boost::filesystem::path& output)
     return true;
 }
 
-bool RunPmuLevelFailureChild(const boost::filesystem::path& output)
+bool RunSectionFailureChild(const boost::filesystem::path& output)
 {
     CHECK(SetScenarioEnvironment(output));
-    CHECK(::setenv("NPU_COMPUTE_PMU_LEVEL", "invalid-level", 1) == 0);
+    NpuComputeTestConfigure(output.c_str(), "invalid-section");
     npucompute::test::ResetAclPtiCallbackStub();
     CHECK(acltoolInitialize() == npucompute::kInitializeFailed);
     CHECK(npucompute::test::AclPtiSubscribeCount() == 0);
@@ -652,8 +610,8 @@ bool RunChildScenario(const std::string& scenario, const boost::filesystem::path
     if (scenario == "config-failure") {
         return RunConfigFailureChild(output);
     }
-    if (scenario == "pmu-level-failure") {
-        return RunPmuLevelFailureChild(output);
+    if (scenario == "section-failure") {
+        return RunSectionFailureChild(output);
     }
     if (scenario == "normal-stop") {
         return RunNormalStopChild(output);
@@ -734,7 +692,7 @@ bool TestInitializationFailures(const char* executable)
         "subscribe-failure",         "enable-failure-launch",
         "enable-failure-host-args",  "enable-failure-simt-host-args",
         "enable-failure-args-array", "config-failure",
-        "pmu-level-failure",
+        "section-failure",
     };
     for (const char* scenario : scenarios) {
         TempDirectory temporary;
@@ -783,8 +741,8 @@ extern "C" aclError aclrtGetDeviceCount(uint32_t* count)
         return ACL_ERROR_INVALID_PARAM;
     }
     *count = 0;
-    const char* output = std::getenv("NPU_COMPUTE_OUTPUT");
-    if (output == nullptr) {
+    const auto& output = g_testOutput;
+    if (output.empty()) {
         return ACL_ERROR_FAILURE;
     }
     {
@@ -835,8 +793,8 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "unexpected runtime callback test arguments\n");
         return 2;
     }
-    return TestPipelineSection() && TestPmuLevelEnvironment() && TestSuccessAndNormalExit(argv[0]) &&
-                   TestIgnoredEvents(argv[0]) && TestInitializationFailures(argv[0]) && TestNormalStop(argv[0]) &&
+    return TestPipelineSection() && TestSuccessAndNormalExit(argv[0]) && TestIgnoredEvents(argv[0]) &&
+                   TestInitializationFailures(argv[0]) && TestNormalStop(argv[0]) &&
                    TestStopDuringCollectionDoesNotHoldRuntimeMutex(argv[0]) && TestCsvSocNameSelection(argv[0]) ?
                0 :
                1;

@@ -24,7 +24,6 @@ public:
     SectionConfig(const SectionConfig&) = delete;
     SectionConfig& operator=(const SectionConfig&) = delete;
 
-    bool LoadFromEnvironment(const char* name, std::string* error);
     bool Load(const std::vector<std::string>& sections, std::string* error);
     aclptiRangeProfilerSetConfigParams* Params();
     std::string JoinedSections() const;

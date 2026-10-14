@@ -20,7 +20,8 @@ public:
     ArtifactReceiver(const ArtifactReceiver&) = delete;
     ArtifactReceiver& operator=(const ArtifactReceiver&) = delete;
     void Receive(const ipc::Frame& frame);
-    void Validate(const ipc::Result& result, const ipc::Config& config) const;
+    bool Validate(
+        const ipc::Result& result, const ipc::Config& config, std::vector<std::string>* issues = nullptr) const;
     size_t Count() const { return manifest_.size(); }
 
 private:

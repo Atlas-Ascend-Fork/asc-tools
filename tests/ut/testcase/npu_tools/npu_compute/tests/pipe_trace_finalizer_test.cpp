@@ -123,3 +123,21 @@ TEST(NpuComputePipeTraceFinalizer, Main)
 {
     ASSERT_EQ(RunSuiteMain(), 0) << "NpuComputePipeTraceFinalizer reported failure";
 }
+
+TEST(NpuComputePipeTraceFinalizer, KeepsCompletedFragmentFromFailedCollection)
+{
+    TestDirectory directory;
+    const auto process = directory.Path() / ".biu-staging/process-uds";
+    ASSERT_TRUE(boost::filesystem::create_directories(process));
+    ASSERT_TRUE(Write(process / "good.json", Fragment("cube", "SCALAR", 1.0)));
+    ASSERT_TRUE(Write(process / "bad.json", "{broken"));
+    ASSERT_TRUE(Write(
+        process / "manifest.json",
+        R"({"version":1,"state":"failed","status":1,"fragments":[{"resultSequence":"0","replayId":"0","deviceId":0,"file":"good.json","eventCount":"1"},{"resultSequence":"1","replayId":"0","deviceId":0,"file":"bad.json","eventCount":"1"}]})"));
+    std::string error;
+    ASSERT_TRUE(npucompute::cli::FinalizePipeTrace(directory.Path(), true, &error)) << error;
+    std::ifstream input((directory.Path() / "PipeTrace.json").string());
+    const std::string json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    EXPECT_NE(json.find("SCALAR"), std::string::npos);
+    EXPECT_EQ(json.find("broken"), std::string::npos);
+}

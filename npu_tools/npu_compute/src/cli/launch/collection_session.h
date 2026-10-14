@@ -19,6 +19,7 @@ struct CollectionOutcome {
     std::string complete = "unknown";
     size_t artifacts = 0;
     std::string childExit = "not_started";
+    std::vector<std::string> issues;
 };
 class CollectionSession {
 public:

@@ -98,9 +98,7 @@ bool BuildChildEnvironment(
     for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
         environment->emplace_back(*entry);
     }
-    for (const char* name :
-         {"NPU_COMPUTE_SECTIONS", "NPU_COMPUTE_REPLAY_MODE", "NPU_COMPUTE_PIPELINE", "NPU_COMPUTE_OUTPUT",
-          "NPU_COMPUTE_CSV_OUTPUT_DIR", "NPU_COMPUTE_PMU_LEVEL"}) {
+    for (const char* name : {"NPU_COMPUTE_REPLAY_MODE", "NPU_COMPUTE_PMU_LEVEL"}) {
         const std::string prefix = std::string(name) + "=";
         environment->erase(
             std::remove_if(
@@ -149,31 +147,6 @@ bool ConsumeNestedCollectionMarker(
         return FailErrno("nested collection detection failed", errno, error);
     }
     *detected = true;
-    return true;
-}
-
-bool ValidateHardwareInfoResult(const std::string& collectionDataDirectory, std::string* error)
-{
-    const std::string path = collectionDataDirectory + "/HardwareInfo.jsonl";
-    struct stat status {};
-    if (::lstat(path.c_str(), &status) != 0) {
-        if (errno == ENOENT) {
-            if (error != nullptr) {
-                *error = "hardware information was not generated: '" + path + "'.";
-            }
-            return false;
-        }
-        if (error != nullptr) {
-            *error = "cannot inspect hardware information '" + path + "': " + std::string(std::strerror(errno));
-        }
-        return false;
-    }
-    if (!S_ISREG(status.st_mode)) {
-        if (error != nullptr) {
-            *error = "hardware information path is not a regular file: '" + path + "'.";
-        }
-        return false;
-    }
     return true;
 }
 
@@ -261,18 +234,25 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     if (appResult != 0) {
         return finishCollection(appResult);
     }
-    if (!ValidateHardwareInfoResult(collection_data.Path(), error)) {
-        return finishCollection(kCollectionErrorExitCode);
+    auto issues = session.Outcome().issues;
+    boost::system::error_code hardwareError;
+    const auto hardwareStatus = boost::filesystem::symlink_status(
+        boost::filesystem::path(collection_data.Path()) / "HardwareInfo.jsonl", hardwareError);
+    if (hardwareError || !boost::filesystem::is_regular_file(hardwareStatus)) {
+        issues.push_back("HardwareInfo.jsonl: hardware information missing or not a regular file");
     }
-    if (!FinalizePipeTrace(collection_data.Path(), config.collect_pipeline, &stage_error)) {
-        SetStageError("finalize PipeTrace failed", stage_error, error);
-        return finishCollection(kReportErrorExitCode);
+    if (!FinalizePipeTrace(collection_data.Path(), config.collect_pipeline, &stage_error, &issues)) {
+        issues.push_back("finalize PipeTrace failed: " + stage_error);
     }
 
     std::vector<uint8_t> encoded;
-    if (!PackDirectoryToRep(collection_data.Path(), &encoded, &stage_error)) {
+    if (!PackDirectoryToRep(collection_data.Path(), &encoded, &stage_error, &issues)) {
         SetStageError("pack collection results failed", stage_error, error);
         return finishCollection(kReportErrorExitCode);
+    }
+    if (encoded.empty()) {
+        Fail(stage_error, error);
+        return finishCollection(kCollectionErrorExitCode);
     }
 
     if (!PublishRepReport(encoded, target, &stage_error)) {
@@ -282,7 +262,13 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     if (report_path != nullptr) {
         *report_path = target.path.string();
     }
-    return finishCollection(0);
+    for (const auto& issue : issues) {
+        std::fprintf(stderr, "[WARNING] npu-compute: %s\n", issue.c_str());
+    }
+    if (!issues.empty()) {
+        Fail("collection incomplete; valid results were packaged", error);
+    }
+    return finishCollection(issues.empty() ? 0 : kCollectionErrorExitCode);
 }
 
 } // namespace npucompute::cli
