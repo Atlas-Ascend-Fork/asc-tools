@@ -28,11 +28,19 @@
 #include "kernel_fp8_e4m3.h"
 #include "kernel_fp8_e5m2.h"
 #include "kernel_fp8_e8m0.h"
+#include "kernel_fp8_e6m2.h"
 #include "kernel_fp4_e2m1.h"
 #include "kernel_fp4_e1m2.h"
 #include "kernel_hif8.h"
+#include "kernel_hif4.h"
 #include "kernel_print_lock.h"
 #include "kernel_raise_signal.h"
+
+#ifndef ASCENDC_FLOAT4_X2_TYPEDEF
+#define ASCENDC_FLOAT4_X2_TYPEDEF
+using float4_e1m2x2_t = fp4x2_e1m2_t;
+using float4_e1m1x2_t = fp4x2_e2m1_t;
+#endif
 
 #define __host__
 #define __global__
@@ -111,7 +119,9 @@ using vector_f32 = std::array<float, ConstantsInternal::b32EleSize>;
 using vector_f8e5m2 = std::array<fp8_e5m2_t, ConstantsInternal::b8EleSize>;
 using vector_f8e4m3 = std::array<fp8_e4m3fn_t, ConstantsInternal::b8EleSize>;
 using vector_f8e8m0 = std::array<fp8_e8m0_t, ConstantsInternal::b8EleSize>;
+using vector_f8e6m2 = std::array<fp8_e6m2_t, ConstantsInternal::b8EleSize>;
 using vector_hif8 = std::array<hifloat8_t, ConstantsInternal::b8EleSize>;
+using vector_hif4x2 = std::array<hifloat4x2_t, ConstantsInternal::b8EleSize>;
 using vector_f4e2m1x2 = std::array<fp4x2_e2m1_t, ConstantsInternal::b8EleSize>;
 using vector_f4e1m2x2 = std::array<fp4x2_e1m2_t, ConstantsInternal::b8EleSize>;
 
