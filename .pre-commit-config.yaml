@@ -51,7 +51,7 @@ repos:
         args: [
             "--write-changes",
             "-L",
-            "CANN,cann,NNAL,nnal,ASCEND,ascend,EnQue,CopyIn,ArchType,AND,ND,tbe,copyin,alog,commiter,abl,thirdparty,enque,offsett,outter,regist",
+            "CANN,cann,NNAL,nnal,ASCEND,ascend,EnQue,CopyIn,ArchType,AND,ND,tbe,copyin,alog,commiter,abl,thirdparty,enque,offsett,outter,regist,msaicerr,aicore,asys,symbolizer,plog,ffts,fixp,FIXP",
             "--skip",
             "*.py,*.cpp,*.hpp,*.c,*.h",
           ]

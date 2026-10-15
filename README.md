@@ -24,6 +24,10 @@ Ascend C Tools是[CANN](https://hiascend.com/software/cann) （Compute Architect
 
     show_kernel_debug_data工具用于离线解析通过AscendC::DumpTensor/AscendC::print接口保存的Kernel侧算子调试信息。
 
+- **tool-exception-dump**
+
+    tool-exception-dump是面向昇腾NPU的AI Core Error系统化诊断技能（skill），基于msaicerr/asys工具管线执行与判读，以知识工作流形式指导AI助手完成场景判定、报错行定位、错误类型解码、单算子复现与证据链汇聚，输出六段式诊断报告，帮助开发者按标准路径定位算子运行中的AI Core Error根因。
+
 ## 🔍目录结构说明
 
 本代码仓目录结构如下:
@@ -43,6 +47,12 @@ Ascend C Tools是[CANN](https://hiascend.com/software/cann) （Compute Architect
 │   └── npu_compute                     // Ascend C Tools npu-compute实现源代码
 ├── npuchk                              // Ascend C Tools CPU调试检查与日志分析脚本
 ├── scripts                             // Ascend C Tools打包脚本
+├── skills                             // Ascend C Tools skills目录（AI 助手技能）
+│   ├── tool-exception-dump            // Ascend C Tools tool-exception-dump实现源代码
+│   ├── tool-npu-check                 // Ascend C Tools tool-npu-check实现源代码
+│   ├── tool-npu-compute               // Ascend C Tools tool-npu-compute实现源代码
+│   ├── tool-npu-objdump               // Ascend C Tools tool-npu-objdump实现源代码
+│   └── tool-precision-debug           // Ascend C Tools tool-precision-debug实现源代码
 ├── tests                               // Ascend C Tools的UT用例
 ├── third_party                         // Ascend C Tools依赖的第三方库文件
 └── utils

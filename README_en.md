@@ -24,6 +24,10 @@ Ascend C Tools is a debugging toolkit provided by [CANN](https://hiascend.com/so
 
     The show_kernel_debug_data tool is used for offline parsing of Kernel-side operator debugging information saved via the AscendC::DumpTensor/AscendC::print interfaces.
 
+- **tool-exception-dump**
+
+    tool-exception-dump is a systematic AI Core Error diagnosis skill for Ascend NPUs. Built on the msaicerr/asys tool pipeline, it guides AI assistants through scenario classification, error line location, error type decoding, single-operator reproduction, and evidence-chain convergence with fix suggestions, producing a six-section diagnosis report to help developers locate AI Core Error root causes along a standard path.
+
 ## 🔍 Directory Structure
 
 The directory structure of this repository is as follows:
@@ -43,6 +47,12 @@ The directory structure of this repository is as follows:
 │   └── npu_compute                     // Ascend C Tools npu-compute implementation source code
 ├── npuchk                              // Ascend C Tools CPU debug checks and log analysis script
 ├── scripts                             // Ascend C Tools packaging scripts
+├── skills                             // Ascend C Tools skills directory
+│   ├── tool-exception-dump            // Ascend C Tools tool-exception-dump实现源代码
+│   ├── tool-npu-check                 // Ascend C Tools tool-npu-check实现源代码
+│   ├── tool-npu-compute               // Ascend C Tools tool-npu-compute实现源代码
+│   ├── tool-npu-objdump               // Ascend C Tools tool-npu-objdump实现源代码
+│   └── tool-precision-debug           // Ascend C Tools tool-precision-debug实现源代码
 ├── tests                               // Ascend C Tools UT test cases
 ├── third_party                         // Third-party library files that Ascend C Tools depends on
 └── utils
