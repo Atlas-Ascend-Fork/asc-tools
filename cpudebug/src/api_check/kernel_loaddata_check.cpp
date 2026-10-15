@@ -70,7 +70,8 @@ bool TikcppLoaddata2dCheck::CheckAllHighLevel()
 
 bool TikcppLoaddata2dv2Check::CheckAllHighLevel() const
 {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3102 || (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102))
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3102 || (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) || \
+                              (__NPU_ARCH__ == 9201) || (__NPU_ARCH__ == 9202))
     if ((param_.srcPos == static_cast<uint8_t>(HardWareIndex::L1)) &&
         ((param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0A)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0B)))) {

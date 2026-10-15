@@ -18,7 +18,11 @@
 #include "stub_def.h"
 #include "stub_fun.h"
 
-#define INTRI_FUN_NUM 5149
+#if defined(CANN_CHIP_EXT) && (CANN_CHIP_EXT == ascend960)
+#define INTRI_FUN_NUM 5928
+#else
+#define INTRI_FUN_NUM 5910
+#endif
 
 typedef enum {
     INTRI_TYPE_CPU = 0,

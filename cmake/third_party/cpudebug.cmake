@@ -14,9 +14,11 @@ string(TOLOWER "${CMAKE_BUILD_TYPE}" BUILD_TYPE_LOWER)
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
     message(STATUS "Detected architecture: x86_64")
     set(TAR_ARCH x86)
+    set(CPUDEBUG_PKG_ARCH x86_64)
 elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
     message(STATUS "Detected architecture: ARM64")
     set(TAR_ARCH aarch64)
+    set(CPUDEBUG_PKG_ARCH aarch64)
 else ()
     message(WARNING "Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif ()
@@ -36,7 +38,7 @@ if (NOT EXISTS ${CMAKE_SOURCE_DIR}/libraries/lib/include/stub_fun.h)
     )
 
     if(NOT EXISTS ${CPUDEBUG_PKG})
-        set(CPUDEBUG_PKG_URL "https://cann-3rd.obs.cn-north-4.myhuaweicloud.com/cann/asc-tools-cpudebug/${CPUDEBUG_PKG_NAME}")
+        set(CPUDEBUG_PKG_URL "https://ascend-ci.obs.cn-north-4.myhuaweicloud.com/asc-toolkit-dev/package/176/cann-asc-toolkit-dev_linux-${CPUDEBUG_PKG_ARCH}.tar.gz")
         message(STATUS "cpudebug pkg not found in ${CANN_3RD_LIB_PATH}, downloading from ${CPUDEBUG_PKG_URL}")
     else()
         set(CPUDEBUG_PKG_URL ${CPUDEBUG_PKG})
@@ -49,6 +51,7 @@ if (NOT EXISTS ${CMAKE_SOURCE_DIR}/libraries/lib/include/stub_fun.h)
         URL ${CPUDEBUG_PKG_URL}
         TLS_VERIFY FALSE
         DOWNLOAD_DIR ${CANN_3RD_LIB_PATH}
+        DOWNLOAD_NAME ${CPUDEBUG_PKG_NAME}
         DOWNLOAD_NO_EXTRACT TRUE
     )
     FetchContent_MakeAvailable(${PKG_NAME})

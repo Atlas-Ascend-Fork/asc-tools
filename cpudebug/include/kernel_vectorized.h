@@ -19,6 +19,7 @@
 #include "kernel_hif8.h"
 #include "kernel_fp8_e4m3.h"
 #include "kernel_fp8_e5m2.h"
+#include "kernel_fp8_e6m2.h"
 
 namespace Vectorized {
 
@@ -108,5 +109,6 @@ using hifloat8x2_t = Vectorized::VectorizedType2<hifloat8_t>;
 
 using float8_e4m3x2_t = Vectorized::VectorizedType2<fp8_e4m3fn_t>;
 using float8_e5m2x2_t = Vectorized::VectorizedType2<fp8_e5m2_t>;
+using float8_e6m2x2_t = Vectorized::VectorizedType2<fp8_e6m2_t>;
 
 #endif // ASCENDC_VECTORIZED_H
