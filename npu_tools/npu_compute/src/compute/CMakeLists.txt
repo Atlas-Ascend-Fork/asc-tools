@@ -22,6 +22,7 @@ add_library(npu_compute SHARED
   report/pmu_csv_writer.cpp
   pmu/pmu_metric_builder.cpp
   report/summary_jsonl_writer.cpp
+  report/summary_metrics.cpp
   report/report_writer.cpp
   runtime/kernel_metadata_collector.cpp
   runtime/compute_service.cpp

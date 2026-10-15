@@ -27,6 +27,8 @@ private:
     std::map<aclrtFuncHandle, std::pair<aclrtBinHandle, std::string>> names_;
     std::map<aclrtFuncHandle*, std::pair<aclrtBinHandle, std::string>> pendingNames_;
     KernelMetadata metadata_;
+    aclptiCallbackId pendingLaunchCbid_ = 0;
+    bool launchPending_ = false;
     bool frozen_ = false;
 };
 

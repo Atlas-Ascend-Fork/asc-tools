@@ -263,14 +263,24 @@ bool DynamicHardwareDeviceApi::GetRatedAiCoreFrequencies(
     return ReadAiCoreFrequencies(deviceId, aicFrequencyMhz, aivFrequencyMhz, false);
 }
 
-bool DynamicHardwareDeviceApi::ReadAiCoreFrequencies(
-    std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz, bool currentFirst)
+bool DynamicHardwareDeviceApi::GetCurrentAiCoreFrequencies(
+    std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz)
 {
-    if (deviceId < 0 || aicFrequencyMhz == nullptr || aivFrequencyMhz == nullptr) {
+    return ReadAiCoreFrequencies(deviceId, aicFrequencyMhz, aivFrequencyMhz, true, false);
+}
+
+bool DynamicHardwareDeviceApi::ReadAiCoreFrequencies(
+    std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz, bool currentFirst,
+    bool allowRatedFallback)
+{
+    if (aicFrequencyMhz == nullptr || aivFrequencyMhz == nullptr) {
         return false;
     }
     *aicFrequencyMhz = 0;
     *aivFrequencyMhz = 0;
+    if (deviceId < 0) {
+        return false;
+    }
 
     using Function = drvError_t (*)(uint32_t, std::int32_t, std::int32_t, std::int64_t*);
     const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", kHalLibrary));
@@ -278,7 +288,8 @@ bool DynamicHardwareDeviceApi::ReadAiCoreFrequencies(
         return false;
     }
 
-    const auto readFrequency = [function, deviceId, currentFirst](std::int32_t moduleType, uint32_t* value) {
+    const auto readFrequency = [function, deviceId, currentFirst, allowRatedFallback](
+                                   std::int32_t moduleType, uint32_t* value) {
         std::int64_t frequency = 0;
         if (currentFirst &&
             function(static_cast<uint32_t>(deviceId), moduleType, INFO_TYPE_CURRENT_FREQ, &frequency) ==
@@ -286,6 +297,9 @@ bool DynamicHardwareDeviceApi::ReadAiCoreFrequencies(
             frequency > 0 && static_cast<uint64_t>(frequency) <= std::numeric_limits<uint32_t>::max()) {
             *value = static_cast<uint32_t>(frequency);
             return true;
+        }
+        if (!allowRatedFallback) {
+            return false;
         }
         frequency = 0;
         if (function(static_cast<uint32_t>(deviceId), moduleType, INFO_TYPE_FREQUE, &frequency) != DRV_ERROR_NONE ||

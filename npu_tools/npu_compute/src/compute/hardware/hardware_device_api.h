@@ -46,7 +46,10 @@ public:
     bool GetControlCpuCount(std::int32_t deviceId, uint32_t* value) override;
     bool GetAiCpuFrequency(std::int32_t deviceId, uint32_t* value) override;
     bool GetAiCoreFrequencies(std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz) override;
-    bool GetRatedAiCoreFrequencies(std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz);
+    bool GetCurrentAiCoreFrequencies(
+        std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz) override;
+    bool GetRatedAiCoreFrequencies(
+        std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz) override;
     // Device oscillator query returns kHz; expose Hz for BIU syscnt conversion.
     bool GetSyscntFrequencyHz(std::int32_t deviceId, double* frequencyHz);
     bool GetChipVersion(std::int32_t deviceId, std::string* value) override;
@@ -55,7 +58,8 @@ public:
 
 private:
     bool ReadAiCoreFrequencies(
-        std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz, bool currentFirst);
+        std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz, bool currentFirst,
+        bool allowRatedFallback = true);
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

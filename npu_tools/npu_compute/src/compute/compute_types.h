@@ -30,12 +30,33 @@ struct ReportConfig {
     bool fixedOutputDirectory = false;
 };
 
+enum class KernelKind {
+    Cube,
+    Vector,
+    Mix,
+};
+
+// Actual device queries only: report/CSV default frequencies are not evidence of availability.
+struct SummaryHardwareInfo {
+    bool collected = false;
+    std::optional<std::string> socName;
+    std::optional<uint32_t> cubeCoreCount;
+    std::optional<uint32_t> vectorCoreCount;
+    std::optional<double> currentAicFrequencyMhz;
+    std::optional<double> currentAivFrequencyMhz;
+    std::optional<double> ratedAicFrequencyMhz;
+    std::optional<double> ratedAivFrequencyMhz;
+};
+
 struct KernelMetadata {
     std::optional<std::string> name;
     std::optional<uint64_t> blockDim;
     std::optional<int32_t> deviceId;
     std::optional<double> ratedAicFrequencyMhz;
     std::optional<double> ratedAivFrequencyMhz;
+    std::optional<KernelKind> kind;
+    std::optional<uint64_t> mixBlockDim;
+    SummaryHardwareInfo hardware;
 };
 
 } // namespace npucompute

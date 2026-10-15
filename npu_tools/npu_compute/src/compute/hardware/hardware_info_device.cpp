@@ -211,12 +211,9 @@ bool CollectAiCoreCounts(
         ReadCountAttribute(api, ACL_DEV_ATTR_CUBE_CORE_NUM, "Cube Core count", &cubeCount, diagnostics);
     const bool readVector =
         ReadCountAttribute(api, ACL_DEV_ATTR_VECTOR_CORE_NUM, "Vector Core count", &vectorCount, diagnostics);
-    if (!readCube || !readVector) {
-        return false;
-    }
     *aiCubeCount = cubeCount;
     *aiVectorCount = vectorCount;
-    return true;
+    return readCube && readVector;
 }
 
 bool CollectAiCoreFrequencies(
@@ -237,6 +234,44 @@ bool CollectAiCoreFrequencies(
     *aiVectorFrequencyMhz = kAiCoreFrequencyFallbackMhz;
     Diagnose(diagnostics, "GetAiCoreFrequencies failed for Device 0; use 1650 MHz fallback");
     return false;
+}
+
+SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, DiagnosticSink* diagnostics)
+{
+    SummaryHardwareInfo summary;
+    summary.collected = true;
+    std::string soc;
+    if (api.GetSocName(&soc) && !soc.empty()) {
+        summary.socName = std::move(soc);
+    }
+    uint32_t aic = 0;
+    uint32_t aiv = 0;
+    CollectAiCoreCounts(api, &aic, &aiv, diagnostics);
+    if (aic > 0) {
+        summary.cubeCoreCount = aic;
+    }
+    if (aiv > 0) {
+        summary.vectorCoreCount = aiv;
+    }
+    aic = 0;
+    aiv = 0;
+    api.GetCurrentAiCoreFrequencies(kDeviceId, &aic, &aiv);
+    if (aic > 0) {
+        summary.currentAicFrequencyMhz = aic;
+    }
+    if (aiv > 0) {
+        summary.currentAivFrequencyMhz = aiv;
+    }
+    aic = 0;
+    aiv = 0;
+    api.GetRatedAiCoreFrequencies(kDeviceId, &aic, &aiv);
+    if (aic > 0) {
+        summary.ratedAicFrequencyMhz = aic;
+    }
+    if (aiv > 0) {
+        summary.ratedAivFrequencyMhz = aiv;
+    }
+    return summary;
 }
 
 } // namespace npucompute

@@ -398,6 +398,7 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
         }
     }
     ReportConfig csvConfig;
+    bool frequencyOverride = false;
     // Kernel EXIT arrives after replay PMU data, so publish HardwareInfo before processing CSV output.
     hardware_info_collector_.CollectOnKernelLaunch();
     {
@@ -407,17 +408,17 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
             csv_device_info_loaded_ = true;
         }
         csvConfig = csv_config_;
+        frequencyOverride = csv_frequency_override_;
     }
     KernelMetadata metadata = kernel_metadata_collector_.Snapshot();
     DynamicHardwareDeviceApi api;
-    uint32_t ratedAic = 0;
-    uint32_t ratedAiv = 0;
-    api.GetRatedAiCoreFrequencies(0, &ratedAic, &ratedAiv);
-    if (ratedAic != 0) {
-        metadata.ratedAicFrequencyMhz = ratedAic;
-    }
-    if (ratedAiv != 0) {
-        metadata.ratedAivFrequencyMhz = ratedAiv;
+    metadata.hardware = CollectSummaryHardwareInfo(api);
+    metadata.ratedAicFrequencyMhz = metadata.hardware.ratedAicFrequencyMhz;
+    metadata.ratedAivFrequencyMhz = metadata.hardware.ratedAivFrequencyMhz;
+    if (frequencyOverride) {
+        // An explicit validated NPU_COMPUTE_FREQUENCY_MHZ remains an authoritative input.
+        metadata.hardware.currentAicFrequencyMhz = csvConfig.aicFrequencyMhz;
+        metadata.hardware.currentAivFrequencyMhz = csvConfig.aivFrequencyMhz;
     }
     const auto& rows = csvConfig.pmuDataLevel == PmuDataLevel::Block ? result->pmuLogs : result->taskPmuLogs;
     row_count_ += rows.size();
@@ -432,13 +433,10 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
         }
     }
     replay_count_ += replayIds.size();
-    aclptiResult csvStatus = ACLPTI_SUCCESS;
-    if (!section_config_.Sections().empty()) {
-        csvStatus = WritePmuReport(
-            *result, section_config_.Sections(), csvConfig, metadata, artifact_sink_, ReportPrefix(report_sequence_),
-            &degraded_);
-        ++report_sequence_;
-    }
+    const aclptiResult csvStatus = WritePmuReport(
+        *result, section_config_.Sections(), csvConfig, metadata, artifact_sink_, ReportPrefix(report_sequence_),
+        &degraded_);
+    ++report_sequence_;
     aclptiResult firstStatus = result->status == ACLPTI_SUCCESS ? csvStatus : result->status;
 
     if (pipeline_enabled_) {

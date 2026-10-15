@@ -10,6 +10,7 @@
 #include "report/report_writer.h"
 #include "artifact_sink.h"
 #include "pmu/pmu_metric_builder.h"
+#include "report/summary_metrics.h"
 #include "common/debug_log.h"
 
 #include <boost/filesystem.hpp>
@@ -60,104 +61,37 @@ std::string Quote(std::string_view value)
     return output.str();
 }
 
-std::string Number(Metric value, bool integer = false)
+std::string Number(Metric value, bool integer = false, int precision = 6)
 {
     if (!value || !std::isfinite(*value)) {
-        return "null";
+        return "\"NA\"";
     }
     std::ostringstream output;
     output.imbue(std::locale::classic());
-    output << std::fixed << std::setprecision(integer ? 0 : 6) << *value;
+    output << std::fixed << std::setprecision(integer ? 0 : precision) << *value;
     return output.str();
 }
 
-struct Average {
-    double sum = 0;
-    std::size_t count = 0;
-    void Add(Metric value)
-    {
-        if (value && std::isfinite(*value)) {
-            sum += *value;
-            ++count;
-        }
-    }
-    Metric Value() const { return count == 0 ? std::nullopt : Metric(sum / count); }
-};
-
-using Fields = std::map<std::string, Metric>;
+using Fields = SummaryFields;
 
 Fields Section(
     std::ostream& output, const std::string& section, const aclptiProfilingDataResult& result,
     const ReportConfig& config)
 {
     const auto header = PmuMetricBuilder::Header(section);
-    std::vector<Average> averages(header.size());
-    std::vector<bool> integers(header.size(), false);
-    const auto duration = PmuMetricBuilder::OperationDuration(result, PmuDataLevel::Task);
-    for (const auto& [key, row] : result.taskPmuLogs) {
-        const auto fields = PmuMetricBuilder::Build(section, key, row, config, duration);
-        for (std::size_t index = 2; index < fields.size(); ++index) {
-            averages[index].Add(fields[index].value);
-            integers[index] = integers[index] || fields[index].integer;
-        }
-    }
-    Fields values;
+    auto fields = AggregateSummarySection(section, result, config);
     output << "{\"category\":" << Quote(section);
     for (std::size_t index = 2; index < header.size(); ++index) {
-        values.emplace(header[index], averages[index].Value());
-        output << ',' << Quote(header[index]) << ':' << Number(averages[index].Value(), integers[index]);
+        const auto& field = fields.at(header[index]);
+        output << ',' << Quote(header[index]) << ':' << Number(field.value, field.integer);
     }
     output << "}\n";
-    return values;
+    return fields;
 }
 
 Metric Sum(Metric left, Metric right)
 {
     return !left && !right ? std::nullopt : Metric(left.value_or(0) + right.value_or(0));
-}
-
-std::pair<Metric, Metric> ParallelMetrics(const aclptiProfilingDataResult& result, const ReportConfig& config)
-{
-    struct Block {
-        Metric time;
-        Average aic;
-        Average aiv;
-    };
-    std::map<uint16_t, Block> blocks;
-    const auto header = PmuMetricBuilder::Header("PipeUtilization");
-    for (const auto& [key, row] : result.pmuLogs) {
-        const auto fields = PmuMetricBuilder::Build("PipeUtilization", key, row, config);
-        auto& block = blocks[key.blockId];
-        for (std::size_t index = 2; index < fields.size(); ++index) {
-            const auto value = fields[index].value;
-            if ((header[index] == "aic_time(us)" || header[index] == "aiv_time(us)") && value) {
-                block.time = block.time ? std::max(*block.time, *value) : value;
-            } else if (header[index] == "aic_cube_ratio") {
-                block.aic.Add(value);
-            } else if (header[index] == "aiv_vec_ratio") {
-                block.aiv.Add(value);
-            }
-        }
-    }
-    Average utilization;
-    Average times;
-    for (const auto& [key, block] : blocks) {
-        utilization.Add(Sum(block.aic.Value(), block.aiv.Value()));
-        times.Add(block.time);
-    }
-    const auto mean = times.Value();
-    Metric balance;
-    if (mean && *mean > 0) {
-        double variance = 0;
-        for (const auto& [key, block] : blocks) {
-            if (block.time) {
-                const double delta = *block.time - *mean;
-                variance += delta * delta;
-            }
-        }
-        balance = 1.0 - std::sqrt(variance / times.count) / *mean;
-    }
-    return {utilization.Value(), balance};
 }
 
 Metric Frequency(bool hasAic, bool hasAiv, Metric aic, Metric aiv)
@@ -178,33 +112,43 @@ void OpInfo(
         hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
         hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
     }
+    if (metadata.kind) {
+        hasAic = *metadata.kind != KernelKind::Vector;
+        hasAiv = *metadata.kind != KernelKind::Cube;
+    }
+    const Metric ratedAic = SummaryRatedFrequency(metadata, true);
+    const Metric ratedAiv = SummaryRatedFrequency(metadata, false);
+    const Metric currentAic = SummaryEffectiveFrequency(metadata, config, true);
+    const Metric currentAiv = SummaryEffectiveFrequency(metadata, config, false);
     const auto selected = [&](std::string_view section) {
         return std::find(sections.begin(), sections.end(), section) != sections.end();
     };
-    const auto [utilization, balance] = ParallelMetrics(result, config);
-    const Metric read = Sum(memory["aic_main_mem_read_bw(GB/s)"], memory["aiv_main_mem_read_bw(GB/s)"]);
-    const Metric write = Sum(memory["aic_main_mem_write_bw(GB/s)"], memory["aiv_main_mem_write_bw(GB/s)"]);
+    const auto metrics = BuildSummaryMetrics(result, config, metadata);
+    const Metric read = Sum(memory["aic_main_mem_read_bw(GB/s)"].value, memory["aiv_main_mem_read_bw(GB/s)"].value);
+    const Metric write = Sum(memory["aic_main_mem_write_bw(GB/s)"].value, memory["aiv_main_mem_write_bw(GB/s)"].value);
     const Metric usage = read && write ? Metric((*read + *write) / 1600.0 * 100.0) : std::nullopt;
     output << "{\"category\":\"OpInfoSummary\",\"Op Name\":"
-           << (metadata.name ? Quote(DemangleName(*metadata.name)) : "null") << ",\"Op Type\":"
+           << (metadata.name ? Quote(DemangleName(*metadata.name)) : "\"NA\"") << ",\"Op Type\":"
            << (hasAic ? (hasAiv ? "\"mix\"" : "\"cube\"") :
                hasAiv ? "\"vector\"" :
-                        "null");
-    const auto field = [&](std::string_view name, Metric value, bool integer = false) {
-        output << ',' << Quote(name) << ':' << Number(value, integer);
+                        "\"NA\"");
+    const auto field = [&](std::string_view name, Metric value, bool integer = false, int precision = 6) {
+        output << ',' << Quote(name) << ':' << Number(value, integer, precision);
     };
     field("Task Duration(us)", PmuMetricBuilder::TaskDuration(result));
     field("Block Dim", metadata.blockDim ? Metric(*metadata.blockDim) : std::nullopt, true);
-    field("Mix Block Dim", std::nullopt);
+    field(
+        "Mix Block Dim", hasAic && hasAiv && metadata.mixBlockDim ? Metric(*metadata.mixBlockDim) : std::nullopt, true);
     field("Device Id", metadata.deviceId ? Metric(*metadata.deviceId) : std::nullopt, true);
     field("Pid", ::getpid(), true);
-    field(
-        "Current Freq", Frequency(
-                            hasAic, hasAiv, config.aicFrequencyMhz > 0 ? config.aicFrequencyMhz : config.frequencyMhz,
-                            config.aivFrequencyMhz > 0 ? config.aivFrequencyMhz : config.frequencyMhz));
-    field("Rated Freq", Frequency(hasAic, hasAiv, metadata.ratedAicFrequencyMhz, metadata.ratedAivFrequencyMhz));
-    field("aicore_parallel_utilization", selected("PipeUtilization") ? utilization : std::nullopt);
-    field("aicore_parallel_balance", balance);
+    field("Current Freq", Frequency(hasAic, hasAiv, currentAic, currentAiv));
+    field("Rated Freq", Frequency(hasAic, hasAiv, ratedAic, ratedAiv));
+    field("aic_flops_theoretical", metrics.aicFlopsTheoretical, false, 2);
+    field("aiv_flops_theoretical", metrics.aivFlopsTheoretical, false, 2);
+    field("aic_flops", metrics.aicFlops);
+    field("aiv_flops", metrics.aivFlops);
+    field("aicore_parallel_utilization", metrics.parallelUtilization);
+    field("aicore_parallel_balance", metrics.parallelBalance);
     field("aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(1600) : std::nullopt, true);
     field("aicore_gm_read_bw(GB/s)", read);
     field("aicore_gm_write_bw(GB/s)", write);
@@ -263,23 +207,27 @@ aclptiResult WriteSummaryJsonl(
     try {
         std::ostringstream output;
         output.imbue(std::locale::classic());
+        auto selectedSections = sections;
+        std::sort(selectedSections.begin(), selectedSections.end());
+        selectedSections.erase(std::unique(selectedSections.begin(), selectedSections.end()), selectedSections.end());
+        const auto summaryConfig = SummaryReportConfig(metadata, config);
         Fields memory;
-        for (const auto& section : sections) {
+        for (const auto& section : selectedSections) {
             if (PmuMetricBuilder::Header(section).empty()) {
                 return ACLPTI_ERROR_NOT_SUPPORTED;
             }
-            auto values = Section(output, section, result, config);
+            auto values = Section(output, section, result, summaryConfig);
             if (section == "Memory") {
                 memory = std::move(values);
             }
         }
-        OpInfo(output, result, sections, config, metadata, std::move(memory));
+        OpInfo(output, result, selectedSections, config, metadata, std::move(memory));
         const std::string content = output.str();
         if (sink != nullptr) {
             sink->Begin(std::string(artifactPrefix) + "summary.jsonl");
             artifactStarted = true;
             sink->Write(content);
-            sink->Commit(sections.size() + 1U);
+            sink->Commit(selectedSections.size() + 1U);
             artifactStarted = false;
         } else if (!Publish(config.outputDirectory, content)) {
             detail::DebugLog(

@@ -334,11 +334,22 @@ def test_cli_real_aclpti_callback_chain(tmp_path, sections):
             json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
         ]
         assert [record["category"] for record in records] == [
-            *sections,
+            *sorted(set(sections)),
             "OpInfoSummary",
         ]
-        for section, record in zip(sections, records):
+        for section, record in zip(sorted(set(sections)), records):
             assert section_metrics[section] in record
             assert "block_id" not in record
+        summary = records[-1]
+        assert len(summary) == 20
+        assert all(value is not None for record in records for value in record.values())
+        for field in (
+            "aic_flops_theoretical",
+            "aiv_flops_theoretical",
+            "aic_flops",
+            "aiv_flops",
+        ):
+            assert field in summary
+            assert summary[field] == "NA" or isinstance(summary[field], (int, float))
         restored = unpacked[0] / path.relative_to(output_directory)
         assert restored.read_bytes() == path.read_bytes()

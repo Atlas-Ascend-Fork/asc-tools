@@ -116,6 +116,25 @@ public:
         return true;
     }
 
+    bool GetCurrentAiCoreFrequencies(std::int32_t, uint32_t* aicValue, uint32_t* aivValue) override
+    {
+        *aicValue = currentAicFrequency;
+        *aivValue = currentAivFrequency;
+        return currentAicFrequency != 0 && currentAivFrequency != 0;
+    }
+
+    bool GetRatedAiCoreFrequencies(std::int32_t, uint32_t* aicValue, uint32_t* aivValue) override
+    {
+        *aicValue = ratedAicFrequency;
+        *aivValue = ratedAivFrequency;
+        return ratedAicFrequency != 0 && ratedAivFrequency != 0;
+    }
+
+    uint32_t currentAicFrequency = 0;
+    uint32_t currentAivFrequency = 0;
+    uint32_t ratedAicFrequency = 0;
+    uint32_t ratedAivFrequency = 0;
+
     bool GetChipVersion(std::int32_t deviceId, std::string* value) override
     {
         deviceIds.push_back(deviceId);
@@ -427,6 +446,52 @@ bool TestHbmCapacityParsing()
 }
 
 } // namespace
+
+TEST(NpuComputeHardwareInfoDevice, CoreCountsRetainValidSideWhenOtherSideFails)
+{
+    for (const auto failed : {ACL_DEV_ATTR_CUBE_CORE_NUM, ACL_DEV_ATTR_VECTOR_CORE_NUM}) {
+        FakeHardwareDeviceApi api;
+        api.failedDeviceAttributes.insert(failed);
+        std::uint32_t cubeCount = 99;
+        std::uint32_t vectorCount = 99;
+        EXPECT_FALSE(npucompute::CollectAiCoreCounts(api, &cubeCount, &vectorCount, nullptr));
+        EXPECT_EQ(cubeCount, failed == ACL_DEV_ATTR_CUBE_CORE_NUM ? 0U : 36U);
+        EXPECT_EQ(vectorCount, failed == ACL_DEV_ATTR_VECTOR_CORE_NUM ? 0U : 72U);
+    }
+}
+
+TEST(NpuComputeHardwareInfoDevice, SummaryRetainsIndependentHardwareInputs)
+{
+    FakeHardwareDeviceApi api;
+    api.currentAicFrequency = 1500;
+    api.ratedAivFrequency = 1700;
+    api.failedDeviceAttributes.insert(ACL_DEV_ATTR_VECTOR_CORE_NUM);
+    const auto summary = npucompute::CollectSummaryHardwareInfo(api);
+    EXPECT_TRUE(summary.collected);
+    EXPECT_EQ(summary.socName, api.socName);
+    EXPECT_EQ(summary.cubeCoreCount, 36U);
+    EXPECT_FALSE(summary.vectorCoreCount);
+    EXPECT_EQ(summary.currentAicFrequencyMhz, 1500);
+    EXPECT_FALSE(summary.currentAivFrequencyMhz);
+    EXPECT_FALSE(summary.ratedAicFrequencyMhz);
+    EXPECT_EQ(summary.ratedAivFrequencyMhz, 1700);
+}
+
+TEST(NpuComputeHardwareInfoDevice, SummaryDoesNotInventDefaultHardwareValues)
+{
+    FakeHardwareDeviceApi api;
+    api.failSocName = true;
+    api.failedDeviceAttributes = {ACL_DEV_ATTR_CUBE_CORE_NUM, ACL_DEV_ATTR_VECTOR_CORE_NUM};
+    const auto summary = npucompute::CollectSummaryHardwareInfo(api);
+    EXPECT_TRUE(summary.collected);
+    EXPECT_FALSE(summary.socName);
+    EXPECT_FALSE(summary.cubeCoreCount);
+    EXPECT_FALSE(summary.vectorCoreCount);
+    EXPECT_FALSE(summary.currentAicFrequencyMhz);
+    EXPECT_FALSE(summary.currentAivFrequencyMhz);
+    EXPECT_FALSE(summary.ratedAicFrequencyMhz);
+    EXPECT_FALSE(summary.ratedAivFrequencyMhz);
+}
 
 static int RunSuiteMain()
 {

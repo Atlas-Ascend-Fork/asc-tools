@@ -222,7 +222,7 @@ bool ArtifactReceiver::Validate(
             expectedPmu.insert(section + ".csv");
         }
     }
-    if (!expectedPmu.empty()) {
+    if (!config.sections.empty()) {
         expectedPmu.insert("summary.jsonl");
     }
     std::set<uint64_t> ids;

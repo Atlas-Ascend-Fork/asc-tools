@@ -92,6 +92,8 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/pmu_data_consumer_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/pmu_report_writer_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/kernel_metadata_collector_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_metadata_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_metrics_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/pipe_trace_finalizer_test.cpp"
   # 直接编译的产品源（与原单测目标保持一致）
     "${NPU_TOOLS_LLT_CLI_DIR}/options.cpp"
@@ -136,6 +138,7 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/pmu/pmu_metric_builder.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/pmu_csv_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/summary_jsonl_writer.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/summary_metrics.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/report_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/runtime/kernel_metadata_collector.cpp"
 )
@@ -214,6 +217,8 @@ add_test(NAME npu_tools_utest COMMAND npu_tools_utest)
 # 与产品库闭包里的真实 libacl_rt 同名互斥，--as-needed 使未被引用的 libacl_san.so
 # 及其真实 runtime 链整体剥离；--allow-shlib-undefined 放宽剩余共享库闭包校验。
 target_link_options(npu_tools_utest PRIVATE
+  -Wl,--export-dynamic-symbol=rtFunctionGetMetaInfo
+  -Wl,--export-dynamic-symbol=rtFunctionGetMetaInfoSize
   -Wl,--disable-new-dtags
   -Wl,--allow-shlib-undefined
   -Wl,--as-needed

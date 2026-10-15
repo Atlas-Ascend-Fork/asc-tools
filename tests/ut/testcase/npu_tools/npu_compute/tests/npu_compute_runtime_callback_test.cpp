@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/property_tree/json_parser.hpp>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -61,6 +62,7 @@ bool g_blockDeviceCount = false;
 bool g_deviceCountStarted = false;
 bool g_releaseDeviceCount = false;
 aclptiProfilingDataCallback g_profilingDataCallback;
+bool g_summaryHardwareAvailable = false;
 
 #define CHECK(expression)                                                                 \
     do {                                                                                  \
@@ -247,6 +249,45 @@ bool RunCsvSocNameChild(const boost::filesystem::path& output)
     return true;
 }
 
+bool RunSummaryHardwareChild(const std::string& scenario, const boost::filesystem::path& output)
+{
+    CHECK(SetScenarioEnvironment(output));
+    g_summaryHardwareAvailable = scenario != "summary-hardware-missing";
+    if (scenario == "summary-hardware-override") {
+        CHECK(::setenv("NPU_COMPUTE_FREQUENCY_MHZ", "1200", 1) == 0);
+    } else {
+        CHECK(::unsetenv("NPU_COMPUTE_FREQUENCY_MHZ") == 0);
+    }
+    npucompute::test::ResetAclPtiCallbackStub();
+    CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
+    CHECK(g_profilingDataCallback != nullptr);
+    auto result = std::make_shared<aclptiProfilingDataResult>();
+    aclptiPmuDataRow row{};
+    row.coreType = ACLPTI_CORE_TYPE_AIV;
+    row.totalCycles = 1000;
+    result->taskPmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, row);
+    CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
+    npucompute::NpuComputeRuntime::Instance().Stop();
+    CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);
+    std::ifstream input((output / "summary.jsonl").string());
+    std::string line;
+    boost::property_tree::ptree summary;
+    while (std::getline(input, line)) {
+        std::istringstream record(line);
+        boost::property_tree::read_json(record, summary);
+    }
+    CHECK(summary.get<std::string>("category") == "OpInfoSummary");
+    CHECK(summary.get<std::string>("Op Type") == "vector");
+    if (!g_summaryHardwareAvailable) {
+        CHECK(summary.get<std::string>("Current Freq") == "NA");
+        CHECK(summary.get<std::string>("Rated Freq") == "NA");
+    } else {
+        CHECK(summary.get<double>("Current Freq") == (scenario == "summary-hardware-override" ? 1200 : 1500));
+        CHECK(summary.get<double>("Rated Freq") == 1500);
+    }
+    return true;
+}
+
 bool RunPipelineClockChild(const boost::filesystem::path& output, bool failQuery)
 {
     CHECK(SetScenarioEnvironment(output));
@@ -272,6 +313,7 @@ bool RunPipelineClockChild(const boost::filesystem::path& output, bool failQuery
     CHECK(
         npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() ==
         (failQuery ? npucompute::kInitializeFailed : 0));
+    CHECK(boost::filesystem::is_regular_file(output / "summary.jsonl"));
     const auto published = output / ".biu-staging/process-uds";
     CHECK(boost::filesystem::is_regular_file(published / "manifest.json"));
     CHECK(boost::filesystem::is_regular_file(
@@ -622,6 +664,9 @@ bool RunChildScenario(const std::string& scenario, const boost::filesystem::path
     if (scenario == "csv-soc-device-api") {
         return RunCsvSocNameChild(output);
     }
+    if (scenario.compare(0, 17, "summary-hardware-") == 0) {
+        return RunSummaryHardwareChild(scenario, output);
+    }
     std::fprintf(stderr, "unknown child scenario: %s\n", scenario.c_str());
     return false;
 }
@@ -733,6 +778,16 @@ bool TestCsvSocNameSelection(const char* executable)
     return true;
 }
 
+bool TestSummaryHardwareInputs(const char* executable)
+{
+    for (const char* scenario : {"summary-hardware-current", "summary-hardware-missing", "summary-hardware-override"}) {
+        TempDirectory temporary;
+        CHECK(!temporary.Path().empty());
+        CHECK(LaunchChild(executable, scenario, temporary.Path()));
+    }
+    return true;
+}
+
 } // namespace
 
 extern "C" aclError aclrtGetDeviceCount(uint32_t* count)
@@ -766,6 +821,16 @@ extern "C" aclError aclrtGetDeviceCount(uint32_t* count)
 
 extern "C" int halGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t* value)
 {
+    if (g_summaryHardwareAvailable && deviceId == 0 && value != nullptr && (moduleType == 4 || moduleType == 7)) {
+        if (infoType == 32) {
+            *value = moduleType == 4 ? 1500 : 0; // AIV must fall back to its own rated value.
+            return 0;
+        }
+        if (infoType == 4) {
+            *value = moduleType == 4 ? 1700 : 1500;
+            return 0;
+        }
+    }
     if (deviceId != 3 || moduleType != 0 || infoType != 25 || value == nullptr) {
         return 3;
     }
@@ -795,7 +860,8 @@ int main(int argc, char** argv)
     }
     return TestPipelineSection() && TestSuccessAndNormalExit(argv[0]) && TestIgnoredEvents(argv[0]) &&
                    TestInitializationFailures(argv[0]) && TestNormalStop(argv[0]) &&
-                   TestStopDuringCollectionDoesNotHoldRuntimeMutex(argv[0]) && TestCsvSocNameSelection(argv[0]) ?
+                   TestStopDuringCollectionDoesNotHoldRuntimeMutex(argv[0]) && TestCsvSocNameSelection(argv[0]) &&
+                   TestSummaryHardwareInputs(argv[0]) ?
                0 :
                1;
 }

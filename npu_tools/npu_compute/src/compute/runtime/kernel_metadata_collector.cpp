@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #include <elf.h>
 #include <fstream>
+#include <string_view>
 
 namespace npucompute {
 namespace {
@@ -117,6 +118,101 @@ std::optional<std::string> ResolveRuntimeFunctionName(aclrtFuncHandle function)
     return std::string(name.data());
 }
 
+template <typename Function>
+Function OriginalRuntimeFunction(const char* name)
+{
+    aclrtApiFunc original = nullptr;
+    return aclrtApiInjectionGetFunc(name, &original, nullptr) == ACL_SUCCESS ? reinterpret_cast<Function>(original) :
+                                                                               nullptr;
+}
+
+// rtFunctionMetaType and payloads from CANN rt_external_base.h and kernel metadata:
+// tag 1 is a uint32 kernel type; tag 3 is uint16 AIC ratio followed by uint16 AIV ratio.
+template <typename Value>
+std::optional<Value> FunctionMetadata(aclrtFuncHandle function, uint32_t tag)
+{
+    using GetSize = int32_t (*)(const void*, uint32_t, std::size_t*);
+    using GetData = int32_t (*)(const void*, uint32_t, void*, uint32_t);
+    const auto getSize = reinterpret_cast<GetSize>(::dlsym(RTLD_DEFAULT, "rtFunctionGetMetaInfoSize"));
+    const auto getData = reinterpret_cast<GetData>(::dlsym(RTLD_DEFAULT, "rtFunctionGetMetaInfo"));
+    std::size_t size = 0;
+    Value value{};
+    if (getSize == nullptr || getData == nullptr || getSize(function, tag, &size) != 0 || size != sizeof(Value) ||
+        getData(function, tag, &value, sizeof(Value)) != 0) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+bool SupportsMixDimension(std::string_view soc)
+{
+    return soc.compare(0, 11, "Ascend950PR") == 0 || soc.compare(0, 11, "Ascend950DT") == 0;
+}
+
+std::optional<uint64_t> MixDimension(uint64_t blocks, uint16_t aivRatio)
+{
+    if (blocks == 0 || aivRatio == 0 || blocks > std::numeric_limits<uint64_t>::max() / aivRatio) {
+        return std::nullopt;
+    }
+    return blocks * aivRatio;
+}
+
+void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata)
+{
+    if (function == nullptr) {
+        return;
+    }
+    using GetAttribute = aclError (*)(const void*, aclrtFuncAttribute, int64_t*);
+    const auto getAttribute = OriginalRuntimeFunction<GetAttribute>("aclrtGetFunctionAttribute");
+    int64_t type = -1;
+    if (getAttribute != nullptr && getAttribute(function, ACL_FUNC_ATTR_KERNEL_TYPE, &type) == ACL_SUCCESS) {
+        if (type == ACL_KERNEL_TYPE_CUBE) {
+            metadata.kind = KernelKind::Cube;
+        } else if (type == ACL_KERNEL_TYPE_VECTOR) {
+            metadata.kind = KernelKind::Vector;
+        } else if (type == ACL_KERNEL_TYPE_MIX) {
+            metadata.kind = KernelKind::Mix;
+        }
+    }
+    if (!metadata.kind) {
+        const auto rawType = FunctionMetadata<uint32_t>(function, 1);
+        if (rawType) {
+            if (*rawType == 2 || *rawType == 6) {
+                metadata.kind = KernelKind::Cube;
+            } else if (*rawType == 3 || *rawType == 7) {
+                metadata.kind = KernelKind::Vector;
+            } else if (*rawType == 4 || *rawType == 5) {
+                metadata.kind = KernelKind::Mix;
+            }
+        }
+    }
+    using GetSoc = const char* (*)();
+    const auto getSoc = OriginalRuntimeFunction<GetSoc>("aclrtGetSocName");
+    const char* soc = getSoc != nullptr ? getSoc() : nullptr;
+    if (soc == nullptr || !SupportsMixDimension(soc)) {
+        return;
+    }
+    // npu-compute supports 950 only; ACL_FUNC_ATTR_KERNEL_RATIO is unsupported on this product.
+    const auto rawRatio = FunctionMetadata<std::array<uint16_t, 2>>(function, 3);
+    if (!rawRatio) {
+        return;
+    }
+    const uint16_t aicRatio = (*rawRatio)[0];
+    const uint16_t aivRatio = (*rawRatio)[1];
+    // The supported 950 ratios are {1,0}, {0,1}, {1,1} and {1,2}.
+    // Pure kernels keep their launch Block Dim; only MIX has an additional AIV dimension.
+    if (aicRatio == 1 && aivRatio == 0) {
+        metadata.kind = KernelKind::Cube;
+    } else if (aicRatio == 0 && aivRatio == 1) {
+        metadata.kind = KernelKind::Vector;
+    } else if (aicRatio == 1 && (aivRatio == 1 || aivRatio == 2)) {
+        metadata.kind = KernelKind::Mix;
+        if (metadata.blockDim) {
+            metadata.mixBlockDim = MixDimension(*metadata.blockDim, aivRatio);
+        }
+    }
+}
+
 } // namespace
 
 void KernelMetadataCollector::OnCallback(aclptiCallbackId cbid, const aclptiCallbackData& data)
@@ -182,8 +278,16 @@ void KernelMetadataCollector::OnCallback(aclptiCallbackId cbid, const aclptiCall
         }
         return;
     }
-    if (data.callbackSite == ACLPTI_API_EXIT && data.retval == ACL_SUCCESS) {
-        if (cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad) {
+    if (data.callbackSite == ACLPTI_API_EXIT) {
+        if (launchPending_ && cbid == pendingLaunchCbid_) {
+            if (data.retval == ACL_SUCCESS) {
+                frozen_ = true;
+            } else {
+                metadata_ = {};
+            }
+            launchPending_ = false;
+        }
+        if (data.retval == ACL_SUCCESS && cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad) {
             const auto& params = *static_cast<const aclptiAclrtBinaryUnLoadParams*>(data.functionParams);
             for (auto iterator = names_.begin(); iterator != names_.end();) {
                 if (iterator->second.first == params.binHandle) {
@@ -241,7 +345,10 @@ void KernelMetadataCollector::OnCallback(aclptiCallbackId cbid, const aclptiCall
     if (found != names_.end()) {
         candidate.name = found->second.second;
     }
+    CollectExecutionMetadata(handle, candidate);
     metadata_ = std::move(candidate);
+    pendingLaunchCbid_ = cbid;
+    launchPending_ = true;
 }
 
 KernelMetadata KernelMetadataCollector::Snapshot()

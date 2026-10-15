@@ -17,6 +17,7 @@
 
 #include <boost/filesystem.hpp>
 #include <boost/property_tree/json_parser.hpp>
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -53,6 +54,8 @@ static int RunSuiteMain()
     npucompute::ReportConfig config;
     config.outputDirectory = directory;
     config.frequencyMhz = 1000;
+    config.aicFrequencyMhz = 1000;
+    config.aivFrequencyMhz = 1000;
     aclptiProfilingDataResult result;
     aclptiPmuDataRow task{};
     task.coreType = ACLPTI_CORE_TYPE_AIV;
@@ -69,9 +72,9 @@ static int RunSuiteMain()
     CHECK(text.find("\"aiv_total_cycles\":2000") != std::string::npos);
     CHECK(text.find("9999") == std::string::npos);
     CHECK(text.find("block_id") == std::string::npos);
-    CHECK(text.find("\"aic_time(us)\":null") != std::string::npos);
+    CHECK(text.find("\"aic_time(us)\":\"NA\"") != std::string::npos);
     CHECK(text.find("\"category\":\"OpInfoSummary\"") > text.find("\"category\":\"Memory\""));
-    CHECK(text.find("aic_flops") == std::string::npos);
+    CHECK(text.find("\"aic_flops\":\"NA\"") != std::string::npos);
     CHECK(text.back() == '\n');
     std::string error;
     CHECK(npucompute::cli::ValidateCollectionFile(
@@ -79,9 +82,9 @@ static int RunSuiteMain()
     auto records = ReadSummary(directory);
     CHECK(records.size() == 2);
     CHECK(std::abs(records[0].get<double>("aiv_main_mem_read_bw(GB/s)") - 0.476837) < 1e-6);
-    CHECK(records[1].get<std::string>("Op Name") == "null");
-    CHECK(records[1].get<std::string>("aicore_parallel_utilization") == "null");
-    CHECK(records[1].size() == 16);
+    CHECK(records[1].get<std::string>("Op Name") == "NA");
+    CHECK(records[1].get<std::string>("aicore_parallel_utilization") == "NA");
+    CHECK(records[1].size() == 20);
 
     std::vector<uint8_t> encoded;
     CHECK(npucompute::cli::PackDirectoryToRep(directory, &encoded, &error));
@@ -107,8 +110,10 @@ static int RunSuiteMain()
     CHECK(npucompute::WritePmuReport(result, sections, config, metadata) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
     CHECK(records.size() == 6);
-    for (std::size_t index = 0; index < sections.size(); ++index) {
-        CHECK(records[index].get<std::string>("category") == sections[index]);
+    auto sortedSections = sections;
+    std::sort(sortedSections.begin(), sortedSections.end());
+    for (std::size_t index = 0; index < sortedSections.size(); ++index) {
+        CHECK(records[index].get<std::string>("category") == sortedSections[index]);
         CHECK(records[index].get<double>("aiv_total_cycles") == 2000);
     }
     CHECK(records.back().get<std::string>("category") == "OpInfoSummary");
@@ -144,7 +149,7 @@ static int RunSuiteMain()
     CHECK(npucompute::WritePmuReport(missing, {"Memory"}, config) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
     CHECK(records.size() == 2);
-    CHECK(records[0].get<std::string>("aiv_total_cycles") == "null");
+    CHECK(records[0].get<std::string>("aiv_total_cycles") == "NA");
     CHECK(!boost::filesystem::exists(boost::filesystem::path(config.outputDirectory) / "Memory.csv"));
 
     config.outputDirectory = (boost::filesystem::path(directory) / "average").string();
@@ -155,12 +160,17 @@ static int RunSuiteMain()
     secondTask.values[0x501] = 3200;
     result.taskPmuLogs.emplace(aclptiBlockKey{1, 0, ACLPTI_CORE_TYPE_AIV, 0}, secondTask);
     result.pmuLogs = result.taskPmuLogs;
-    CHECK(npucompute::WritePmuReport(result, {"PipeUtilization"}, config) == ACLPTI_SUCCESS);
+    npucompute::KernelMetadata averageMetadata;
+    averageMetadata.kind = npucompute::KernelKind::Vector;
+    averageMetadata.blockDim = 2;
+    result.taskLogs[1] = {
+        {0, 0, 1, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIV, 0}, {0, 1, 1, 0, 10100, 0, 0, ACLPTI_CORE_TYPE_AIV, 0}};
+    CHECK(npucompute::WritePmuReport(result, {"PipeUtilization"}, config, averageMetadata) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
     CHECK(records[0].get<double>("aiv_total_cycles") == 3000);
     CHECK(std::abs(records[0].get<double>("aiv_vec_ratio") - 0.65) < 1e-6);
-    CHECK(std::abs(records[1].get<double>("aicore_parallel_utilization") - 0.65) < 1e-6);
-    CHECK(std::abs(records[1].get<double>("aicore_parallel_balance") - 2.0 / 3.0) < 1e-6);
+    CHECK(std::abs(records[1].get<double>("aicore_parallel_utilization") - 30) < 1e-6);
+    CHECK(std::abs(records[1].get<double>("aicore_parallel_balance") - 75) < 1e-6);
 
     config.outputDirectory = (boost::filesystem::path(directory) / "mixed").string();
     aclptiPmuDataRow cube{};
@@ -176,7 +186,7 @@ static int RunSuiteMain()
     records = ReadSummary(config.outputDirectory);
     CHECK(records[1].get<std::string>("Op Type") == "mix");
     CHECK(records[1].get<double>("Task Duration(us)") == 10);
-    CHECK(records[1].get<std::string>("Current Freq") == "null");
+    CHECK(records[1].get<std::string>("Current Freq") == "NA");
     CHECK(std::abs(records[1].get<double>("aicore_gm_read_bw(GB/s)") - 0.286102) < 1e-6);
     CHECK(std::abs(records[1].get<double>("aicore_gm_bw_usage_rate(%)") - 0.026822) < 1e-6);
 
@@ -188,9 +198,9 @@ static int RunSuiteMain()
     zero.pmuLogs = zero.taskPmuLogs;
     CHECK(npucompute::WritePmuReport(zero, {"PipeUtilization"}, config) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
-    CHECK(records[0].get<std::string>("aic_cube_ratio") == "null");
+    CHECK(records[0].get<std::string>("aic_cube_ratio") == "NA");
     CHECK(records[0].get<double>("aic_total_cycles") == 0);
-    CHECK(records[1].get<std::string>("aicore_parallel_balance") == "null");
+    CHECK(records[1].get<std::string>("aicore_parallel_balance") == "NA");
 
     // Summary metrics must use task PMU rows even when CSV selects block rows.
     config.outputDirectory = (boost::filesystem::path(directory) / "arithmetic-conflict").string();

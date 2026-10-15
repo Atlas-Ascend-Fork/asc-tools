@@ -11,6 +11,7 @@
 #define NPU_TOOLS_NPU_COMPUTE_SRC_COMPUTE_HARDWARE_HARDWARE_INFO_DEVICE_H
 
 #include "hardware/hardware_info_types.h"
+#include "compute_types.h"
 
 #include <cstdint>
 #include <string>
@@ -28,6 +29,18 @@ public:
     virtual bool GetControlCpuCount(std::int32_t deviceId, uint32_t* value) = 0;
     virtual bool GetAiCpuFrequency(std::int32_t deviceId, uint32_t* value) = 0;
     virtual bool GetAiCoreFrequencies(std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz) = 0;
+    virtual bool GetCurrentAiCoreFrequencies(std::int32_t, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz)
+    {
+        *aicFrequencyMhz = 0;
+        *aivFrequencyMhz = 0;
+        return false;
+    }
+    virtual bool GetRatedAiCoreFrequencies(std::int32_t, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz)
+    {
+        *aicFrequencyMhz = 0;
+        *aivFrequencyMhz = 0;
+        return false;
+    }
     virtual bool GetChipVersion(std::int32_t deviceId, std::string* value) = 0;
     virtual bool GetHbmUsage(std::int32_t deviceId, uint64_t* freeBytes, uint64_t* totalBytes) = 0;
     virtual bool GetHbmFrequency(std::int32_t deviceId, uint32_t* value) = 0;
@@ -43,6 +56,8 @@ bool CollectAiCoreCounts(
 bool CollectAiCoreFrequencies(
     HardwareDeviceApi& api, std::uint32_t* aiCubeFrequencyMhz, std::uint32_t* aiVectorFrequencyMhz,
     DiagnosticSink* diagnostics);
+
+SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, DiagnosticSink* diagnostics = nullptr);
 
 } // namespace npucompute
 

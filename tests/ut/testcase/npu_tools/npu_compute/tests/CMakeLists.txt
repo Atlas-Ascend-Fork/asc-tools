@@ -178,6 +178,7 @@ set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/pmu_csv_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_jsonl_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_metrics.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/report_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/compute_service.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/kernel_metadata_collector.cpp
@@ -529,6 +530,7 @@ set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/pmu_csv_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_jsonl_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_metrics.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/report_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/kernel_metadata_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/section_config.cpp

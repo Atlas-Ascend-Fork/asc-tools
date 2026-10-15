@@ -169,6 +169,29 @@ void TestMalformedAndCleanup()
     }
     Check(fs::is_empty(temporary.Path()));
 }
+void TestPipelineOnlySummary()
+{
+    TempDirectory temporary;
+    ArtifactReceiver receiver(temporary.Path());
+    const std::vector<std::string> names = {
+        "HardwareInfo.jsonl", "summary.jsonl", ".biu-staging/process-uds/manifest.json",
+        ".biu-staging/process-uds/result-0-device-0-replay-0.json"};
+    const std::string summary = "{\"category\":\"OpInfoSummary\",\"aiv_flops\":\"NA\"}\n";
+    Config config;
+    config.sections = {"Pipeline"};
+    Result result;
+    result.sections = config.sections;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        const auto id = i + 1;
+        const auto data = names[i] == "summary.jsonl" ? summary : "{}\n";
+        Begin(receiver, id, names[i]);
+        TypedChunk(receiver, id, KindForName(names[i]), data);
+        End(receiver, id, data.size());
+        result.manifest.push_back({id, names[i], data.size()});
+    }
+    Check(receiver.Validate(result, config));
+    Check(ReadFile(fs::path(temporary.Path()) / "summary.jsonl") == summary);
+}
 void TestNoOverwrite()
 {
     TempDirectory temporary;
@@ -337,6 +360,7 @@ int main()
 {
     try {
         TestRoundTripAndManifest();
+        TestPipelineOnlySummary();
         TestMalformedAndCleanup();
         TestNoOverwrite();
         TestPublisherProcess();

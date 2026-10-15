@@ -79,6 +79,10 @@ struct Calls {
 Calls g_calls;
 std::int64_t g_oscFrequencyKhz = 1000000;
 std::int32_t g_oscStatus = 0;
+std::int64_t g_currentAicFrequency = 0;
+std::int64_t g_currentAivFrequency = 0;
+std::int64_t g_ratedAicFrequency = 1650;
+std::int64_t g_ratedAivFrequency = 1650;
 
 void ResetCalls() { g_calls = {}; }
 
@@ -139,12 +143,13 @@ extern "C" std::int32_t StubHalGetDeviceInfo(
     }
     if ((moduleType == kHalModuleTypeAiCore || moduleType == kHalModuleTypeVectorCore) &&
         infoType == kHalInfoTypeCurrentFrequency) {
-        return kHalErrorInvalidValue;
+        *value = moduleType == kHalModuleTypeAiCore ? g_currentAicFrequency : g_currentAivFrequency;
+        return *value == 0 ? kHalErrorInvalidValue : 0;
     }
     if ((moduleType == kHalModuleTypeAiCore || moduleType == kHalModuleTypeVectorCore) &&
         infoType == kHalInfoTypeFrequency) {
-        *value = 1650;
-        return 0;
+        *value = moduleType == kHalModuleTypeAiCore ? g_ratedAicFrequency : g_ratedAivFrequency;
+        return *value == 0 ? kHalErrorInvalidValue : 0;
     }
     return kHalErrorInvalidValue;
 }
@@ -492,4 +497,35 @@ static int RunSuiteMain()
 TEST(NpuComputeHardwareDeviceApi, Main)
 {
     ASSERT_EQ(RunSuiteMain(), 0) << "NpuComputeHardwareDeviceApi reported failure";
+}
+
+TEST(NpuComputeHardwareDeviceApi, CurrentFrequencyDoesNotFallBackToRated)
+{
+    auto resolver = std::make_shared<FakeDynamicSymbolResolver>();
+    resolver->AddDriverLibraries();
+    npucompute::DynamicHardwareDeviceApi api(resolver);
+    uint32_t aic = 99;
+    uint32_t aiv = 99;
+    EXPECT_FALSE(api.GetCurrentAiCoreFrequencies(0, &aic, &aiv));
+    EXPECT_EQ(aic, 0U);
+    EXPECT_EQ(aiv, 0U);
+    EXPECT_TRUE(api.GetRatedAiCoreFrequencies(0, &aic, &aiv));
+    EXPECT_EQ(aic, 1650U);
+    EXPECT_EQ(aiv, 1650U);
+}
+
+TEST(NpuComputeHardwareDeviceApi, CurrentFrequencyRetainsValidSide)
+{
+    auto resolver = std::make_shared<FakeDynamicSymbolResolver>();
+    resolver->AddDriverLibraries();
+    npucompute::DynamicHardwareDeviceApi api(resolver);
+    g_currentAicFrequency = 1500;
+    g_currentAivFrequency = -1;
+    uint32_t aic = 99;
+    uint32_t aiv = 99;
+    EXPECT_FALSE(api.GetCurrentAiCoreFrequencies(0, &aic, &aiv));
+    EXPECT_EQ(aic, 1500U);
+    EXPECT_EQ(aiv, 0U);
+    g_currentAicFrequency = 0;
+    g_currentAivFrequency = 0;
 }
