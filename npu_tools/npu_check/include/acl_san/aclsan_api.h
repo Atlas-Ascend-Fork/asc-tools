@@ -78,7 +78,6 @@ typedef enum AclsanCallbackDomain {
     ACLSAN_CB_DOMAIN_LAUNCH = 7,
     ACLSAN_CB_DOMAIN_REPORT = 8,
     ACLSAN_CB_DOMAIN_ERROR = 9,
-    ACLSAN_CB_DOMAIN_DEVICE_BARRIER = 10,
 } AclsanCallbackDomain;
 
 typedef enum AclsanCallbackIdResource {
@@ -102,13 +101,9 @@ typedef enum AclsanCallbackIdDeviceInstruction {
     ACLSAN_CBID_DEVICE_STATE = 3,
     ACLSAN_CBID_DEVICE_CONTROL = 4,
     ACLSAN_CBID_DEVICE_ERROR = 5,
+    ACLSAN_CBID_DEVICE_PIPE_BARRIER = 6,
     ACLSAN_CBID_DEVICE_INSTRUCTION_INVALID = 0x7fffffff
 } AclsanCallbackIdDeviceInstruction;
-
-typedef enum AclsanCallbackIdDeviceBarrier {
-    ACLSAN_CBID_DEVICE_PIPE_BARRIER = 1,
-    ACLSAN_CBID_DEVICE_BARRIER_INVALID = 0x7fffffff
-} AclsanCallbackIdDeviceBarrier;
 
 typedef enum AclsanCallbackIdLaunch {
     ACLSAN_CBID_LAUNCH_KERNEL = 1,

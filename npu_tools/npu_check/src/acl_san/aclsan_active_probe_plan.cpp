@@ -23,9 +23,6 @@ std::shared_mutex g_activeProbePlanMutex;
 
 uint32_t ProbeGroupMaskForCallback(AclsanCallbackDomain domain, AclsanCallbackId id) noexcept
 {
-    if (domain == ACLSAN_CB_DOMAIN_DEVICE_BARRIER && id == ACLSAN_CBID_DEVICE_PIPE_BARRIER) {
-        return PROBE_GROUP_SYNC;
-    }
     if (domain != ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
         return 0;
     }
@@ -36,7 +33,7 @@ uint32_t ProbeGroupMaskForCallback(AclsanCallbackDomain domain, AclsanCallbackId
     if (id == ACLSAN_CBID_DEVICE_STATE) {
         return PROBE_GROUP_MTE1 | PROBE_GROUP_MTE2 | PROBE_GROUP_MTE3 | PROBE_GROUP_FIXPIPE | PROBE_GROUP_SCALAR;
     }
-    if (id == ACLSAN_CBID_DEVICE_SYNC) {
+    if (id == ACLSAN_CBID_DEVICE_SYNC || id == ACLSAN_CBID_DEVICE_PIPE_BARRIER) {
         return PROBE_GROUP_SYNC;
     }
     return 0;

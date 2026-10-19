@@ -13,6 +13,7 @@
 #include "aclsan_boundary_stub.h"
 
 #include "aclsan_active_probe_plan.h"
+#include "aclsan_dispatch.h"
 #include "device_runtime/device_symbolizer.h"
 #include "aclsan_device_call_stack.h"
 #include "aclsan_runtime_hook.h"
@@ -188,4 +189,36 @@ TEST(AclsanProbePlanCallback, Main)
     CHECK(g_maxActiveApplyCalls.load(std::memory_order_acquire) == 1);
     CHECK(aclsan::SnapshotActiveProbePlan() == (memoryProbeMask | PROBE_GROUP_SYNC));
     CHECK(aclsanUnsubscribe(subscriber) == ACLSAN_STATUS_SUCCESS);
+}
+
+TEST(AclsanProbePlanCallback, BarrierUsesInstructionDomainAndIndependentId)
+{
+    aclsan_test::Boundary boundary;
+    boundary.applyRuntimeHooks = &ApplyRuntimeHooksTracking;
+    const aclsan_test::BoundaryGuard boundaryGuard{boundary};
+    int deliveries = 0;
+    const auto callback = [](void* userdata, AclsanCallbackDomain domain, AclsanCallbackId id, const void*) {
+        EXPECT_EQ(domain, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION);
+        EXPECT_EQ(id, ACLSAN_CBID_DEVICE_PIPE_BARRIER);
+        ++*static_cast<int*>(userdata);
+    };
+    AclsanSubscriberHandle subscriber = nullptr;
+    ASSERT_EQ(aclsanSubscribe(&subscriber, callback, &deliveries), ACLSAN_STATUS_SUCCESS);
+    EXPECT_EQ(
+        aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER),
+        ACLSAN_STATUS_SUCCESS);
+    EXPECT_EQ(aclsan::SnapshotActiveProbePlan(), aclsan::PROBE_GROUP_SYNC);
+    EXPECT_EQ(
+        aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_CONTROL),
+        ACLSAN_STATUS_ERROR_INVALID_PARAMETER);
+    AclsanDeviceBarrierData barrier{};
+    aclsan::AclsanCallbackDispatcher::DispatchDeviceBarrier(barrier);
+    EXPECT_EQ(deliveries, 1);
+    EXPECT_EQ(
+        aclsanEnableCallback(0, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER),
+        ACLSAN_STATUS_SUCCESS);
+    EXPECT_EQ(aclsan::SnapshotActiveProbePlan(), 0U);
+    aclsan::AclsanCallbackDispatcher::DispatchDeviceBarrier(barrier);
+    EXPECT_EQ(deliveries, 1);
+    EXPECT_EQ(aclsanUnsubscribe(subscriber), ACLSAN_STATUS_SUCCESS);
 }

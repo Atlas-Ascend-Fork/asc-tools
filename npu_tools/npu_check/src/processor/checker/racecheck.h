@@ -41,6 +41,8 @@ private:
         uint64_t skippedMemory = 0;
         std::set<std::string> reasons;
     };
+    class LaunchProcessor;
+    bool StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId id, const void* data);
     void Finish(uint64_t id, Launch& launch, CheckerReportList& reports);
     void Analyze(uint64_t id, Launch& launch, CheckerReportList& reports);
     void Collect(void* stream, bool final, CheckerReportList& reports);

@@ -173,7 +173,7 @@ const std::vector<CallbackSpec>& Racechecker::GetSubscribedID() const
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC},
-        {ACLSAN_CB_DOMAIN_DEVICE_BARRIER, ACLSAN_CBID_DEVICE_PIPE_BARRIER},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER},
         {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END}};
     return ids;
 }
@@ -240,6 +240,12 @@ bool Racechecker::OnCallback(
         return malformed();
     if (!acceptLaunch(h.launchId))
         return true;
+    return StoreDeviceEvent(domain, id, data);
+}
+
+bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId id, const void* data)
+{
+    const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
     auto& state = launches_[h.launchId];
     if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
         ++memoryEvents_;
@@ -347,16 +353,9 @@ void Racechecker::Finish(uint64_t id, Launch& l, CheckerReportList& reports)
     incomplete_ |= !l.reasons.empty();
 }
 
-void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerReportList& reports)
-{
-    using namespace race;
-    // Stable identities, independent of callback interleaving, determine tie breaks only.
-    std::sort(launch.memory.begin(), launch.memory.end(), [](const auto& a, const auto& b) {
-        return std::make_pair(Key(a.header), a.accessIndex) < std::make_pair(Key(b.header), b.accessIndex);
-    });
-    std::sort(launch.sync.begin(), launch.sync.end(), [](const auto& a, const auto& b) {
-        return Key(a.header) < Key(b.header);
-    });
+// Per-launch analysis state. It is discarded after replay and never shared
+// across launches; the graph is sealed before any memory-state comparison.
+class Racechecker::LaunchProcessor {
     struct Access {
         const AclsanDeviceMemoryAccessData& data;
         size_t node;
@@ -368,84 +367,6 @@ void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerR
         size_t node;
         uint32_t pipe;
     };
-    HappensBeforeGraph graph(limits_.edges, limits_.queryWork, limits_.queryCache);
-    std::map<Instruction, Event> events;
-    std::map<std::pair<Instruction, uint32_t>, size_t> accessKeys;
-    std::map<Instruction, std::pair<uint32_t, std::set<uint32_t>>> counts;
-    std::vector<Access> accesses;
-    size_t segments = 0;
-    for (const auto& a : launch.memory) {
-        const auto key = Key(a.header);
-        auto old = accessKeys.find({key, a.accessIndex});
-        if (old != accessKeys.end()) {
-            if (!SameMemory(accesses[old->second].data, a))
-                launch.reasons.insert("conflicting_duplicate");
-            continue;
-        }
-        if (!a.accessCount || a.accessIndex >= a.accessCount || !ValidPipe(a.header.pipeline) ||
-            a.header.blockType > ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
-            launch.reasons.insert("invalid_access_identity");
-            continue;
-        }
-        auto& count = counts[key];
-        if (count.first && count.first != a.accessCount)
-            launch.reasons.insert("access_count_mismatch");
-        count.first = a.accessCount;
-        count.second.insert(a.accessIndex);
-        auto event = events.find(key);
-        size_t node;
-        if (event == events.end()) {
-            node = graph.AddNode();
-            events.emplace(key, Event{false, accesses.size(), node, a.header.pipeline});
-        } else {
-            node = event->second.node;
-            const auto& first = accesses[event->second.index].data;
-            if (event->second.pipe != a.header.pipeline || first.header.pc != a.header.pc ||
-                first.header.siteId != a.header.siteId || first.instructionId != a.instructionId ||
-                first.unitFlag != a.unitFlag)
-                launch.reasons.insert("instruction_identity_mismatch");
-        }
-        Access access{a, node, {}};
-        if (a.instructionId >= static_cast<uint32_t>(aclsan::InstructionId::StAtomicB32) &&
-            a.instructionId <= static_cast<uint32_t>(aclsan::InstructionId::StiAtomicB8)) {
-            launch.reasons.insert("atomic_semantics_unknown");
-        }
-        // Remote/shared owner mappings are not encoded by the current callback.
-        if (a.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR &&
-            a.memorySpace >= ACLSAN_DEVICE_MEMORY_SPACE_L1) {
-            launch.reasons.insert("owner_mapping_unknown");
-        }
-        if (a.accessMode < 1 || a.accessMode > 3 || Space(a.memorySpace) == NpuCheckReportMemorySpace::UNKNOWN) {
-            launch.reasons.insert("access_coverage_unknown");
-        } else if (!Normalize(a, limits_.segments - segments, access.ranges)) {
-            launch.reasons.insert("invalid_or_excessive_layout");
-        }
-        segments += access.ranges.size();
-        accessKeys[{key, a.accessIndex}] = accesses.size();
-        accesses.push_back(std::move(access));
-    }
-    for (const auto& c : counts) {
-        auto observed = c.second.second;
-        const auto skipped = launch.skippedFragments.find(c.first);
-        if (skipped != launch.skippedFragments.end())
-            for (auto index : skipped->second)
-                if (index < c.second.first)
-                    observed.insert(index);
-        if (c.second.first != observed.size())
-            launch.reasons.insert("missing_access_fragment");
-    }
-    for (size_t i = 0; i < launch.sync.size(); ++i) {
-        const auto& s = launch.sync[i];
-        auto found = events.find(Key(s.header));
-        if (found != events.end()) {
-            if (!found->second.sync || !SameSync(launch.sync[found->second.index], s))
-                launch.reasons.insert("conflicting_duplicate");
-        } else
-            events.emplace(Key(s.header), Event{true, i, graph.AddNode(), s.header.pipeline});
-    }
-    using Flag = std::tuple<Domain, uint32_t, uint32_t, uint32_t, uint64_t>;
-    std::map<Flag, size_t> flags;
-    std::set<Flag> invalidFlags;
     // FFTS (modes 0/1/2) and intra-block (mode 4) are separate counter banks.
     // Each key identifies one receiver, not a launch-wide flag broadcast.
     using CrossFlag = std::tuple<Domain, bool, uint64_t>;
@@ -465,23 +386,139 @@ void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerR
     };
     std::map<CrossFlag, CrossCounter> crossCounters;
     using Pipe = std::pair<Domain, uint32_t>;
+    Racechecker& checker;
+    Launch& launch;
+    CheckerReportList& reports;
+    const Limits& limits_;
+    HappensBeforeGraph graph;
+    std::map<Instruction, Event> events;
+    std::vector<Access> accesses;
+    std::map<Instruction, size_t> instructionStarts;
+    // Prefix/acquire joins do not imply completion order within a pipeline.
     std::map<Pipe, std::optional<size_t>> prefix, acquired;
-    // S/V/M complete in issue order within one core. Other pipelines only
-    // issue in order; their overlapping accesses still require synchronization.
+    // Only S/V/M complete in issue order within one core.
     std::map<Pipe, size_t> lastOrdered;
     bool graphExhausted = false;
-    const auto edge = [&](size_t a, size_t b, HappensBeforeGraph::Reason reason) {
+    size_t joinNodes = 0;
+    size_t comparisons = 0;
+
+public:
+    LaunchProcessor(Racechecker& owner, Launch& data, CheckerReportList& output)
+        : checker(owner),
+          launch(data),
+          reports(output),
+          limits_(owner.limits_),
+          graph(limits_.edges, limits_.queryWork, limits_.queryCache)
+    {}
+
+    void Run()
+    {
+        NormalizeEvents();
+        ExpandUnitFlagAccesses();
+        RouteCrossCoreNotifications();
+        BuildNotificationTokens();
+        BuildLocalEdges();
+        ResolveCrossCoreWaits();
+        if (SealGraph())
+            ReplayMemory();
+    }
+
+private:
+    void NormalizeEvents()
+    {
+        // Stable identities, independent of callback interleaving, determine tie breaks only.
+        std::sort(launch.memory.begin(), launch.memory.end(), [](const auto& a, const auto& b) {
+            return std::make_pair(Key(a.header), a.accessIndex) < std::make_pair(Key(b.header), b.accessIndex);
+        });
+        std::sort(launch.sync.begin(), launch.sync.end(), [](const auto& a, const auto& b) {
+            return Key(a.header) < Key(b.header);
+        });
+        std::map<std::pair<Instruction, uint32_t>, size_t> accessKeys;
+        std::map<Instruction, std::pair<uint32_t, std::set<uint32_t>>> counts;
+        size_t segments = 0;
+        for (const auto& a : launch.memory) {
+            const auto key = Key(a.header);
+            auto old = accessKeys.find({key, a.accessIndex});
+            if (old != accessKeys.end()) {
+                if (!SameMemory(accesses[old->second].data, a))
+                    launch.reasons.insert("conflicting_duplicate");
+                continue;
+            }
+            if (!a.accessCount || a.accessIndex >= a.accessCount || !ValidPipe(a.header.pipeline) ||
+                a.header.blockType > ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
+                launch.reasons.insert("invalid_access_identity");
+                continue;
+            }
+            auto& count = counts[key];
+            if (count.first && count.first != a.accessCount)
+                launch.reasons.insert("access_count_mismatch");
+            count.first = a.accessCount;
+            count.second.insert(a.accessIndex);
+            auto event = events.find(key);
+            size_t node;
+            if (event == events.end()) {
+                node = graph.AddNode();
+                events.emplace(key, Event{false, accesses.size(), node, a.header.pipeline});
+            } else {
+                node = event->second.node;
+                const auto& first = accesses[event->second.index].data;
+                if (event->second.pipe != a.header.pipeline || first.header.pc != a.header.pc ||
+                    first.header.siteId != a.header.siteId || first.instructionId != a.instructionId ||
+                    first.unitFlag != a.unitFlag)
+                    launch.reasons.insert("instruction_identity_mismatch");
+            }
+            Access access{a, node, {}};
+            if (a.instructionId >= static_cast<uint32_t>(aclsan::InstructionId::StAtomicB32) &&
+                a.instructionId <= static_cast<uint32_t>(aclsan::InstructionId::StiAtomicB8)) {
+                launch.reasons.insert("atomic_semantics_unknown");
+            }
+            // Remote/shared owner mappings are not encoded by the current callback.
+            if (a.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR &&
+                a.memorySpace >= ACLSAN_DEVICE_MEMORY_SPACE_L1) {
+                launch.reasons.insert("owner_mapping_unknown");
+            }
+            if (a.accessMode < 1 || a.accessMode > 3 || Space(a.memorySpace) == NpuCheckReportMemorySpace::UNKNOWN) {
+                launch.reasons.insert("access_coverage_unknown");
+            } else if (!Normalize(a, limits_.segments - segments, access.ranges)) {
+                launch.reasons.insert("invalid_or_excessive_layout");
+            }
+            segments += access.ranges.size();
+            accessKeys[{key, a.accessIndex}] = accesses.size();
+            accesses.push_back(std::move(access));
+        }
+        for (const auto& c : counts) {
+            auto observed = c.second.second;
+            const auto skipped = launch.skippedFragments.find(c.first);
+            if (skipped != launch.skippedFragments.end())
+                for (auto index : skipped->second)
+                    if (index < c.second.first)
+                        observed.insert(index);
+            if (c.second.first != observed.size())
+                launch.reasons.insert("missing_access_fragment");
+        }
+        for (size_t i = 0; i < launch.sync.size(); ++i) {
+            const auto& s = launch.sync[i];
+            auto found = events.find(Key(s.header));
+            if (found != events.end()) {
+                if (!found->second.sync || !SameSync(launch.sync[found->second.index], s))
+                    launch.reasons.insert("conflicting_duplicate");
+            } else
+                events.emplace(Key(s.header), Event{true, i, graph.AddNode(), s.header.pipeline});
+        }
+    }
+
+    void AddEdge(size_t a, size_t b, HappensBeforeGraph::Reason reason)
+    {
         if (!graph.AddEdge(a, b, reason)) {
             launch.reasons.insert("graph_budget");
             graphExhausted = true;
         }
-    };
-    // P/G are graph joins, not execution-order frontiers. A join has incoming
-    // edges from both contributors and is never linked to a new memory access
-    // through P: same-pipeline memory operations can still be unordered.
-    // One join replaces an arbitrarily long prefix/acquire list with two edges.
-    size_t joinNodes = 0;
-    const auto merge = [&](std::optional<size_t>& aggregate, size_t node, HappensBeforeGraph::Reason reason) {
+    }
+
+    // A join collects both contributors with two incoming edges. It is not
+    // a completion-order frontier for later accesses on the same pipeline.
+    void MergePrefix(std::optional<size_t>& aggregate, size_t node, HappensBeforeGraph::Reason reason)
+    {
         if (!aggregate) {
             aggregate = node;
             return;
@@ -497,14 +534,13 @@ void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerR
         }
         const size_t joined = graph.AddNode();
         ++joinNodes;
-        edge(*aggregate, joined, reason);
+        AddEdge(*aggregate, joined, reason);
         if (!graphExhausted)
-            edge(node, joined, reason);
+            AddEdge(node, joined, reason);
         aggregate = joined;
-    };
-    // UnitFlag synchronizes L0C fragments, never whole FIX/M pipelines.
-    // Instruction boundaries retain ordinary barriers and M completion ordering.
-    constexpr uint64_t unitBytes = 512;
+    }
+
+    static constexpr uint64_t unitBytes = 512;
     struct UnitAccess {
         size_t node;
         uint32_t mode;
@@ -513,429 +549,477 @@ void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerR
         std::vector<UnitAccess> writes;
         std::vector<UnitAccess> reads;
     };
-    std::map<std::pair<Domain, uint64_t>, UnitQueues> units;
-    // Adjacent hardware units with identical access membership have identical
-    // protocol histories. Partition at every observed unit boundary, retaining
-    // byte-precise footprints while avoiding one node per 512 bytes of a tile.
-    std::map<Domain, std::set<uint64_t>> unitBoundaries;
-    for (const auto& access : accesses) {
-        if (!access.data.unitFlag || access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C)
-            continue;
-        auto& boundaries = unitBoundaries[DomainOf(access.data.header)];
-        for (const auto& range : access.ranges) {
-            if (range.begin < range.end) {
-                boundaries.insert(range.begin / unitBytes);
-                boundaries.insert((range.end - 1) / unitBytes + 1);
-            }
-        }
-    }
-    std::map<Instruction, size_t> instructionStarts;
-    std::vector<Access> expanded;
-    std::map<std::pair<Instruction, uint64_t>, size_t> unitNodes;
-    for (const auto& access : accesses) {
-        const auto& a = access.data;
-        if (!a.unitFlag) {
-            expanded.push_back(access);
-            continue;
-        }
-        if ((a.unitFlag != 2 && a.unitFlag != 3) || a.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
-            (a.header.pipeline != ACLSAN_DEVICE_PIPE_MATRIX && a.header.pipeline != ACLSAN_DEVICE_PIPE_FIXPIPE)) {
-            launch.reasons.insert("invalid_unit_flag");
-            expanded.push_back(access);
-            continue;
-        }
-        const auto key = Key(a.header);
-        auto start = instructionStarts.find(key);
-        if (start == instructionStarts.end())
-            start = instructionStarts.emplace(key, graph.AddNode()).first;
-        const auto addFragment = [&](const std::vector<Interval>& ranges, bool unit) {
-            if (expanded.size() >= limits_.segments || graphExhausted) {
-                launch.reasons.insert("unit_flag_budget");
-                return;
-            }
-            const auto unitKey = std::make_pair(key, ranges.empty() ? 0 : ranges.front().begin / unitBytes);
-            const auto existing = unit ? unitNodes.find(unitKey) : unitNodes.end();
-            const bool fresh = existing == unitNodes.end();
-            const size_t node = fresh ? graph.AddNode() : existing->second;
-            if (unit && fresh)
-                unitNodes.emplace(unitKey, node);
-            if (fresh) {
-                edge(start->second, node, HappensBeforeGraph::Reason::InstructionBoundary);
-                edge(node, access.node, HappensBeforeGraph::Reason::InstructionBoundary);
-            }
-            expanded.push_back(Access{a, node, ranges});
-            if (unit && fresh) {
-                auto& q = units[{DomainOf(a.header), ranges.front().begin / unitBytes}];
-                auto& queue = a.header.pipeline == ACLSAN_DEVICE_PIPE_MATRIX ? q.writes : q.reads;
-                queue.push_back({node, a.unitFlag});
-            }
-        };
-        if (a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C) {
-            addFragment(access.ranges, false);
-            continue;
-        }
-        if (a.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE && a.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
-            launch.reasons.insert("invalid_unit_flag_access");
-            continue;
-        }
-        for (const auto& range : access.ranges) {
-            for (uint64_t begin = range.begin; begin < range.end;) {
-                const auto& boundaries = unitBoundaries.at(DomainOf(a.header));
-                const auto next = boundaries.upper_bound(begin / unitBytes);
-                const uint64_t end = next == boundaries.end() || *next > UINT64_MAX / unitBytes ?
-                                         range.end :
-                                         std::min(range.end, *next * unitBytes);
-                const uint64_t length = end - begin;
-                addFragment({Interval{begin, begin + length}}, true);
-                begin += length;
-                if (graphExhausted || expanded.size() >= limits_.segments) {
-                    if (begin < range.end)
-                        launch.reasons.insert("unit_flag_budget");
-                    break;
+    struct UnitPartition {
+        std::map<std::pair<Domain, uint64_t>, UnitQueues> units;
+        std::map<Domain, std::set<uint64_t>> boundaries;
+        std::map<std::pair<Instruction, uint64_t>, size_t> nodes;
+        std::vector<Access> expanded;
+    };
+
+    void CollectUnitBoundaries(UnitPartition& partition)
+    {
+        // Adjacent hardware units with identical access membership have identical
+        // protocol histories. Partition at every observed unit boundary, retaining
+        // byte-precise footprints while avoiding one node per 512 bytes of a tile.
+        for (const auto& access : accesses) {
+            if (!access.data.unitFlag || access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C)
+                continue;
+            auto& boundaries = partition.boundaries[DomainOf(access.data.header)];
+            for (const auto& range : access.ranges) {
+                if (range.begin < range.end) {
+                    boundaries.insert(range.begin / unitBytes);
+                    boundaries.insert((range.end - 1) / unitBytes + 1);
                 }
             }
         }
-    }
-    accesses = std::move(expanded);
-    // Match generations independently in each physical L0C unit. Callback
-    // interleaving across M and FIX is not ordering evidence. Mode 2 holds
-    // ownership; only mode 3 hands the unit to the opposite pipeline.
-    for (const auto& item : units) {
-        const auto& q = item.second;
-        size_t w = 0, r = 0;
-        std::optional<size_t> released;
-        while (w < q.writes.size()) {
-            std::optional<size_t> published;
-            while (w < q.writes.size()) {
-                const auto current = q.writes[w++];
-                if (released)
-                    edge(*released, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                if (current.mode == 3) {
-                    published = current.node;
-                    break;
-                }
-            }
-            if (!published) {
-                if (r < q.reads.size())
-                    launch.reasons.insert("unit_flag_missing_publish");
-                break;
-            }
-            released.reset();
-            std::optional<size_t> previousRead;
-            while (r < q.reads.size()) {
-                const auto current = q.reads[r++];
-                edge(*published, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                // Hardware completes the preceding L0C read/flag action before
-                // the next FIX instruction's unit action. This does not order GM writes.
-                if (previousRead)
-                    edge(*previousRead, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                previousRead = current.node;
-                if (current.mode == 3) {
-                    released = current.node;
-                    break;
-                }
-            }
-            if (!released && w < q.writes.size()) {
-                launch.reasons.insert("unit_flag_missing_release");
-                break;
-            }
-        }
-        if (r < q.reads.size())
-            launch.reasons.insert("unit_flag_missing_publish");
     }
 
-    // Route notifications to actual receiver counters before adding HB edges.
-    // Callback arrival order is irrelevant; each sender/receiver is traversed
-    // in its own instruction order. Reused flags consume one wave per WAIT.
-    std::set<Domain> domains;
-    for (const auto& pair : events)
-        domains.insert(std::get<0>(pair.first));
-    size_t routedSets = 0;
-    for (const auto& pair : events) {
-        const auto& e = pair.second;
-        if (!e.sync)
-            continue;
-        const auto& s = launch.sync[e.index];
-        if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK)
-            continue;
-        const auto sender = DomainOf(s.header);
-        const bool intra = s.mode == 4;
-        const bool cube = s.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-        const auto flag = s.objectId & (intra && cube ? 31U : 15U);
-        if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE || (s.mode != 0 && s.mode != 1 && s.mode != 2 && s.mode != 4) ||
-            (s.mode != 0 && !Position3510(sender))) {
-            launch.reasons.insert("unsupported_cross_core_topology_or_mode");
-            continue;
+    void AddUnitFragment(
+        UnitPartition& partition, const Access& access, size_t start, const std::vector<Interval>& ranges, bool unit)
+    {
+        const auto& a = access.data;
+        const auto key = Key(a.header);
+        if (partition.expanded.size() >= limits_.segments || graphExhausted) {
+            launch.reasons.insert("unit_flag_budget");
+            return;
         }
-        if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
-            crossCounters[{sender, intra, flag}].waits.push_back(e.node);
-            continue;
+        const auto unitKey = std::make_pair(key, ranges.empty() ? 0 : ranges.front().begin / unitBytes);
+        const auto existing = unit ? partition.nodes.find(unitKey) : partition.nodes.end();
+        const bool fresh = existing == partition.nodes.end();
+        const size_t node = fresh ? graph.AddNode() : existing->second;
+        if (unit && fresh)
+            partition.nodes.emplace(unitKey, node);
+        if (fresh) {
+            AddEdge(start, node, HappensBeforeGraph::Reason::InstructionBoundary);
+            AddEdge(node, access.node, HappensBeforeGraph::Reason::InstructionBoundary);
         }
-        if (s.action != ACLSAN_DEVICE_SYNC_ACTION_SET)
-            continue;
-        bool delivered = false;
-        for (const auto& receiver : domains) {
-            uint64_t receiverFlag = flag;
-            if (intra) {
-                const auto sp = Position3510(sender), rp = Position3510(receiver);
-                if (!sp || !rp)
-                    continue;
-                if (cube && rp->subblock != (flag >> 4U))
-                    continue;
-                receiverFlag = cube ? flag & 15U : flag + 16U * sp->subblock;
-            }
-            if (!CrossParticipant(s.mode, sender, receiver, receiverFlag))
-                continue;
-            delivered = true;
-            if (++routedSets > limits_.edges) {
-                launch.reasons.insert("graph_budget");
-                break;
-            }
-            auto& counter = crossCounters[{receiver, intra, receiverFlag}];
-            auto [streamIt, inserted] = counter.modes.try_emplace(s.mode);
-            auto& stream = streamIt->second;
-            if (inserted) {
-                // A notification requires every active participant in this
-                // mode's scope. A missing SET must not shrink that scope.
-                for (const auto& peer : domains)
-                    if (CrossParticipant(s.mode, peer, receiver, receiverFlag))
-                        stream.senders[peer];
-            }
-            stream.senders[sender].push_back(e.node);
-        }
-        if (!delivered)
-            launch.reasons.insert("pending_cross_core_set");
-        if (routedSets > limits_.edges)
-            break;
-    }
-    for (auto& entry : crossCounters) {
-        for (auto& mode : entry.second.modes) {
-            auto& stream = mode.second;
-            size_t complete = std::numeric_limits<size_t>::max();
-            for (const auto& sender : stream.senders)
-                complete = std::min(complete, sender.second.size());
-            if (stream.senders.empty())
-                continue;
-            for (size_t i = 0; i < complete; ++i) {
-                std::optional<size_t> joined;
-                std::vector<size_t> contributors;
-                for (const auto& sender : stream.senders) {
-                    const auto node = sender.second[i];
-                    contributors.push_back(node);
-                    merge(joined, node, HappensBeforeGraph::Reason::TokenMatch);
-                }
-                // Per-core scalar SET order makes successive complete
-                // notifications in one participant stream ordered as well.
-                if (!stream.tokens.empty())
-                    edge(stream.tokens.back().node, *joined, HappensBeforeGraph::Reason::TokenMatch);
-                stream.tokens.push_back({*joined, std::move(contributors)});
-            }
+        partition.expanded.push_back(Access{a, node, ranges});
+        if (unit && fresh) {
+            auto& q = partition.units[{DomainOf(a.header), ranges.front().begin / unitBytes}];
+            auto& queue = a.header.pipeline == ACLSAN_DEVICE_PIPE_MATRIX ? q.writes : q.reads;
+            queue.push_back({node, a.unitFlag});
         }
     }
-    for (const auto& pair : events) {
-        if (graphExhausted)
-            break;
-        const Domain domain = std::get<0>(pair.first);
-        const auto& e = pair.second;
-        if (!e.sync) {
-            const size_t begin = instructionStarts.count(pair.first) ? instructionStarts.at(pair.first) : e.node;
-            if (e.pipe == ACLSAN_DEVICE_PIPE_VECTOR || e.pipe == ACLSAN_DEVICE_PIPE_SCALAR ||
-                e.pipe == ACLSAN_DEVICE_PIPE_MATRIX) {
-                const auto previous = lastOrdered.find({domain, e.pipe});
-                if (previous != lastOrdered.end())
-                    edge(previous->second, begin, HappensBeforeGraph::Reason::PipelineOrder);
-                lastOrdered[{domain, e.pipe}] = e.node;
-            }
-            if (const auto token = acquired[{domain, e.pipe}])
-                edge(*token, begin, HappensBeforeGraph::Reason::AcquireSuffix);
-            merge(prefix[{domain, e.pipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
-            continue;
-        }
-        const auto& s = launch.sync[e.index];
-        if (s.syncKind == ACLSAN_DEVICE_SYNC_KIND_UNKNOWN && s.action == ACLSAN_DEVICE_SYNC_ACTION_UNKNOWN) {
-            if (s.dstPipe == ACLSAN_DEVICE_PIPE_ALL) {
-                const uint32_t pipes[] = {ACLSAN_DEVICE_PIPE_SCALAR, ACLSAN_DEVICE_PIPE_VECTOR,
-                                          ACLSAN_DEVICE_PIPE_MATRIX, ACLSAN_DEVICE_PIPE_MTE1,
-                                          ACLSAN_DEVICE_PIPE_MTE2,   ACLSAN_DEVICE_PIPE_MTE3,
-                                          ACLSAN_DEVICE_PIPE_FIXPIPE};
-                for (const auto p : pipes) {
-                    if (const auto prior = prefix[{domain, p}])
-                        edge(*prior, e.node, HappensBeforeGraph::Reason::BarrierPrefix);
-                    acquired[{domain, p}] = e.node;
-                    prefix[{domain, p}] = e.node;
-                }
-            } else if (ValidPipe(s.dstPipe)) {
-                if (const auto prior = prefix[{domain, s.dstPipe}])
-                    edge(*prior, e.node, HappensBeforeGraph::Reason::BarrierPrefix);
-                acquired[{domain, s.dstPipe}] = e.node;
-                prefix[{domain, s.dstPipe}] = e.node;
-            } else {
-                launch.reasons.insert("barrier_coverage_unknown");
-            }
-            continue;
-        }
-        if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || !ValidPipe(s.srcPipe) || !ValidPipe(s.dstPipe) ||
-            (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != 0) ||
-            (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE && s.srcPipe == s.dstPipe) ||
-            (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > 4)) {
-            launch.reasons.insert("sync_coverage_unknown");
-            continue;
-        }
-        if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK) {
-            // Cross-core SET/WAIT execute on scalar in core order, regardless
-            // of their selected source/destination pipeline or flag ID. This
-            // orders notifications, not all ordinary memory completions.
-            auto scalar = std::make_pair(domain, uint32_t{ACLSAN_DEVICE_PIPE_SCALAR});
-            if (const auto prior = prefix[scalar])
-                edge(*prior, e.node, HappensBeforeGraph::Reason::PipelineOrder);
-            lastOrdered[scalar] = e.node;
-            merge(prefix[scalar], e.node, HappensBeforeGraph::Reason::PublishPrefix);
-            if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
-                if (s.srcPipe != ACLSAN_DEVICE_PIPE_SCALAR)
-                    if (const auto prior = prefix[{domain, s.srcPipe}])
-                        edge(*prior, e.node, HappensBeforeGraph::Reason::PublishPrefix);
-            } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
-                // Notification edges are resolved after local graph building.
-                if (ValidPipe(s.dstPipe)) {
-                    merge(acquired[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::AcquireSuffix);
-                    merge(prefix[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
-                }
-            } else if (s.action != ACLSAN_DEVICE_SYNC_ACTION_SET) {
-                launch.reasons.insert("invalid_cross_core_sync_action");
-            }
-            continue;
-        }
-        const Flag key{domain, s.scope, s.srcPipe, s.dstPipe, s.objectId};
-        if (invalidFlags.count(key)) {
-            if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
-                flags.erase(key);
-                invalidFlags.erase(key);
-            }
-            continue;
-        }
-        if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
-            if (flags.count(key)) {
-                invalidFlags.insert(key);
-                launch.reasons.insert("duplicate_set");
+
+    void PartitionUnitAccesses(UnitPartition& partition)
+    {
+        for (const auto& access : accesses) {
+            const auto& a = access.data;
+            if (!a.unitFlag) {
+                partition.expanded.push_back(access);
                 continue;
             }
-            if (const auto prior = prefix[{domain, s.srcPipe}])
-                edge(*prior, e.node, HappensBeforeGraph::Reason::PublishPrefix);
-            flags[key] = e.node;
-        } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
-            auto f = flags.find(key);
-            if (f == flags.end() || invalidFlags.count(key)) {
-                launch.reasons.insert("unmatched_wait");
+            if ((a.unitFlag != 2 && a.unitFlag != 3) || a.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
+                (a.header.pipeline != ACLSAN_DEVICE_PIPE_MATRIX && a.header.pipeline != ACLSAN_DEVICE_PIPE_FIXPIPE)) {
+                launch.reasons.insert("invalid_unit_flag");
+                partition.expanded.push_back(access);
                 continue;
             }
-            edge(f->second, e.node, HappensBeforeGraph::Reason::TokenMatch);
-            flags.erase(f);
-            merge(acquired[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::AcquireSuffix);
-            merge(prefix[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
-        } else
-            launch.reasons.insert("invalid_sync_action");
-    }
-    if (!flags.empty())
-        launch.reasons.insert("pending_set");
-    // WAIT consumes one notification from its receiver counter, irrespective
-    // of mode. Resolve only orders proven by SET scalar order or existing HB
-    // paths. Iteration allows handshakes on another flag to establish order;
-    // callback arrival and map iteration order are never matching evidence.
-    bool progress = true;
-    while (progress && launch.reasons.empty()) {
-        progress = false;
-        for (auto& entry : crossCounters) {
-            auto& counter = entry.second;
-            if (counter.consumed == counter.waits.size())
+            const auto key = Key(a.header);
+            auto start = instructionStarts.find(key);
+            if (start == instructionStarts.end())
+                start = instructionStarts.emplace(key, graph.AddNode()).first;
+            if (a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C) {
+                AddUnitFragment(partition, access, start->second, access.ranges, false);
                 continue;
-            const auto wait = counter.waits[counter.consumed];
-            std::vector<NotificationStream*> candidates;
-            for (auto& mode : counter.modes) {
-                auto& stream = mode.second;
-                if (stream.consumed == stream.tokens.size())
-                    continue;
-                bool future = false;
-                for (auto source : stream.tokens[stream.consumed].contributors) {
-                    const auto path = graph.PrecedesDuringBuild(wait, source);
-                    if (!path) {
-                        launch.reasons.insert("graph_query_budget");
+            }
+            if (a.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE && a.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
+                launch.reasons.insert("invalid_unit_flag_access");
+                continue;
+            }
+            for (const auto& range : access.ranges) {
+                for (uint64_t begin = range.begin; begin < range.end;) {
+                    const auto& boundaries = partition.boundaries.at(DomainOf(a.header));
+                    const auto next = boundaries.upper_bound(begin / unitBytes);
+                    const uint64_t end = next == boundaries.end() || *next > UINT64_MAX / unitBytes ?
+                                             range.end :
+                                             std::min(range.end, *next * unitBytes);
+                    const uint64_t length = end - begin;
+                    AddUnitFragment(partition, access, start->second, {Interval{begin, begin + length}}, true);
+                    begin += length;
+                    if (graphExhausted || partition.expanded.size() >= limits_.segments) {
+                        if (begin < range.end)
+                            launch.reasons.insert("unit_flag_budget");
                         break;
                     }
-                    future |= *path;
                 }
-                if (!future)
-                    candidates.push_back(&stream);
             }
-            NotificationStream* selected = nullptr;
-            for (auto* candidate : candidates) {
-                bool first = true;
-                for (auto* other : candidates) {
-                    if (candidate == other)
+        }
+    }
+
+    void MatchUnitFlags(const UnitPartition& partition)
+    {
+        // Match generations independently in each physical L0C unit. Callback
+        // interleaving across M and FIX is not ordering evidence. Mode 2 holds
+        // ownership; only mode 3 hands the unit to the opposite pipeline.
+        for (const auto& item : partition.units) {
+            const auto& q = item.second;
+            size_t w = 0, r = 0;
+            std::optional<size_t> released;
+            while (w < q.writes.size()) {
+                std::optional<size_t> published;
+                while (w < q.writes.size()) {
+                    const auto current = q.writes[w++];
+                    if (released)
+                        AddEdge(*released, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                    if (current.mode == 3) {
+                        published = current.node;
+                        break;
+                    }
+                }
+                if (!published) {
+                    if (r < q.reads.size())
+                        launch.reasons.insert("unit_flag_missing_publish");
+                    break;
+                }
+                released.reset();
+                std::optional<size_t> previousRead;
+                while (r < q.reads.size()) {
+                    const auto current = q.reads[r++];
+                    AddEdge(*published, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                    // Hardware completes the preceding L0C read/flag action before
+                    // the next FIX instruction's unit action. This does not order GM writes.
+                    if (previousRead)
+                        AddEdge(*previousRead, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                    previousRead = current.node;
+                    if (current.mode == 3) {
+                        released = current.node;
+                        break;
+                    }
+                }
+                if (!released && w < q.writes.size()) {
+                    launch.reasons.insert("unit_flag_missing_release");
+                    break;
+                }
+            }
+            if (r < q.reads.size())
+                launch.reasons.insert("unit_flag_missing_publish");
+        }
+    }
+
+    void ExpandUnitFlagAccesses()
+    {
+        // UnitFlag synchronizes L0C fragments, never whole FIX/M pipelines.
+        // Keep scratch state local to this stage; instruction boundaries remain in the graph.
+        UnitPartition partition;
+        CollectUnitBoundaries(partition);
+        PartitionUnitAccesses(partition);
+        accesses = std::move(partition.expanded);
+        MatchUnitFlags(partition);
+    }
+
+    void RouteCrossCoreNotifications()
+    {
+        // Route notifications to actual receiver counters before adding HB edges.
+        // Callback arrival order is irrelevant; each sender/receiver is traversed
+        // in its own instruction order. Reused flags consume one wave per WAIT.
+        std::set<Domain> domains;
+        for (const auto& pair : events)
+            domains.insert(std::get<0>(pair.first));
+        size_t routedSets = 0;
+        for (const auto& pair : events) {
+            const auto& e = pair.second;
+            if (!e.sync)
+                continue;
+            const auto& s = launch.sync[e.index];
+            if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK)
+                continue;
+            const auto sender = DomainOf(s.header);
+            const bool intra = s.mode == 4;
+            const bool cube = s.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+            const auto flag = s.objectId & (intra && cube ? 31U : 15U);
+            if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE ||
+                (s.mode != 0 && s.mode != 1 && s.mode != 2 && s.mode != 4) || (s.mode != 0 && !Position3510(sender))) {
+                launch.reasons.insert("unsupported_cross_core_topology_or_mode");
+                continue;
+            }
+            if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
+                crossCounters[{sender, intra, flag}].waits.push_back(e.node);
+                continue;
+            }
+            if (s.action != ACLSAN_DEVICE_SYNC_ACTION_SET)
+                continue;
+            bool delivered = false;
+            for (const auto& receiver : domains) {
+                uint64_t receiverFlag = flag;
+                if (intra) {
+                    const auto sp = Position3510(sender), rp = Position3510(receiver);
+                    if (!sp || !rp)
                         continue;
-                    for (auto source : candidate->tokens[candidate->consumed].contributors) {
-                        const auto path = graph.PrecedesDuringBuild(source, other->tokens[other->consumed].node);
-                        if (!path)
+                    if (cube && rp->subblock != (flag >> 4U))
+                        continue;
+                    receiverFlag = cube ? flag & 15U : flag + 16U * sp->subblock;
+                }
+                if (!CrossParticipant(s.mode, sender, receiver, receiverFlag))
+                    continue;
+                delivered = true;
+                if (++routedSets > limits_.edges) {
+                    launch.reasons.insert("graph_budget");
+                    break;
+                }
+                auto& counter = crossCounters[{receiver, intra, receiverFlag}];
+                auto [streamIt, inserted] = counter.modes.try_emplace(s.mode);
+                auto& stream = streamIt->second;
+                if (inserted) {
+                    // A notification requires every active participant in this
+                    // mode's scope. A missing SET must not shrink that scope.
+                    for (const auto& peer : domains)
+                        if (CrossParticipant(s.mode, peer, receiver, receiverFlag))
+                            stream.senders[peer];
+                }
+                stream.senders[sender].push_back(e.node);
+            }
+            if (!delivered)
+                launch.reasons.insert("pending_cross_core_set");
+            if (routedSets > limits_.edges)
+                break;
+        }
+    }
+
+    void BuildNotificationTokens()
+    {
+        for (auto& entry : crossCounters) {
+            for (auto& mode : entry.second.modes) {
+                auto& stream = mode.second;
+                size_t complete = std::numeric_limits<size_t>::max();
+                for (const auto& sender : stream.senders)
+                    complete = std::min(complete, sender.second.size());
+                if (stream.senders.empty())
+                    continue;
+                for (size_t i = 0; i < complete; ++i) {
+                    std::optional<size_t> joined;
+                    std::vector<size_t> contributors;
+                    for (const auto& sender : stream.senders) {
+                        const auto node = sender.second[i];
+                        contributors.push_back(node);
+                        MergePrefix(joined, node, HappensBeforeGraph::Reason::TokenMatch);
+                    }
+                    // Per-core scalar SET order makes successive complete
+                    // notifications in one participant stream ordered as well.
+                    if (!stream.tokens.empty())
+                        AddEdge(stream.tokens.back().node, *joined, HappensBeforeGraph::Reason::TokenMatch);
+                    stream.tokens.push_back({*joined, std::move(contributors)});
+                }
+            }
+        }
+    }
+
+    void BuildLocalEdges()
+    {
+        using Flag = std::tuple<Domain, uint32_t, uint32_t, uint32_t, uint64_t>;
+        std::map<Flag, size_t> flags;
+        std::set<Flag> invalidFlags;
+        for (const auto& pair : events) {
+            if (graphExhausted)
+                break;
+            const Domain domain = std::get<0>(pair.first);
+            const auto& e = pair.second;
+            if (!e.sync) {
+                const size_t begin = instructionStarts.count(pair.first) ? instructionStarts.at(pair.first) : e.node;
+                if (e.pipe == ACLSAN_DEVICE_PIPE_VECTOR || e.pipe == ACLSAN_DEVICE_PIPE_SCALAR ||
+                    e.pipe == ACLSAN_DEVICE_PIPE_MATRIX) {
+                    const auto previous = lastOrdered.find({domain, e.pipe});
+                    if (previous != lastOrdered.end())
+                        AddEdge(previous->second, begin, HappensBeforeGraph::Reason::PipelineOrder);
+                    lastOrdered[{domain, e.pipe}] = e.node;
+                }
+                if (const auto token = acquired[{domain, e.pipe}])
+                    AddEdge(*token, begin, HappensBeforeGraph::Reason::AcquireSuffix);
+                MergePrefix(prefix[{domain, e.pipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
+                continue;
+            }
+            const auto& s = launch.sync[e.index];
+            if (s.syncKind == ACLSAN_DEVICE_SYNC_KIND_UNKNOWN && s.action == ACLSAN_DEVICE_SYNC_ACTION_UNKNOWN) {
+                if (s.dstPipe == ACLSAN_DEVICE_PIPE_ALL) {
+                    const uint32_t pipes[] = {ACLSAN_DEVICE_PIPE_SCALAR, ACLSAN_DEVICE_PIPE_VECTOR,
+                                              ACLSAN_DEVICE_PIPE_MATRIX, ACLSAN_DEVICE_PIPE_MTE1,
+                                              ACLSAN_DEVICE_PIPE_MTE2,   ACLSAN_DEVICE_PIPE_MTE3,
+                                              ACLSAN_DEVICE_PIPE_FIXPIPE};
+                    for (const auto p : pipes) {
+                        if (const auto prior = prefix[{domain, p}])
+                            AddEdge(*prior, e.node, HappensBeforeGraph::Reason::BarrierPrefix);
+                        acquired[{domain, p}] = e.node;
+                        prefix[{domain, p}] = e.node;
+                    }
+                } else if (ValidPipe(s.dstPipe)) {
+                    if (const auto prior = prefix[{domain, s.dstPipe}])
+                        AddEdge(*prior, e.node, HappensBeforeGraph::Reason::BarrierPrefix);
+                    acquired[{domain, s.dstPipe}] = e.node;
+                    prefix[{domain, s.dstPipe}] = e.node;
+                } else {
+                    launch.reasons.insert("barrier_coverage_unknown");
+                }
+                continue;
+            }
+            if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || !ValidPipe(s.srcPipe) || !ValidPipe(s.dstPipe) ||
+                (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != 0) ||
+                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE && s.srcPipe == s.dstPipe) ||
+                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > 4)) {
+                launch.reasons.insert("sync_coverage_unknown");
+                continue;
+            }
+            if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK) {
+                // Cross-core SET/WAIT execute on scalar in core order, regardless
+                // of their selected source/destination pipeline or flag ID. This
+                // orders notifications, not all ordinary memory completions.
+                auto scalar = std::make_pair(domain, uint32_t{ACLSAN_DEVICE_PIPE_SCALAR});
+                if (const auto prior = prefix[scalar])
+                    AddEdge(*prior, e.node, HappensBeforeGraph::Reason::PipelineOrder);
+                lastOrdered[scalar] = e.node;
+                MergePrefix(prefix[scalar], e.node, HappensBeforeGraph::Reason::PublishPrefix);
+                if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
+                    if (s.srcPipe != ACLSAN_DEVICE_PIPE_SCALAR)
+                        if (const auto prior = prefix[{domain, s.srcPipe}])
+                            AddEdge(*prior, e.node, HappensBeforeGraph::Reason::PublishPrefix);
+                } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
+                    // Notification edges are resolved after local graph building.
+                    if (ValidPipe(s.dstPipe)) {
+                        MergePrefix(acquired[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::AcquireSuffix);
+                        MergePrefix(prefix[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
+                    }
+                } else if (s.action != ACLSAN_DEVICE_SYNC_ACTION_SET) {
+                    launch.reasons.insert("invalid_cross_core_sync_action");
+                }
+                continue;
+            }
+            const Flag key{domain, s.scope, s.srcPipe, s.dstPipe, s.objectId};
+            if (invalidFlags.count(key)) {
+                if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
+                    flags.erase(key);
+                    invalidFlags.erase(key);
+                }
+                continue;
+            }
+            if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
+                if (flags.count(key)) {
+                    invalidFlags.insert(key);
+                    launch.reasons.insert("duplicate_set");
+                    continue;
+                }
+                if (const auto prior = prefix[{domain, s.srcPipe}])
+                    AddEdge(*prior, e.node, HappensBeforeGraph::Reason::PublishPrefix);
+                flags[key] = e.node;
+            } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
+                auto f = flags.find(key);
+                if (f == flags.end() || invalidFlags.count(key)) {
+                    launch.reasons.insert("unmatched_wait");
+                    continue;
+                }
+                AddEdge(f->second, e.node, HappensBeforeGraph::Reason::TokenMatch);
+                flags.erase(f);
+                MergePrefix(acquired[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::AcquireSuffix);
+                MergePrefix(prefix[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
+            } else
+                launch.reasons.insert("invalid_sync_action");
+        }
+        if (!flags.empty())
+            launch.reasons.insert("pending_set");
+    }
+
+    void ResolveCrossCoreWaits()
+    {
+        // WAIT consumes one notification from its receiver counter, irrespective
+        // of mode. Resolve only orders proven by SET scalar order or existing HB
+        // paths. Iteration allows handshakes on another flag to establish order;
+        // callback arrival and map iteration order are never matching evidence.
+        bool progress = true;
+        while (progress && launch.reasons.empty()) {
+            progress = false;
+            for (auto& entry : crossCounters) {
+                auto& counter = entry.second;
+                if (counter.consumed == counter.waits.size())
+                    continue;
+                const auto wait = counter.waits[counter.consumed];
+                std::vector<NotificationStream*> candidates;
+                for (auto& mode : counter.modes) {
+                    auto& stream = mode.second;
+                    if (stream.consumed == stream.tokens.size())
+                        continue;
+                    bool future = false;
+                    for (auto source : stream.tokens[stream.consumed].contributors) {
+                        const auto path = graph.PrecedesDuringBuild(wait, source);
+                        if (!path) {
                             launch.reasons.insert("graph_query_budget");
-                        if (!path || !*path) {
-                            first = false;
                             break;
                         }
+                        future |= *path;
                     }
-                    if (!first)
+                    if (!future)
+                        candidates.push_back(&stream);
+                }
+                NotificationStream* selected = nullptr;
+                for (auto* candidate : candidates) {
+                    bool first = true;
+                    for (auto* other : candidates) {
+                        if (candidate == other)
+                            continue;
+                        for (auto source : candidate->tokens[candidate->consumed].contributors) {
+                            const auto path = graph.PrecedesDuringBuild(source, other->tokens[other->consumed].node);
+                            if (!path)
+                                launch.reasons.insert("graph_query_budget");
+                            if (!path || !*path) {
+                                first = false;
+                                break;
+                            }
+                        }
+                        if (!first)
+                            break;
+                    }
+                    if (first) {
+                        selected = candidate;
                         break;
+                    }
                 }
-                if (first) {
-                    selected = candidate;
-                    break;
+                if (selected && launch.reasons.empty()) {
+                    AddEdge(selected->tokens[selected->consumed++].node, wait, HappensBeforeGraph::Reason::TokenMatch);
+                    ++counter.consumed;
+                    progress = true;
                 }
-            }
-            if (selected && launch.reasons.empty()) {
-                edge(selected->tokens[selected->consumed++].node, wait, HappensBeforeGraph::Reason::TokenMatch);
-                ++counter.consumed;
-                progress = true;
             }
         }
-    }
-    for (const auto& entry : crossCounters) {
-        const auto& counter = entry.second;
-        if (counter.consumed == counter.waits.size())
-            continue; // Unconsumed SET notifications are allowed to accumulate.
-        size_t remaining = 0;
-        for (const auto& mode : counter.modes)
-            remaining += mode.second.tokens.size() - mode.second.consumed;
-        launch.reasons.insert(
-            remaining < counter.waits.size() - counter.consumed ? "unmatched_cross_core_wait" :
-                                                                  "ambiguous_cross_core_notification_order");
-    }
-    const bool graphComplete = graph.Seal(launch.reasons.empty());
-    graphNodesPeak_ = std::max(graphNodesPeak_, graph.Order().size());
-    graphEdgesPeak_ = std::max(graphEdgesPeak_, graph.EdgeCount());
-    if (!graphComplete) {
-        launch.reasons.insert("incomplete_sync_graph");
-        return;
+        for (const auto& entry : crossCounters) {
+            const auto& counter = entry.second;
+            if (counter.consumed == counter.waits.size())
+                continue; // Unconsumed SET notifications are allowed to accumulate.
+            size_t remaining = 0;
+            for (const auto& mode : counter.modes)
+                remaining += mode.second.tokens.size() - mode.second.consumed;
+            launch.reasons.insert(
+                remaining < counter.waits.size() - counter.consumed ? "unmatched_cross_core_wait" :
+                                                                      "ambiguous_cross_core_notification_order");
+        }
     }
 
-    // Freeze before querying: a missing path is meaningful only after all
-    // supported synchronization edges have been collected and validated.
-    MemoryAccessState memory(limits_.stateSegments, limits_.stateBytes);
-    std::map<size_t, std::vector<size_t>> instructions;
-    for (size_t i = 0; i < accesses.size(); ++i)
-        instructions[accesses[i].node].push_back(i);
-    size_t comparisons = 0;
-    const auto compare = [&](size_t previous, size_t current) {
+    bool SealGraph()
+    {
+        const bool graphComplete = graph.Seal(launch.reasons.empty());
+        checker.graphNodesPeak_ = std::max(checker.graphNodesPeak_, graph.Order().size());
+        checker.graphEdgesPeak_ = std::max(checker.graphEdgesPeak_, graph.EdgeCount());
+        if (!graphComplete) {
+            launch.reasons.insert("incomplete_sync_graph");
+            return false;
+        }
+
+        return true;
+    }
+
+    HappensBeforeGraph::Relation CompareAccesses(size_t previous, size_t current)
+    {
         if (++comparisons > limits_.comparisons) {
             launch.reasons.insert("comparison_budget");
             return HappensBeforeGraph::Relation::Unknown;
         }
         const auto relation = graph.Compare(accesses[previous].node, accesses[current].node);
-        graphQueryWorkPeak_ = std::max(graphQueryWorkPeak_, graph.QueryWork());
+        checker.graphQueryWorkPeak_ = std::max(checker.graphQueryWorkPeak_, graph.QueryWork());
         if (relation == HappensBeforeGraph::Relation::Unknown)
             launch.reasons.insert("graph_query_budget");
         if (relation == HappensBeforeGraph::Relation::After)
             launch.reasons.insert("invalid_analysis_order");
         return relation;
-    };
-    const auto reportRace = [&](size_t first, size_t second, uint32_t kind, Interval overlap) {
+    }
+
+    void ReportRace(size_t first, size_t second, uint32_t kind, Interval overlap)
+    {
         NpuCheckRacecheckReport report{};
         report.common.tool = ReportTool::RACECHECK;
         report.common.severity = ReportSeverity::ERROR;
@@ -967,116 +1051,146 @@ void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerR
         report.common.flags |= kNpuCheckReportCommonHasExecContext;
         reports.emplace_back(std::move(report));
         if (kind == 1)
-            ++raw_;
+            ++checker.raw_;
         else if (kind == 2)
-            ++war_;
+            ++checker.war_;
         else
-            ++waw_;
-        ++stoppedLaunches_;
+            ++checker.waw_;
+        ++checker.stoppedLaunches_;
+    }
+
+    struct MemoryTransaction {
+        std::vector<MemoryAccessState::Update> updates;
+        size_t bytes = 0;
     };
-    for (auto node : graph.Order()) {
-        auto instruction = instructions.find(node);
-        if (instruction == instructions.end())
-            continue;
-        // Sweep all operands together. One instruction is one transaction;
-        // overlapping read/write fragments never observe their own updates.
-        using Boundary = std::pair<size_t, bool>;
-        std::map<Storage, std::map<uint64_t, std::vector<Boundary>>> boundaries;
-        for (auto i : instruction->second) {
-            auto& points = boundaries[StorageOf(accesses[i].data)];
-            for (auto range : accesses[i].ranges) {
-                points[range.begin].emplace_back(i, true);
-                points[range.end].emplace_back(i, false);
+
+    bool PlanMemoryRange(
+        MemoryTransaction& plan, const Storage& storage, Interval range, const MemoryAccessState::StatePtr& old,
+        size_t current, bool write)
+    {
+        const auto check = [&](size_t previous, uint32_t kind) {
+            const auto relation = CompareAccesses(previous, current);
+            if (relation == HappensBeforeGraph::Relation::Unordered) {
+                ReportRace(previous, current, kind, range);
+                return false;
             }
+            return relation == HappensBeforeGraph::Relation::Before;
+        };
+        if (old && old->writer && !check(*old->writer, write ? 3 : 1))
+            return false;
+        if (old && write)
+            for (auto reader : old->readers)
+                if (!check(reader, 2))
+                    return false;
+        const size_t readerCount = write ? 0 : (old ? old->readers.size() : 0) + 1;
+        const size_t cost = sizeof(MemoryAccessState::State) + 128 + readerCount * sizeof(size_t);
+        if (plan.updates.size() >= limits_.stateSegments || cost > limits_.stateBytes - plan.bytes) {
+            launch.reasons.insert("state_plan_budget");
+            return false;
         }
-        std::vector<MemoryAccessState::Update> plan;
-        size_t planBytes = 0;
-        bool failed = false;
-        for (const auto& space : boundaries) {
-            std::set<size_t> readers, writers;
-            for (auto point = space.second.begin(); point != space.second.end(); ++point) {
-                for (auto boundary : point->second) {
-                    const auto mode = accesses[boundary.first].data.accessMode;
-                    if (mode & 1U) {
-                        if (boundary.second)
-                            readers.insert(boundary.first);
-                        else
-                            readers.erase(boundary.first);
-                    }
-                    if (mode & 2U) {
-                        if (boundary.second)
-                            writers.insert(boundary.first);
-                        else
-                            writers.erase(boundary.first);
-                    }
+        plan.bytes += cost;
+        auto state = std::make_shared<MemoryAccessState::State>();
+        if (write)
+            state->writer = current;
+        else {
+            state->readers.reserve(readerCount);
+            if (old) {
+                state->writer = old->writer;
+                for (auto reader : old->readers) {
+                    const auto relation = CompareAccesses(reader, current);
+                    if (relation == HappensBeforeGraph::Relation::Unknown ||
+                        relation == HappensBeforeGraph::Relation::After)
+                        return false;
+                    if (relation == HappensBeforeGraph::Relation::Unordered)
+                        state->readers.push_back(reader);
                 }
-                const auto next = std::next(point);
-                if (next == space.second.end() || (readers.empty() && writers.empty()))
-                    continue;
-                const auto current = writers.empty() ? *readers.begin() : *writers.begin();
-                const bool write = !writers.empty();
-                failed = !memory.Visit(
-                    space.first, {point->first, next->first},
-                    [&](Interval range, const MemoryAccessState::StatePtr& old) {
-                        const auto check = [&](size_t previous, uint32_t kind) {
-                            const auto relation = compare(previous, current);
-                            if (relation == HappensBeforeGraph::Relation::Unordered) {
-                                reportRace(previous, current, kind, range);
-                                return false;
-                            }
-                            return relation == HappensBeforeGraph::Relation::Before;
-                        };
-                        if (old && old->writer && !check(*old->writer, write ? 3 : 1))
-                            return false;
-                        if (old && write)
-                            for (auto reader : old->readers)
-                                if (!check(reader, 2))
-                                    return false;
-                        const size_t readerCount = write ? 0 : (old ? old->readers.size() : 0) + 1;
-                        const size_t cost = sizeof(MemoryAccessState::State) + 128 + readerCount * sizeof(size_t);
-                        if (plan.size() >= limits_.stateSegments || cost > limits_.stateBytes - planBytes) {
-                            launch.reasons.insert("state_plan_budget");
-                            return false;
+            }
+            state->readers.insert(std::lower_bound(state->readers.begin(), state->readers.end(), current), current);
+        }
+        plan.updates.push_back({storage, range, std::move(state)});
+        return true;
+    }
+
+    void ReplayMemory()
+    {
+        // Freeze before querying: a missing path is meaningful only after all
+        // supported synchronization edges have been collected and validated.
+        MemoryAccessState memory(limits_.stateSegments, limits_.stateBytes);
+        std::map<size_t, std::vector<size_t>> instructions;
+        for (size_t i = 0; i < accesses.size(); ++i)
+            instructions[accesses[i].node].push_back(i);
+        for (auto node : graph.Order()) {
+            auto instruction = instructions.find(node);
+            if (instruction == instructions.end())
+                continue;
+            // Sweep all operands together. One instruction is one transaction;
+            // overlapping read/write fragments never observe their own updates.
+            using Boundary = std::pair<size_t, bool>;
+            std::map<Storage, std::map<uint64_t, std::vector<Boundary>>> boundaries;
+            for (auto i : instruction->second) {
+                auto& points = boundaries[StorageOf(accesses[i].data)];
+                for (auto range : accesses[i].ranges) {
+                    points[range.begin].emplace_back(i, true);
+                    points[range.end].emplace_back(i, false);
+                }
+            }
+            MemoryTransaction plan;
+            bool failed = false;
+            for (const auto& space : boundaries) {
+                std::set<size_t> readers, writers;
+                for (auto point = space.second.begin(); point != space.second.end(); ++point) {
+                    for (auto boundary : point->second) {
+                        const auto mode = accesses[boundary.first].data.accessMode;
+                        if (mode & 1U) {
+                            if (boundary.second)
+                                readers.insert(boundary.first);
+                            else
+                                readers.erase(boundary.first);
                         }
-                        planBytes += cost;
-                        auto state = std::make_shared<MemoryAccessState::State>();
-                        if (write)
-                            state->writer = current;
-                        else {
-                            state->readers.reserve(readerCount);
-                            if (old) {
-                                state->writer = old->writer;
-                                for (auto reader : old->readers) {
-                                    const auto relation = compare(reader, current);
-                                    if (relation == HappensBeforeGraph::Relation::Unknown ||
-                                        relation == HappensBeforeGraph::Relation::After)
-                                        return false;
-                                    if (relation == HappensBeforeGraph::Relation::Unordered)
-                                        state->readers.push_back(reader);
-                                }
-                            }
-                            state->readers.insert(
-                                std::lower_bound(state->readers.begin(), state->readers.end(), current), current);
+                        if (mode & 2U) {
+                            if (boundary.second)
+                                writers.insert(boundary.first);
+                            else
+                                writers.erase(boundary.first);
                         }
-                        plan.push_back({space.first, range, std::move(state)});
-                        return true;
-                    });
+                    }
+                    const auto next = std::next(point);
+                    if (next == space.second.end() || (readers.empty() && writers.empty()))
+                        continue;
+                    const auto current = writers.empty() ? *readers.begin() : *writers.begin();
+                    const bool write = !writers.empty();
+                    // TODO(memstate): Replace Visit and its manual candidate enumeration with
+                    // CheckPotentialRace(cbIndex); keep HB checks in checker.
+                    failed = !memory.Visit(
+                        space.first, {point->first, next->first},
+                        [&](Interval range, const MemoryAccessState::StatePtr& old) {
+                            return PlanMemoryRange(plan, space.first, range, old, current, write);
+                        });
+                    if (failed)
+                        break;
+                }
                 if (failed)
                     break;
             }
             if (failed)
-                break;
-        }
-        if (failed)
-            return;
-        const bool applied = memory.Apply(plan);
-        stateBytesPeak_ = std::max(stateBytesPeak_, memory.PeakBytes());
-        stateSegmentsPeak_ = std::max(stateSegmentsPeak_, memory.SegmentCount());
-        if (!applied) {
-            launch.reasons.insert("memory_state_budget");
-            return;
+                return;
+            // TODO(memstate): Replace the temporary state update plan and Apply with
+            // UpdateMemState(cbIndex, conflicts).
+            const bool applied = memory.Apply(plan.updates);
+            checker.stateBytesPeak_ = std::max(checker.stateBytesPeak_, memory.PeakBytes());
+            checker.stateSegmentsPeak_ = std::max(checker.stateSegmentsPeak_, memory.SegmentCount());
+            if (!applied) {
+                launch.reasons.insert("memory_state_budget");
+                return;
+            }
         }
     }
+};
+
+void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerReportList& reports)
+{
+    LaunchProcessor processor(*this, launch, reports);
+    processor.Run();
 }
 
 bool Racechecker::HasErrors() const { return raw_ || war_ || waw_; }

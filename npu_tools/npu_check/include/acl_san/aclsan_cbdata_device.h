@@ -96,7 +96,7 @@ typedef struct AclsanDeviceEventHeader {
     uint32_t flags;     // AclsanDeviceEventFlags
 } AclsanDeviceEventHeader;
 
-// Delivered only through ACLSAN_CB_DOMAIN_DEVICE_BARRIER.
+// Delivered only through ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION.
 typedef struct AclsanDeviceBarrierData {
     AclsanDeviceEventHeader header;
     uint32_t pipe; // Barrier target; header.pipeline is the issuing pipeline.

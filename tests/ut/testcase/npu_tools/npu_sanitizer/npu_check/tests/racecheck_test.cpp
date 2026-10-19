@@ -88,7 +88,8 @@ struct Harness {
     }
     void Add(const AclsanDeviceBarrierData& a)
     {
-        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_BARRIER, ACLSAN_CBID_DEVICE_PIPE_BARRIER, &a, reports));
+        ASSERT_TRUE(
+            checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER, &a, reports));
     }
     void Sync(void* stream = nullptr, int result = 0)
     {
