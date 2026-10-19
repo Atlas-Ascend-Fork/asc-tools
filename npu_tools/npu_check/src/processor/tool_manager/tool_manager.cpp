@@ -182,6 +182,19 @@ void ToolManager::Finalize()
         callbacksDrained_.wait(callbackLock, [this] { return activeCallbacks_ == 0; });
     }
 
+    CheckerReportList finalReports;
+    {
+        std::lock_guard<std::mutex> stateLock(stateMutex_);
+        for (auto& checker : checkers_) {
+            try {
+                checker->Finalize(finalReports);
+            } catch (...) {
+                ++frameworkErrors_;
+            }
+        }
+    }
+    StoreReports(std::move(finalReports));
+
     // 当前不再发布实时诊断；停掉 publisher 线程后，Result 独占后续线路，且
     // dropped_messages 才是最终值。
     server_.StopPublisher();
@@ -325,7 +338,8 @@ void ToolManager::OnCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid,
                 continue;
             }
             try {
-                checker->OnCallback(domain, cbid, cbdata, reports);
+                if (!checker->OnCallback(domain, cbid, cbdata, reports))
+                    ++malformedCallbacks_;
             } catch (const std::exception& error) {
                 ++frameworkErrors_;
                 ASCTOOL_ERROR("checker callback failed: %s", error.what());

@@ -14,6 +14,11 @@
 #include <cstdint>
 
 namespace aclsan {
+struct PipeBarrierParamField {
+    uint32_t instrId = 0;
+    uint32_t pipe = 0;
+};
+
 // =====================================
 // ========   SET/WAIT FLAG    =========
 // =====================================
@@ -54,6 +59,15 @@ struct SyncBufParamField {
 struct DeviceFlagParamField {
     uint32_t instrId = 0;
     uint32_t pipe = 0;
+    uint64_t flagId = 0;
+};
+
+// FFTS cross-core SET record. The mode and flag ID are packed in the raw
+// probe config by the device-side DBI probe.
+struct FftsSyncParamField {
+    uint32_t instrId = 0;
+    uint32_t dstPipe = 0;
+    uint32_t mode = 0;
     uint64_t flagId = 0;
 };
 

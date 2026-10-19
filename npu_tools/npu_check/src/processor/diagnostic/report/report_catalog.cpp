@@ -131,7 +131,10 @@ const PatternCatalog& Catalog()
             "{{firstLocation}}\n"
             "=========     Read AICore ({{secondCoreId}}) pipe ({{secondPipe}}) in launch ({{secondLaunchId}}) at "
             "{{secondLocation}}\n"
-            "=========     Current Value : {{currentValue}}\n"),
+            "=========     Device {{raceDevice}}: {{firstType}} block {{firstBlock}} instruction {{firstInstruction}}; "
+            "{{secondType}} block {{secondBlock}} instruction {{secondInstruction}}\n"
+            "=========     Overlap: {{overlapRanges}} bytes={{overlapBytes}}\n"
+            "=========     ordering={{ordering}} coverage={{coverage}} unordered_peers={{unorderedPeers}}\n"),
         MakePattern(
             ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_HAZARD_WAR, "hazard_war",
             "========= {{Severity}}:[RACECHECK] Potential WAR hazard detected at {{space}} 0x{{address}} in block "
@@ -141,7 +144,10 @@ const PatternCatalog& Catalog()
             "{{firstLocation}}\n"
             "=========     Write AICore ({{secondCoreId}}) pipe ({{secondPipe}}) in launch ({{secondLaunchId}}) at "
             "{{secondLocation}}\n"
-            "=========     Incoming Value : {{incomingValue}}\n"),
+            "=========     Device {{raceDevice}}: {{firstType}} block {{firstBlock}} instruction {{firstInstruction}}; "
+            "{{secondType}} block {{secondBlock}} instruction {{secondInstruction}}\n"
+            "=========     Overlap: {{overlapRanges}} bytes={{overlapBytes}}\n"
+            "=========     ordering={{ordering}} coverage={{coverage}} unordered_peers={{unorderedPeers}}\n"),
         MakePattern(
             ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_HAZARD_WAW, "hazard_waw",
             "========= {{Severity}}:[RACECHECK] Potential WAW hazard detected at {{space}} 0x{{address}} in block "
@@ -151,7 +157,10 @@ const PatternCatalog& Catalog()
             "{{firstLocation}}\n"
             "=========     Write AICore ({{secondCoreId}}) pipe ({{secondPipe}}) in launch ({{secondLaunchId}}) at "
             "{{secondLocation}}\n"
-            "=========     Current Value : {{currentValue}}, Incoming Value : {{incomingValue}}\n"),
+            "=========     Device {{raceDevice}}: {{firstType}} block {{firstBlock}} instruction {{firstInstruction}}; "
+            "{{secondType}} block {{secondBlock}} instruction {{secondInstruction}}\n"
+            "=========     Overlap: {{overlapRanges}} bytes={{overlapBytes}}\n"
+            "=========     ordering={{ordering}} coverage={{coverage}} unordered_peers={{unorderedPeers}}\n"),
         MakePattern(
             ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_ATOMIC_RACE, "atomic_race",
             "========= {{Severity}}:[RACECHECK] Potential atomic race detected at {{space}} 0x{{address}}\n"

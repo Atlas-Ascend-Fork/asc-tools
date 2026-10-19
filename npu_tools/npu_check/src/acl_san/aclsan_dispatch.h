@@ -24,6 +24,7 @@ public:
     static void DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& callbackData) noexcept;
     static void DispatchDeviceState(const AclsanDeviceRegisterStateData& callbackData) noexcept;
     static void DispatchDeviceSync(const AclsanDeviceSyncData& callbackData) noexcept;
+    static void DispatchDeviceBarrier(const AclsanDeviceBarrierData& callbackData) noexcept;
     static void DispatchLaunch(const AclsanLaunchData& callbackData) noexcept;
 
 private:

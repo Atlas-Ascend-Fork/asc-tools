@@ -44,6 +44,10 @@ add_library(npu_check_core STATIC
   checker/allocation_registry.cpp
   checker/memcheck.cpp
   checker/initcheck.cpp
+  checker/racecheck.cpp
+  checker/racecheck/types.cpp
+  checker/racecheck/happens_before_graph.cpp
+  checker/racecheck/memory_access_state.cpp
   checker/synccheck.cpp
   diagnostic/report_buffer.cpp
   ipc/uds_server.cpp

@@ -315,6 +315,49 @@ std::optional<DecodedInstruction> DecodeFlag(
     return DecodedInstruction{kind, params};
 }
 
+std::optional<DecodedInstruction> DecodeHardwareFlag(
+    const aclsan::AclsanRawTraceRecord& record, DeviceInstructionKind kind) noexcept
+{
+    if (record.args[0] > UINT32_MAX || record.args[1] > UINT32_MAX || record.args[4] > 1U) {
+        return std::nullopt;
+    }
+    const HardwareFlagParamField params{
+        record.instrId,
+        static_cast<uint32_t>(record.args[0]),
+        static_cast<uint32_t>(record.args[1]),
+        record.args[2],
+        record.args[3],
+        record.args[4] != 0};
+    return DecodedInstruction{kind, params};
+}
+
+std::optional<DecodedInstruction> DecodeFftsSync(
+    const aclsan::AclsanRawTraceRecord& record, DeviceInstructionKind kind, uint32_t dstPipe) noexcept
+{
+    // SET_CROSS_CORE_V carries the packed mode/flag in arg0; the scalar
+    // form carries it in arg1 after the destination-pipe argument.
+    const uint64_t config =
+        record.instrId == static_cast<uint32_t>(InstructionId::SetCrossCoreV) ? record.args[0] : record.args[1];
+    FftsSyncParamField params{
+        record.instrId, dstPipe, static_cast<uint32_t>((config >> 4U) & 0x3U), (config >> 8U) & 0xFU};
+    return DecodedInstruction{kind, params};
+}
+
+std::optional<DecodedInstruction> DecodeDeviceFlag(
+    const aclsan::AclsanRawTraceRecord& record, DeviceInstructionKind kind, uint32_t pipe) noexcept
+{
+    // Mode 0/1/2 use four-bit counters; mode 4 additionally uses AIC IDs
+    // 16..31. Preserve five bits here so the race checker can distinguish the
+    // AIV1-to-AIC half of a mode-4 synchronization pair.
+    return DecodedInstruction{kind, DeviceFlagParamField{record.instrId, pipe, record.args[1] & 0x1FU}};
+}
+
+std::optional<DecodedInstruction> DecodeIntraBlock(
+    const aclsan::AclsanRawTraceRecord& record, DeviceInstructionKind kind, uint32_t pipe) noexcept
+{
+    return DecodedInstruction{kind, HardwareFlagParamField{record.instrId, pipe, pipe, record.args[1], 4, false}};
+}
+
 std::optional<DecodedInstruction> DecodeBuffer(
     const aclsan::AclsanRawTraceRecord& record, DeviceInstructionKind kind) noexcept
 {
@@ -445,8 +488,8 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
             MmadParamField{
                 record.instrId, static_cast<uint32_t>(record.args[0]), record.args[1], record.args[2],
                 static_cast<uint16_t>(config & 0xfff), static_cast<uint16_t>((config >> 12) & 0xfff),
-                static_cast<uint16_t>((config >> 24) & 0xfff), bool((config >> 61) & 1), bool((config >> 62) & 1),
-                bool((config >> 63) & 1)}};
+                static_cast<uint16_t>((config >> 24) & 0xfff), static_cast<uint8_t>((config >> 55) & 0x3),
+                bool((config >> 61) & 1), bool((config >> 62) & 1), bool((config >> 63) & 1)}};
     }
     if (record.instrId == 151 || record.instrId == 152) {
         const uint64_t config = record.args[2];
@@ -609,6 +652,12 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         case RawId(InstructionId::Loop2StrideGmToCbuf):
             return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_CBUF, 1);
 
+        case RawId(InstructionId::PipeBarrier):
+            if (record.args[0] > UINT32_MAX)
+                return std::nullopt;
+            return DecodedInstruction{
+                DeviceInstructionKind::PipeBarrier,
+                PipeBarrierParamField{record.instrId, static_cast<uint32_t>(record.args[0])}};
         case RawId(InstructionId::SetFlag):
         case RawId(InstructionId::SetFlagI):
         case RawId(InstructionId::SetFlagV):
@@ -619,6 +668,38 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         case RawId(InstructionId::WaitFlagV):
         case RawId(InstructionId::WaitFlagIV):
             return DecodeFlag(record, DeviceInstructionKind::WaitFlag);
+        case RawId(InstructionId::SetCrossCore):
+            return DecodeFftsSync(
+                record, DeviceInstructionKind::CrossCoreSetFlag, static_cast<uint32_t>(record.args[0]));
+        case RawId(InstructionId::SetCrossCoreV):
+            return DecodeFftsSync(record, DeviceInstructionKind::CrossCoreSetFlag, ACLSAN_DEVICE_PIPE_VECTOR);
+        case RawId(InstructionId::SetIntraBlock):
+        case RawId(InstructionId::SetIntraBlockI):
+            return DecodeIntraBlock(
+                record, DeviceInstructionKind::HardwareSetFlag, static_cast<uint32_t>(record.args[0]));
+        case RawId(InstructionId::WaitIntraBlock):
+        case RawId(InstructionId::WaitIntraBlockI):
+            return DecodeIntraBlock(
+                record, DeviceInstructionKind::HardwareWaitFlag, static_cast<uint32_t>(record.args[0]));
+        case RawId(InstructionId::SetIntraBlockV):
+        case RawId(InstructionId::SetIntraBlockIV):
+            return DecodeIntraBlock(record, DeviceInstructionKind::HardwareSetFlag, ACLSAN_DEVICE_PIPE_VECTOR);
+        case RawId(InstructionId::WaitIntraBlockV):
+        case RawId(InstructionId::WaitIntraBlockIV):
+            return DecodeIntraBlock(record, DeviceInstructionKind::HardwareWaitFlag, ACLSAN_DEVICE_PIPE_VECTOR);
+        case 445:
+        case 446:
+            return DecodeDeviceFlag(
+                record, DeviceInstructionKind::CrossCoreWaitFlag, static_cast<uint32_t>(record.args[0]));
+        case RawId(InstructionId::WaitFlagDevV):
+        case RawId(InstructionId::WaitFlagDevIV):
+            return DecodeDeviceFlag(record, DeviceInstructionKind::CrossCoreWaitFlag, ACLSAN_DEVICE_PIPE_VECTOR);
+        case RawId(InstructionId::HSetFlag):
+        case RawId(InstructionId::HSetFlagI):
+            return DecodeHardwareFlag(record, DeviceInstructionKind::HardwareSetFlag);
+        case RawId(InstructionId::HWaitFlag):
+        case RawId(InstructionId::HWaitFlagI):
+            return DecodeHardwareFlag(record, DeviceInstructionKind::HardwareWaitFlag);
         case RawId(InstructionId::GetBuf):
         case RawId(InstructionId::GetBufI):
         case RawId(InstructionId::GetBufV):

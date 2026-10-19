@@ -96,6 +96,13 @@ typedef struct AclsanDeviceEventHeader {
     uint32_t flags;     // AclsanDeviceEventFlags
 } AclsanDeviceEventHeader;
 
+// Delivered only through ACLSAN_CB_DOMAIN_DEVICE_BARRIER.
+typedef struct AclsanDeviceBarrierData {
+    AclsanDeviceEventHeader header;
+    uint32_t pipe; // Barrier target; header.pipeline is the issuing pipeline.
+    uint32_t reserved;
+} AclsanDeviceBarrierData;
+
 // ==========================================
 // ===========      MEM CHECK      ==========
 // ==========================================
@@ -154,7 +161,7 @@ typedef struct AclsanDeviceMemoryAccessData {
         AclsanMemNdAffineLayout ndAffine;
     } layout;
     uint32_t instructionId;
-    uint32_t reserved;
+    uint32_t unitFlag; // Former reserved slot: 0=disabled, 2=keep, 3=update L0C unit flag.
     uint64_t regDependencyMask0;
     uint64_t regDependencyMask1;
 } AclsanDeviceMemoryAccessData;

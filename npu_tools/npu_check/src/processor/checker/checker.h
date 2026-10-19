@@ -23,7 +23,8 @@
 namespace npucheck {
 using CallbackSpec = std::pair<AclsanCallbackDomain, AclsanCallbackId>;
 using CheckerReport = std::variant<
-    npucheck::NpuCheckMemcheckReport, npucheck::NpuCheckInitcheckReport, npucheck::NpuCheckSynccheckReport>;
+    npucheck::NpuCheckMemcheckReport, npucheck::NpuCheckInitcheckReport, npucheck::NpuCheckSynccheckReport,
+    npucheck::NpuCheckRacecheckReport>;
 using CheckerReportList = std::vector<CheckerReport>;
 
 // Checkers declare their own events and state. ToolManager serializes callbacks,
@@ -36,6 +37,8 @@ public:
     // checker自己的callback逻辑，False 表示数据格式错误。无关事件会通过 IsSubscribed() 进行过滤。
     virtual bool OnCallback(
         AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports) = 0;
+    // Called after callbacks are drained; pending work must not silently disappear.
+    virtual void Finalize([[maybe_unused]] CheckerReportList& reports) {}
     // 输出分析结果摘要，供工具管理器在分析结束时输出
     virtual std::string Summary() const = 0;
     // 检查是否检测到错误

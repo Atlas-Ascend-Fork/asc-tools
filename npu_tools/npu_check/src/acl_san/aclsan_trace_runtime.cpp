@@ -444,6 +444,8 @@ void DispatchTraceRecords(
             }
         } else if (const auto* sync = std::get_if<AclsanDeviceSyncData>(&*callbackData)) {
             AclsanCallbackDispatcher::DispatchDeviceSync(*sync);
+        } else if (const auto* barrier = std::get_if<AclsanDeviceBarrierData>(&*callbackData)) {
+            AclsanCallbackDispatcher::DispatchDeviceBarrier(*barrier);
         }
     }
 }

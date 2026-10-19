@@ -58,10 +58,15 @@ enum class DeviceInstructionKind : uint32_t {
     ScalarPreload,
     ScalarAtomic, // InstructionId::StAtomicB*/StiAtomicB* -> ScalarAtomicParamField
 
-    SetFlag,  // InstructionId::SetFlag/SetFlagI/SetFlagV/SetFlagIV     -> FlagParamField
-    WaitFlag, // InstructionId::WaitFlag/WaitFlagI/WaitFlagV/WaitFlagIV -> FlagParamField
-    GetBuf,   // InstructionId::GetBuf/GetBufI/GetBufV/GetBufIV         -> SyncBufParamField
-    RlsBuf,   // InstructionId::RlsBuf/RlsBufI/RlsBufV/RlsBufIV         -> SyncBufParamField
+    SetFlag,           // InstructionId::SetFlag/SetFlagI/SetFlagV/SetFlagIV     -> FlagParamField
+    WaitFlag,          // InstructionId::WaitFlag/WaitFlagI/WaitFlagV/WaitFlagIV -> FlagParamField
+    HardwareSetFlag,   // InstructionId::HSetFlag/HSetFlagI -> HardwareFlagParamField
+    HardwareWaitFlag,  // InstructionId::HWaitFlag/HWaitFlagI -> HardwareFlagParamField
+    CrossCoreSetFlag,  // InstructionId::SetCrossCore/SetCrossCoreV -> FftsSyncParamField
+    CrossCoreWaitFlag, // WAIT_FLAG_DEV(_V) -> DeviceFlagParamField
+    GetBuf,            // InstructionId::GetBuf/GetBufI/GetBufV/GetBufIV         -> SyncBufParamField
+    RlsBuf,            // InstructionId::RlsBuf/RlsBufI/RlsBufV/RlsBufIV         -> SyncBufParamField
+    PipeBarrier,
 };
 
 using DeviceInstructionParamField = std::variant<
@@ -70,10 +75,10 @@ using DeviceInstructionParamField = std::variant<
     CopyGmToCbufMultiDn2NzParamField, CopyGmToCbufMultiNd2NzParamField, CopyGmToCbufV2ParamField, Mte2SourceParamField,
     NdDmaPadCountParamField, NdDmaLoopStrideParamField, Mte2NzParamField, Loop3ParamField, DmaLoopSizeParamField,
     DmaLoopStrideParamField, LoadGmToCbuf2DV2ParamField, NdDmaOutToUbufParamField, SetL12DParamField,
-    FixL0cToOutParamField, LocalMemoryTransferParamField, SetPaddingParamField, FlagParamField, SyncBufParamField,
-    ScalarDevParamField, ScalarPreloadParamField, ScalarAtomicParamField, MmadParamField, LoadL1MxParamField,
-    LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField, Img2ColParamField, FmatrixParamField, L3dRptParamField,
-    ScalarGmParamField>;
+    FixL0cToOutParamField, LocalMemoryTransferParamField, SetPaddingParamField, FlagParamField, HardwareFlagParamField,
+    FftsSyncParamField, DeviceFlagParamField, SyncBufParamField, ScalarDevParamField, ScalarPreloadParamField,
+    ScalarAtomicParamField, MmadParamField, LoadL1MxParamField, LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField,
+    Img2ColParamField, FmatrixParamField, L3dRptParamField, ScalarGmParamField, PipeBarrierParamField>;
 
 struct DecodedInstruction {
     DeviceInstructionKind kind = DeviceInstructionKind::InvalidInstruction;

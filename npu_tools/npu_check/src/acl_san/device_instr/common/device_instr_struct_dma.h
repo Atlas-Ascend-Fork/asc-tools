@@ -27,6 +27,7 @@ struct MmadParamField {
     uint16_t m = 0;              // config [0:11]
     uint16_t k = 0;              // config [12:23]
     uint16_t n = 0;              // config [24:35]
+    uint8_t unitFlag = 0;        // config [55:56], mode 2/3 enables unit-flag ordering
     bool disableGemv = false;    // config [61]
     bool cmatrixSource = false;  // config [62]
     bool cmatrixInitVal = false; // config [63]

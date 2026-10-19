@@ -24,7 +24,7 @@ namespace aclsan {
 
 // 一条搬运指令可能会返回多个cbdata，x条src, y条dst
 using DeviceMemoryAccessDataList = std::vector<AclsanDeviceMemoryAccessData>;
-using DeviceCallbackData = std::variant<DeviceMemoryAccessDataList, AclsanDeviceSyncData>;
+using DeviceCallbackData = std::variant<DeviceMemoryAccessDataList, AclsanDeviceSyncData, AclsanDeviceBarrierData>;
 
 // 根据 ParsedTraceRecord 和 paramField 提取最终返回的 cbdata，配上对应的日志
 std::optional<DeviceCallbackData> TranslateDecodedTraceToCallbackData(

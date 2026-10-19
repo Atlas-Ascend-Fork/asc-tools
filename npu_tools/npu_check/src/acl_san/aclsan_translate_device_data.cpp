@@ -79,7 +79,11 @@ constexpr bool IsMemoryAccessParamField() noexcept
 template <typename ParamField>
 constexpr bool IsSyncParamField() noexcept
 {
-    return std::is_same_v<ParamField, aclsan::FlagParamField> || std::is_same_v<ParamField, aclsan::SyncBufParamField>;
+    return std::is_same_v<ParamField, aclsan::FlagParamField> ||
+           std::is_same_v<ParamField, aclsan::HardwareFlagParamField> ||
+           std::is_same_v<ParamField, aclsan::FftsSyncParamField> ||
+           std::is_same_v<ParamField, aclsan::DeviceFlagParamField> ||
+           std::is_same_v<ParamField, aclsan::SyncBufParamField>;
 }
 
 class Translator final {
@@ -101,6 +105,11 @@ public:
                         "[cbdata] no GM access for local-only memory instruction instrId=%u kind=%u", value.instrId,
                         static_cast<unsigned int>(value.kind));
                     return DeviceCallbackData{DeviceMemoryAccessDataList{}};
+                } else if constexpr (std::is_same_v<ParamField, aclsan::PipeBarrierParamField>) {
+                    AclsanDeviceBarrierData barrier{};
+                    barrier.header = MakeDeviceEventHeader(parsed, pipeline, 0, sizeof(barrier));
+                    barrier.pipe = value.pipe;
+                    return DeviceCallbackData{barrier};
                 } else if constexpr (IsSyncParamField<ParamField>()) {
                     return MakeDeviceSyncData(parsed, decoded.kind, pipeline, value);
                 } else {
@@ -159,6 +168,22 @@ private:
             ResolveRegisterDependencies(MemoryInstructionField{params}, registerState);
         // Partial conversion can still contain proven GM or on-chip accesses.
         for (AclsanDeviceMemoryAccessData& access : result.data) {
+            if constexpr (
+                std::is_same_v<ParamField, aclsan::MmadParamField> ||
+                std::is_same_v<ParamField, aclsan::FixL0cToOutParamField>) {
+                access.unitFlag = params.unitFlag;
+            } else if constexpr (std::is_same_v<ParamField, aclsan::LocalMemoryTransferParamField>) {
+                switch (params.kind) {
+                    case aclsan::LocalMemoryTransferKind::FixL0cToCbufF32:
+                    case aclsan::LocalMemoryTransferKind::FixL0cToCbufS32:
+                    case aclsan::LocalMemoryTransferKind::FixL0cToUbufF32:
+                    case aclsan::LocalMemoryTransferKind::FixL0cToUbufS32:
+                        access.unitFlag = static_cast<uint32_t>((params.config1 >> 32) & 3);
+                        break;
+                    default:
+                        break;
+                }
+            }
             access.regDependencyMask0 = dependencies.mask0;
             access.regDependencyMask1 = dependencies.mask1;
         }
@@ -166,6 +191,14 @@ private:
             return DeviceCallbackData{std::move(result.data)};
         }
         if (result.status == MemoryCbdataStatus::NO_ACCESS) {
+            return DeviceCallbackData{DeviceMemoryAccessDataList{}};
+        }
+        if (result.status == MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE) {
+            ASCTOOL_DEBUG(
+                "acl_san trace: skipped memory access in known UB/PRIVATE address space instrId=%llu pc=0x%llx "
+                "blockType=%u blockId=%u",
+                static_cast<unsigned long long>(parsed.record.instrId),
+                static_cast<unsigned long long>(parsed.record.pc), parsed.blockType, parsed.blockId);
             return DeviceCallbackData{DeviceMemoryAccessDataList{}};
         }
         if (result.status == MemoryCbdataStatus::MISSING_REGISTER_STATE &&
@@ -192,16 +225,25 @@ private:
         return std::nullopt;
     }
 
+    static AclsanDeviceSyncData MakeDeviceSyncDataBase(
+        const ParsedTraceRecord& parsed, AclsanDevicePipeline pipeline,
+        AclsanDeviceSourceKind sourceKind = ACLSAN_DEVICE_SOURCE_SET_WAIT_FLAG,
+        AclsanDeviceSyncKind syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG) noexcept
+    {
+        AclsanDeviceSyncData callbackData{};
+        callbackData.header =
+            MakeDeviceEventHeader(parsed, pipeline, 0, static_cast<uint32_t>(sizeof(AclsanDeviceSyncData)));
+        callbackData.header.sourceKind = sourceKind;
+        callbackData.syncKind = syncKind;
+        return callbackData;
+    }
+
     static DeviceCallbackData MakeDeviceSyncData(
         const ParsedTraceRecord& parsed, aclsan::DeviceInstructionKind kind, AclsanDevicePipeline pipeline,
         const aclsan::FlagParamField& params) noexcept
     {
         const bool isSet = kind == aclsan::DeviceInstructionKind::SetFlag;
-        AclsanDeviceSyncData callbackData{};
-        callbackData.header =
-            MakeDeviceEventHeader(parsed, pipeline, 0, static_cast<uint32_t>(sizeof(AclsanDeviceSyncData)));
-        callbackData.header.sourceKind = ACLSAN_DEVICE_SOURCE_SET_WAIT_FLAG;
-        callbackData.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
+        auto callbackData = MakeDeviceSyncDataBase(parsed, pipeline);
         callbackData.action = isSet ? ACLSAN_DEVICE_SYNC_ACTION_SET : ACLSAN_DEVICE_SYNC_ACTION_WAIT;
         callbackData.scope = ACLSAN_DEVICE_SYNC_SCOPE_BLOCK;
         callbackData.srcPipe = params.srcPipe;
@@ -212,14 +254,54 @@ private:
 
     static DeviceCallbackData MakeDeviceSyncData(
         const ParsedTraceRecord& parsed, aclsan::DeviceInstructionKind kind, AclsanDevicePipeline pipeline,
+        const aclsan::FftsSyncParamField& params) noexcept
+    {
+        auto callbackData = MakeDeviceSyncDataBase(parsed, pipeline);
+        callbackData.action = ACLSAN_DEVICE_SYNC_ACTION_SET;
+        callbackData.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+        callbackData.srcPipe = params.dstPipe;
+        callbackData.dstPipe = params.dstPipe;
+        callbackData.mode = params.mode;
+        callbackData.objectId = params.flagId;
+        return callbackData;
+    }
+
+    static DeviceCallbackData MakeDeviceSyncData(
+        const ParsedTraceRecord& parsed, aclsan::DeviceInstructionKind kind, AclsanDevicePipeline pipeline,
+        const aclsan::DeviceFlagParamField& params) noexcept
+    {
+        auto callbackData = MakeDeviceSyncDataBase(parsed, pipeline);
+        callbackData.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
+        callbackData.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+        callbackData.srcPipe = params.pipe;
+        callbackData.dstPipe = params.pipe;
+        callbackData.objectId = params.flagId;
+        return callbackData;
+    }
+
+    static DeviceCallbackData MakeDeviceSyncData(
+        const ParsedTraceRecord& parsed, aclsan::DeviceInstructionKind kind, AclsanDevicePipeline pipeline,
+        const aclsan::HardwareFlagParamField& params) noexcept
+    {
+        const bool isSet = kind == aclsan::DeviceInstructionKind::HardwareSetFlag;
+        auto callbackData = MakeDeviceSyncDataBase(parsed, pipeline);
+        callbackData.action = isSet ? ACLSAN_DEVICE_SYNC_ACTION_SET : ACLSAN_DEVICE_SYNC_ACTION_WAIT;
+        callbackData.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+        callbackData.srcPipe = params.srcPipe;
+        callbackData.dstPipe = params.dstPipe;
+        callbackData.mode = static_cast<uint32_t>(params.memory);
+        callbackData.objectId = params.eventId;
+        callbackData.reserved[0] = params.isVirtual ? 1U : 0U;
+        return callbackData;
+    }
+
+    static DeviceCallbackData MakeDeviceSyncData(
+        const ParsedTraceRecord& parsed, aclsan::DeviceInstructionKind kind, AclsanDevicePipeline pipeline,
         const aclsan::SyncBufParamField& params) noexcept
     {
         const bool isGet = kind == aclsan::DeviceInstructionKind::GetBuf;
-        AclsanDeviceSyncData callbackData{};
-        callbackData.header =
-            MakeDeviceEventHeader(parsed, pipeline, 0, static_cast<uint32_t>(sizeof(AclsanDeviceSyncData)));
-        callbackData.header.sourceKind = ACLSAN_DEVICE_SOURCE_GET_RLS_BUF;
-        callbackData.syncKind = ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF;
+        auto callbackData = MakeDeviceSyncDataBase(
+            parsed, pipeline, ACLSAN_DEVICE_SOURCE_GET_RLS_BUF, ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF);
         callbackData.action = isGet ? ACLSAN_DEVICE_SYNC_ACTION_GET : ACLSAN_DEVICE_SYNC_ACTION_RELEASE;
         callbackData.scope = ACLSAN_DEVICE_SYNC_SCOPE_PIPE;
         callbackData.dstPipe = params.pipe;

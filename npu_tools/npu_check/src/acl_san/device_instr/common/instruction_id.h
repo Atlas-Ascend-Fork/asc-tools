@@ -174,14 +174,22 @@ enum class InstructionId : uint32_t {
     Loop2StrideGmToCbuf = 396, // 已完成：DmaLoopStrideParamField（状态）
 
     // SYNCCHECK
-    SetFlag = 440,    // 已完成：FlagParamField
-    SetFlagI = 441,   // 已完成：FlagParamField
-    WaitFlag = 442,   // 已完成：FlagParamField
-    WaitFlagI = 443,  // 已完成：FlagParamField
-    GetBuf = 448,     // 已完成：SyncBufParamField
-    GetBufI = 449,    // 已完成：SyncBufParamField
-    RlsBuf = 450,     // 已完成：SyncBufParamField
-    RlsBufI = 451,    // 已完成：SyncBufParamField
+    PipeBarrier = 439,
+    SetFlag = 440,   // 已完成：FlagParamField
+    SetFlagI = 441,  // 已完成：FlagParamField
+    WaitFlag = 442,  // 已完成：FlagParamField
+    WaitFlagI = 443, // 已完成：FlagParamField
+    WaitFlagDev = 445,
+    WaitFlagDevI = 446,
+    SetCrossCore = 447,
+    GetBuf = 448,  // 已完成：SyncBufParamField
+    GetBufI = 449, // 已完成：SyncBufParamField
+    RlsBuf = 450,  // 已完成：SyncBufParamField
+    RlsBufI = 451, // 已完成：SyncBufParamField
+    SetIntraBlock = 452,
+    SetIntraBlockI = 453,
+    WaitIntraBlock = 454,
+    WaitIntraBlockI = 455,
     SetFlagV = 456,   // 已完成：FlagParamField
     SetFlagIV = 457,  // 已完成：FlagParamField
     WaitFlagV = 458,  // 已完成：FlagParamField
@@ -190,6 +198,20 @@ enum class InstructionId : uint32_t {
     GetBufIV = 461,   // 已完成：SyncBufParamField
     RlsBufV = 462,    // 已完成：SyncBufParamField
     RlsBufIV = 463,   // 已完成：SyncBufParamField
+    SetIntraBlockV = 464,
+    SetIntraBlockIV = 465,
+    WaitIntraBlockV = 466,
+    WaitIntraBlockIV = 467,
+    SetCrossCoreV = 468,
+    WaitFlagDevV = 469,
+    WaitFlagDevIV = 470,
+
+    // Cross-core hardware flag synchronization. These IDs are emitted by the
+    // DBI probes for HSET_FLAG/HWAIT_FLAG and their immediate forms.
+    HSetFlag = 471,
+    HSetFlagI = 472,
+    HWaitFlag = 473,
+    HWaitFlagI = 474,
 };
 
 constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
@@ -203,6 +225,7 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         return true;
     }
     switch (static_cast<InstructionId>(instructionId)) {
+        case InstructionId::PipeBarrier:
         case InstructionId::StAtomicB32:
         case InstructionId::StAtomicB16:
         case InstructionId::StAtomicB8:
@@ -274,6 +297,8 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::SetFlagI:
         case InstructionId::WaitFlag:
         case InstructionId::WaitFlagI:
+        case InstructionId::WaitFlagDev:
+        case InstructionId::WaitFlagDevI:
         case InstructionId::GetBuf:
         case InstructionId::GetBufI:
         case InstructionId::RlsBuf:
@@ -286,6 +311,22 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::GetBufIV:
         case InstructionId::RlsBufV:
         case InstructionId::RlsBufIV:
+        case InstructionId::SetIntraBlock:
+        case InstructionId::SetIntraBlockI:
+        case InstructionId::WaitIntraBlock:
+        case InstructionId::WaitIntraBlockI:
+        case InstructionId::SetIntraBlockV:
+        case InstructionId::SetIntraBlockIV:
+        case InstructionId::WaitIntraBlockV:
+        case InstructionId::WaitIntraBlockIV:
+        case InstructionId::SetCrossCore:
+        case InstructionId::SetCrossCoreV:
+        case InstructionId::WaitFlagDevV:
+        case InstructionId::WaitFlagDevIV:
+        case InstructionId::HSetFlag:
+        case InstructionId::HSetFlagI:
+        case InstructionId::HWaitFlag:
+        case InstructionId::HWaitFlagI:
             return true;
         default:
             return false;

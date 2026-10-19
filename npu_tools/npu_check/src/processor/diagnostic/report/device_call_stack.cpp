@@ -82,6 +82,12 @@ void PopulateStack(NpuCheckReportCommon& common, NpuCheckReportExecContext& exec
 }
 } // namespace
 
+void PopulateDeviceCallStack(NpuCheckRacecheckReport& report) noexcept
+{
+    PopulateStack(report.common, report.first.exec, ReportStackRole::RELATED_ACCESS_A);
+    PopulateStack(report.common, report.second.exec, ReportStackRole::RELATED_ACCESS_B);
+}
+
 std::string FormatCallStackReport(AclsanStatus status, const AclsanDeviceCallStack& stack)
 {
     if (!HasCallStackFrames(status) || stack.depth == 0) {

@@ -969,3 +969,68 @@ TEST(AclsanTranslateDeviceData, Main)
     TestRejectsUnsupportedCallbackParamField();
     TestRejectsUnknownInstruction();
 }
+
+TEST(AclsanTranslateDeviceData, ScalarAddressClassificationSkipsKnownLocalSpacesButPreservesFailures)
+{
+    for (const uint32_t instructionId : {26U, 44U}) {
+        SCOPED_TRACE(instructionId);
+        aclsan::ParsedTraceRecord parsed = MakeParsedTraceRecord(17, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE, 2, 3);
+        auto& record = parsed.record;
+        record.instrId = instructionId;
+        record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+        record.args[3] = UINT64_C(0x100000000);
+        record.args[4] = aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
+
+        // Scalar LD/ST instructions also access UB and compiler-private stack windows.
+        for (const uint64_t address : {UINT64_C(0x100080040), UINT64_C(0x100100040)}) {
+            SCOPED_TRACE(address);
+            record.args[0] = address;
+            const auto decoded = DecodeRecord(record);
+            ASSERT_TRUE(decoded.has_value());
+            PlogCapture capture;
+            const auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+            ASSERT_TRUE(callback.has_value());
+            const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
+            ASSERT_NE(accesses, nullptr);
+            EXPECT_TRUE(accesses->empty());
+            EXPECT_NE(
+                capture.Text().find("skipped memory access in known UB/PRIVATE address space"), std::string::npos);
+            EXPECT_EQ(capture.Text().find("incomplete memory access"), std::string::npos);
+        }
+
+        record.args[0] = UINT64_C(0x8000000200001000);
+        auto decoded = DecodeRecord(record);
+        ASSERT_TRUE(decoded.has_value());
+        const auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+        ASSERT_TRUE(callback.has_value());
+        const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
+        ASSERT_NE(accesses, nullptr);
+        ASSERT_EQ(accesses->size(), 1U);
+        EXPECT_EQ(accesses->front().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+        EXPECT_EQ(accesses->front().address, UINT64_C(0x200001000));
+        EXPECT_EQ(
+            accesses->front().accessMode,
+            instructionId == 26U ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+        EXPECT_EQ(accesses->front().layout.range.bytes, instructionId == 26U ? 2U : 8U);
+
+        // Unknown address encodings and missing mapping context remain conversion errors.
+        record.args[0] = UINT64_C(0x100000040);
+        decoded = DecodeRecord(record);
+        ASSERT_TRUE(decoded.has_value());
+        {
+            PlogCapture capture;
+            EXPECT_FALSE(aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded).has_value());
+            EXPECT_NE(capture.Text().find("incomplete memory access status=INVALID_ADDRESS_SPACE"), std::string::npos);
+        }
+        record.args[0] = UINT64_C(0x8000000200001000);
+        record.args[4] = 0;
+        decoded = DecodeRecord(record);
+        ASSERT_TRUE(decoded.has_value());
+        {
+            PlogCapture capture;
+            EXPECT_FALSE(aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded).has_value());
+            EXPECT_NE(
+                capture.Text().find("incomplete memory access status=MISSING_ADDRESS_CONTEXT"), std::string::npos);
+        }
+    }
+}

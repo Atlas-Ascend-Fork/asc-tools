@@ -66,4 +66,9 @@ void AclsanCallbackDispatcher::DispatchLaunch(const AclsanLaunchData& cbdata) no
     Dispatch(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &cbdata, cbdata.common.apiName);
 }
 
+void AclsanCallbackDispatcher::DispatchDeviceBarrier(const AclsanDeviceBarrierData& cbdata) noexcept
+{
+    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_BARRIER, ACLSAN_CBID_DEVICE_PIPE_BARRIER, &cbdata, "DEVICE_PIPE_BARRIER");
+}
+
 } // namespace aclsan

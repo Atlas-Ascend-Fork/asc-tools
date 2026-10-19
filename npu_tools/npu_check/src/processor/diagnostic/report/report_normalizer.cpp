@@ -158,6 +158,20 @@ ReportRecord ToReportRecord(const NpuCheckRacecheckReport& report)
         fields["launchId"] = FormatLaunchId(report.first.exec.launchId);
     }
     fields["hazardCount"] = std::to_string(report.hazardCount);
+    fields["overlapBytes"] = std::to_string(report.overlapBytes);
+    fields["ordering"] = report.ordering;
+    fields["coverage"] = report.coverage;
+    fields["unorderedPeers"] = report.unorderedPeers ? "true" : "false";
+    fields["raceDevice"] = std::to_string(report.first.exec.deviceId);
+    fields["firstInstruction"] = std::to_string(report.first.exec.instrExecId);
+    fields["secondInstruction"] = std::to_string(report.second.exec.instrExecId);
+    std::string ranges;
+    for (const auto& range : report.overlapRanges) {
+        if (!ranges.empty())
+            ranges += ", ";
+        ranges += "[0x" + Hex(range.first) + ", 0x" + Hex(range.second) + ")";
+    }
+    fields["overlapRanges"] = ranges.empty() ? "unknown" : ranges;
     fields["currentValue"] = HexWithPrefix(report.currentValue);
     fields["incomingValue"] = HexWithPrefix(report.incomingValue);
     fields["scope"] = std::to_string(report.scope);

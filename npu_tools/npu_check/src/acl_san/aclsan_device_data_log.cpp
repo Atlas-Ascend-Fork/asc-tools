@@ -51,7 +51,9 @@ constexpr bool HasParamFieldLogger() noexcept
            std::is_same_v<ParamField, aclsan::DmaLoopSizeParamField> ||
            std::is_same_v<ParamField, aclsan::DmaLoopStrideParamField> ||
            std::is_same_v<ParamField, aclsan::SetPaddingParamField> ||
-           std::is_same_v<ParamField, aclsan::FlagParamField> || std::is_same_v<ParamField, aclsan::SyncBufParamField>;
+           std::is_same_v<ParamField, aclsan::FlagParamField> ||
+           std::is_same_v<ParamField, aclsan::SyncBufParamField> ||
+           std::is_same_v<ParamField, aclsan::PipeBarrierParamField>;
 }
 
 const char* BlockTypeName(uint32_t blockType) noexcept
@@ -327,6 +329,11 @@ void LogParamField(const aclsan::FlagParamField& value) noexcept
         value.dstPipe, static_cast<unsigned long long>(value.eventId));
 }
 
+void LogParamField(const aclsan::PipeBarrierParamField& value) noexcept
+{
+    ASCTOOL_DEBUG("[param] type=PipeBarrierParamField instrId=%u pipe=%u", value.instrId, value.pipe);
+}
+
 void LogParamField(const aclsan::SyncBufParamField& value) noexcept
 {
     ASCTOOL_DEBUG(
@@ -409,6 +416,16 @@ void LogParamField(const aclsan::DeviceInstructionParamField& params) noexcept
             }
         },
         params);
+}
+
+void LogCallbackData(const AclsanDeviceBarrierData& barrier) noexcept
+{
+    const auto& h = barrier.header;
+    ASCTOOL_DEBUG(
+        "[cbdata] type=AclsanDeviceBarrierData deviceId=%u phyCoreId=%u blockId=%u blockType=%s "
+        "instrExecId=%llu launchId=%llu pc=0x%llx pipeline=%u pipe=%u",
+        h.deviceId, h.phyCoreId, h.blockId, BlockTypeName(h.blockType), static_cast<unsigned long long>(h.instrExecId),
+        static_cast<unsigned long long>(h.launchId), static_cast<unsigned long long>(h.pc), h.pipeline, barrier.pipe);
 }
 
 void LogCallbackData(const DeviceCallbackData& callbackData) noexcept

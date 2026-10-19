@@ -17,6 +17,7 @@
 #include <limits>
 #include <string>
 #include <variant>
+#include <utility>
 #include <vector>
 
 namespace npucheck {
@@ -362,6 +363,12 @@ struct NpuCheckRacecheckReport {
     NpuCheckRaceAccessSite first;
     NpuCheckRaceAccessSite second;
 
+    // Racecheck has no memory values. Overlap ranges preserve stride holes.
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> overlapRanges;
+    std::uint64_t overlapBytes = 0;
+    std::string ordering = "unknown";
+    std::string coverage = "unknown";
+    bool unorderedPeers = false;
     std::uint64_t currentValue = 0;
     std::uint64_t incomingValue = 0;
 };
