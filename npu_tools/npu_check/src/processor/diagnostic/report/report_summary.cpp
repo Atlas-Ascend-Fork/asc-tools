@@ -38,10 +38,7 @@ const std::map<ReportTemplateKey, SummaryCounter>& SummaryCounters()
         {{ReportTool::RACECHECK, "hazard_raw"}, &ToolSummary::hazards},
         {{ReportTool::RACECHECK, "hazard_war"}, &ToolSummary::hazards},
         {{ReportTool::RACECHECK, "hazard_waw"}, &ToolSummary::hazards},
-        {{ReportTool::RACECHECK, "atomic_race"}, &ToolSummary::hazards},
-        {{ReportTool::RACECHECK, "cross_pipe_race"}, &ToolSummary::hazards},
-        {{ReportTool::RACECHECK, "inter_core_race"}, &ToolSummary::hazards},
-        {{ReportTool::RACECHECK, "invalid_remote_access"}, &ToolSummary::hazards},
+        {{ReportTool::RACECHECK, "atomic_semantic"}, &ToolSummary::hazards},
         {{ReportTool::SYNCCHECK, "deadlock"}, &ToolSummary::deadlocks},
     };
     return counters;

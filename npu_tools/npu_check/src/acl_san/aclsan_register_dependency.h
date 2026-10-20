@@ -26,6 +26,18 @@ struct RegisterDependencyMask {
     uint64_t mask1 = 0;
 };
 
+constexpr uint64_t RegisterBit(AclsanDeviceRegisterId id) noexcept
+{
+    const auto index = static_cast<uint32_t>(id);
+    return index < 64U ? UINT64_C(1) << index : 0;
+}
+
+constexpr bool HasRegisterBit(uint64_t mask, AclsanDeviceRegisterId id) noexcept
+{
+    const auto bit = RegisterBit(id);
+    return bit != 0 && (mask & bit) != 0;
+}
+
 RegisterDependencyMask ResolveRegisterDependencies(
     const MemoryInstructionField& field, const MemoryRegisterState& state) noexcept;
 

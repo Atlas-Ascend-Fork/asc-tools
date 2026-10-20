@@ -11,6 +11,7 @@
 #include "diagnostic/report/synccheck_adapter.h"
 
 #include "acl_san/aclsan_cbdata_device.h"
+#include "diagnostic/pipeline_name.h"
 #include "diagnostic/report/report_catalog.h"
 #include "diagnostic/report/report_fields.h"
 
@@ -85,31 +86,6 @@ const char* PairKindName(NpuCheckSyncPairKind pairKind)
             return "UNKNOWN";
     }
     return "UNKNOWN";
-}
-
-std::string PairKeyPipeName(AclsanDevicePipeline pipe)
-{
-    switch (pipe) {
-        case ACLSAN_DEVICE_PIPE_SCALAR:
-            return "PIPE_S";
-        case ACLSAN_DEVICE_PIPE_VECTOR:
-            return "PIPE_V";
-        case ACLSAN_DEVICE_PIPE_MATRIX:
-            return "PIPE_M";
-        case ACLSAN_DEVICE_PIPE_MTE1:
-            return "PIPE_MTE1";
-        case ACLSAN_DEVICE_PIPE_MTE2:
-            return "PIPE_MTE2";
-        case ACLSAN_DEVICE_PIPE_MTE3:
-            return "PIPE_MTE3";
-        case ACLSAN_DEVICE_PIPE_ALL:
-            return "PIPE_ALL";
-        case ACLSAN_DEVICE_PIPE_FIXPIPE:
-            return "PIPE_FIXPIP";
-        case ACLSAN_DEVICE_PIPE_INVALID:
-            return "PIPE_INVALID";
-    }
-    return "PIPE_UNKNOWN(" + std::to_string(static_cast<std::uint32_t>(pipe)) + ")";
 }
 
 const char* PrimitiveKindName(NpuCheckSyncPrimitiveKind primitiveKind)
@@ -267,11 +243,10 @@ std::string FormatPairKey(const NpuCheckSyncPairKey& key)
 {
     std::ostringstream os;
     if (key.pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG) {
-        os << "srcPipe=" << PairKeyPipeName(static_cast<AclsanDevicePipeline>(key.srcPipe))
-           << ", dstPipe=" << PairKeyPipeName(static_cast<AclsanDevicePipeline>(key.dstPipe)) << ", id=" << key.id;
+        os << "srcPipe=" << DevicePipelineName(key.srcPipe) << ", dstPipe=" << DevicePipelineName(key.dstPipe)
+           << ", id=" << key.id;
     } else {
-        os << "pipe=" << PairKeyPipeName(static_cast<AclsanDevicePipeline>(key.dstPipe)) << ", id=" << key.id
-           << ", mode=" << key.mode;
+        os << "pipe=" << DevicePipelineName(key.dstPipe) << ", id=" << key.id << ", mode=" << key.mode;
     }
     return os.str();
 }

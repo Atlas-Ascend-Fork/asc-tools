@@ -25,7 +25,7 @@ namespace {
 
 int32_t g_plogRecordCount = 0;
 int32_t g_plogLevel = -1;
-char g_plogMessage[256] = {};
+char g_plogMessage[2048] = {};
 
 int32_t CheckLogLevelStub(int32_t, int32_t) { return 1; }
 

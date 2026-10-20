@@ -41,6 +41,7 @@ public:
     InitcheckStats Stats() const;
 
 private:
+    // (blockType, blockId) 唯一标识一次 device/launch 内的执行。
     using CoreKey = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t>;
     using UsageKey = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t, uint64_t, uint32_t>;
     using InstructionKey = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t, uint64_t>;

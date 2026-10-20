@@ -16,7 +16,6 @@ find_package(Threads REQUIRED)
 set(NPU_CHECK_REPORT_RENDERER_SOURCES
   diagnostic/report_renderer.cpp
   diagnostic/report/report_catalog.cpp
-  diagnostic/report/report_fields.cpp
   diagnostic/report/report_normalizer.cpp
   diagnostic/report/report_summary.cpp
   diagnostic/report/report_text_renderer.cpp
@@ -41,10 +40,15 @@ add_library(npu_check_core STATIC
   checker/memcheck_callbacks.cpp
   checker/synccheck_callbacks.cpp
   diagnostic/report/device_call_stack.cpp
+  diagnostic/report/report_assembler.cpp
+  diagnostic/report/report_fields.cpp
   checker/allocation_registry.cpp
   checker/memcheck.cpp
-  checker/initcheck.cpp
+  checker/mem_state_tracker.cpp
+  checker/racecheck_reports.cpp
   checker/racecheck.cpp
+  checker/initcheck.cpp
+  checker/racecheck/sync_analysis.cpp
   checker/racecheck/types.cpp
   checker/racecheck/happens_before_graph.cpp
   checker/racecheck/memory_access_state.cpp

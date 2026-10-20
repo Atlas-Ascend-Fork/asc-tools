@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "acl_san/aclsan_api.h"
 #include <gtest/gtest.h>
 #include "aclsan_memory_cbdata.h"
 #include "device_instr/arch/dav_3510/decoder.h"
@@ -29,6 +30,8 @@ MemoryRegisterState SingleGmToL1Iteration()
 MemoryCbdataResult ConvertRaw(
     uint32_t id, std::array<uint64_t, 4> args, MemoryRegisterState state = {}, uint64_t arg4 = 0)
 {
+    // 这些 footprint 用例专门验证非原子传输。
+    state.ctrl = CtrlRegisterParamField{0};
     AclsanRawTraceRecord raw{};
     raw.instrId = id;
     std::copy(args.begin(), args.end(), raw.args);
@@ -143,6 +146,8 @@ TEST(CubeMemory, CapacityBoundariesAndOverflowAreIndependentOfGmAllocations)
           {ACLSAN_DEVICE_MEMORY_SPACE_L0C, 262144}}) {
         npucheck::Memcheck checker;
         AclsanDeviceMemoryAccessData d{};
+        d.header.version = ACLSAN_API_VERSION;
+        d.header.size = sizeof(d);
         d.memorySpace = entry.first;
         d.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
         d.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
@@ -536,10 +541,11 @@ TEST(CubeMemory, Img2ColPaddingIsSynthesizedAndDestinationOffsetIsChecked)
     ASSERT_EQ(reports.size(), 1u);
     EXPECT_EQ(reports[0].access.memorySpace, npucheck::NpuCheckReportMemorySpace::L0_B);
     r = ConvertRaw(155, {0, 0, 16 | (16ULL << 16), config}, {});
-    EXPECT_EQ(r.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
+    EXPECT_EQ(r.status, MemoryCbdataStatus::MISSING_REGISTER_STATE);
     EXPECT_EQ(r.requiredRegisterInstructionId, 387u);
     state.l3dRpt[1].reset();
     r = ConvertRaw(155, {0, 0, 16 | (16ULL << 16), config}, state);
+    EXPECT_EQ(r.status, MemoryCbdataStatus::MISSING_REGISTER_STATE);
     EXPECT_EQ(r.requiredRegisterInstructionId, 391u);
 }
 
@@ -625,6 +631,69 @@ TEST(CubeMemoryRegression, CopyV2DestinationStrideIsGapAfterBurst)
     const auto reports = checker.OnSynchronization();
     ASSERT_EQ(reports.size(), 1u);
     EXPECT_EQ(reports[0].access.rangeEnd, 0x80020u);
+}
+
+TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmWrites)
+{
+    for (uint32_t id : {56u, 57u, 58u, 59u, 60u, 61u, 83u, 91u}) {
+        for (uint64_t address : {0x1000u, 0x2000u}) {
+            SCOPED_TRACE(::testing::Message() << "id=" << id << " address=" << address);
+            ParsedTraceRecord parsed{};
+            parsed.record.instrId = id;
+            parsed.record.args[0] = address;
+            parsed.instrExecId = 23;
+            MemoryRegisterState state{};
+            if (id == 83) {
+                parsed.record.pipeline = ACLSAN_DEVICE_PIPE_MTE3;
+                parsed.record.args[2] = (1ULL << 4) | (32ULL << 25);
+                state.dmaLoopSizes[static_cast<size_t>(DmaLoopDirection::UBUF_TO_GM)] =
+                    DmaLoopSizeParamField{DmaLoopDirection::UBUF_TO_GM, 1, 1};
+            } else if (id == 91) {
+                parsed.record.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
+                parsed.record.args[2] = (16ULL << 4) | (16ULL << 16) | (256ULL << 32);
+                parsed.record.args[3] = 16;
+            } else {
+                parsed.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+                parsed.record.args[3] = UINT64_C(0x100000000);
+                parsed.record.args[4] = ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
+            }
+            const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
+            ASSERT_TRUE(decoded);
+            const auto callback = TranslateDecodedTraceToCallbackData(parsed, *decoded, state);
+            ASSERT_TRUE(callback);
+            const auto& accesses = std::get<DeviceMemoryAccessDataList>(*callback);
+            npucheck::Memcheck checker;
+            AclsanResourceData allocation{};
+            allocation.ptr = reinterpret_cast<void*>(0x1000);
+            allocation.bytes = 4096;
+            allocation.resourceId = 1;
+            allocation.memorySpace = ACLSAN_MEMORY_SPACE_DEVICE;
+            checker.OnAllocation(allocation);
+            for (const auto& access : accesses) {
+                if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+                    const uint32_t expectedFlags =
+                        (id == 83 || id == 91) ?
+                            ACLSAN_DEVICE_EVENT_FLAG_EXACT :
+                            ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
+                    EXPECT_EQ(access.header.flags, expectedFlags);
+                    EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+                    if (id == 83 || id == 91) {
+                        EXPECT_NE(access.regDependencyMask0 & (UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CTRL), 0U);
+                    }
+                }
+                checker.QueueDeviceMemoryAccess(access);
+            }
+            const auto reports = checker.OnSynchronization();
+            ASSERT_EQ(reports.size(), address == 0x2000 ? 1u : 0u);
+            if (!reports.empty()) {
+                EXPECT_EQ(reports[0].access.accessMode, npucheck::NpuCheckReportAccessMode::WRITE);
+                EXPECT_EQ(reports[0].access.address, address);
+            }
+            EXPECT_TRUE(checker.AnalysisComplete());
+            EXPECT_EQ(checker.Stats().inexactDeviceOperations, 0u);
+            EXPECT_EQ(checker.Stats().droppedDeviceOperations, 0u);
+        }
+    }
 }
 
 TEST(CubeMemoryRegression, Img2ColZeroRepeatCannotClaimExactCoverage)

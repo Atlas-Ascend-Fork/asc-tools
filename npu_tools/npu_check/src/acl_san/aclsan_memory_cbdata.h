@@ -46,6 +46,7 @@ using MemoryInstructionField = std::variant<
     ScalarGmParamField, ScalarDevParamField, ScalarPreloadParamField, ScalarAtomicParamField>;
 
 struct MemoryRegisterState {
+    std::optional<CtrlRegisterParamField> ctrl;
     std::array<std::optional<FmatrixParamField>, 2> fmatrix{}; // normal / _B register banks
     std::array<std::optional<L3dRptParamField>, 2> l3dRpt{};
     std::optional<Mte2SourceParamField> mte2Source;
@@ -86,6 +87,8 @@ struct MemoryCbdataResult {
     MemoryCbdataStatus status = MemoryCbdataStatus::INVALID_FIELD;
     MemoryCbdata data;
     uint64_t requiredRegisterInstructionId = 0;
+    // 即使保留了已知访问，仍须补发采集不完整事件；翻译层无需识别具体指令。
+    bool requiresIncompleteEvent = false;
 };
 
 class MemoryFieldToCbdataConverter final {

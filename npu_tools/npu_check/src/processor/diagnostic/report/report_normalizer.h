@@ -15,6 +15,7 @@
 
 namespace npucheck::detail {
 
+// 将各 checker 的报告转换为统一记录；racecheck 的访问范围已在生成时解析。
 ReportRenderStatus NormalizeReport(const NpuCheckReportRecord& record, ReportRecord* out);
 
 } // namespace npucheck::detail

@@ -19,8 +19,6 @@
 namespace aclsan {
 namespace {
 
-constexpr uint64_t RegisterBit(AclsanDeviceRegisterId id) noexcept { return UINT64_C(1) << static_cast<uint32_t>(id); }
-
 AclsanDeviceEventHeader MakeHeader(const ParsedTraceRecord& parsed) noexcept
 {
     return {ACLSAN_API_VERSION,     static_cast<uint32_t>(sizeof(AclsanDeviceRegisterStateData)),
@@ -37,7 +35,9 @@ std::optional<AclsanDeviceRegisterId> RegisterId(const DecodedInstruction& decod
     return std::visit(
         [](const auto& value) noexcept -> std::optional<AclsanDeviceRegisterId> {
             using Field = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<Field, Mte2SourceParamField>) {
+            if constexpr (std::is_same_v<Field, CtrlRegisterParamField>) {
+                return ACLSAN_DEVICE_REGISTER_CTRL;
+            } else if constexpr (std::is_same_v<Field, Mte2SourceParamField>) {
                 return ACLSAN_DEVICE_REGISTER_MTE2_SOURCE;
             } else if constexpr (std::is_same_v<Field, NdDmaPadCountParamField>) {
                 return ACLSAN_DEVICE_REGISTER_NDDMA_PAD_COUNT;
@@ -140,7 +140,11 @@ RegisterDependencyMask ResolveRegisterDependencies(
             } else if constexpr (std::is_same_v<Field, CopyGmToCbufAlignV2ParamField>) {
                 return DmaDependencies(value, DmaLoopDirection::GM_TO_CBUF, state);
             } else if constexpr (std::is_same_v<Field, CopyUbufToGmAlignV2ParamField>) {
-                return DmaDependencies(value, DmaLoopDirection::UBUF_TO_GM, state);
+                auto dependencies = DmaDependencies(value, DmaLoopDirection::UBUF_TO_GM, state);
+                if (value.burstNum != 0 && value.burstLen != 0) {
+                    dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_CTRL);
+                }
+                return dependencies;
             } else if constexpr (std::is_same_v<Field, CopyGmToCbufV2ParamField>) {
                 if (value.burstNum == 0 || value.burstLen == 0) {
                     return {};
@@ -151,9 +155,14 @@ RegisterDependencyMask ResolveRegisterDependencies(
                 }
                 return result;
             } else if constexpr (std::is_same_v<Field, FixL0cToOutParamField>) {
-                return value.nSize != 0 && value.mSize != 0 && (value.nz2ndEnable || value.nz2dnEnable) ?
-                           RegisterDependencyMask{RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3), 0} :
-                           RegisterDependencyMask{};
+                RegisterDependencyMask dependencies{};
+                if (value.nSize != 0 && value.mSize != 0) {
+                    dependencies.mask0 = RegisterBit(ACLSAN_DEVICE_REGISTER_CTRL);
+                    if (value.nz2ndEnable || value.nz2dnEnable) {
+                        dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3);
+                    }
+                }
+                return dependencies;
             }
             return {};
         },

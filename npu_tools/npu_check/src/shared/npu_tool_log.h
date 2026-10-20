@@ -17,6 +17,7 @@
 #include "dlog_pub.h"
 
 #define ASCTOOL_MODULE_ID static_cast<int32_t>(ASCTOOL)
+#define ASCTOOL_DEBUG_ENABLED() (CheckLogLevel(ASCTOOL_MODULE_ID, DLOG_DEBUG) == 1)
 
 // Append an empty string so C++17 callers can omit format arguments without GNU extensions.
 #define ASCTOOL_DEBUG(...) ASCTOOL_DEBUG_IMPL(__VA_ARGS__, "")

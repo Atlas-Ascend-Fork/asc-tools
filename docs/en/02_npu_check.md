@@ -15,8 +15,9 @@ When using this tool through an Agent, refer to the [tool-npu-check Skill](../..
 | `memcheck` | Checks GM reads and writes and supported L1, L0A, L0B, and L0C accesses | GM allocation bounds, invalid addresses, use after free, and on-chip memory capacity bounds |
 | `synccheck` | Checks whether device synchronization operations are correctly paired | Repeated event notifications, waits for events that have not been notified, notifications without corresponding waits, and mismatched notification/wait pairs |
 | `initcheck` | Checks whether persistent registers are set before their first dependent use | Data-transfer or compute instructions using persistent registers before they are set, or registers set only after use |
+| `racecheck` | Checks conflicting memory accesses that lack required synchronization | Read-after-write, write-after-read, and write-after-write races and atomic write semantic conflicts |
 
-The three features can be used separately or enabled together for the same application run.
+The four features can be used separately or enabled together for the same application run.
 
 ### Usage Scenarios
 
@@ -52,24 +53,24 @@ To locate source files and line numbers directly from a report, preserve line in
 ## Command Format
 
 ```text
-npu-check [--tool <name>]... [--log-file <filepath>] [--] <application> [args...]
+npu-check [--tool <checktype>]... [--log-file <filepath>] [--] <application> [args...]
 ```
 
 ### Options
 
 | Option | Input | Default Behavior | Description |
 | --- | --- | --- | --- |
-| `--tool <name>` | `memcheck`, `synccheck`, `initcheck` | Enables `memcheck` when omitted | Can be specified multiple times to enable multiple tools; repeating the same tool does not repeat the check |
+| `--tool <checktype>` | `memcheck`, `synccheck`, `initcheck`, `racecheck` | Enables `memcheck` when omitted | Can be specified multiple times to enable multiple tools; repeating the same tool does not repeat the check |
 | `--log-file <filepath>` | A file path | Displays the report in the terminal | Saves diagnostic information |
 | `-h`, `--help` | None | Does not display help | Displays command help |
 | `--` | None | Optional | Separates tool options from application arguments |
 
 ## Usage Examples
 
-Check device memory accesses:
+Run a specific type of check, replacing `<checktype>` with `memcheck`, `synccheck`, `initcheck`, or `racecheck`:
 
-```bash
-npu-check --tool memcheck ./my_app
+```text
+npu-check --tool <checktype> ./my_app
 ```
 
 When no feature is specified, memory access checking (`memcheck`) is enabled by default:
@@ -78,16 +79,10 @@ When no feature is specified, memory access checking (`memcheck`) is enabled by 
 npu-check ./my_app
 ```
 
-Run synchronization checking only:
-
-```bash
-npu-check --tool synccheck ./my_app
-```
-
 Enable all checks:
 
 ```bash
-npu-check --tool memcheck --tool synccheck --tool initcheck ./my_app
+npu-check --tool memcheck --tool synccheck --tool initcheck --tool racecheck ./my_app
 ```
 
 ### Specifying the Report Location
@@ -109,6 +104,10 @@ When `--log-file` is specified, the report is written to the file and is not als
 - `memcheck` checks GM accesses from supported instructions and accesses beyond buffer boundaries in L1, L0A, L0B, and L0C.
 - `synccheck` checks intra-core synchronization pairing issues and repeated synchronization setting issues.
 - `initcheck` checks only currently supported data-transfer and Fixpipe instructions and their explicit persistent-register dependencies.
+- `racecheck` checks races only within a single kernel execution (launch), not between different launches.
+- `racecheck` supports ADD/MIN/MAX atomic write checking. Writes using the same atomic mode are not considered race conflicts; writes using different atomic modes report an atomic write semantic conflict when their address ranges overlap and required synchronization is missing. Atomic writes are also checked for conflicts with ordinary reads and writes.
+- Writes with atomic mode disabled are checked as ordinary writes. Unsupported or unrecognized atomic configurations make race analysis incomplete.
+- `racecheck` can report multiple races within a single launch and continues checking other memory ranges after finding the first race. Only the first confirmed race for a given memory range is reported; subsequent races in that range are not reported again.
 - The target program must be able to run independently without `npu-check`.
 - The target program must be an executable file.
 - Multi-process and multi-threaded execution are not supported.

@@ -168,6 +168,7 @@ enum class InstructionId : uint32_t {
     FixL0cToUbufS32 = 171, // LocalMemoryTransferParamField：L0C READ
 
     // REGISTER
+    SetCtrl = 159,             // SET_CTRL
     SetPadding = 392,          // SET_PADDING
     LoopSizeGmToCbuf = 394,    // 已完成：DmaLoopSizeParamField（状态）
     Loop1StrideGmToCbuf = 395, // 已完成：DmaLoopStrideParamField（状态）
@@ -289,6 +290,7 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::FixL0cToCbufS32:
         case InstructionId::FixL0cToUbufF32:
         case InstructionId::FixL0cToUbufS32:
+        case InstructionId::SetCtrl:
         case InstructionId::SetPadding:
         case InstructionId::LoopSizeGmToCbuf:
         case InstructionId::Loop1StrideGmToCbuf:

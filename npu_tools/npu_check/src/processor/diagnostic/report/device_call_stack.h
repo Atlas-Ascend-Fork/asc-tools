@@ -14,10 +14,18 @@
 #include "diagnostic/report_message.h"
 
 namespace npucheck {
+struct DeviceCallStackInfo {
+    AclsanStatus status = ACLSAN_STATUS_ERROR_INVALID_STATE;
+    uint64_t binaryId = 0;
+    std::vector<ReportFrame> frames;
+    std::string text;
+};
+
+// 只解析 PC，不修改报告；调用方在最终组装时赋予栈角色并合入报告。
+DeviceCallStackInfo ResolveDeviceCallStack(uint64_t pc) noexcept;
 std::string FormatCallStackReport(AclsanStatus status, const AclsanDeviceCallStack& stack);
 void PopulateDeviceCallStack(NpuCheckMemcheckReport& report) noexcept;
 void PopulateDeviceCallStack(NpuCheckInitcheckReport& report) noexcept;
-void PopulateDeviceCallStack(NpuCheckRacecheckReport& report) noexcept;
 void PopulateDeviceCallStack(NpuCheckSynccheckReport& report) noexcept;
 } // namespace npucheck
 

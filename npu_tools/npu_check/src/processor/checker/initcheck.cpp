@@ -8,7 +8,10 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "acl_san/aclsan_api.h"
+#include "aclsan_register_dependency.h"
 #include "checker/initcheck.h"
+#include "diagnostic/pipeline_name.h"
 
 #include "device_instr/common/instruction_id.h"
 
@@ -28,28 +31,6 @@ uint64_t TimestampNs()
 {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
-}
-
-const char* PipelineName(uint32_t pipeline)
-{
-    switch (pipeline) {
-        case ACLSAN_DEVICE_PIPE_SCALAR:
-            return "SCALAR";
-        case ACLSAN_DEVICE_PIPE_VECTOR:
-            return "VECTOR";
-        case ACLSAN_DEVICE_PIPE_MATRIX:
-            return "MATRIX";
-        case ACLSAN_DEVICE_PIPE_MTE1:
-            return "MTE1";
-        case ACLSAN_DEVICE_PIPE_MTE2:
-            return "MTE2";
-        case ACLSAN_DEVICE_PIPE_MTE3:
-            return "MTE3";
-        case ACLSAN_DEVICE_PIPE_FIXPIPE:
-            return "FIXPIPE";
-        default:
-            return "UNKNOWN";
-    }
 }
 
 struct RegisterDescription {
@@ -80,6 +61,7 @@ RegisterDescription DescribeRegister(uint32_t id)
         {"dma_loop1_stride_gm_to_cbuf", "set_loop1_stride_outtol1"},
         {"dma_loop2_stride_gm_to_cbuf", "set_loop2_stride_outtol1"},
         {"set_padding", "set_padding"},
+        {"ctrl", "set_ctrl / set_atomic_*"},
     };
     return id < ACLSAN_DEVICE_REGISTER_COUNT ? descriptions[id] : RegisterDescription{"unknown", "unknown"};
 }
@@ -135,7 +117,7 @@ NpuCheckReportExecContext ToExecContext(const AclsanDeviceMemoryAccessData& data
     exec.blockType = data.header.blockType;
     exec.pipeId = data.header.pipeline;
     exec.siteId = data.header.siteId;
-    exec.pipeName = PipelineName(data.header.pipeline);
+    exec.pipeName = detail::DevicePipelineName(data.header.pipeline);
     return exec;
 }
 
@@ -153,13 +135,12 @@ const std::vector<CallbackSpec>& Initcheck::GetSubscribedID() const
 
 bool Initcheck::OnRegisterState(const AclsanDeviceRegisterStateData& data)
 {
-    if (data.header.version != ACLSAN_API_VERSION || data.header.size < sizeof(data) ||
-        data.regId >= ACLSAN_DEVICE_REGISTER_COUNT || data.regId >= 64) {
+    if (data.header.size < sizeof(data) || data.regId >= ACLSAN_DEVICE_REGISTER_COUNT || data.regId >= 64) {
         ++stats_.malformedEvents;
         return false;
     }
     const CoreKey key{data.header.deviceId, data.header.launchId, data.header.blockType, data.header.blockId};
-    initializedRegisters_[key] |= UINT64_C(1) << data.regId;
+    initializedRegisters_[key] |= aclsan::RegisterBit(static_cast<AclsanDeviceRegisterId>(data.regId));
     ++stats_.registerWrites;
     return true;
 }
@@ -186,15 +167,22 @@ NpuCheckInitcheckReport Initcheck::MakeReport(
 
 bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports)
 {
-    if (data.header.version != ACLSAN_API_VERSION || data.header.size < kMemoryAccessDependencySize ||
-        data.regDependencyMask1 != 0 || (data.regDependencyMask0 & ~kSupportedRegisterMask) != 0) {
+    if (data.header.size < kMemoryAccessDependencySize || data.regDependencyMask1 != 0 ||
+        (data.regDependencyMask0 & ~kSupportedRegisterMask) != 0) {
         ++stats_.malformedEvents;
         return false;
     }
     ++stats_.deviceOperations;
     const CoreKey core{data.header.deviceId, data.header.launchId, data.header.blockType, data.header.blockId};
     const uint64_t initialized = initializedRegisters_[core];
-    uint64_t missing = data.regDependencyMask0 & ~initialized;
+    uint64_t missing = 0;
+    for (uint32_t id = 0; id < ACLSAN_DEVICE_REGISTER_COUNT; ++id) {
+        const auto registerId = static_cast<AclsanDeviceRegisterId>(id);
+        if (aclsan::HasRegisterBit(data.regDependencyMask0, registerId) &&
+            !aclsan::HasRegisterBit(initialized, registerId)) {
+            missing |= aclsan::RegisterBit(registerId);
+        }
+    }
     if (missing == 0) {
         return true;
     }

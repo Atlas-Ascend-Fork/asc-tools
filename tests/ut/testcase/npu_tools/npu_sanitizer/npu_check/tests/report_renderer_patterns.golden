@@ -80,49 +80,32 @@
 =========     <unusedPercent>% of allocation were unused.
 
 ===== racecheck.analysis =====
-========= ERROR:[RACECHECK] Race reported between <firstAccess> access in launch (<firstLaunchId>) at <firstLocation>
-=========     and <secondAccess> access in launch (<secondLaunchId>) at <secondLocation> [<hazardCount> hazards]
+========= ERROR:[RACECHECK] Race reported between <firstAccess> access at <firstLocation>
+=========     and <secondAccess> access at <secondLocation> [<hazardCount> hazards]
 
-===== racecheck.atomic_race =====
-========= ERROR:[RACECHECK] Potential atomic race detected at <space> 0x<address>
-=========     First access in launch (<firstLaunchId>) at <firstLocation>
-=========     Second access in launch (<secondLaunchId>) at <secondLocation>
-=========     Race scope <scope>
-
-===== racecheck.cross_pipe_race =====
-========= ERROR:[RACECHECK] Potential cross-pipe race detected at <space> 0x<address>
-=========     First access by aicore (<coreId>) pipe (<firstPipe>) in launch (<firstLaunchId>) at <firstLocation>
-=========     Second access by aicore (<coreId>) pipe (<secondPipe>) in launch (<secondLaunchId>) at <secondLocation>
+===== racecheck.atomic_semantic =====
+========= ERROR:[RACECHECK] ATOMIC_SEMANTIC race detected.
+=========     current access: <currentAccess> by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>), range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
+=========     previous access: <previousAccess> by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>), range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
+=========     memory: <space><memoryOwner>, overlap [0x<overlapBegin>, 0x<overlapEnd>), <overlapBytes> bytes
 
 ===== racecheck.hazard_raw =====
-========= ERROR:[RACECHECK] Potential RAW hazard detected at <space> 0x<address> in block (<blockId>) :
-=========     Write AICore (<firstCoreId>) pipe (<firstPipe>) in launch (<firstLaunchId>) at <firstLocation>
-=========     Read AICore (<secondCoreId>) pipe (<secondPipe>) in launch (<secondLaunchId>) at <secondLocation>
-=========     Current Value : <currentValue>
+========= ERROR:[RACECHECK] RAW (read after write) race detected.
+=========     current access: <currentAccess> by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>), range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
+=========     previous access: <previousAccess> by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>), range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
+=========     memory: <space><memoryOwner>, overlap [0x<overlapBegin>, 0x<overlapEnd>), <overlapBytes> bytes
 
 ===== racecheck.hazard_war =====
-========= ERROR:[RACECHECK] Potential WAR hazard detected at <space> 0x<address> in block (<blockId>) :
-=========     Read AICore (<firstCoreId>) pipe (<firstPipe>) in launch (<firstLaunchId>) at <firstLocation>
-=========     Write AICore (<secondCoreId>) pipe (<secondPipe>) in launch (<secondLaunchId>) at <secondLocation>
-=========     Incoming Value : <incomingValue>
+========= ERROR:[RACECHECK] WAR (write after read) race detected.
+=========     current access: <currentAccess> by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>), range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
+=========     previous access: <previousAccess> by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>), range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
+=========     memory: <space><memoryOwner>, overlap [0x<overlapBegin>, 0x<overlapEnd>), <overlapBytes> bytes
 
 ===== racecheck.hazard_waw =====
-========= ERROR:[RACECHECK] Potential WAW hazard detected at <space> 0x<address> in block (<blockId>) :
-=========     Write AICore (<firstCoreId>) pipe (<firstPipe>) in launch (<firstLaunchId>) at <firstLocation>
-=========     Write AICore (<secondCoreId>) pipe (<secondPipe>) in launch (<secondLaunchId>) at <secondLocation>
-=========     Current Value : <currentValue>, Incoming Value : <incomingValue>
-
-===== racecheck.inter_core_race =====
-========= ERROR:[RACECHECK] Potential inter-core race detected at <space> 0x<address>
-=========     First access by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>) in launch (<firstLaunchId>)
-=========     Second access by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>) in launch (<secondLaunchId>)
-=========     <hazardCount> hazards are associated with this address range
-
-===== racecheck.invalid_remote_access =====
-========= ERROR:[RACECHECK] Potential invalid <space> <access> of size <accessBytes> bytes
-=========     <location>
-=========     by aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>) in launch (<launchId>)
-=========     Address 0x<address> is located in a remote execution entity that <remoteState>
+========= ERROR:[RACECHECK] WAW (write after write) race detected.
+=========     current access: <currentAccess> by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>), range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
+=========     previous access: <previousAccess> by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>), range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
+=========     memory: <space><memoryOwner>, overlap [0x<overlapBegin>, 0x<overlapEnd>), <overlapBytes> bytes
 
 ===== synccheck.deadlock =====
 ========= ERROR:[SYNCCHECK] Deadlock detected. <reason>.

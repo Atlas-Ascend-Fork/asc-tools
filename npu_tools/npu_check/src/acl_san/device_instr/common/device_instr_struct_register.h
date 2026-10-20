@@ -52,6 +52,11 @@ struct SetPaddingParamField {
     uint64_t value = 0;
 };
 
+// SET_CTRL 写入完整的 CTRL 寄存器，包括原子类型 [8:6] 和操作 [10:9]。
+struct CtrlRegisterParamField {
+    uint64_t value = 0;
+};
+
 struct Mte2SourceParamField {
     int64_t srcStride = 0;
 };

@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "acl_san/aclsan_api.h"
 #include "checker/initcheck.h"
 
 #include <gtest/gtest.h>
@@ -191,6 +192,79 @@ TEST(InitcheckTest, RejectsLegacyOrInvalidEvents)
     access.regDependencyMask1 = 1;
     EXPECT_FALSE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
     EXPECT_FALSE(checker.AnalysisComplete());
+}
+
+TEST(InitcheckTest, AtomicCtrlInitializationIsIsolatedByLogicalBlockIdentity)
+{
+    Initcheck checker;
+    CheckerReportList reports;
+    auto state = State(ACLSAN_DEVICE_REGISTER_CTRL, 64);
+    state.header.phyCoreId = 1;
+    ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_STATE, &state, reports));
+    auto access = Access(1, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CTRL);
+    access.instructionId = 83;
+    access.header.phyCoreId = 1;
+    ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+    EXPECT_TRUE(reports.empty());
+    // 另一个核上的不同执行也对应不同的逻辑 block。
+    access.header.phyCoreId = 2;
+    access.header.blockId = 1;
+    ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+    ASSERT_EQ(reports.size(), 1U);
+    const auto& report = std::get<NpuCheckInitcheckReport>(reports.front());
+    EXPECT_EQ(report.registerId, ACLSAN_DEVICE_REGISTER_CTRL);
+    EXPECT_EQ(report.registerName, "ctrl");
+    EXPECT_EQ(report.common.exec.phyCoreId, 2U);
+
+    // 即使 block 编号相同，只要 type/device/launch 不同，仍然相互独立。
+    const auto checkScope = [&](AclsanDeviceMemoryAccessData other) {
+        const auto previousSize = reports.size();
+        ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &other, reports));
+        ASSERT_EQ(reports.size(), previousSize + 1);
+        const auto group = std::get<NpuCheckInitcheckReport>(reports.back()).common.groupId;
+        EXPECT_NE(group, std::get<NpuCheckInitcheckReport>(reports[0]).common.groupId);
+        ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &other, reports));
+        EXPECT_EQ(reports.size(), previousSize + 1);
+    };
+    auto other = access;
+    other.header.blockId = 0;
+    other.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    checkScope(other);
+    other = access;
+    ++other.header.deviceId;
+    checkScope(other);
+    other = access;
+    ++other.header.launchId;
+    checkScope(other);
+}
+
+TEST(InitcheckTest, OrdinaryWriteFallbackStillReportsMissingCtrl)
+{
+    Initcheck checker;
+    CheckerReportList reports;
+    auto access = Access(1, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CTRL);
+    access.instructionId = 83;
+    access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+    access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
+    ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(std::get<NpuCheckInitcheckReport>(reports.front()).registerId, ACLSAN_DEVICE_REGISTER_CTRL);
+    EXPECT_TRUE(checker.AnalysisComplete());
+}
+
+TEST(InitcheckTest, IgnoresApiVersionForMemoryAndRegisterState)
+{
+    Initcheck checker;
+    CheckerReportList reports;
+    auto ctrl = State(ACLSAN_DEVICE_REGISTER_CTRL, 64);
+    ctrl.header.version = ACLSAN_API_VERSION + 1;
+    ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_STATE, &ctrl, reports));
+    auto access = Access(1, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CTRL);
+    access.header.version = ACLSAN_API_VERSION + 1;
+    access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
+    EXPECT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+    EXPECT_TRUE(reports.empty());
+    EXPECT_TRUE(checker.AnalysisComplete());
 }
 
 } // namespace

@@ -34,6 +34,8 @@ const char* MemorySpaceName(NpuCheckReportMemorySpace space)
             return "L0C";
         case NpuCheckReportMemorySpace::BT:
             return "BT";
+        case NpuCheckReportMemorySpace::FB:
+            return "FB";
         case NpuCheckReportMemorySpace::PRIVATE:
             return "private";
         case NpuCheckReportMemorySpace::HOST:
@@ -51,8 +53,12 @@ const char* AccessModeName(NpuCheckReportAccessMode mode)
             return "read";
         case NpuCheckReportAccessMode::WRITE:
             return "write";
-        case NpuCheckReportAccessMode::READ_WRITE:
-            return "read/write";
+        case NpuCheckReportAccessMode::ATOMIC_WRITE_ADD:
+            return "atomic write(add)";
+        case NpuCheckReportAccessMode::ATOMIC_WRITE_MIN:
+            return "atomic write(min)";
+        case NpuCheckReportAccessMode::ATOMIC_WRITE_MAX:
+            return "atomic write(max)";
         case NpuCheckReportAccessMode::FREE:
             return "free";
     }

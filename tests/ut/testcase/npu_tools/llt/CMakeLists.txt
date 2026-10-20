@@ -48,6 +48,8 @@ endif()
 add_executable(npu_tools_utest
   gtest_main.cpp
   # npu_check processor / tool manager / renderer
+  "${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/mem_state_tracker_test.cpp"
+  "${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/racecheck_report_test.cpp"
   # cli
   "${NPU_TOOLS_LLT_CLI_TESTS_DIR}/options_test.cpp"
   "${NPU_TOOLS_LLT_CLI_TESTS_DIR}/process_runner_test.cpp"

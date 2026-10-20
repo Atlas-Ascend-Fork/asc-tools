@@ -11,16 +11,48 @@
 #ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_REPORT_MESSAGE_H
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_REPORT_MESSAGE_H
 
+#include "acl_san/aclsan_cbdata_device.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <tuple>
 #include <string>
 #include <variant>
 #include <utility>
 #include <vector>
 
 namespace npucheck {
+
+using CbIndex = size_t;
+enum class ConflictKind : uint8_t { RAW, WAR, WAW, ATOMIC_SEMANTIC };
+
+inline const char* ConflictKindName(ConflictKind kind) noexcept
+{
+    switch (kind) {
+        case ConflictKind::RAW:
+            return "RAW (read after write)";
+        case ConflictKind::WAR:
+            return "WAR (write after read)";
+        case ConflictKind::WAW:
+            return "WAW (write after write)";
+        case ConflictKind::ATOMIC_SEMANTIC:
+            return "ATOMIC_SEMANTIC";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+struct PhysicalSpaceKey {
+    uint32_t deviceId;
+    AclsanDeviceMemorySpace memorySpace;
+    uint32_t phyCoreId;
+    bool operator<(const PhysicalSpaceKey& rhs) const noexcept
+    {
+        return std::tie(deviceId, memorySpace, phyCoreId) < std::tie(rhs.deviceId, rhs.memorySpace, rhs.phyCoreId);
+    }
+};
 
 inline constexpr std::size_t kNpuCheckReportStackMax = 8;
 inline constexpr std::size_t kNpuCheckReportFrameMax = 16;
@@ -90,15 +122,18 @@ enum class NpuCheckReportMemorySpace {
     L0_B = 5,
     L0_C = 6,
     BT = 7,
-    PRIVATE = 8,
-    HOST = 9,
+    FB = 8,
+    PRIVATE = 9,
+    HOST = 10,
 };
 
 enum class NpuCheckReportAccessMode {
     READ = 1,
     WRITE = 2,
-    READ_WRITE = 3,
+    ATOMIC_WRITE_ADD = 3,
     FREE = 4,
+    ATOMIC_WRITE_MIN = 5,
+    ATOMIC_WRITE_MAX = 6,
 };
 
 enum class NpuCheckReportDistanceKind {
@@ -130,10 +165,7 @@ enum class NpuCheckReportPattern : std::uint32_t {
     RACECHECK_HAZARD_RAW = 0x0302,
     RACECHECK_HAZARD_WAR = 0x0303,
     RACECHECK_HAZARD_WAW = 0x0304,
-    RACECHECK_ATOMIC_RACE = 0x0305,
-    RACECHECK_CROSS_PIPE_RACE = 0x0306,
-    RACECHECK_INTER_CORE_RACE = 0x0307,
-    RACECHECK_INVALID_REMOTE_ACCESS = 0x0308,
+    RACECHECK_ATOMIC_SEMANTIC = 0x0309,
 
     SYNCCHECK_INTRA_CORE_DIVERGENT = 0x0401,
     SYNCCHECK_INTER_CORE_DIVERGENT = 0x0402,
@@ -292,16 +324,6 @@ struct NpuCheckSyncObjectError {
 using NpuCheckSyncErrorDetail = std::variant<
     NpuCheckSyncBarrierError, NpuCheckSyncPairingError, NpuCheckSyncSequenceError, NpuCheckSyncObjectError>;
 
-struct NpuCheckRaceAccessSite {
-    NpuCheckReportExecContext exec;
-    NpuCheckReportMemoryAccess access;
-
-    std::uint64_t value = 0;
-    bool hasValue = false;
-    std::uint32_t syncEpoch = 0; // Checker-defined happens-before epoch; 0 means unavailable.
-    std::uint32_t flags = 0;     // Checker-defined access-site metadata bit mask.
-};
-
 struct NpuCheckSocStateRef {
     std::uint32_t stateKind = 0;  // Checker-defined SOC state category; 0 means unknown.
     std::uint32_t scope = 0;      // Checker-defined state visibility scope; 0 means unknown.
@@ -352,26 +374,40 @@ struct NpuCheckInitcheckReport {
     std::string consumerInstruction;
 };
 
-struct NpuCheckRacecheckReport {
-    NpuCheckReportCommon common;
-    std::uint32_t hazardKind = 0; // Checker-defined RAW/WAR/WAW/atomic hazard category; 0 means unknown.
-    std::uint32_t reportMode = 0; // Checker-defined race reporting mode; 0 means the default mode.
-    std::uint32_t scope = 0;      // Checker-defined synchronization scope; 0 means unknown.
-    std::uint32_t flags = 0;      // Checker-defined race metadata bit mask.
-
-    std::uint64_t hazardCount = 0;
-    NpuCheckRaceAccessSite first;
-    NpuCheckRaceAccessSite second;
-
-    // Racecheck has no memory values. Overlap ranges preserve stride holes.
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> overlapRanges;
-    std::uint64_t overlapBytes = 0;
-    std::string ordering = "unknown";
-    std::string coverage = "unknown";
-    bool unorderedPeers = false;
-    std::uint64_t currentValue = 0;
-    std::uint64_t incomingValue = 0;
+struct NpuCheckRacecheckRange {
+    std::uint64_t begin = 0;
+    std::uint64_t end = 0;
 };
+
+// 每条报告拥有一对已确认冲突的原始访问及各自涉及冲突的连续访问段。
+// 在生成报告时解析布局，消费报告不再依赖 tracker 或 launch 记录容器。
+struct NpuCheckRacecheckReport {
+    std::uint64_t reportId = 0;
+    std::uint64_t launchId = 0;
+    PhysicalSpaceKey key{};
+    AclsanDeviceMemoryAccessData previous{};
+    AclsanDeviceMemoryAccessData current{};
+    NpuCheckRacecheckRange previousRange;
+    NpuCheckRacecheckRange currentRange;
+    NpuCheckRacecheckRange checkRange; // 本次确认发生冲突的区间 [begin, end)。
+    ConflictKind kind = ConflictKind::RAW;
+};
+
+inline NpuCheckReportPattern RacecheckPattern(ConflictKind kind) noexcept
+{
+    switch (kind) {
+        case ConflictKind::RAW:
+            return NpuCheckReportPattern::RACECHECK_HAZARD_RAW;
+        case ConflictKind::WAR:
+            return NpuCheckReportPattern::RACECHECK_HAZARD_WAR;
+        case ConflictKind::WAW:
+            return NpuCheckReportPattern::RACECHECK_HAZARD_WAW;
+        case ConflictKind::ATOMIC_SEMANTIC:
+            return NpuCheckReportPattern::RACECHECK_ATOMIC_SEMANTIC;
+        default:
+            return NpuCheckReportPattern::UNKNOWN;
+    }
+}
 
 struct NpuCheckSynccheckReport {
     NpuCheckReportCommon common;
@@ -427,7 +463,7 @@ public:
     {
         NpuCheckReportRecord record{};
         record.tool = ReportTool::RACECHECK;
-        record.pattern = report.common.pattern;
+        record.pattern = RacecheckPattern(report.kind);
         record.payload_ = &report;
         return record;
     }

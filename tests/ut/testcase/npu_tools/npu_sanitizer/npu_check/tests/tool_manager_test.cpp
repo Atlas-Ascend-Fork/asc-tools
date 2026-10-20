@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "acl_san/aclsan_api.h"
 #include "tool_manager/tool_manager.h"
 #include "options.h"
 #include "uds_client.h"
@@ -37,7 +38,7 @@ struct Session {
 
 Session RunSession(
     std::vector<std::string> args, bool memoryError, bool syncError, bool failSync = false, bool nullCallback = false,
-    bool initError = false)
+    bool initError = false, bool race = false)
 {
     enabled.clear();
     enableCalls = 0;
@@ -90,6 +91,13 @@ Session RunSession(
         allocation.memorySpace = ACLSAN_MEMORY_SPACE_DEVICE;
         allocation.resourceId = 1;
         Emit(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, &allocation);
+        if (race) {
+            AclsanLaunchData launch{};
+            launch.common.version = ACLSAN_API_VERSION;
+            launch.common.size = sizeof(launch);
+            launch.launchId = 1;
+            Emit(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch);
+        }
         AclsanDeviceMemoryAccessData memory{};
         memory.header.version = ACLSAN_API_VERSION;
         memory.header.size = sizeof(memory);
@@ -105,7 +113,21 @@ Session RunSession(
             memory.instructionId = 72;
             memory.regDependencyMask0 = UINT64_C(1) << ACLSAN_DEVICE_REGISTER_MTE2_SOURCE;
         }
+        if (race) {
+            memory.header.launchId = 1;
+            memory.header.instrExecId = 1;
+            memory.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
+            memory.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
+            memory.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+        }
         Emit(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &memory);
+        if (race) {
+            memory.header.instrExecId = 2;
+            memory.header.pc = 0x180;
+            memory.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
+            memory.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+            Emit(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &memory);
+        }
         if (syncError) {
             AclsanDeviceSyncData sync{};
             sync.header.version = ACLSAN_API_VERSION;
@@ -176,6 +198,45 @@ TEST(ToolManagerTest, CombinedToolsReportBothAndSubscribeSharedCallbackOnce)
     EXPECT_EQ(result.text.find("api_status_"), std::string::npos);
     EXPECT_EQ(result.text.find("[CALL-STACK] pc="), std::string::npos);
     EXPECT_NE(result.flags & npucheck::ipc::kFlagHasErrors, 0U);
+}
+
+TEST(ToolManagerTest, RacecheckConfigurationReachesGraphAndRejectsMalformedObservation)
+{
+    const auto session = RunSession({"npu-check", "--tool", "racecheck", "/bin/true"}, false, false);
+    ASSERT_EQ(session.initialized, 0);
+    ASSERT_TRUE(session.error.empty()) << session.error;
+    EXPECT_EQ(enabled.size(), 5U);
+    EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
+    EXPECT_NE(session.text.find("malformed_callback=1"), std::string::npos);
+    EXPECT_NE(session.text.find("status=incomplete"), std::string::npos);
+    EXPECT_NE(session.text.find("analysis_complete=false"), std::string::npos);
+    EXPECT_EQ(session.text.find("WARNING:[RACECHECK]"), std::string::npos);
+}
+
+TEST(ToolManagerTest, RacecheckGraphPublishesMemstateEvidenceThroughCliSession)
+{
+    const auto session =
+        RunSession({"npu-check", "--tool", "racecheck", "/bin/true"}, false, false, false, false, false, true);
+    ASSERT_EQ(session.initialized, 0);
+    ASSERT_TRUE(session.error.empty()) << session.error;
+    EXPECT_NE(session.text.find("WARNING:[RACECHECK]"), std::string::npos);
+    EXPECT_NE(session.text.find("RAW"), std::string::npos);
+    EXPECT_NE(session.text.find("analysis_complete=true"), std::string::npos);
+    EXPECT_NE(session.text.find("raw=1"), std::string::npos);
+    EXPECT_NE(session.flags & npucheck::ipc::kFlagHasErrors, 0U);
+}
+
+TEST(ToolManagerTest, RacecheckDoesNotSuppressOtherToolsReports)
+{
+    const auto session =
+        RunSession({"npu-check", "--tool", "racecheck", "--tool", "memcheck", "/bin/true"}, true, false);
+    ASSERT_EQ(session.initialized, 0);
+    ASSERT_TRUE(session.error.empty()) << session.error;
+    EXPECT_EQ(enabled.size(), 7U);
+    EXPECT_NE(session.text.find("MEMCHECK SUMMARY: 1 errors"), std::string::npos);
+    EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
+    EXPECT_NE(session.text.find("analysis_complete=false"), std::string::npos);
+    EXPECT_NE(session.flags & npucheck::ipc::kFlagHasErrors, 0U);
 }
 
 TEST(ToolManagerTest, ThreeToolsReportIndependentlyAndShareCallbacks)

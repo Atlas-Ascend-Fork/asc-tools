@@ -303,6 +303,15 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
+// SET_CTRL，API ID 159。捕获源操作数，用于原子配置变更和完整 CTRL 恢复。
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_ctrl(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::RegisterState, static_cast<uint16_t>(PIPE_S), 159, config,
+        0UL, 0UL, 0UL, 0UL);
+}
+
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_ffts_base_addr(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {

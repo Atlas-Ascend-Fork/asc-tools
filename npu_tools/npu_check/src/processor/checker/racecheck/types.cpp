@@ -72,7 +72,7 @@ bool Normalize(const AclsanDeviceMemoryAccessData& a, size_t budget, std::vector
     // address, and keeps the running bounds within uint64_t even for INT64_MIN.
     Wide lower = a.address, upper = a.address;
     std::vector<std::pair<uint64_t, uint64_t>> forwardAxes;
-    for (const auto axis : axes) {
+    for (const auto& axis : axes) {
         const Wide extent = static_cast<Wide>(axis.first - 1) * axis.second;
         if (extent < 0) {
             if (-extent > lower)
@@ -95,7 +95,7 @@ bool Normalize(const AclsanDeviceMemoryAccessData& a, size_t budget, std::vector
     // or overlap, so gaps in a sparse matrix never become accessed bytes.
     std::sort(forwardAxes.begin(), forwardAxes.end(), [](auto x, auto y) { return x.second < y.second; });
     std::vector<std::pair<uint64_t, uint64_t>> sparseAxes;
-    for (const auto axis : forwardAxes) {
+    for (const auto& axis : forwardAxes) {
         if (axis.first == 1)
             continue;
         if (axis.second <= bytes) {

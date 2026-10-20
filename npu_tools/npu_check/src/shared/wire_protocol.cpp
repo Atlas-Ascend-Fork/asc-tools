@@ -535,12 +535,12 @@ bool LookupTool(const std::string& name, ToolId& id)
         id = ToolId::SYNCCHECK;
         return true;
     }
-    if (name == "racecheck") {
-        id = ToolId::RACECHECK;
-        return true;
-    }
     if (name == "initcheck") {
         id = ToolId::INITCHECK;
+        return true;
+    }
+    if (name == "racecheck") {
+        id = ToolId::RACECHECK;
         return true;
     }
     return false;
@@ -580,9 +580,14 @@ const OptionRegistryEntry* LookupOptionById(OptionId optionId)
 
 bool IsKnownTool(uint16_t toolId)
 {
-    const auto tool = static_cast<ToolId>(toolId);
-    return tool == ToolId::MEMCHECK || tool == ToolId::SYNCCHECK || tool == ToolId::INITCHECK ||
-           tool == ToolId::RACECHECK;
+    switch (static_cast<ToolId>(toolId)) {
+        case ToolId::MEMCHECK:
+        case ToolId::SYNCCHECK:
+        case ToolId::INITCHECK:
+        case ToolId::RACECHECK:
+            return true;
+    }
+    return false;
 }
 
 } // namespace npucheck::ipc

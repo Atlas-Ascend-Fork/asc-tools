@@ -15,8 +15,9 @@ npu-check 是面向昇腾 NPU 的运行时正确性检查工具，帮助客户�
 | `memcheck` | 检查 GM 读写访问及受支持的 L1、L0A、L0B、L0C 访问 | GM 分配范围越界、无效地址、释放后访问，以及片上内存容量越界 |
 | `synccheck` | 检查设备同步操作是否正确配对 | 重复设置事件、等待未设置的事件、设置事件后未等待，事件设置和等待不配对问题 |
 | `initcheck` | 检查持久化寄存器在首次依赖使用前是否已被设置 | 搬运或计算指令依赖的持久化寄存器尚未设置，或者仅在使用后设置 |
+| `racecheck` | 检查缺少必要同步的冲突内存访问 | 写后读、读后写、写后写竞争及原子写语义竞争 |
 
-三种功能可以分别运行，也可以在同一次应用执行中同时启用。
+四种功能可以分别运行，也可以在同一次应用执行中同时启用。
 
 ### 使用场景
 
@@ -52,24 +53,24 @@ npu-check --help
 ## 命令格式
 
 ```text
-npu-check [--tool <name>]... [--log-file <filepath>] [--] <application> [args...]
+npu-check [--tool <checktype>]... [--log-file <filepath>] [--] <application> [args...]
 ```
 
 ### 选项
 
 | 选项 | 输入 | 默认行为 | 说明 |
 | --- | --- | --- | --- |
-| `--tool <name>` | `memcheck`、`synccheck`、`initcheck` | 未指定时启用 `memcheck` | 可多次指定，用于同时启用多个工具；重复指定同一工具不会重复检查 |
+| `--tool <checktype>` | `memcheck`、`synccheck`、`initcheck`、`racecheck` | 未指定时启用 `memcheck` | 可多次指定，用于同时启用多个工具；重复指定同一工具不会重复检查 |
 | `--log-file <filepath>` | 文件路径 | 报告显示在终端 | 保存检查诊断信息 |
 | `-h`、`--help` | 无 | 不显示帮助 | 显示命令帮助 |
 | `--` | 无 | 可选添加 | 用于分隔工具参数和应用参数 |
 
 ## 使用示例
 
-检查设备内存访问：
+运行指定类型的检查，将 `<checktype>` 替换为 `memcheck`、`synccheck`、`initcheck` 或 `racecheck`：
 
-```bash
-npu-check --tool memcheck ./my_app
+```text
+npu-check --tool <checktype> ./my_app
 ```
 
 不指定功能的情况下，默认使能内存访问检查(memcheck)：
@@ -78,16 +79,10 @@ npu-check --tool memcheck ./my_app
 npu-check ./my_app
 ```
 
-仅运行同步检查：
-
-```bash
-npu-check --tool synccheck ./my_app
-```
-
 使能全部检查：
 
 ```bash
-npu-check --tool memcheck --tool synccheck --tool initcheck ./my_app
+npu-check --tool memcheck --tool synccheck --tool initcheck --tool racecheck ./my_app
 ```
 
 ### 指定报告输出位置
@@ -109,6 +104,10 @@ npu-check --tool memcheck --log-file reports/memcheck.log ./my_app
 - `memcheck` 检查已支持指令的 GM 访问，以及 L1、L0A、L0B、L0C 的超出buffer边界的访问
 - `synccheck` 的检查范围是核内同步配对问题和重复设置同步问题
 - `initcheck` 仅检查当前已支持的搬运、Fixpipe 指令及其明确的持久化寄存器依赖
+- `racecheck` 仅检查同一次核函数执行（launch）内的竞争，不检查不同 launch 之间的竞争。
+- `racecheck` 支持 ADD/MIN/MAX 原子写检查。相同原子模式的写访问之间不视为竞争冲突；不同原子模式访问重叠地址且缺少必要同步时，报告原子写语义竞争。原子写与普通读写之间也参与竞争检查。
+- 未启用原子模式的写访问按普通写检查。不支持或无法识别的原子配置会使竞争分析不完整。
+- `racecheck` 在单次 launch 内可报告多个竞争，发现首个竞争后继续检测其他内存区间；同一内存区间仅报告首次确认的竞争，后续竞争不重复报告。
 - 目标程序必须能在未使用 `npu-check` 时独立运行
 - 目标程序必须是可执行文件
 - 不支持多进程和多线程运行

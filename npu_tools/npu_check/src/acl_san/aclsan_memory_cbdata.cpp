@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <limits>
 #include <new>
 #include <optional>
@@ -646,11 +647,17 @@ public:
         if (resolved.status != MemoryCbdataStatus::SUCCESS) {
             return {resolved.status, {}};
         }
+        // ST_ATOMIC_CFG 独立于 CTRL，且 ctrlbin 不会提供它。
+        // 保留已知地址和位宽，供 Memcheck 按普通写检查；Racecheck 通过标记识别语义缺失。
         const MemoryInstructionProfile profile{dataBits, ACLSAN_DEVICE_SOURCE_ST, context_.blockType};
         MemoryCbdataBuilder builder{context_, profile};
         (void)builder.Add(
             {resolved.address, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, dataBits, RangeDescriptor{dataBits / 8U}});
-        return std::move(builder).Build();
+        auto result = std::move(builder).Build();
+        for (auto& access : result.data) {
+            access.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
+        }
+        return result;
     }
 
     MemoryCbdataResult operator()(const ScalarPreloadParamField& field) const noexcept
@@ -1520,7 +1527,14 @@ public:
         const auto ok = [](MemoryCbdataStatus s) {
             return s == MemoryCbdataStatus::SUCCESS || s == MemoryCbdataStatus::NO_ACCESS;
         };
-        if (!ok(first.status) || !ok(second.status)) {
+        // 缺失寄存器配置保留具体原因；其他未完整转换的组合统一为部分覆盖。
+        if (first.status == MemoryCbdataStatus::MISSING_REGISTER_STATE ||
+            second.status == MemoryCbdataStatus::MISSING_REGISTER_STATE) {
+            if (first.status != MemoryCbdataStatus::MISSING_REGISTER_STATE) {
+                first.requiredRegisterInstructionId = second.requiredRegisterInstructionId;
+            }
+            first.status = MemoryCbdataStatus::MISSING_REGISTER_STATE;
+        } else if (!ok(first.status) || !ok(second.status)) {
             first.status = MemoryCbdataStatus::PARTIAL_COVERAGE;
             if (second.requiredRegisterInstructionId) {
                 first.requiredRegisterInstructionId = second.requiredRegisterInstructionId;
@@ -1662,6 +1676,44 @@ private:
     const MemoryRegisterState& state_;
 };
 
+void ApplyAtomicConfiguration(MemoryCbdataResult& output, const MemoryRegisterState& state) noexcept
+{
+    const bool hasGmWrite = std::any_of(output.data.begin(), output.data.end(), [](const auto& access) {
+        return access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM &&
+               access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+    });
+    if (!hasGmWrite) {
+        return;
+    }
+    if (!state.ctrl) {
+        // 未配置 CTRL 时按普通写检测，保留已还原的精确访存范围。
+        // 寄存器依赖仍由翻译层提供给 Initcheck。
+        return;
+    }
+    // CTRL[8:6] 选择原子类型；类型为 0 时禁用原子操作，忽略保留的操作位。
+    const uint64_t type = (state.ctrl->value >> 6U) & 7U;
+    if (type == 0) {
+        return;
+    }
+    const uint64_t operation = (state.ctrl->value >> 9U) & 3U;
+    constexpr uint32_t typeBits[] = {0, 32, 16, 16, 32, 8, 16, 0};
+    constexpr AclsanDeviceMemoryAccessMode modes[] = {
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN};
+    const bool widthMismatch = std::any_of(
+        output.data.begin(), output.data.end(),
+        [type, &typeBits](const auto& access) { return access.dataBits != 0 && access.dataBits != typeBits[type]; });
+    if (operation >= std::size(modes) || typeBits[type] == 0 || widthMismatch) {
+        output.data.clear();
+        output.status = MemoryCbdataStatus::PARTIAL_COVERAGE;
+        return;
+    }
+    for (auto& access : output.data) {
+        access.accessMode = modes[operation];
+        access.dataBits = typeBits[type];
+    }
+}
+
 } // namespace
 
 MemoryFieldToCbdataConverter::MemoryFieldToCbdataConverter(
@@ -1672,14 +1724,21 @@ MemoryFieldToCbdataConverter::MemoryFieldToCbdataConverter(
 MemoryCbdataResult MemoryFieldToCbdataConverter::Convert(const MemoryInstructionField& field) const noexcept
 {
     auto gm = std::visit(MemoryFieldVisitor{context_, registerState_}, field);
-    if (gm.status != MemoryCbdataStatus::SUCCESS && gm.status != MemoryCbdataStatus::NO_ACCESS) {
-        return gm;
+    const bool gmOutput = std::holds_alternative<CopyUbufToGmAlignV2ParamField>(field) ||
+                          std::holds_alternative<FixL0cToOutParamField>(field);
+    if (gm.status == MemoryCbdataStatus::SUCCESS || gm.status == MemoryCbdataStatus::NO_ACCESS) {
+        if (gmOutput) {
+            ApplyAtomicConfiguration(gm, registerState_);
+        }
+        auto local = std::visit(CubeMemoryFieldVisitor{context_, registerState_}, field);
+        if (local.status != MemoryCbdataStatus::NO_ACCESS) {
+            gm = CubeMemoryFieldVisitor::Merge(std::move(gm), std::move(local));
+        }
     }
-    auto local = std::visit(CubeMemoryFieldVisitor{context_, registerState_}, field);
-    if (local.status == MemoryCbdataStatus::NO_ACCESS) {
-        return gm;
-    }
-    return CubeMemoryFieldVisitor::Merge(std::move(gm), std::move(local));
+    const bool atomicConfiguration = gmOutput || std::holds_alternative<ScalarAtomicParamField>(field);
+    gm.requiresIncompleteEvent = atomicConfiguration && (gm.status == MemoryCbdataStatus::MISSING_REGISTER_STATE ||
+                                                         gm.status == MemoryCbdataStatus::PARTIAL_COVERAGE);
+    return gm;
 }
 
 } // namespace aclsan

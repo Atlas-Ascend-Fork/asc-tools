@@ -57,21 +57,18 @@ void PopulateStack(NpuCheckReportCommon& common, NpuCheckReportExecContext& exec
         return;
     }
     try {
-        auto source = std::make_unique<AclsanDeviceCallStack>();
-        const auto status =
-            exec.pc == 0 ? ACLSAN_STATUS_ERROR_INVALID_STATE : aclsanGetDeviceCallStack(exec.pc, source.get());
+        auto resolved = ResolveDeviceCallStack(exec.pc);
+        if (resolved.frames.empty() && resolved.text.empty()) {
+            return;
+        }
         ReportCallStack stack;
         stack.role = role;
-        if (HasCallStackFrames(status)) {
-            stack.frames = MakeReportFrames(*source);
-        }
+        stack.frames = std::move(resolved.frames);
         stack.format = stack.frames.empty() ? ReportStackFormat::RAW_TEXT : ReportStackFormat::FRAMES;
-        if (stack.frames.empty()) {
-            stack.rawText = FormatCallStackReport(status, *source);
-        }
+        stack.rawText = std::move(resolved.text);
         common.stacks[index] = std::move(stack);
-        if (source->binaryId != 0) {
-            exec.binaryId = source->binaryId;
+        if (resolved.binaryId != 0) {
+            exec.binaryId = resolved.binaryId;
         }
         if (index == common.stackCount) {
             ++common.stackCount;
@@ -81,12 +78,6 @@ void PopulateStack(NpuCheckReportCommon& common, NpuCheckReportExecContext& exec
     }
 }
 } // namespace
-
-void PopulateDeviceCallStack(NpuCheckRacecheckReport& report) noexcept
-{
-    PopulateStack(report.common, report.first.exec, ReportStackRole::RELATED_ACCESS_A);
-    PopulateStack(report.common, report.second.exec, ReportStackRole::RELATED_ACCESS_B);
-}
 
 std::string FormatCallStackReport(AclsanStatus status, const AclsanDeviceCallStack& stack)
 {
@@ -110,6 +101,31 @@ std::string FormatCallStackReport(AclsanStatus status, const AclsanDeviceCallSta
         output << '\n';
     }
     return output.str();
+}
+
+DeviceCallStackInfo ResolveDeviceCallStack(uint64_t pc) noexcept
+{
+    DeviceCallStackInfo resolved;
+    try {
+        auto source = std::make_unique<AclsanDeviceCallStack>();
+        resolved.status = pc == 0 ? static_cast<AclsanStatus>(ACLSAN_STATUS_ERROR_INVALID_STATE) :
+                                    aclsanGetDeviceCallStack(pc, source.get());
+        if (source->pc == 0) {
+            source->pc = pc;
+        }
+        resolved.binaryId = source->binaryId;
+        if (HasCallStackFrames(resolved.status)) {
+            resolved.frames = MakeReportFrames(*source);
+        }
+        if (resolved.frames.empty()) {
+            resolved.text = FormatCallStackReport(resolved.status, *source);
+        }
+    } catch (const std::bad_alloc&) {
+        resolved.status = ACLSAN_STATUS_ERROR_OUT_OF_MEMORY;
+    } catch (...) {
+        resolved.status = ACLSAN_STATUS_ERROR_INTERNAL;
+    }
+    return resolved;
 }
 
 void PopulateDeviceCallStack(NpuCheckMemcheckReport& report) noexcept

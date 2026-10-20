@@ -48,7 +48,7 @@ aclsan::ProbeGroup BindingGroup(const BindingSpec& binding)
     if ((id >= 174 && id <= 178) || (id >= 417 && id <= 421)) {
         return ProbeGroup::Vector;
     }
-    if ((id >= 24 && id <= 71) || id == 90 || id == 123 || (id >= 124 && id <= 136) || (id >= 160 && id <= 164) ||
+    if ((id >= 24 && id <= 71) || id == 90 || id == 123 || (id >= 124 && id <= 136) || (id >= 159 && id <= 164) ||
         (id >= 386 && id <= 387) || (id >= 390 && id <= 399)) {
         return ProbeGroup::Scalar;
     }
@@ -317,6 +317,7 @@ const std::vector<BindingSpec>& AllBindings()
         {InstrType::DC_PRELOAD, 62, "__sanitizer_report_dc_preload", {0, 1}},
         {InstrType::DC_PRELOADI, 63, "__sanitizer_report_dc_preloadi", {0, 1}},
         {InstrType::CHANNEL_PARA, 123, "__sanitizer_report_set_channel_para", {0}},
+        {InstrType::SET_CTRL, 159, "__sanitizer_report_set_ctrl", {0}},
         {InstrType::SET_FFTS_BASE_ADDR, 160, "__sanitizer_report_set_ffts_base_addr", {0}},
         {InstrType::SET_FPC, 161, "__sanitizer_report_set_fpc", {0}},
         {InstrType::SET_QUANT_PRE, 162, "__sanitizer_report_set_quant_pre", {0}},

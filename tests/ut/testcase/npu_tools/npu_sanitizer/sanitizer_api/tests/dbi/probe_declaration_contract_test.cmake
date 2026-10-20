@@ -75,8 +75,8 @@ if(NOT synchronization_category_count EQUAL 29)
 endif()
 string(REGEX MATCHALL "DeviceInstructionCategory::RegisterState" register_state_categories "${probe_content}")
 list(LENGTH register_state_categories register_state_category_count)
-if(NOT register_state_category_count EQUAL 32)
-  message(FATAL_ERROR "expected 32 register-state probe categories, found ${register_state_category_count}")
+if(NOT register_state_category_count EQUAL 33)
+  message(FATAL_ERROR "expected 33 register-state probe categories, found ${register_state_category_count}")
 endif()
 foreach(expected_pipeline IN ITEMS PIPE_S PIPE_M PIPE_V PIPE_MTE1 PIPE_MTE2 PIPE_MTE3 PIPE_FIX)
   if(NOT probe_content MATCHES "static_cast<uint16_t>\\(${expected_pipeline}\\)")
@@ -105,8 +105,8 @@ string(REGEX MATCHALL
   "__sanitizer_report_[A-Za-z0-9_]+[ \t\r\n]*\\("
   probe_definitions "${probe_content}")
 list(LENGTH probe_definitions probe_count)
-if(NOT probe_count EQUAL 154)
-  message(FATAL_ERROR "expected 154 probe definitions, found ${probe_count}")
+if(NOT probe_count EQUAL 155)
+  message(FATAL_ERROR "expected 155 probe definitions, found ${probe_count}")
 endif()
 
 string(REGEX MATCHALL "__sanitizer_report_[A-Za-z0-9_]+" probe_symbols "${probe_content}")
@@ -126,8 +126,8 @@ string(CONCAT explicit_declaration
   "__sanitizer_report_[A-Za-z0-9_]+[ \t\r\n]*\\(")
 string(REGEX MATCHALL "${explicit_declaration}" explicit_probes "${probe_content}")
 list(LENGTH explicit_probes explicit_probe_count)
-if(NOT explicit_probe_count EQUAL 154)
-  message(FATAL_ERROR "expected 154 explicit probe declarations, found ${explicit_probe_count}")
+if(NOT explicit_probe_count EQUAL 155)
+  message(FATAL_ERROR "expected 155 explicit probe declarations, found ${explicit_probe_count}")
 endif()
 
 # Vector synchronization instructions omit PIPE_V from their explicit operands.

@@ -100,12 +100,68 @@ TEST(RacecheckTranslation, RawCopyFlagLoadUsesExistingCallbacks)
         EXPECT_EQ(reports.size(), synchronized ? 0U : 1U);
         if (!synchronized && !reports.empty()) {
             const auto& r = std::get<npucheck::NpuCheckRacecheckReport>(reports[0]);
-            EXPECT_EQ(r.hazardKind, 1U);
-            EXPECT_EQ(r.overlapBytes, 32U);
+            EXPECT_EQ(r.kind, npucheck::ConflictKind::RAW);
+            EXPECT_EQ(r.checkRange.end - r.checkRange.begin, 32U);
         }
     }
 }
-TEST(RacecheckTranslation, MissingRegisterStateEstimatedCallbackIsSkipped)
+TEST(RacecheckTranslation, GmWritesWithoutCtrlParticipateInRaceDetection)
+{
+    for (uint32_t id : {83U, 91U}) {
+        SCOPED_TRACE(id);
+        npucheck::Racechecker checker;
+        npucheck::CheckerReportList reports;
+        AclsanLaunchData launch{};
+        launch.launchId = 993;
+        launch.common.version = ACLSAN_API_VERSION;
+        launch.common.size = sizeof(launch);
+        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+        MemoryRegisterState state{};
+        state.dmaLoopSizes[static_cast<size_t>(DmaLoopDirection::UBUF_TO_GM)] =
+            DmaLoopSizeParamField{DmaLoopDirection::UBUF_TO_GM, 1, 1};
+        for (uint32_t core : {0U, 1U}) {
+            ParsedTraceRecord raw{};
+            raw.launchId = launch.launchId;
+            raw.instrExecId = 1;
+            raw.phyCoreId = id == 83 ? 18 + core : core;
+            raw.blockType = id == 83 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+            raw.record.instrId = id;
+            raw.record.pipeline = id == 83 ? ACLSAN_DEVICE_PIPE_MTE3 : ACLSAN_DEVICE_PIPE_FIXPIPE;
+            raw.record.args[0] = 0x1000;
+            if (id == 83) {
+                raw.record.args[2] = (1ULL << 4) | (32ULL << 25);
+            } else {
+                raw.record.args[2] = (16ULL << 4) | (16ULL << 16) | (256ULL << 32);
+                raw.record.args[3] = 16;
+            }
+            const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+            ASSERT_TRUE(decoded.has_value());
+            const auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded, state);
+            ASSERT_TRUE(translated.has_value());
+            const auto& accesses = std::get<DeviceMemoryAccessDataList>(*translated);
+            ASSERT_FALSE(accesses.empty());
+            for (const auto& access : accesses) {
+                ASSERT_TRUE(checker.OnCallback(
+                    ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+            }
+        }
+        AclsanSynchronizeData end{};
+        end.common.version = ACLSAN_API_VERSION;
+        end.common.size = sizeof(end);
+        ASSERT_TRUE(
+            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+        EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+        ASSERT_EQ(reports.size(), 1U);
+        const auto& report = std::get<npucheck::NpuCheckRacecheckReport>(reports[0]);
+        EXPECT_EQ(report.kind, npucheck::ConflictKind::WAW);
+        EXPECT_EQ(report.previous.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+        EXPECT_EQ(report.current.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+        EXPECT_EQ(report.current.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+        EXPECT_NE(checker.Summary().find("skipped_memory_events=0"), std::string::npos);
+    }
+}
+
+TEST(RacecheckTranslation, MissingRegisterStateEstimatedCallbackMakesCoverageIncomplete)
 {
     ParsedTraceRecord raw{};
     raw.launchId = 992;
@@ -135,7 +191,7 @@ TEST(RacecheckTranslation, MissingRegisterStateEstimatedCallbackIsSkipped)
     end.common.size = sizeof(end);
     ASSERT_TRUE(
         checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
-    EXPECT_TRUE(checker.AnalysisComplete());
+    EXPECT_FALSE(checker.AnalysisComplete());
     EXPECT_TRUE(reports.empty());
     EXPECT_NE(checker.Summary().find("skipped_memory_events=1"), std::string::npos);
 }

@@ -15,6 +15,17 @@
 namespace npucheck::detail {
 namespace {
 
+constexpr char kRaceHazardTemplate[] =
+    "========= {{Severity}}:[RACECHECK] {{raceKind}} race detected.\n"
+    "=========     current access: {{currentAccess}} by aicore ({{secondCoreId}}) type ({{secondType}}) block "
+    "({{secondBlock}}) "
+    "pipe ({{secondPipe}}), range [0x{{currentRangeBegin}}, 0x{{currentRangeEnd}})\n"
+    "=========     previous access: {{previousAccess}} by aicore ({{firstCoreId}}) type ({{firstType}}) block "
+    "({{firstBlock}}) "
+    "pipe ({{firstPipe}}), range [0x{{previousRangeBegin}}, 0x{{previousRangeEnd}})\n"
+    "=========     memory: {{space}}{{memoryOwner}}, overlap [0x{{overlapBegin}}, 0x{{overlapEnd}}), "
+    "{{overlapBytes}} bytes\n";
+
 PatternCatalog::value_type MakePattern(
     ReportTool tool, NpuCheckReportPattern value, const char* name, const char* reportTemplate)
 {
@@ -117,80 +128,19 @@ const PatternCatalog& Catalog()
 
         MakePattern(
             ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_ANALYSIS, "analysis",
-            "========= {{Severity}}:[RACECHECK] Race reported between {{firstAccess}} access in launch "
-            "({{firstLaunchId}}) at "
+            "========= {{Severity}}:[RACECHECK] Race reported between {{firstAccess}} access at "
             "{{firstLocation}}\n"
-            "=========     and {{secondAccess}} access in launch ({{secondLaunchId}}) at {{secondLocation}} "
+            "=========     and {{secondAccess}} access at {{secondLocation}} "
             "[{{hazardCount}} hazards]\n"),
         MakePattern(
-            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_HAZARD_RAW, "hazard_raw",
-            "========= {{Severity}}:[RACECHECK] Potential RAW hazard detected at {{space}} 0x{{address}} in block "
-            "({{blockId}}) "
-            ":\n"
-            "=========     Write AICore ({{firstCoreId}}) pipe ({{firstPipe}}) in launch ({{firstLaunchId}}) at "
-            "{{firstLocation}}\n"
-            "=========     Read AICore ({{secondCoreId}}) pipe ({{secondPipe}}) in launch ({{secondLaunchId}}) at "
-            "{{secondLocation}}\n"
-            "=========     Device {{raceDevice}}: {{firstType}} block {{firstBlock}} instruction {{firstInstruction}}; "
-            "{{secondType}} block {{secondBlock}} instruction {{secondInstruction}}\n"
-            "=========     Overlap: {{overlapRanges}} bytes={{overlapBytes}}\n"
-            "=========     ordering={{ordering}} coverage={{coverage}} unordered_peers={{unorderedPeers}}\n"),
+            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_HAZARD_RAW, "hazard_raw", kRaceHazardTemplate),
         MakePattern(
-            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_HAZARD_WAR, "hazard_war",
-            "========= {{Severity}}:[RACECHECK] Potential WAR hazard detected at {{space}} 0x{{address}} in block "
-            "({{blockId}}) "
-            ":\n"
-            "=========     Read AICore ({{firstCoreId}}) pipe ({{firstPipe}}) in launch ({{firstLaunchId}}) at "
-            "{{firstLocation}}\n"
-            "=========     Write AICore ({{secondCoreId}}) pipe ({{secondPipe}}) in launch ({{secondLaunchId}}) at "
-            "{{secondLocation}}\n"
-            "=========     Device {{raceDevice}}: {{firstType}} block {{firstBlock}} instruction {{firstInstruction}}; "
-            "{{secondType}} block {{secondBlock}} instruction {{secondInstruction}}\n"
-            "=========     Overlap: {{overlapRanges}} bytes={{overlapBytes}}\n"
-            "=========     ordering={{ordering}} coverage={{coverage}} unordered_peers={{unorderedPeers}}\n"),
+            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_HAZARD_WAR, "hazard_war", kRaceHazardTemplate),
         MakePattern(
-            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_HAZARD_WAW, "hazard_waw",
-            "========= {{Severity}}:[RACECHECK] Potential WAW hazard detected at {{space}} 0x{{address}} in block "
-            "({{blockId}}) "
-            ":\n"
-            "=========     Write AICore ({{firstCoreId}}) pipe ({{firstPipe}}) in launch ({{firstLaunchId}}) at "
-            "{{firstLocation}}\n"
-            "=========     Write AICore ({{secondCoreId}}) pipe ({{secondPipe}}) in launch ({{secondLaunchId}}) at "
-            "{{secondLocation}}\n"
-            "=========     Device {{raceDevice}}: {{firstType}} block {{firstBlock}} instruction {{firstInstruction}}; "
-            "{{secondType}} block {{secondBlock}} instruction {{secondInstruction}}\n"
-            "=========     Overlap: {{overlapRanges}} bytes={{overlapBytes}}\n"
-            "=========     ordering={{ordering}} coverage={{coverage}} unordered_peers={{unorderedPeers}}\n"),
+            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_HAZARD_WAW, "hazard_waw", kRaceHazardTemplate),
         MakePattern(
-            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_ATOMIC_RACE, "atomic_race",
-            "========= {{Severity}}:[RACECHECK] Potential atomic race detected at {{space}} 0x{{address}}\n"
-            "=========     First access in launch ({{firstLaunchId}}) at {{firstLocation}}\n"
-            "=========     Second access in launch ({{secondLaunchId}}) at {{secondLocation}}\n"
-            "=========     Race scope {{scope}}\n"),
-        MakePattern(
-            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_CROSS_PIPE_RACE, "cross_pipe_race",
-            "========= {{Severity}}:[RACECHECK] Potential cross-pipe race detected at {{space}} 0x{{address}}\n"
-            "=========     First access by aicore ({{coreId}}) pipe ({{firstPipe}}) in launch "
-            "({{firstLaunchId}}) at {{firstLocation}}\n"
-            "=========     Second access by aicore ({{coreId}}) pipe ({{secondPipe}}) in launch "
-            "({{secondLaunchId}}) at {{secondLocation}}\n"),
-        MakePattern(
-            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_INTER_CORE_RACE, "inter_core_race",
-            "========= {{Severity}}:[RACECHECK] Potential inter-core race detected at {{space}} 0x{{address}}\n"
-            "=========     First access by aicore ({{firstCoreId}}) type ({{firstType}}) block ({{firstBlock}}) "
-            "pipe ({{firstPipe}}) in launch ({{firstLaunchId}})\n"
-            "=========     Second access by aicore ({{secondCoreId}}) type ({{secondType}}) block ({{secondBlock}}) "
-            "pipe ({{secondPipe}}) in launch ({{secondLaunchId}})\n"
-            "=========     {{hazardCount}} hazards are associated with this address range\n"),
-        MakePattern(
-            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_INVALID_REMOTE_ACCESS, "invalid_remote_access",
-            "========= {{Severity}}:[RACECHECK] Potential invalid {{space}} {{access}} of size {{accessBytes}} "
-            "bytes\n"
-            "=========     {{location}}\n"
-            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe ({{pipeName}}) "
-            "in launch ({{launchId}})\n"
-            "=========     Address 0x{{address}} is located in a remote execution entity that {{remoteState}}\n"),
-
+            ReportTool::RACECHECK, NpuCheckReportPattern::RACECHECK_ATOMIC_SEMANTIC, "atomic_semantic",
+            kRaceHazardTemplate),
         MakePattern(
             ReportTool::SYNCCHECK, NpuCheckReportPattern::SYNCCHECK_INTRA_CORE_DIVERGENT, "intra_core_divergent",
             "========= {{Severity}}:[SYNCCHECK] Barrier error detected. {{reason}}.\n"

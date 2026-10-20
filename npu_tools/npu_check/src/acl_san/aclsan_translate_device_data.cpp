@@ -201,8 +201,14 @@ private:
                 static_cast<unsigned long long>(parsed.record.pc), parsed.blockType, parsed.blockId);
             return DeviceCallbackData{DeviceMemoryAccessDataList{}};
         }
-        if (result.status == MemoryCbdataStatus::MISSING_REGISTER_STATE &&
-            (dependencies.mask0 != 0 || dependencies.mask1 != 0)) {
+        const bool missingRegister = result.status == MemoryCbdataStatus::MISSING_REGISTER_STATE &&
+                                     (dependencies.mask0 != 0 || dependencies.mask1 != 0);
+        if (missingRegister || result.requiresIncompleteEvent) {
+            if (!result.requiresIncompleteEvent && !result.data.empty()) {
+                return DeviceCallbackData{std::move(result.data)};
+            }
+            // 保留已确认的源读，并标记采集不完整；
+            // 对无法解析的目标端不臆造原子操作。
             AclsanDeviceMemoryAccessData estimated{};
             estimated.header =
                 MakeDeviceEventHeader(parsed, pipeline, 0, static_cast<uint32_t>(sizeof(AclsanDeviceMemoryAccessData)));
@@ -210,7 +216,12 @@ private:
             estimated.instructionId = parsed.record.instrId;
             estimated.regDependencyMask0 = dependencies.mask0;
             estimated.regDependencyMask1 = dependencies.mask1;
-            return DeviceCallbackData{DeviceMemoryAccessDataList{estimated}};
+            result.data.push_back(estimated);
+            for (size_t i = 0; i < result.data.size(); ++i) {
+                result.data[i].accessIndex = static_cast<uint32_t>(i);
+                result.data[i].accessCount = static_cast<uint32_t>(result.data.size());
+            }
+            return DeviceCallbackData{std::move(result.data)};
         }
         ASCTOOL_ERROR(
             "acl_san trace: incomplete memory access status=%s instrId=%llu pc=0x%llx blockType=%u "
@@ -253,8 +264,8 @@ private:
     }
 
     static DeviceCallbackData MakeDeviceSyncData(
-        const ParsedTraceRecord& parsed, aclsan::DeviceInstructionKind kind, AclsanDevicePipeline pipeline,
-        const aclsan::FftsSyncParamField& params) noexcept
+        const ParsedTraceRecord& parsed, [[maybe_unused]] aclsan::DeviceInstructionKind kind,
+        AclsanDevicePipeline pipeline, const aclsan::FftsSyncParamField& params) noexcept
     {
         auto callbackData = MakeDeviceSyncDataBase(parsed, pipeline);
         callbackData.action = ACLSAN_DEVICE_SYNC_ACTION_SET;
@@ -267,8 +278,8 @@ private:
     }
 
     static DeviceCallbackData MakeDeviceSyncData(
-        const ParsedTraceRecord& parsed, aclsan::DeviceInstructionKind kind, AclsanDevicePipeline pipeline,
-        const aclsan::DeviceFlagParamField& params) noexcept
+        const ParsedTraceRecord& parsed, [[maybe_unused]] aclsan::DeviceInstructionKind kind,
+        AclsanDevicePipeline pipeline, const aclsan::DeviceFlagParamField& params) noexcept
     {
         auto callbackData = MakeDeviceSyncDataBase(parsed, pipeline);
         callbackData.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;

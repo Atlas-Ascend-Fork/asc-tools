@@ -91,12 +91,14 @@ TEST(HappensBeforeGraphTest, CyclesMissingCoverageAndPostSealMutationFailClosed)
         graph.AddNode();
         graph.AddNode();
         ASSERT_TRUE(graph.AddEdge(0, 1, EDGE));
-        if (mode == 0)
+        if (mode == 0) {
             ASSERT_TRUE(graph.AddEdge(1, 0, EDGE));
+        }
         const bool sealed = graph.Seal(mode != 1);
         EXPECT_EQ(sealed, mode >= 2);
-        if (mode == 2)
+        if (mode == 2) {
             EXPECT_FALSE(graph.AddEdge(1, 0, EDGE));
+        }
         if (mode == 3)
             graph.AddNode();
         EXPECT_EQ(graph.Compare(0, 1), Graph::Relation::Unknown);

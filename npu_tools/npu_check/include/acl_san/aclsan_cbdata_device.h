@@ -66,7 +66,9 @@ typedef enum AclsanDeviceMemorySpace {
 typedef enum AclsanDeviceMemoryAccessMode {
     ACLSAN_DEVICE_MEMORY_ACCESS_READ = 1,
     ACLSAN_DEVICE_MEMORY_ACCESS_WRITE = 2,
-    ACLSAN_DEVICE_MEMORY_ACCESS_READ_WRITE = 3 // TODO: 后续看有没有atomic
+    ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD = 3,
+    ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN = 4,
+    ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX = 5
 } AclsanDeviceMemoryAccessMode;
 
 // TODO: 先留着，不确定可靠性有没有必要
@@ -76,7 +78,9 @@ typedef enum AclsanDeviceEventFlags {
     ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED = 1u << 1u,
     ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED = 1u << 2u,
     ACLSAN_DEVICE_EVENT_FLAG_PREDICATED = 1u << 3u,
-    ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR = 1u << 4u
+    ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR = 1u << 4u,
+    // 地址和布局已知，原子配置缺失；WRITE 仅供 Memcheck 按普通写检查边界。
+    ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN = 1u << 5u
 } AclsanDeviceEventFlags;
 
 typedef struct AclsanDeviceEventHeader {
@@ -187,7 +191,8 @@ typedef enum AclsanDeviceRegisterId {
     ACLSAN_DEVICE_REGISTER_DMA_LOOP1_STRIDE_GM_TO_CBUF = 17,
     ACLSAN_DEVICE_REGISTER_DMA_LOOP2_STRIDE_GM_TO_CBUF = 18,
     ACLSAN_DEVICE_REGISTER_SET_PADDING = 19,
-    ACLSAN_DEVICE_REGISTER_COUNT = 20
+    ACLSAN_DEVICE_REGISTER_CTRL = 20,
+    ACLSAN_DEVICE_REGISTER_COUNT = 21
 } AclsanDeviceRegisterId;
 
 typedef struct AclsanDeviceRegisterStateData {

@@ -37,7 +37,7 @@ bool GeneratesCompleteDeterministicGroupSources()
 {
     const std::vector<std::pair<ProbeGroup, std::size_t>> expected{
         {ProbeGroup::Mte1, 25U},   {ProbeGroup::Mte2, 19U}, {ProbeGroup::Mte3, 2U},    {ProbeGroup::Fixpipe, 7U},
-        {ProbeGroup::Scalar, 78U}, {ProbeGroup::Sync, 29U}, {ProbeGroup::Matrix, 16U}, {ProbeGroup::Vector, 10U},
+        {ProbeGroup::Scalar, 79U}, {ProbeGroup::Sync, 29U}, {ProbeGroup::Matrix, 16U}, {ProbeGroup::Vector, 10U},
     };
     for (const auto& [group, symbolCount] : expected) {
         const GeneratedProbeSource first = GenerateProbeSource("dav-3510", group);
@@ -181,8 +181,8 @@ bool EmbedsPrivateProbeHeaders()
 bool ValidatesCompleteBindingCatalog()
 {
     CHECK(BindingSymbols({ProbeGroup::Mte1}).size() == 25U);
-    CHECK(BindingSymbols({ProbeGroup::Mte2}).size() == 65U);
-    CHECK(BindingSymbols({ProbeGroup::Scalar}).size() == 78U);
+    CHECK(BindingSymbols({ProbeGroup::Mte2}).size() == 98U);
+    CHECK(BindingSymbols({ProbeGroup::Scalar}).size() == 79U);
     CHECK(BindingSymbols({ProbeGroup::Sync}).size() == 29U);
     CHECK(BindingSymbols({ProbeGroup::Matrix}).size() == 16U);
     CHECK(BindingSymbols({ProbeGroup::Vector}).size() == 10U);
@@ -197,7 +197,7 @@ bool ValidatesCompleteBindingCatalog()
     std::sort(generatedSymbols.begin(), generatedSymbols.end());
     std::sort(bindingSymbols.begin(), bindingSymbols.end());
     CHECK(generatedSymbols == bindingSymbols);
-    CHECK(bindingSymbols.size() == 186U);
+    CHECK(bindingSymbols.size() == 187U);
 
     const std::filesystem::path ctrlBin = std::filesystem::temp_directory_path() / "aclsan-all-probes.ctrl.bin";
     std::filesystem::remove(ctrlBin);
@@ -244,6 +244,24 @@ TEST(ProbeSourceGeneratorScalarDev, IncludesAllWidthsAndByteOffsets)
             EXPECT_NE(definition.find("PIPE_S"), std::string::npos);
         }
     }
+}
+
+TEST(ProbeSourceGeneratorCtrl, CapturesFullCtrlOperandForScalarAndDmaGroups)
+{
+    using namespace aclsan;
+    for (const auto group : {ProbeGroup::Scalar, ProbeGroup::Mte3, ProbeGroup::Fixpipe}) {
+        const auto bindings = BindingSymbols({group});
+        EXPECT_NE(std::find(bindings.begin(), bindings.end(), "__sanitizer_report_set_ctrl"), bindings.end());
+    }
+    const auto generated = GenerateProbeSource("dav-3510", ProbeGroup::Scalar);
+    ASSERT_TRUE(generated.success);
+    const auto definition = FindProbeDefinition(generated.source, "__sanitizer_report_set_ctrl");
+    ASSERT_FALSE(definition.empty());
+    EXPECT_NE(definition.find("uint64_t config)"), std::string_view::npos);
+    EXPECT_NE(definition.find("DeviceInstructionCategory::RegisterState"), std::string_view::npos);
+    EXPECT_NE(definition.find("static_cast<uint16_t>(PIPE_S), 159,"), std::string_view::npos);
+    EXPECT_NE(definition.find("config, 0UL, 0UL, 0UL, 0UL"), std::string_view::npos);
+    EXPECT_NE(generated.sourceMap.find("apiId=159 symbol=__sanitizer_report_set_ctrl"), std::string::npos);
 }
 
 TEST(ProbeSourceGeneratorScalarAtomic, IncludesAllWidthsAndPostArgument)

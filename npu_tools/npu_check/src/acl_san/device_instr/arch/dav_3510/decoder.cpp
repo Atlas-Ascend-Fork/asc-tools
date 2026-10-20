@@ -643,6 +643,8 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         case RawId(InstructionId::SetL12DB32):
             return DecodeSetL12D(record, DATA_BITS_B32);
 
+        case RawId(InstructionId::SetCtrl):
+            return DecodedInstruction{DeviceInstructionKind::SetCtrl, CtrlRegisterParamField{record.args[0]}};
         case RawId(InstructionId::SetPadding):
             return DecodeSetPadding(record);
         case RawId(InstructionId::LoopSizeGmToCbuf):

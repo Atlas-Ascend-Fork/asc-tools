@@ -6,12 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "acl_san/aclsan_api.h"
 #include "checker/memcheck.h"
 
 #include <gtest/gtest.h>
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -81,6 +81,7 @@ AclsanDeviceMemoryAccessData ScalarAccess(uint32_t instrId, uint64_t address, ui
     data.header.pc = 0x170;
     data.address = address;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    // 下面的合成原子夹具显式提供已知操作。
     data.accessMode = instrId < 68 ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     data.accessCount = 1;
     data.dataBits = static_cast<uint32_t>(bytes * 8U);
@@ -201,7 +202,7 @@ TEST(MemcheckTest, ScalarDevAccessChecksWholeAllocationRangeAndUseAfterFree)
     }
 }
 
-TEST(MemcheckTest, ScalarAtomicAccessChecksEveryWidthAndDirection)
+TEST(MemcheckTest, ScalarAtomicAccessChecksEveryWidthOnce)
 {
     for (uint32_t id = 56; id <= 61; ++id) {
         SCOPED_TRACE(id);
@@ -211,7 +212,8 @@ TEST(MemcheckTest, ScalarAtomicAccessChecksEveryWidthAndDirection)
         checker.OnAllocation(allocation);
         for (bool invalid : {false, true}) {
             const uint64_t address = invalid ? 0x1020 : 0x1020 - bytes;
-            const auto access = ScalarAccess(id, address, bytes);
+            auto access = ScalarAccess(id, address, bytes);
+            access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
             checker.QueueDeviceMemoryAccess(access);
             const auto reports = checker.OnSynchronization();
             if (!invalid) {
@@ -219,9 +221,19 @@ TEST(MemcheckTest, ScalarAtomicAccessChecksEveryWidthAndDirection)
             } else {
                 ASSERT_EQ(reports.size(), 1U);
                 EXPECT_EQ(reports.front().common.pattern, NpuCheckReportPattern::MEMCHECK_INVALID_ACCESS);
-                EXPECT_EQ(reports.front().access.accessMode, NpuCheckReportAccessMode::WRITE);
+                EXPECT_EQ(reports[0].access.accessMode, NpuCheckReportAccessMode::ATOMIC_WRITE_ADD);
             }
         }
+        EXPECT_EQ(checker.Stats().errors, 1U);
+        checker.OnFree(allocation);
+        auto access = ScalarAccess(id, 0x1000, bytes);
+        access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
+        checker.QueueDeviceMemoryAccess(access);
+        const auto freedReports = checker.OnSynchronization();
+        ASSERT_EQ(freedReports.size(), 1U);
+        EXPECT_EQ(freedReports[0].common.pattern, NpuCheckReportPattern::MEMCHECK_USE_AFTER_FREE);
+        EXPECT_EQ(freedReports[0].access.accessMode, NpuCheckReportAccessMode::ATOMIC_WRITE_ADD);
+        EXPECT_EQ(checker.Stats().errors, 2U);
     }
 }
 
@@ -260,7 +272,7 @@ TEST(MemcheckTest, ReportsOutOfBoundsReadAtSynchronization)
         npucheck::RenderNpuCheckReportRecord(npucheck::NpuCheckReportRecord::From(report), {}, &rendered),
         ReportRenderStatus::SUCCESS);
     EXPECT_NE(rendered.find("Invalid GM read of size 64 bytes"), std::string::npos);
-    EXPECT_NE(rendered.find("by aicore (75) type (AIC) block (7) pipe (MTE2)"), std::string::npos);
+    EXPECT_NE(rendered.find("by aicore (75) type (AIC) block (7) pipe (PIPE_MTE2)"), std::string::npos);
     EXPECT_NE(rendered.find("Address 0x100ff0 is out of bounds"), std::string::npos);
     // The public template omits allocation-distance details; structured fields are checked above.
     EXPECT_EQ(rendered.find("nearest allocation"), std::string::npos);
@@ -283,36 +295,6 @@ TEST(MemcheckTest, SkipsEstimatedAccessWithoutInterpretingItsLayout)
     EXPECT_EQ(checker.Stats().deviceOperations, 0U);
     EXPECT_EQ(checker.Stats().inexactDeviceOperations, 1U);
     EXPECT_EQ(checker.Stats().droppedDeviceOperations, 0U);
-}
-
-TEST(MemcheckTest, AcceptsLegacyMemoryCallbackWithoutReadingExtendedTail)
-{
-    Memcheck checker;
-    CheckerReportList reports;
-    auto legacy = Access(DeviceSourceKind::MTE2, 0x9000, 16);
-    legacy.header.size = offsetof(AclsanDeviceMemoryAccessData, instructionId);
-    legacy.instructionId = 0xffffffffU;
-    legacy.regDependencyMask0 = std::numeric_limits<uint64_t>::max();
-
-    ASSERT_TRUE(
-        checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &legacy, reports));
-    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 1U);
-    const auto diagnostics = checker.OnSynchronization();
-    ASSERT_EQ(diagnostics.size(), 1U);
-    EXPECT_EQ(diagnostics.front().access.address, 0x9000U);
-    EXPECT_EQ(checker.Stats().inexactDeviceOperations, 0U);
-}
-
-TEST(MemcheckTest, RejectsTruncatedLegacyMemoryCallback)
-{
-    Memcheck checker;
-    CheckerReportList reports;
-    auto truncated = Access(DeviceSourceKind::MTE2, 0x9000, 16);
-    truncated.header.size = offsetof(AclsanDeviceMemoryAccessData, instructionId) - 1;
-
-    EXPECT_FALSE(
-        checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &truncated, reports));
-    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 0U);
 }
 
 TEST(MemcheckTest, FailedLaunchOrSynchronizationMakesAnalysisIncomplete)
@@ -677,26 +659,71 @@ TEST(MemcheckTest, DropsLayoutWhoseSegmentAddressOverflows)
     EXPECT_EQ(checker.Stats().droppedDeviceOperations, 1U);
 }
 
-TEST(MemcheckTest, SeparatesReadWriteAndHonorsPredicate)
+TEST(MemcheckTest, EveryAtomicModeChecksTheWholeReadModifyWriteRangeOnce)
+{
+    const std::pair<AclsanDeviceMemoryAccessMode, NpuCheckReportAccessMode> modes[] = {
+        {ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, NpuCheckReportAccessMode::ATOMIC_WRITE_ADD},
+        {ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN, NpuCheckReportAccessMode::ATOMIC_WRITE_MIN},
+        {ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX, NpuCheckReportAccessMode::ATOMIC_WRITE_MAX}};
+    for (const auto& [wireMode, reportMode] : modes) {
+        SCOPED_TRACE(wireMode);
+        Memcheck checker;
+        const auto allocation = AllocationEvent(0x1000, 32, 1);
+        checker.OnAllocation(allocation);
+        auto access = Access(DeviceSourceKind::MTE3, 0x101c, 4);
+        access.accessMode = wireMode;
+        checker.QueueDeviceMemoryAccess(access);
+        EXPECT_TRUE(checker.OnSynchronization().empty());
+        access.layout.range.bytes = 8;
+        checker.QueueDeviceMemoryAccess(access);
+        const auto reports = checker.OnSynchronization();
+        ASSERT_EQ(reports.size(), 1U);
+        EXPECT_EQ(reports[0].access.accessMode, reportMode);
+        EXPECT_EQ(reports[0].access.accessBytes, 8U);
+        EXPECT_EQ(checker.Stats().errors, 1U);
+    }
+}
+
+TEST(MemcheckTest, IgnoresApiVersionWhenProcessingAccess)
+{
+    auto access = Access(DeviceSourceKind::MTE3, 0x1000, 4);
+    access.header.version = ACLSAN_API_VERSION + 1;
+    access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
+    Memcheck checker;
+    CheckerReportList reports;
+    EXPECT_TRUE(
+        checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+    EXPECT_EQ(checker.Stats().droppedDeviceOperations, 0U);
+    EXPECT_EQ(checker.OnSynchronization().size(), 1U);
+    EXPECT_TRUE(checker.AnalysisComplete());
+}
+
+TEST(MemcheckTest, ReportsAtomicWriteOnceAndHonorsPredicate)
 {
     Memcheck checker;
     checker.OnAllocation(AllocationEvent(0x200000, 512, 2));
 
-    auto readWrite = Access(DeviceSourceKind::MTE3, 0x2001fc, 8);
-    readWrite.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ_WRITE;
-    checker.QueueDeviceMemoryAccess(readWrite);
+    auto atomicWrite = Access(DeviceSourceKind::MTE3, 0x2001fc, 8);
+    atomicWrite.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
+    checker.QueueDeviceMemoryAccess(atomicWrite);
     const auto reports = checker.OnSynchronization();
 
-    ASSERT_EQ(reports.size(), 2U);
-    EXPECT_EQ(reports[0].access.accessMode, NpuCheckReportAccessMode::READ);
-    EXPECT_EQ(reports[1].access.accessMode, NpuCheckReportAccessMode::WRITE);
-    EXPECT_NE(reports[0].common.reportId, reports[1].common.reportId);
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].access.accessMode, NpuCheckReportAccessMode::ATOMIC_WRITE_ADD);
+    EXPECT_EQ(reports[0].access.rangeBegin, 0x2001fcU);
+    EXPECT_EQ(reports[0].access.rangeEnd, 0x200204U);
+    EXPECT_EQ(checker.Stats().errors, 1U);
+    std::string rendered;
+    ASSERT_EQ(
+        RenderNpuCheckReportRecord(NpuCheckReportRecord::From(reports[0]), {}, &rendered), ReportRenderStatus::SUCCESS);
+    EXPECT_NE(rendered.find("Invalid GM atomic write(add) of size 8 bytes"), std::string::npos);
 
-    readWrite.header.flags = kDeviceEventFlagPredicated;
-    readWrite.predicateMask0 = 0;
-    readWrite.predicateMask1 = 0;
-    checker.QueueDeviceMemoryAccess(readWrite);
+    atomicWrite.header.flags = kDeviceEventFlagPredicated;
+    atomicWrite.predicateMask0 = 0;
+    atomicWrite.predicateMask1 = 0;
+    checker.QueueDeviceMemoryAccess(atomicWrite);
     EXPECT_TRUE(checker.OnSynchronization().empty());
+    EXPECT_EQ(checker.Stats().errors, 1U);
 }
 
 TEST(MemcheckTest, ReportsUnknownAndFreedRanges)
@@ -770,7 +797,7 @@ TEST(MemcheckTest, GroupsDerivedDataByCompleteInstructionIdentity)
     EXPECT_EQ(
         npucheck::RenderNpuCheckReportRecord(npucheck::NpuCheckReportRecord::From(reports[2]), {}, &rendered),
         ReportRenderStatus::SUCCESS);
-    EXPECT_NE(rendered.find("by aicore (4) type (AIV) block (0) pipe (MTE2)"), std::string::npos);
+    EXPECT_NE(rendered.find("by aicore (4) type (AIV) block (0) pipe (PIPE_MTE2)"), std::string::npos);
 }
 
 } // namespace

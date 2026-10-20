@@ -9,6 +9,7 @@
  */
 
 #include "checker/synccheck.h"
+#include "diagnostic/pipeline_name.h"
 
 #include <functional>
 #include <utility>
@@ -56,7 +57,7 @@ NpuCheckReportExecContext ExecContext(const AclsanDeviceSyncData& data)
     exec.blockType = data.header.blockType;
     // Sync instructions execute on PIPE_S independently of their srcPipe/dstPipe pairing arguments.
     exec.pipeId = 0;
-    exec.pipeName = "PIPE_S";
+    exec.pipeName = detail::DevicePipelineName(ACLSAN_DEVICE_PIPE_SCALAR);
     return exec;
 }
 

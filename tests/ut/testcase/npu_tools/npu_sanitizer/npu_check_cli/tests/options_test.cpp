@@ -91,7 +91,8 @@ TEST(OptionsTest, HelpDoesNotSuppressErrorsOnItsRight)
 {
     const auto afterHelp = Parse({"npu_check", "-h", "--tool", "unknown"});
     EXPECT_FALSE(afterHelp.ok);
-    EXPECT_EQ(afterHelp.error, "unknown tool 'unknown'; supported tools are memcheck, synccheck, and initcheck");
+    EXPECT_EQ(
+        afterHelp.error, "unknown tool 'unknown'; supported tools are memcheck, synccheck, initcheck, and racecheck");
 
     const auto unknownOption = Parse({"npu_check", "-h", "--nonsense"});
     EXPECT_FALSE(unknownOption.ok);
@@ -100,7 +101,8 @@ TEST(OptionsTest, HelpDoesNotSuppressErrorsOnItsRight)
     // 反向顺序早就会报错，这里一并锁住：错误与 -h 的相对位置无关。
     const auto beforeHelp = Parse({"npu_check", "--tool", "unknown", "-h"});
     EXPECT_FALSE(beforeHelp.ok);
-    EXPECT_EQ(beforeHelp.error, "unknown tool 'unknown'; supported tools are memcheck, synccheck, and initcheck");
+    EXPECT_EQ(
+        beforeHelp.error, "unknown tool 'unknown'; supported tools are memcheck, synccheck, initcheck, and racecheck");
 }
 
 // 选项本身合法时 -h 仍然只是"打印帮助"，不因为缺少应用而失败。
@@ -140,6 +142,7 @@ std::vector<std::pair<uint16_t, std::vector<uint16_t>>> ToolShape(const Options&
 constexpr uint16_t kMemcheck = static_cast<uint16_t>(npucheck::ipc::ToolId::MEMCHECK);
 constexpr uint16_t kSynccheck = static_cast<uint16_t>(npucheck::ipc::ToolId::SYNCCHECK);
 constexpr uint16_t kInitcheck = static_cast<uint16_t>(npucheck::ipc::ToolId::INITCHECK);
+constexpr uint16_t kRacecheck = static_cast<uint16_t>(npucheck::ipc::ToolId::RACECHECK);
 constexpr uint16_t kCheckCacheControl = static_cast<uint16_t>(npucheck::ipc::OptionId::MEMCHECK_CHECK_CACHE_CONTROL);
 constexpr uint16_t kMissingBarrierInitIsFatal =
     static_cast<uint16_t>(npucheck::ipc::OptionId::SYNCCHECK_MISSING_BARRIER_INIT_IS_FATAL);
@@ -197,6 +200,52 @@ TEST(OptionsTest, RepeatedToolIsIdempotent)
 
     ASSERT_TRUE(result.ok) << result.error;
     EXPECT_EQ(ToolShape(result.options), (decltype(ToolShape(result.options)){{kMemcheck, {}}}));
+}
+
+TEST(OptionsTest, AcceptsOnlyRacecheckWithoutEnablingDefaultTool)
+{
+    const auto result = Parse({"npu-check", "--tool", "racecheck", kSampleApp});
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_EQ(ToolShape(result.options), (decltype(ToolShape(result.options)){{kRacecheck, {}}}));
+    const auto rejected = Parse({"npu-check", "--tool", "race-check", kSampleApp});
+    EXPECT_FALSE(rejected.ok);
+    EXPECT_EQ(
+        rejected.error, "unknown tool 'race-check'; supported tools are memcheck, synccheck, initcheck, and racecheck");
+}
+
+TEST(OptionsTest, RepeatedRacecheckDeduplicatesAndSortsWithExistingTools)
+{
+    const auto result = Parse(
+        {"npu-check", "--tool", "racecheck", "--tool", "initcheck", "--tool", "racecheck", "--tool", "synccheck",
+         "--tool", "memcheck", kSampleApp});
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_EQ(
+        ToolShape(result.options),
+        (decltype(ToolShape(result.options)){{kMemcheck, {}}, {kSynccheck, {}}, {kInitcheck, {}}, {kRacecheck, {}}}));
+    npucheck::ipc::ConfigureRequest request;
+    request.tools = result.options.tools;
+    npucheck::ipc::ConfigureRequest decoded;
+    std::string error;
+    ASSERT_TRUE(npucheck::ipc::DecodeConfigure(npucheck::ipc::EncodeConfigure(request), decoded, error)) << error;
+    ASSERT_EQ(decoded.tools.size(), 4U);
+    EXPECT_EQ(static_cast<uint16_t>(decoded.tools.back().toolId), kRacecheck);
+}
+
+TEST(OptionsTest, RacecheckRejectsOtherToolsOptionsUnlessTheirOwnerIsEnabled)
+{
+    for (const auto& entry : npucheck::ipc::OptionRegistry()) {
+        const auto result = Parse({"npu-check", "--tool", "racecheck", std::string("--") + entry.name, kSampleApp});
+        EXPECT_FALSE(result.ok);
+        EXPECT_EQ(
+            result.error, std::string("--") + entry.name + " belongs to tool '" +
+                              npucheck::ipc::ToolName(entry.toolId) + "', which is not enabled");
+    }
+    const auto combined =
+        Parse({"npu-check", "--tool", "racecheck", "--tool", "memcheck", "--check-cache-control", kSampleApp});
+    ASSERT_TRUE(combined.ok) << combined.error;
+    EXPECT_EQ(
+        ToolShape(combined.options),
+        (decltype(ToolShape(combined.options)){{kMemcheck, {kCheckCacheControl}}, {kRacecheck, {}}}));
 }
 
 // 规范化编码唯一：tools 按 toolId 升序，与命令行出现顺序无关。
@@ -278,7 +327,8 @@ TEST(OptionsTest, RejectsInvalidInvocation)
 
     const auto unknownTool = Parse({"npu_check", "--tool", "trace", "--", kSampleApp});
     EXPECT_FALSE(unknownTool.ok);
-    EXPECT_EQ(unknownTool.error, "unknown tool 'trace'; supported tools are memcheck, synccheck, and initcheck");
+    EXPECT_EQ(
+        unknownTool.error, "unknown tool 'trace'; supported tools are memcheck, synccheck, initcheck, and racecheck");
 
     const auto missingValue = Parse({"npu_check", "--tool"});
     EXPECT_FALSE(missingValue.ok);
@@ -469,6 +519,8 @@ TEST(OptionsTest, UsageListsOnlyPublicOptions)
     EXPECT_NE(usage.find("[--tool <name>]..."), std::string::npos);
     EXPECT_NE(usage.find("Options:"), std::string::npos);
     EXPECT_NE(usage.find("--tool"), std::string::npos);
+    EXPECT_EQ(usage.find("race-check"), std::string::npos);
+    EXPECT_NE(usage.find("racecheck"), std::string::npos);
     EXPECT_EQ(usage.find("--tools"), std::string::npos);
     EXPECT_NE(usage.find("--log-file"), std::string::npos);
     EXPECT_NE(usage.find("--help"), std::string::npos);

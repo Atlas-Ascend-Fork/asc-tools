@@ -154,7 +154,7 @@ enum class ToolId : uint16_t {
     MEMCHECK = 1,  // 内存访问与生命周期检查
     SYNCCHECK = 2, // 同步原语及 barrier 使用检查
     INITCHECK = 3, // 持久化寄存器首次使用前初始化检查
-    RACECHECK = 4, // 同步图和 shadow memory 竞争检测
+    RACECHECK = 4, // 无同步顺序保证的冲突内存访问检查
 };
 
 // Configure 中工具子选项的稳定线路标识，由共享注册表映射到名称和值编码。

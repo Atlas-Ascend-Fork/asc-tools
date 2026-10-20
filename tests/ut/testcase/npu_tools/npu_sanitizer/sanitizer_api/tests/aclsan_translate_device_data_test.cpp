@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "acl_san/aclsan_api.h"
 #include <gtest/gtest.h>
 
 #include "../../common/tests/plog_capture.h"
@@ -100,7 +101,9 @@ std::optional<aclsan::DeviceCallbackData> TranslateRecordToCallbackData(
         return std::nullopt;
     }
     parsed.record = record;
-    auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded, registerState);
+    auto state = registerState;
+    state.ctrl = aclsan::CtrlRegisterParamField{0};
+    auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded, state);
     // Existing cases below assert GM conversion and sync behavior. Multi-space
     // translation and unsupported modes are exercised by the Cube integration tests.
     if (callback) {

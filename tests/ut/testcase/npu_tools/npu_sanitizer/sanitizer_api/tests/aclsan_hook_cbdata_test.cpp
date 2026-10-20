@@ -813,7 +813,10 @@ void TestUbufToGmOuterLoopStateReachesMemoryCallback()
     memory.record.args[2] = (UINT64_C(2) << 4U) | (UINT64_C(32) << 25U);
     memory.record.args[3] = 64;
 
-    aclsan::DispatchTraceRecords({loopSize, loop1Stride, loop2Stride, memory}, *decoder);
+    auto ctrl = base;
+    ctrl.record.instrId = 159;
+    ctrl.record.args[0] = 0;
+    aclsan::DispatchTraceRecords({ctrl, loopSize, loop1Stride, loop2Stride, memory}, *decoder);
 
     assert(g_deviceMemoryCallbackCount == 1);
     const auto& access = g_deviceMemoryCallbacks[0];
@@ -917,7 +920,10 @@ void TestFixpipeLoop3StateReachesMemoryCallback()
     memory.record.args[2] = (UINT64_C(32) << 4U) | (UINT64_C(3) << 16U) | (UINT64_C(40) << 32U);
     memory.record.args[3] = UINT64_C(1) << 43U;
 
-    aclsan::DispatchTraceRecords({loop3, memory}, *decoder);
+    auto ctrl = base;
+    ctrl.record.instrId = 159;
+    ctrl.record.args[0] = 0;
+    aclsan::DispatchTraceRecords({ctrl, loop3, memory}, *decoder);
 
     assert(g_deviceMemoryCallbackCount == 3);
     const auto& access = g_deviceMemoryCallbacks[0];
@@ -1305,4 +1311,64 @@ TEST(AclsanHookCbdata, L1ToBtAndFbDispatchSourceReads)
         EXPECT_EQ(access.address, 0x7ff00u);
         EXPECT_EQ(access.layout.range.bytes, id == 167 ? 128u : 64u);
     }
+}
+
+TEST(AclsanHookCbdata, AtomicCtrlReplayPersistsAcrossSnapshotsAndRestoresMode)
+{
+    aclsan_test::Boundary boundary;
+    boundary.invokeCallback = &aclsan::CaptureInvokeCallback;
+    const aclsan_test::BoundaryGuard boundaryGuard{boundary};
+    ResetCapture();
+    const auto& decoder = aclsan::dav3510::GetDeviceInstructionDecoder();
+    aclsan::dav3510::Dav3510RegisterStateManager state(99);
+    aclsan::ParsedTraceRecord base{};
+    base.launchId = 99;
+    base.phyCoreId = 2;
+    base.deviceId = 1;
+    base.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    auto ctrl = base;
+    ctrl.record.instrId = 159;
+    ctrl.record.args[0] = 64; // f32 加法
+    auto loops = base;
+    loops.record.instrId = 125; // set_loop_size_ubtoout
+    loops.record.args[0] = 1 | (UINT64_C(1) << 21U);
+    auto memory = base;
+    memory.record.instrId = 83;
+    memory.record.pipeline = ACLSAN_DEVICE_PIPE_MTE3;
+    memory.record.args[0] = 0x4000;
+    memory.record.args[1] = 0;
+    memory.record.args[2] = (UINT64_C(1) << 4U) | (UINT64_C(32) << 25U);
+    aclsan::DispatchTraceRecords({ctrl, loops}, decoder, nullptr, &state);
+    EXPECT_EQ(g_deviceMemoryCallbackCount, 0U);
+    EXPECT_EQ(g_deviceSyncCallbackCount, 0U);
+    aclsan::DispatchTraceRecords({memory}, decoder, nullptr, &state);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 1U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+    EXPECT_NE(g_deviceMemoryCallbacks[0].regDependencyMask0 & (UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CTRL), 0U);
+    ctrl.record.args[0] = UINT64_C(2) << 9U; // none，但保留旧的 min 位
+    aclsan::DispatchTraceRecords({ctrl, memory}, decoder, nullptr, &state);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 2U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    ctrl.record.args[0] = 64; // set_ctrl(savedCtrl)
+    aclsan::DispatchTraceRecords({ctrl, memory}, decoder, nullptr, &state);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 3U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[2].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+    EXPECT_EQ(g_deviceMemoryCallbacks[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+    ctrl.record.args[0] = 64 | (UINT64_C(1) << 9U); // max 替换 add
+    aclsan::DispatchTraceRecords({ctrl, memory}, decoder, nullptr, &state);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 4U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[3].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX);
+    EXPECT_EQ(g_deviceMemoryCallbacks[3].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    ctrl.record.args[0] = 64 | (UINT64_C(2) << 9U); // min 替换 max
+    aclsan::DispatchTraceRecords({ctrl, memory}, decoder, nullptr, &state);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 5U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[4].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN);
+    EXPECT_EQ(g_deviceMemoryCallbacks[4].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    memory.phyCoreId = 3;
+    loops.phyCoreId = 3;
+    aclsan::DispatchTraceRecords({loops, memory}, decoder, nullptr, &state);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 6U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[5].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    EXPECT_EQ(g_deviceMemoryCallbacks[5].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    EXPECT_EQ(g_deviceSyncCallbackCount, 0U);
 }

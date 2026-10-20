@@ -84,6 +84,58 @@ TEST(WireProtocolTest, ResolvesInitcheckToolNameWithoutChangingExistingIds)
     EXPECT_EQ(id, ToolId::INITCHECK);
 }
 
+TEST(WireProtocolTest, ResolvesOnlyRacecheckWithStableId)
+{
+    const auto racecheck = ToolId::RACECHECK;
+    EXPECT_EQ(static_cast<uint16_t>(racecheck), 4U);
+    EXPECT_STREQ(ToolName(racecheck), "racecheck");
+    EXPECT_TRUE(IsKnownTool(4));
+    ToolId id = ToolId::MEMCHECK;
+    ASSERT_TRUE(LookupTool("racecheck", id));
+    EXPECT_EQ(id, racecheck);
+    EXPECT_FALSE(LookupTool("race-check", id));
+    EXPECT_FALSE(IsKnownTool(5));
+}
+
+TEST(WireProtocolTest, RoundTripsRacecheckAloneAndWithExistingTools)
+{
+    const ToolRequest racecheck{ToolId::RACECHECK, {}};
+    ConfigureRequest request;
+    request.tools.push_back(racecheck);
+    ConfigureRequest decoded;
+    std::string error;
+    ASSERT_TRUE(DecodeConfigure(EncodeConfigure(request), decoded, error)) << error;
+    ASSERT_EQ(decoded.tools.size(), 1U);
+    EXPECT_EQ(decoded.tools[0].toolId, racecheck.toolId);
+    EXPECT_TRUE(decoded.tools[0].options.empty());
+
+    request = SampleConfigure();
+    request.tools.push_back(racecheck);
+    ASSERT_TRUE(DecodeConfigure(EncodeConfigure(request), decoded, error)) << error;
+    ASSERT_EQ(decoded.tools.size(), 4U);
+    EXPECT_EQ(decoded.tools.back().toolId, racecheck.toolId);
+    EXPECT_TRUE(ValidateConfigureMinor(decoded, 0, error)) << error;
+    EXPECT_EQ(EncodeConfigure(request).size(), 4U + 4U * 4U + 2U * 5U);
+}
+
+TEST(WireProtocolTest, RejectsDuplicateUnsortedAndForeignOptionsForRacecheck)
+{
+    const ToolRequest racecheck{ToolId::RACECHECK, {}};
+    ConfigureRequest request;
+    ConfigureRequest decoded;
+    std::string error;
+    request.tools = {racecheck, racecheck};
+    EXPECT_FALSE(DecodeConfigure(EncodeConfigure(request), decoded, error));
+    request.tools = {racecheck, {ToolId::MEMCHECK, {}}};
+    EXPECT_FALSE(DecodeConfigure(EncodeConfigure(request), decoded, error));
+    for (const auto& entry : OptionRegistry()) {
+        request.tools = {racecheck};
+        request.tools[0].options.push_back({entry.optionId, {entry.presentValue}});
+        EXPECT_FALSE(DecodeConfigure(EncodeConfigure(request), decoded, error));
+        EXPECT_EQ(error, "option does not belong to the enclosing tool");
+    }
+}
+
 // 规范化编码唯一：未排序或重复的 tool_id / option_id 必须被拒绝。接受了非规范编码，
 // "子选项换个位置写、编码结果不变"这条性质就无法断言。
 TEST(WireProtocolTest, RejectsNonCanonicalConfigure)

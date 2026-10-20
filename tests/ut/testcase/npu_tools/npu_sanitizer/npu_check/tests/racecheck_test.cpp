@@ -10,6 +10,7 @@
 
 #include "checker/racecheck.h"
 #include "diagnostic/report_renderer.h"
+#include "checker/racecheck_reports.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <functional>
@@ -360,7 +361,8 @@ AclsanDeviceMemoryAccessData CrossMemory(uint64_t seq, uint32_t physical, bool c
     a.header.blockType = cube ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     a.header.phyCoreId = physical;
     a.header.blockId = 100U + physical;
-    a.header.pipeline = cube && write ? ACLSAN_DEVICE_PIPE_FIXPIPE : a.header.pipeline;
+    if (cube && write)
+        a.header.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
     a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
     return a;
 }
@@ -657,6 +659,69 @@ TEST(RacecheckTest, CrossSetSelectedPipeDoesNotPublishOtherMemoryPipelines)
     }
 }
 
+TEST(RacecheckIntegrationTest, ConcreteAtomicModesUseMemstateCompatibility)
+{
+    for (uint32_t first :
+         {ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
+          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX}) {
+        for (uint32_t second :
+             {ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
+              ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX}) {
+            Harness h;
+            auto a = Memory(1, first);
+            a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+            auto b = a;
+            b.header.instrExecId = 2;
+            b.header.pipeline = ACLSAN_DEVICE_PIPE_MTE3;
+            b.accessMode = second;
+            h.Add(b); // Arrival order cannot establish happens-before.
+            h.Add(a);
+            h.Sync();
+            ASSERT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+            ASSERT_EQ(h.reports.size(), first == second ? 0U : 1U);
+            if (first != second) {
+                EXPECT_EQ(std::get<NpuCheckRacecheckReport>(h.reports[0]).kind, ConflictKind::ATOMIC_SEMANTIC);
+            }
+        }
+    }
+}
+
+TEST(RacecheckIntegrationTest, MissingAtomicConfigurationNeverCertifiesClean)
+{
+    for (bool marker : {false, true}) {
+        Harness h;
+        auto a = Memory(1);
+        if (marker) {
+            a.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
+            a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN;
+        } else {
+            a.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
+        }
+        h.Add(a);
+        h.Sync();
+        EXPECT_FALSE(h.checker.AnalysisComplete());
+        EXPECT_TRUE(h.reports.empty());
+    }
+}
+
+TEST(RacecheckIntegrationTest, SynchronizationOrdersDifferentAtomicOperations)
+{
+    Harness h;
+    auto a = Memory(1, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+    a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    auto b = a;
+    b.header.instrExecId = 4;
+    b.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
+    b.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN;
+    h.Add(b);
+    h.Add(Flag(3, ACLSAN_DEVICE_SYNC_ACTION_WAIT));
+    h.Add(a);
+    h.Add(Flag(2, ACLSAN_DEVICE_SYNC_ACTION_SET));
+    h.Sync();
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    EXPECT_TRUE(h.reports.empty());
+}
+
 TEST(RacecheckTest, RawWarWawAndReadRead)
 {
     for (uint32_t first : {1U, 2U})
@@ -672,8 +737,8 @@ TEST(RacecheckTest, RawWarWawAndReadRead)
             }
             ASSERT_EQ(h.reports.size(), 1U);
             auto r = std::get<NpuCheckRacecheckReport>(h.reports[0]);
-            EXPECT_EQ(r.hazardKind, first == 1 ? 2U : second == 1 ? 1U : 3U);
-            EXPECT_EQ(r.overlapBytes, 8U);
+            EXPECT_EQ(static_cast<uint32_t>(r.kind) + 1, first == 1 ? 2U : second == 1 ? 1U : 3U);
+            EXPECT_EQ(r.checkRange.end - r.checkRange.begin, 8U);
             EXPECT_TRUE(h.checker.HasErrors());
         }
 }
@@ -750,7 +815,10 @@ TEST(RacecheckTest, ShadowByteMasksPagesAndStrideHoles)
     h.Add(Memory(3, 1, 5, 4095, 2));
     h.Sync();
     ASSERT_EQ(h.reports.size(), 1U);
-    EXPECT_EQ(std::get<NpuCheckRacecheckReport>(h.reports[0]).overlapBytes, 2U);
+    EXPECT_EQ(
+        std::get<NpuCheckRacecheckReport>(h.reports[0]).checkRange.end -
+            std::get<NpuCheckRacecheckReport>(h.reports[0]).checkRange.begin,
+        2U);
     Harness strided;
     auto a = Memory(1);
     a.layoutKind = ACLSAN_MEM_LAYOUT_BLOCK_REPEAT;
@@ -878,30 +946,30 @@ TEST(RacecheckTest, PrivateOwnersIsolatedGlobalPeersStableUnderInputPermutation)
         h.Sync();
         ASSERT_EQ(h.reports.size(), 1U);
         const auto& r = std::get<NpuCheckRacecheckReport>(h.reports[0]);
-        EXPECT_EQ(r.hazardKind, 1U);
-        EXPECT_EQ(r.first.exec.blockId, 0U);
-        EXPECT_TRUE(r.unorderedPeers);
+        EXPECT_EQ(static_cast<uint32_t>(r.kind) + 1, 1U);
+        EXPECT_EQ(r.previous.header.blockId, 0U);
+        EXPECT_NE(r.previous.header.blockId, r.current.header.blockId);
     }
 }
-TEST(RacecheckTest, FirstWawStopsLaunchAndSameNonVectorPipeNeedsSynchronization)
+TEST(RacecheckTest, ReportsAllDistinctRangesAndDeduplicatesSameRange)
 {
-    for (auto pipe : {ACLSAN_DEVICE_PIPE_VECTOR, ACLSAN_DEVICE_PIPE_MTE2}) {
-        Harness h;
-        h.Add(Memory(1));
-        h.Add(Memory(2, 2, pipe));
-        h.Add(Memory(3, 1, ACLSAN_DEVICE_PIPE_MTE3));
-        h.Sync();
-        ASSERT_EQ(h.reports.size(), 1U);
-        EXPECT_EQ(std::get<NpuCheckRacecheckReport>(h.reports[0]).hazardKind, 3U);
-        EXPECT_TRUE(h.checker.HasErrors());
-        EXPECT_TRUE(h.checker.AnalysisComplete());
-        EXPECT_NE(h.checker.Summary().find("stopped_launches=1"), std::string::npos);
-    }
+    Harness h;
+    h.Add(Memory(1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, ACLSAN_DEVICE_PIPE_MTE2, 0x1000));
+    h.Add(Memory(2, ACLSAN_DEVICE_MEMORY_ACCESS_READ, ACLSAN_DEVICE_PIPE_MTE3, 0x1000));
+    h.Add(Memory(3, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, ACLSAN_DEVICE_PIPE_MTE1, 0x1000));
+    h.Add(Memory(4, ACLSAN_DEVICE_MEMORY_ACCESS_READ, ACLSAN_DEVICE_PIPE_MTE2, 0x2000));
+    h.Add(Memory(5, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, ACLSAN_DEVICE_PIPE_MTE1, 0x2000));
+    h.Sync();
+    ASSERT_EQ(h.reports.size(), 2U);
+    EXPECT_EQ(std::get<NpuCheckRacecheckReport>(h.reports[0]).checkRange.begin, 0x1000U);
+    EXPECT_EQ(std::get<NpuCheckRacecheckReport>(h.reports[1]).checkRange.begin, 0x2000U);
+    EXPECT_TRUE(h.checker.HasErrors());
+    EXPECT_TRUE(h.checker.AnalysisComplete());
 }
 
 TEST(RacecheckTest, VectorHardwareOrderCoversRawWarWawRegardlessOfCallbackOrder)
 {
-    for (const auto modes : {std::pair{2U, 1U}, std::pair{1U, 2U}, std::pair{2U, 2U}}) {
+    for (const auto& modes : {std::pair{2U, 1U}, std::pair{1U, 2U}, std::pair{2U, 2U}}) {
         Harness h;
         h.Add(Memory(3, modes.second, ACLSAN_DEVICE_PIPE_VECTOR));
         h.Add(Memory(2, 1, ACLSAN_DEVICE_PIPE_VECTOR, 0x2000));
@@ -994,19 +1062,22 @@ TEST(RacecheckTest, VectorOrderingEdgesRespectGraphBudget)
 TEST(RacecheckTest, ReadWriteFragmentsDeduplicatedAndNoSelfRace)
 {
     Harness h;
-    auto a = Memory(1, 3);
+    auto a = Memory(1, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
     auto fragment = a;
     a.accessCount = 2;
     fragment.accessCount = 2;
     fragment.accessIndex = 1;
+    fragment.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
     h.Add(a);
     h.Add(fragment);
     h.Add(a);
-    h.Add(Memory(2, 3, 1));
+    h.Add(Memory(2, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, ACLSAN_DEVICE_PIPE_MTE1));
     h.Sync();
     ASSERT_EQ(h.reports.size(), 1U);
     for (auto& v : h.reports)
-        EXPECT_EQ(std::get<NpuCheckRacecheckReport>(v).overlapBytes, 8U);
+        EXPECT_EQ(
+            std::get<NpuCheckRacecheckReport>(v).checkRange.end - std::get<NpuCheckRacecheckReport>(v).checkRange.begin,
+            8U);
     Harness missing;
     missing.Add(a);
     missing.Sync();
@@ -1030,9 +1101,10 @@ TEST(RacecheckTest, InexactCallbacksDoNotDowngradeExactRawWarWaw)
             EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
             EXPECT_TRUE(h.checker.HasErrors());
             EXPECT_EQ(
-                std::get<NpuCheckRacecheckReport>(h.reports[0]).hazardKind, modes.first == 1  ? 2U :
-                                                                            modes.second == 1 ? 1U :
-                                                                                                3U);
+                static_cast<uint32_t>(std::get<NpuCheckRacecheckReport>(h.reports[0]).kind) + 1, modes.first == 1 ? 2U :
+                                                                                                 modes.second == 1 ?
+                                                                                                                    1U :
+                                                                                                                    3U);
             EXPECT_NE(h.checker.Summary().find("skipped_memory_events=1"), std::string::npos);
         }
     }
@@ -1171,9 +1243,8 @@ TEST(RacecheckTest, CoverageIsExplicitlyLimitedToObservedCallbacks)
     h.Sync();
     ASSERT_EQ(h.reports.size(), 1U);
     const auto& report = std::get<NpuCheckRacecheckReport>(h.reports[0]);
-    EXPECT_EQ(report.coverage, "observed_cbdata");
-    EXPECT_EQ(report.ordering, "no_observed_happens_before_path");
-    EXPECT_NE(h.checker.Summary().find("trace_completeness=unverified"), std::string::npos);
+    EXPECT_EQ(report.kind, ConflictKind::RAW);
+    EXPECT_EQ(report.launchId, 1U);
 }
 TEST(RacecheckTest, RenderIncludesOverlapAndBothSitesWithoutInventedValues)
 {
@@ -1185,8 +1256,9 @@ TEST(RacecheckTest, RenderIncludesOverlapAndBothSitesWithoutInventedValues)
     auto& r = std::get<NpuCheckRacecheckReport>(h.reports[0]);
     std::string text;
     ASSERT_EQ(RenderNpuCheckReportRecord(NpuCheckReportRecord::From(r), {}, &text), ReportRenderStatus::SUCCESS);
-    EXPECT_NE(text.find("bytes=8"), std::string::npos);
-    EXPECT_NE(text.find("coverage=observed_cbdata"), std::string::npos);
+    EXPECT_NE(text.find("8 bytes"), std::string::npos);
+    EXPECT_NE(text.find("Previous"), std::string::npos);
+    EXPECT_NE(text.find("Current"), std::string::npos);
     EXPECT_EQ(text.find("Current Value"), std::string::npos);
     EXPECT_EQ(text.find("Incoming Value"), std::string::npos);
 }
@@ -1220,11 +1292,11 @@ TEST(RacecheckTest, RandomExactFootprintsAgreeWithExhaustiveByteOracle)
         for (auto& v : h.reports) {
             auto r = std::get<NpuCheckRacecheckReport>(v);
             actual.emplace(
-                std::min(r.first.exec.blockId, r.second.exec.blockId),
-                std::max(r.first.exec.blockId, r.second.exec.blockId));
+                std::min(r.previous.header.blockId, r.current.header.blockId),
+                std::max(r.previous.header.blockId, r.current.header.blockId));
         }
         EXPECT_EQ(actual.empty(), expected.empty());
-        EXPECT_LE(actual.size(), 1U);
+        EXPECT_LE(actual.size(), expected.size());
         for (const auto& pair : actual)
             EXPECT_EQ(expected.count(pair), 1U);
         EXPECT_TRUE(h.checker.AnalysisComplete());
@@ -1245,6 +1317,20 @@ TEST(RacecheckTest, AtomicAndUnknownOwnersRemainUnsupported)
         h.Sync();
         EXPECT_FALSE(h.checker.AnalysisComplete());
         EXPECT_FALSE(h.checker.HasErrors());
+    }
+}
+TEST(RacecheckTest, UnsupportedMemorySpaceValuesMakeAnalysisIncomplete)
+{
+    for (uint32_t space : {0U, 9U, UINT32_MAX}) {
+        SCOPED_TRACE(space);
+        Harness h;
+        auto access = Memory(1);
+        access.memorySpace = space;
+        h.Add(access);
+        h.Sync();
+        EXPECT_FALSE(h.checker.AnalysisComplete());
+        EXPECT_TRUE(h.reports.empty());
+        EXPECT_NE(h.checker.Summary().find("access_coverage_unknown=1"), std::string::npos);
     }
 }
 TEST(RacecheckTest, UnresolvedMasksAreSkipped)
@@ -1336,10 +1422,9 @@ TEST(RacecheckTest, ExactOverlapAcrossLeafAndRootBoundaries)
         ASSERT_TRUE(h.checker.AnalysisComplete());
         ASSERT_EQ(h.reports.size(), 1U);
         const auto& report = std::get<NpuCheckRacecheckReport>(h.reports.front());
-        EXPECT_EQ(report.overlapBytes, 4U);
-        ASSERT_EQ(report.overlapRanges.size(), 1U);
-        EXPECT_EQ(report.overlapRanges.front().first, boundary - 1);
-        EXPECT_EQ(report.overlapRanges.front().second, boundary + 3);
+        EXPECT_EQ(report.checkRange.end - report.checkRange.begin, 4U);
+        EXPECT_EQ(report.checkRange.begin, boundary - 1);
+        EXPECT_EQ(report.checkRange.end, boundary + 3);
     }
 }
 TEST(RacecheckTest, WriterSurvivesReadAndDetectsUnorderedSecondRead)
@@ -1360,9 +1445,9 @@ TEST(RacecheckTest, WriterSurvivesReadAndDetectsUnorderedSecondRead)
     h.Sync();
     ASSERT_EQ(h.reports.size(), 1U);
     const auto& r = std::get<NpuCheckRacecheckReport>(h.reports[0]);
-    EXPECT_EQ(r.hazardKind, 1U);
-    EXPECT_EQ(r.first.exec.instrExecId, 1U);
-    EXPECT_EQ(r.second.exec.instrExecId, 10U);
+    EXPECT_EQ(static_cast<uint32_t>(r.kind) + 1, 1U);
+    EXPECT_EQ(r.previous.header.instrExecId, 1U);
+    EXPECT_EQ(r.current.header.instrExecId, 10U);
 }
 TEST(RacecheckTest, SamePipeReadersCannotOverwriteEarlierUnorderedReader)
 {
@@ -1375,9 +1460,9 @@ TEST(RacecheckTest, SamePipeReadersCannotOverwriteEarlierUnorderedReader)
     h.Sync();
     ASSERT_EQ(h.reports.size(), 1U);
     const auto& r = std::get<NpuCheckRacecheckReport>(h.reports[0]);
-    EXPECT_EQ(r.hazardKind, 2U);
-    EXPECT_EQ(r.first.exec.instrExecId, 4U);
-    EXPECT_EQ(r.second.exec.instrExecId, 5U);
+    EXPECT_EQ(static_cast<uint32_t>(r.kind) + 1, 2U);
+    EXPECT_EQ(r.previous.header.instrExecId, 4U);
+    EXPECT_EQ(r.current.header.instrExecId, 5U);
 }
 TEST(RacecheckTest, OverlappingOperandsDoNotCreateSelfRaces)
 {
@@ -1456,10 +1541,9 @@ TEST(RacecheckTest, RandomSynchronizationAndFootprintsMatchAllPairsOracle)
         h.Sync();
         ASSERT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
         EXPECT_EQ(h.reports.empty(), conflicts.empty());
-        ASSERT_LE(h.reports.size(), 1U);
-        if (!h.reports.empty()) {
-            const auto& r = std::get<NpuCheckRacecheckReport>(h.reports[0]);
-            const auto pair = std::minmax(r.first.exec.instrExecId, r.second.exec.instrExecId);
+        for (const auto& report : h.reports) {
+            const auto& r = std::get<NpuCheckRacecheckReport>(report);
+            const auto pair = std::minmax(r.previous.header.instrExecId, r.current.header.instrExecId);
             EXPECT_EQ(conflicts.count(pair), 1U);
         }
     }

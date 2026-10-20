@@ -8,7 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "acl_san/aclsan_api.h"
 #include "checker/memcheck.h"
+#include "diagnostic/pipeline_name.h"
 
 #include <algorithm>
 #include <array>
@@ -225,30 +227,6 @@ bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
     return true;
 }
 
-const char* PipelineName(uint32_t pipeline)
-{
-    switch (pipeline) {
-        case ACLSAN_DEVICE_PIPE_SCALAR:
-            return "SCALAR";
-        case ACLSAN_DEVICE_PIPE_VECTOR:
-            return "VECTOR";
-        case ACLSAN_DEVICE_PIPE_MATRIX:
-            return "MATRIX";
-        case ACLSAN_DEVICE_PIPE_MTE1:
-            return "MTE1";
-        case ACLSAN_DEVICE_PIPE_MTE2:
-            return "MTE2";
-        case ACLSAN_DEVICE_PIPE_MTE3:
-            return "MTE3";
-        case ACLSAN_DEVICE_PIPE_ALL:
-            return "ALL";
-        case ACLSAN_DEVICE_PIPE_FIXPIPE:
-            return "FIXPIPE";
-        default:
-            return "UNKNOWN";
-    }
-}
-
 NpuCheckReportAllocation ToReportAllocation(const std::optional<Allocation>& allocation)
 {
     NpuCheckReportAllocation result{};
@@ -279,7 +257,7 @@ NpuCheckReportExecContext ToExecContext(const AclsanDeviceMemoryAccessData& data
     exec.blockType = data.header.blockType;
     exec.pipeId = data.header.pipeline;
     exec.siteId = data.header.siteId;
-    exec.pipeName = PipelineName(data.header.pipeline);
+    exec.pipeName = detail::DevicePipelineName(data.header.pipeline);
     return exec;
 }
 
@@ -400,6 +378,8 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
 
 void Memcheck::QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data)
 {
+    // 原子配置未知但范围已还原的 WRITE 仍按普通写检查边界。
+    // ATOMIC_CONFIG_UNKNOWN 不影响 Memcheck；ESTIMATED 表示访问范围也不精确。
     if ((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0) {
         ++stats_.inexactDeviceOperations;
         return;
@@ -424,17 +404,22 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
         return std::vector<NpuCheckMemcheckReport>{};
     };
 
-    std::vector<NpuCheckReportAccessMode> accessModes;
+    NpuCheckReportAccessMode accessMode;
     switch (data.accessMode) {
         case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
-            accessModes.push_back(NpuCheckReportAccessMode::READ);
+            accessMode = NpuCheckReportAccessMode::READ;
             break;
         case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
-            accessModes.push_back(NpuCheckReportAccessMode::WRITE);
+            accessMode = NpuCheckReportAccessMode::WRITE;
             break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_READ_WRITE:
-            accessModes.push_back(NpuCheckReportAccessMode::READ);
-            accessModes.push_back(NpuCheckReportAccessMode::WRITE);
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD:
+            accessMode = NpuCheckReportAccessMode::ATOMIC_WRITE_ADD;
+            break;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN:
+            accessMode = NpuCheckReportAccessMode::ATOMIC_WRITE_MIN;
+            break;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX:
+            accessMode = NpuCheckReportAccessMode::ATOMIC_WRITE_MAX;
             break;
         default:
             return markIncomplete();
@@ -445,11 +430,9 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
     }
 
     std::vector<NpuCheckMemcheckReport> reports;
-    auto appendAccess = [this, &data, &accessModes, &reports, groupId](uint64_t address, uint64_t bytes) {
-        for (const NpuCheckReportAccessMode accessMode : accessModes) {
-            auto found = CheckAccess(data, accessMode, address, bytes, groupId);
-            reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
-        }
+    auto appendAccess = [this, &data, accessMode, &reports, groupId](uint64_t address, uint64_t bytes) {
+        auto found = CheckAccess(data, accessMode, address, bytes, groupId);
+        reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
     };
 
     switch (data.layoutKind) {

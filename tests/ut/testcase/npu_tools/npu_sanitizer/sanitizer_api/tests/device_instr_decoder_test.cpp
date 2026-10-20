@@ -821,6 +821,21 @@ void TestClassifiesCurrentDav3510InstructionSet()
 
 } // namespace
 
+TEST(DeviceInstrDecoder, DecodesFullCtrlRegisterWrites)
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    ASSERT_NE(decoder, nullptr);
+    aclsan::AclsanRawTraceRecord record{};
+    record.instrId = 159;
+    record.args[0] = 0xFEDCBA9876543FC0ULL;
+    const auto decoded = decoder->decode(record);
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(decoded->kind, aclsan::DeviceInstructionKind::SetCtrl);
+    const auto* params = std::get_if<aclsan::CtrlRegisterParamField>(&decoded->params);
+    ASSERT_NE(params, nullptr);
+    EXPECT_EQ(params->value, record.args[0]);
+}
+
 TEST(DeviceInstrDecoder, Main)
 {
     TestSocVersionMappingsSelectDav3510Decoder();

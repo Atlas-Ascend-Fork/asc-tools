@@ -23,7 +23,8 @@ namespace {
 template <typename ParamField>
 constexpr bool HasParamFieldLogger() noexcept
 {
-    return std::is_same_v<ParamField, aclsan::CopyGmToUbufAlignV2ParamField> ||
+    return std::is_same_v<ParamField, aclsan::CtrlRegisterParamField> ||
+           std::is_same_v<ParamField, aclsan::CopyGmToUbufAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyUbufToGmAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufV2ParamField> ||
@@ -68,6 +69,14 @@ const char* BlockTypeName(uint32_t blockType) noexcept
         default:
             return "UNKNOWN";
     }
+}
+
+void LogParamField(const aclsan::CtrlRegisterParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=CtrlRegisterParamField value=0x%llx atomicType=%llu atomicOp=%llu",
+        static_cast<unsigned long long>(value.value), static_cast<unsigned long long>((value.value >> 6U) & 7U),
+        static_cast<unsigned long long>((value.value >> 9U) & 3U));
 }
 
 void LogParamField(const aclsan::SetPaddingParamField& value) noexcept

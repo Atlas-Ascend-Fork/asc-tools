@@ -62,8 +62,6 @@ private:
     void RollbackSanitizer();
     static void LogHandshakeFailure(const std::string& reason) noexcept;
     void StoreReports(CheckerReportList reports);
-    bool NormalizeAndStoreReportRecord(
-        const npucheck::NpuCheckReportRecord& report, uint64_t reportId, const char* what);
     void LogMalformed(AclsanCallbackDomain domain, AclsanCallbackId cbid, const char* reason);
     void LogCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata);
     std::string BuildToolNames() const;

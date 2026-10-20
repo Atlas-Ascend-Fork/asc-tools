@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "acl_san/aclsan_api.h"
 #include "checker/checker.h"
 #include "diagnostic/report/device_call_stack.h"
 #include "diagnostic/report_renderer.h"
@@ -89,6 +90,17 @@ TEST(CheckerTest, CallbackUnionAndIndependentTools)
     EXPECT_TRUE(checkers[0]->IsSubscribed(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL));
     EXPECT_TRUE(checkers[1]->IsSubscribed(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL));
     EXPECT_EQ(CreateChecker(static_cast<npucheck::ipc::ToolId>(0xffff)), nullptr);
+}
+
+TEST(CheckerTest, RacecheckFactoryUsesSynchronizationGraphAndWaitsForCompleteLaunch)
+{
+    auto checker = CreateChecker(npucheck::ipc::ToolId::RACECHECK);
+    ASSERT_NE(checker, nullptr);
+    EXPECT_TRUE(checker->IsSubscribed(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS));
+    EXPECT_TRUE(checker->IsSubscribed(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC));
+    EXPECT_FALSE(checker->AnalysisComplete());
+    EXPECT_NE(checker->Summary().find("tool=racecheck"), std::string::npos);
+    EXPECT_TRUE(checker->IsSubscribed(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER));
 }
 
 TEST(CheckerTest, BothProduceReportsFromTheSameSynchronization)

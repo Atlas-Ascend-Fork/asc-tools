@@ -17,10 +17,16 @@ namespace aclsan::dav3510 {
 
 bool Dav3510CoreKey::operator==(const Dav3510CoreKey& other) const noexcept
 {
-    return blockType == other.blockType && blockId == other.blockId;
+    return blockType == other.blockType && blockId == other.blockId && phyCoreId == other.phyCoreId &&
+           deviceId == other.deviceId;
 }
 
 Dav3510RegisterStateManager::Dav3510RegisterStateManager(uint64_t launchId) noexcept : launchId_(launchId) {}
+
+void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const CtrlRegisterParamField& params) noexcept
+{
+    states_[key].ctrl = params;
+}
 
 void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const FmatrixParamField& params) noexcept
 {
@@ -163,6 +169,8 @@ std::size_t Dav3510RegisterStateManager::CoreKeyHash::operator()(const Dav3510Co
 {
     std::size_t result = std::hash<uint32_t>{}(key.blockType);
     result ^= std::hash<uint32_t>{}(key.blockId) + (result << 6U) + (result >> 2U);
+    result ^= std::hash<uint32_t>{}(key.phyCoreId) + (result << 6U) + (result >> 2U);
+    result ^= std::hash<uint32_t>{}(key.deviceId) + (result << 6U) + (result >> 2U);
     return result;
 }
 

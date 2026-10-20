@@ -26,7 +26,14 @@ namespace {
 // multi-space results and incomplete modes are tested in cube_memory_test.cpp.
 class GmProjectionConverter {
 public:
-    GmProjectionConverter(aclsan::MemoryCbdataContext c, aclsan::MemoryRegisterState s = {}) : converter_(c, s) {}
+    GmProjectionConverter(aclsan::MemoryCbdataContext c, aclsan::MemoryRegisterState s = {})
+        : converter_(c, WithAtomicDisabled(s))
+    {}
+    static aclsan::MemoryRegisterState WithAtomicDisabled(aclsan::MemoryRegisterState s)
+    {
+        s.ctrl = aclsan::CtrlRegisterParamField{0};
+        return s;
+    }
     aclsan::MemoryCbdataResult Convert(const aclsan::MemoryInstructionField& f) const
     {
         auto r = converter_.Convert(f);
@@ -1139,16 +1146,15 @@ TEST(AclsanMemoryCbdata, ParameterFilteringUsesResolvedScalarAddressAndPairWidth
     EXPECT_EQ(crossing.data[0].layout.range.bytes, 16U);
 }
 
-TEST(AclsanMemoryCbdata, ScalarAtomicUsesWidthAndOffsetFamily)
+TEST(AclsanMemoryCbdata, ScalarAtomicWithoutConfigurationPublishesFlaggedOrdinaryWrite)
 {
     const aclsan::MemoryFieldToCbdataConverter converter{{}};
     struct Case {
         uint32_t id;
         uint32_t bits;
-        bool elementOffset;
     };
     const Case cases[] = {
-        {56, 32, true}, {57, 16, true}, {58, 8, true}, {59, 32, false}, {60, 16, false}, {61, 8, false},
+        {56, 32}, {57, 16}, {58, 8}, {59, 32}, {60, 16}, {61, 8},
     };
     for (const auto& test : cases) {
         for (uint64_t post : {0UL, 1UL}) {
@@ -1157,21 +1163,20 @@ TEST(AclsanMemoryCbdata, ScalarAtomicUsesWidthAndOffsetFamily)
                 test.id, test.bits, 0x1000, 3, post, UINT64_C(0x100000000), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1};
             const auto result = converter.Convert(field);
             ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+            EXPECT_FALSE(result.requiresIncompleteEvent);
             ASSERT_EQ(result.data.size(), 1U);
-            const uint64_t scaled = test.elementOffset ? 3U * (test.bits / 8U) : 3U;
             const auto& access = result.data.front();
-            EXPECT_EQ(access.address, post == 1U ? 0x1000U : 0x1000U + scaled);
-            EXPECT_EQ(access.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
             EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+            EXPECT_EQ(
+                access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
+            EXPECT_EQ(access.address, 0x1000U + (post == 1 ? 0U : 3U * (test.id <= 58 ? test.bits / 8U : 1U)));
             EXPECT_EQ(access.dataBits, test.bits);
-            EXPECT_EQ(access.layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
             EXPECT_EQ(access.layout.range.bytes, test.bits / 8U);
-            EXPECT_EQ(access.header.sourceKind, ACLSAN_DEVICE_SOURCE_ST);
         }
     }
 }
 
-TEST(AclsanMemoryCbdata, ScalarAtomicMapsEffectiveAddressAndRejectsLocalWindows)
+TEST(AclsanMemoryCbdata, ScalarAtomicValidatesAddressBeforeOrdinaryWriteFallback)
 {
     const aclsan::MemoryFieldToCbdataConverter converter{{}};
     for (uint32_t id = 56; id <= 61; ++id) {
@@ -1186,7 +1191,6 @@ TEST(AclsanMemoryCbdata, ScalarAtomicMapsEffectiveAddressAndRejectsLocalWindows)
         auto result = converter.Convert(field);
         ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
         ASSERT_EQ(result.data.size(), 1U);
-        EXPECT_EQ(result.data[0].address, UINT64_C(0x200001000));
         for (uint64_t local : {UINT64_C(0x100080040), UINT64_C(0x100100040)}) {
             field.addr = local;
             result = converter.Convert(field);
@@ -1200,7 +1204,7 @@ TEST(AclsanMemoryCbdata, ScalarAtomicMapsEffectiveAddressAndRejectsLocalWindows)
         field.offset = id <= 58 ? 4 / (bits / 8) : 4;
         result = converter.Convert(field);
         ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
-        EXPECT_EQ(result.data[0].address, UINT64_C(0x101000000));
+        ASSERT_EQ(result.data.size(), 1U);
         field.addressContext = 0;
         EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::MISSING_ADDRESS_CONTEXT);
         field.addressContext = aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1 + 1;
@@ -1215,7 +1219,10 @@ TEST(AclsanMemoryCbdata, ScalarAtomicMapsEffectiveAddressAndRejectsLocalWindows)
     EXPECT_EQ(converter.Convert(tail).status, aclsan::MemoryCbdataStatus::SUCCESS);
     tail.addr = 0x1000004;
     tail.offset = -1;
-    EXPECT_EQ(converter.Convert(tail).data.front().address, 0x1000000U);
+    const auto negativeOffset = converter.Convert(tail);
+    EXPECT_EQ(negativeOffset.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    ASSERT_EQ(negativeOffset.data.size(), 1U);
+    EXPECT_EQ(negativeOffset.data[0].address, 0x1000000U);
 }
 
 TEST(AclsanMemoryCbdata, ScalarAtomicRejectsInconsistentFieldsAndPost)
@@ -1253,7 +1260,7 @@ TEST(AclsanMemoryCbdata, ScalarAtomicRejectsInconsistentFieldsAndPost)
     }
 }
 
-TEST(AclsanMemoryCbdata, ReadOnlyBinaryFilteringPreservesWritesAtomicsAndCrossBoundaryReads)
+TEST(AclsanMemoryCbdata, ReadOnlyBinaryFilteringPreservesWritesCrossBoundaryReadsAndAtomicFallback)
 {
     const std::vector<aclsan::InternalMemoryRange> ranges{{reinterpret_cast<void*>(0x4000), 32}};
     aclsan::MemoryCbdataContext context{};
@@ -1276,7 +1283,9 @@ TEST(AclsanMemoryCbdata, ReadOnlyBinaryFilteringPreservesWritesAtomicsAndCrossBo
     const auto atomic = converter.Convert(aclsan::ScalarAtomicParamField{
         56, 32, 0x4000, 0, 0, UINT64_C(0x100000000), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1});
     EXPECT_EQ(atomic.status, aclsan::MemoryCbdataStatus::SUCCESS);
-    EXPECT_FALSE(atomic.data.empty());
+    ASSERT_EQ(atomic.data.size(), 1U);
+    EXPECT_EQ(atomic.data[0].address, 0x4000U);
+    EXPECT_EQ(atomic.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
     EXPECT_EQ(
         aclsan::MemoryFieldToCbdataConverter{{}}.Convert(aclsan::ScalarDevParamField{68, 64, 0x4000, 0}).status,
         aclsan::MemoryCbdataStatus::SUCCESS);
@@ -1297,6 +1306,226 @@ TEST(AclsanMemoryCbdata, ScalarAtomicAddressOverflowIsExplicit)
             const auto result = converter.Convert(field);
             EXPECT_EQ(result.status, aclsan::MemoryCbdataStatus::ARITHMETIC_OVERFLOW);
             EXPECT_TRUE(result.data.empty());
+        }
+    }
+}
+
+TEST(AclsanMemoryCbdata, LocalConversionPreservesMissingRegisterCause)
+{
+    aclsan::Img2ColParamField field{};
+    field.instrId = 153;
+    field.mExtension = 16;
+    field.kExtension = 16;
+    aclsan::MemoryRegisterState state{};
+    auto result = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+    EXPECT_EQ(result.status, aclsan::MemoryCbdataStatus::MISSING_REGISTER_STATE);
+    EXPECT_EQ(result.requiredRegisterInstructionId, RawInstructionId(InstructionId::SetFmatrix));
+    EXPECT_FALSE(result.requiresIncompleteEvent);
+    EXPECT_TRUE(result.data.empty());
+
+    state.fmatrix[0] = aclsan::FmatrixParamField{};
+    result = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+    EXPECT_EQ(result.status, aclsan::MemoryCbdataStatus::MISSING_REGISTER_STATE);
+    EXPECT_EQ(result.requiredRegisterInstructionId, RawInstructionId(InstructionId::SetL3dRpt));
+    EXPECT_TRUE(result.data.empty());
+}
+
+TEST(AclsanMemoryCbdata, GmOutputWithoutCtrlPublishesExactOrdinaryWrite)
+{
+    aclsan::CopyUbufToGmAlignV2ParamField field{};
+    field.instrId = 83;
+    field.dstAddr = 0x1000;
+    field.burstNum = 1;
+    field.burstLen = 32;
+    const auto result =
+        aclsan::MemoryFieldToCbdataConverter{{}, SingletonDmaState(aclsan::DmaLoopDirection::UBUF_TO_GM)}.Convert(
+            field);
+    ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    EXPECT_FALSE(result.requiresIncompleteEvent);
+    ASSERT_EQ(result.data.size(), 1U);
+    const auto& access = result.data.front();
+    EXPECT_EQ(access.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+    EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    EXPECT_EQ(access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    EXPECT_EQ(access.address, 0x1000U);
+    EXPECT_EQ(access.layout.range.bytes, 32U);
+}
+
+TEST(AclsanMemoryCbdata, GmDmaAtomicConfigurationFreezesOnlyOutputAccesses)
+{
+    aclsan::CopyUbufToGmAlignV2ParamField field{};
+    field.instrId = 83;
+    field.srcAddr = 0x200;
+    field.dstAddr = 0x1000;
+    field.burstNum = 2;
+    field.burstLen = 32;
+    auto state = SingletonDmaState(aclsan::DmaLoopDirection::UBUF_TO_GM);
+    constexpr uint32_t bits[] = {0, 32, 16, 16, 32, 8, 16};
+    for (uint64_t type = 0; type <= 6; ++type) {
+        state.ctrl = aclsan::CtrlRegisterParamField{type << 6U};
+        const auto result = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+        ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+        EXPECT_FALSE(result.requiresIncompleteEvent);
+        ASSERT_GE(result.data.size(), 1U);
+        for (const auto& access : result.data) {
+            if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+                EXPECT_EQ(
+                    access.accessMode,
+                    type ? ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD : ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+                EXPECT_EQ(access.dataBits, bits[type]);
+            } else {
+                EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+            }
+        }
+    }
+    state.ctrl = aclsan::CtrlRegisterParamField{1U << 6U};
+    const auto enabled = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+    state.ctrl = aclsan::CtrlRegisterParamField{2U << 9U}; // none 会保留 min 操作位
+    const auto disabled = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+    ASSERT_EQ(disabled.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    EXPECT_EQ(enabled.data.front().accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+    EXPECT_EQ(disabled.data.front().accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+}
+
+TEST(AclsanMemoryCbdata, UnsupportedAtomicModesCannotBecomeExactWrites)
+{
+    aclsan::CopyUbufToGmAlignV2ParamField field{};
+    field.instrId = 83;
+    field.dstAddr = 0x1000;
+    field.burstNum = 1;
+    field.burstLen = 32;
+    auto state = SingletonDmaState(aclsan::DmaLoopDirection::UBUF_TO_GM);
+    for (uint64_t ctrl : {uint64_t((1U << 6U) | (3U << 9U)), uint64_t(7U << 6U)}) {
+        state.ctrl = aclsan::CtrlRegisterParamField{ctrl};
+        const auto result = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+        ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::PARTIAL_COVERAGE);
+        EXPECT_TRUE(result.requiresIncompleteEvent);
+        for (const auto& access : result.data) {
+            EXPECT_NE(access.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+            EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+        }
+    }
+}
+
+TEST(AclsanMemoryCbdata, FixpipeAtomicChangesAllOutputSegmentsAndPreservesL0cRead)
+{
+    aclsan::FixL0cToOutParamField field{};
+    field.instrId = 91;
+    field.dstAddr = 0x1000;
+    field.nSize = 16;
+    field.mSize = 16;
+    field.loopDstStride = 256;
+    field.loopSrtStride = 16;
+    aclsan::MemoryRegisterState state{};
+    state.ctrl = aclsan::CtrlRegisterParamField{1U << 6U};
+    const auto result = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+    ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    ASSERT_GE(result.data.size(), 2U);
+    for (const auto& access : result.data) {
+        EXPECT_EQ(
+            access.accessMode, access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
+                                   ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD :
+                                   ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    }
+    state.ctrl = aclsan::CtrlRegisterParamField{5U << 6U};
+    const auto mismatch = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+    EXPECT_EQ(mismatch.status, aclsan::MemoryCbdataStatus::PARTIAL_COVERAGE);
+}
+
+TEST(AclsanMemoryCbdata, MissingCtrlPreservesFixpipeSourceReadAndExactGmWrite)
+{
+    aclsan::FixL0cToOutParamField field{};
+    field.instrId = 91;
+    field.dstAddr = 0x1000;
+    field.nSize = 16;
+    field.mSize = 16;
+    field.loopDstStride = 256;
+    field.loopSrtStride = 16;
+    const auto result = aclsan::MemoryFieldToCbdataConverter{{}}.Convert(field);
+    ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    EXPECT_FALSE(result.requiresIncompleteEvent);
+    ASSERT_EQ(result.data.size(), 2U);
+    EXPECT_EQ(result.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+    EXPECT_EQ(result.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    EXPECT_EQ(result.data[0].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    EXPECT_EQ(result.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L0C);
+    EXPECT_EQ(result.data[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    EXPECT_EQ(result.data[1].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+}
+
+TEST(AclsanMemoryCbdata, FixpipeAtomicCoversS32AndQuantizedOutputSegments)
+{
+    struct Case {
+        uint32_t id;
+        uint8_t quantPre;
+        uint64_t atomicType;
+        uint32_t bits;
+    };
+    for (const auto& test :
+         {Case{92, 0, 4, 32}, Case{91, 1, 2, 16}, Case{92, 10, 3, 16}, Case{91, 24, 5, 8}, Case{92, 8, 5, 8}}) {
+        SCOPED_TRACE(::testing::Message() << "id=" << test.id << " quantPre=" << unsigned(test.quantPre));
+        aclsan::FixL0cToOutParamField field{};
+        field.instrId = test.id;
+        field.quantPre = test.quantPre;
+        field.dstAddr = 0x8000;
+        field.nSize = 48;
+        field.mSize = 4;
+        field.loopDstStride = 64;
+        field.loopSrtStride = 16;
+        aclsan::MemoryRegisterState state{};
+        state.ctrl = aclsan::CtrlRegisterParamField{test.atomicType << 6U};
+        const auto result = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+        ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+        size_t gmCount = 0;
+        for (const auto& access : result.data) {
+            if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+                ++gmCount;
+                EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+                EXPECT_EQ(access.dataBits, test.bits);
+                EXPECT_EQ(access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+                EXPECT_EQ(access.header.version, ACLSAN_API_VERSION);
+            } else {
+                EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+            }
+        }
+        EXPECT_GT(gmCount, 0U);
+        if (test.quantPre == 24) {
+            EXPECT_EQ(gmCount, 2U);
+        }
+    }
+}
+
+TEST(AclsanMemoryCbdata, AddMaxMinAllProduceAtomicWritesForDmaAndFixpipe)
+{
+    for (uint64_t operation = 0; operation <= 2; ++operation) {
+        SCOPED_TRACE(operation);
+        auto state = SingletonDmaState(aclsan::DmaLoopDirection::UBUF_TO_GM);
+        state.ctrl = aclsan::CtrlRegisterParamField{(1U << 6U) | (operation << 9U)};
+        aclsan::CopyUbufToGmAlignV2ParamField dma{};
+        dma.instrId = 83;
+        dma.dstAddr = 0x1000;
+        dma.burstNum = 1;
+        dma.burstLen = 32;
+        aclsan::FixL0cToOutParamField fix{};
+        fix.instrId = 91;
+        fix.dstAddr = 0x1000;
+        fix.nSize = 16;
+        fix.mSize = 16;
+        fix.loopDstStride = 256;
+        fix.loopSrtStride = 16;
+        for (const auto& field : {aclsan::MemoryInstructionField{dma}, aclsan::MemoryInstructionField{fix}}) {
+            const auto result = aclsan::MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+            EXPECT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+            ASSERT_FALSE(result.data.empty());
+            for (const auto& access : result.data) {
+                EXPECT_EQ(access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+                EXPECT_EQ(
+                    access.accessMode, access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
+                                           (operation == 0 ? ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD :
+                                            operation == 1 ? ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX :
+                                                             ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN) :
+                                           ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+            }
         }
     }
 }

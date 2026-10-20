@@ -21,6 +21,26 @@
 namespace npucheck {
 namespace {
 
+const char* RaceKindName(const ReportTemplateKey& key)
+{
+    if (key.tool != ReportTool::RACECHECK) {
+        return nullptr;
+    }
+    if (key.pattern == "atomic_semantic") {
+        return ConflictKindName(ConflictKind::ATOMIC_SEMANTIC);
+    }
+    if (key.pattern == "hazard_raw") {
+        return ConflictKindName(ConflictKind::RAW);
+    }
+    if (key.pattern == "hazard_war") {
+        return ConflictKindName(ConflictKind::WAR);
+    }
+    if (key.pattern == "hazard_waw") {
+        return ConflictKindName(ConflictKind::WAW);
+    }
+    return nullptr;
+}
+
 std::string Trim(const std::string& value)
 {
     std::size_t begin = 0;
@@ -184,12 +204,14 @@ void AppendRawStackText(const std::string& rawText, std::string* out)
     }
 }
 
-void AppendFrame(const ReportFrame& frame, std::size_t frameIndex, std::string* out)
+void AppendFrame(const ReportFrame& frame, std::size_t frameIndex, std::string* out, bool raceFrame)
 {
     out->append("=========     #");
     out->append(std::to_string(frameIndex));
     out->append(" ");
-    out->append(frame.function.empty() ? "<unknown>" : frame.function);
+    out->append(
+        frame.function.empty() && raceFrame ? "pc " + detail::HexWithPrefix(frame.pc) :
+                                              (frame.function.empty() ? "<unknown>" : frame.function));
     if (!frame.file.empty()) {
         out->append(" in ");
         out->append(frame.file);
@@ -205,7 +227,7 @@ void AppendFrame(const ReportFrame& frame, std::size_t frameIndex, std::string* 
     out->push_back('\n');
 }
 
-void AppendCallStacks(const std::vector<ReportCallStack>& stacks, std::string* out)
+void AppendCallStacks(const std::vector<ReportCallStack>& stacks, std::string* out, bool raceHazard)
 {
     for (const ReportCallStack& stack : stacks) {
         const bool renderRaw = stack.format == ReportStackFormat::RAW_TEXT && !stack.rawText.empty();
@@ -215,14 +237,19 @@ void AppendCallStacks(const std::vector<ReportCallStack>& stacks, std::string* o
         }
         EnsureTrailingNewline(out);
         out->append("=========  ");
-        out->append(ReportStackRoleTitle(stack.role));
+        const bool current = raceHazard && stack.role == ReportStackRole::RELATED_ACCESS_B;
+        const bool previous = raceHazard && stack.role == ReportStackRole::RELATED_ACCESS_A;
+        out->append(
+            current  ? "Current Device Frames:" :
+            previous ? "Previous Device Frames:" :
+                       ReportStackRoleTitle(stack.role));
         out->push_back('\n');
         if (renderRaw) {
             AppendRawStackText(stack.rawText, out);
         }
         if (renderFrames) {
             for (std::size_t index = 0; index < stack.frames.size(); ++index) {
-                AppendFrame(stack.frames[index], index, out);
+                AppendFrame(stack.frames[index], index, out, current || previous);
             }
         }
     }
@@ -257,11 +284,15 @@ ReportRenderStatus RenderReportRecord(
     PutDerivedLocations(&fields);
     fields["Severity"] = ReportSeverityName(record.severity);
     fields["pattern"] = record.key.pattern;
+    const char* raceKind = RaceKindName(record.key);
+    if (raceKind != nullptr) {
+        fields["raceKind"] = raceKind;
+    }
     const ReportRenderStatus status = RenderReportText(*tpl, fields, out);
     if (status != ReportRenderStatus::SUCCESS) {
         return status;
     }
-    AppendCallStacks(record.stacks, out);
+    AppendCallStacks(record.stacks, out, raceKind != nullptr);
     return ReportRenderStatus::SUCCESS;
 }
 

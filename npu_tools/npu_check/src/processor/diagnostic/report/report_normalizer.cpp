@@ -9,12 +9,14 @@
  */
 
 #include "diagnostic/report/report_normalizer.h"
+#include "checker/racecheck_reports.h"
 
 #include "diagnostic/report/report_catalog.h"
 #include "diagnostic/report/report_fields.h"
 #include "diagnostic/report/synccheck_adapter.h"
 
 #include <type_traits>
+#include <utility>
 
 namespace npucheck::detail {
 namespace {
@@ -22,8 +24,6 @@ namespace {
 const char* MemcheckPatternName(NpuCheckReportPattern pattern) { return PatternName(ReportTool::MEMCHECK, pattern); }
 
 const char* InitcheckPatternName(NpuCheckReportPattern pattern) { return PatternName(ReportTool::INITCHECK, pattern); }
-
-const char* RacecheckPatternName(NpuCheckReportPattern pattern) { return PatternName(ReportTool::RACECHECK, pattern); }
 
 const char* SoccheckPatternName(NpuCheckReportPattern pattern) { return PatternName(ReportTool::SOCCHECK, pattern); }
 
@@ -112,77 +112,6 @@ ReportRecord ToReportRecord(const NpuCheckInitcheckReport& report)
         ActiveCallStacks(report.common)};
 }
 
-ReportRecord ToReportRecord(const NpuCheckRacecheckReport& report)
-{
-    ReportFields fields;
-    PutExecFields(report.common.exec, &fields);
-    PutFaultLocationFields(report.common, &fields);
-    PutAccessFields(report.first.access, &fields);
-    fields["blockId"] = std::to_string(report.first.exec.blockId);
-    fields["firstAccess"] = AccessModeName(report.first.access.accessMode);
-    fields["secondAccess"] = AccessModeName(report.second.access.accessMode);
-    fields["firstCoreId"] = FormatCoreId(report.first.exec.phyCoreId);
-    fields["firstType"] = FormatBlockType(report.first.exec.blockType);
-    fields["firstBlock"] = std::to_string(report.first.exec.blockId);
-    fields["firstPipe"] = OrUnknown(report.first.exec.pipeName);
-    fields["firstFunction"] = OrUnknown(report.first.exec.function);
-    fields["firstOffset"] = Hex(report.first.exec.offset);
-    fields["firstFile"] = OrUnknown(report.first.exec.file);
-    fields["firstLine"] = std::to_string(report.first.exec.line);
-    fields["firstLocation"] = FormatLocation(report.first.exec, false);
-    fields["firstLaunchId"] = FormatLaunchId(report.first.exec.launchId);
-    fields["secondCoreId"] = FormatCoreId(report.second.exec.phyCoreId);
-    fields["secondType"] = FormatBlockType(report.second.exec.blockType);
-    fields["secondBlock"] = std::to_string(report.second.exec.blockId);
-    fields["secondPipe"] = OrUnknown(report.second.exec.pipeName);
-    fields["secondFunction"] = OrUnknown(report.second.exec.function);
-    fields["secondOffset"] = Hex(report.second.exec.offset);
-    fields["secondFile"] = OrUnknown(report.second.exec.file);
-    fields["secondLine"] = std::to_string(report.second.exec.line);
-    fields["secondLocation"] = FormatLocation(report.second.exec, false);
-    fields["secondLaunchId"] = FormatLaunchId(report.second.exec.launchId);
-    if (const ReportFrame* frame = FirstStructuredFrame(report.common, ReportStackRole::RELATED_ACCESS_A)) {
-        PutFrameLocationFields(*frame, "first", &fields);
-    }
-    if (const ReportFrame* frame = FirstStructuredFrame(report.common, ReportStackRole::RELATED_ACCESS_B)) {
-        PutFrameLocationFields(*frame, "second", &fields);
-    }
-    if (report.common.pattern == NpuCheckReportPattern::RACECHECK_CROSS_PIPE_RACE) {
-        fields["coreId"] = FormatCoreId(report.first.exec.phyCoreId);
-    } else if (report.common.pattern == NpuCheckReportPattern::RACECHECK_INVALID_REMOTE_ACCESS) {
-        fields["location"] = "at " + fields["firstLocation"];
-        fields["coreId"] = FormatCoreId(report.first.exec.phyCoreId);
-        fields["blockType"] = FormatBlockType(report.first.exec.blockType);
-        fields["blockId"] = std::to_string(report.first.exec.blockId);
-        fields["pipeName"] = OrUnknown(report.first.exec.pipeName);
-        fields["launchId"] = FormatLaunchId(report.first.exec.launchId);
-    }
-    fields["hazardCount"] = std::to_string(report.hazardCount);
-    fields["overlapBytes"] = std::to_string(report.overlapBytes);
-    fields["ordering"] = report.ordering;
-    fields["coverage"] = report.coverage;
-    fields["unorderedPeers"] = report.unorderedPeers ? "true" : "false";
-    fields["raceDevice"] = std::to_string(report.first.exec.deviceId);
-    fields["firstInstruction"] = std::to_string(report.first.exec.instrExecId);
-    fields["secondInstruction"] = std::to_string(report.second.exec.instrExecId);
-    std::string ranges;
-    for (const auto& range : report.overlapRanges) {
-        if (!ranges.empty())
-            ranges += ", ";
-        ranges += "[0x" + Hex(range.first) + ", 0x" + Hex(range.second) + ")";
-    }
-    fields["overlapRanges"] = ranges.empty() ? "unknown" : ranges;
-    fields["currentValue"] = HexWithPrefix(report.currentValue);
-    fields["incomingValue"] = HexWithPrefix(report.incomingValue);
-    fields["scope"] = std::to_string(report.scope);
-    fields["remoteState"] = "is unavailable";
-    return ReportRecord{
-        {ReportTool::RACECHECK, RacecheckPatternName(report.common.pattern)},
-        report.common.severity,
-        fields,
-        ActiveCallStacks(report.common)};
-}
-
 ReportRecord ToReportRecord(const NpuCheckSoccheckReport& report)
 {
     ReportFields fields;
@@ -222,18 +151,6 @@ template <>
 inline constexpr ReportTool kReportTool<NpuCheckSoccheckReport> = ReportTool::SOCCHECK;
 
 template <typename Report>
-bool ValidateToolSpecific(const Report&)
-{
-    return true;
-}
-
-bool ValidateToolSpecific(const NpuCheckRacecheckReport& report)
-{
-    return report.common.pattern != NpuCheckReportPattern::RACECHECK_CROSS_PIPE_RACE ||
-           report.first.exec.phyCoreId == report.second.exec.phyCoreId;
-}
-
-template <typename Report>
 ReportRenderStatus NormalizeTypedReport(const Report& report, ReportRecord* out)
 {
     *out = ToReportRecord(report);
@@ -261,11 +178,16 @@ ReportRenderStatus NormalizeReport(const NpuCheckReportRecord& record, ReportRec
             using Payload = std::decay_t<decltype(payload)>;
             if constexpr (std::is_same_v<Payload, std::monostate>) {
                 return ReportRenderStatus::INVALID_ARGUMENT;
+            } else if constexpr (std::is_same_v<Payload, const NpuCheckRacecheckReport*>) {
+                if (!payload || record.tool != ReportTool::RACECHECK ||
+                    record.pattern != RacecheckPattern(payload->kind)) {
+                    return ReportRenderStatus::INVALID_ARGUMENT;
+                }
+                return NormalizeRacecheckReport(*payload, out);
             } else {
                 using Report = std::remove_const_t<std::remove_pointer_t<Payload>>;
                 if (payload == nullptr || record.tool != kReportTool<Report> ||
-                    !ValidateReportCommon(payload->common, kReportTool<Report>, record.pattern) ||
-                    !ValidateToolSpecific(*payload)) {
+                    !ValidateReportCommon(payload->common, kReportTool<Report>, record.pattern)) {
                     return ReportRenderStatus::INVALID_ARGUMENT;
                 }
                 return NormalizeTypedReport(*payload, out);

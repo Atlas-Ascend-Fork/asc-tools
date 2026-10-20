@@ -10,8 +10,7 @@
 
 #include "tool_manager/tool_manager.h"
 
-#include "diagnostic/report/report_normalizer.h"
-#include "diagnostic/report/device_call_stack.h"
+#include "diagnostic/report/report_assembler.h"
 
 #include <algorithm>
 #include <exception>
@@ -369,36 +368,18 @@ void ToolManager::OnCallbackException(const char* reason) noexcept
 void ToolManager::StoreReports(CheckerReportList reports)
 {
     for (auto& report : reports) {
-        std::visit(
-            [this](auto& typed) {
-                npucheck::PopulateDeviceCallStack(typed);
-                NormalizeAndStoreReportRecord(
-                    npucheck::NpuCheckReportRecord::From(typed), typed.common.reportId, "checker report");
-            },
-            report);
-    }
-}
-
-bool ToolManager::NormalizeAndStoreReportRecord(
-    const npucheck::NpuCheckReportRecord& report, uint64_t reportId, const char* what)
-{
-    npucheck::ReportRecord normalized;
-    const auto status = npucheck::detail::NormalizeReport(report, &normalized);
-    if (status != npucheck::ReportRenderStatus::SUCCESS) {
-        {
-            std::lock_guard<std::mutex> stateLock(stateMutex_);
-            ++frameworkErrors_;
-        }
-        ASCTOOL_ERROR(
-            "%s normalization failed report_id=%llu status=%d", what, static_cast<unsigned long long>(reportId),
-            static_cast<int>(status));
-        return false;
-    }
-    {
+        // 与回调串行组装并保存最终报告。
         std::lock_guard<std::mutex> stateLock(stateMutex_);
-        reportRecords_.push_back(std::move(normalized));
+        auto result = AssembleReport(report);
+        if (result.status != ReportRenderStatus::SUCCESS) {
+            ++frameworkErrors_;
+            ASCTOOL_ERROR(
+                "checker report normalization failed report_id=%llu status=%d",
+                static_cast<unsigned long long>(result.reportId), static_cast<int>(result.status));
+            continue;
+        }
+        reportRecords_.push_back(std::move(result.record));
     }
-    return true;
 }
 
 void ToolManager::LogMalformed(AclsanCallbackDomain domain, AclsanCallbackId cbid, const char* reason)

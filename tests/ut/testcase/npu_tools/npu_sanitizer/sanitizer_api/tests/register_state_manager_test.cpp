@@ -294,3 +294,21 @@ TEST(RegisterStateManager, Main)
     TestResetClearsStateAndKeepsLaunchIdentity();
     TestLogsEveryRegisterUpdateWithFullNewValue();
 }
+
+TEST(RegisterStateManager, AtomicCtrlIsolatesExecutionCoresAndResetsBetweenLaunches)
+{
+    Dav3510RegisterStateManager manager(1);
+    const Dav3510CoreKey first{ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR, 0, 1, 0};
+    const Dav3510CoreKey second{ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR, 0, 2, 0};
+    const Dav3510CoreKey otherDevice{ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR, 0, 1, 1};
+    manager.Update(first, aclsan::CtrlRegisterParamField{64});
+    manager.Update(second, aclsan::CtrlRegisterParamField{0});
+    EXPECT_EQ(manager.Get(first)->ctrl->value, 64U);
+    EXPECT_EQ(manager.Get(second)->ctrl->value, 0U);
+    EXPECT_FALSE(manager.Get(otherDevice).has_value());
+    manager.Update(first, aclsan::CtrlRegisterParamField{128});
+    EXPECT_EQ(manager.Get(first)->ctrl->value, 128U);
+    EXPECT_FALSE(Dav3510RegisterStateManager(2).Get(first).has_value());
+    manager.Reset();
+    EXPECT_FALSE(manager.Get(first).has_value());
+}

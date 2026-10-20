@@ -33,7 +33,7 @@ struct ProbeDefinition {
     std::string_view recordArguments;
 };
 
-const std::array<ProbeDefinition, 188>
+const std::array<ProbeDefinition, 189>
     kDefinitions{
         {
             {167, ProbeGroup::Fixpipe, "__sanitizer_report_copy_cbuf_to_fbuf",
@@ -683,6 +683,9 @@ const std::array<ProbeDefinition, 188>
             {123, ProbeGroup::Scalar, "__sanitizer_report_set_channel_para",
              R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t value)PARAM", "RegisterState",
              "PIPE_S", R"ARGS(value, 0UL, 0UL, 0UL, 0UL)ARGS"},
+            {159, ProbeGroup::Scalar, "__sanitizer_report_set_ctrl",
+             R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)PARAM", "RegisterState",
+             "PIPE_S", R"ARGS(config, 0UL, 0UL, 0UL, 0UL)ARGS"},
             {160, ProbeGroup::Scalar, "__sanitizer_report_set_ffts_base_addr",
              R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)PARAM", "RegisterState",
              "PIPE_S", R"ARGS(config, 0UL, 0UL, 0UL, 0UL)ARGS"},

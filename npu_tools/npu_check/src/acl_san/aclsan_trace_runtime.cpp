@@ -380,9 +380,11 @@ void DispatchTraceRecords(
             continue;
         }
 
-        const dav3510::Dav3510CoreKey key{parsed.blockType, parsed.blockId};
+        const dav3510::Dav3510CoreKey key{parsed.blockType, parsed.blockId, parsed.phyCoreId, parsed.deviceId};
         bool stateInstruction = true;
-        if (const auto* value = std::get_if<FmatrixParamField>(&decoded->params)) {
+        if (const auto* value = std::get_if<CtrlRegisterParamField>(&decoded->params)) {
+            registerState.Update(key, *value);
+        } else if (const auto* value = std::get_if<FmatrixParamField>(&decoded->params)) {
             registerState.Update(key, *value);
         } else if (const auto* value = std::get_if<L3dRptParamField>(&decoded->params)) {
             registerState.Update(key, *value);
@@ -417,6 +419,7 @@ void DispatchTraceRecords(
         const std::optional<dav3510::Dav3510CoreRegisterState> state = registerState.Get(key);
         MemoryRegisterState memoryState{};
         if (state.has_value()) {
+            memoryState.ctrl = state->ctrl;
             memoryState.fmatrix = state->fmatrix;
             memoryState.l3dRpt = state->l3dRpt;
             memoryState.mte2Source = state->mte2Source;
