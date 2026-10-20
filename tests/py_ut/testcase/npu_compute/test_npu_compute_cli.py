@@ -484,7 +484,10 @@ def test_optional_separator_preserves_application_arguments(
         (("-i",), "--import expects a report file, but no file was provided."),
         (("--export",), "--export requires an output path:"),
         (("-o",), "--export requires an output path:"),
-        (("--import", "missing.npu-rep"), "--import cannot be combined"),
+        (
+            ("--import", "missing.npu-rep"),
+            "Use --import alone or with --export as the only additional option.",
+        ),
         (("--list-sections",), "use --list-sections as a standalone command."),
         (("--bad",), "unknown option '--bad'"),
     ],

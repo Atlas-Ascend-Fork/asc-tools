@@ -1,5 +1,16 @@
 # npu-compute performance data
 
+This document describes the fields and calculations in Section CSV files, `summary.jsonl`, and `HardwareInfo.jsonl`. CSV files contain Block/sub-block details. The summary contains Task-level metrics for the selected Sections and an `OpInfoSummary` operator overview. HardwareInfo records host and device information.
+
+| Output | Scope | Relationship to other data |
+|---|---|---|
+| Section CSV | Block/sub-block | Counters, execution times, and derived metrics for each logical execution object. |
+| Section records in the summary | Task | Cycles, counters, and data volumes correspond to cumulative totals. Ratios, hit rates, and bandwidths use cumulative inputs and their respective denominators; they are not uniformly Block averages. |
+| `OpInfoSummary` | Current Kernel | Combines Task metrics, Block parallel statistics, runtime metadata, and hardware capabilities. |
+| `HardwareInfo.jsonl` | Collection environment | Host and device information, distinct from the Kernel's logical launch counts. |
+
+Matching metric names use the same units and base formulas, but their scope, frequency, or time denominator may differ. See the summary section for the relationship between CSV files and the summary.
+
 ## ArithmeticUtilization (Cube and Vector instruction utilization and counts)
 
 ArithmeticUtilization.csv contains active-cycle ratios for Cube and Vector instructions and instruction counts for Cube. Use it to examine activity by instruction type and the number of Cube instructions executed. See the field descriptions in the table below for details.
@@ -233,39 +244,68 @@ NA means inapplicable to the current Core or unavailable data; it does not mean 
 
 ## summary (Section summaries and operator information)
 
-summary.jsonl contains summaries of the selected performance metrics and basic operator information. Start with valid values for operator duration, compute activity, and Block execution balance, then examine the detailed data in the corresponding CSV files. See the field descriptions in the following tables for details.
-
-`summary.jsonl` uses JSON Lines: one JSON object per line. Selected PMU Section records appear in selection order, followed by `OpInfoSummary`, which contains basic operator information.
+`summary.jsonl` uses JSON Lines, one object per line. The selected subset of the seven PMU Sections is emitted in alphabetical order, without duplicates, followed by OpInfoSummary. Pipeline-only collection also emits an operator summary when a Kernel collection result exists. Commands that execute no Kernel do not create a summary.
 
 ### Section summary records
 
-| Field | Description |
-|---|---|
-| `category` | String identifying the Section: ArithmeticUtilization, L2Cache, Memory, MemoryL0, MemoryUB, PipeUtilization, or ResourceConflictRatio. |
-| All metric fields from the corresponding CSV | Same names and units as the Section tables above, excluding `block_id` and `sub_block_id`. Each metric is independently averaged over valid Task-level values; no valid value produces JSON `null`. |
+The category is ArithmeticUtilization, L2Cache, Memory, MemoryL0, MemoryUB, PipeUtilization, or ResourceConflictRatio. Fields use the corresponding CSV names and units, excluding block_id and sub_block_id. Each field is independently averaged over valid Task PMU records. Unavailable fields remain present and use the exact JSON string "NA"; valid zero remains a number. Counter averages have no decimal places; other finite metrics have six.
 
-Summaries always use Task records regardless of whether CSV uses Block or Task records. Counter averages are still displayed without decimal places; other finite metrics use six. Metrics may have different valid sample counts. Summary bandwidth is a mean of valid row bandwidths, not the sum across all Cores.
+This averaging is across Task records, a separate level from the cumulative Block coverage of a single Task. Task summaries read Task PMU directly. They neither generate Task data by multiplying Block data by a Block count nor fall back to Block data when Task input is missing. Valid sample counts may differ between Section fields; summaries cannot reconstruct Block details.
+
+### Relationship between Block and Task metrics
+
+The relationships below require the same Core type, the same Task execution, matching collection scope, and a complete valid Block set. Let $C_b$ be Block cycles, $P_b$ the relevant Event count, $Q_b$ bytes, $F$ the frequency for that Core type in MHz, $t_b=C_b/F$ execution time in us, and $T$ Task Log duration in us. AIC and AIV are handled separately.
+
+**The sums, weighted relationships, and equations describe equivalent statistical meanings under these conditions, not code that accumulates Block data to generate Task data.** The implementation reads cycles and Event counts directly from Task PMU, then computes Task metrics. Different replays, missing data, sampling scope, and display rounding can prevent exact equality between displayed values.
+
+| Metric | Relationship from Blocks to one Task | Difference when comparing with CSV |
+|---|---|---|
+| Total cycles, instruction counts, and L2 access counts | $C_{\mathrm{task}}=\sum_b C_b$; additive Event counts satisfy $P_{\mathrm{task}}=\sum_b P_b$. | Cumulative totals, not Block averages. |
+| Execution time and pipeline active time | At the same frequency, $C_{\mathrm{task}}/F=\sum_b t_b$; active time is $\sum_b P_b/F$. | Cumulative Core time, not end-to-end Task duration. |
+| Data volumes | For linear conversions, $Q_{\mathrm{task}}=\sum_b Q_b$; KB uses bytes divided by `1024`. | Fields with nonlinear adjustments such as clamping or rounding use their original formulas; derived values are not necessarily additive. |
+| Active, wait, and conflict ratios | $\frac{\sum_b P_b}{\sum_b C_b}$, a cycle-weighted ratio. | Not an arithmetic mean of Block ratios; combine numerator Events as defined for each field. |
+| L2 hit rates and I-cache miss rates | L2: $100\times\frac{\sum_b \mathrm{hit}_b}{\sum_b \mathrm{access}_b}$; I-cache: $\frac{\sum_b \mathrm{miss}_b}{\sum_b \mathrm{access}_b}$. | Access-weighted rates. I-cache does not multiply by `100`; zero denominators follow the corresponding field rules. |
+| Bandwidth using cumulative execution time | $\frac{\sum_b Q_b\times10^6}{1024^3\times\sum_b t_b}$, with the output label GB/s. | An execution-time-weighted Block bandwidth, not a sum of bandwidths. |
+| Active bandwidth | $\frac{\sum_b Q_b\times10^6}{1024^3\times\sum_b \mathrm{active\_time}_b}$. | Weighted by active time; nonlinear numerator adjustments still use the original formula. |
+| Bandwidth using a common Task duration | $\frac{Q_{\mathrm{task}}\times10^6}{1024^3\times T}$. | Equals the sum of Block bandwidths only when the CSV rows also use the same `T` and data volumes are additive. |
+| Bandwidth utilization within a Section | Compute Task bandwidth first, then apply the corresponding theoretical bandwidth and clipping rule. | Do not directly average or sum Block utilization values. OpInfoSummary GM utilization has its own formula below. |
+
+Bandwidth fields in Memory, MemoryL0, and MemoryUB that use operation duration use Task duration when both AIC/AIV data and valid Task Logs are present; otherwise, they use cycles and frequency for the corresponding Core type. PipeUtilization active bandwidth uses pipeline active time. The summary prefers actual Current frequency, falls back to Rated frequency, and never substitutes CSV defaults when both are missing. Compare matching time and bandwidth fields only after checking that their effective frequencies and time denominators agree.
+
+For example, two Blocks with cycles `1000, 3000` and active cycles `100, 1500` give Task cycles `4000`, active cycles `1600`, and ratio `0.4`. The arithmetic mean of the Block ratios is `0.3` and cannot replace the Task ratio. When multiple Task records exist, the summary then averages valid Task values independently for each field. Fields without an AIC/AIV prefix also use their applicable records; do not unconditionally treat the sum of both Core types as the final summary value. Calculations use unrounded inputs, so recomputing from rounded CSV values may differ in the last digits.
 
 ### OpInfoSummary fields
 
+Numeric fields accept a number or the exact string "NA". Integer metadata accepts an integer or NA; missing text also uses NA. FP16 theoretical TFLOPS values have two decimal places; other derived floating-point values have six.
+
 | Field | JSON type | Description |
 |---|---|---|
-| `category` | string | Always `OpInfoSummary`. |
-| `Op Name` | string/null | Readable name of the current Kernel. Null if the name is unavailable. |
-| `Op Type` | string/null | Execution type derived from Task PMU data: cube for Cube only, vector for Vector only, or mix for both. Null if no valid type information exists. |
-| `Task Duration(us)` | number/null | Median valid Task execution time for the current Kernel, in us. Each replay duration comes from Task start and end records. Null when no valid interval is available. |
-| `Block Dim` | integer/null | Logical Block count configured at Kernel launch. Null if launch information is unavailable. |
-| `Mix Block Dim` | null | Reserved mixed-Kernel Block dimension field; currently always `null`. |
-| `Device Id` | integer/null | Logical Device ID from Kernel launch metadata; `null` if unavailable. |
-| `Pid` | integer | ID of the target process executing the Kernel. |
-| `Current Freq` | number/null | Core frequency used to calculate performance metrics, in MHz. Null when Cube and Vector frequencies differ for a mixed Kernel. |
-| `Rated Freq` | number/null | Rated Core frequency returned by the device API, in MHz, currently queried for logical Device 0. Null if unavailable or if Cube and Vector frequencies differ for a mixed Kernel. |
-| `aicore_parallel_utilization` | number/null | Average compute activity across Blocks. Average Cube and Vector active ratios separately within each Block, add them, then average across Blocks. Null without PipeUtilization or valid data; may exceed 1. |
-| `aicore_parallel_balance` | number/null | Consistency of execution times across Blocks, using the longest Core duration in each Block. Values closer to 1 indicate more balanced execution. Null without valid data; large variation can produce a negative value. |
-| `aicore_gm_bw_theoretical(GB/s)` | integer/null | Theoretical bandwidth used to calculate summary GM bandwidth utilization. Fixed at 1600 GB/s when Memory is selected, otherwise `null`. |
-| `aicore_gm_read_bw(GB/s)` | number/null | Sum of AIC and AIV main-memory read bandwidths in the Memory summary. Uses the available one if only one exists; `null` if neither exists. |
-| `aicore_gm_write_bw(GB/s)` | number/null | Sum of AIC and AIV main-memory write bandwidths in the Memory summary. Uses the available one if only one exists; `null` if neither exists. |
-| `aicore_gm_bw_usage_rate(%)` | number/null | Sum of summary GM read and write bandwidth as a percentage of the fixed theoretical bandwidth of 1600 GB/s. Null if either summary is unavailable; may exceed 100%. |
+| `category` | string | Always OpInfoSummary. |
+| `Op Name` | string/NA | Readable Kernel name, with C++ names demangled when possible. |
+| `Op Type` | string/NA | cube, vector, or mix. Prefer launch ratio/type metadata; use Task PMU only when metadata is unavailable. |
+| `Task Duration(us)` | number/NA | Median valid Task duration from paired start/end records. |
+| `Block Dim` | integer/NA | Launch logical Block count: Cube for mix, the corresponding Core type for a pure Kernel. |
+| `Mix Block Dim` | integer/NA | Vector logical count for mix: AIV ratio times Block Dim. NA for non-mix or missing/invalid dimensions. |
+| `Device Id` | integer/NA | Logical launch Device ID. |
+| `Pid` | integer | Target process ID. |
+| `Current Freq` | number/NA | Effective Core frequency used for calculations, in MHz. Prefer actual Current frequency, then valid Rated frequency. NA if neither is valid or the two effective mix frequencies differ; each Core type's metrics still use its own effective frequency. |
+| `Rated Freq` | number/NA | Rated frequency in MHz; NA when unavailable or mix sides differ. |
+| `aic_flops_theoretical` | number/NA | Hardware Cube count × 8192 × effective AIC frequency(MHz) / 10^6; FP16 TFLOPS, two decimal places. |
+| `aiv_flops_theoretical` | number/NA | Hardware Vector count × 256 × effective AIV frequency(MHz) / 10^6; FP16 TFLOPS, two decimal places. |
+| `aic_flops` | number/NA | mean_task(aic_total_cycles) × mean_task(aic_cube_fp_ratio) × 8192 / (TaskDuration(us) × 10^6). |
+| `aiv_flops` | number/NA | mean_task(aiv_total_cycles) × mean_task(aiv_vec_ratio) × 256 / (TaskDuration(us) × 10^6). |
+| `aicore_parallel_utilization` | number/NA | Sum of logical object execution times / (logical object count × TaskDuration) × 100, in percent. |
+| `aicore_parallel_balance` | number/NA | Mean logical object execution time / maximum execution time × 100, in percent. Does not require Task duration. |
+| `aicore_gm_bw_theoretical(GB/s)` | integer/NA | 1600 GB/s when Memory is selected, otherwise NA. |
+| `aicore_gm_read_bw(GB/s)` | number/NA | Sum of available AIC/AIV main-memory read bandwidths from the Task Memory summary. |
+| `aicore_gm_write_bw(GB/s)` | number/NA | Sum of available AIC/AIV main-memory write bandwidths from the Task Memory summary. |
+| `aicore_gm_bw_usage_rate(%)` | number/NA | (Summary read bandwidth + summary write bandwidth) / 1600 × 100. NA if either is missing. |
+
+Parallel metrics require the complete logical object set, identified by (blockId, subBlockId, coreType), ignoring physical coreId changes. Each time is total cycles divided by the effective frequency for that side. Missing records, conflicting duplicate cycles, or missing frequency make the metrics unavailable; the denominator is never reduced to the received row count. Mix preserves separate AIC/AIV times. All-zero times produce utilization 0 and balance NA. Missing Task duration only prevents utilization.
+
+Estimated TFLOPS use unrounded cycles and ratios averaged over the same valid Task record set for each side. They do not multiply by Block Dim or Mix Block Dim, and never fall back to Block data when Task input is missing. These are active-cycle estimates, not exact operation counts. Hardware core counts are used only for theoretical compute capacity; 36/72 cores at 1650 MHz produce 486.60/30.41 TFLOPS.
+
+Each side prefers valid Current frequency, then valid Rated frequency; missing values do not use CSV defaults. The explicit NPU_COMPUTE_FREQUENCY_MHZ override remains supported. The tool currently supports 950 only: ratios {1,0}/{0,1} identify pure cube/vector, while {1,1}/{1,2} identify mix. Mix Block Dim is AIV ratio times launch Block Dim, representing the logical Vector count.
 
 ## HardwareInfo (host and device information)
 

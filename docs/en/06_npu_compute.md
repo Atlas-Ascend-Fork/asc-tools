@@ -2,91 +2,121 @@
 
 ## Overview
 
-`npu-compute` runs a compiled NPU application and collects performance data. After a successful collection, it packages hardware information, a result summary, and data collected for the selected sections into a `.npu-rep` report. It can also unpack an existing report into files for inspection.
+`npu-compute` collects performance data from NPU applications. The tool runs the specified target program, collects [performance data](#performance-data-collection) for the selected metrics, and generates a `.npu-rep` report after successful collection. For an existing report, use `--import` to [unpack](#unpacking-a-report) it into files that can be inspected.
 
-The following sections are currently supported:
+### Metrics
 
-| Section | Description |
-| :--- | :--- |
-| `ArithmeticUtilization` | Cube FP/INT instruction counts and Cube/Vector active cycle ratios |
-| `L2Cache` | L2 Cache access data |
-| `Memory` | Main memory and on-chip memory access data |
-| `MemoryL0` | L0 memory access data |
-| `MemoryUB` | Unified Buffer access data |
-| `Pipeline` | Pipeline Timeline data |
-| `PipeUtilization` | Compute and pipeline utilization data |
-| `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios |
+`npu-compute` organizes the metrics it can collect into metric groups (Sections), each containing one category of metrics. A predefined set (Set) contains multiple Sections so that a group of commonly used metrics can be selected at once.
 
-Section names are case-sensitive.
+The following Sections are currently supported:
+
+| Section | Description | Included in |
+| :--- | :--- | :--- |
+| `ArithmeticUtilization` | Cube FP/INT instruction counts and Cube/Vector active cycle ratios | `basic`, `full` |
+| `L2Cache` | L2 Cache access data | `basic`, `full` |
+| `Memory` | Main memory and on-chip memory access data | `basic`, `full` |
+| `MemoryL0` | L0 memory access data | `basic`, `full` |
+| `MemoryUB` | Unified Buffer access data | `basic`, `full` |
+| `Pipeline` | Pipeline timeline data, written to `PipeTrace.json` | `basic`, `full` |
+| `PipeUtilization` | Compute and pipeline utilization data | `basic`, `full` |
+| `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios | `full` |
+
+Two predefined sets are available: `basic` contains the seven Sections other than `ResourceConflictRatio`, and `full` contains all eight Sections.
+
+For the meaning and calculation method of the fields in each Section, see [Performance Data](appendix/npu_compute_performance_data.md).
 
 ## Environment Preparation
 
-Refer to [Quick Start](00_quick_start.md) to prepare the environment. Install a CANN package that matches the target NPU and driver, then load the CANN environment. Replace `<CANN installation directory>` with the actual installation directory:
+Refer to [Quick Start](00_quick_start.md) to prepare the environment. Before use, install a CANN package that matches the target NPU and driver, and run the following command to set the environment variables:
 
 ```bash
-source <CANN installation directory>/cann/set_env.sh
+source ${INSTALL_DIR}/set_env.sh
 ```
 
-Run the following command to check whether `npu-compute` can be invoked:
+> Replace `${INSTALL_DIR}` with the directory where the CANN software is installed. For a root installation, the default installation path is `/usr/local/Ascend/cann`.
 
-```bash
-npu-compute --help
-```
+## Command Format and Options
 
-The target program must be able to run independently in the current environment and successfully execute at least one NPU kernel during its run.
+`npu-compute` supports two usage modes: performance data collection and report unpacking.
 
-## Command Format
+### Command Format
+
+Collect performance data:
 
 ```text
-npu-compute [options] [--] [program] [program-arguments]
+npu-compute [options] [--] <program> [program-arguments]
 ```
 
-`program` is the target program to collect. It can be specified using an absolute path, a relative path, or a command name. When a command name is used, the program must be discoverable through the `PATH` environment variable. The target can be a compiled executable or a script with execute permission. Everything after the target program is passed to that program as an argument.
+Unpack an existing report:
 
-The operators to be collected in the target program must currently be written in Ascend C and invoked using `<<<>>>` or aclnn. For chip support and other restrictions, see [Constraints](#constraints).
-
-For example:
-
-```bash
-npu-compute --section PipeUtilization ./application --input input.bin
+```text
+npu-compute --import <report-file> [--export <directory>]
 ```
 
-Tool options must be placed before the target program. If the target program name starts with `-`, add `--` before it.
+| Placeholder | Description |
+| :--- | :--- |
+| `options` | Tool options. Must precede the target program. See [Options](#options). |
+| `<program>` | Target program. Can be specified using an absolute path, a relative path, or a command name; when a command name is used, the program must be discoverable through `PATH`. |
+| `[program-arguments]` | Arguments passed unchanged to the target program. |
+| `[--]` | Optional separator placed before the target program to separate tool options from the target program and its arguments. Required when the target program name starts with `-`. |
+| `<report-file>` | Path to an existing `.npu-rep` report. |
+| `<directory>` | Existing directory that receives the unpacked results. |
 
-The target program must have execute permission. If a script is not executable, invoke its interpreter explicitly. For example:
-
-```bash
-npu-compute --section PipeUtilization bash ./run.sh
-```
+Everything after the target program is passed to it as arguments.
 
 ### Options
 
-| Option | Description |
-| :--- | :--- |
-| `-h`, `--help` | Shows help information. |
-| `--list-sections` | Lists supported section names. Use alone. |
-| `--list-sets` | Lists basic, full and their sections without starting collection. Use alone. |
-| `--set arg` | Selects basic or full (case-sensitive). If neither `--set` nor `--section` is specified, basic is used. May be repeated or combined with `--section`. |
-| `--section arg` | Selects a metric group (Section) to collect by name. Names are case-sensitive. When this option is used, a section name must be provided; there is no default. Specify this option multiple times to select different groups. |
-| `--replay-mode arg` | Kernel replay mode. Only `kernel` is supported and is the default. |
-| `-o arg`, `--export arg` | Specifies a report file path or an existing directory for collection. For import, specifies an existing directory in which a new result subdirectory is created. If this option is not used, the report or unpacked results are saved in the current directory. |
-| `-i arg`, `--import arg` | Imports and unpacks a `.npu-rep` report generated by npu-compute. Use `--export` to specify where results are saved. |
-| `--` | Optional separator placed before the target program to separate tool options from the target program and its arguments. |
+| Option | Mode | Input | Repeatable | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `-h`, `--help` | All | None | Yes | Shows help information. |
+| `--list-sections` | Query | None | No | Lists supported Section names. |
+| `--list-sets` | Query | None | No | Lists `basic`, `full`, and the Sections they contain. |
+| `--section arg` | Collect | Section name | Yes | Selects metric groups to collect by name. Names are case-sensitive. |
+| `--set arg` | Collect | `basic`, `full` | Yes | Selects a predefined set (case-sensitive). Equivalent to specifying each Section in the set with `--section`. |
+| `--replay-mode arg` | Collect | `kernel` | No | Kernel replay mode. Only `kernel` is supported and is the default. |
+| `-i arg`, `--import arg` | Unpack | Report file path | No | Imports and unpacks a `.npu-rep` report generated by npu-compute. |
+| `-o arg`, `--export arg` | Collect, Unpack | Report path or directory | No | For collection, specifies a report file path or an existing directory; for unpacking, specifies an existing directory for the unpacked results. See below for details. |
 
-Repeated identical `--section` options are collected once. `--replay-mode`, `--import`, and `--export` can each be specified only once per command.
+Combination rules:
 
-## Collecting Performance Data
+- A command can use options from only one mode, as shown in the Mode column.
+  - Query: accepts only one query option.
+  - Unpack: accepts only `--import` (required) and `--export` (optional).
+  - Collect: requires a target program; collect-mode options are optional.
+- `--help` takes precedence over other options: when combined with other valid options, only help is shown.
 
-A collection command requires a target program. If neither `--section` nor `--set` is specified, the basic set is collected.
+`--export` behaves differently in the two modes:
 
-`basic` contains ArithmeticUtilization, L2Cache, Memory, MemoryL0, MemoryUB, Pipeline, and PipeUtilization. `full` additionally contains ResourceConflictRatio.
+- Collection: specifies a report file path ending in `.npu-rep` or an existing directory. The parent directory of the report file must already exist, and existing files are not overwritten. If the option is not used, the report is saved in the current directory.
+- Unpacking: specifies an existing directory for the unpacked results. The tool creates a unique result subdirectory inside it and does not overwrite existing result directories. If the option is not used, the results are saved in a new result subdirectory under the current directory.
 
-`--set` can be combined with `--section`. The tool expands them in argument order and removes duplicates after the first occurrence. For example, `--section Memory --set basic` collects Memory first, followed by the remaining sections in basic. `--set` cannot be combined with `--import`; `--list-sets` must be used alone and cannot be specified more than once.
+Use the following commands to view help and the currently supported Sections and sets:
 
 ```bash
+npu-compute --help
+npu-compute --list-sections
 npu-compute --list-sets
-npu-compute --set basic --section ResourceConflictRatio ./application
 ```
+
+## Performance Data Collection
+
+The collection command collects the selected metrics while the target program runs, and generates a `.npu-rep` report after successful collection. For how to specify the target program and pass arguments, see [Command Format](#command-format). For chip support and target program requirements, see [Constraints](#constraints).
+
+### Selecting Metrics
+
+If neither `--set` nor `--section` is specified, `basic` is selected by default.
+
+When the same metric group appears more than once across selections, the tool merges the duplicates and collects each group only once.
+
+### Collection Examples
+
+Run `./application` and collect the metrics in the default set basic:
+
+```bash
+npu-compute ./application
+```
+
+Collect the Memory and PipeUtilization Sections:
 
 ```bash
 npu-compute \
@@ -94,6 +124,32 @@ npu-compute \
   --section PipeUtilization \
   ./application
 ```
+
+Use `--set full` to collect all supported Sections:
+
+```bash
+npu-compute --set full ./application
+```
+
+Collect the basic set and the ResourceConflictRatio Section:
+
+```bash
+npu-compute --set basic --section ResourceConflictRatio ./application
+```
+
+Pass the arguments `--input input.bin` to `./application`:
+
+```bash
+npu-compute --section PipeUtilization ./application --input input.bin
+```
+
+Run the script `./run.sh` through the bash interpreter:
+
+```bash
+npu-compute --section PipeUtilization bash ./run.sh
+```
+
+### Report Output
 
 After collection, the tool prints the report path:
 
@@ -101,15 +157,13 @@ After collection, the tool prints the report path:
 npu-compute: report= <report-path>
 ```
 
-### Specifying the Report Location
-
-Without `--export`, the report is created in the current directory with this name format:
+The default report name has the following format:
 
 ```text
-report_<milliseconds>_<random-id>.npu-rep
+report_<timestamp-ms>_<random-id>.npu-rep
 ```
 
-`--export` can specify a report file path ending in `.npu-rep`:
+Save the report as `./reports/profile.npu-rep`:
 
 ```bash
 npu-compute --section PipeUtilization \
@@ -117,86 +171,61 @@ npu-compute --section PipeUtilization \
   ./application
 ```
 
-The report file's parent directory must already exist, and existing files are not overwritten.
-
-`--export` can also specify an existing directory. The tool creates an automatically named report in that directory:
+Create an automatically named report in the `./reports` directory:
 
 ```bash
 mkdir -p ./reports
 npu-compute --section Memory --export ./reports ./application
 ```
 
-### Collecting Multiple Sections
+## Viewing Reports
 
-Multiple sections can be specified in one command. The following example lists all currently supported sections:
+A `.npu-rep` report can be viewed directly with a visualization tool (see [Visualization Tool Guide](https://gitcode.com/opdevtools/plugin_release/blob/dev/docs/user_guide.md)), or unpacked to inspect the collected files.
 
-```bash
-npu-compute \
-  --section ArithmeticUtilization \
-  --section L2Cache \
-  --section Memory \
-  --section MemoryL0 \
-  --section MemoryUB \
-  --section Pipeline \
-  --section PipeUtilization \
-  --section ResourceConflictRatio \
-  ./application
-```
+### Report Files
 
-`NA` in a CSV means that no valid value was collected for that metric. Other collected metrics remain available for inspection.
+A report can contain the following files:
 
-## Importing a Report
+| File | Generated when | Content |
+| :--- | :--- | :--- |
+| `HardwareInfo.jsonl` | Every collection | Host and NPU hardware information. |
+| `summary.jsonl` | A kernel is executed | Performance summary and operator overview. |
+| `PipeTrace.json` | `Pipeline` is selected | Pipeline timeline data in Chrome Trace format, viewable with Chrome Trace-compatible tools. |
+| `<Section-name>.csv` | Metric data is collected (except for `Pipeline`) | Metric data for the Section. |
 
-Use `--import` to unpack a report:
+`Pipeline` uses sampling to generate the pipeline diagram, independent of the number of cores enabled; even when all cores are enabled, the diagram shows data for at most six sampled Groups.
+
+`NA` in a CSV means that no valid value was collected for that metric; other metrics remain available.
+
+For field definitions, calculation methods, and the relationship between CSV files and the summary, see [Performance Data](appendix/npu_compute_performance_data.md).
+
+### Unpacking a Report
+
+Use `--import` to specify an existing `.npu-rep` report. The tool unpacks it into a result directory and prints the directory path.
 
 ```bash
 npu-compute --import ./reports/profile.npu-rep
 ```
 
-Without `--export`, the tool creates a unique result directory in the current directory and prints its path:
-
 ```text
-npu-compute: unpacked= <imported-result-directory>
+npu-compute: unpacked= <unpacked-result-directory>
 ```
 
-When `--export` specifies an existing directory, the tool creates a unique result subdirectory under it:
+The following command unpacks the report into a result subdirectory under `./restored`:
 
 ```bash
 mkdir -p ./restored
 npu-compute --import ./reports/profile.npu-rep --export ./restored
 ```
 
-The result directory contains the collected files before packaging, such as `HardwareInfo.jsonl`, `summary.jsonl`, `PipeUtilization.csv`, and `PipeTrace.json`. Importing a report does not run a target program.
-
-`--import arg` can be used alone. To specify where imported results are saved, use it with `--export <existing-directory>`.
-
-## Report Contents
-
-A report can contain the following files:
-
-| File | Content |
-| :--- | :--- |
-| `HardwareInfo.jsonl` | Host and NPU hardware information collected by default.|
-| `summary.jsonl` | Result summary collected by default. |
-| `PipeTrace.json` | Pipeline Timeline data in Chrome Trace format, collected when `--section Pipeline` is specified. |
-| `<Section name>.csv` | Performance data for a section specified with `--section`. It is generated when valid PMU data rows are available for the section.|
-
-Different sections have different CSV columns. Use the first row of each CSV as the field definition. If no valid PMU data row is available for a section, its CSV might not be generated. Other valid files that were generated can still be written to the report.
-
-`PipeTrace.json` can be visualized with Chrome Trace-compatible tools.
-
-For instructions on viewing npu-compute reports with visualization tools, see the [Visualization Tool Guide](https://gitcode.com/opdevtools/plugin_release/tree/dev#npu-compute-%E5%B7%A5%E5%85%B7%E4%BC%98%E5%85%88).
+The result directory contains the collected files listed in [Report Files](#report-files).
 
 ## Constraints
 
 - Chip type: only Ascend 950 (dav-3510) is currently supported.
 - Programming language: operators to be collected must currently be written in Ascend C.
-- Kernel function type: currently, the kernel type must be specified using the `__cube__`, `__vector__`, or `__mix__(cube,vec)` qualifier.
 - Operator invocation: currently, a single invocation of a single operator using `<<<>>>` or aclnn is supported.
-- The `Pipeline` Section generates the pipeline diagram through sampling and is independent of the number of cores enabled by the user. Even when all cores are enabled, the diagram displays data for at most 6 cores.
-- The target program must run independently without `npu-compute` and successfully execute at least one NPU kernel during its run.
-- The target program must be executable. A script can also be run by using an interpreter such as `bash` as the target program.
-- The target program and scripts started by it must not start another `npu-compute` collection. When nested collection is detected, the collection fails and no report is produced.
-- One collection command runs one target program. Run separate commands to collect multiple programs.
-- `--list-sections` cannot be combined with collection, import, or other configuration options.
-- Collection and import never overwrite existing report files or result directories.
+- `Pipeline` collection is limited by hardware: only one process on the same device can collect `Pipeline` at a time. If multiple processes collect `Pipeline` concurrently, only one produces output normally; the others fail.
+- When collecting `Pipeline` data for a SIMT operator, `noinline` `__aicore__` functions are not supported, including `printf` and `asc_dump`.
+- The target program must have execute permission, can be an executable or a script, must run independently without `npu-compute`, and must successfully execute at least one NPU kernel during its run.
+- One collection command runs one target program; run separate commands to collect multiple programs. The target program and scripts started by it must not start another `npu-compute` collection. When nested collection is detected, the collection fails and no report is produced.

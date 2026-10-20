@@ -2,91 +2,121 @@
 
 ## 概述
 
-`npu-compute` 用于运行已编译的 NPU 应用并采集性能数据。采集成功后，工具将硬件信息、结果摘要和所选 Section 的采集数据打包为 `.npu-rep` 报告；也可以将已有报告解包为可查看的文件。
+`npu-compute`是用于采集NPU应用的性能数据的工具。工具运行指定的目标程序，按照用户所选性能指标，进行对应[性能数据的采集](#性能数据采集)，并在采集成功后生成`.npu-rep`报告文件。对于已有报告，可通过`--import`将其[解包](#报告解包)为可查看的采集结果文件。
 
-当前支持以下 Section：
+### 性能指标
 
-| Section | 说明 |
-| :--- | :--- |
-| `ArithmeticUtilization` | Cube FP/INT 指令数与 Cube、Vector 活跃周期占比 |
-| `L2Cache` | L2 Cache 访问数据 |
-| `Memory` | 主存和片上存储访问数据 |
-| `MemoryL0` | L0 存储访问数据 |
-| `MemoryUB` | Unified Buffer 访问数据 |
-| `Pipeline` | 流水 Timeline 数据 |
-| `PipeUtilization` | 计算与流水线利用率数据 |
-| `ResourceConflictRatio` | 流水等待率与 Vector 资源冲突率 |
+`npu-compute`支持采集的性能指标按指标组（Section）组织，每个Section包含一类性能指标。预定义集合（Set）包含多个Section，便于一次选择一组常用指标。
 
-Section 名称区分大小写。
+当前支持以下Section：
+
+| Section | 说明 | 所属Set |
+| :--- | :--- | :--- |
+| `ArithmeticUtilization` | Cube FP/INT指令数与Cube、Vector活跃周期占比 | `basic`、`full` |
+| `L2Cache` | L2 Cache访问数据 | `basic`、`full` |
+| `Memory` | 主存和片上存储访问数据 | `basic`、`full` |
+| `MemoryL0` | L0存储访问数据 | `basic`、`full` |
+| `MemoryUB` | Unified Buffer访问数据 | `basic`、`full` |
+| `Pipeline` | 流水时间线数据，输出为`PipeTrace.json` | `basic`、`full` |
+| `PipeUtilization` | 计算与流水线利用率数据 | `basic`、`full` |
+| `ResourceConflictRatio` | 流水等待率与Vector资源冲突率 | `full` |
+
+当前提供`basic`和`full`两个预定义Set：`basic`包含除`ResourceConflictRatio`外的7个Section，`full`包含全部8个Section。
+
+各Section的字段含义和计算方法请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
 
 ## 环境准备
 
-请参考[快速入门](00_quick_start.md)完成环境准备。使用前，请安装与目标 NPU 和驱动匹配的 CANN 软件包，并加载 CANN 环境变量。以下命令中的 `<CANN安装目录>` 替换为实际安装目录：
+请参考[快速入门](00_quick_start.md)完成环境准备。使用前，请安装与目标NPU和驱动匹配的CANN软件包，并执行以下命令设置环境变量：
 
-```bash
-source <CANN安装目录>/cann/set_env.sh
-```
+  ```
+  source ${INSTALL_DIR}/set_env.sh
+  ```
 
-运行以下命令，检查 `npu-compute` 是否可以正常调用：
+  > `${INSTALL_DIR}`请替换为CANN软件安装后的文件存储路径。以root用户安装为例，安装后文件默认存储路径为：`/usr/local/Ascend/cann`。
 
-```bash
-npu-compute --help
-```
+## 命令格式与选项
 
-目标程序应能够在当前环境中独立运行，并在运行过程中至少成功执行一次 NPU 核函数。
+`npu-compute`支持性能数据采集和报告解包两种使用方式。
 
-## 命令格式
+### 命令格式
+
+采集性能数据：
 
 ```text
-npu-compute [options] [--] [program] [program-arguments]
+npu-compute [options] [--] <program> [program-arguments]
 ```
 
-`program` 是待采集的目标程序，可以通过绝对路径、相对路径或命令名指定。使用命令名时，该程序必须能够通过 `PATH` 环境变量找到。目标程序可以是编译生成的可执行文件，也可以是具有执行权限的脚本。目标程序后的所有内容均作为目标程序参数传递。
+解包已有报告：
 
-目标程序中待采集的算子当前仅支持使用 Ascend C 编写，并通过 `<<<>>>` 或 aclnn 方式调用。芯片支持范围及其他限制请参见[约束说明](#约束说明)。
-
-例如：
-
-```bash
-npu-compute --section PipeUtilization ./application --input input.bin
+```text
+npu-compute --import <report-file> [--export <directory>]
 ```
 
-工具选项必须位于目标程序之前。目标程序名称以 `-` 开头时，在目标程序前添加 `--`。
+| 占位符 | 说明 |
+| :--- | :--- |
+| `options` | 工具选项，必须位于目标程序之前，见[选项](#选项)。 |
+| `<program>` | 目标程序，可以使用绝对路径、相对路径或命令名指定；使用命令名时，该程序必须能够通过`PATH`环境变量找到。 |
+| `[program-arguments]` | 原样传递给目标程序的参数。 |
+| `[--]` | 可选分隔符，放在目标程序前，用于分隔工具选项和目标程序及其参数。目标程序名称以`-`开头时必须添加。 |
+| `<report-file>` | 已有`.npu-rep`报告文件的路径。 |
+| `<directory>` | 保存解包结果的已有目录。 |
 
-目标程序必须具有执行权限。脚本没有执行权限时，应显式调用对应解释器，例如：
-
-```bash
-npu-compute --section PipeUtilization bash ./run.sh
-```
+目标程序后的所有内容均作为程序参数传递。
 
 ### 选项
 
-| 选项 | 说明 |
-| :--- | :--- |
-| `-h`、`--help` | 输出帮助信息。 |
-| `--list-sections` | 列出支持的指标组名称，单独使用。 |
-| `--list-sets` | 列出 basic、full 及其包含的 Section，单独使用，不启动采集。 |
-| `--set arg` | 选择 basic 或 full，区分大小写。未指定 `--set` 和 `--section` 时默认使用 basic。支持重复指定，可与 `--section` 组合。 |
-| `--section arg` | 指定要采集的指标组（Section）名称，区分大小写。使用该命令行选项时必须配合指标组名称，没有默认值。可多次使用该选项指定不同指标组。 |
-| `--replay-mode arg` | Kernel 重放模式，当前仅支持 `kernel`，默认值为 `kernel`。 |
-| `-o arg`、`--export arg` | 采集时指定报告文件路径或已有目录；导入时指定保存解包结果的已有目录，工具会在其中创建新的结果子目录。不使用该选项时，报告或解包结果保存在当前目录。 |
-| `-i arg`、`--import arg` | 导入并解包 npu-compute 生成的 `.npu-rep` 报告，可配合 `--export` 指定保存位置。 |
-| `--` | 可选分隔符，放在目标程序前，用于分隔工具选项和目标程序及其参数。 |
+| 选项 | 适用模式 | 输入 | 可重复 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `-h`、`--help` | 全部 | 无 | 是 | 显示帮助信息。 |
+| `--list-sections` | 查询 | 无 | 否 | 列出支持的指标组名称。 |
+| `--list-sets` | 查询 | 无 | 否 | 列出`basic`、`full`及其包含的Section。 |
+| `--section arg` | 采集 | Section名称 | 是 | 按名称选择要采集的指标组，区分大小写。 |
+| `--set arg` | 采集 | `basic`、`full` | 是 | 选择预定义指标组集合，区分大小写。在采集选择上，等价于分别指定其包含的多个`--section`。 |
+| `--replay-mode arg` | 采集 | `kernel` | 否 | Kernel重放模式，当前仅支持`kernel`，默认值为`kernel`。 |
+| `-i arg`、`--import arg` | 解包 | 报告文件路径 | 否 | 导入并解包`npu-compute`生成的`.npu-rep`报告。 |
+| `-o arg`、`--export arg` | 采集、解包 | 报告路径或目录 | 否 | 采集时指定报告文件路径或已有目录，解包时指定保存解包结果的已有目录。具体行为见下文。 |
 
-同一个 `--section` 重复指定时只采集一次。`--replay-mode`、`--import` 和 `--export` 每条命令只能指定一次。
+组合规则：
 
-## 采集性能数据
+- 一条命令只能使用“适用模式”列中同一模式的选项。
+  - 查询：只接受一个查询选项。
+  - 解包：只接受`--import`（必需）和`--export`（可选）。
+  - 采集：必须指定目标程序，采集模式选项按需使用。
+- `--help`优先于其他选项：与其他有效选项组合时只显示帮助。
 
-采集命令指定目标程序即可；未指定 `--section` 和 `--set` 时默认采集 basic。
+`--export`在两种使用方式下的行为不同：
 
-`basic` 包含 ArithmeticUtilization、L2Cache、Memory、MemoryL0、MemoryUB、Pipeline 和 PipeUtilization；`full` 在此基础上增加 ResourceConflictRatio。
+- 采集：指定以`.npu-rep`结尾的报告文件路径或已有目录。报告文件的父目录必须已存在，且不会覆盖已有文件。不使用该选项时，报告保存在当前目录。
+- 解包：指定保存解包结果的已有目录，工具会在其中创建唯一的结果子目录，不会覆盖已有结果目录。不使用该选项时，解包结果保存在当前目录下新建的结果子目录中。
 
-`--set` 可以与 `--section` 组合。工具按照参数出现顺序展开两者，并按首次出现顺序去重。例如 `--section Memory --set basic` 会优先采集 Memory，再补充 basic 中尚未选择的 Section。`--set` 不能与 `--import` 组合；`--list-sets` 必须单独使用，且不能重复指定。
+使用以下命令查看帮助和当前支持的指标组、集合：
 
 ```bash
+npu-compute --help
+npu-compute --list-sections
 npu-compute --list-sets
-npu-compute --set basic --section ResourceConflictRatio ./application
 ```
+
+## 性能数据采集
+
+采集命令在运行目标程序的过程中采集所选指标，采集成功后生成`.npu-rep`报告文件。目标程序的指定要求和参数传递规则见[命令格式](#命令格式)，芯片支持范围和目标程序要求见[约束说明](#约束说明)。
+
+### 选择指标
+
+不指定`--set`和`--section`时，默认选择`basic`。
+
+多次选择中出现重复的指标组时，工具会自动合并，每个指标组只采集一次。
+
+### 采集示例
+
+运行`./application`，采集默认集合basic中的指标：
+
+```bash
+npu-compute ./application
+```
+
+采集Memory和PipeUtilization指标组：
 
 ```bash
 npu-compute \
@@ -95,21 +125,45 @@ npu-compute \
   ./application
 ```
 
+使用`--set full`采集全部支持的Section：
+
+```bash
+npu-compute --set full ./application
+```
+
+采集basic集合和ResourceConflictRatio指标组：
+
+```bash
+npu-compute --set basic --section ResourceConflictRatio ./application
+```
+
+向`./application`传递参数`--input input.bin`：
+
+```bash
+npu-compute --section PipeUtilization ./application --input input.bin
+```
+
+通过bash解释器运行脚本`./run.sh`：
+
+```bash
+npu-compute --section PipeUtilization bash ./run.sh
+```
+
+### 报告输出
+
 采集完成后，工具会在终端输出报告路径：
 
 ```text
-npu-compute: report= <报告路径>
+npu-compute: report= <report-path>
 ```
 
-### 指定报告输出位置
-
-未指定 `--export` 时，报告保存在当前目录，名称格式如下：
+默认报告的名称格式如下：
 
 ```text
-report_<毫秒时间戳>_<随机标识>.npu-rep
+report_<timestamp-ms>_<random-id>.npu-rep
 ```
 
-`--export` 可以指定以 `.npu-rep` 结尾的报告文件路径：
+将报告保存为`./reports/profile.npu-rep`：
 
 ```bash
 npu-compute --section PipeUtilization \
@@ -117,86 +171,63 @@ npu-compute --section PipeUtilization \
   ./application
 ```
 
-报告文件的父目录必须已存在，且不会覆盖已有文件。
-
-`--export` 也可以指定一个已存在的目录，工具会在其中生成自动命名的报告：
+在`./reports`目录中生成自动命名的报告：
 
 ```bash
 mkdir -p ./reports
 npu-compute --section Memory --export ./reports ./application
 ```
 
-### 采集多个 Section
+## 查看报告
 
-可在同一条命令中指定多个 Section：
+`.npu-rep`报告可直接使用可视化工具查看（参见[可视化工具使用说明](https://gitcode.com/opdevtools/plugin_release/blob/dev/docs/user_guide.md)），也可解包后查看其中的采集文件。
 
-```bash
-npu-compute \
-  --section ArithmeticUtilization \
-  --section L2Cache \
-  --section Memory \
-  --section MemoryL0 \
-  --section MemoryUB \
-  --section Pipeline \
-  --section PipeUtilization \
-  --section ResourceConflictRatio \
-  ./application
-```
+### 报告文件
 
-CSV 中的 `NA` 表示该项指标未采集到有效值。其他已采集到的指标仍可正常查看。
+报告可包含以下文件：
 
-## 导入报告
+| 文件 | 生成条件 | 内容 |
+| :--- | :--- | :--- |
+| `HardwareInfo.jsonl` | 每次采集时生成 | 主机和NPU硬件信息。 |
+| `summary.jsonl` | 执行Kernel时生成 | 性能汇总及算子概览。 |
+| `PipeTrace.json` | 选择`Pipeline`时生成 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
+| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`除外） | 该Section的指标数据。 |
 
-使用 `--import` 解包报告：
+`Pipeline` Section基于采样机制生成流水图，与用户启用的核数无直接关系；即使启用全部核，流水图最多展示6个采样Group的数据。
+
+CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常查看。
+
+各文件的字段含义、计算方法及CSV与summary的关系，请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
+
+### 报告解包
+
+使用`--import`指定已有的`.npu-rep`报告，工具将其解包到结果目录并输出该目录路径。
 
 ```bash
 npu-compute --import ./reports/profile.npu-rep
 ```
 
-未指定 `--export` 时，工具在当前目录创建唯一的解包结果目录，并输出路径：
+工具输出解包结果目录的路径：
 
 ```text
-npu-compute: unpacked= <解包结果目录>
+npu-compute: unpacked= <unpacked-result-directory>
 ```
 
-使用 `--export` 指定已有目录时，工具会在该目录下创建唯一的结果子目录：
+以下命令将报告解包到`./restored`目录下的结果子目录：
 
 ```bash
 mkdir -p ./restored
 npu-compute --import ./reports/profile.npu-rep --export ./restored
 ```
 
-解包结果目录包含打包前的采集文件，例如 `HardwareInfo.jsonl`、`summary.jsonl`、`PipeUtilization.csv` 和 `PipeTrace.json`。导入不会运行目标程序。
-
-`--import arg` 可以单独使用；需要指定解包结果的保存目录时，可以同时使用 `--export <已存在目录>`。
-
-## 报告内容
-
-报告可包含以下文件：
-
-| 文件 | 内容 |
-| :--- | :--- |
-| `HardwareInfo.jsonl` | 默认采集的主机和 NPU 硬件信息。|
-| `summary.jsonl` | 默认采集的结果摘要。 |
-| `PipeTrace.json` | 指定 `--section Pipeline` 时采集的流水 Timeline 数据，Chrome Trace 格式。 |
-| `<Section名称>.csv` | 通过 `--section` 指定的 Section 的性能数据。对应 Section 获得有效 PMU 数据行时生成。|
-
-不同 Section 的 CSV 字段不同。分析数据时，应以 CSV 首行的字段名为准。如果某个 Section 未获得有效 PMU 数据行，则对应 CSV 可能不会生成；其他已经生成的有效文件仍可写入报告。
-
-`PipeTrace.json` 支持使用 Chrome Trace 兼容工具进行可视化。
-
-使用可视化工具查看 npu-compute 报告的方法，请参见[可视化工具使用说明](https://gitcode.com/opdevtools/plugin_release/tree/dev#npu-compute-%E5%B7%A5%E5%85%B7%E4%BC%98%E5%85%88)。
+解包结果目录中包含[报告文件](#报告文件)列出的采集文件。
 
 ## 约束说明
 
-- 芯片类型：当前仅支持 Ascend 950（dav-3510）。
-- 编程语言：待采集的算子当前仅支持 Ascend C。
-- Kernel 函数类型：目前需使用 `__cube__`、`__vector__` 或 `__mix__(cube,vec)` 限定符指定 Kernel 类型。
-- 算子调用方式：当前支持通过 `<<<>>>` 或 aclnn 方式进行单算子单次调用。
-- `Pipeline` Section 基于采样机制生成流水图，与用户启用的核数无直接关系；即使启用全部核，流水图最多展示 6 个核的数据。
-- 目标程序必须能在未使用 `npu-compute` 时独立运行，并在运行过程中至少成功执行一次 NPU 核函数。
-- 目标程序必须是可执行文件；脚本也可以通过 `bash` 等解释器作为目标程序运行。
-- 目标程序或其启动的脚本不能再次运行 `npu-compute` 进行采集。检测到嵌套采集时，本次采集失败且不会生成报告。
-- 一条采集命令只运行一个目标程序。需要采集多个程序时，分别执行多条命令。
-- `--list-sections` 不能与采集、导入或其他配置选项组合。
-- 采集和导入均不会覆盖已有报告文件或结果目录。
+- 芯片类型：当前仅支持Ascend 950（dav-3510）。
+- 编程语言：待采集的算子当前仅支持Ascend C。
+- 算子调用方式：当前支持通过`<<<>>>`或aclnn方式进行单算子单次调用。
+- `Pipeline`采集受硬件限制：同一Device上只能有一个进程采集`Pipeline`；多个进程同时采集时，只有一个进程能正常输出，其他进程采集失败。
+- 采集SIMT算子的`Pipeline`数据时，不支持使用`noinline`的`__aicore__`函数，比如`printf`和`asc_dump`。
+- 目标程序必须具有执行权限，可以是可执行文件或脚本，能够在未使用`npu-compute`时独立运行，并在运行过程中至少成功执行一次NPU核函数。
+- 一条采集命令只运行一个目标程序；需要采集多个程序时，分别执行多条命令。目标程序及其启动的脚本不能再次运行`npu-compute`，检测到嵌套采集时本次采集失败且不会生成报告。

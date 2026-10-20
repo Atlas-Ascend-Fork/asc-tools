@@ -99,8 +99,9 @@ bool ValidateImportMode(const CliConfig& config, std::vector<std::string>* error
     if (!config.import_path.has_value()) {
         return false;
     }
-    if (config.replay_mode_specified || !config.sections.empty() || !config.program.empty()) {
-        AddError("--import cannot be combined with --set, --section, --replay-mode or a target program.", errors);
+    if (config.list_sets || config.list_sections || config.replay_mode_specified || !config.sections.empty() ||
+        !config.program.empty()) {
+        AddError("Use --import alone or with --export as the only additional option.", errors);
     }
     return true;
 }
@@ -109,19 +110,6 @@ void ValidateExportRequirement(const CliConfig& config, std::vector<std::string>
 {
     if (config.export_path.has_value() && config.sections.empty() && config.program.empty()) {
         AddError("--export requires a collection command or --import.", errors);
-    }
-}
-
-void ValidateCollectionSections(const CliConfig& config, std::vector<std::string>* errors)
-{
-    if (!config.sections.empty()) {
-        return;
-    }
-    if (config.program.empty()) {
-        AddError("collection requires at least one --set or --section before the program.", errors);
-    } else {
-        AddError(
-            "collection requires at least one --set or --section before program '" + config.program + "'.", errors);
     }
 }
 
@@ -137,6 +125,9 @@ void ValidateCombinations(const CliConfig& config, std::vector<std::string>* err
     if (SkipCombinationValidation(config, *errors)) {
         return;
     }
+    if (ValidateImportMode(config, errors)) {
+        return;
+    }
     if (config.list_sets) {
         if (config.list_sections || config.replay_mode_specified || config.import_path || config.export_path ||
             !config.sections.empty() || !config.program.empty()) {
@@ -147,15 +138,10 @@ void ValidateCombinations(const CliConfig& config, std::vector<std::string>* err
     if (ValidateListSectionsMode(config, errors)) {
         return;
     }
-    if (ValidateImportMode(config, errors)) {
-        return;
-    }
     ValidateExportRequirement(config, errors);
     if (!errors->empty()) {
         return;
     }
-    // Both collection requirements can fail; report them in section/program order.
-    ValidateCollectionSections(config, errors);
     ValidateTargetProgram(config, errors);
 }
 
@@ -176,13 +162,27 @@ OptionRegistry RegisterOptions()
     help.protect_from_value = true;
     help.help = "Show help information.";
     builder.Add(std::move(help));
+
+    OptionSpec section;
+    section.long_name = "--section";
+    section.arity = OptionArity::RequiredValue;
+    section.missing_message = "--section requires a section name. Use --list-sections to see supported names.";
+    section.apply = [missing = section.missing_message](
+                        const std::string& value, CliConfig& config, std::vector<std::string>& errors) {
+        AddSection(value, missing.c_str(), &config, &errors);
+    };
+    section.help = "Select a metric group by name (case-sensitive).\n"
+                   "Use --list-sections to see supported names.\n"
+                   "May be combined with --set.\n"
+                   "Defaults to basic when no set or section is given.\n"
+                   "Specify different groups separately:\n"
+                   "  --section Memory --section L2Cache";
+    builder.Add(std::move(section));
+
     auto list = FlagOption("--list-sections", '\0', &CliConfig::list_sections, RepeatPolicy::Once);
     list.help = "List supported section names.";
     builder.Add(std::move(list));
 
-    auto list_sets = FlagOption("--list-sets", '\0', &CliConfig::list_sets, RepeatPolicy::Once);
-    list_sets.help = "List supported section sets and their sections.";
-    builder.Add(std::move(list_sets));
     OptionSpec set;
     set.long_name = "--set";
     set.arity = OptionArity::RequiredValue;
@@ -215,21 +215,9 @@ OptionRegistry RegisterOptions()
                "Defaults to basic when no set or section is given.";
     builder.Add(std::move(set));
 
-    OptionSpec section;
-    section.long_name = "--section";
-    section.arity = OptionArity::RequiredValue;
-    section.missing_message = "--section requires a section name. Use --list-sections to see supported names.";
-    section.apply = [missing = section.missing_message](
-                        const std::string& value, CliConfig& config, std::vector<std::string>& errors) {
-        AddSection(value, missing.c_str(), &config, &errors);
-    };
-    section.help = "Select a metric group by name (case-sensitive).\n"
-                   "Use --list-sections to see supported names.\n"
-                   "May be combined with --set.\n"
-                   "Defaults to basic when no set or section is given.\n"
-                   "Specify different groups separately:\n"
-                   "  --section Memory --section L2Cache";
-    builder.Add(std::move(section));
+    auto list_sets = FlagOption("--list-sets", '\0', &CliConfig::list_sets, RepeatPolicy::Once);
+    list_sets.help = "List supported section sets and their sections.";
+    builder.Add(std::move(list_sets));
 
     OptionSpec replay;
     replay.long_name = "--replay-mode";
@@ -270,8 +258,9 @@ OptionRegistry RegisterOptions()
     add_path(
         "--import", 'i', "--import expects a report file, but no file was provided.",
         "--import expects a report file, but no file was specified.", &CliConfig::import_path,
-        "Import a valid report file generated by npu-compute.\n"
-        "Use alone or with --export; no target program.");
+        "Import and unpack a report generated by npu-compute.\n"
+        "Use --import alone or with --export as the only additional option.\n"
+        "--export specifies the directory where the report is unpacked.");
     add_path(
         "--export", 'o', "--export requires an output path: a report file or directory.",
         "--export requires a non-empty output path.", &CliConfig::export_path,
