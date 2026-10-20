@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "acl/acl_rt.h"
+#include "acl/acl.h"
 
 #include "debug_log.h"
 #include "injection/prof_api_stub.h"
@@ -25,6 +26,7 @@ namespace {
 
 constexpr std::size_t kRuntimeApiCount = 31;
 constexpr std::size_t kSocNameCapacity = 64;
+constexpr char kDefaultSocName[] = "Ascend950PR_9599";
 
 struct KernelArgs {
     uint8_t* value;
@@ -398,6 +400,16 @@ extern "C" ACL_TOOL_INJECTION_EXPORT aclError RuntimeStubSetSocName(const char* 
     return ACL_SUCCESS;
 }
 
+extern "C" ACL_TOOL_INJECTION_EXPORT void RuntimeStubReset()
+{
+    std::lock_guard<std::mutex> lock(g_runtimeMutex);
+    for (auto& entry : g_runtimeEntries) {
+        entry.current = entry.origin;
+    }
+    g_currentDevice.store(-1, std::memory_order_relaxed);
+    std::memcpy(g_socName.data(), kDefaultSocName, sizeof(kDefaultSocName));
+}
+
 extern "C" aclError aclrtApiInjectionGetFunc(const char* name, aclrtApiFunc* originFunc, aclrtApiFunc* currentFunc)
 {
     if (originFunc == nullptr && currentFunc == nullptr) {
@@ -432,6 +444,19 @@ extern "C" aclError aclrtApiInjectionSetFunc(const char* name, aclrtApiFunc func
 }
 
 extern "C" int aclrtInit() { return ProfApiLoadApiInjectionFromEnv(); }
+
+extern "C" aclError aclInit(const char* configPath)
+{
+    (void)configPath;
+    return aclrtInit() == 0 ? ACL_SUCCESS : ACL_ERROR_FAILURE;
+}
+
+extern "C" aclError aclFinalize()
+{
+    // Keep injection DSOs loaded: they may own process-exit callbacks.
+    RuntimeStubReset();
+    return ACL_SUCCESS;
+}
 
 extern "C" aclError aclrtSetDevice(std::int32_t deviceId)
 {

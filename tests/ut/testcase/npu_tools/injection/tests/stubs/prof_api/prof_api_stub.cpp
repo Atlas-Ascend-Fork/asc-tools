@@ -25,6 +25,7 @@ void* g_injectionHandle = nullptr;
 bool g_injectionInitialized = false;
 MsprofRawDataCallback g_rawDataCallback = nullptr;
 RawDataType g_activeRawDataType = PMU_DATA_TYPE;
+bool g_collectBlock = false;
 
 using AcltoolInitializeFn = int (*)();
 
@@ -125,6 +126,18 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int ProfApiLoadApiInjectionFromEnv()
     return result;
 }
 
+extern "C" ACL_TOOL_INJECTION_EXPORT void ProfApiReset()
+{
+    if (g_injectionHandle != nullptr) {
+        dlclose(g_injectionHandle);
+    }
+    g_injectionHandle = nullptr;
+    g_injectionInitialized = false;
+    g_rawDataCallback = nullptr;
+    g_activeRawDataType = PMU_DATA_TYPE;
+    g_collectBlock = false;
+}
+
 extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofRegisterDataCallback(uint32_t type, void* callback)
 {
     injection::detail::DebugLog("prof_api_stub", "MsprofRegisterDataCallback type=%u callback=%p", type, callback);
@@ -147,6 +160,12 @@ extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofStart(uint32_t dataType,
     const auto* config = static_cast<const MsprofConfig*>(data);
     const std::size_t pmuCount = CountConfiguredPmus(*config);
     g_activeRawDataType = ResolveRawDataType(*config);
+    g_collectBlock = false;
+    for (std::size_t i = 0; config->configInfo.attrs != nullptr && i < config->configInfo.numAttrs; ++i) {
+        if (config->configInfo.attrs[i].id == PROF_CONFIG_ATTR_TASK_BLOCK) {
+            g_collectBlock = true;
+        }
+    }
     injection::detail::DebugLog(
         "prof_api_stub", "MsprofStart type=%u profSwitch=0x%llx pmuCount=%zu rawDataType=%d", dataType,
         static_cast<unsigned long long>(config->profSwitch), pmuCount, static_cast<int>(g_activeRawDataType));
@@ -173,6 +192,11 @@ extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofStop(uint32_t dataType, 
         record[6] = 1U << 16U;
         rawData.chunkSize = sizeof(record);
         std::memcpy(rawData.chunk, record.data(), sizeof(record));
+        if (g_collectBlock) {
+            record[0] = 0x6bd30029U;
+            std::memcpy(rawData.chunk + sizeof(record), record.data(), sizeof(record));
+            rawData.chunkSize += sizeof(record);
+        }
     } else {
         constexpr std::array<char, 4> kOpaqueData = {'a', 'c', 'l', 'p'};
         rawData.chunkSize = kOpaqueData.size();

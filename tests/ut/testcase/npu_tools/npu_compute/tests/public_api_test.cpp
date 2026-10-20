@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "aclpti/aclpti.h"
 #include "aclpti/aclpti_data.h"
 
@@ -27,83 +29,72 @@ static_assert(ACLPTI_ERROR_NOT_INITIALIZED > ACLPTI_ERROR_INTERNAL);
 static_assert(ACLPTI_ERROR_CSV_WRITE > ACLPTI_ERROR_NOT_INITIALIZED);
 static_assert(ACLPTI_ERROR_RESULT_UNRELIABLE > ACLPTI_ERROR_CSV_WRITE);
 
-namespace {
-
-int Check(bool condition, const char* expression, int line)
-{
-    if (condition) {
-        return 0;
-    }
-    std::fprintf(stderr, "check failed at line %d: %s\n", line, expression);
-    return 1;
-}
-
-#define CHECK(expression)                                      \
-    do {                                                       \
-        if (Check((expression), #expression, __LINE__) != 0) { \
-            return 1;                                          \
-        }                                                      \
-    } while (false)
-
-} // namespace
-
 std::int32_t MsprofStart(uint32_t, const void*, uint32_t) { return 0; }
 
 std::int32_t MsprofStop(uint32_t, const void*, uint32_t) { return 0; }
 
 std::int32_t MsprofRegisterDataCallback(uint32_t, void* function) { return function == nullptr ? -1 : 0; }
 
-int main()
+TEST(NpuComputePublicApi, RejectsInvalidSubscribers)
 {
-    CHECK(aclptiSubscribe(nullptr, nullptr, nullptr, nullptr) == ACLPTI_ERROR_INVALID_PARAMETER);
-    CHECK(aclptiActivityEnable(nullptr, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_ERROR_INVALID_SUBSCRIBER);
-    CHECK(aclptiRangeProfilerSetConfig(nullptr) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiSubscribe(nullptr, nullptr, nullptr, nullptr) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiActivityEnable(nullptr, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_ERROR_INVALID_SUBSCRIBER);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(nullptr) == ACLPTI_ERROR_INVALID_PARAMETER);
     aclptiSubscribeParams invalid_params{1};
     aclptiSubscribeHandle invalid_subscriber = nullptr;
-    CHECK(aclptiSubscribe(&invalid_subscriber, nullptr, nullptr, &invalid_params) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(
+        aclptiSubscribe(&invalid_subscriber, nullptr, nullptr, &invalid_params) == ACLPTI_ERROR_INVALID_PARAMETER);
+}
 
+TEST(NpuComputePublicApi, ReusesProcessSubscriber)
+{
     aclptiSubscribeHandle first = nullptr;
     aclptiSubscribeHandle second = nullptr;
-    CHECK(aclptiSubscribe(&first, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(first != nullptr);
-    CHECK(aclptiSubscribe(&second, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(second == first);
+    ASSERT_TRUE(aclptiSubscribe(&first, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(first != nullptr);
+    ASSERT_TRUE(aclptiSubscribe(&second, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(second == first);
+}
 
+TEST(NpuComputePublicApi, ValidatesProfilingConfigurations)
+{
+    aclptiSubscribeHandle subscriber = nullptr;
+    ASSERT_EQ(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr), ACLPTI_SUCCESS);
     aclptiRangeProfilerSetConfigParams empty{};
     empty.sections = nullptr;
     empty.numSections = 0;
-    CHECK(aclptiRangeProfilerSetConfig(&empty) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&empty) == ACLPTI_ERROR_INVALID_PARAMETER);
 
     aclptiRangeProfilerSetConfigParams pipeline_only{nullptr, 0, ACLPTI_BLOCK_RESULT_DISABLED, true, false};
-    CHECK(aclptiRangeProfilerSetConfig(&pipeline_only) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&pipeline_only) == ACLPTI_SUCCESS);
 
     aclptiRangeProfilerSetConfigParams pc_sampling_only{nullptr, 0, ACLPTI_BLOCK_RESULT_DISABLED, false, true};
-    CHECK(aclptiRangeProfilerSetConfig(&pc_sampling_only) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&pc_sampling_only) == ACLPTI_SUCCESS);
 
     aclptiRangeProfilerSetConfigParams instruction_collection{nullptr, 0, ACLPTI_BLOCK_RESULT_ALL, true, true};
-    CHECK(aclptiRangeProfilerSetConfig(&instruction_collection) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&instruction_collection) == ACLPTI_SUCCESS);
 
     aclptiRangeProfilerSetConfigParams block_only{nullptr, 0, ACLPTI_BLOCK_RESULT_ALL, false, false};
-    CHECK(aclptiRangeProfilerSetConfig(&block_only) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&block_only) == ACLPTI_ERROR_INVALID_PARAMETER);
 
     aclptiRangeProfilerSetConfigParams invalid_block{nullptr, 0, static_cast<aclptiBlockResultMode>(3), true, false};
-    CHECK(aclptiRangeProfilerSetConfig(&invalid_block) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&invalid_block) == ACLPTI_ERROR_INVALID_PARAMETER);
 
     const char* unknown_sections[] = {"UnknownMetric"};
     aclptiRangeProfilerSetConfigParams unknown{unknown_sections, 1};
-    CHECK(aclptiRangeProfilerSetConfig(&unknown) == ACLPTI_ERROR_NOT_SUPPORTED);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&unknown) == ACLPTI_ERROR_NOT_SUPPORTED);
 
     const char* unsupported_sections[] = {"HardwareInfo"};
     aclptiRangeProfilerSetConfigParams unsupported{unsupported_sections, 1};
-    CHECK(aclptiRangeProfilerSetConfig(&unsupported) == ACLPTI_ERROR_NOT_SUPPORTED);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&unsupported) == ACLPTI_ERROR_NOT_SUPPORTED);
 
     const char* null_sections[] = {nullptr};
     aclptiRangeProfilerSetConfigParams null_section{null_sections, 1};
-    CHECK(aclptiRangeProfilerSetConfig(&null_section) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&null_section) == ACLPTI_ERROR_INVALID_PARAMETER);
 
     const char* empty_name_sections[] = {""};
     aclptiRangeProfilerSetConfigParams empty_name{empty_name_sections, 1};
-    CHECK(aclptiRangeProfilerSetConfig(&empty_name) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&empty_name) == ACLPTI_ERROR_INVALID_PARAMETER);
 
     constexpr std::array<const char*, 7> supported_sections = {
         "ArithmeticUtilization",
@@ -115,16 +106,15 @@ int main()
         "L2Cache",
     };
     aclptiRangeProfilerSetConfigParams all_supported{supported_sections.data(), supported_sections.size()};
-    CHECK(aclptiRangeProfilerSetConfig(&all_supported) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&all_supported) == ACLPTI_SUCCESS);
 
     for (const char* section : supported_sections) {
         const char* single_section[] = {section};
         aclptiRangeProfilerSetConfigParams single{single_section, 1};
-        CHECK(aclptiRangeProfilerSetConfig(&single) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(aclptiRangeProfilerSetConfig(&single) == ACLPTI_SUCCESS);
     }
 
     const char* valid_sections[] = {"PipeUtilization", "Memory", "PipeUtilization"};
     aclptiRangeProfilerSetConfigParams valid{valid_sections, 3};
-    CHECK(aclptiRangeProfilerSetConfig(&valid) == ACLPTI_SUCCESS);
-    return 0;
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&valid) == ACLPTI_SUCCESS);
 }

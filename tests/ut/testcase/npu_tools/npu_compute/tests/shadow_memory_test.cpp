@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "isolated_gtest.h"
+
 #include "aclpti/aclpti.h"
 #include "injection/runtime_stub_api.h"
 #include "profiling/prof_api.h"
@@ -19,14 +21,6 @@
 #include <vector>
 
 namespace {
-
-#define CHECK(expression)                                                                 \
-    do {                                                                                  \
-        if (!(expression)) {                                                              \
-            std::fprintf(stderr, "check failed at line %d: %s\n", __LINE__, #expression); \
-            return 1;                                                                     \
-        }                                                                                 \
-    } while (false)
 
 struct KernelArgs {
     uint8_t* values;
@@ -108,41 +102,42 @@ std::int32_t MsprofRegisterDataCallback(uint32_t type, void* function)
     return RegisterRawData(type, reinterpret_cast<MsprofRawDataCallback>(function));
 }
 
-int main()
+TEST(NpuComputeShadowMemory, MirrorsMemoryAndRestoresInputsAcrossReplay)
 {
-    CHECK(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemcpy", &RealMemcpy) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemset", &RealMemset) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &RealLaunch) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == 0);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemcpy", &RealMemcpy) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemset", &RealMemset) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &RealLaunch) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == 0);
     aclptiSubscribeHandle subscriber = nullptr;
-    CHECK(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(aclrtSetDevice(0) == ACL_SUCCESS);
+    ASSERT_TRUE(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclrtSetDevice(0) == ACL_SUCCESS);
     const char* sections[] = {"PipeUtilization", "ResourceConflictRatio"};
     aclptiRangeProfilerSetConfigParams config{sections, 2};
-    CHECK(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
 
     void* source = nullptr;
     void* destination = nullptr;
-    CHECK(aclrtMalloc(&source, 4, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
-    CHECK(aclrtMalloc(&destination, 4, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
+    ASSERT_TRUE(aclrtMalloc(&source, 4, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
+    ASSERT_TRUE(aclrtMalloc(&destination, 4, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
     const std::array<uint8_t, 4> sourceData{1, 2, 3, 4};
-    CHECK(aclrtMemcpy(source, 4, sourceData.data(), sourceData.size(), ACL_MEMCPY_HOST_TO_DEVICE) == 0);
+    ASSERT_TRUE(aclrtMemcpy(source, 4, sourceData.data(), sourceData.size(), ACL_MEMCPY_HOST_TO_DEVICE) == 0);
     const std::array<uint8_t, 4> currentSourceData{5, 6, 7, 8};
-    CHECK(RealMemcpy(source, 4, currentSourceData.data(), currentSourceData.size(), ACL_MEMCPY_HOST_TO_DEVICE) == 0);
-    CHECK(aclrtMemset(destination, 4, 0, 4) == 0);
-    CHECK(
+    ASSERT_TRUE(
+        RealMemcpy(source, 4, currentSourceData.data(), currentSourceData.size(), ACL_MEMCPY_HOST_TO_DEVICE) == 0);
+    ASSERT_TRUE(aclrtMemset(destination, 4, 0, 4) == 0);
+    ASSERT_TRUE(
         aclrtMemcpy(
             static_cast<uint8_t*>(destination) + 2, 2, static_cast<uint8_t*>(source) + 1, 2,
             ACL_MEMCPY_DEVICE_TO_DEVICE) == 0);
     KernelArgs offsetArgs{static_cast<uint8_t*>(destination) + 2, 2};
-    CHECK(aclrtLaunchKernel(nullptr, 1, &offsetArgs, sizeof(offsetArgs), nullptr) == 0);
-    CHECK(gLaunchCalls == 4);
-    CHECK((gInputs == std::vector<std::array<uint8_t, 2>>{{6, 7}, {6, 7}, {6, 7}, {6, 7}}));
-    CHECK(offsetArgs.values[0] == 7);
-    CHECK(offsetArgs.values[1] == 8);
-    CHECK(aclrtFree(source) == 0);
-    CHECK(aclrtFree(destination) == 0);
-    return 0;
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, &offsetArgs, sizeof(offsetArgs), nullptr) == 0);
+    ASSERT_TRUE(gLaunchCalls == 4);
+    ASSERT_TRUE((gInputs == std::vector<std::array<uint8_t, 2>>{{6, 7}, {6, 7}, {6, 7}, {6, 7}}));
+    ASSERT_TRUE(offsetArgs.values[0] == 7);
+    ASSERT_TRUE(offsetArgs.values[1] == 8);
+    ASSERT_TRUE(aclrtFree(source) == 0);
+    ASSERT_TRUE(aclrtFree(destination) == 0);
 }

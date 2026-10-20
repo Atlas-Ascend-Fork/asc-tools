@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "isolated_gtest.h"
+
 #include "aclpti/aclpti.h"
 #include "injection/injection_hook.h"
 #include "injection/runtime_stub_api.h"
@@ -24,22 +26,6 @@
 #include <vector>
 
 namespace {
-
-int Check(bool condition, const char* expression, int line)
-{
-    if (condition) {
-        return 0;
-    }
-    std::fprintf(stderr, "check failed at line %d: %s\n", line, expression);
-    return 1;
-}
-
-#define CHECK(expression)                                      \
-    do {                                                       \
-        if (Check((expression), #expression, __LINE__) != 0) { \
-            return 1;                                          \
-        }                                                      \
-    } while (false)
 
 template <typename Function>
 bool CaptureStderr(Function function, std::string* output)
@@ -376,119 +362,123 @@ extern "C" aclError ReplayTestGetFunctionName(aclrtFuncHandle, uint32_t, char* n
     return ACL_SUCCESS;
 }
 
-int main(int argc, char** argv)
+class NpuComputeReplay : public testing::TestWithParam<std::string> {};
+
+TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
 {
-    const bool useShrinkBlock = argc == 2 && std::strcmp(argv[1], "shrink") == 0;
-    const bool useDebugLog = argc == 2 && std::strcmp(argv[1], "debug") == 0;
-    const bool useHostArgs = argc == 2 && std::strcmp(argv[1], "host") == 0;
-    const bool useSymbol = argc == 2 && std::strcmp(argv[1], "symbol") == 0;
-    CHECK(argc == 1 || useShrinkBlock || useDebugLog || useHostArgs || useSymbol);
+    NPU_COMPUTE_ISOLATE_TEST();
+    const auto& mode = GetParam();
+    const bool useShrinkBlock = mode == "shrink";
+    const bool useDebugLog = mode == "debug";
+    const bool useHostArgs = mode == "host";
+    const bool useSymbol = mode == "symbol";
     if (useDebugLog) {
-        CHECK(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
+        ASSERT_TRUE(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
     } else {
-        CHECK(unsetenv("NPU_COMPUTE_DEBUG") == 0);
+        ASSERT_TRUE(unsetenv("NPU_COMPUTE_DEBUG") == 0);
     }
     const aclptiBlockResultMode blockResult = useShrinkBlock ? ACLPTI_BLOCK_RESULT_SHRINK : ACLPTI_BLOCK_RESULT_ALL;
     const std::uint32_t expectedBlockMode = useShrinkBlock ? PROF_COMPUTE_BLOCK_SHRINK : PROF_COMPUTE_ALL_BLOCK;
-    CHECK(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMallocAlign32", &RealMalloc) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemcpy", &RealMemcpy) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemset", &RealMemset) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &RealLaunch) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtBinaryLoadFromData", &RealBinaryLoad) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtBinaryGetFunction", &RealBinaryFunction) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtBinaryGetFunctionByEntry", &RealBinaryEntry) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtBinaryUnLoad", &RealBinaryUnload) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernelWithHostArgs", &RealLaunchWithHostArgs) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtFunctionGetParamCount", &MissingParameterCount) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtFunctionGetParamInfo", &MissingParameterInfo) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtSetDevice", &RealSetDevice) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtResetDevice", &RealResetDevice) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMallocAlign32", &RealMalloc) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemcpy", &RealMemcpy) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemset", &RealMemset) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &RealLaunch) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtBinaryLoadFromData", &RealBinaryLoad) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtBinaryGetFunction", &RealBinaryFunction) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtBinaryGetFunctionByEntry", &RealBinaryEntry) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtBinaryUnLoad", &RealBinaryUnload) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchKernelWithHostArgs", &RealLaunchWithHostArgs) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFunctionGetParamCount", &MissingParameterCount) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFunctionGetParamInfo", &MissingParameterInfo) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtSetDevice", &RealSetDevice) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtResetDevice", &RealResetDevice) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == 0);
 
     aclptiSubscribeHandle subscriber = nullptr;
-    CHECK(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(subscriber != nullptr);
-    CHECK(g_registered_callback != nullptr);
-    CHECK(g_callback_type == 0);
-    CHECK(reinterpret_cast<aclrtMallocFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMalloc)) == &RealMalloc);
-    CHECK(
+    ASSERT_TRUE(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(subscriber != nullptr);
+    ASSERT_TRUE(g_registered_callback != nullptr);
+    ASSERT_TRUE(g_callback_type == 0);
+    ASSERT_TRUE(reinterpret_cast<aclrtMallocFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMalloc)) == &RealMalloc);
+    ASSERT_TRUE(
         reinterpret_cast<aclrtMallocAlign32Func>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMallocAlign32)) ==
         &RealMalloc);
-    CHECK(reinterpret_cast<aclrtFreeFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtFree)) == &RealFree);
-    CHECK(reinterpret_cast<aclrtMemcpyFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMemcpy)) == &RealMemcpy);
-    CHECK(reinterpret_cast<aclrtMemsetFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMemset)) == &RealMemset);
-    CHECK(
+    ASSERT_TRUE(reinterpret_cast<aclrtFreeFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtFree)) == &RealFree);
+    ASSERT_TRUE(reinterpret_cast<aclrtMemcpyFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMemcpy)) == &RealMemcpy);
+    ASSERT_TRUE(reinterpret_cast<aclrtMemsetFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMemset)) == &RealMemset);
+    ASSERT_TRUE(
         reinterpret_cast<aclrtLaunchKernelFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtLaunchKernel)) ==
         &RealLaunch);
-    CHECK(
+    ASSERT_TRUE(
         reinterpret_cast<aclrtLaunchKernelWithHostArgsFunc>(
             acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtLaunchKernelWithHostArgs)) == &RealLaunchWithHostArgs);
-    CHECK(
+    ASSERT_TRUE(
         reinterpret_cast<aclrtSynchronizeStreamFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtSynchronizeStream)) ==
         &RealSynchronize);
-    CHECK(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtSetDevice) != nullptr);
-    CHECK(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtLaunchKernelWithHostArgs) != nullptr);
+    ASSERT_TRUE(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtSetDevice) != nullptr);
+    ASSERT_TRUE(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtLaunchKernelWithHostArgs) != nullptr);
 
     aclptiSubscribeHandle repeated_subscriber = nullptr;
-    CHECK(aclptiSubscribe(&repeated_subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(repeated_subscriber == subscriber);
+    ASSERT_TRUE(aclptiSubscribe(&repeated_subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(repeated_subscriber == subscriber);
 
-    CHECK(aclptiActivityEnable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
-    CHECK(aclptiActivityEnable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
-    CHECK(aclptiActivityEnable(subscriber, ACLPTI_ACTIVITY_KIND_INVALID, nullptr) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiActivityEnable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiActivityEnable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(
+        aclptiActivityEnable(subscriber, ACLPTI_ACTIVITY_KIND_INVALID, nullptr) == ACLPTI_ERROR_INVALID_PARAMETER);
     aclptiActivityConfig invalid_activity_config{1};
-    CHECK(
+    ASSERT_TRUE(
         aclptiActivityEnable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, &invalid_activity_config) ==
         ACLPTI_ERROR_INVALID_PARAMETER);
-    CHECK(aclptiActivityDisable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
-    CHECK(aclptiActivityDisable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiActivityDisable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiActivityDisable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
     const char* sections[] = {"PipeUtilization", "ResourceConflictRatio"};
     aclptiRangeProfilerSetConfigParams config{sections, std::size(sections), blockResult, true, true};
-    CHECK(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
     aclptiRangeProfilerSetConfigParams invalidConfig{nullptr, 0, ACLPTI_BLOCK_RESULT_ALL, false, false};
-    CHECK(aclptiRangeProfilerSetConfig(&invalidConfig) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&invalidConfig) == ACLPTI_ERROR_INVALID_PARAMETER);
 
     const char binaryImage[] = "sample ELF (toolchain stub input)";
     aclrtBinHandle binary = nullptr;
-    CHECK(aclrtBinaryLoadFromData(binaryImage, sizeof(binaryImage), nullptr, &binary) == ACL_SUCCESS);
-    CHECK(binary == &g_binary_tokens[0]);
-    CHECK(g_binary_loads == 2);
+    ASSERT_TRUE(aclrtBinaryLoadFromData(binaryImage, sizeof(binaryImage), nullptr, &binary) == ACL_SUCCESS);
+    ASSERT_TRUE(binary == &g_binary_tokens[0]);
+    ASSERT_TRUE(g_binary_loads == 2);
     aclrtFuncHandle namedFunction = nullptr;
     if (useSymbol) {
         // Like Bisheng's generated host stub: symbol lookup is the only function query.
-        CHECK(aclrtGetFuncBySymbol(&g_function_tokens[0], &namedFunction) == ACL_SUCCESS);
+        ASSERT_TRUE(aclrtGetFuncBySymbol(&g_function_tokens[0], &namedFunction) == ACL_SUCCESS);
     } else {
-        CHECK(aclrtBinaryGetFunction(binary, "sample", &namedFunction) == ACL_SUCCESS);
+        ASSERT_TRUE(aclrtBinaryGetFunction(binary, "sample", &namedFunction) == ACL_SUCCESS);
     }
-    CHECK(namedFunction == &g_function_tokens[0]);
+    ASSERT_TRUE(namedFunction == &g_function_tokens[0]);
     // The second binary deliberately reuses Entry 42; it must retain its own mapping.
     aclrtBinHandle entryBinary = nullptr;
-    CHECK(aclrtBinaryLoadFromData(binaryImage, sizeof(binaryImage), nullptr, &entryBinary) == ACL_SUCCESS);
+    ASSERT_TRUE(aclrtBinaryLoadFromData(binaryImage, sizeof(binaryImage), nullptr, &entryBinary) == ACL_SUCCESS);
     aclrtFuncHandle entryFunction = nullptr;
-    CHECK(aclrtBinaryGetFunctionByEntry(entryBinary, 42, &entryFunction) == ACL_SUCCESS);
-    CHECK(entryFunction == &g_function_tokens[2]);
+    ASSERT_TRUE(aclrtBinaryGetFunctionByEntry(entryBinary, 42, &entryFunction) == ACL_SUCCESS);
+    ASSERT_TRUE(entryFunction == &g_function_tokens[2]);
 
     void* alignedAllocation = nullptr;
-    CHECK(aclrtMallocAlign32(&alignedAllocation, 1, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
+    ASSERT_TRUE(aclrtMallocAlign32(&alignedAllocation, 1, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
     uint8_t alignedValue = 3;
-    CHECK(aclrtMemcpy(alignedAllocation, 1, &alignedValue, 1, ACL_MEMCPY_HOST_TO_DEVICE) == 0);
-    CHECK(aclrtFree(alignedAllocation) == 0);
+    ASSERT_TRUE(aclrtMemcpy(alignedAllocation, 1, &alignedValue, 1, ACL_MEMCPY_HOST_TO_DEVICE) == 0);
+    ASSERT_TRUE(aclrtFree(alignedAllocation) == 0);
 
     void* allocation = nullptr;
-    CHECK(aclrtMalloc(&allocation, 1, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
+    ASSERT_TRUE(aclrtMalloc(&allocation, 1, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
     uint8_t initial_value = 5;
-    CHECK(aclrtMemcpy(allocation, 1, &initial_value, 1, ACL_MEMCPY_HOST_TO_DEVICE) == 0);
+    ASSERT_TRUE(aclrtMemcpy(allocation, 1, &initial_value, 1, ACL_MEMCPY_HOST_TO_DEVICE) == 0);
 
     KernelArgs args{static_cast<uint8_t*>(allocation)};
     g_expected_args_data = &args;
 
-    CHECK(aclrtSetDevice(7) == 0);
-    CHECK(g_set_device_calls == 1);
+    ASSERT_TRUE(aclrtSetDevice(7) == 0);
+    ASSERT_TRUE(g_set_device_calls == 1);
     std::string profilingLog;
     aclError firstLaunchStatus = ACL_ERROR_RT_FAILURE;
-    CHECK(CaptureStderr(
+    ASSERT_TRUE(CaptureStderr(
         [&] {
             auto function = useShrinkBlock ? entryFunction : namedFunction;
             firstLaunchStatus = useHostArgs ? aclrtLaunchKernelWithHostArgs(
@@ -496,110 +486,114 @@ int main(int argc, char** argv)
                                               aclrtLaunchKernel(function, 1, &args, sizeof(args), nullptr);
         },
         &profilingLog));
-    CHECK(firstLaunchStatus == ACL_SUCCESS);
-    CHECK(g_parameter_query_calls == 0);
-    CHECK(g_instrumented_launch_calls == 1);
-    CHECK(g_start_calls == 5);
-    CHECK(g_stop_calls == 5);
-    CHECK(g_start_data_type == 8);
-    CHECK(g_stop_data_type == 8);
-    CHECK(g_launch_calls == 6);
+    ASSERT_TRUE(firstLaunchStatus == ACL_SUCCESS);
+    ASSERT_TRUE(g_parameter_query_calls == 0);
+    ASSERT_TRUE(g_instrumented_launch_calls == 1);
+    ASSERT_TRUE(g_start_calls == 5);
+    ASSERT_TRUE(g_stop_calls == 5);
+    ASSERT_TRUE(g_start_data_type == 8);
+    ASSERT_TRUE(g_stop_data_type == 8);
+    ASSERT_TRUE(g_launch_calls == 6);
     void* expectedOriginal = useShrinkBlock ? &g_function_tokens[2] : &g_function_tokens[0];
     void* expectedPatched = useShrinkBlock ? &g_function_tokens[3] : &g_function_tokens[1];
-    CHECK(
+    ASSERT_TRUE(
         (g_launch_handles == std::vector<void*>{
                                  expectedOriginal, expectedOriginal, expectedOriginal, expectedOriginal,
                                  expectedPatched, expectedOriginal}));
-    CHECK(aclrtBinaryGetFunctionByEntry(entryBinary, 43, &entryFunction) == ACL_ERROR_INVALID_PARAM);
-    CHECK(aclrtBinaryUnLoad(binary) == ACL_SUCCESS);
-    CHECK(aclrtBinaryUnLoad(entryBinary) == ACL_SUCCESS);
-    CHECK(g_unloaded_binaries.size() == 4);
-    CHECK(g_sync_calls == 6);
-    CHECK(g_get_device_calls == 1);
-    CHECK(g_soc_name_calls == 0);
-    CHECK((g_kernel_inputs == std::vector<std::uint8_t>{5, 5, 5, 5, 5, 5}));
-    CHECK(*static_cast<std::uint8_t*>(allocation) == 6);
+    ASSERT_TRUE(aclrtBinaryGetFunctionByEntry(entryBinary, 43, &entryFunction) == ACL_ERROR_INVALID_PARAM);
+    ASSERT_TRUE(aclrtBinaryUnLoad(binary) == ACL_SUCCESS);
+    ASSERT_TRUE(aclrtBinaryUnLoad(entryBinary) == ACL_SUCCESS);
+    ASSERT_TRUE(g_unloaded_binaries.size() == 4);
+    ASSERT_TRUE(g_sync_calls == 6);
+    ASSERT_TRUE(g_get_device_calls == 1);
+    ASSERT_TRUE(g_soc_name_calls == 0);
+    ASSERT_TRUE((g_kernel_inputs == std::vector<std::uint8_t>{5, 5, 5, 5, 5, 5}));
+    ASSERT_TRUE(*static_cast<std::uint8_t*>(allocation) == 6);
 
-    CHECK(g_configs.size() == 5);
+    ASSERT_TRUE(g_configs.size() == 5);
     const auto expected_first = ExpectedPmus({796, 0, 1, 10, 36, 52, 53, 514, 515, 810});
     const auto expected_second = ExpectedPmus({796, 1281, 1794, 1812, 1813, 11, 12, 13, 14, 15});
     const auto expected_third = ExpectedPmus({796, 1344, 1366, 1376, 1377, 1378, 1379});
-    CHECK(g_configs[0].pmuEvents == expected_first);
-    CHECK(g_configs[0].profSwitch == (PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK));
-    CHECK(g_configs[0].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
-    CHECK(g_configs[0].blockMode == expectedBlockMode);
-    CHECK(g_configs[0].devNums == 1);
-    CHECK(g_configs[0].deviceId == 7);
-    CHECK(g_configs[1].pmuEvents == expected_second);
-    CHECK(g_configs[1].profSwitch == (PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK));
-    CHECK(g_configs[1].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
-    CHECK(g_configs[1].blockMode == expectedBlockMode);
-    CHECK(g_configs[1].devNums == 1);
-    CHECK(g_configs[1].deviceId == 7);
-    CHECK(g_configs[2].pmuEvents == expected_third);
-    CHECK(g_configs[2].profSwitch == (PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK));
-    CHECK(g_configs[2].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
-    CHECK(g_configs[2].blockMode == expectedBlockMode);
-    CHECK(g_configs[2].devNums == 1);
-    CHECK(g_configs[2].deviceId == 7);
-    CHECK(g_configs[3].profSwitch == (PROF_TASK_TIME_MASK | PROF_INSTR_MASK));
-    CHECK(g_configs[3].primaryAttr == PROF_CONFIG_ATTR_INSTR);
-    CHECK(g_configs[3].instrMode == PROF_COMPUTE_BIU_PERF);
-    CHECK(g_configs[3].blockMode == 0);
-    CHECK(g_configs[4].profSwitch == (PROF_TASK_TIME_MASK | PROF_INSTR_MASK));
-    CHECK(g_configs[4].primaryAttr == PROF_CONFIG_ATTR_INSTR);
-    CHECK(g_configs[4].instrMode == PROF_COMPUTE_PC_SAMPLING);
-    CHECK(g_configs[4].blockMode == expectedBlockMode);
+    ASSERT_TRUE(g_configs[0].pmuEvents == expected_first);
+    ASSERT_TRUE(g_configs[0].profSwitch == (PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK));
+    ASSERT_TRUE(g_configs[0].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
+    ASSERT_TRUE(g_configs[0].blockMode == expectedBlockMode);
+    ASSERT_TRUE(g_configs[0].devNums == 1);
+    ASSERT_TRUE(g_configs[0].deviceId == 7);
+    ASSERT_TRUE(g_configs[1].pmuEvents == expected_second);
+    ASSERT_TRUE(g_configs[1].profSwitch == (PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK));
+    ASSERT_TRUE(g_configs[1].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
+    ASSERT_TRUE(g_configs[1].blockMode == expectedBlockMode);
+    ASSERT_TRUE(g_configs[1].devNums == 1);
+    ASSERT_TRUE(g_configs[1].deviceId == 7);
+    ASSERT_TRUE(g_configs[2].pmuEvents == expected_third);
+    ASSERT_TRUE(g_configs[2].profSwitch == (PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK));
+    ASSERT_TRUE(g_configs[2].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
+    ASSERT_TRUE(g_configs[2].blockMode == expectedBlockMode);
+    ASSERT_TRUE(g_configs[2].devNums == 1);
+    ASSERT_TRUE(g_configs[2].deviceId == 7);
+    ASSERT_TRUE(g_configs[3].profSwitch == (PROF_TASK_TIME_MASK | PROF_INSTR_MASK));
+    ASSERT_TRUE(g_configs[3].primaryAttr == PROF_CONFIG_ATTR_INSTR);
+    ASSERT_TRUE(g_configs[3].instrMode == PROF_COMPUTE_BIU_PERF);
+    ASSERT_TRUE(g_configs[3].blockMode == 0);
+    ASSERT_TRUE(g_configs[4].profSwitch == (PROF_TASK_TIME_MASK | PROF_INSTR_MASK));
+    ASSERT_TRUE(g_configs[4].primaryAttr == PROF_CONFIG_ATTR_INSTR);
+    ASSERT_TRUE(g_configs[4].instrMode == PROF_COMPUTE_PC_SAMPLING);
+    ASSERT_TRUE(g_configs[4].blockMode == expectedBlockMode);
 
     if (useDebugLog) {
-        CHECK(profilingLog.find("[aclpti] msprof config round=0 collectionType=8") != std::string::npos);
-        CHECK(profilingLog.find("profSwitch=0x804") != std::string::npos);
-        CHECK(profilingLog.find("devNums=1") != std::string::npos);
-        CHECK(profilingLog.find("devId[0]=7") != std::string::npos);
-        CHECK(profilingLog.find("dumpPath=\"\" dumpPathLength=0") != std::string::npos);
-        CHECK(profilingLog.find("sampleConfig=\"\" sampleConfigLength=0") != std::string::npos);
-        CHECK(profilingLog.find("configInfo.attrs=") != std::string::npos);
-        CHECK(profilingLog.find("configInfo.numAttrs=2") != std::string::npos);
-        CHECK(profilingLog.find("attr[0] id=0 aicoreMetrics[0]=796") != std::string::npos);
-        CHECK(profilingLog.find("aicoreMetrics[9]=810") != std::string::npos);
-        CHECK(profilingLog.find("round=1 attr[0] id=0 aicoreMetrics[1]=1281") != std::string::npos);
-        CHECK(profilingLog.find("attr[1] id=2 taskBlockMode=1") != std::string::npos);
-        CHECK(profilingLog.find("attr[0] id=1 instrMode=1") != std::string::npos);
-        CHECK(profilingLog.find("attr[0] id=1 instrMode=2") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("[aclpti] msprof config round=0 collectionType=8") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("profSwitch=0x804") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("devNums=1") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("devId[0]=7") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("dumpPath=\"\" dumpPathLength=0") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("sampleConfig=\"\" sampleConfigLength=0") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("configInfo.attrs=") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("configInfo.numAttrs=2") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("attr[0] id=0 aicoreMetrics[0]=796") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("aicoreMetrics[9]=810") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("round=1 attr[0] id=0 aicoreMetrics[1]=1281") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("attr[1] id=2 taskBlockMode=1") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("attr[0] id=1 instrMode=1") != std::string::npos);
+        ASSERT_TRUE(profilingLog.find("attr[0] id=1 instrMode=2") != std::string::npos);
     } else {
-        CHECK(profilingLog.find("msprof config round=") == std::string::npos);
+        ASSERT_TRUE(profilingLog.find("msprof config round=") == std::string::npos);
     }
 
     const std::size_t starts_after_first_launch = g_start_calls;
     const std::size_t syncs_after_first_launch = g_sync_calls;
     initial_value = 10;
-    CHECK(aclrtMemcpy(allocation, 1, &initial_value, 1, ACL_MEMCPY_HOST_TO_DEVICE) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(aclrtLaunchKernel(nullptr, 1, &args, sizeof(args), nullptr) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(g_start_calls == starts_after_first_launch);
-    CHECK(g_sync_calls == syncs_after_first_launch);
-    CHECK(g_launch_calls == 7);
-    CHECK(g_get_device_calls == 1);
-    CHECK(g_kernel_inputs.back() == 10);
-    CHECK(*static_cast<std::uint8_t*>(allocation) == 11);
+    ASSERT_TRUE(
+        aclrtMemcpy(allocation, 1, &initial_value, 1, ACL_MEMCPY_HOST_TO_DEVICE) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, &args, sizeof(args), nullptr) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(g_start_calls == starts_after_first_launch);
+    ASSERT_TRUE(g_sync_calls == syncs_after_first_launch);
+    ASSERT_TRUE(g_launch_calls == 7);
+    ASSERT_TRUE(g_get_device_calls == 1);
+    ASSERT_TRUE(g_kernel_inputs.back() == 10);
+    ASSERT_TRUE(*static_cast<std::uint8_t*>(allocation) == 11);
 
     const std::size_t starts_before_host_args = g_start_calls;
     const std::size_t syncs_before_host_args = g_sync_calls;
-    CHECK(
+    ASSERT_TRUE(
         aclrtLaunchKernelWithHostArgs(nullptr, 1, nullptr, nullptr, nullptr, 0, nullptr, 0) ==
         ACL_ERROR_PROFILING_FAILURE);
-    CHECK(g_launch_with_host_args_calls == (useHostArgs ? 7U : 1U));
-    CHECK(g_get_device_calls == 1);
-    CHECK(g_start_calls == starts_before_host_args);
-    CHECK(g_sync_calls == syncs_before_host_args);
+    ASSERT_TRUE(g_launch_with_host_args_calls == (useHostArgs ? 7U : 1U));
+    ASSERT_TRUE(g_get_device_calls == 1);
+    ASSERT_TRUE(g_start_calls == starts_before_host_args);
+    ASSERT_TRUE(g_sync_calls == syncs_before_host_args);
 
-    CHECK(aclrtResetDevice(7) == 0);
-    CHECK(g_reset_device_calls == 1);
-    CHECK(aclrtLaunchKernel(nullptr, 1, &args, sizeof(args), nullptr) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(g_get_device_calls == 1);
-    CHECK(g_start_calls == starts_before_host_args);
-    CHECK(g_sync_calls == syncs_before_host_args);
-    CHECK(aclrtFree(allocation) == 0);
-    CHECK(g_malloc_calls == 4);
-    CHECK(g_free_calls == 4);
-    return 0;
+    ASSERT_TRUE(aclrtResetDevice(7) == 0);
+    ASSERT_TRUE(g_reset_device_calls == 1);
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, &args, sizeof(args), nullptr) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(g_get_device_calls == 1);
+    ASSERT_TRUE(g_start_calls == starts_before_host_args);
+    ASSERT_TRUE(g_sync_calls == syncs_before_host_args);
+    ASSERT_TRUE(aclrtFree(allocation) == 0);
+    ASSERT_TRUE(g_malloc_calls == 4);
+    ASSERT_TRUE(g_free_calls == 4);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    Modes, NpuComputeReplay, testing::Values("Default", "symbol", "debug", "shrink", "host"),
+    [](const testing::TestParamInfo<std::string>& info) { return info.param; });

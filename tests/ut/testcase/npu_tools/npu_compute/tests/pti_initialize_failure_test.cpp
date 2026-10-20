@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "isolated_gtest.h"
+
 #include "aclpti/aclpti.h"
 #include "injection/runtime_stub_api.h"
 #include "profiling/prof_api.h"
@@ -24,14 +26,6 @@ std::int32_t MsprofRegisterDataCallback(std::uint32_t, void*) { return 0; }
 #include <cstdlib>
 
 namespace {
-
-#define CHECK(expression)                                                                 \
-    do {                                                                                  \
-        if (!(expression)) {                                                              \
-            std::fprintf(stderr, "check failed at line %d: %s\n", __LINE__, #expression); \
-            return 1;                                                                     \
-        }                                                                                 \
-    } while (false)
 
 int DummyMalloc(void** pointer, std::size_t size, aclrtMemMallocPolicy)
 {
@@ -52,18 +46,18 @@ int DummySynchronize(void*) { return 0; }
 
 } // namespace
 
-int main()
+TEST(NpuComputeInitializeFailure, RejectsSubscriberAfterInitializationFailure)
 {
-    CHECK(setenv("NPU_COMPUTE_TEST_PTI_INITIALIZE_FAILURE", "1", 1) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMalloc", &DummyMalloc) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtFree", &DummyFree) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemcpy", &DummyMemcpy) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemset", &DummyMemset) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &DummyLaunch) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &DummySynchronize) == 0);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_TRUE(setenv("NPU_COMPUTE_TEST_PTI_INITIALIZE_FAILURE", "1", 1) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMalloc", &DummyMalloc) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFree", &DummyFree) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemcpy", &DummyMemcpy) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemset", &DummyMemset) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &DummyLaunch) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &DummySynchronize) == 0);
 
     aclptiSubscribeHandle subscriber = nullptr;
-    CHECK(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_ERROR_INTERNAL);
-    CHECK(subscriber == nullptr);
-    return 0;
+    ASSERT_TRUE(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_ERROR_INTERNAL);
+    ASSERT_TRUE(subscriber == nullptr);
 }

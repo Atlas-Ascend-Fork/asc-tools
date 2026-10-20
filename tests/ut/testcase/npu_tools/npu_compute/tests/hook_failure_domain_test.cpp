@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "isolated_gtest.h"
+
 #include "aclpti/aclpti.h"
 #include "injection/runtime_stub_api.h"
 #include "profiling/prof_api.h"
@@ -45,14 +47,6 @@ void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
 
 namespace {
-
-#define CHECK(expression)                                                                 \
-    do {                                                                                  \
-        if (!(expression)) {                                                              \
-            std::fprintf(stderr, "check failed at line %d: %s\n", __LINE__, #expression); \
-            return 1;                                                                     \
-        }                                                                                 \
-    } while (false)
 
 constexpr aclError kMallocFailure = -41;
 constexpr aclError kFreeFailure = -42;
@@ -169,126 +163,138 @@ aclptiResult CountingShutdownCallback(void* userData)
     return ACLPTI_SUCCESS;
 }
 
-int Initialize()
+void Initialize()
 {
-    CHECK(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemcpy", &RealMemcpy) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemset", &RealMemset) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &RealLaunch) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemcpy", &RealMemcpy) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemset", &RealMemset) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &RealLaunch) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == ACL_SUCCESS);
     aclptiSubscribeHandle subscriber = nullptr;
-    CHECK(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(subscriber != nullptr);
+    ASSERT_TRUE(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(subscriber != nullptr);
     const char* sections[] = {"PipeUtilization"};
     aclptiRangeProfilerSetConfigParams config{sections, 1};
-    CHECK(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
-    return 0;
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
 }
 
-int TestShadowMallocStopsProfiling()
+TEST(NpuComputeHookFailure, ShadowMallocStopsProfiling)
 {
-    CHECK(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
     gFailMallocCall = 2;
     void* allocation = nullptr;
     const std::size_t freeCallsBeforeMalloc = gFreeCalls;
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     std::string logText;
-    CHECK(CaptureStderr([&] { status = aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST); }, &logText));
-    CHECK(status == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(allocation != nullptr);
-    CHECK(gMallocCalls == 2);
-    CHECK(gFreeCalls == freeCallsBeforeMalloc);
-    CHECK(logText.find("[aclpti] error operation=shadow_malloc") != std::string::npos);
-    CHECK(logText.find("status=-41") != std::string::npos);
-    CHECK(logText.find("rollback_status=") == std::string::npos);
-    CHECK(logText.find("domain=") == std::string::npos);
-    CHECK(logText.find("consistency=") == std::string::npos);
-    CHECK(gShutdownCalls == 1);
+    ASSERT_TRUE(CaptureStderr([&] { status = aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST); }, &logText));
+    ASSERT_TRUE(status == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(allocation != nullptr);
+    ASSERT_TRUE(gMallocCalls == 2);
+    ASSERT_TRUE(gFreeCalls == freeCallsBeforeMalloc);
+    ASSERT_TRUE(logText.find("[aclpti] error operation=shadow_malloc") != std::string::npos);
+    ASSERT_TRUE(logText.find("status=-41") != std::string::npos);
+    ASSERT_TRUE(logText.find("rollback_status=") == std::string::npos);
+    ASSERT_TRUE(logText.find("domain=") == std::string::npos);
+    ASSERT_TRUE(logText.find("consistency=") == std::string::npos);
+    ASSERT_TRUE(gShutdownCalls == 1);
 
     const std::size_t startsBeforeLaunch = gStartCalls;
-    CHECK(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(gLaunchCalls == 1);
-    CHECK(gStartCalls == startsBeforeLaunch);
-    CHECK(gShutdownCalls == 1);
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(gLaunchCalls == 1);
+    ASSERT_TRUE(gStartCalls == startsBeforeLaunch);
+    ASSERT_TRUE(gShutdownCalls == 1);
 
-    CHECK(aclrtFree(allocation) == ACL_SUCCESS);
-    CHECK(gFreeCalls == freeCallsBeforeMalloc + 1);
-    return 0;
+    ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
+    ASSERT_TRUE(gFreeCalls == freeCallsBeforeMalloc + 1);
 }
 
-int TestReplaySynchronizeFailure()
+TEST(NpuComputeHookFailure, ReplaySynchronizeFailure)
 {
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
     gFailSyncCall = 2;
     const std::size_t memcpyCallsBeforeLaunch = gMemcpyCalls;
     aclError launchStatus = ACL_ERROR_INTERNAL_ERROR;
     std::string logText;
-    CHECK(CaptureStderr([&] { launchStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
+    ASSERT_TRUE(CaptureStderr([&] { launchStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
 
-    CHECK(launchStatus == ACL_ERROR_INTERNAL_ERROR);
-    CHECK(logText.find("[aclpti] error operation=replay_sync") != std::string::npos);
-    CHECK(logText.find("status=-43") != std::string::npos);
-    CHECK(logText.find("domain=") == std::string::npos);
-    CHECK(gLaunchCalls == 2);
-    CHECK(gStartCalls == 1);
-    CHECK(gSyncCalls == 2);
-    CHECK(gMemcpyCalls == memcpyCallsBeforeLaunch);
+    ASSERT_TRUE(launchStatus == ACL_ERROR_INTERNAL_ERROR);
+    ASSERT_TRUE(logText.find("[aclpti] error operation=replay_sync") != std::string::npos);
+    ASSERT_TRUE(logText.find("status=-43") != std::string::npos);
+    ASSERT_TRUE(logText.find("domain=") == std::string::npos);
+    ASSERT_TRUE(gLaunchCalls == 2);
+    ASSERT_TRUE(gStartCalls == 1);
+    ASSERT_TRUE(gSyncCalls == 2);
+    ASSERT_TRUE(gMemcpyCalls == memcpyCallsBeforeLaunch);
     const std::size_t startsBeforeRetry = gStartCalls;
-    CHECK(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(gLaunchCalls == 3);
-    CHECK(gStartCalls == startsBeforeRetry);
-    return 0;
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(gLaunchCalls == 3);
+    ASSERT_TRUE(gStartCalls == startsBeforeRetry);
 }
 
-int TestInitialSynchronizeFailure()
+TEST(NpuComputeHookFailure, InitialSynchronizeFailure)
 {
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
     gFailSyncCall = 1;
     aclError launchStatus = ACL_SUCCESS;
     std::string logText;
-    CHECK(CaptureStderr([&] { launchStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
+    ASSERT_TRUE(CaptureStderr([&] { launchStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
 
-    CHECK(launchStatus == ACL_ERROR_INTERNAL_ERROR);
-    CHECK(logText.find("[aclpti] error operation=replay_initial_sync") != std::string::npos);
-    CHECK(logText.find("status=-43") != std::string::npos);
-    CHECK(gLaunchCalls == 1);
-    CHECK(gStartCalls == 0);
-    CHECK(gSyncCalls == 1);
-    return 0;
+    ASSERT_TRUE(launchStatus == ACL_ERROR_INTERNAL_ERROR);
+    ASSERT_TRUE(logText.find("[aclpti] error operation=replay_initial_sync") != std::string::npos);
+    ASSERT_TRUE(logText.find("status=-43") != std::string::npos);
+    ASSERT_TRUE(gLaunchCalls == 1);
+    ASSERT_TRUE(gStartCalls == 0);
+    ASSERT_TRUE(gSyncCalls == 1);
 }
 
-int TestReplayInitialSynchronize()
+TEST(NpuComputeHookFailure, ReplayInitialSynchronize)
 {
-    CHECK(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_SUCCESS);
-    CHECK(gLaunchCalls >= 2);
-    CHECK(gSyncCalls == gLaunchCalls);
-    CHECK(gStartCalls + 1 == gLaunchCalls);
-    CHECK(gMemcpyCalls == 0);
-    return 0;
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_SUCCESS);
+    ASSERT_TRUE(gLaunchCalls >= 2);
+    ASSERT_TRUE(gSyncCalls == gLaunchCalls);
+    ASSERT_TRUE(gStartCalls + 1 == gLaunchCalls);
+    ASSERT_TRUE(gMemcpyCalls == 0);
 }
 
-int TestProfilingFlowFailure()
+TEST(NpuComputeHookFailure, ProfilingFlowFailure)
 {
-    CHECK(aclptiRegisterDataModuleShutdownCallback(&FailingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&FailingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     std::string logText;
-    CHECK(CaptureStderr([&] { status = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
-    CHECK(status == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(logText.find("[aclpti] error operation=data_shutdown") != std::string::npos);
-    CHECK(logText.find("status=8") != std::string::npos);
-    CHECK(logText.find("domain=") == std::string::npos);
-    return 0;
+    ASSERT_TRUE(CaptureStderr([&] { status = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
+    ASSERT_TRUE(status == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(logText.find("[aclpti] error operation=data_shutdown") != std::string::npos);
+    ASSERT_TRUE(logText.find("status=8") != std::string::npos);
+    ASSERT_TRUE(logText.find("domain=") == std::string::npos);
 }
 
-int TestShadowFreeRetry()
+TEST(NpuComputeHookFailure, ShadowFreeRetry)
 {
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
     void* allocation = nullptr;
-    CHECK(aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
-    CHECK(gMallocCalls == 2);
+    ASSERT_TRUE(aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
+    ASSERT_TRUE(gMallocCalls == 2);
     gFailFreeCall = 2;
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     bool threwBadAlloc = false;
     std::string logText;
-    CHECK(CaptureStderr(
+    ASSERT_TRUE(CaptureStderr(
         [&] {
             gFailNextHostAllocation = true;
             try {
@@ -299,86 +305,97 @@ int TestShadowFreeRetry()
             gFailNextHostAllocation = false;
         },
         &logText));
-    CHECK(!threwBadAlloc);
-    CHECK(status == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(logText.find("[aclpti] error operation=shadow_free") != std::string::npos);
-    CHECK(logText.find("status=-42") != std::string::npos);
-    CHECK(logText.find("domain=") == std::string::npos);
+    ASSERT_TRUE(!threwBadAlloc);
+    ASSERT_TRUE(status == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(logText.find("[aclpti] error operation=shadow_free") != std::string::npos);
+    ASSERT_TRUE(logText.find("status=-42") != std::string::npos);
+    ASSERT_TRUE(logText.find("domain=") == std::string::npos);
 
     void* cleanupAllocation = nullptr;
-    CHECK(aclrtMalloc(&cleanupAllocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(aclrtFree(cleanupAllocation) == ACL_SUCCESS);
-    CHECK(gFreeCalls == 4);
-    return 0;
+    ASSERT_TRUE(aclrtMalloc(&cleanupAllocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(aclrtFree(cleanupAllocation) == ACL_SUCCESS);
+    ASSERT_TRUE(gFreeCalls == 4);
 }
 
-int TestNullFreeDoesNotStopProfiling()
+TEST(NpuComputeHookFailure, NullFreeDoesNotStopProfiling)
 {
-    CHECK(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
-    CHECK(aclrtFree(nullptr) == ACL_SUCCESS);
-    CHECK(gFreeCalls == 1);
-    CHECK(gShutdownCalls == 0);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclrtFree(nullptr) == ACL_SUCCESS);
+    ASSERT_TRUE(gFreeCalls == 1);
+    ASSERT_TRUE(gShutdownCalls == 0);
 
-    CHECK(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_SUCCESS);
-    CHECK(gStartCalls == 2);
-    CHECK(gShutdownCalls == 1);
-    return 0;
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_SUCCESS);
+    ASSERT_TRUE(gStartCalls == 2);
+    ASSERT_TRUE(gShutdownCalls == 1);
 }
 
-int TestMissingMemcpyMirrorStopsProfiling()
+TEST(NpuComputeHookFailure, MissingMemcpyMirrorStopsProfiling)
 {
-    CHECK(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
     void* allocation = nullptr;
-    CHECK(RealMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
+    ASSERT_TRUE(RealMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
     std::uint8_t value = 9;
-    CHECK(aclrtMemcpy(allocation, 16, &value, sizeof(value), ACL_MEMCPY_HOST_TO_DEVICE) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(*static_cast<std::uint8_t*>(allocation) == value);
-    CHECK(gShutdownCalls == 1);
+    ASSERT_TRUE(
+        aclrtMemcpy(allocation, 16, &value, sizeof(value), ACL_MEMCPY_HOST_TO_DEVICE) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(*static_cast<std::uint8_t*>(allocation) == value);
+    ASSERT_TRUE(gShutdownCalls == 1);
 
     const std::size_t startsBeforeLaunch = gStartCalls;
-    CHECK(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(gStartCalls == startsBeforeLaunch);
-    CHECK(gShutdownCalls == 1);
-    CHECK(aclrtFree(allocation) == ACL_SUCCESS);
-    return 0;
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(gStartCalls == startsBeforeLaunch);
+    ASSERT_TRUE(gShutdownCalls == 1);
+    ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
 }
 
-int TestMissingMemsetMirrorStopsProfiling()
+TEST(NpuComputeHookFailure, MissingMemsetMirrorStopsProfiling)
 {
-    CHECK(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
     void* allocation = nullptr;
-    CHECK(RealMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
-    CHECK(aclrtMemset(allocation, 16, 5, 16) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(*static_cast<std::uint8_t*>(allocation) == 5);
-    CHECK(gShutdownCalls == 1);
+    ASSERT_TRUE(RealMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
+    ASSERT_TRUE(aclrtMemset(allocation, 16, 5, 16) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(*static_cast<std::uint8_t*>(allocation) == 5);
+    ASSERT_TRUE(gShutdownCalls == 1);
 
     const std::size_t startsBeforeLaunch = gStartCalls;
-    CHECK(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(gStartCalls == startsBeforeLaunch);
-    CHECK(gShutdownCalls == 1);
-    CHECK(aclrtFree(allocation) == ACL_SUCCESS);
-    return 0;
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(gStartCalls == startsBeforeLaunch);
+    ASSERT_TRUE(gShutdownCalls == 1);
+    ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
 }
 
-int TestMallocMissingFreeStopsProfiling()
+TEST(NpuComputeHookFailure, MallocMissingFreeStopsProfiling)
 {
-    CHECK(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
-    CHECK(RuntimeStubClearOrigin("aclrtFree") == ACL_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(RuntimeStubClearOrigin("aclrtFree") == ACL_SUCCESS);
     void* allocation = nullptr;
-    CHECK(aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(allocation != nullptr);
-    CHECK(gMallocCalls == 1);
-    CHECK(gShutdownCalls == 1);
+    ASSERT_TRUE(aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(allocation != nullptr);
+    ASSERT_TRUE(gMallocCalls == 1);
+    ASSERT_TRUE(gShutdownCalls == 1);
 
-    CHECK(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == ACL_SUCCESS);
-    CHECK(aclrtFree(allocation) == ACL_SUCCESS);
-    CHECK(gFreeCalls == 1);
-    return 0;
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == ACL_SUCCESS);
+    ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
+    ASSERT_TRUE(gFreeCalls == 1);
 }
 
-int TestShadowMetadataAllocationFailure()
+TEST(NpuComputeHookFailure, ShadowMetadataAllocationFailure)
 {
-    CHECK(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
     void* allocation = nullptr;
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     bool threwBadAlloc = false;
@@ -390,40 +407,41 @@ int TestShadowMetadataAllocationFailure()
     }
     gFailNextHostAllocation = false;
 
-    CHECK(!threwBadAlloc);
-    CHECK(status == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(allocation != nullptr);
-    CHECK(gMallocCalls == 2);
-    CHECK(gFreeCalls == 1);
-    CHECK(gShutdownCalls == 1);
-    CHECK(aclrtFree(allocation) == ACL_SUCCESS);
-    CHECK(gFreeCalls == 2);
-    return 0;
+    ASSERT_TRUE(!threwBadAlloc);
+    ASSERT_TRUE(status == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(allocation != nullptr);
+    ASSERT_TRUE(gMallocCalls == 2);
+    ASSERT_TRUE(gFreeCalls == 1);
+    ASSERT_TRUE(gShutdownCalls == 1);
+    ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
+    ASSERT_TRUE(gFreeCalls == 2);
 }
 
-int TestShadowMemcpyStopsProfiling()
+TEST(NpuComputeHookFailure, ShadowMemcpyStopsProfiling)
 {
-    CHECK(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_DEBUG", "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&CountingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
 
     void* allocation = nullptr;
-    CHECK(aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
+    ASSERT_TRUE(aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
     std::uint8_t value = 7;
     gFailMemcpyCall = gMemcpyCalls + 2;
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     std::string logText;
-    CHECK(CaptureStderr(
+    ASSERT_TRUE(CaptureStderr(
         [&] { status = aclrtMemcpy(allocation, 16, &value, sizeof(value), ACL_MEMCPY_HOST_TO_DEVICE); }, &logText));
-    CHECK(status == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(logText.find("[aclpti] error operation=shadow_memcpy status=-44") != std::string::npos);
-    CHECK(gShutdownCalls == 1);
+    ASSERT_TRUE(status == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(logText.find("[aclpti] error operation=shadow_memcpy status=-44") != std::string::npos);
+    ASSERT_TRUE(gShutdownCalls == 1);
 
     const std::size_t startsBeforeLaunch = gStartCalls;
-    CHECK(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
-    CHECK(gLaunchCalls == 1);
-    CHECK(gStartCalls == startsBeforeLaunch);
-    CHECK(gShutdownCalls == 1);
-    CHECK(aclrtFree(allocation) == ACL_SUCCESS);
-    return 0;
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == ACL_ERROR_PROFILING_FAILURE);
+    ASSERT_TRUE(gLaunchCalls == 1);
+    ASSERT_TRUE(gStartCalls == startsBeforeLaunch);
+    ASSERT_TRUE(gShutdownCalls == 1);
+    ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
 }
 
 } // namespace
@@ -445,49 +463,4 @@ extern "C" aclError aclrtGetDevice(std::int32_t* deviceId)
     }
     *deviceId = 0;
     return ACL_SUCCESS;
-}
-
-int main(int argc, char** argv)
-{
-    CHECK(argc == 2);
-    CHECK(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
-    CHECK(Initialize() == 0);
-    const std::string_view scenario(argv[1]);
-    if (scenario == "shadow-malloc-stop") {
-        return TestShadowMallocStopsProfiling();
-    }
-    if (scenario == "replay-sync") {
-        return TestReplaySynchronizeFailure();
-    }
-    if (scenario == "replay-initial-sync-failure") {
-        return TestInitialSynchronizeFailure();
-    }
-    if (scenario == "replay-initial-sync") {
-        return TestReplayInitialSynchronize();
-    }
-    if (scenario == "profiling-flow") {
-        return TestProfilingFlowFailure();
-    }
-    if (scenario == "shadow-free") {
-        return TestShadowFreeRetry();
-    }
-    if (scenario == "null-free") {
-        return TestNullFreeDoesNotStopProfiling();
-    }
-    if (scenario == "shadow-memcpy-stop") {
-        return TestShadowMemcpyStopsProfiling();
-    }
-    if (scenario == "missing-memcpy-mirror") {
-        return TestMissingMemcpyMirrorStopsProfiling();
-    }
-    if (scenario == "missing-memset-mirror") {
-        return TestMissingMemsetMirrorStopsProfiling();
-    }
-    if (scenario == "malloc-missing-free") {
-        return TestMallocMissingFreeStopsProfiling();
-    }
-    if (scenario == "shadow-metadata-oom") {
-        return TestShadowMetadataAllocationFailure();
-    }
-    return 1;
 }

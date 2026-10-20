@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "biu/biu_pipeline.h"
 
 #include <boost/filesystem.hpp>
@@ -18,14 +20,6 @@
 #include <iterator>
 #include <string>
 #include <vector>
-
-#define CHECK(condition)                                                                         \
-    do {                                                                                         \
-        if (!(condition)) {                                                                      \
-            std::fprintf(stderr, "check failed at %s:%d: %s\n", __FILE__, __LINE__, #condition); \
-            return 1;                                                                            \
-        }                                                                                        \
-    } while (false)
 
 namespace {
 
@@ -62,7 +56,7 @@ uint32_t DfxWord(uint8_t ctrl, uint16_t regionId, uint16_t cycles)
 
 uint32_t StampWord(uint32_t value) { return 0xe0000000U | value; }
 
-int TestParseIntervals()
+TEST(NpuComputeBiuPipeline, ParseIntervals)
 {
     aclptiPipelineData replay;
     replay.deviceId = 0;
@@ -81,28 +75,27 @@ int TestParseIntervals()
         },
         &stats);
 
-    CHECK(status == ACLPTI_SUCCESS);
+    ASSERT_TRUE(status == ACLPTI_SUCCESS);
     std::vector<npucompute::BiuTraceEvent> busyIntervals;
     std::copy_if(intervals.begin(), intervals.end(), std::back_inserter(busyIntervals), [](const auto& event) {
         return !event.isDfx;
     });
-    CHECK(busyIntervals.size() == 2);
-    CHECK(busyIntervals[0].channel.groupId == 0);
-    CHECK(busyIntervals[0].channel.coreKind == aclptiBiuCoreKind::Aic);
-    CHECK(busyIntervals[0].name == "SCALAR");
-    CHECK(busyIntervals[0].blockId == 4);
-    CHECK(std::abs(busyIntervals[0].startUs - 0.01) < 1e-12);
-    CHECK(std::abs(busyIntervals[0].durationUs - 0.02) < 1e-12);
-    CHECK(busyIntervals[1].channel.groupId == 2);
-    CHECK(std::abs(busyIntervals[1].startUs - 1.005) < 1e-12);
-    CHECK(std::abs(busyIntervals[1].durationUs - 0.0045) < 1e-12);
-    CHECK(stats.payloadBytes == 80);
-    CHECK(stats.paddingBytes == 8);
-    CHECK(stats.intervalCount == 2);
-    return 0;
+    ASSERT_TRUE(busyIntervals.size() == 2);
+    ASSERT_TRUE(busyIntervals[0].channel.groupId == 0);
+    ASSERT_TRUE(busyIntervals[0].channel.coreKind == aclptiBiuCoreKind::Aic);
+    ASSERT_TRUE(busyIntervals[0].name == "SCALAR");
+    ASSERT_TRUE(busyIntervals[0].blockId == 4);
+    ASSERT_TRUE(std::abs(busyIntervals[0].startUs - 0.01) < 1e-12);
+    ASSERT_TRUE(std::abs(busyIntervals[0].durationUs - 0.02) < 1e-12);
+    ASSERT_TRUE(busyIntervals[1].channel.groupId == 2);
+    ASSERT_TRUE(std::abs(busyIntervals[1].startUs - 1.005) < 1e-12);
+    ASSERT_TRUE(std::abs(busyIntervals[1].durationUs - 0.0045) < 1e-12);
+    ASSERT_TRUE(stats.payloadBytes == 80);
+    ASSERT_TRUE(stats.paddingBytes == 8);
+    ASSERT_TRUE(stats.intervalCount == 2);
 }
 
-int TestIncompleteIntervalsAreSkipped()
+TEST(NpuComputeBiuPipeline, IncompleteIntervalsAreSkipped)
 {
     aclptiPipelineData replay;
     replay.deviceId = 0;
@@ -117,26 +110,25 @@ int TestIncompleteIntervalsAreSkipped()
     const auto parse = [&]() {
         return npucompute::ParsePipelineReplay(1, replay, clocks, [](const auto&) { return ACLPTI_SUCCESS; }, &stats);
     };
-    CHECK(parse() == ACLPTI_SUCCESS);
-    CHECK(stats.intervalCount == 2);
-    CHECK(stats.incompleteIntervalCount == 4);
+    ASSERT_TRUE(parse() == ACLPTI_SUCCESS);
+    ASSERT_TRUE(stats.intervalCount == 2);
+    ASSERT_TRUE(stats.incompleteIntervalCount == 4);
     // A new anchor also ends an unclosed interval without losing later data.
     auto& words = replay.channels.begin()->second;
     const auto next = words;
     words.insert(words.end(), next.begin(), next.end());
-    CHECK(parse() == ACLPTI_SUCCESS);
-    CHECK(stats.intervalCount == 3);
-    CHECK(stats.incompleteIntervalCount == 6);
+    ASSERT_TRUE(parse() == ACLPTI_SUCCESS);
+    ASSERT_TRUE(stats.intervalCount == 3);
+    ASSERT_TRUE(stats.incompleteIntervalCount == 6);
     // A valid stream with only incomplete intervals still permits an empty trace.
     replay.channels.clear();
     replay.channels[{0, aclptiBiuCoreKind::Aiv0}] = {Stamp(1000), Stamp(0), Stamp(0), Stamp(0), 0xf0010014U};
-    CHECK(parse() == ACLPTI_SUCCESS);
-    CHECK(stats.intervalCount == 0);
-    CHECK(stats.incompleteIntervalCount == 1);
-    return 0;
+    ASSERT_TRUE(parse() == ACLPTI_SUCCESS);
+    ASSERT_TRUE(stats.intervalCount == 0);
+    ASSERT_TRUE(stats.incompleteIntervalCount == 1);
 }
 
-int TestDecodeFailures()
+TEST(NpuComputeBiuPipeline, DecodeFailures)
 {
     aclptiPipelineData replay;
     replay.deviceId = 0;
@@ -144,18 +136,17 @@ int TestDecodeFailures()
     replay.channels[{0, aclptiBiuCoreKind::Aic}] = {Stamp(1), Stamp(2)};
     npucompute::BiuClockConfig clocks{100000000.0, 1000000000.0, 1000000000.0, "unit-test"};
     npucompute::BiuParseStats stats;
-    CHECK(
+    ASSERT_TRUE(
         npucompute::ParsePipelineReplay(
             1, replay, clocks, [](const auto&) { return ACLPTI_SUCCESS; }, &stats) == ACLPTI_ERROR_TRACE_INCOMPLETE);
 
     replay.channels[{0, aclptiBiuCoreKind::Aic}] = {0x70000000U};
-    CHECK(
+    ASSERT_TRUE(
         npucompute::ParsePipelineReplay(
             1, replay, clocks, [](const auto&) { return ACLPTI_SUCCESS; }, &stats) == ACLPTI_ERROR_DECODE);
-    return 0;
 }
 
-int TestDfxEventsAndChip6Fixp()
+TEST(NpuComputeBiuPipeline, DfxEventsAndChip6Fixp)
 {
     aclptiPipelineData replay;
     replay.deviceId = 0;
@@ -191,46 +182,45 @@ int TestDfxEventsAndChip6Fixp()
             return ACLPTI_SUCCESS;
         },
         &stats);
-    CHECK(status == ACLPTI_SUCCESS);
-    CHECK(stats.intervalCount == 0);
-    CHECK(stats.dfxEventCount == 7);
-    CHECK(events.size() == 7);
+    ASSERT_TRUE(status == ACLPTI_SUCCESS);
+    ASSERT_TRUE(stats.intervalCount == 0);
+    ASSERT_TRUE(stats.dfxEventCount == 7);
+    ASSERT_TRUE(events.size() == 7);
     std::vector<std::string> names;
     for (const auto& event : events) {
         names.push_back(event.name);
     }
-    CHECK(std::find(names.begin(), names.end(), "MarkStamp1031") != names.end());
-    CHECK(std::find(names.begin(), names.end(), "MarkStamp3079") != names.end());
-    CHECK(std::find(names.begin(), names.end(), "Region7") != names.end());
-    CHECK(std::find(names.begin(), names.end(), "MarkStamp1035") != names.end());
-    CHECK(std::find(names.begin(), names.end(), "MarkStamp3083") != names.end());
-    CHECK(std::find(names.begin(), names.end(), "Region11") != names.end());
-    CHECK(std::find(names.begin(), names.end(), "MarkStamp13") != names.end());
-    CHECK(std::find(names.begin(), names.end(), "MarkStamp3464") == names.end());
-    CHECK(std::find(names.begin(), names.end(), "MarkStamp3479") == names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "MarkStamp1031") != names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "MarkStamp3079") != names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "Region7") != names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "MarkStamp1035") != names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "MarkStamp3083") != names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "Region11") != names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "MarkStamp13") != names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "MarkStamp3464") == names.end());
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "MarkStamp3479") == names.end());
     const auto mark =
         std::find_if(events.begin(), events.end(), [](const auto& event) { return event.name == "MarkStamp1031"; });
-    CHECK(mark != events.end());
-    CHECK(mark->pipe == npucompute::BiuPipe::Vector);
-    CHECK(std::abs(mark->durationUs - 0.001) < 1e-12);
+    ASSERT_TRUE(mark != events.end());
+    ASSERT_TRUE(mark->pipe == npucompute::BiuPipe::Vector);
+    ASSERT_TRUE(std::abs(mark->durationUs - 0.001) < 1e-12);
     const auto region =
         std::find_if(events.begin(), events.end(), [](const auto& event) { return event.name == "Region7"; });
-    CHECK(region != events.end());
-    CHECK(region->pipe == npucompute::BiuPipe::Vector);
-    CHECK(std::abs(region->durationUs - 0.015) < 1e-12);
+    ASSERT_TRUE(region != events.end());
+    ASSERT_TRUE(region->pipe == npucompute::BiuPipe::Vector);
+    ASSERT_TRUE(std::abs(region->durationUs - 0.015) < 1e-12);
     const auto fixpDfxMark =
         std::find_if(events.begin(), events.end(), [](const auto& event) { return event.name == "MarkStamp1035"; });
-    CHECK(fixpDfxMark != events.end());
-    CHECK(fixpDfxMark->pipe == npucompute::BiuPipe::Fixp);
+    ASSERT_TRUE(fixpDfxMark != events.end());
+    ASSERT_TRUE(fixpDfxMark->pipe == npucompute::BiuPipe::Fixp);
     const auto fixpDfxRegion =
         std::find_if(events.begin(), events.end(), [](const auto& event) { return event.name == "Region11"; });
-    CHECK(fixpDfxRegion != events.end());
-    CHECK(fixpDfxRegion->pipe == npucompute::BiuPipe::Fixp);
-    CHECK(std::abs(fixpDfxRegion->durationUs - 0.015) < 1e-12);
-    return 0;
+    ASSERT_TRUE(fixpDfxRegion != events.end());
+    ASSERT_TRUE(fixpDfxRegion->pipe == npucompute::BiuPipe::Fixp);
+    ASSERT_TRUE(std::abs(fixpDfxRegion->durationUs - 0.015) < 1e-12);
 }
 
-int TestIncompleteEndMarkSequenceKeepsDfxEvents()
+TEST(NpuComputeBiuPipeline, IncompleteEndMarkSequenceKeepsDfxEvents)
 {
     aclptiPipelineData replay;
     replay.deviceId = 0;
@@ -246,7 +236,7 @@ int TestIncompleteEndMarkSequenceKeepsDfxEvents()
     npucompute::BiuClockConfig clocks{1e9, 1e9, 1e9, "unit-test"};
     npucompute::BiuParseStats stats;
     std::vector<npucompute::BiuTraceEvent> events;
-    CHECK(
+    ASSERT_TRUE(
         npucompute::ParsePipelineReplay(
             5, replay, clocks,
             [&events](const npucompute::BiuTraceEvent& event) {
@@ -254,21 +244,20 @@ int TestIncompleteEndMarkSequenceKeepsDfxEvents()
                 return ACLPTI_SUCCESS;
             },
             &stats) == ACLPTI_SUCCESS);
-    CHECK(stats.dfxEventCount == 3);
-    CHECK(events.size() == 3);
-    CHECK(std::find_if(events.begin(), events.end(), [](const auto& event) {
-              return event.name == "MarkStamp3464";
-          }) != events.end());
-    CHECK(std::find_if(events.begin(), events.end(), [](const auto& event) {
-              return event.name == "MarkStamp3481";
-          }) != events.end());
-    CHECK(std::find_if(events.begin(), events.end(), [](const auto& event) {
-              return event.name == "MarkStamp27";
-          }) != events.end());
-    return 0;
+    ASSERT_TRUE(stats.dfxEventCount == 3);
+    ASSERT_TRUE(events.size() == 3);
+    ASSERT_TRUE(std::find_if(events.begin(), events.end(), [](const auto& event) {
+                    return event.name == "MarkStamp3464";
+                }) != events.end());
+    ASSERT_TRUE(std::find_if(events.begin(), events.end(), [](const auto& event) {
+                    return event.name == "MarkStamp3481";
+                }) != events.end());
+    ASSERT_TRUE(std::find_if(events.begin(), events.end(), [](const auto& event) {
+                    return event.name == "MarkStamp27";
+                }) != events.end());
 }
 
-int TestOnlyRequiresUsedCoreClock()
+TEST(NpuComputeBiuPipeline, OnlyRequiresUsedCoreClock)
 {
     aclptiPipelineData replay;
     replay.deviceId = 0;
@@ -277,23 +266,22 @@ int TestOnlyRequiresUsedCoreClock()
 
     npucompute::BiuClockConfig clocks{100000000.0, 1000000000.0, 0.0, "unit-test"};
     npucompute::BiuParseStats stats;
-    CHECK(
+    ASSERT_TRUE(
         npucompute::ParsePipelineReplay(
             1, replay, clocks, [](const auto&) { return ACLPTI_SUCCESS; }, &stats) == ACLPTI_SUCCESS);
 
     replay.channels.clear();
     replay.channels[{0, aclptiBiuCoreKind::Aiv0}] = TraceWords(1000, 4, 15);
-    CHECK(
+    ASSERT_TRUE(
         npucompute::ParsePipelineReplay(
             1, replay, clocks, [](const auto&) { return ACLPTI_SUCCESS; }, &stats) == ACLPTI_ERROR_RESULT_UNRELIABLE);
-    return 0;
 }
 
-int TestPipeTraceWriter()
+TEST(NpuComputeBiuPipeline, PipeTraceWriter)
 {
     const boost::filesystem::path directory =
         boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("npu-compute-biu-%%%%-%%%%");
-    CHECK(boost::filesystem::create_directory(directory));
+    ASSERT_TRUE(boost::filesystem::create_directory(directory));
 
     npucompute::PipeTraceWriter writer;
     std::string error;
@@ -301,60 +289,36 @@ int TestPipeTraceWriter()
     if (beginStatus != ACLPTI_SUCCESS) {
         std::fprintf(stderr, "PipeTraceWriter::Begin failed: %d %s\n", beginStatus, error.c_str());
     }
-    CHECK(beginStatus == ACLPTI_SUCCESS);
+    ASSERT_TRUE(beginStatus == ACLPTI_SUCCESS);
     npucompute::BiuTraceEvent event{
         {7, 0, 3, aclptiBiuCoreKind::Aiv1}, npucompute::BiuPipe::Vector, 5, "VECTOR", "rail_idle", 1.25, 0.5, false};
-    CHECK(writer.Append(event) == ACLPTI_SUCCESS);
-    CHECK(writer.Commit() == ACLPTI_SUCCESS);
+    ASSERT_TRUE(writer.Append(event) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(writer.Commit() == ACLPTI_SUCCESS);
 
     std::ifstream input((directory / "PipeTrace.json").string());
     const std::string json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-    CHECK(json.find("\"displayTimeUnit\":\"ns\"") != std::string::npos);
-    CHECK(json.find("\"name\":\"VECTOR\"") != std::string::npos);
-    CHECK(json.find("\"pid\":\"group3.veccore1\"") != std::string::npos);
-    CHECK(json.find("\"tid\":\"VECTOR\"") != std::string::npos);
-    CHECK(json.find("\"ph\":\"X\"") != std::string::npos);
+    ASSERT_TRUE(json.find("\"displayTimeUnit\":\"ns\"") != std::string::npos);
+    ASSERT_TRUE(json.find("\"name\":\"VECTOR\"") != std::string::npos);
+    ASSERT_TRUE(json.find("\"pid\":\"group3.veccore1\"") != std::string::npos);
+    ASSERT_TRUE(json.find("\"tid\":\"VECTOR\"") != std::string::npos);
+    ASSERT_TRUE(json.find("\"ph\":\"X\"") != std::string::npos);
 
     npucompute::PipeTraceWriter regionWriter;
-    CHECK(regionWriter.Begin(directory / "region.json", &error) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(regionWriter.Begin(directory / "region.json", &error) == ACLPTI_SUCCESS);
     npucompute::BiuTraceEvent regionEvent{
         {7, 0, 3, aclptiBiuCoreKind::Aiv1}, npucompute::BiuPipe::Vector, 5, "Region10", "good", 1.25, 0.5, true};
-    CHECK(regionWriter.Append(regionEvent) == ACLPTI_SUCCESS);
-    CHECK(regionWriter.Commit() == ACLPTI_SUCCESS);
+    ASSERT_TRUE(regionWriter.Append(regionEvent) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(regionWriter.Commit() == ACLPTI_SUCCESS);
     std::ifstream regionInput((directory / "region.json").string());
     const std::string regionJson((std::istreambuf_iterator<char>(regionInput)), std::istreambuf_iterator<char>());
-    CHECK(regionJson.find("\"cname\":\"good\"") != std::string::npos);
-    CHECK(regionJson.find("\"cname\":\"orange\"") == std::string::npos);
+    ASSERT_TRUE(regionJson.find("\"cname\":\"good\"") != std::string::npos);
+    ASSERT_TRUE(regionJson.find("\"cname\":\"orange\"") == std::string::npos);
 
     npucompute::PipeTraceWriter emptyWriter;
-    CHECK(emptyWriter.Begin(directory / "empty.json", &error) == ACLPTI_SUCCESS);
-    CHECK(emptyWriter.Commit() == ACLPTI_SUCCESS);
+    ASSERT_TRUE(emptyWriter.Begin(directory / "empty.json", &error) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(emptyWriter.Commit() == ACLPTI_SUCCESS);
     boost::system::error_code ignored;
     boost::filesystem::remove_all(directory, ignored);
-    return 0;
 }
 
 } // namespace
-
-int main()
-{
-    if (const int result = TestParseIntervals(); result != 0) {
-        return result;
-    }
-    if (const int result = TestDecodeFailures(); result != 0) {
-        return result;
-    }
-    if (const int result = TestDfxEventsAndChip6Fixp(); result != 0) {
-        return result;
-    }
-    if (const int result = TestIncompleteEndMarkSequenceKeepsDfxEvents(); result != 0) {
-        return result;
-    }
-    if (const int result = TestOnlyRequiresUsedCoreClock(); result != 0) {
-        return result;
-    }
-    if (const int result = TestIncompleteIntervalsAreSkipped(); result != 0) {
-        return result;
-    }
-    return TestPipeTraceWriter();
-}

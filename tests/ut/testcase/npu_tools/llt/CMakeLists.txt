@@ -70,6 +70,10 @@ add_executable(npu_tools_utest
   # injection（依赖桩版 runtime/profapi，真实 CANN 链已按需剥离）
   "${NPU_TOOLS_TEST_ROOT}/injection/tests/injection_hook_test.cpp"
   # npu_compute 纯逻辑用例（.so 边界/进程类用例保留在 npu_compute/tests 独立目标）
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/test_process_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/ipc_protocol_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/uds_artifact_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/ipc/artifact_publisher.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/cli_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/option_registry_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/collection_file_validator_test.cpp"
@@ -189,6 +193,7 @@ target_include_directories(npu_tools_utest PRIVATE
 )
 
 target_link_libraries(npu_tools_utest PRIVATE
+  npu_compute_test_process
   npu_compute_headers
   npu_compute_ipc
   npu_check_core
@@ -208,7 +213,14 @@ target_link_libraries(npu_tools_utest PRIVATE
   ${CMAKE_DL_LIBS}
 )
 
-add_test(NAME npu_tools_utest COMMAND npu_tools_utest)
+target_compile_definitions(npu_tools_utest PRIVATE
+  NPU_COMPUTE_PROCESS_CHILD_PATH="$<TARGET_FILE:npu_compute_test_process_child>")
+add_dependencies(npu_tools_utest npu_compute_test_process_child)
+
+set(NPU_TOOLS_GTEST_XML "${CMAKE_BINARY_DIR}/npu_compute-reports/$<CONFIG>/gtest.xml")
+add_test(NAME npu_tools_utest COMMAND npu_tools_utest
+  "--gtest_output=xml:${NPU_TOOLS_GTEST_XML}")
+set_tests_properties(npu_tools_utest PROPERTIES LABELS "npu_compute_ci_host" TIMEOUT 300)
 
 # 桩库（unified_dlog/runtime/profapi）与 CANN 真实库同名；用 DT_RPATH（优先于
 # LD_LIBRARY_PATH）让构建树里的桩目录稳定抢占，POST_BUILD/ctest 环境无关。
@@ -248,4 +260,7 @@ target_link_options(npu_tools_utest PRIVATE
   -Wl,--wrap=_ZN6aclsan28ResolveActiveDeviceCallStackEmPNS_14device_runtime15CallStackResultE
 )
 
-run_llt_test(TARGET npu_tools_utest TASK_NUM 1)
+option(NPU_TOOLS_LLT_RUN_POST_BUILD "Run npu_tools_utest after linking" ON)
+if(NPU_TOOLS_LLT_RUN_POST_BUILD)
+  run_llt_test(TARGET npu_tools_utest TASK_NUM 1)
+endif()

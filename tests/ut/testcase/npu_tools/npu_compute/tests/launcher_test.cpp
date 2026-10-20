@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "import/imported_profile_results.h"
 #include "launch/launcher.h"
 
@@ -20,21 +22,6 @@
 #include <unistd.h>
 
 namespace {
-
-int Check(bool condition, const char* expression, int line)
-{
-    if (condition) {
-        return 0;
-    }
-    std::fprintf(stderr, "line %d: check failed: %s\n", line, expression);
-    return 1;
-}
-
-#define CHECK(expression)                               \
-    do {                                                \
-        if (Check((expression), #expression, __LINE__)) \
-            return 1;                                   \
-    } while (false)
 
 using npucompute::cli::CliConfig;
 using npucompute::cli::ImportedProfileEntry;
@@ -162,24 +149,23 @@ bool HasCollectionDirectoryIn(const boost::filesystem::path& parent)
     return false;
 }
 
-int CheckReportContents(const boost::filesystem::path& report)
+void CheckReportContents(const boost::filesystem::path& report)
 {
     std::vector<ImportedProfileEntry> results;
     std::string error;
-    CHECK(ReadImportedProfileResults(report, &results, &error));
-    CHECK(results.size() == 3U);
-    CHECK(results[0].name == "HardwareInfo.jsonl");
-    CHECK(results[1].name == "PipeUtilization.csv");
-    CHECK(results[2].name == "summary.jsonl");
-    return 0;
+    ASSERT_TRUE(ReadImportedProfileResults(report, &results, &error));
+    ASSERT_TRUE(results.size() == 3U);
+    ASSERT_TRUE(results[0].name == "HardwareInfo.jsonl");
+    ASSERT_TRUE(results[1].name == "PipeUtilization.csv");
+    ASSERT_TRUE(results[2].name == "summary.jsonl");
 }
 
-int TestWithoutExportPublishesReportInCurrentDirectory()
+TEST(NpuComputeLauncher, WithoutExportPublishesReportInCurrentDirectory)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const CliConfig config = FixtureConfig();
     std::string report;
     std::string error = "old error";
@@ -188,207 +174,183 @@ int TestWithoutExportPublishesReportInCurrentDirectory()
     if (launchResult != 0) {
         std::fprintf(stderr, "launch failed (%d): %s\n", launchResult, error.c_str());
     }
-    CHECK(launchResult == 0);
-    CHECK(error.empty());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(boost::filesystem::path(report).parent_path() == workDirectory.Path());
-    CHECK(boost::filesystem::path(report).extension() == ".npu-rep");
-    CHECK(boost::filesystem::is_regular_file(report));
-    CHECK(CheckReportContents(report) == 0);
-    return 0;
+    ASSERT_TRUE(launchResult == 0);
+    ASSERT_TRUE(error.empty());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(boost::filesystem::path(report).parent_path() == workDirectory.Path());
+    ASSERT_TRUE(boost::filesystem::path(report).extension() == ".npu-rep");
+    ASSERT_TRUE(boost::filesystem::is_regular_file(report));
+    ASSERT_NO_FATAL_FAILURE(CheckReportContents(report));
 }
 
-int TestExplicitReportRemovesDataFromCurrentDirectory()
+TEST(NpuComputeLauncher, ExplicitReportRemovesDataFromCurrentDirectory)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const boost::filesystem::path output = workDirectory.Path() / "result.npu-rep";
     const CliConfig config = FixtureConfig(output);
     std::string report;
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 0);
-    CHECK(error.empty());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(report == output.string());
-    CHECK(boost::filesystem::is_regular_file(output));
-    CHECK(CheckReportContents(output) == 0);
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 0);
+    ASSERT_TRUE(error.empty());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(report == output.string());
+    ASSERT_TRUE(boost::filesystem::is_regular_file(output));
+    ASSERT_NO_FATAL_FAILURE(CheckReportContents(output));
 }
 
-int TestExportDirectoryRemovesCollectionData()
+TEST(NpuComputeLauncher, ExportDirectoryRemovesCollectionData)
 {
     TestDirectory workDirectory;
     TestDirectory reportDirectory;
-    CHECK(!workDirectory.Path().empty());
-    CHECK(!reportDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
+    ASSERT_TRUE(!reportDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const CliConfig config = FixtureConfig(reportDirectory.Path());
     std::string report;
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 0);
-    CHECK(error.empty());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(boost::filesystem::path(report).parent_path() == reportDirectory.Path());
-    CHECK(boost::filesystem::is_regular_file(report));
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 0);
+    ASSERT_TRUE(error.empty());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(boost::filesystem::path(report).parent_path() == reportDirectory.Path());
+    ASSERT_TRUE(boost::filesystem::is_regular_file(report));
 }
 
-int TestInvalidTmpdirDoesNotAffectCollection()
+TEST(NpuComputeLauncher, InvalidTmpdirDoesNotAffectCollection)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const ScopedTmpdir tmpdir((workDirectory.Path() / "missing-tmpdir").string());
     const CliConfig config = FixtureConfig(workDirectory.Path() / "result.npu-rep");
     std::string report;
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 0);
-    CHECK(error.empty());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(boost::filesystem::is_regular_file(report));
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 0);
+    ASSERT_TRUE(error.empty());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(boost::filesystem::is_regular_file(report));
 }
 
-int TestInvalidExportIsRejectedBeforeAppLaunch()
+TEST(NpuComputeLauncher, InvalidExportIsRejectedBeforeAppLaunch)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const boost::filesystem::path marker = workDirectory.Path() / "app-ran";
     const boost::filesystem::path output = workDirectory.Path() / "missing" / "result.npu-rep";
     const CliConfig config = ShellConfig("touch app-ran", output);
     std::string report = "old report";
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 4);
-    CHECK(report.empty());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(!boost::filesystem::exists(marker));
-    CHECK(!boost::filesystem::exists(output));
-    CHECK(error.find("Create it before using --export") != std::string::npos);
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 4);
+    ASSERT_TRUE(report.empty());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(!boost::filesystem::exists(marker));
+    ASSERT_TRUE(!boost::filesystem::exists(output));
+    ASSERT_TRUE(error.find("Create it before using --export") != std::string::npos);
 }
 
-int TestFailedAppRemovesEmptyDataAndDoesNotPublishReport()
+TEST(NpuComputeLauncher, FailedAppRemovesEmptyDataAndDoesNotPublishReport)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const boost::filesystem::path output = workDirectory.Path() / "result.npu-rep";
     CliConfig config = FixtureConfig(output);
     config.program_arguments = {"--exit-code", "23"};
     std::string report = "old report";
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 23);
-    CHECK(report.empty());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(boost::filesystem::is_empty(workDirectory.Path()));
-    CHECK(!boost::filesystem::exists(output));
-    CHECK(error.find("APP exited with status 23") != std::string::npos);
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 23);
+    ASSERT_TRUE(report.empty());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(boost::filesystem::is_empty(workDirectory.Path()));
+    ASSERT_TRUE(!boost::filesystem::exists(output));
+    ASSERT_TRUE(error.find("APP exited with status 23") != std::string::npos);
 }
 
-int TestMissingHardwareInfoRemovesEmptyDataAndDoesNotPublishReport()
+TEST(NpuComputeLauncher, MissingHardwareInfoRemovesEmptyDataAndDoesNotPublishReport)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const boost::filesystem::path output = workDirectory.Path() / "result.npu-rep";
     const CliConfig config = FixtureConfig(output, "empty");
     std::string report;
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 3);
-    CHECK(report.empty());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(boost::filesystem::is_empty(workDirectory.Path()));
-    CHECK(!boost::filesystem::exists(output));
-    CHECK(error.find("required artifact missing") != std::string::npos);
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 3);
+    ASSERT_TRUE(report.empty());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(boost::filesystem::is_empty(workDirectory.Path()));
+    ASSERT_TRUE(!boost::filesystem::exists(output));
+    ASSERT_TRUE(error.find("required artifact missing") != std::string::npos);
 }
 
-int TestMissingHardwareInfoPublishesPartialReport()
+TEST(NpuComputeLauncher, MissingHardwareInfoPublishesPartialReport)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const boost::filesystem::path output = workDirectory.Path() / "result.npu-rep";
     const CliConfig config = FixtureConfig(output, "missing-hardware");
     std::string report;
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 3);
-    CHECK(report == output.string());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(boost::filesystem::is_regular_file(output));
-    CHECK(error.find("collection incomplete") != std::string::npos);
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 3);
+    ASSERT_TRUE(report == output.string());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(boost::filesystem::is_regular_file(output));
+    ASSERT_TRUE(error.find("collection incomplete") != std::string::npos);
 }
 
-int TestIncompleteResultPublishesPartialReport()
+TEST(NpuComputeLauncher, IncompleteResultPublishesPartialReport)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const boost::filesystem::path output = workDirectory.Path() / "result.npu-rep";
     const CliConfig config = FixtureConfig(output, "incomplete");
     std::string report;
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 3);
-    CHECK(report == output.string());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(boost::filesystem::is_regular_file(output));
-    CHECK(error.find("collection incomplete") != std::string::npos);
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 3);
+    ASSERT_TRUE(report == output.string());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(boost::filesystem::is_regular_file(output));
+    ASSERT_TRUE(error.find("collection incomplete") != std::string::npos);
 }
 
-int TestPublishingFailureRemovesCollectionDataDirectory()
+TEST(NpuComputeLauncher, PublishingFailureRemovesCollectionDataDirectory)
 {
     TestDirectory workDirectory;
-    CHECK(!workDirectory.Path().empty());
+    ASSERT_TRUE(!workDirectory.Path().empty());
     const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
-    CHECK(currentDirectory.IsActive());
+    ASSERT_TRUE(currentDirectory.IsActive());
     const boost::filesystem::path output =
         boost::filesystem::path("/proc") / ("npu-compute-launcher-" + std::to_string(::getpid()) + ".npu-rep");
     const CliConfig config = FixtureConfig(output);
     std::string report;
     std::string error;
 
-    CHECK(LaunchTarget(config, &report, &error) == 4);
-    CHECK(report.empty());
-    CHECK(!HasCollectionDirectoryIn(workDirectory.Path()));
-    CHECK(!boost::filesystem::exists(output));
-    CHECK(error.find("create temporary rep failed") != std::string::npos);
-    CHECK(error.find("/proc/") != std::string::npos);
-    return 0;
+    ASSERT_TRUE(LaunchTarget(config, &report, &error) == 4);
+    ASSERT_TRUE(report.empty());
+    ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
+    ASSERT_TRUE(!boost::filesystem::exists(output));
+    ASSERT_TRUE(error.find("create temporary rep failed") != std::string::npos);
+    ASSERT_TRUE(error.find("/proc/") != std::string::npos);
 }
 
 } // namespace
-
-int main()
-{
-    if (TestWithoutExportPublishesReportInCurrentDirectory() != 0 ||
-        TestExplicitReportRemovesDataFromCurrentDirectory() != 0 || TestExportDirectoryRemovesCollectionData() != 0 ||
-        TestInvalidTmpdirDoesNotAffectCollection() != 0 || TestInvalidExportIsRejectedBeforeAppLaunch() != 0 ||
-        TestFailedAppRemovesEmptyDataAndDoesNotPublishReport() != 0 ||
-        TestMissingHardwareInfoRemovesEmptyDataAndDoesNotPublishReport() != 0 ||
-        TestMissingHardwareInfoPublishesPartialReport() != 0 || TestIncompleteResultPublishesPartialReport() != 0 ||
-        TestPublishingFailureRemovesCollectionDataDirectory() != 0) {
-        return 1;
-    }
-    return 0;
-}

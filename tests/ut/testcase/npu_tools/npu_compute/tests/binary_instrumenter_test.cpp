@@ -8,6 +8,13 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "acl_pti/profiling/binary_instrumenter.h"
+#include "isolated_gtest.h"
+
+#include <boost/filesystem.hpp>
+#include <fstream>
+#include <functional>
+#include <iterator>
+#include <set>
 
 #include <algorithm>
 #include <atomic>
@@ -118,45 +125,118 @@ std::vector<char> MakeElfWithKernelArgumentSizes(
 
 } // namespace
 
-int main()
+namespace {
+
+std::vector<std::string> ReadLines(const boost::filesystem::path& path)
 {
-    const std::vector<char> input = MakeElfWithKernelArgumentSizes({40, 31, 16}, {{0, 232}});
-    const std::vector<char> aggregateInput = MakeElfWithKernelArgumentSizes({}, {{24, 24}, {0, 24}});
-    const std::vector<char> missingArgumentMetadata = MakeElfWithKernelArgumentSizes({});
-    std::vector<char> output;
-    std::uint32_t traceOffset = 123;
-    if (aclpti::profiling::InstrumentKernelEnd(
-            missingArgumentMetadata.data(), missingArgumentMetadata.size(), output, &traceOffset) ||
-        traceOffset != 0) {
-        return 1;
+    std::ifstream input(path.string());
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(input, line)) {
+        lines.push_back(line);
     }
-    // A failed linker invocation must not invalidate the extracted asset cache.
-    if (aclpti::profiling::InstrumentKernelEnd(input.data(), input.size(), output)) {
-        return 2;
+    return lines;
+}
+
+void CheckToolCallsAndCleanup(const boost::filesystem::path& root, bool toolsUsed)
+{
+    const auto calls = ReadLines(root / "calls");
+    EXPECT_EQ(std::count(calls.begin(), calls.end(), "bisheng"), toolsUsed ? 1 : 0);
+    EXPECT_EQ(std::count(calls.begin(), calls.end(), "ld.lld"), toolsUsed ? 7 : 0);
+    EXPECT_EQ(std::count(calls.begin(), calls.end(), "bisheng-tune"), toolsUsed ? 6 : 0);
+    EXPECT_EQ(calls.size(), toolsUsed ? 14U : 0U);
+    const auto caches = ReadLines(root / "caches");
+    const auto workdirs = ReadLines(root / "workdirs");
+    const auto sources = ReadLines(root / "probe_sources");
+    const std::set<std::string> uniqueCaches(caches.begin(), caches.end());
+    const std::set<std::string> uniqueWorkdirs(workdirs.begin(), workdirs.end());
+    const std::set<std::string> uniqueSources(sources.begin(), sources.end());
+    EXPECT_EQ(caches.size(), toolsUsed ? 7U : 0U);
+    EXPECT_EQ(workdirs.size(), toolsUsed ? 7U : 0U);
+    EXPECT_EQ(sources.size(), toolsUsed ? 1U : 0U);
+    EXPECT_EQ(uniqueCaches.size(), toolsUsed ? 1U : 0U);
+    EXPECT_EQ(uniqueWorkdirs.size(), toolsUsed ? 7U : 0U);
+    EXPECT_EQ(uniqueSources, uniqueCaches);
+    for (const auto& paths : {caches, workdirs, sources}) {
+        for (const auto& path : paths) {
+            EXPECT_FALSE(boost::filesystem::exists(path)) << "Temporary asset survived child exit: " << path;
+        }
     }
-    std::atomic<bool> success{true};
-    std::vector<std::thread> workers;
-    for (int i = 0; i < 4; ++i) {
-        workers.emplace_back([&] {
-            std::vector<char> patched;
-            if (!aclpti::profiling::InstrumentKernelEnd(input.data(), input.size(), patched) ||
-                patched.size() <= input.size()) {
-                success = false;
-            }
-        });
+    EXPECT_FALSE(boost::filesystem::exists(root / "kernel_end"));
+}
+
+void RunIsolatedScenario(bool toolsUsed, const std::function<void()>& assertions)
+{
+    if (npucompute::test::IsIsolatedTestChild()) {
+        assertions();
+        return;
     }
-    for (auto& worker : workers) {
-        worker.join();
+    npucompute::test::TemporaryDirectory temporary;
+    const boost::filesystem::path root(temporary.Path());
+    const auto tools = root / "tools/bisheng_compiler/bin";
+    ASSERT_TRUE(boost::filesystem::create_directories(tools));
+    for (const auto* name : {"bisheng", "ld.lld", "bisheng-tune"}) {
+        boost::filesystem::create_symlink(NPU_COMPUTE_INSTRUMENTER_TOOL_STUB_PATH, tools / name);
     }
-    if (!aclpti::profiling::InstrumentKernelEnd(input.data(), input.size(), output, &traceOffset) ||
-        traceOffset != 232) {
-        return 3;
-    }
-    std::vector<char> aggregateOutput;
-    if (!aclpti::profiling::InstrumentKernelEnd(
-            aggregateInput.data(), aggregateInput.size(), aggregateOutput, &traceOffset) ||
-        traceOffset != 48) {
-        return 4;
-    }
-    return success ? 0 : 5;
+    const auto name = npucompute::test::CurrentTestName();
+    npucompute::test::ProcessOptions options;
+    options.arguments = {"/proc/self/exe", "--gtest_filter=" + name};
+    options.environment["NPU_COMPUTE_ISOLATED_GTEST"] = name;
+    options.environment["NPU_COMPUTE_INSTRUMENTER_TEST_ROOT"] = root.string();
+    options.environment["ASCEND_HOME_PATH"] = root.string();
+    options.environment["PATH"] = tools.string();
+    options.environment["NPU_COMPUTE_BISHENG"] = std::nullopt;
+    const auto result = npucompute::test::RunProcess(options);
+    ASSERT_EQ(result.launchError, 0);
+    ASSERT_FALSE(result.timedOut);
+    ASSERT_EQ(result.signal, 0) << result.standardOutput << result.standardError;
+    ASSERT_EQ(result.exitCode, 0) << result.standardOutput << result.standardError;
+    CheckToolCallsAndCleanup(root, toolsUsed);
+}
+
+} // namespace
+
+TEST(NpuComputeBinaryInstrumenter, RejectsMissingArgumentMetadataBeforeInvokingTools)
+{
+    RunIsolatedScenario(false, [] {
+        const auto input = MakeElfWithKernelArgumentSizes({});
+        std::vector<char> output;
+        std::uint32_t traceOffset = 123;
+        EXPECT_FALSE(aclpti::profiling::InstrumentKernelEnd(input.data(), input.size(), output, &traceOffset));
+        EXPECT_EQ(traceOffset, 0U);
+        EXPECT_TRUE(output.empty());
+    });
+}
+
+TEST(NpuComputeBinaryInstrumenter, ReusesProbeAcrossLinkFailureAndConcurrentInstrumentation)
+{
+    RunIsolatedScenario(true, [] {
+        const auto input = MakeElfWithKernelArgumentSizes({40, 31, 16}, {{0, 232}});
+        const auto aggregateInput = MakeElfWithKernelArgumentSizes({}, {{24, 24}, {0, 24}});
+        std::vector<char> output;
+        // The tool stub fails the first link; later calls must reuse the compiled probe.
+        ASSERT_FALSE(aclpti::profiling::InstrumentKernelEnd(input.data(), input.size(), output));
+        std::atomic<bool> success{true};
+        std::vector<std::thread> workers;
+        for (int index = 0; index < 4; ++index) {
+            workers.emplace_back([&] {
+                std::vector<char> patched;
+                if (!aclpti::profiling::InstrumentKernelEnd(input.data(), input.size(), patched) ||
+                    patched.size() <= input.size()) {
+                    success = false;
+                }
+            });
+        }
+        for (auto& worker : workers) {
+            worker.join();
+        }
+        EXPECT_TRUE(success.load()) << "Concurrent instrumentation failed or did not append parameter metadata";
+        std::uint32_t traceOffset = 123;
+        ASSERT_TRUE(aclpti::profiling::InstrumentKernelEnd(input.data(), input.size(), output, &traceOffset));
+        EXPECT_EQ(traceOffset, 232U);
+        std::vector<char> aggregateOutput;
+        ASSERT_TRUE(aclpti::profiling::InstrumentKernelEnd(
+            aggregateInput.data(), aggregateInput.size(), aggregateOutput, &traceOffset));
+        EXPECT_EQ(traceOffset, 48U);
+    });
 }

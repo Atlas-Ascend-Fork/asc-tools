@@ -42,6 +42,7 @@ def test_npu_compute_product_naming_is_consistent():
         for root in (product_root, REPO_ROOT / "tests")
         for path in root.rglob("*")
         if path.is_file()
+        and "third_party" not in path.relative_to(REPO_ROOT).parts
         and (path.name == "CMakeLists.txt" or path.suffix in TEXT_SUFFIXES)
     )
 
@@ -69,12 +70,17 @@ def test_npu_compute_build_and_log_names_are_consistent():
         REPO_ROOT / "npu_tools/npu_compute" / "src" / "cli" / "main.cpp"
     ).read_text(encoding="utf-8")
     library_source = (
-        REPO_ROOT / "npu_tools/npu_compute" / "src" / "compute" / "npu_compute.cpp"
+        REPO_ROOT
+        / "npu_tools/npu_compute"
+        / "src"
+        / "compute"
+        / "runtime"
+        / "npu_compute_runtime.cpp"
     ).read_text(encoding="utf-8")
 
     assert "project(npu_compute LANGUAGES CXX)" in product_cmake
     assert "add_library(npu_compute SHARED" in library_cmake
-    assert "OUTPUT_NAME npu-compute" in library_cmake
+    assert "OUTPUT_NAME npu_compute_processor" in library_cmake
     assert "add_executable(npu_compute_cli" in cli_cmake
     assert "OUTPUT_NAME npu-compute" in cli_cmake
     assert '"[ERROR] npu-compute: %s\\n"' in cli_main
@@ -106,8 +112,7 @@ def test_package_build_includes_npu_compute_and_sanitizer():
         in sanitizer_cmake
     )
     assert (
-        "set(NPU_SANITIZER_INSTALL_INTERNAL_DIR "
-        '"${NPU_SANITIZER_INSTALL_BASE_DIR}/tools/npu_tools")' in sanitizer_cmake
+        'set(NPU_SANITIZER_INSTALL_INTERNAL_DIR "tools/npu_tools")' in sanitizer_cmake
     )
     assert "install(TARGETS npu_check_cli" in sanitizer_cmake
     assert "install(TARGETS npu_check acl_san" in sanitizer_cmake
@@ -188,7 +193,6 @@ def test_npu_compute_test_ownership_is_in_tests_directory():
         REPO_ROOT / "tests/ut/testcase/npu_tools/npu_compute/tests/CMakeLists.txt"
     ).read_text(encoding="utf-8")
 
-    assert "option(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS" in npu_tools_tests_cmake
     assert "add_subdirectory(npu_compute/tests)" in npu_tools_tests_cmake
     assert "add_library(acl_pti_test" in npu_compute_tests_cmake
     assert "add_library(npu_compute_test" in npu_compute_tests_cmake
@@ -223,7 +227,9 @@ def test_cmake_targets_use_component_prefixes_and_merge_data_module():
     )
     assert "add_library(acl_pti SHARED" in acl_pti_cmake
     assert "data/api.cpp" in acl_pti_cmake
-    assert "data/module.cpp" in acl_pti_cmake
+    assert "data/profiling_data_manager.cpp" in acl_pti_cmake
+    assert "data/data_processor.cpp" in acl_pti_cmake
+    assert "data/data_receiver.cpp" in acl_pti_cmake
     assert "data/raw_data_decoder.cpp" in acl_pti_cmake
     assert "add_library(acl_pti_data_module_impl" not in cmake_content
     assert "OUTPUT_NAME pti_data_module_impl" not in cmake_content

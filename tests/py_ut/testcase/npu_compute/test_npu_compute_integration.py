@@ -16,6 +16,19 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def collection_work_directory(tmp_path, monkeypatch):
+    # Collection writes reports in cwd; isolate each test from the checkout.
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def hardware_stub_environment(monkeypatch):
+    stub = os.environ.get("NPU_COMPUTE_HARDWARE_API_STUB")
+    assert stub and Path(stub).is_file(), "hardware API stub must be built"
+    monkeypatch.setenv("LD_PRELOAD", str(Path(stub).resolve()))
+
+
 BIN_DIR = Path(
     os.environ.get(
         "NPU_COMPUTE_TEST_BIN_DIR",
@@ -168,8 +181,8 @@ def test_each_collection_publishes_unique_report():
     first, _ = run_collection()
     second, _ = run_collection()
 
-    assert first.returncode == 3, first.stderr
-    assert second.returncode == 3, second.stderr
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
     first_output = extract_output_path(first.stderr)
     second_output = extract_output_path(second.stderr)
     assert first_output.is_absolute()
@@ -189,7 +202,7 @@ def test_collection_runs_the_connected_replay_chain():
         "200",
     )
 
-    assert result.returncode == 3, result.stderr
+    assert result.returncode == 0, result.stderr
     assert "[demo] argv[1]=--app-value" in result.stderr
     assert "[demo] argv[2]=value-from-user" in result.stderr
     assert result.stderr.count("[aclpti] subscribe result=0") == 1
@@ -237,7 +250,7 @@ def test_app_nonzero_exit_is_preserved_after_successful_collection():
 def test_multiple_sections_reach_aclpti_in_order():
     result, _ = run_collection(sections=("Memory", "L2Cache"))
 
-    assert result.returncode == 3, result.stderr
+    assert result.returncode == 0, result.stderr
     assert_markers_in_order(
         result.stderr,
         [
@@ -260,7 +273,7 @@ def test_all_supported_sections_reach_aclpti_in_order():
 
     result, _ = run_collection(sections=sections)
 
-    assert result.returncode == 3, result.stderr
+    assert result.returncode == 0, result.stderr
     assert result.stderr.count("[aclpti] subscribe result=0") == 1
     assert result.stderr.count("[aclpti] range config result=0") == 1
     assert (

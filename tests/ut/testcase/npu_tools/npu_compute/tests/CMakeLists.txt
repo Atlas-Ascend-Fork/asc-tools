@@ -21,22 +21,18 @@ set(NPU_COMPUTE_ACLPTI_DSO_BACKENDS
   acl_runtime_stub
 )
 
+if(NOT TARGET GTest::gtest)
+  find_package(GTest REQUIRED)
+endif()
+
+add_library(npu_compute_test_process STATIC test_process.cpp)
+target_include_directories(npu_compute_test_process PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(npu_compute_test_process PUBLIC npu_compute_test_headers PRIVATE Boost::filesystem)
+add_executable(npu_compute_test_process_child test_process_child.cpp)
+
 if(NOT TARGET npu_compute_ipc)
   add_subdirectory(${NPU_COMPUTE_SOURCE_DIR}/src/ipc ${CMAKE_CURRENT_BINARY_DIR}/ipc)
 endif()
-add_executable(npu_compute_ipc_protocol_test ipc_protocol_test.cpp)
-target_link_libraries(npu_compute_ipc_protocol_test PRIVATE npu_compute_ipc Threads::Threads)
-add_test(NAME npu_compute.ipc_protocol COMMAND npu_compute_ipc_protocol_test)
-add_executable(npu_compute_uds_artifact_test
-  uds_artifact_test.cpp
-  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/ipc/artifact_receiver.cpp
-  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/artifact_publisher.cpp)
-target_link_libraries(npu_compute_uds_artifact_test
-  PRIVATE npu_compute_ipc Threads::Threads Boost::filesystem)
-target_include_directories(npu_compute_uds_artifact_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
-add_test(NAME npu_compute.uds_artifact COMMAND npu_compute_uds_artifact_test)
-set_tests_properties(npu_compute.uds_artifact PROPERTIES TIMEOUT 60)
-
 # 最小 profapi 桩（"仅仅能跑"）：Msprof 场景函数由各用例 mock 定义，
 # 这里只补装载器入口；真实装载/场景由 DSO 集成用例覆盖。
 add_library(prof_api_min_stub STATIC prof_api_min_stub.cpp)
@@ -74,38 +70,7 @@ set_target_properties(acl_pti_unit PROPERTIES
   VISIBILITY_INLINES_HIDDEN YES
 )
 
-
 find_package(Threads REQUIRED)
-
-# 桩库（libruntime.so/libprofapi.so 等）与 CANN 真实库同名；DSO 族统一转 DT_RPATH
-# （优先于 LD_LIBRARY_PATH），使构建树桩目录在任意环境下稳定抢占。
-foreach(target IN ITEMS
-    npu_compute_binary_instrumenter_test
-    npu_compute_injection_path_test
-    npu_compute_imported_profile_results_test
-    npu_compute_launcher_test
-    npu_compute_rep_fixture_app
-    npu_compute_stub_demo_app
-    acl_pti_public_api_test
-    acl_pti_callback_api_test
-    acl_pti_replay_test
-    acl_pti_simt_replay_test
-    acl_pti_args_array_replay_test
-    acl_pti_shadow_memory_test
-    acl_pti_launch_without_config_test
-    acl_pti_initialize_failure_test
-    acl_pti_runtime_failure_short_circuit_test
-    acl_pti_hook_failure_domain_test
-    acl_pti_callback_stub_test
-    acl_prof_api_loader_test
-    acl_prof_api_stub_test
-    npu_compute_runtime_callback_test
-    npu_compute_biu_pipeline_test
-  )
-  if(TARGET ${target})
-    target_link_options(${target} PRIVATE -Wl,--disable-new-dtags)
-  endif()
-endforeach()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 # 边界型用例：自带 runtime 边界 mock（acltoolGetOriginalRuntimeApi / aclrt* 桩），
@@ -122,10 +87,12 @@ add_executable(npu_compute_binary_instrumenter_test binary_instrumenter_test.cpp
 target_compile_definitions(npu_compute_binary_instrumenter_test PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_include_directories(npu_compute_binary_instrumenter_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
 target_link_libraries(npu_compute_binary_instrumenter_test PRIVATE Boost::filesystem Threads::Threads ${CMAKE_DL_LIBS})
-add_test(NAME npu_compute.binary_instrumenter
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/binary_instrumenter_test.py
-    $<TARGET_FILE:npu_compute_binary_instrumenter_test>)
-
+add_executable(npu_compute_binary_instrumenter_tool_stub binary_instrumenter_tool_stub.cpp)
+target_link_libraries(npu_compute_binary_instrumenter_tool_stub PRIVATE Boost::filesystem npu_compute_test_headers)
+target_compile_definitions(npu_compute_binary_instrumenter_test PRIVATE
+  NPU_COMPUTE_INSTRUMENTER_TOOL_STUB_PATH="$<TARGET_FILE:npu_compute_binary_instrumenter_tool_stub>")
+add_dependencies(npu_compute_binary_instrumenter_test npu_compute_binary_instrumenter_tool_stub)
+add_test(NAME npu_compute.binary_instrumenter COMMAND npu_compute_binary_instrumenter_test)
 
 add_library(acl_pti_test SHARED
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/initialization.cpp
@@ -250,9 +217,6 @@ npu_compute_set_test_output(npu_compute_cli_test_bin)
 
 
 
-
-
-
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/injection_path_test.cpp")
   add_executable(npu_compute_injection_path_test
     injection_path_test.cpp
@@ -261,7 +225,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/injection_path_test.cpp")
   target_include_directories(npu_compute_injection_path_test PRIVATE
     ${NPU_COMPUTE_SOURCE_DIR}/src/cli
   )
-  target_link_libraries(npu_compute_injection_path_test PRIVATE Boost::filesystem)
+  target_link_libraries(npu_compute_injection_path_test PRIVATE
+    npu_compute_test_headers
+    Boost::filesystem
+  )
   set_target_properties(npu_compute_injection_path_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY
       "${CMAKE_CURRENT_BINARY_DIR}/injection_path_layout/${CMAKE_SYSTEM_PROCESSOR}-linux/bin"
@@ -269,13 +236,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/injection_path_test.cpp")
   add_test(NAME npu_compute.injection_path COMMAND npu_compute_injection_path_test)
 endif()
 
-
 add_executable(npu_compute_imported_profile_results_test imported_profile_results_test.cpp)
 target_link_libraries(npu_compute_imported_profile_results_test
   PRIVATE npu_compute_launcher_core_test Boost::filesystem)
 add_test(NAME npu_compute.imported_profile_results
-  COMMAND npu_compute_imported_profile_results_test $<TARGET_FILE:npu_compute_cli_test_bin>
+  COMMAND npu_compute_imported_profile_results_test
 )
+
+target_compile_definitions(npu_compute_imported_profile_results_test PRIVATE
+  NPU_COMPUTE_CLI_TEST_PATH="$<TARGET_FILE:npu_compute_cli_test_bin>")
+add_dependencies(npu_compute_imported_profile_results_test npu_compute_cli_test_bin)
 
 add_executable(npu_compute_launcher_test launcher_test.cpp)
 target_link_libraries(npu_compute_launcher_test
@@ -283,7 +253,6 @@ target_link_libraries(npu_compute_launcher_test
 add_dependencies(npu_compute_launcher_test npu_compute_test)
 npu_compute_set_test_output(npu_compute_launcher_test)
 add_test(NAME npu_compute.launcher COMMAND npu_compute_launcher_test)
-
 
 add_executable(npu_compute_rep_fixture_app
   rep_fixture_app.cpp
@@ -330,11 +299,11 @@ target_link_libraries(acl_pti_replay_test
 )
 set_target_properties(acl_pti_replay_test PROPERTIES ENABLE_EXPORTS YES)
 set_target_properties(acl_pti_replay_test PROPERTIES ENABLE_EXPORTS YES)
-add_test(NAME npu_compute.replay COMMAND acl_pti_replay_test)
-add_test(NAME npu_compute.replay_symbol COMMAND acl_pti_replay_test symbol)
-add_test(NAME npu_compute.replay_debug COMMAND acl_pti_replay_test debug)
-add_test(NAME npu_compute.replay_shrink_block COMMAND acl_pti_replay_test shrink)
-add_test(NAME npu_compute.replay_pipeline_host_args COMMAND acl_pti_replay_test host)
+add_test(NAME npu_compute.replay COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/Default)
+add_test(NAME npu_compute.replay_symbol COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/symbol)
+add_test(NAME npu_compute.replay_debug COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/debug)
+add_test(NAME npu_compute.replay_shrink_block COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/shrink)
+add_test(NAME npu_compute.replay_pipeline_host_args COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/host)
 
 add_executable(acl_pti_simt_replay_test simt_replay_test.cpp)
 target_link_libraries(acl_pti_simt_replay_test
@@ -349,10 +318,10 @@ target_link_libraries(acl_pti_args_array_replay_test
 )
 set_target_properties(acl_pti_args_array_replay_test PROPERTIES ENABLE_EXPORTS YES)
 add_test(NAME npu_compute.args_array_replay
-  COMMAND acl_pti_args_array_replay_test normal
+  COMMAND acl_pti_args_array_replay_test --gtest_filter=Modes/NpuComputeArgsArrayReplay.PreservesArgumentsAcrossReplay/normal
 )
 add_test(NAME npu_compute.simt_args_array_replay
-  COMMAND acl_pti_args_array_replay_test simt
+  COMMAND acl_pti_args_array_replay_test --gtest_filter=Modes/NpuComputeArgsArrayReplay.PreservesArgumentsAcrossReplay/simt
 )
 
 add_executable(acl_pti_shadow_memory_test shadow_memory_test.cpp)
@@ -392,12 +361,15 @@ set_target_properties(acl_pti_runtime_failure_short_circuit_test
 )
 add_test(NAME npu_compute.runtime_failure_short_circuit
   COMMAND acl_pti_runtime_failure_short_circuit_test
+    --gtest_filter=Scenarios/NpuComputeRuntimeFailure.PreservesFailureAndStopsProfiling/Default
 )
 foreach(scenario malloc free memcpy memset launch missing shutdown-failure binary-disabled
     binary-load binary-companion-load binary-name binary-entry binary-companion-name
     binary-companion-entry binary-unload binary-companion-unload)
+  string(REPLACE "-" "_" scenario_filter "${scenario}")
   add_test(NAME npu_compute.runtime_failure.${scenario}
-    COMMAND acl_pti_runtime_failure_short_circuit_test ${scenario})
+    COMMAND acl_pti_runtime_failure_short_circuit_test
+      --gtest_filter=Scenarios/NpuComputeRuntimeFailure.PreservesFailureAndStopsProfiling/${scenario_filter})
 endforeach()
 
 add_executable(acl_pti_hook_failure_domain_test hook_failure_domain_test.cpp)
@@ -406,40 +378,40 @@ target_link_libraries(acl_pti_hook_failure_domain_test
 )
 set_target_properties(acl_pti_hook_failure_domain_test PROPERTIES ENABLE_EXPORTS YES)
 add_test(NAME npu_compute.hook_failure.shadow_malloc_stop
-  COMMAND acl_pti_hook_failure_domain_test shadow-malloc-stop
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.ShadowMallocStopsProfiling
 )
 add_test(NAME npu_compute.hook_failure.replay_sync
-  COMMAND acl_pti_hook_failure_domain_test replay-sync
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.ReplaySynchronizeFailure
 )
 add_test(NAME npu_compute.hook_failure.replay_initial_sync_failure
-  COMMAND acl_pti_hook_failure_domain_test replay-initial-sync-failure
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.InitialSynchronizeFailure
 )
 add_test(NAME npu_compute.hook_failure.replay_initial_sync
-  COMMAND acl_pti_hook_failure_domain_test replay-initial-sync
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.ReplayInitialSynchronize
 )
 add_test(NAME npu_compute.hook_failure.profiling_flow
-  COMMAND acl_pti_hook_failure_domain_test profiling-flow
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.ProfilingFlowFailure
 )
 add_test(NAME npu_compute.hook_failure.shadow_free
-  COMMAND acl_pti_hook_failure_domain_test shadow-free
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.ShadowFreeRetry
 )
 add_test(NAME npu_compute.hook_failure.null_free
-  COMMAND acl_pti_hook_failure_domain_test null-free
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.NullFreeDoesNotStopProfiling
 )
 add_test(NAME npu_compute.hook_failure.shadow_memcpy_stop
-  COMMAND acl_pti_hook_failure_domain_test shadow-memcpy-stop
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.ShadowMemcpyStopsProfiling
 )
 add_test(NAME npu_compute.hook_failure.missing_memcpy_mirror
-  COMMAND acl_pti_hook_failure_domain_test missing-memcpy-mirror
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.MissingMemcpyMirrorStopsProfiling
 )
 add_test(NAME npu_compute.hook_failure.missing_memset_mirror
-  COMMAND acl_pti_hook_failure_domain_test missing-memset-mirror
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.MissingMemsetMirrorStopsProfiling
 )
 add_test(NAME npu_compute.hook_failure.malloc_missing_free
-  COMMAND acl_pti_hook_failure_domain_test malloc-missing-free
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.MallocMissingFreeStopsProfiling
 )
 add_test(NAME npu_compute.hook_failure.shadow_metadata_oom
-  COMMAND acl_pti_hook_failure_domain_test shadow-metadata-oom
+  COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.ShadowMetadataAllocationFailure
 )
 
 add_library(acl_prof_api_loader_test_plugin SHARED loader_test_plugin.cpp)
@@ -450,13 +422,21 @@ set_target_properties(acl_prof_api_loader_test_plugin PROPERTIES
 
 add_executable(acl_prof_api_loader_test prof_api_loader_test.cpp)
 target_link_libraries(acl_prof_api_loader_test PRIVATE acl_prof_api_stub)
+target_compile_definitions(acl_prof_api_loader_test PRIVATE
+  NPU_COMPUTE_LOADER_PLUGIN_PATH="$<TARGET_FILE:acl_prof_api_loader_test_plugin>")
+add_dependencies(acl_prof_api_loader_test acl_prof_api_loader_test_plugin)
 add_test(NAME npu_compute.prof_api_loader
-  COMMAND acl_prof_api_loader_test $<TARGET_FILE:acl_prof_api_loader_test_plugin>
+  COMMAND acl_prof_api_loader_test
 )
 
 add_executable(acl_prof_api_stub_test prof_api_stub_test.cpp)
 target_link_libraries(acl_prof_api_stub_test PRIVATE acl_prof_api_stub)
 add_test(NAME npu_compute.prof_api_stub COMMAND acl_prof_api_stub_test)
+
+add_executable(npu_compute_stub_state_reset_test stub_state_reset_test.cpp)
+target_link_libraries(npu_compute_stub_state_reset_test PRIVATE
+  acl_runtime_stub acl_prof_api_stub injection_test_headers)
+add_test(NAME npu_compute.stub_state_reset COMMAND npu_compute_stub_state_reset_test)
 
 add_executable(acl_pti_data_module_test pti_data_module_impl_test.cpp)
 target_compile_definitions(acl_pti_data_module_test PRIVATE
@@ -485,7 +465,6 @@ add_test(NAME npu_compute.acl_pti_data_module
 
 
 
-
 add_executable(npu_compute_biu_pipeline_test
   biu_pipeline_test.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/biu/biu_pipeline.cpp
@@ -497,9 +476,6 @@ target_link_libraries(npu_compute_biu_pipeline_test PRIVATE
   acl_pti_test Boost::filesystem
 )
 add_test(NAME npu_compute.biu_pipeline COMMAND npu_compute_biu_pipeline_test)
-
-
-
 
 
 
@@ -562,74 +538,76 @@ add_test(NAME npu_compute.runtime_callback
     $<TARGET_FILE:npu_compute_runtime_callback_test>
 )
 
-if(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS)
-  add_library(npu_compute_real_hardware_test_library SHARED
+# Host HardwareInfo scenarios use the runtime and hardware API stubs.
+if(ENABLE_TEST)
+  add_library(npu_compute_hardware_collection_stub_library SHARED
     ${NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES}
   )
-  target_include_directories(
-    npu_compute_real_hardware_test_library PRIVATE
+  target_include_directories(npu_compute_hardware_collection_stub_library PRIVATE
     ${NPU_COMPUTE_SOURCE_DIR}/src
     ${NPU_COMPUTE_SOURCE_DIR}/src/compute
   )
-  target_link_libraries(npu_compute_real_hardware_test_library PRIVATE
+  target_link_libraries(npu_compute_hardware_collection_stub_library PRIVATE
     acl_pti_callback_stub
+    acl_runtime_stub
+    npu_compute_hardware_api_stub
     npu_compute_test_headers
     acl_pti_test
     ${CMAKE_DL_LIBS}
     Threads::Threads
     Boost::filesystem
   )
-  set(NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT
-    "${CMAKE_CURRENT_BINARY_DIR}/runtime_test.map"
+  set(NPU_COMPUTE_HW_STUB_VERSION_SCRIPT
+    "${CMAKE_CURRENT_BINARY_DIR}/hardware_stub_test.map"
   )
-  file(WRITE "${NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT}"
+  file(WRITE "${NPU_COMPUTE_HW_STUB_VERSION_SCRIPT}"
     "{ global: acltoolInitialize; acltoolShutdown; NpuComputeTestConfigure; local: *; };\n")
-  target_link_options(npu_compute_real_hardware_test_library PRIVATE
-    "LINKER:--version-script=${NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT}"
+  target_link_options(npu_compute_hardware_collection_stub_library PRIVATE
+    "LINKER:--version-script=${NPU_COMPUTE_HW_STUB_VERSION_SCRIPT}"
   )
-  set_target_properties(
-    npu_compute_real_hardware_test_library PROPERTIES
-    OUTPUT_NAME npu-compute-real-hardware-test
+  set_target_properties(npu_compute_hardware_collection_stub_library PROPERTIES
+    OUTPUT_NAME npu-compute-hardware-stub-test
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
-    LINK_DEPENDS "${NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT}"
+    LINK_DEPENDS "${NPU_COMPUTE_HW_STUB_VERSION_SCRIPT}"
   )
-  npu_compute_set_test_output(npu_compute_real_hardware_test_library)
+  npu_compute_set_test_output(npu_compute_hardware_collection_stub_library)
 
-  find_library(NPU_COMPUTE_REAL_ASCENDCL_LIBRARY
-    NAMES ascendcl
-    HINTS
-      "${NPUCOMPUTE_CANN_ROOT}/lib64"
-      "${ASCEND_CANN_PACKAGE_PATH}/${CMAKE_SYSTEM_PROCESSOR}-linux/lib64"
-      "$ENV{ASCEND_HOME_PATH}/lib64"
-    NO_DEFAULT_PATH
+  add_executable(npu_compute_hardware_collection_stub_app
+    hardware_collection_stub_app.cpp
   )
-  if(NOT NPU_COMPUTE_REAL_ASCENDCL_LIBRARY)
-    message(FATAL_ERROR
-      "Real HardwareInfo tests require libascendcl.so from the CANN installation")
-  endif()
-
-  add_executable(npu_compute_real_hardware_callback_app
-    real_hardware_callback_app.cpp
-  )
-  target_link_libraries(
-    npu_compute_real_hardware_callback_app PRIVATE
+  target_link_libraries(npu_compute_hardware_collection_stub_app PRIVATE
     acl_pti_callback_stub
+    acl_runtime_stub
+    npu_compute_hardware_api_stub
     npu_compute_test_headers
-    "${NPU_COMPUTE_REAL_ASCENDCL_LIBRARY}"
     ${CMAKE_DL_LIBS}
     Boost::filesystem
   )
-  set_target_properties(
-    npu_compute_real_hardware_callback_app PROPERTIES
-    OUTPUT_NAME npu_compute_real_hardware_callback_app
-  )
-  npu_compute_set_test_output(npu_compute_real_hardware_callback_app)
+  npu_compute_set_test_output(npu_compute_hardware_collection_stub_app)
+
+  add_executable(npu_compute_hardware_collection_stub_test hardware_collection_stub_test.cpp)
+  target_link_libraries(npu_compute_hardware_collection_stub_test PRIVATE Boost::filesystem npu_compute_test_headers)
+  target_compile_definitions(npu_compute_hardware_collection_stub_test PRIVATE
+    NPU_COMPUTE_HW_APP_PATH="$<TARGET_FILE:npu_compute_hardware_collection_stub_app>"
+    NPU_COMPUTE_HW_LIBRARY_PATH="$<TARGET_FILE:npu_compute_hardware_collection_stub_library>"
+    NPU_COMPUTE_HW_API_STUB_PATH="$<TARGET_FILE:npu_compute_hardware_api_stub>")
+  add_dependencies(npu_compute_hardware_collection_stub_test
+    npu_compute_hardware_collection_stub_app npu_compute_hardware_collection_stub_library
+    npu_compute_hardware_api_stub)
+  foreach(scenario IN ITEMS 13 0 16 17 missing-stub missing-library)
+    string(REPLACE "-" "_" scenario_filter "${scenario}")
+    add_test(NAME npu_compute.hardware_stub.${scenario}
+      COMMAND npu_compute_hardware_collection_stub_test
+        --gtest_filter=Scenarios/NpuComputeHardwareCollection.CollectsOrReportsSetupFailureAndCleansUp/${scenario_filter})
+  endforeach()
 endif()
 
 # 桩库（libruntime.so/libprofapi.so 等）与 CANN 真实库同名；DSO 族统一转 DT_RPATH
 # （优先于 LD_LIBRARY_PATH），使构建树桩目录在任意环境下稳定抢占。
 foreach(target IN ITEMS
+    acl_runtime_stub
+    acl_prof_api_stub
     npu_compute_binary_instrumenter_test
     npu_compute_injection_path_test
     npu_compute_imported_profile_results_test
@@ -651,9 +629,17 @@ foreach(target IN ITEMS
     acl_prof_api_stub_test
     npu_compute_runtime_callback_test
     npu_compute_biu_pipeline_test
+    npu_compute_stub_state_reset_test
+    npu_compute_hardware_collection_stub_app
+    npu_compute_hardware_collection_stub_library
+    acl_pti_test
+    npu_compute_test
   )
   if(TARGET ${target})
     target_link_options(${target} PRIVATE -Wl,--disable-new-dtags)
+    # Put the test runtime/profapi paths before transitive CANN library paths.
+    set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH
+      "${NPU_TOOLS_TEST_CANN_RUNTIME_DIR};${NPU_TOOLS_TEST_RUNTIME_OUTPUT_DIR}")
   endif()
 endforeach()
 
@@ -667,21 +653,6 @@ add_test(
     ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
     ${NPU_COMPUTE_PY_TEST_DIR}/test_rep_packaging_integration.py
 )
-
-if(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS)
-  add_test(
-    NAME npu_compute.real_hardware_with_callback_stub
-    COMMAND ${CMAKE_COMMAND} -E env
-      "NPU_COMPUTE_REAL_HW_APP=$<TARGET_FILE:npu_compute_real_hardware_callback_app>"
-      "NPU_COMPUTE_REAL_HW_LIBRARY=$<TARGET_FILE:npu_compute_real_hardware_test_library>"
-      ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
-      ${NPU_COMPUTE_PY_TEST_DIR}/test_real_hardware_collection.py
-  )
-  set_tests_properties(
-    npu_compute.real_hardware_with_callback_stub PROPERTIES
-    LABELS "requires_npu"
-  )
-endif()
 
 add_test(
   NAME npu_compute.hardware_info_integration
@@ -715,7 +686,7 @@ add_test(
   NAME npu_compute.connected_integration
   COMMAND ${CMAKE_COMMAND} -E env
     "NPU_COMPUTE_TEST_BIN_DIR=$<TARGET_FILE_DIR:npu_compute_cli_test_bin>"
-    "LD_PRELOAD=$<TARGET_FILE:npu_compute_hardware_api_stub>:$ENV{LD_PRELOAD}"
+    "NPU_COMPUTE_HARDWARE_API_STUB=$<TARGET_FILE:npu_compute_hardware_api_stub>"
     ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
     ${CMAKE_SOURCE_DIR}/tests/py_ut/testcase/npu_compute/test_npu_compute_integration.py
 )
@@ -729,3 +700,78 @@ add_test(
     ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
     ${CMAKE_SOURCE_DIR}/tests/py_ut/testcase/npu_compute/test_npu_compute_install.py
 )
+
+# Keep upstream Python-driven integration entries available for focused runs.
+set(npu_compute_python_wrappers
+  npu_compute.rep_packaging_integration
+  npu_compute.hardware_info_integration
+  npu_compute.subscribe_lifecycle
+  npu_compute.integration_stubs
+  npu_compute.connected_integration
+  npu_compute.install_layout
+)
+get_property(npu_compute_tests DIRECTORY PROPERTY TESTS)
+set(NPU_COMPUTE_TEST_LD_LIBRARY_PATH
+  "${NPU_TOOLS_TEST_CANN_RUNTIME_DIR}:${NPU_TOOLS_TEST_RUNTIME_OUTPUT_DIR}")
+if(DEFINED ENV{LD_LIBRARY_PATH} AND NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
+  string(APPEND NPU_COMPUTE_TEST_LD_LIBRARY_PATH ":$ENV{LD_LIBRARY_PATH}")
+endif()
+foreach(test_name IN LISTS npu_compute_tests)
+  if(test_name IN_LIST npu_compute_python_wrappers)
+    set_tests_properties(${test_name} PROPERTIES LABELS "npu_compute_python_wrapper")
+  else()
+    set_tests_properties(${test_name} PROPERTIES LABELS "npu_compute_ci_host")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+      "LD_LIBRARY_PATH=${NPU_COMPUTE_TEST_LD_LIBRARY_PATH}")
+  endif()
+  get_property(test_timeout TEST ${test_name} PROPERTY TIMEOUT)
+  if(NOT test_timeout)
+    set_tests_properties(${test_name} PROPERTIES TIMEOUT 120)
+  endif()
+endforeach()
+
+# Keep dedicated mock/DSO/layout linkage while using real GTest assertions and output.
+foreach(target_name IN ITEMS
+    npu_compute_binary_registry_test
+    npu_compute_binary_instrumenter_test
+    npu_compute_injection_path_test
+    npu_compute_imported_profile_results_test
+    npu_compute_launcher_test
+    acl_pti_public_api_test
+    acl_pti_callback_api_test
+    acl_prof_api_stub_test
+    npu_compute_stub_state_reset_test
+    acl_pti_data_module_test
+    npu_compute_biu_pipeline_test
+    acl_pti_callback_stub_test)
+  target_sources(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../llt/gtest_main.cpp")
+  target_link_libraries(${target_name} PRIVATE GTest::gtest npu_compute_test_headers)
+  list(APPEND NPU_COMPUTE_NATIVE_GTEST_TARGETS ${target_name})
+endforeach()
+
+target_link_libraries(npu_compute_binary_instrumenter_test PRIVATE npu_compute_test_process)
+
+# Stateful scenarios run their real GTest assertions in fresh subprocesses.
+foreach(target_name IN ITEMS
+    acl_pti_replay_test
+    acl_pti_simt_replay_test
+    acl_pti_args_array_replay_test
+    acl_pti_shadow_memory_test
+    acl_pti_launch_without_config_test
+    acl_pti_initialize_failure_test
+    acl_pti_runtime_failure_short_circuit_test
+    acl_pti_hook_failure_domain_test
+    acl_prof_api_loader_test
+    npu_compute_hardware_collection_stub_test)
+  target_sources(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../llt/gtest_main.cpp")
+  target_link_libraries(${target_name} PRIVATE
+    GTest::gtest npu_compute_test_process npu_compute_test_headers)
+  list(APPEND NPU_COMPUTE_NATIVE_GTEST_TARGETS ${target_name})
+endforeach()
+target_link_libraries(npu_compute_runtime_callback_test PRIVATE GTest::gtest npu_compute_test_process)
+list(APPEND NPU_COMPUTE_NATIVE_GTEST_TARGETS npu_compute_runtime_callback_test)
+set(NPU_COMPUTE_NATIVE_GTEST_TARGETS "${NPU_COMPUTE_NATIVE_GTEST_TARGETS}" PARENT_SCOPE)
+
+# Build the generated test artifacts without running tests or unrelated products.
+get_property(npu_compute_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+add_custom_target(npu_compute_test_artifacts DEPENDS ${npu_compute_targets})

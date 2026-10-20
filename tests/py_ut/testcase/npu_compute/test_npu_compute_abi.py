@@ -138,7 +138,7 @@ def test_aclpti_uses_a_focused_initialization_module():
     assert 'include "acl_pti/initialization.h"' in callback_api
     assert "initialization::InitializeDependencies()" in callback_api
     assert "initialization.cpp" in cmake
-    assert "manager.cpp" not in cmake
+    assert "manager.cpp" not in cmake.split()
 
 
 def test_range_config_calls_replay_runtime_directly():
@@ -158,11 +158,10 @@ def test_replay_runtime_owns_the_profiling_health_policy():
     private_implementation = header.split("private:", 1)[1]
 
     assert "ProfilingAvailable" not in public_interface
-    assert "StopProfiling" not in public_interface
+    assert "aclptiResult StopProfiling();" in public_interface
     assert "ProfilingAvailable" in private_implementation
-    assert "StopProfiling" in private_implementation
     assert ".ProfilingAvailable()" not in handlers
-    assert ".StopProfiling()" not in handlers
+    assert "GetReplayRuntime().StopProfiling()" in handlers
     assert "MapProfilingResult(profiling::ReplayRuntime&" not in handlers
     assert "ProfilingAvailable()" in source
     assert "StopProfiling()" in source
@@ -243,7 +242,7 @@ def test_replay_waits_after_msprof_start_before_launching_kernel():
     source = RANGE_PROFILER_SOURCE.read_text(encoding="utf-8")
 
     assert source.index("MsprofStart(") < source.index(
-        "const aclError launchStatus = launchFunction();"
+        "launchStatus = launchFunction(function, pipeline);"
     )
 
 

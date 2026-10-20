@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "isolated_gtest.h"
+
 #include "aclpti/aclpti.h"
 #include "injection/injection_hook.h"
 #include "injection/runtime_stub_api.h"
@@ -18,14 +20,6 @@
 #include <vector>
 
 namespace {
-
-#define CHECK(expression)                                                                 \
-    do {                                                                                  \
-        if (!(expression)) {                                                              \
-            std::fprintf(stderr, "check failed at line %d: %s\n", __LINE__, #expression); \
-            return 1;                                                                     \
-        }                                                                                 \
-    } while (false)
 
 struct NormalLaunch {
     void* func;
@@ -71,7 +65,7 @@ aclError RealSynchronize(aclrtStream)
     return ACL_SUCCESS;
 }
 
-int CheckNormalReplay()
+void CheckNormalReplay()
 {
     int functionToken = 0;
     std::uint32_t firstArg = 11;
@@ -80,19 +74,18 @@ int CheckNormalReplay()
     aclrtLaunchKernelCfg cfg{};
     const auto stream = reinterpret_cast<aclrtStream>(0x10);
 
-    CHECK(aclrtLaunchKernelWithArgsArray(&functionToken, 8, stream, &cfg, args) == ACL_SUCCESS);
-    CHECK(gNormalLaunches.size() == 3);
+    ASSERT_TRUE(aclrtLaunchKernelWithArgsArray(&functionToken, 8, stream, &cfg, args) == ACL_SUCCESS);
+    ASSERT_TRUE(gNormalLaunches.size() == 3);
     for (const auto& launch : gNormalLaunches) {
-        CHECK(launch.func == &functionToken);
-        CHECK(launch.numBlocks == 8);
-        CHECK(launch.stream == stream);
-        CHECK(launch.cfg == &cfg);
-        CHECK(launch.args == args);
+        ASSERT_TRUE(launch.func == &functionToken);
+        ASSERT_TRUE(launch.numBlocks == 8);
+        ASSERT_TRUE(launch.stream == stream);
+        ASSERT_TRUE(launch.cfg == &cfg);
+        ASSERT_TRUE(launch.args == args);
     }
-    return 0;
 }
 
-int CheckSimtReplay()
+void CheckSimtReplay()
 {
     int functionToken = 0;
     std::uint32_t firstArg = 11;
@@ -103,19 +96,18 @@ int CheckSimtReplay()
     aclrtLaunchKernelCfg cfg{};
     const auto stream = reinterpret_cast<aclrtStream>(0x20);
 
-    CHECK(
+    ASSERT_TRUE(
         aclrtLaunchSIMTKernelWithArgsArray(&functionToken, gridDim, blockDim, 4096, stream, &cfg, args) == ACL_SUCCESS);
-    CHECK(gSimtLaunches.size() == 3);
+    ASSERT_TRUE(gSimtLaunches.size() == 3);
     for (const auto& launch : gSimtLaunches) {
-        CHECK(launch.func == &functionToken);
-        CHECK(launch.gridDim.x == 2 && launch.gridDim.y == 3 && launch.gridDim.z == 4);
-        CHECK(launch.blockDim.x == 5 && launch.blockDim.y == 6 && launch.blockDim.z == 7);
-        CHECK(launch.dynUbufSize == 4096);
-        CHECK(launch.stream == stream);
-        CHECK(launch.cfg == &cfg);
-        CHECK(launch.args == args);
+        ASSERT_TRUE(launch.func == &functionToken);
+        ASSERT_TRUE(launch.gridDim.x == 2 && launch.gridDim.y == 3 && launch.gridDim.z == 4);
+        ASSERT_TRUE(launch.blockDim.x == 5 && launch.blockDim.y == 6 && launch.blockDim.z == 7);
+        ASSERT_TRUE(launch.dynUbufSize == 4096);
+        ASSERT_TRUE(launch.stream == stream);
+        ASSERT_TRUE(launch.cfg == &cfg);
+        ASSERT_TRUE(launch.args == args);
     }
-    return 0;
 }
 
 } // namespace
@@ -134,32 +126,40 @@ std::int32_t MsprofStop(uint32_t, const void*, uint32_t)
 
 std::int32_t MsprofRegisterDataCallback(uint32_t, void* callback) { return callback == nullptr ? -1 : 0; }
 
-int main(int argc, char** argv)
+class NpuComputeArgsArrayReplay : public testing::TestWithParam<std::string> {};
+
+TEST_P(NpuComputeArgsArrayReplay, PreservesArgumentsAcrossReplay)
 {
-    CHECK(argc == 2);
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernelWithArgsArray", &RealNormalLaunch) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchSIMTKernelWithArgsArray", &RealSimtLaunch) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == ACL_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchKernelWithArgsArray", &RealNormalLaunch) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchSIMTKernelWithArgsArray", &RealSimtLaunch) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == ACL_SUCCESS);
 
     aclptiSubscribeHandle subscriber = nullptr;
-    CHECK(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(subscriber != nullptr);
-    CHECK(
+    ASSERT_TRUE(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(subscriber != nullptr);
+    ASSERT_TRUE(
         reinterpret_cast<aclrtLaunchKernelWithArgsArrayFunc>(
             acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtLaunchKernelWithArgsArray)) == &RealNormalLaunch);
-    CHECK(
+    ASSERT_TRUE(
         reinterpret_cast<aclrtLaunchSIMTKernelWithArgsArrayFunc>(
             acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray)) == &RealSimtLaunch);
-    CHECK(aclrtSetDevice(7) == ACL_SUCCESS);
+    ASSERT_TRUE(aclrtSetDevice(7) == ACL_SUCCESS);
 
     const char* sections[] = {"PipeUtilization"};
     aclptiRangeProfilerSetConfigParams config{sections, 1};
-    CHECK(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
 
-    const std::string_view mode = argv[1];
-    CHECK((mode == "normal" ? CheckNormalReplay() : mode == "simt" ? CheckSimtReplay() : 1) == 0);
-    CHECK(gStartCalls == 2);
-    CHECK(gStopCalls == 2);
-    CHECK(gSyncCalls == 3);
-    return 0;
+    if (GetParam() == "normal") {
+        ASSERT_NO_FATAL_FAILURE(CheckNormalReplay());
+    } else {
+        ASSERT_NO_FATAL_FAILURE(CheckSimtReplay());
+    }
+    ASSERT_TRUE(gStartCalls == 2);
+    ASSERT_TRUE(gStopCalls == 2);
+    ASSERT_TRUE(gSyncCalls == 3);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    Modes, NpuComputeArgsArrayReplay, testing::Values("normal", "simt"),
+    [](const testing::TestParamInfo<std::string>& info) { return info.param; });

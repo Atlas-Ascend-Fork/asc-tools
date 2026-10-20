@@ -18,10 +18,8 @@ set(INJECTION_SOURCE_DIR "${CMAKE_SOURCE_DIR}/npu_tools/injection")
 set(NPU_COMPUTE_SOURCE_DIR "${CMAKE_SOURCE_DIR}/npu_tools/npu_compute")
 set(NPU_COMPUTE_PY_TEST_DIR "${NPU_TOOLS_PY_TEST_ROOT}/npu_compute")
 
-option(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS
-  "Build real HardwareInfo integration test" OFF)
-
 find_package(Threads REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 function(injection_set_test_output target)
   set_target_properties(${target} PROPERTIES
@@ -82,3 +80,56 @@ add_subdirectory(npu_sanitizer/npu_check/tests)
 
 # npu_tools 迁移模块统一 GTest 大用例（构建即运行，对齐 tikcpp_utest 的 run_llt_test 机制）
 add_subdirectory(llt)
+
+add_dependencies(npu_compute_test_artifacts npu_tools_utest)
+
+# Execute each dedicated GTest binary once, with its output streamed directly.
+# The unified LLT retains its original POST_BUILD execution during normal builds.
+# Keep the runner source here; only the generated script belongs in the build tree.
+string(CONFIGURE [=[
+set(_npu_compute_stub_library_path
+  "@NPU_TOOLS_TEST_CANN_RUNTIME_DIR@:@NPU_TOOLS_TEST_RUNTIME_OUTPUT_DIR@")
+if(DEFINED ENV{LD_LIBRARY_PATH} AND NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
+  string(APPEND _npu_compute_stub_library_path ":$ENV{LD_LIBRARY_PATH}")
+endif()
+set(ENV{LD_LIBRARY_PATH} "${_npu_compute_stub_library_path}")
+
+if(NPU_COMPUTE_PRINT_UNIFIED)
+  execute_process(COMMAND "@CMAKE_COMMAND@" -E echo "$<TARGET_FILE:npu_tools_utest>")
+  return()
+endif()
+
+function(run_gtest executable working_directory timeout)
+  execute_process(COMMAND "${executable}"
+    WORKING_DIRECTORY "${working_directory}"
+    TIMEOUT "${timeout}"
+    RESULT_VARIABLE result)
+  if(NOT "${result}" STREQUAL "0")
+    message(FATAL_ERROR "GTest executable ${executable} failed: ${result}")
+  endif()
+endfunction()
+
+if(NOT DEFINED NPU_COMPUTE_RUN_UNIFIED)
+  set(NPU_COMPUTE_RUN_UNIFIED $<NOT:$<BOOL:@NPU_TOOLS_LLT_RUN_POST_BUILD@>>)
+endif()
+if(NPU_COMPUTE_RUN_UNIFIED)
+  run_gtest([==[$<TARGET_FILE:npu_tools_utest>]==] [==[@CMAKE_CURRENT_BINARY_DIR@/llt]==] 300)
+endif()
+]=] NPU_COMPUTE_NATIVE_TEST_CONTENT @ONLY)
+foreach(test_target IN LISTS NPU_COMPUTE_NATIVE_GTEST_TARGETS)
+  string(APPEND NPU_COMPUTE_NATIVE_TEST_CONTENT
+    "run_gtest([==[$<TARGET_FILE:${test_target}>]==] [==[${CMAKE_CURRENT_BINARY_DIR}/npu_compute/tests]==] 120)\n")
+endforeach()
+set(NPU_COMPUTE_NATIVE_TEST_SCRIPT
+  "${CMAKE_CURRENT_BINARY_DIR}/run_npu_compute_native_tests-$<CONFIG>.cmake")
+file(GENERATE OUTPUT "${NPU_COMPUTE_NATIVE_TEST_SCRIPT}"
+  CONTENT "${NPU_COMPUTE_NATIVE_TEST_CONTENT}")
+add_custom_target(run_npu_compute_native_tests ALL
+  COMMAND ${CMAKE_COMMAND} -P "${NPU_COMPUTE_NATIVE_TEST_SCRIPT}"
+  DEPENDS npu_tools_utest ${NPU_COMPUTE_NATIVE_GTEST_TARGETS}
+  COMMENT "Run npu-compute native GTest UT"
+  VERBATIM
+)
+if(TARGET collect_coverage_data)
+  add_dependencies(collect_coverage_data run_npu_compute_native_tests)
+endif()

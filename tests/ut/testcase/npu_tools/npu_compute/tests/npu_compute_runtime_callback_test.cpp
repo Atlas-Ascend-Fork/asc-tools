@@ -7,6 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "test_process.h"
+#include <gtest/gtest.h>
+
 #include "npu_compute/acl_pti_callback_stub.h"
 #include "npu_compute/npu_compute.h"
 #include "runtime/npu_compute_runtime.h"
@@ -64,12 +67,12 @@ bool g_releaseDeviceCount = false;
 aclptiProfilingDataCallback g_profilingDataCallback;
 bool g_summaryHardwareAvailable = false;
 
-#define CHECK(expression)                                                                 \
-    do {                                                                                  \
-        if (!(expression)) {                                                              \
-            std::fprintf(stderr, "check failed at line %d: %s\n", __LINE__, #expression); \
-            return false;                                                                 \
-        }                                                                                 \
+#define CHECK(expression)                 \
+    do {                                  \
+        if (!(expression)) {              \
+            ADD_FAILURE() << #expression; \
+            return false;                 \
+        }                                 \
     } while (false)
 
 class TempDirectory {
@@ -108,21 +111,20 @@ bool SetScenarioEnvironment(const boost::filesystem::path& output)
     return true;
 }
 
-bool TestPipelineSection()
+TEST(NpuComputeRuntimeCallback, PipelineSection)
 {
     npucompute::SectionConfig config;
     std::string error;
-    CHECK(config.Load({"Pipeline"}, &error));
-    CHECK(config.PipelineEnabled());
-    CHECK(config.Params()->numSections == 0);
-    CHECK(config.Load({"Memory", "Pipeline"}, &error));
-    CHECK(config.PipelineEnabled());
-    CHECK(config.Sections() == std::vector<std::string>{"Memory"});
-    CHECK(config.JoinedSections() == "Memory,Pipeline");
-    CHECK(config.Load({"Memory"}, &error));
-    CHECK(!config.PipelineEnabled());
-    CHECK(!config.Load({"pipeline"}, &error));
-    return true;
+    ASSERT_TRUE(config.Load({"Pipeline"}, &error));
+    ASSERT_TRUE(config.PipelineEnabled());
+    ASSERT_TRUE(config.Params()->numSections == 0);
+    ASSERT_TRUE(config.Load({"Memory", "Pipeline"}, &error));
+    ASSERT_TRUE(config.PipelineEnabled());
+    ASSERT_TRUE(config.Sections() == std::vector<std::string>{"Memory"});
+    ASSERT_TRUE(config.JoinedSections() == "Memory,Pipeline");
+    ASSERT_TRUE(config.Load({"Memory"}, &error));
+    ASSERT_TRUE(!config.PipelineEnabled());
+    ASSERT_TRUE(!config.Load({"pipeline"}, &error));
 }
 
 bool CheckSubscribeAndEnableContract()
@@ -673,18 +675,16 @@ bool RunChildScenario(const std::string& scenario, const boost::filesystem::path
 
 bool LaunchChild(const char* executable, const char* scenario, const boost::filesystem::path& output)
 {
-    const pid_t process = ::fork();
-    CHECK(process >= 0);
-    if (process == 0) {
-        ::execl(executable, executable, "--child", scenario, output.c_str(), static_cast<char*>(nullptr));
-        std::perror("execl runtime callback child failed");
-        ::_exit(127);
+    npucompute::test::ProcessOptions options;
+    options.arguments = {executable, "--child", scenario, output.string()};
+    const auto result = npucompute::test::RunProcess(options);
+    if (result.launchError != 0 || result.timedOut || result.signal != 0 || result.exitCode != 0) {
+        ADD_FAILURE() << "runtime callback child " << scenario << ": launchError=" << result.launchError
+                      << ", timeout=" << result.timedOut << ", signal=" << result.signal
+                      << ", exitCode=" << result.exitCode << "\n"
+                      << result.standardOutput << result.standardError;
+        return false;
     }
-
-    int status = 0;
-    CHECK(::waitpid(process, &status, 0) == process);
-    CHECK(WIFEXITED(status));
-    CHECK(WEXITSTATUS(status) == 0);
     return true;
 }
 
@@ -699,94 +699,142 @@ std::size_t CountLines(const boost::filesystem::path& path)
     return lines;
 }
 
-bool TestSuccessAndNormalExit(const char* executable)
-{
-    constexpr std::array<const char*, 5> scenarios = {
-        "success-launch", "success-host-args", "success-simt-host-args", "success-args-array", "success-repeated",
-    };
-    for (const char* scenario : scenarios) {
-        TempDirectory temporary;
-        CHECK(!temporary.Path().empty());
-        CHECK(LaunchChild(executable, scenario, temporary.Path()));
-        CHECK(boost::filesystem::is_regular_file(temporary.Path() / kHardwareInfoFile));
-        CHECK(CountLines(temporary.Path() / kHardwareInfoFile) == 5);
-        CHECK(boost::filesystem::file_size(temporary.Path() / kDeviceCountFile) == 1);
-    }
-    return true;
-}
+class NpuComputeRuntimeSuccessAndNormalExit : public testing::TestWithParam<std::string> {};
 
-bool TestIgnoredEvents(const char* executable)
+TEST_P(NpuComputeRuntimeSuccessAndNormalExit, VerifiesCallbackAndArtifacts)
 {
-    constexpr std::array<const char*, 8> scenarios = {
-        "ignore-enter",  "ignore-failed-exit", "ignore-simt-failed-exit", "ignore-set-device",
-        "ignore-malloc", "ignore-nontarget",   "ignore-domain",           "ignore-mismatched-metadata",
-    };
-    for (const char* scenario : scenarios) {
-        TempDirectory temporary;
-        CHECK(!temporary.Path().empty());
-        CHECK(LaunchChild(executable, scenario, temporary.Path()));
-        CHECK(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
-        CHECK(!boost::filesystem::exists(temporary.Path() / kDeviceCountFile));
-    }
-    return true;
-}
+    const char* executable = "/proc/self/exe";
+    const auto& scenario = GetParam();
 
-bool TestInitializationFailures(const char* executable)
-{
-    constexpr std::array<const char*, 7> scenarios = {
-        "subscribe-failure",         "enable-failure-launch",
-        "enable-failure-host-args",  "enable-failure-simt-host-args",
-        "enable-failure-args-array", "config-failure",
-        "section-failure",
-    };
-    for (const char* scenario : scenarios) {
-        TempDirectory temporary;
-        CHECK(!temporary.Path().empty());
-        CHECK(LaunchChild(executable, scenario, temporary.Path()));
-        CHECK(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
-    }
-    return true;
-}
-
-bool TestNormalStop(const char* executable)
-{
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
-    CHECK(LaunchChild(executable, "normal-stop", temporary.Path()));
+    ASSERT_TRUE(!temporary.Path().empty());
+    ASSERT_TRUE(LaunchChild(executable, scenario.c_str(), temporary.Path()));
+    ASSERT_TRUE(boost::filesystem::is_regular_file(temporary.Path() / kHardwareInfoFile));
+    ASSERT_TRUE(CountLines(temporary.Path() / kHardwareInfoFile) == 5);
+    ASSERT_TRUE(boost::filesystem::file_size(temporary.Path() / kDeviceCountFile) == 1);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Scenarios, NpuComputeRuntimeSuccessAndNormalExit,
+    testing::Values(
+        "success-launch", "success-host-args", "success-simt-host-args", "success-args-array", "success-repeated"),
+    [](const testing::TestParamInfo<std::string>& info) {
+        std::string name = info.param;
+        for (char& character : name) {
+            if (character == '-')
+                character = '_';
+        }
+        return name;
+    });
+
+class NpuComputeRuntimeIgnoredEvents : public testing::TestWithParam<std::string> {};
+
+TEST_P(NpuComputeRuntimeIgnoredEvents, VerifiesCallbackAndArtifacts)
+{
+    const char* executable = "/proc/self/exe";
+    const auto& scenario = GetParam();
+
+    TempDirectory temporary;
+    ASSERT_TRUE(!temporary.Path().empty());
+    ASSERT_TRUE(LaunchChild(executable, scenario.c_str(), temporary.Path()));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kDeviceCountFile));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Scenarios, NpuComputeRuntimeIgnoredEvents,
+    testing::Values(
+        "ignore-enter", "ignore-failed-exit", "ignore-simt-failed-exit", "ignore-set-device", "ignore-malloc",
+        "ignore-nontarget", "ignore-domain", "ignore-mismatched-metadata"),
+    [](const testing::TestParamInfo<std::string>& info) {
+        std::string name = info.param;
+        for (char& character : name) {
+            if (character == '-')
+                character = '_';
+        }
+        return name;
+    });
+
+class NpuComputeRuntimeInitializationFailures : public testing::TestWithParam<std::string> {};
+
+TEST_P(NpuComputeRuntimeInitializationFailures, VerifiesCallbackAndArtifacts)
+{
+    const char* executable = "/proc/self/exe";
+    const auto& scenario = GetParam();
+
+    TempDirectory temporary;
+    ASSERT_TRUE(!temporary.Path().empty());
+    ASSERT_TRUE(LaunchChild(executable, scenario.c_str(), temporary.Path()));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Scenarios, NpuComputeRuntimeInitializationFailures,
+    testing::Values(
+        "subscribe-failure", "enable-failure-launch", "enable-failure-host-args", "enable-failure-simt-host-args",
+        "enable-failure-args-array", "config-failure", "section-failure"),
+    [](const testing::TestParamInfo<std::string>& info) {
+        std::string name = info.param;
+        for (char& character : name) {
+            if (character == '-')
+                character = '_';
+        }
+        return name;
+    });
+
+TEST(NpuComputeRuntimeCallback, NormalStop)
+{
+    const char* executable = "/proc/self/exe";
+    TempDirectory temporary;
+    ASSERT_TRUE(!temporary.Path().empty());
+    ASSERT_TRUE(LaunchChild(executable, "normal-stop", temporary.Path()));
     TempDirectory pipeline;
-    CHECK(LaunchChild(executable, "pipeline-clock", pipeline.Path()));
+    ASSERT_TRUE(LaunchChild(executable, "pipeline-clock", pipeline.Path()));
     TempDirectory failure;
-    CHECK(LaunchChild(executable, "pipeline-clock-failure", failure.Path()));
-    CHECK(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
-    CHECK(!boost::filesystem::exists(temporary.Path() / kDeviceCountFile));
-    return true;
+    ASSERT_TRUE(LaunchChild(executable, "pipeline-clock-failure", failure.Path()));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kDeviceCountFile));
 }
 
-bool TestStopDuringCollectionDoesNotHoldRuntimeMutex(const char* executable)
+TEST(NpuComputeRuntimeCallback, StopDuringCollectionDoesNotHoldRuntimeMutex)
 {
+    const char* executable = "/proc/self/exe";
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
-    CHECK(LaunchChild(executable, "stop-during-collection", temporary.Path()));
-    return true;
+    ASSERT_TRUE(!temporary.Path().empty());
+    ASSERT_TRUE(LaunchChild(executable, "stop-during-collection", temporary.Path()));
 }
 
-bool TestCsvSocNameSelection(const char* executable)
+TEST(NpuComputeRuntimeCallback, CsvSocNameSelection)
 {
+    const char* executable = "/proc/self/exe";
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
-    CHECK(LaunchChild(executable, "csv-soc-device-api", temporary.Path()));
-    return true;
+    ASSERT_TRUE(!temporary.Path().empty());
+    ASSERT_TRUE(LaunchChild(executable, "csv-soc-device-api", temporary.Path()));
 }
 
-bool TestSummaryHardwareInputs(const char* executable)
+class NpuComputeRuntimeSummaryHardwareInputs : public testing::TestWithParam<std::string> {};
+
+TEST_P(NpuComputeRuntimeSummaryHardwareInputs, VerifiesCallbackAndArtifacts)
 {
-    for (const char* scenario : {"summary-hardware-current", "summary-hardware-missing", "summary-hardware-override"}) {
-        TempDirectory temporary;
-        CHECK(!temporary.Path().empty());
-        CHECK(LaunchChild(executable, scenario, temporary.Path()));
-    }
-    return true;
+    const char* executable = "/proc/self/exe";
+    const auto& scenario = GetParam();
+
+    TempDirectory temporary;
+    ASSERT_TRUE(!temporary.Path().empty());
+    ASSERT_TRUE(LaunchChild(executable, scenario.c_str(), temporary.Path()));
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    Scenarios, NpuComputeRuntimeSummaryHardwareInputs,
+    testing::Values("summary-hardware-current", "summary-hardware-missing", "summary-hardware-override"),
+    [](const testing::TestParamInfo<std::string>& info) {
+        std::string name = info.param;
+        for (char& character : name) {
+            if (character == '-')
+                character = '_';
+        }
+        return name;
+    });
 
 } // namespace
 
@@ -854,14 +902,6 @@ int main(int argc, char** argv)
     if (argc == 4 && std::string(argv[1]) == "--child") {
         return RunChildScenario(argv[2], argv[3]) ? 0 : 1;
     }
-    if (argc != 1) {
-        std::fprintf(stderr, "unexpected runtime callback test arguments\n");
-        return 2;
-    }
-    return TestPipelineSection() && TestSuccessAndNormalExit(argv[0]) && TestIgnoredEvents(argv[0]) &&
-                   TestInitializationFailures(argv[0]) && TestNormalStop(argv[0]) &&
-                   TestStopDuringCollectionDoesNotHoldRuntimeMutex(argv[0]) && TestCsvSocNameSelection(argv[0]) &&
-                   TestSummaryHardwareInputs(argv[0]) ?
-               0 :
-               1;
+    testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
 }

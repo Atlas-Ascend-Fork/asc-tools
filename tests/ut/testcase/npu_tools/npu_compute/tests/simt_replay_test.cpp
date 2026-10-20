@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "isolated_gtest.h"
+
 #include "aclpti/aclpti.h"
 #include "injection/injection_hook.h"
 #include "injection/runtime_stub_api.h"
@@ -17,14 +19,6 @@
 #include <vector>
 
 namespace {
-
-#define CHECK(expression)                                                                 \
-    do {                                                                                  \
-        if (!(expression)) {                                                              \
-            std::fprintf(stderr, "check failed at line %d: %s\n", __LINE__, #expression); \
-            return 1;                                                                     \
-        }                                                                                 \
-    } while (false)
 
 struct ObservedLaunch {
     void* func;
@@ -75,22 +69,23 @@ std::int32_t MsprofStop(uint32_t, const void*, uint32_t)
 
 std::int32_t MsprofRegisterDataCallback(uint32_t, void* callback) { return callback == nullptr ? -1 : 0; }
 
-int main()
+TEST(NpuComputeSimtReplay, PreservesLaunchParametersAcrossReplay)
 {
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchSIMTKernelWithHostArgs", &RealSIMTLaunch) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == ACL_SUCCESS);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchSIMTKernelWithHostArgs", &RealSIMTLaunch) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == ACL_SUCCESS);
 
     aclptiSubscribeHandle subscriber = nullptr;
-    CHECK(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(subscriber != nullptr);
-    CHECK(
+    ASSERT_TRUE(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(subscriber != nullptr);
+    ASSERT_TRUE(
         reinterpret_cast<aclrtLaunchSIMTKernelWithHostArgsFunc>(
             acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtLaunchSIMTKernelWithHostArgs)) == &RealSIMTLaunch);
-    CHECK(aclrtSetDevice(7) == ACL_SUCCESS);
+    ASSERT_TRUE(aclrtSetDevice(7) == ACL_SUCCESS);
 
     const char* sections[] = {"PipeUtilization"};
     aclptiRangeProfilerSetConfigParams config{sections, 1};
-    CHECK(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
 
     int functionToken = 0;
     std::uint64_t hostArgs[] = {11, 12};
@@ -100,26 +95,25 @@ int main()
     aclrtPlaceHolderInfo placeHolder{};
     const auto stream = reinterpret_cast<aclrtStream>(0x10);
 
-    CHECK(
+    ASSERT_TRUE(
         aclrtLaunchSIMTKernelWithHostArgs(
             &functionToken, gridDim, blockDim, 4096, stream, &launchConfig, hostArgs, sizeof(hostArgs), &placeHolder,
             1) == ACL_SUCCESS);
-    CHECK(gLaunches.size() == 3);
-    CHECK(gStartCalls == 2);
-    CHECK(gStopCalls == 2);
-    CHECK(gSyncCalls == 3);
+    ASSERT_TRUE(gLaunches.size() == 3);
+    ASSERT_TRUE(gStartCalls == 2);
+    ASSERT_TRUE(gStopCalls == 2);
+    ASSERT_TRUE(gSyncCalls == 3);
 
     for (const auto& launch : gLaunches) {
-        CHECK(launch.func == &functionToken);
-        CHECK(launch.gridDim.x == 2 && launch.gridDim.y == 3 && launch.gridDim.z == 4);
-        CHECK(launch.blockDim.x == 5 && launch.blockDim.y == 6 && launch.blockDim.z == 7);
-        CHECK(launch.dynUbufSize == 4096);
-        CHECK(launch.stream == stream);
-        CHECK(launch.cfg == &launchConfig);
-        CHECK(launch.hostArgs == hostArgs);
-        CHECK(launch.argsSize == sizeof(hostArgs));
-        CHECK(launch.placeHolderArray == &placeHolder);
-        CHECK(launch.placeHolderNum == 1);
+        ASSERT_TRUE(launch.func == &functionToken);
+        ASSERT_TRUE(launch.gridDim.x == 2 && launch.gridDim.y == 3 && launch.gridDim.z == 4);
+        ASSERT_TRUE(launch.blockDim.x == 5 && launch.blockDim.y == 6 && launch.blockDim.z == 7);
+        ASSERT_TRUE(launch.dynUbufSize == 4096);
+        ASSERT_TRUE(launch.stream == stream);
+        ASSERT_TRUE(launch.cfg == &launchConfig);
+        ASSERT_TRUE(launch.hostArgs == hostArgs);
+        ASSERT_TRUE(launch.argsSize == sizeof(hostArgs));
+        ASSERT_TRUE(launch.placeHolderArray == &placeHolder);
+        ASSERT_TRUE(launch.placeHolderNum == 1);
     }
-    return 0;
 }

@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "cli/ipc/artifact_receiver.h"
 #include "compute/ipc/artifact_publisher.h"
 
@@ -27,12 +29,15 @@ using npucompute::ArtifactPublisher;
 using npucompute::cli::ArtifactReceiver;
 namespace fs = std::filesystem;
 
-void Check(bool condition)
+void Check(bool condition, const char* expression, const char* file, int line)
 {
     if (!condition) {
+        ADD_FAILURE_AT(file, line) << expression;
         throw std::runtime_error("UDS artifact test check failed");
     }
 }
+#define Check(expression) Check((expression), #expression, __FILE__, __LINE__)
+
 void Reject(const std::function<void()>& operation)
 {
     bool failed = false;
@@ -90,7 +95,7 @@ void End(ArtifactReceiver& receiver, uint64_t id, uint64_t length)
 {
     receiver.Receive({Type::DataEnd, EncodeArtifactEnd({id, length, 1})});
 }
-void TestRoundTripAndManifest()
+TEST(NpuComputeUdsArtifact, RoundTripAndManifest)
 {
     TempDirectory temporary;
     ArtifactReceiver receiver(temporary.Path());
@@ -143,7 +148,7 @@ void TestRoundTripAndManifest()
     Reject([&] { Begin(receiver, 3, "MemoryL0.csv"); });
     Reject([&] { Begin(receiver, 1, "Memory.csv"); });
 }
-void TestMalformedAndCleanup()
+TEST(NpuComputeUdsArtifact, MalformedAndCleanup)
 {
     TempDirectory temporary;
     {
@@ -169,7 +174,7 @@ void TestMalformedAndCleanup()
     }
     Check(fs::is_empty(temporary.Path()));
 }
-void TestPipelineOnlySummary()
+TEST(NpuComputeUdsArtifact, PipelineOnlySummary)
 {
     TempDirectory temporary;
     ArtifactReceiver receiver(temporary.Path());
@@ -192,7 +197,7 @@ void TestPipelineOnlySummary()
     Check(receiver.Validate(result, config));
     Check(ReadFile(fs::path(temporary.Path()) / "summary.jsonl") == summary);
 }
-void TestNoOverwrite()
+TEST(NpuComputeUdsArtifact, NoOverwrite)
 {
     TempDirectory temporary;
     const fs::path root(temporary.Path());
@@ -232,7 +237,7 @@ void TestNoOverwrite()
     Check(ReadFile(root / "sentinel") == "preserve");
     Check(fs::is_symlink(root / ".Memory.csv.2.tmp"));
 }
-void TestPublisherProcess()
+TEST(NpuComputeUdsArtifact, PublisherProcess)
 {
     TempDirectory temporary;
     std::string data(2 * 1024 * 1024, '\0');
@@ -297,9 +302,12 @@ void TestPublisherProcess()
 void TestPublisherControl(Type control, bool expectedSuccess, bool finalReply = false)
 {
     const auto bootstrap = MakeBootstrap();
+    int finishGate[2];
+    Check(pipe(finishGate) == 0);
     const pid_t child = fork();
     Check(child >= 0);
     if (child == 0) {
+        close(finishGate[1]);
         alarm(10);
         try {
             Listener listener(bootstrap.name);
@@ -308,8 +316,15 @@ void TestPublisherControl(Type control, bool expectedSuccess, bool finalReply = 
             publisher.Begin("Memory.csv");
             publisher.Write("header\nvalue\n");
             publisher.Commit(1);
-            // Allow an early control to reach the worker before requesting finalization.
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // For cancellation/error, finalize only after the receiver has seen
+            // the worker's rejection. This tests Finish without racing Begin/Write.
+            if (!expectedSuccess && !finalReply) {
+                char token;
+                if (read(finishGate[0], &token, 1) != 1) {
+                    _exit(13);
+                }
+            }
+            close(finishGate[0]);
             Result result;
             result.sections = {"Memory"};
             const bool success = publisher.Finish(result);
@@ -318,16 +333,17 @@ void TestPublisherControl(Type control, bool expectedSuccess, bool finalReply = 
             _exit(12);
         }
     }
+    close(finishGate[0]);
     try {
         auto client = Channel::Connect(bootstrap.name, bootstrap.session, child, getuid(), bootstrap.handshakeDeadline);
         const Bytes payload =
             control == Type::Error ? EncodeError({9, "receiver rejected data", "ARTIFACT", "receive"}) : Bytes{};
-        if (!finalReply) {
-            client.Send(control, payload, After(std::chrono::seconds(1)));
-        }
         bool terminal = false;
         for (;;) {
             const auto frame = client.Receive(After(std::chrono::seconds(3)));
+            if (frame.type == Type::DataEnd && !finalReply) {
+                client.Send(control, payload, After(std::chrono::seconds(1)));
+            }
             if (frame.type == Type::Error) {
                 Check(!expectedSuccess);
                 Check(!DecodeError(frame.payload).message.empty());
@@ -346,32 +362,25 @@ void TestPublisherControl(Type control, bool expectedSuccess, bool finalReply = 
             }
         }
         Check(terminal);
+        if (!expectedSuccess && !finalReply) {
+            const char token = 1;
+            Check(write(finishGate[1], &token, 1) == 1);
+        }
+        close(finishGate[1]);
+        finishGate[1] = -1;
         int status = 0;
         Check(waitpid(child, &status, 0) == child);
         Check(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     } catch (...) {
+        close(finishGate[1]);
         kill(child, SIGKILL);
         waitpid(child, nullptr, 0);
         throw;
     }
 }
 } // namespace
-int main()
-{
-    try {
-        TestRoundTripAndManifest();
-        TestPipelineOnlySummary();
-        TestMalformedAndCleanup();
-        TestNoOverwrite();
-        TestPublisherProcess();
-        TestPublisherControl(Type::Flush, true);
-        TestPublisherControl(Type::Interrupt, false);
-        TestPublisherControl(Type::Error, false);
-        TestPublisherControl(Type::ConnectAck, false, true);
-        std::puts("UDS artifact tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
-}
+
+TEST(NpuComputeUdsArtifact, FlushPublishesResult) { TestPublisherControl(Type::Flush, true); }
+TEST(NpuComputeUdsArtifact, InterruptAbortsPublication) { TestPublisherControl(Type::Interrupt, false); }
+TEST(NpuComputeUdsArtifact, ErrorAbortsPublication) { TestPublisherControl(Type::Error, false); }
+TEST(NpuComputeUdsArtifact, UnexpectedFinalReplyFails) { TestPublisherControl(Type::ConnectAck, false, true); }

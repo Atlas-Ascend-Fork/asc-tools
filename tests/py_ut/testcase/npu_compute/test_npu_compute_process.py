@@ -18,6 +18,12 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def collection_work_directory(tmp_path, monkeypatch):
+    # Collection writes reports in cwd; isolate each test from the checkout.
+    monkeypatch.chdir(tmp_path)
+
+
 BUILD_DIR = Path(
     os.environ.get("NPU_COMPUTE_BUILD_DIR", "/tmp/asc_tools_npu_compute_integration")
 )

@@ -7,7 +7,10 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "profiling/prof_api.h"
+#include "injection/prof_api_stub.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -18,22 +21,6 @@ namespace {
 
 int g_callbackCount = 0;
 MsprofRawData g_rawData{};
-
-int Check(bool condition, const char* expression, int line)
-{
-    if (condition) {
-        return 0;
-    }
-    std::fprintf(stderr, "check failed at line %d: %s\n", line, expression);
-    return 1;
-}
-
-#define CHECK(expression)                                      \
-    do {                                                       \
-        if (Check((expression), #expression, __LINE__) != 0) { \
-            return 1;                                          \
-        }                                                      \
-    } while (false)
 
 std::int32_t CaptureRawData(MsprofRawData* rawData)
 {
@@ -47,17 +34,20 @@ std::int32_t CaptureRawData(MsprofRawData* rawData)
 
 } // namespace
 
-int main()
+TEST(NpuComputeProfApiStub, EmitsConfiguredDataAndClearsCallbackOnReset)
 {
+    ProfApiReset();
+    g_callbackCount = 0;
+    g_rawData = {};
     MsprofConfig defaultConfig{};
-    CHECK(MsprofStart(8, &defaultConfig, sizeof(defaultConfig)) == 0);
+    ASSERT_TRUE(MsprofStart(8, &defaultConfig, sizeof(defaultConfig)) == 0);
 
     MsprofConfigAttr instrModeAttr{};
     instrModeAttr.id = PROF_CONFIG_ATTR_INSTR;
     MsprofConfig instrModeConfig{};
     instrModeConfig.configInfo.attrs = &instrModeAttr;
     instrModeConfig.configInfo.numAttrs = 1;
-    CHECK(MsprofStart(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
+    ASSERT_TRUE(MsprofStart(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
 
     MsprofConfigAttr attr{};
     attr.id = PROF_CONFIG_ATTR_AICORE_METRICS;
@@ -69,31 +59,44 @@ int main()
     config.configInfo.attrs = &attr;
     config.configInfo.numAttrs = 1;
 
-    CHECK(MsprofRegisterDataCallback(8, reinterpret_cast<void*>(&CaptureRawData)) == 0);
+    ASSERT_TRUE(MsprofRegisterDataCallback(8, reinterpret_cast<void*>(&CaptureRawData)) == 0);
 
     instrModeAttr.value.instrMode = PROF_COMPUTE_BIU_PERF;
-    CHECK(MsprofStart(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
-    CHECK(MsprofStop(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
-    CHECK(g_callbackCount == 1);
-    CHECK(g_rawData.type == BIU_PERF_DATA_TYPE);
+    ASSERT_TRUE(MsprofStart(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
+    ASSERT_TRUE(MsprofStop(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
+    ASSERT_TRUE(g_callbackCount == 1);
+    ASSERT_TRUE(g_rawData.type == BIU_PERF_DATA_TYPE);
 
     instrModeAttr.value.instrMode = PROF_COMPUTE_PC_SAMPLING;
-    CHECK(MsprofStart(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
-    CHECK(MsprofStop(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
-    CHECK(g_callbackCount == 2);
-    CHECK(g_rawData.type == PC_SAMPLING_DATA_TYPE);
+    ASSERT_TRUE(MsprofStart(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
+    ASSERT_TRUE(MsprofStop(8, &instrModeConfig, sizeof(instrModeConfig)) == 0);
+    ASSERT_TRUE(g_callbackCount == 2);
+    ASSERT_TRUE(g_rawData.type == PC_SAMPLING_DATA_TYPE);
 
-    CHECK(MsprofStart(8, &config, sizeof(config)) == 0);
-    CHECK(MsprofStop(8, &config, sizeof(config)) == 0);
-    CHECK(g_callbackCount == 3);
-    CHECK(g_rawData.isLastChunk);
-    CHECK(g_rawData.type == PMU_DATA_TYPE);
-    CHECK(g_rawData.deviceId == 0);
-    CHECK(g_rawData.offset == 0);
-    CHECK(g_rawData.chunkModule == 0);
-    CHECK(g_rawData.chunkSize == 128);
+    ASSERT_TRUE(MsprofStart(8, &config, sizeof(config)) == 0);
+    ASSERT_TRUE(MsprofStop(8, &config, sizeof(config)) == 0);
+    ASSERT_TRUE(g_callbackCount == 3);
+    ASSERT_TRUE(g_rawData.isLastChunk);
+    ASSERT_TRUE(g_rawData.type == PMU_DATA_TYPE);
+    ASSERT_TRUE(g_rawData.deviceId == 0);
+    ASSERT_TRUE(g_rawData.offset == 0);
+    ASSERT_TRUE(g_rawData.chunkModule == 0);
+    ASSERT_TRUE(g_rawData.chunkSize == 128);
     uint32_t magic = 0;
     std::memcpy(&magic, g_rawData.chunk, sizeof(magic));
-    CHECK(magic == 0x6bd3002aU);
-    return 0;
+    ASSERT_TRUE(magic == 0x6bd3002aU);
+    MsprofConfigAttr blockAttr{};
+    blockAttr.id = PROF_CONFIG_ATTR_TASK_BLOCK;
+    blockAttr.value.taskBlockMode = PROF_COMPUTE_ALL_BLOCK;
+    config.configInfo.attrs = &blockAttr;
+    ASSERT_TRUE(MsprofStart(8, &config, sizeof(config)) == 0);
+    ASSERT_TRUE(MsprofStop(8, &config, sizeof(config)) == 0);
+    ASSERT_TRUE(g_callbackCount == 4);
+    ASSERT_TRUE(g_rawData.chunkSize == 256);
+    std::memcpy(&magic, g_rawData.chunk + 128, sizeof(magic));
+    ASSERT_TRUE(magic == 0x6bd30029U);
+    ProfApiReset();
+    ASSERT_TRUE(MsprofStart(8, &config, sizeof(config)) == 0);
+    ASSERT_TRUE(MsprofStop(8, &config, sizeof(config)) == 0);
+    ASSERT_TRUE(g_callbackCount == 4);
 }

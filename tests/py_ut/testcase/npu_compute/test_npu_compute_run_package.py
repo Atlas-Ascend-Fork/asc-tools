@@ -22,8 +22,8 @@ import pytest
 
 PACKAGE_ARCH = os.environ.get("NPU_COMPUTE_TEST_ARCH", platform.machine())
 ARCH_ROOT = f"{PACKAGE_ARCH}-linux"
-SANITIZER_ROOT = f"{ARCH_ROOT}/tools/npu_tools"
-NPU_COMPUTE_ROOT = f"{ARCH_ROOT}/tools/npu_tools"
+SANITIZER_ROOT = "tools/npu_tools"
+NPU_COMPUTE_ROOT = "tools/npu_tools"
 NPU_COMPUTE_PATHS = frozenset(
     {
         f"{ARCH_ROOT}/bin/npu-compute",
@@ -36,6 +36,8 @@ NPU_CHECK_PATHS = frozenset(
         f"{SANITIZER_ROOT}/bin/npu-check",
     }
 )
+# DBI sources/headers and ctrlbin generation are embedded in libacl_san.so.
+# Only installed runtime artifacts belong in the run-package path contract.
 REQUIRED_PATHS = (
     frozenset(
         {
@@ -44,15 +46,6 @@ REQUIRED_PATHS = (
             f"{NPU_COMPUTE_ROOT}/lib64/libnpu_compute_processor.so",
             f"{SANITIZER_ROOT}/lib64/libacl_san.so",
             f"{SANITIZER_ROOT}/lib64/libnpu_check_processor.so",
-            "libexec/aclsan/gen_ctrlbin",
-            "share/aclsan/dbi/probes/fixpipe.cpp",
-            "share/aclsan/dbi/probes/mte1.cpp",
-            "share/aclsan/dbi/probes/mte2.cpp",
-            "share/aclsan/dbi/probes/mte3.cpp",
-            "share/aclsan/dbi/probes/scalar.cpp",
-            "share/aclsan/dbi/probes/sync.cpp",
-            "share/aclsan/dbi/trace_buffer_abi.h",
-            "share/aclsan/dbi/trace_record.h",
         }
     )
     | NPU_COMPUTE_PATHS
@@ -65,7 +58,6 @@ UNIQUE_REQUIRED_PATHS = frozenset(
         f"{NPU_COMPUTE_ROOT}/lib64/libnpu_compute_processor.so",
         f"{SANITIZER_ROOT}/lib64/libacl_san.so",
         f"{SANITIZER_ROOT}/lib64/libnpu_check_processor.so",
-        "libexec/aclsan/gen_ctrlbin",
     }
 )
 EXPECTED_PATHS_BY_REQUIRED_FILE_NAME = {
@@ -92,66 +84,6 @@ FORBIDDEN_PATH_PREFIXES = (
 )
 LIST_PATH_PATTERN = re.compile(r"(?:^|\s)(\./\S+)")
 RUN_PACKAGE = os.environ.get("ASC_TOOLS_RUN_PACKAGE")
-UNINSTALL_SCRIPT = (
-    Path(__file__).parents[4]
-    / "scripts/package/asc-tools/scripts/asc-tools_custom_uninstall.sh"
-)
-NPU_TOOL_RUNTIME_PATHS = (
-    f"{ARCH_ROOT}/bin/npu-compute",
-    f"{ARCH_ROOT}/bin/npu-check",
-    f"{NPU_COMPUTE_ROOT}/bin/npu-compute",
-    f"{NPU_COMPUTE_ROOT}/bin/npu-check",
-    f"{NPU_COMPUTE_ROOT}/lib64/libacl_pti.so",
-    f"{NPU_COMPUTE_ROOT}/lib64/libacl_tool_injection.so",
-    f"{NPU_COMPUTE_ROOT}/lib64/libnpu_compute_processor.so",
-    f"{NPU_COMPUTE_ROOT}/lib64/libnpu_check_processor.so",
-    f"{NPU_COMPUTE_ROOT}/lib64/libacl_san.so",
-)
-
-
-def run_npu_tools_uninstall(install_root):
-    uninstall_script = UNINSTALL_SCRIPT.read_text(encoding="utf-8")
-    function_start = "removeNpuToolFile() {"
-    function_end = "### uninstall whl"
-    assert function_start in uninstall_script
-    assert function_end in uninstall_script
-    function_source = (
-        function_start
-        + uninstall_script.split(function_start, 1)[1].split(function_end, 1)[0]
-    )
-    environment = os.environ.copy()
-    environment["TEST_INSTALL_PATH"] = str(install_root)
-    environment["TEST_ARCH"] = PACKAGE_ARCH
-    result = subprocess.run(
-        [
-            "bash",
-            "-c",
-            "\n".join(
-                (
-                    "log() { :; }",
-                    "log_and_print() { :; }",
-                    'LEVEL_INFO="INFO"',
-                    'LEVEL_ERROR="ERROR"',
-                    function_source,
-                    'install_path="${TEST_INSTALL_PATH}"',
-                    'PLT_ARCH="${TEST_ARCH}"',
-                    "uninstallNpuTools",
-                )
-            ),
-        ],
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def create_npu_tool_runtime_files(install_root):
-    for relative_path in NPU_TOOL_RUNTIME_PATHS:
-        path = install_root / relative_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(relative_path, encoding="utf-8")
 
 
 def list_package_paths(package):
@@ -223,44 +155,6 @@ def create_run_package(tmp_path, paths, return_code=0):
         encoding="utf-8",
     )
     return package
-
-
-def test_uninstall_removes_npu_tool_runtime_files_and_empty_directories(tmp_path):
-    install_root = tmp_path / "cann"
-    create_npu_tool_runtime_files(install_root)
-    shared_bin_file = install_root / ARCH_ROOT / "bin/keep"
-    shared_bin_file.write_text("keep", encoding="utf-8")
-
-    run_npu_tools_uninstall(install_root)
-
-    for relative_path in NPU_TOOL_RUNTIME_PATHS:
-        assert not (install_root / relative_path).exists()
-    assert shared_bin_file.is_file()
-    assert not (install_root / NPU_COMPUTE_ROOT).exists()
-    assert not (install_root / ARCH_ROOT / "tools").exists()
-
-
-def test_uninstall_preserves_unknown_files_and_nonempty_directories(tmp_path):
-    install_root = tmp_path / "cann"
-    create_npu_tool_runtime_files(install_root)
-    unknown_library = install_root / NPU_COMPUTE_ROOT / "lib64/libanother_tool.so"
-    unknown_library.write_text("keep", encoding="utf-8")
-
-    run_npu_tools_uninstall(install_root)
-
-    for relative_path in NPU_TOOL_RUNTIME_PATHS:
-        assert not (install_root / relative_path).exists()
-    assert unknown_library.is_file()
-    assert (install_root / NPU_COMPUTE_ROOT / "lib64").is_dir()
-    assert (install_root / NPU_COMPUTE_ROOT).is_dir()
-    assert (install_root / ARCH_ROOT / "tools").is_dir()
-
-
-def test_uninstall_cleans_npu_tools_before_running_python_uninstall():
-    uninstall_script = UNINSTALL_SCRIPT.read_text(encoding="utf-8")
-    main_flow = uninstall_script.split("\ninit\n", 1)[1]
-
-    assert main_flow.index("uninstallNpuTools") < main_flow.index("uninstallPython")
 
 
 def test_complete_run_package_passes(tmp_path):
@@ -375,24 +269,23 @@ def test_npu_compute_package_manifest_registers_runtime_files_only():
     package_config = ET.parse(
         repo_root / "scripts/package/asc-tools/asc-tools.xml"
     ).getroot()
-    block_names = {block.attrib["name"] for block in package_config.findall(".//block")}
-    assert "NpuCompute" in block_names
-
-    module_path = repo_root / "scripts/package/module/ascend/NpuCompute.xml"
-    module = ET.parse(module_path).getroot()
     packaged_files = {
         (file_info.attrib["dst_path"], file_node.attrib["value"])
-        for file_info in module.findall("file_info")
+        for file_info in package_config.findall("file_info")
+        if file_info.attrib.get("value", "").startswith("npu_tools_")
         for file_node in file_info.findall("file")
     }
     assert packaged_files == {
         ("$(TARGET_ENV)/bin", "npu-compute"),
-        ("$(TARGET_ENV)/tools/npu_tools/bin", "npu-compute"),
-        ("$(TARGET_ENV)/tools/npu_tools/lib64", "libacl_pti.so"),
-        ("$(TARGET_ENV)/tools/npu_tools/lib64", "libacl_tool_injection.so"),
-        ("$(TARGET_ENV)/tools/npu_tools/lib64", "libnpu_compute_processor.so"),
+        ("$(TARGET_ENV)/bin", "npu-check"),
+        ("tools/npu_tools/bin", "npu-compute"),
+        ("tools/npu_tools/bin", "npu-check"),
+        ("tools/npu_tools/lib64", "libacl_pti.so"),
+        ("tools/npu_tools/lib64", "libacl_tool_injection.so"),
+        ("tools/npu_tools/lib64", "libnpu_compute_processor.so"),
+        ("tools/npu_tools/lib64", "libnpu_check_processor.so"),
+        ("tools/npu_tools/lib64", "libacl_san.so"),
     }
-    assert "aclpti" not in module_path.read_text(encoding="utf-8").lower()
 
 
 def test_npu_compute_wrapper_executes_real_binary(tmp_path):

@@ -7,33 +7,23 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "isolated_gtest.h"
+
 #include "injection/prof_api_stub.h"
 
 #include <cstdio>
 #include <cstdlib>
 
-int main(int argc, char** argv)
+TEST(NpuComputeProfApiLoader, RetriesInitializationAfterFailure)
 {
-    if (argc != 2) {
-        return 1;
-    }
-    unsetenv("NPU_COMPUTE_TEST_INIT_SUCCESS");
-    unsetenv("NPU_COMPUTE_TEST_INITIALIZED");
-    if (setenv("ACL_API_INJECTION", argv[1], 1) != 0) {
-        return 1;
-    }
-    if (ProfApiLoadApiInjectionFromEnv() == 0) {
-        std::fprintf(stderr, "first initialization unexpectedly succeeded\n");
-        return 1;
-    }
-    if (setenv("NPU_COMPUTE_TEST_INIT_SUCCESS", "1", 1) != 0 || ProfApiLoadApiInjectionFromEnv() != 0) {
-        std::fprintf(stderr, "retry initialization failed\n");
-        return 1;
-    }
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(unsetenv("NPU_COMPUTE_TEST_INIT_SUCCESS"), 0);
+    ASSERT_EQ(unsetenv("NPU_COMPUTE_TEST_INITIALIZED"), 0);
+    ASSERT_EQ(setenv("ACL_API_INJECTION", NPU_COMPUTE_LOADER_PLUGIN_PATH, 1), 0);
+    ASSERT_NE(ProfApiLoadApiInjectionFromEnv(), 0);
+    ASSERT_EQ(setenv("NPU_COMPUTE_TEST_INIT_SUCCESS", "1", 1), 0);
+    ASSERT_EQ(ProfApiLoadApiInjectionFromEnv(), 0);
     const char* initialized = std::getenv("NPU_COMPUTE_TEST_INITIALIZED");
-    if (initialized == nullptr || initialized[0] != '1') {
-        std::fprintf(stderr, "retry returned without calling acltoolInitialize\n");
-        return 1;
-    }
-    return 0;
+    ASSERT_NE(initialized, nullptr);
+    EXPECT_EQ(initialized[0], '1');
 }

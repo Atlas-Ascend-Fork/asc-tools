@@ -20,6 +20,7 @@ extern "C" {
 ACL_TOOL_INJECTION_EXPORT aclError RuntimeStubSetOrigin(const char* name, aclrtApiFunc function);
 ACL_TOOL_INJECTION_EXPORT aclError RuntimeStubClearOrigin(const char* name);
 ACL_TOOL_INJECTION_EXPORT aclError RuntimeStubSetSocName(const char* socName);
+ACL_TOOL_INJECTION_EXPORT void RuntimeStubReset(void);
 
 #ifdef __cplusplus
 }

@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "import/imported_profile_results.h"
 #include "import/import_output_directory.h"
 
@@ -31,21 +33,6 @@
 #include "report/rep_encoder.h"
 
 namespace {
-
-int Check(bool condition, const char* expression, int line)
-{
-    if (condition) {
-        return 0;
-    }
-    std::fprintf(stderr, "line %d: check failed: %s\n", line, expression);
-    return 1;
-}
-
-#define CHECK(expression)                               \
-    do {                                                \
-        if (Check((expression), #expression, __LINE__)) \
-            return 1;                                   \
-    } while (false)
 
 using npucompute::cli::EncodeRep;
 using npucompute::cli::ImportedProfileEntry;
@@ -172,206 +159,202 @@ bool SameDirectoryTrees(const boost::filesystem::path& left, const boost::filesy
     return true;
 }
 
-int TestReadsNestedProfileResults()
+TEST(NpuComputeImportedProfileResults, ReadsNestedProfileResults)
 {
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
+    ASSERT_TRUE(!temporary.Path().empty());
     std::vector<uint8_t> encoded;
-    CHECK(BuildNestedRep(&encoded));
+    ASSERT_TRUE(BuildNestedRep(&encoded));
     const boost::filesystem::path input = temporary.Path() / "input.npu-rep";
-    CHECK(WriteFile(input, encoded));
+    ASSERT_TRUE(WriteFile(input, encoded));
 
     std::vector<ImportedProfileEntry> results;
     std::string error = "old error";
-    CHECK(ReadImportedProfileResults(input, &results, &error));
-    CHECK(error.empty());
-    CHECK(results.size() == 2U);
-    CHECK(results[0].name == "HardwareInfo.jsonl");
-    CHECK(results[0].type == NpuRepFileType::Jsonl);
-    CHECK(results[0].payload == Bytes("{\"category\":\"Host Info\"}\n"));
-    CHECK(results[0].children.empty());
-    CHECK(results[1].name == "device_0.npu.rep");
-    CHECK(results[1].type == NpuRepFileType::NpuRep);
-    CHECK(results[1].payload.empty());
-    CHECK(results[1].children.size() == 1U);
-    CHECK(results[1].children[0].name == "Memory.csv");
-    return 0;
+    ASSERT_TRUE(ReadImportedProfileResults(input, &results, &error));
+    ASSERT_TRUE(error.empty());
+    ASSERT_TRUE(results.size() == 2U);
+    ASSERT_TRUE(results[0].name == "HardwareInfo.jsonl");
+    ASSERT_TRUE(results[0].type == NpuRepFileType::Jsonl);
+    ASSERT_TRUE(results[0].payload == Bytes("{\"category\":\"Host Info\"}\n"));
+    ASSERT_TRUE(results[0].children.empty());
+    ASSERT_TRUE(results[1].name == "device_0.npu.rep");
+    ASSERT_TRUE(results[1].type == NpuRepFileType::NpuRep);
+    ASSERT_TRUE(results[1].payload.empty());
+    ASSERT_TRUE(results[1].children.size() == 1U);
+    ASSERT_TRUE(results[1].children[0].name == "Memory.csv");
 }
 
-int TestUnpacksRecursiveProfileResults()
+TEST(NpuComputeImportedProfileResults, UnpacksRecursiveProfileResults)
 {
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
+    ASSERT_TRUE(!temporary.Path().empty());
     const boost::filesystem::path fixture = temporary.Path() / "fixture";
     std::vector<uint8_t> encoded;
-    CHECK(BuildRecursiveFixture(fixture, &encoded));
+    ASSERT_TRUE(BuildRecursiveFixture(fixture, &encoded));
     const boost::filesystem::path input = temporary.Path() / "input.npu-rep";
-    CHECK(WriteFile(input, encoded));
+    ASSERT_TRUE(WriteFile(input, encoded));
 
     std::vector<ImportedProfileEntry> results;
     std::string error;
-    CHECK(ReadImportedProfileResults(input, &results, &error));
+    ASSERT_TRUE(ReadImportedProfileResults(input, &results, &error));
     const boost::filesystem::path output = temporary.Path() / "unpacked";
-    CHECK(boost::filesystem::create_directory(output));
-    CHECK(UnpackImportedProfileResults(results, output, &error));
-    CHECK(error.empty());
+    ASSERT_TRUE(boost::filesystem::create_directory(output));
+    ASSERT_TRUE(UnpackImportedProfileResults(results, output, &error));
+    ASSERT_TRUE(error.empty());
 
     std::vector<uint8_t> actual;
-    CHECK(ReadFile(output / "HardwareInfo.jsonl", &actual));
-    CHECK(actual == HardwareInfoBytes());
-    CHECK(ReadFile(output / "metadata.json", &actual));
-    CHECK(actual == Bytes("{\"version\":1}\n"));
-    CHECK(ReadFile(output / "profile.sqlite3", &actual));
-    CHECK(actual == std::vector<uint8_t>({0x53U, 0x51U, 0x4cU, 0x00U, 0xffU}));
-    CHECK(ReadFile(output / "trace.pb", &actual));
-    CHECK(actual == std::vector<uint8_t>({0x08U, 0x96U, 0x01U, 0x00U}));
-    CHECK(ReadFile(output / "device_0" / "Memory.csv", &actual));
-    CHECK(actual == Bytes("name,value\nmemory,2\n"));
-    CHECK(ReadFile(output / "device_0" / "details" / "L2Cache.csv", &actual));
-    CHECK(actual == Bytes("name,value\nl2,3\n"));
-    CHECK(RelativeDirectoryEntries(output) == RelativeDirectoryEntries(fixture));
-    CHECK(!boost::filesystem::exists(output / ".hardware_info.lock"));
-    return 0;
+    ASSERT_TRUE(ReadFile(output / "HardwareInfo.jsonl", &actual));
+    ASSERT_TRUE(actual == HardwareInfoBytes());
+    ASSERT_TRUE(ReadFile(output / "metadata.json", &actual));
+    ASSERT_TRUE(actual == Bytes("{\"version\":1}\n"));
+    ASSERT_TRUE(ReadFile(output / "profile.sqlite3", &actual));
+    ASSERT_TRUE(actual == std::vector<uint8_t>({0x53U, 0x51U, 0x4cU, 0x00U, 0xffU}));
+    ASSERT_TRUE(ReadFile(output / "trace.pb", &actual));
+    ASSERT_TRUE(actual == std::vector<uint8_t>({0x08U, 0x96U, 0x01U, 0x00U}));
+    ASSERT_TRUE(ReadFile(output / "device_0" / "Memory.csv", &actual));
+    ASSERT_TRUE(actual == Bytes("name,value\nmemory,2\n"));
+    ASSERT_TRUE(ReadFile(output / "device_0" / "details" / "L2Cache.csv", &actual));
+    ASSERT_TRUE(actual == Bytes("name,value\nl2,3\n"));
+    ASSERT_TRUE(RelativeDirectoryEntries(output) == RelativeDirectoryEntries(fixture));
+    ASSERT_TRUE(!boost::filesystem::exists(output / ".hardware_info.lock"));
 }
 
-int TestUnpacksShortRepSuffix()
+TEST(NpuComputeImportedProfileResults, UnpacksShortRepSuffix)
 {
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
+    ASSERT_TRUE(!temporary.Path().empty());
     const boost::filesystem::path output = temporary.Path() / "unpacked";
-    CHECK(boost::filesystem::create_directory(output));
+    ASSERT_TRUE(boost::filesystem::create_directory(output));
     const std::vector<ImportedProfileEntry> results = {
         {"details.rep",
          NpuRepFileType::NpuRep,
          {},
          {{"L2Cache.csv", NpuRepFileType::Csv, Bytes("name,value\nl2,3\n"), {}}}}};
     std::string error;
-    CHECK(UnpackImportedProfileResults(results, output, &error));
+    ASSERT_TRUE(UnpackImportedProfileResults(results, output, &error));
     std::vector<uint8_t> actual;
-    CHECK(ReadFile(output / "details" / "L2Cache.csv", &actual));
-    CHECK(actual == Bytes("name,value\nl2,3\n"));
-    return 0;
+    ASSERT_TRUE(ReadFile(output / "details" / "L2Cache.csv", &actual));
+    ASSERT_TRUE(actual == Bytes("name,value\nl2,3\n"));
 }
 
-int TestRejectsExistingOutputWithoutPartialWrites()
+TEST(NpuComputeImportedProfileResults, RejectsExistingOutputWithoutPartialWrites)
 {
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
+    ASSERT_TRUE(!temporary.Path().empty());
     const boost::filesystem::path fixture = temporary.Path() / "fixture";
     std::vector<uint8_t> encoded;
-    CHECK(BuildRecursiveFixture(fixture, &encoded));
+    ASSERT_TRUE(BuildRecursiveFixture(fixture, &encoded));
     const boost::filesystem::path input = temporary.Path() / "input.npu-rep";
-    CHECK(WriteFile(input, encoded));
+    ASSERT_TRUE(WriteFile(input, encoded));
     std::vector<ImportedProfileEntry> results;
     std::string error;
-    CHECK(ReadImportedProfileResults(input, &results, &error));
+    ASSERT_TRUE(ReadImportedProfileResults(input, &results, &error));
 
     const boost::filesystem::path output = temporary.Path() / "unpacked";
-    CHECK(boost::filesystem::create_directory(output));
+    ASSERT_TRUE(boost::filesystem::create_directory(output));
     const std::vector<uint8_t> existing = Bytes("keep-existing");
-    CHECK(WriteFile(output / "trace.pb", existing));
-    CHECK(!UnpackImportedProfileResults(results, output, &error));
-    CHECK(error.find("exists") != std::string::npos);
-    CHECK(!boost::filesystem::exists(output / "HardwareInfo.jsonl"));
-    CHECK(!boost::filesystem::exists(output / "device_0"));
+    ASSERT_TRUE(WriteFile(output / "trace.pb", existing));
+    ASSERT_TRUE(!UnpackImportedProfileResults(results, output, &error));
+    ASSERT_TRUE(error.find("exists") != std::string::npos);
+    ASSERT_TRUE(!boost::filesystem::exists(output / "HardwareInfo.jsonl"));
+    ASSERT_TRUE(!boost::filesystem::exists(output / "device_0"));
     std::vector<uint8_t> actual;
-    CHECK(ReadFile(output / "trace.pb", &actual));
-    CHECK(actual == existing);
-    return 0;
+    ASSERT_TRUE(ReadFile(output / "trace.pb", &actual));
+    ASSERT_TRUE(actual == existing);
 }
 
-int TestRejectsUnsafeAndConflictingOutputModel()
+TEST(NpuComputeImportedProfileResults, RejectsUnsafeAndConflictingOutputModel)
 {
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
+    ASSERT_TRUE(!temporary.Path().empty());
     const boost::filesystem::path output = temporary.Path() / "unpacked";
-    CHECK(boost::filesystem::create_directory(output));
+    ASSERT_TRUE(boost::filesystem::create_directory(output));
     std::string error;
 
     std::vector<ImportedProfileEntry> results = {{".hardware_info.lock", NpuRepFileType::Jsonl, Bytes("lock"), {}}};
-    CHECK(!UnpackImportedProfileResults(results, output, &error));
-    CHECK(error.find("lock") != std::string::npos);
-    CHECK(boost::filesystem::is_empty(output));
+    ASSERT_TRUE(!UnpackImportedProfileResults(results, output, &error));
+    ASSERT_TRUE(error.find("lock") != std::string::npos);
+    ASSERT_TRUE(boost::filesystem::is_empty(output));
 
     results = {{"device_0", NpuRepFileType::Json, Bytes("{}"), {}}, {"device_0.rep", NpuRepFileType::NpuRep, {}, {}}};
-    CHECK(!UnpackImportedProfileResults(results, output, &error));
-    CHECK(error.find("conflict") != std::string::npos);
-    CHECK(boost::filesystem::is_empty(output));
+    ASSERT_TRUE(!UnpackImportedProfileResults(results, output, &error));
+    ASSERT_TRUE(error.find("conflict") != std::string::npos);
+    ASSERT_TRUE(boost::filesystem::is_empty(output));
 
     results = {{"device_0.bin", NpuRepFileType::NpuRep, {}, {}}};
-    CHECK(!UnpackImportedProfileResults(results, output, &error));
-    CHECK(error.find("invalid nested report entry name") != std::string::npos);
-    CHECK(boost::filesystem::is_empty(output));
-    return 0;
+    ASSERT_TRUE(!UnpackImportedProfileResults(results, output, &error));
+    ASSERT_TRUE(error.find("invalid nested report entry name") != std::string::npos);
+    ASSERT_TRUE(boost::filesystem::is_empty(output));
 }
 
-int TestRejectsInvalidInputAndChildRep()
+TEST(NpuComputeImportedProfileResults, RejectsInvalidInputAndChildRep)
 {
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
+    ASSERT_TRUE(!temporary.Path().empty());
     std::vector<ImportedProfileEntry> results;
     std::string error;
-    CHECK(!ReadImportedProfileResults(temporary.Path() / "missing.npu-rep", &results, &error));
-    CHECK(error.find("missing.npu-rep") != std::string::npos);
-    CHECK(results.empty());
-    CHECK(!ReadImportedProfileResults(temporary.Path(), &results, &error));
-    CHECK(error.find("is a directory") != std::string::npos);
+    ASSERT_TRUE(!ReadImportedProfileResults(temporary.Path() / "missing.npu-rep", &results, &error));
+    ASSERT_TRUE(error.find("missing.npu-rep") != std::string::npos);
+    ASSERT_TRUE(results.empty());
+    ASSERT_TRUE(!ReadImportedProfileResults(temporary.Path(), &results, &error));
+    ASSERT_TRUE(error.find("is a directory") != std::string::npos);
 
     std::vector<uint8_t> child = Bytes("not-a-rep");
     std::vector<uint8_t> parent;
-    CHECK(EncodeRep({{"broken.npu.rep", NpuRepFileType::NpuRep, child}}, &parent, &error));
+    ASSERT_TRUE(EncodeRep({{"broken.npu.rep", NpuRepFileType::NpuRep, child}}, &parent, &error));
     const boost::filesystem::path input = temporary.Path() / "broken.npu-rep";
-    CHECK(WriteFile(input, parent));
-    CHECK(!ReadImportedProfileResults(input, &results, &error));
-    CHECK(error.find(input.string()) != std::string::npos);
-    CHECK(error.find("broken.npu.rep") == std::string::npos);
-    CHECK(error.find("is corrupted") != std::string::npos);
-    CHECK(error.find("invalid npu-compute report ") != std::string::npos);
-    CHECK(results.empty());
-    return 0;
+    ASSERT_TRUE(WriteFile(input, parent));
+    ASSERT_TRUE(!ReadImportedProfileResults(input, &results, &error));
+    ASSERT_TRUE(error.find(input.string()) != std::string::npos);
+    ASSERT_TRUE(error.find("broken.npu.rep") == std::string::npos);
+    ASSERT_TRUE(error.find("is corrupted") != std::string::npos);
+    ASSERT_TRUE(error.find("invalid npu-compute report ") != std::string::npos);
+    ASSERT_TRUE(results.empty());
 }
 
-int TestInputDiagnosticsAndCompatibleNames()
+TEST(NpuComputeImportedProfileResults, InputDiagnosticsAndCompatibleNames)
 {
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
+    ASSERT_TRUE(!temporary.Path().empty());
     const std::string hint = "--import expects a report file, but ";
     std::vector<ImportedProfileEntry> results;
     std::string error;
     const auto missing = temporary.Path() / "app";
-    CHECK(!ReadImportedProfileResults(missing, &results, &error));
-    CHECK(error == hint + "'" + missing.string() + "' does not exist.");
-    CHECK(!ReadImportedProfileResults(temporary.Path(), &results, &error));
-    CHECK(error == hint + "'" + temporary.Path().string() + "' is a directory.");
+    ASSERT_TRUE(!ReadImportedProfileResults(missing, &results, &error));
+    ASSERT_TRUE(error == hint + "'" + missing.string() + "' does not exist.");
+    ASSERT_TRUE(!ReadImportedProfileResults(temporary.Path(), &results, &error));
+    ASSERT_TRUE(error == hint + "'" + temporary.Path().string() + "' is a directory.");
     const auto input = temporary.Path() / "invalid.npu-rep";
-    CHECK(WriteFile(input, {}));
-    CHECK(!ReadImportedProfileResults(input, &results, &error));
-    CHECK(error == "invalid npu-compute report '" + input.string() + "': invalid file format: the file is empty.");
-    CHECK(WriteFile(input, std::vector<uint8_t>(128, 0)));
-    CHECK(!ReadImportedProfileResults(input, &results, &error));
-    CHECK(error == "invalid npu-compute report '" + input.string() + "': invalid file format.");
-    CHECK(results.empty());
+    ASSERT_TRUE(WriteFile(input, {}));
+    ASSERT_TRUE(!ReadImportedProfileResults(input, &results, &error));
+    ASSERT_TRUE(
+        error == "invalid npu-compute report '" + input.string() + "': invalid file format: the file is empty.");
+    ASSERT_TRUE(WriteFile(input, std::vector<uint8_t>(128, 0)));
+    ASSERT_TRUE(!ReadImportedProfileResults(input, &results, &error));
+    ASSERT_TRUE(error == "invalid npu-compute report '" + input.string() + "': invalid file format.");
+    ASSERT_TRUE(results.empty());
     boost::filesystem::create_symlink(input, temporary.Path() / "link.npu-rep");
-    CHECK(!ReadImportedProfileResults(temporary.Path() / "link.npu-rep", &results, &error));
-    CHECK(error.find("symbolic links are not supported") != std::string::npos);
-    CHECK(error.find(hint) != std::string::npos);
+    ASSERT_TRUE(!ReadImportedProfileResults(temporary.Path() / "link.npu-rep", &results, &error));
+    ASSERT_TRUE(error.find("symbolic links are not supported") != std::string::npos);
+    ASSERT_TRUE(error.find(hint) != std::string::npos);
 
     std::vector<uint8_t> encoded;
-    CHECK(BuildNestedRep(&encoded));
+    ASSERT_TRUE(BuildNestedRep(&encoded));
     for (const char* name : {"input.npu-rep", "input.npu.rep", "input.rep"}) {
         const auto file = temporary.Path() / name;
-        CHECK(WriteFile(file, encoded));
-        CHECK(ReadImportedProfileResults(file, &results, &error));
+        ASSERT_TRUE(WriteFile(file, encoded));
+        ASSERT_TRUE(ReadImportedProfileResults(file, &results, &error));
         npucompute::cli::ImportOutputDirectory directory;
-        CHECK(npucompute::cli::ImportOutputDirectory::Create(file, temporary.Path().string(), &directory, &error));
-        CHECK(UnpackImportedProfileResults(results, directory.TemporaryPath(), &error));
-        CHECK(boost::filesystem::exists(directory.TemporaryPath() / "device_0" / "Memory.csv"));
+        ASSERT_TRUE(
+            npucompute::cli::ImportOutputDirectory::Create(file, temporary.Path().string(), &directory, &error));
+        ASSERT_TRUE(UnpackImportedProfileResults(results, directory.TemporaryPath(), &error));
+        ASSERT_TRUE(boost::filesystem::exists(directory.TemporaryPath() / "device_0" / "Memory.csv"));
     }
-    CHECK(WriteFile(input, encoded));
-    CHECK(::chmod(temporary.Path().c_str(), 0755) == 0);
-    CHECK(::chmod(input.c_str(), 0000) == 0);
+    ASSERT_TRUE(WriteFile(input, encoded));
+    ASSERT_TRUE(::chmod(temporary.Path().c_str(), 0755) == 0);
+    ASSERT_TRUE(::chmod(input.c_str(), 0000) == 0);
     const pid_t child = ::fork();
-    CHECK(child >= 0);
+    ASSERT_TRUE(child >= 0);
     if (child == 0) {
         if (::geteuid() == 0 && (::setgid(65534) != 0 || ::setuid(65534) != 0)) {
             std::perror("drop test privileges");
@@ -387,15 +370,14 @@ int TestInputDiagnosticsAndCompatibleNames()
                 1);
     }
     int status = 0;
-    CHECK(::waitpid(child, &status, 0) == child);
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-    CHECK(::chmod(input.c_str(), 0600) == 0);
+    ASSERT_TRUE(::waitpid(child, &status, 0) == child);
+    ASSERT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    ASSERT_TRUE(::chmod(input.c_str(), 0600) == 0);
     // Linux exposes this as a regular file, but reading unmapped address zero fails.
-    CHECK(!ReadImportedProfileResults("/proc/self/mem", &results, &error));
-    CHECK(error.find("cannot be read") != std::string::npos);
-    CHECK(error.find(hint) != std::string::npos);
-    CHECK(results.empty());
-    return 0;
+    ASSERT_TRUE(!ReadImportedProfileResults("/proc/self/mem", &results, &error));
+    ASSERT_TRUE(error.find("cannot be read") != std::string::npos);
+    ASSERT_TRUE(error.find(hint) != std::string::npos);
+    ASSERT_TRUE(results.empty());
 }
 
 struct ProcessResult {
@@ -494,103 +476,90 @@ bool HasTemporaryImportDirectory(const boost::filesystem::path& outputRoot)
     return false;
 }
 
-int TestCliImportUnpacksResults(const boost::filesystem::path& cli)
+TEST(NpuComputeImportedProfileResults, CliImportUnpacksResults)
 {
+    const boost::filesystem::path cli(NPU_COMPUTE_CLI_TEST_PATH);
     TempDirectory temporary;
-    CHECK(!temporary.Path().empty());
+    ASSERT_TRUE(!temporary.Path().empty());
     const boost::filesystem::path runtime_tmp = temporary.Path() / "tmp";
     const boost::filesystem::path work = temporary.Path() / "work";
     const boost::filesystem::path fixture = temporary.Path() / "fixture";
-    CHECK(boost::filesystem::create_directory(runtime_tmp));
-    CHECK(boost::filesystem::create_directory(work));
+    ASSERT_TRUE(boost::filesystem::create_directory(runtime_tmp));
+    ASSERT_TRUE(boost::filesystem::create_directory(work));
     std::vector<uint8_t> encoded;
-    CHECK(BuildRecursiveFixture(fixture, &encoded));
+    ASSERT_TRUE(BuildRecursiveFixture(fixture, &encoded));
     const boost::filesystem::path input = temporary.Path() / "input.npu-rep";
-    CHECK(WriteFile(input, encoded));
+    ASSERT_TRUE(WriteFile(input, encoded));
 
     ProcessResult defaultResult;
-    CHECK(RunCli(cli, {"--import", input.string()}, runtime_tmp, work, &defaultResult));
-    CHECK(defaultResult.exit_code == 0);
+    ASSERT_TRUE(RunCli(cli, {"--import", input.string()}, runtime_tmp, work, &defaultResult));
+    ASSERT_TRUE(defaultResult.exit_code == 0);
     boost::filesystem::path defaultOutput;
-    CHECK(ExtractUnpackedPath(defaultResult, &defaultOutput));
-    CHECK(defaultOutput.parent_path() == work);
-    CHECK(!HasRuntimeCollectionOutput(defaultResult.standard_error));
-    CHECK(SameDirectoryTrees(fixture, defaultOutput));
-    CHECK(boost::filesystem::is_empty(runtime_tmp));
+    ASSERT_TRUE(ExtractUnpackedPath(defaultResult, &defaultOutput));
+    ASSERT_TRUE(defaultOutput.parent_path() == work);
+    ASSERT_TRUE(!HasRuntimeCollectionOutput(defaultResult.standard_error));
+    ASSERT_TRUE(SameDirectoryTrees(fixture, defaultOutput));
+    ASSERT_TRUE(boost::filesystem::is_empty(runtime_tmp));
 
     const boost::filesystem::path outputRoot = temporary.Path() / "exported";
-    CHECK(boost::filesystem::create_directory(outputRoot));
-    CHECK(WriteFile(outputRoot / "keep.txt", Bytes("keep")));
+    ASSERT_TRUE(boost::filesystem::create_directory(outputRoot));
+    ASSERT_TRUE(WriteFile(outputRoot / "keep.txt", Bytes("keep")));
     ProcessResult firstResult;
-    CHECK(RunCli(cli, {"--import", input.string(), "--export", outputRoot.string()}, runtime_tmp, work, &firstResult));
-    CHECK(firstResult.exit_code == 0);
+    ASSERT_TRUE(
+        RunCli(cli, {"--import", input.string(), "--export", outputRoot.string()}, runtime_tmp, work, &firstResult));
+    ASSERT_TRUE(firstResult.exit_code == 0);
     boost::filesystem::path firstOutput;
-    CHECK(ExtractUnpackedPath(firstResult, &firstOutput));
-    CHECK(firstOutput.parent_path() == outputRoot);
-    CHECK(!HasRuntimeCollectionOutput(firstResult.standard_error));
-    CHECK(SameDirectoryTrees(fixture, firstOutput));
-    CHECK(boost::filesystem::is_empty(runtime_tmp));
+    ASSERT_TRUE(ExtractUnpackedPath(firstResult, &firstOutput));
+    ASSERT_TRUE(firstOutput.parent_path() == outputRoot);
+    ASSERT_TRUE(!HasRuntimeCollectionOutput(firstResult.standard_error));
+    ASSERT_TRUE(SameDirectoryTrees(fixture, firstOutput));
+    ASSERT_TRUE(boost::filesystem::is_empty(runtime_tmp));
 
     ProcessResult secondResult;
-    CHECK(RunCli(cli, {"--import", input.string(), "--export", outputRoot.string()}, runtime_tmp, work, &secondResult));
-    CHECK(secondResult.exit_code == 0);
+    ASSERT_TRUE(
+        RunCli(cli, {"--import", input.string(), "--export", outputRoot.string()}, runtime_tmp, work, &secondResult));
+    ASSERT_TRUE(secondResult.exit_code == 0);
     boost::filesystem::path secondOutput;
-    CHECK(ExtractUnpackedPath(secondResult, &secondOutput));
-    CHECK(secondOutput.parent_path() == outputRoot);
-    CHECK(firstOutput != secondOutput);
-    CHECK(SameDirectoryTrees(fixture, secondOutput));
+    ASSERT_TRUE(ExtractUnpackedPath(secondResult, &secondOutput));
+    ASSERT_TRUE(secondOutput.parent_path() == outputRoot);
+    ASSERT_TRUE(firstOutput != secondOutput);
+    ASSERT_TRUE(SameDirectoryTrees(fixture, secondOutput));
     std::vector<uint8_t> actual;
-    CHECK(ReadFile(outputRoot / "keep.txt", &actual));
-    CHECK(actual == Bytes("keep"));
-    CHECK(!HasTemporaryImportDirectory(outputRoot));
+    ASSERT_TRUE(ReadFile(outputRoot / "keep.txt", &actual));
+    ASSERT_TRUE(actual == Bytes("keep"));
+    ASSERT_TRUE(!HasTemporaryImportDirectory(outputRoot));
 
     const boost::filesystem::path invalid = temporary.Path() / "invalid.npu-rep";
-    CHECK(WriteFile(invalid, Bytes("invalid")));
+    ASSERT_TRUE(WriteFile(invalid, Bytes("invalid")));
     ProcessResult invalidResult;
-    CHECK(RunCli(cli, {"--import", invalid.string()}, runtime_tmp, work, &invalidResult));
-    CHECK(invalidResult.exit_code == 4);
-    CHECK(invalidResult.standard_error.find("invalid") != std::string::npos);
-    CHECK(!HasTemporaryImportDirectory(work));
+    ASSERT_TRUE(RunCli(cli, {"--import", invalid.string()}, runtime_tmp, work, &invalidResult));
+    ASSERT_TRUE(invalidResult.exit_code == 4);
+    ASSERT_TRUE(invalidResult.standard_error.find("invalid") != std::string::npos);
+    ASSERT_TRUE(!HasTemporaryImportDirectory(work));
 
     const boost::filesystem::path missingRoot = temporary.Path() / "missing-output-root";
     ProcessResult missingRootResult;
-    CHECK(RunCli(
+    ASSERT_TRUE(RunCli(
         cli, {"--import", input.string(), "--export", missingRoot.string()}, runtime_tmp, work, &missingRootResult));
-    CHECK(missingRootResult.exit_code == 4);
-    CHECK(missingRootResult.standard_error.find("does not exist") != std::string::npos);
-    CHECK(!boost::filesystem::exists(missingRoot));
+    ASSERT_TRUE(missingRootResult.exit_code == 4);
+    ASSERT_TRUE(missingRootResult.standard_error.find("does not exist") != std::string::npos);
+    ASSERT_TRUE(!boost::filesystem::exists(missingRoot));
 
     const boost::filesystem::path regularFile = temporary.Path() / "regular-file";
-    CHECK(WriteFile(regularFile, Bytes("keep")));
+    ASSERT_TRUE(WriteFile(regularFile, Bytes("keep")));
     ProcessResult regularFileResult;
-    CHECK(RunCli(
+    ASSERT_TRUE(RunCli(
         cli, {"--import", input.string(), "--export", regularFile.string()}, runtime_tmp, work, &regularFileResult));
-    CHECK(regularFileResult.exit_code == 4);
-    CHECK(regularFileResult.standard_error.find("requires an existing directory") != std::string::npos);
-    CHECK(ReadFile(regularFile, &actual));
-    CHECK(actual == Bytes("keep"));
+    ASSERT_TRUE(regularFileResult.exit_code == 4);
+    ASSERT_TRUE(regularFileResult.standard_error.find("requires an existing directory") != std::string::npos);
+    ASSERT_TRUE(ReadFile(regularFile, &actual));
+    ASSERT_TRUE(actual == Bytes("keep"));
 
     ProcessResult writeFailure;
-    CHECK(RunCli(cli, {"--import", input.string(), "--export", "/proc"}, runtime_tmp, work, &writeFailure));
-    CHECK(writeFailure.exit_code == 4);
-    CHECK(writeFailure.standard_error.find("create import temporary directory failed") != std::string::npos);
-    CHECK(boost::filesystem::is_empty(runtime_tmp));
-    return 0;
+    ASSERT_TRUE(RunCli(cli, {"--import", input.string(), "--export", "/proc"}, runtime_tmp, work, &writeFailure));
+    ASSERT_TRUE(writeFailure.exit_code == 4);
+    ASSERT_TRUE(writeFailure.standard_error.find("create import temporary directory failed") != std::string::npos);
+    ASSERT_TRUE(boost::filesystem::is_empty(runtime_tmp));
 }
 
 } // namespace
-
-int main(int argc, char** argv)
-{
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: %s <npu-compute>\n", argv[0]);
-        return 2;
-    }
-    if (TestInputDiagnosticsAndCompatibleNames() != 0 || TestReadsNestedProfileResults() != 0 ||
-        TestUnpacksRecursiveProfileResults() != 0 || TestUnpacksShortRepSuffix() != 0 ||
-        TestRejectsExistingOutputWithoutPartialWrites() != 0 || TestRejectsUnsafeAndConflictingOutputModel() != 0 ||
-        TestRejectsInvalidInputAndChildRep() != 0 || TestCliImportUnpacksResults(argv[1]) != 0) {
-        return 1;
-    }
-    return 0;
-}

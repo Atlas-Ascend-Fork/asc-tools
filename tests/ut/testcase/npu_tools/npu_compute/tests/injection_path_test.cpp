@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "launch/injection_path.h"
 
 #include <cstdio>
@@ -18,21 +20,6 @@
 #include <unistd.h>
 
 namespace {
-
-int Check(bool condition, const char* expression, int line)
-{
-    if (condition) {
-        return 0;
-    }
-    std::fprintf(stderr, "line %d: check failed: %s\n", line, expression);
-    return 1;
-}
-
-#define CHECK(expression)                               \
-    do {                                                \
-        if (Check((expression), #expression, __LINE__)) \
-            return 1;                                   \
-    } while (false)
 
 bool WritePlaceholder(const boost::filesystem::path& path)
 {
@@ -48,24 +35,23 @@ bool WritePlaceholder(const boost::filesystem::path& path)
 
 } // namespace
 
-int main()
+TEST(NpuComputeInjectionPath, ResolvesInstalledLibraryBesideExecutable)
 {
     using npucompute::cli::ResolveInjectionLibraryPath;
 
     boost::system::error_code error;
     const boost::filesystem::path executable = boost::filesystem::canonical("/proc/self/exe", error);
-    CHECK(!error);
+    ASSERT_TRUE(!error);
     const boost::filesystem::path executableDirectory = executable.parent_path();
     const boost::filesystem::path installedLibrary = executableDirectory / "../lib64/libnpu_compute_processor.so";
 
     boost::filesystem::remove(installedLibrary, error);
-    CHECK(WritePlaceholder(installedLibrary));
+    ASSERT_TRUE(WritePlaceholder(installedLibrary));
 
     std::string resolved;
     std::string resolveError;
-    CHECK(ResolveInjectionLibraryPath(&resolved, &resolveError));
-    CHECK(resolved == boost::filesystem::canonical(installedLibrary).string());
+    ASSERT_TRUE(ResolveInjectionLibraryPath(&resolved, &resolveError));
+    ASSERT_TRUE(resolved == boost::filesystem::canonical(installedLibrary).string());
 
     boost::filesystem::remove(installedLibrary, error);
-    return 0;
 }

@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "acl_pti/profiling/binary_instrumenter.h"
 #include "acl_pti/profiling/binary_registry.h"
 #include <cstdio>
@@ -34,13 +36,6 @@ bool ValidImage(aclrtBinHandle binary)
     const auto index = static_cast<int*>(binary) - binaryTokens;
     return imageSizes[index] >= 3 && std::memcmp(images[index], "ELF", 3) == 0;
 }
-#define CHECK(value)                                                 \
-    do {                                                             \
-        if (!(value)) {                                              \
-            std::fprintf(stderr, "line %d: %s\n", __LINE__, #value); \
-            return 1;                                                \
-        }                                                            \
-    } while (false)
 
 aclError Load(const void* data, std::size_t size, const aclrtBinaryLoadOptions*, aclrtBinHandle* result)
 {
@@ -126,97 +121,105 @@ bool InstrumentKernelEnd(const void*, std::size_t, std::vector<char>& output, st
 }
 } // namespace aclpti::profiling
 
-int main()
+TEST(NpuComputeBinaryRegistry, RegistersCompanionsAndPreservesOriginalsOnFailure)
 {
+    loads = 0;
+    failLoad = -1;
+    failLookup = nullptr;
+    failUnload = nullptr;
+    failTools = false;
+    failBinary = false;
+    failName = false;
+    unloaded.clear();
     BinaryRegistry registry;
     const char input[] = "ELF";
     aclrtBinHandle a = nullptr;
     aclrtFuncHandle f = nullptr;
-    CHECK(Load(input, sizeof(input), nullptr, &a) == ACL_SUCCESS);
+    ASSERT_TRUE(Load(input, sizeof(input), nullptr, &a) == ACL_SUCCESS);
     failTools = true;
-    CHECK(registry.RegisterBinary(input, sizeof(input), nullptr, a) == ACLPTI_ERROR_PROFILING_FAILED);
-    CHECK(unloaded.empty()); // Profiling failure must not release the application's original binary.
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, a) == ACLPTI_ERROR_PROFILING_FAILED);
+    ASSERT_TRUE(unloaded.empty()); // Profiling failure must not release the application's original binary.
     failTools = false;
     failLoad = loads;
-    CHECK(registry.RegisterBinary(input, sizeof(input), nullptr, a) == ACLPTI_ERROR_PROFILING_FAILED);
-    CHECK(unloaded.empty());
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, a) == ACLPTI_ERROR_PROFILING_FAILED);
+    ASSERT_TRUE(unloaded.empty());
     failLoad = -1;
     const int companionIndex = loads;
-    CHECK(registry.RegisterBinary(input, sizeof(input), nullptr, a) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, a) == ACLPTI_SUCCESS);
 
     const char* filePath = "/tmp/npu_compute_binary_registry_test.bin";
     {
         std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
-        CHECK(file.good());
+        ASSERT_TRUE(file.good());
         file.write(input, sizeof(input));
-        CHECK(file.good());
+        ASSERT_TRUE(file.good());
     }
     aclrtBinHandle fileBinary = nullptr;
-    CHECK(Load(input, sizeof(input), nullptr, &fileBinary) == ACL_SUCCESS);
-    CHECK(registry.RegisterBinaryFromFile(filePath, nullptr, fileBinary) == ACLPTI_SUCCESS);
-    CHECK(fileBinary != nullptr);
+    ASSERT_TRUE(Load(input, sizeof(input), nullptr, &fileBinary) == ACL_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinaryFromFile(filePath, nullptr, fileBinary) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(fileBinary != nullptr);
     std::remove(filePath);
 
-    CHECK(Lookup(a, "kernel", &f) == ACL_SUCCESS);
+    ASSERT_TRUE(Lookup(a, "kernel", &f) == ACL_SUCCESS);
     failBinary = true;
-    CHECK(registry.RegisterSymbolFunction(f) == ACLPTI_ERROR_PROFILING_FAILED);
+    ASSERT_TRUE(registry.RegisterSymbolFunction(f) == ACLPTI_ERROR_PROFILING_FAILED);
     failBinary = false;
     failName = true;
-    CHECK(registry.RegisterSymbolFunction(f) == ACLPTI_ERROR_PROFILING_FAILED);
+    ASSERT_TRUE(registry.RegisterSymbolFunction(f) == ACLPTI_ERROR_PROFILING_FAILED);
     failName = false;
-    CHECK(registry.RegisterSymbolFunction(f) == ACLPTI_SUCCESS);
-    CHECK(registry.FindInstrumentedFunction(f) == &functionTokens[companionIndex]);
+    ASSERT_TRUE(registry.RegisterSymbolFunction(f) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.FindInstrumentedFunction(f) == &functionTokens[companionIndex]);
     std::uint32_t traceOffset = 0;
-    CHECK(registry.GetInstrumentedTraceArgumentOffset(registry.FindInstrumentedFunction(f), traceOffset));
-    CHECK(traceOffset == 56);
-    CHECK(!registry.GetInstrumentedTraceArgumentOffset(f, traceOffset));
-    CHECK(traceOffset == 0);
+    ASSERT_TRUE(registry.GetInstrumentedTraceArgumentOffset(registry.FindInstrumentedFunction(f), traceOffset));
+    ASSERT_TRUE(traceOffset == 56);
+    ASSERT_TRUE(!registry.GetInstrumentedTraceArgumentOffset(f, traceOffset));
+    ASSERT_TRUE(traceOffset == 0);
 
     aclrtBinHandle b = nullptr;
     aclrtFuncHandle g = nullptr;
-    CHECK(Load(input, sizeof(input), nullptr, &b) == ACL_SUCCESS);
-    CHECK(registry.RegisterBinary(input, sizeof(input), nullptr, b) == ACLPTI_SUCCESS);
-    CHECK(Entry(b, 42, &g) == ACL_SUCCESS);
-    CHECK(registry.RegisterSymbolFunction(g) == ACLPTI_SUCCESS);
-    CHECK(registry.RegisterBinaryFunction(b, std::uint64_t(42), g) == ACLPTI_SUCCESS);
-    CHECK(registry.FindInstrumentedFunction(f) != registry.FindInstrumentedFunction(g));
+    ASSERT_TRUE(Load(input, sizeof(input), nullptr, &b) == ACL_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, b) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(Entry(b, 42, &g) == ACL_SUCCESS);
+    ASSERT_TRUE(registry.RegisterSymbolFunction(g) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinaryFunction(b, std::uint64_t(42), g) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.FindInstrumentedFunction(f) != registry.FindInstrumentedFunction(g));
 
     failLookup = &binaryTokens[companionIndex];
-    CHECK(registry.RegisterBinaryFunction(a, "kernel", f) == ACLPTI_ERROR_PROFILING_FAILED);
-    CHECK(f != nullptr && registry.FindInstrumentedFunction(f) == nullptr);
-    CHECK(registry.RegisterBinaryFunction(a, std::uint64_t(42), f) == ACLPTI_ERROR_PROFILING_FAILED);
+    ASSERT_TRUE(registry.RegisterBinaryFunction(a, "kernel", f) == ACLPTI_ERROR_PROFILING_FAILED);
+    ASSERT_TRUE(f != nullptr && registry.FindInstrumentedFunction(f) == nullptr);
+    ASSERT_TRUE(registry.RegisterBinaryFunction(a, std::uint64_t(42), f) == ACLPTI_ERROR_PROFILING_FAILED);
     failLookup = nullptr;
-    CHECK(registry.RegisterBinaryFunction(a, "kernel", f) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinaryFunction(a, "kernel", f) == ACLPTI_SUCCESS);
     failUnload = &binaryTokens[companionIndex];
     {
         BinaryRegistry::UnloadContext context;
-        CHECK(registry.PrepareBinaryUnload(a, context) == ACLPTI_ERROR_PROFILING_FAILED);
+        ASSERT_TRUE(registry.PrepareBinaryUnload(a, context) == ACLPTI_ERROR_PROFILING_FAILED);
     }
-    CHECK(registry.FindInstrumentedFunction(f) != nullptr);
+    ASSERT_TRUE(registry.FindInstrumentedFunction(f) != nullptr);
     failUnload = nullptr;
     {
         BinaryRegistry::UnloadContext context;
-        CHECK(registry.PrepareBinaryUnload(a, context) == ACLPTI_SUCCESS);
-        CHECK(Unload(a) == ACL_SUCCESS);
-        CHECK(registry.CompleteBinaryUnload(context) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(registry.PrepareBinaryUnload(a, context) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(Unload(a) == ACL_SUCCESS);
+        ASSERT_TRUE(registry.CompleteBinaryUnload(context) == ACLPTI_SUCCESS);
     }
-    CHECK(registry.FindInstrumentedFunction(f) == nullptr);
-    CHECK(!registry.GetInstrumentedTraceArgumentOffset(&functionTokens[companionIndex], traceOffset));
+    ASSERT_TRUE(registry.FindInstrumentedFunction(f) == nullptr);
+    ASSERT_TRUE(!registry.GetInstrumentedTraceArgumentOffset(&functionTokens[companionIndex], traceOffset));
     failUnload = b;
     {
         BinaryRegistry::UnloadContext context;
-        CHECK(registry.PrepareBinaryUnload(b, context) == ACLPTI_SUCCESS);
-        CHECK(Unload(b) == ACL_ERROR_RT_FAILURE);
+        ASSERT_TRUE(registry.PrepareBinaryUnload(b, context) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(Unload(b) == ACL_ERROR_RT_FAILURE);
         // Destruction releases the lock without removing the original record.
     }
-    CHECK(registry.FindInstrumentedFunction(g) == nullptr);
+    ASSERT_TRUE(registry.FindInstrumentedFunction(g) == nullptr);
     const auto count = unloaded.size();
     failUnload = nullptr;
     {
         BinaryRegistry::UnloadContext context;
-        CHECK(registry.PrepareBinaryUnload(b, context) == ACLPTI_SUCCESS);
-        CHECK(Unload(b) == ACL_SUCCESS);
-        CHECK(registry.CompleteBinaryUnload(context) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(registry.PrepareBinaryUnload(b, context) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(Unload(b) == ACL_SUCCESS);
+        ASSERT_TRUE(registry.CompleteBinaryUnload(context) == ACLPTI_SUCCESS);
     }
-    CHECK(unloaded.size() == count + 1);
+    ASSERT_TRUE(unloaded.size() == count + 1);
 }

@@ -17,6 +17,7 @@ extern "C" {
 #endif
 
 ACL_TOOL_INJECTION_EXPORT int ProfApiLoadApiInjectionFromEnv(void);
+ACL_TOOL_INJECTION_EXPORT void ProfApiReset(void);
 
 #ifdef __cplusplus
 }

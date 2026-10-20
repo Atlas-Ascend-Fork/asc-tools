@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "isolated_gtest.h"
+
 #include "aclpti/aclpti.h"
 #include "injection/runtime_stub_api.h"
 #include "profiling/prof_api.h"
@@ -17,14 +19,6 @@
 #include <cstring>
 
 namespace {
-
-#define CHECK(expression)                                                                 \
-    do {                                                                                  \
-        if (!(expression)) {                                                              \
-            std::fprintf(stderr, "check failed at line %d: %s\n", __LINE__, #expression); \
-            return 1;                                                                     \
-        }                                                                                 \
-    } while (false)
 
 std::size_t g_launch_calls = 0;
 std::size_t g_start_calls = 0;
@@ -101,23 +95,23 @@ std::int32_t MsprofRegisterDataCallback(uint32_t type, void* function)
     return RegisterRawData(type, reinterpret_cast<MsprofRawDataCallback>(function));
 }
 
-int main()
+TEST(NpuComputeLaunchWithoutConfig, LaunchesWithoutStartingProfiling)
 {
-    CHECK(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemcpy", &RealMemcpy) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtMemset", &RealMemset) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &RealLaunch) == 0);
-    CHECK(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == 0);
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemcpy", &RealMemcpy) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMemset", &RealMemset) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtLaunchKernel", &RealLaunch) == 0);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize) == 0);
 
     aclptiSubscribeHandle subscriber = nullptr;
-    CHECK(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
-    CHECK(subscriber != nullptr);
-    CHECK(aclrtSetDevice(0) == ACL_SUCCESS);
+    ASSERT_TRUE(aclptiSubscribe(&subscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(subscriber != nullptr);
+    ASSERT_TRUE(aclrtSetDevice(0) == ACL_SUCCESS);
 
-    CHECK(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == 0);
-    CHECK(g_launch_calls == 1);
-    CHECK(g_start_calls == 0);
-    CHECK(g_stop_calls == 0);
-    return 0;
+    ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr) == 0);
+    ASSERT_TRUE(g_launch_calls == 1);
+    ASSERT_TRUE(g_start_calls == 0);
+    ASSERT_TRUE(g_stop_calls == 0);
 }

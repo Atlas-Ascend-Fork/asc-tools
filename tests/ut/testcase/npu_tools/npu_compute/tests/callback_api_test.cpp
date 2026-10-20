@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "aclpti/aclpti.h"
 
 #include "injection/injection_hook.h"
@@ -18,14 +20,6 @@
 #include <thread>
 
 namespace {
-
-#define CHECK(expression)                                                                 \
-    do {                                                                                  \
-        if (!(expression)) {                                                              \
-            std::fprintf(stderr, "check failed at line %d: %s\n", __LINE__, #expression); \
-            return 1;                                                                     \
-        }                                                                                 \
-    } while (false)
 
 struct CallbackEvent {
     aclptiCallbackDomain domain;
@@ -132,27 +126,41 @@ static_assert(ACLPTI_RUNTIME_CBID_aclrtMallocWithCfg == 20);
 static_assert(ACLPTI_RUNTIME_CBID_aclrtBinaryLoadFromFile == 21);
 static_assert(ACLPTI_RUNTIME_CBID_SIZE == 22);
 
-int main()
+TEST(NpuComputeCallbackApi, ListsSupportedDomains)
 {
     std::size_t domainCount = 0;
-    CHECK(aclptiSupportedDomains(&domainCount, nullptr) == ACLPTI_SUCCESS);
-    CHECK(domainCount == 1);
+    ASSERT_TRUE(aclptiSupportedDomains(&domainCount, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(domainCount == 1);
 
     std::array<aclptiCallbackDomain, 1> insufficientDomains{};
     std::size_t insufficientCount = 0;
-    CHECK(aclptiSupportedDomains(&insufficientCount, insufficientDomains.data()) == ACLPTI_ERROR_INVALID_PARAMETER);
-    CHECK(insufficientCount == 1);
+    ASSERT_TRUE(
+        aclptiSupportedDomains(&insufficientCount, insufficientDomains.data()) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(insufficientCount == 1);
 
     std::array<aclptiCallbackDomain, 1> domains{};
-    CHECK(aclptiSupportedDomains(&domainCount, domains.data()) == ACLPTI_SUCCESS);
-    CHECK(domainCount == domains.size());
-    CHECK(domains[0] == ACLPTI_CB_DOMAIN_RUNTIME_API);
-    CHECK(aclptiSupportedDomains(nullptr, nullptr) == ACLPTI_ERROR_INVALID_PARAMETER);
+    ASSERT_TRUE(aclptiSupportedDomains(&domainCount, domains.data()) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(domainCount == domains.size());
+    ASSERT_TRUE(domains[0] == ACLPTI_CB_DOMAIN_RUNTIME_API);
+    ASSERT_TRUE(aclptiSupportedDomains(nullptr, nullptr) == ACLPTI_ERROR_INVALID_PARAMETER);
+}
 
-    CHECK(RuntimeStubSetOriginFunction("aclrtMalloc", &OriginalMalloc) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtFree", &OriginalFree) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtGetFuncBySymbol", &OriginalGetFuncBySymbol) == ACL_SUCCESS);
-    CHECK(RuntimeStubSetOriginFunction("aclrtBinaryUnLoad", &OriginalBinaryUnLoad) == ACL_SUCCESS);
+TEST(NpuComputeCallbackApi, DispatchesEnabledCallbacksAndSupportsConcurrentSubscribe)
+{
+    g_callbackState = {};
+    g_mallocSize = 0;
+    g_mallocCalls = 0;
+    g_freeCalls = 0;
+    g_getFuncBySymbolCalls = 0;
+    g_binaryUnLoadCalls = 0;
+    g_failMalloc = false;
+    g_getFuncBySymbolArgument = nullptr;
+    g_binaryUnLoadArgument = nullptr;
+
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMalloc", &OriginalMalloc) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFree", &OriginalFree) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtGetFuncBySymbol", &OriginalGetFuncBySymbol) == ACL_SUCCESS);
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtBinaryUnLoad", &OriginalBinaryUnLoad) == ACL_SUCCESS);
 
     constexpr std::size_t subscriberCount = 8;
     std::array<aclptiSubscribeHandle, subscriberCount> subscribers{};
@@ -167,135 +175,134 @@ int main()
         thread.join();
     }
     const aclptiSubscribeHandle subscriber = subscribers[0];
-    CHECK(subscriber != nullptr);
+    ASSERT_TRUE(subscriber != nullptr);
     for (std::size_t index = 0; index < subscriberCount; ++index) {
-        CHECK(subscribeResults[index] == ACLPTI_SUCCESS);
-        CHECK(subscribers[index] == subscriber);
+        ASSERT_TRUE(subscribeResults[index] == ACLPTI_SUCCESS);
+        ASSERT_TRUE(subscribers[index] == subscriber);
     }
     for (aclptiCallbackId cbid = 0; cbid < ACLPTI_RUNTIME_CBID_SIZE; ++cbid) {
-        CHECK(aclptiEnableCallback(true, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, cbid) == ACLPTI_SUCCESS);
-        CHECK(aclptiEnableCallback(false, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, cbid) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(aclptiEnableCallback(true, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, cbid) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(aclptiEnableCallback(false, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, cbid) == ACLPTI_SUCCESS);
     }
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(true, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtMalloc) ==
         ACLPTI_SUCCESS);
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(true, subscriber, ACLPTI_CB_DOMAIN_INVALID, ACLPTI_RUNTIME_CBID_aclrtMalloc) ==
         ACLPTI_ERROR_NOT_SUPPORTED);
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(true, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_SIZE) ==
         ACLPTI_ERROR_INVALID_PARAMETER);
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(true, nullptr, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtMalloc) ==
         ACLPTI_ERROR_INVALID_SUBSCRIBER);
 
     void* allocation = nullptr;
-    CHECK(aclrtMalloc(&allocation, 8, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
-    CHECK(allocation != nullptr);
-    CHECK(g_callbackState.receivedExpectedUserData);
-    CHECK(g_callbackState.eventCount == 2);
-    CHECK(g_callbackState.events[0].domain == ACLPTI_CB_DOMAIN_RUNTIME_API);
-    CHECK(g_callbackState.events[0].cbid == ACLPTI_RUNTIME_CBID_aclrtMalloc);
-    CHECK(g_callbackState.events[0].site == ACLPTI_API_ENTER);
-    CHECK(g_callbackState.events[1].site == ACLPTI_API_EXIT);
-    CHECK(g_callbackState.events[1].retval == ACL_SUCCESS);
-    CHECK(g_mallocCalls == 2);
-    CHECK(g_mallocSize == 64);
+    ASSERT_TRUE(aclrtMalloc(&allocation, 8, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
+    ASSERT_TRUE(allocation != nullptr);
+    ASSERT_TRUE(g_callbackState.receivedExpectedUserData);
+    ASSERT_TRUE(g_callbackState.eventCount == 2);
+    ASSERT_TRUE(g_callbackState.events[0].domain == ACLPTI_CB_DOMAIN_RUNTIME_API);
+    ASSERT_TRUE(g_callbackState.events[0].cbid == ACLPTI_RUNTIME_CBID_aclrtMalloc);
+    ASSERT_TRUE(g_callbackState.events[0].site == ACLPTI_API_ENTER);
+    ASSERT_TRUE(g_callbackState.events[1].site == ACLPTI_API_EXIT);
+    ASSERT_TRUE(g_callbackState.events[1].retval == ACL_SUCCESS);
+    ASSERT_TRUE(g_mallocCalls == 2);
+    ASSERT_TRUE(g_mallocSize == 64);
 
-    CHECK(aclrtFree(allocation) == ACL_SUCCESS);
-    CHECK(g_freeCalls == 2);
-    CHECK(g_callbackState.eventCount == 2);
+    ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
+    ASSERT_TRUE(g_freeCalls == 2);
+    ASSERT_TRUE(g_callbackState.eventCount == 2);
 
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(false, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtMalloc) ==
         ACLPTI_SUCCESS);
     g_failMalloc = false;
     allocation = nullptr;
-    CHECK(aclrtMalloc(&allocation, 8, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
-    CHECK(g_callbackState.eventCount == 2);
-    CHECK(aclrtFree(allocation) == ACL_SUCCESS);
+    ASSERT_TRUE(aclrtMalloc(&allocation, 8, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS);
+    ASSERT_TRUE(g_callbackState.eventCount == 2);
+    ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
 
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(true, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtMalloc) ==
         ACLPTI_SUCCESS);
     g_failMalloc = true;
     allocation = nullptr;
-    CHECK(aclrtMalloc(&allocation, 8, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_ERROR_INVALID_PARAM);
-    CHECK(allocation == nullptr);
-    CHECK(g_callbackState.eventCount == 4);
-    CHECK(g_callbackState.events[2].site == ACLPTI_API_ENTER);
-    CHECK(g_callbackState.events[3].site == ACLPTI_API_EXIT);
-    CHECK(g_callbackState.events[3].retval == ACL_ERROR_INVALID_PARAM);
+    ASSERT_TRUE(aclrtMalloc(&allocation, 8, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_ERROR_INVALID_PARAM);
+    ASSERT_TRUE(allocation == nullptr);
+    ASSERT_TRUE(g_callbackState.eventCount == 4);
+    ASSERT_TRUE(g_callbackState.events[2].site == ACLPTI_API_ENTER);
+    ASSERT_TRUE(g_callbackState.events[3].site == ACLPTI_API_EXIT);
+    ASSERT_TRUE(g_callbackState.events[3].retval == ACL_ERROR_INVALID_PARAM);
 
     int originalSymbol = 0;
     aclrtFuncHandle functionHandle = nullptr;
-    CHECK(aclrtGetFuncBySymbol(&originalSymbol, &functionHandle) == 31);
-    CHECK(functionHandle == &originalSymbol);
-    CHECK(g_getFuncBySymbolCalls == 1);
-    CHECK(g_getFuncBySymbolArgument == &originalSymbol);
-    CHECK(aclrtBinaryUnLoad(&originalSymbol) == 32);
-    CHECK(g_binaryUnLoadCalls == 1);
-    CHECK(g_binaryUnLoadArgument == &originalSymbol);
-    CHECK(
+    ASSERT_TRUE(aclrtGetFuncBySymbol(&originalSymbol, &functionHandle) == 31);
+    ASSERT_TRUE(functionHandle == &originalSymbol);
+    ASSERT_TRUE(g_getFuncBySymbolCalls == 1);
+    ASSERT_TRUE(g_getFuncBySymbolArgument == &originalSymbol);
+    ASSERT_TRUE(aclrtBinaryUnLoad(&originalSymbol) == 32);
+    ASSERT_TRUE(g_binaryUnLoadCalls == 1);
+    ASSERT_TRUE(g_binaryUnLoadArgument == &originalSymbol);
+    ASSERT_TRUE(
         aclptiEnableCallback(
             true, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol) ==
         ACLPTI_SUCCESS);
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(true, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad) ==
         ACLPTI_SUCCESS);
     functionHandle = nullptr;
-    CHECK(aclrtGetFuncBySymbol(&originalSymbol, &functionHandle) == 31);
-    CHECK(functionHandle == &g_callbackSymbol);
-    CHECK(g_getFuncBySymbolCalls == 2);
-    CHECK(g_getFuncBySymbolArgument == &g_callbackSymbol);
-    CHECK(g_callbackState.eventCount == 6);
-    CHECK(g_callbackState.events[4].cbid == ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol);
-    CHECK(g_callbackState.events[4].site == ACLPTI_API_ENTER);
-    CHECK(g_callbackState.events[5].cbid == ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol);
-    CHECK(g_callbackState.events[5].site == ACLPTI_API_EXIT);
-    CHECK(g_callbackState.events[5].retval == 31);
-    CHECK(aclrtBinaryUnLoad(&originalSymbol) == 32);
-    CHECK(g_binaryUnLoadCalls == 2);
-    CHECK(g_binaryUnLoadArgument == &g_callbackBinary);
-    CHECK(g_callbackState.eventCount == 8);
-    CHECK(g_callbackState.events[6].cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad);
-    CHECK(g_callbackState.events[6].site == ACLPTI_API_ENTER);
-    CHECK(g_callbackState.events[7].cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad);
-    CHECK(g_callbackState.events[7].site == ACLPTI_API_EXIT);
-    CHECK(g_callbackState.events[7].retval == 32);
+    ASSERT_TRUE(aclrtGetFuncBySymbol(&originalSymbol, &functionHandle) == 31);
+    ASSERT_TRUE(functionHandle == &g_callbackSymbol);
+    ASSERT_TRUE(g_getFuncBySymbolCalls == 2);
+    ASSERT_TRUE(g_getFuncBySymbolArgument == &g_callbackSymbol);
+    ASSERT_TRUE(g_callbackState.eventCount == 6);
+    ASSERT_TRUE(g_callbackState.events[4].cbid == ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol);
+    ASSERT_TRUE(g_callbackState.events[4].site == ACLPTI_API_ENTER);
+    ASSERT_TRUE(g_callbackState.events[5].cbid == ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol);
+    ASSERT_TRUE(g_callbackState.events[5].site == ACLPTI_API_EXIT);
+    ASSERT_TRUE(g_callbackState.events[5].retval == 31);
+    ASSERT_TRUE(aclrtBinaryUnLoad(&originalSymbol) == 32);
+    ASSERT_TRUE(g_binaryUnLoadCalls == 2);
+    ASSERT_TRUE(g_binaryUnLoadArgument == &g_callbackBinary);
+    ASSERT_TRUE(g_callbackState.eventCount == 8);
+    ASSERT_TRUE(g_callbackState.events[6].cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad);
+    ASSERT_TRUE(g_callbackState.events[6].site == ACLPTI_API_ENTER);
+    ASSERT_TRUE(g_callbackState.events[7].cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad);
+    ASSERT_TRUE(g_callbackState.events[7].site == ACLPTI_API_EXIT);
+    ASSERT_TRUE(g_callbackState.events[7].retval == 32);
 
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(
             false, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol) ==
         ACLPTI_SUCCESS);
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(false, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad) ==
         ACLPTI_SUCCESS);
     functionHandle = nullptr;
-    CHECK(aclrtGetFuncBySymbol(&originalSymbol, &functionHandle) == 31);
-    CHECK(functionHandle == &originalSymbol);
-    CHECK(g_getFuncBySymbolCalls == 3);
-    CHECK(g_getFuncBySymbolArgument == &originalSymbol);
-    CHECK(aclrtBinaryUnLoad(&originalSymbol) == 32);
-    CHECK(g_binaryUnLoadCalls == 3);
-    CHECK(g_binaryUnLoadArgument == &originalSymbol);
-    CHECK(g_callbackState.eventCount == 8);
+    ASSERT_TRUE(aclrtGetFuncBySymbol(&originalSymbol, &functionHandle) == 31);
+    ASSERT_TRUE(functionHandle == &originalSymbol);
+    ASSERT_TRUE(g_getFuncBySymbolCalls == 3);
+    ASSERT_TRUE(g_getFuncBySymbolArgument == &originalSymbol);
+    ASSERT_TRUE(aclrtBinaryUnLoad(&originalSymbol) == 32);
+    ASSERT_TRUE(g_binaryUnLoadCalls == 3);
+    ASSERT_TRUE(g_binaryUnLoadArgument == &originalSymbol);
+    ASSERT_TRUE(g_callbackState.eventCount == 8);
 
-    CHECK(
+    ASSERT_TRUE(
         aclptiEnableCallback(
             true, subscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol) ==
         ACLPTI_SUCCESS);
     aclptiSubscribeHandle activityOnlySubscriber = nullptr;
-    CHECK(aclptiSubscribe(&activityOnlySubscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(aclptiSubscribe(&activityOnlySubscriber, nullptr, nullptr, nullptr) == ACLPTI_SUCCESS);
     functionHandle = nullptr;
-    CHECK(aclrtGetFuncBySymbol(&originalSymbol, &functionHandle) == 31);
-    CHECK(functionHandle == &originalSymbol);
-    CHECK(g_getFuncBySymbolCalls == 4);
-    CHECK(g_getFuncBySymbolArgument == &originalSymbol);
-    CHECK(g_callbackState.eventCount == 8);
-    CHECK(
+    ASSERT_TRUE(aclrtGetFuncBySymbol(&originalSymbol, &functionHandle) == 31);
+    ASSERT_TRUE(functionHandle == &originalSymbol);
+    ASSERT_TRUE(g_getFuncBySymbolCalls == 4);
+    ASSERT_TRUE(g_getFuncBySymbolArgument == &originalSymbol);
+    ASSERT_TRUE(g_callbackState.eventCount == 8);
+    ASSERT_TRUE(
         aclptiEnableCallback(
             true, activityOnlySubscriber, ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtMalloc) ==
         ACLPTI_ERROR_INVALID_STATE);
-    return 0;
 }

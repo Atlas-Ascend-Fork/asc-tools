@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <gtest/gtest.h>
+
 #include "ipc/ipc.h"
 
 #include <cstdio>
@@ -21,12 +23,15 @@
 
 namespace {
 using namespace npucompute::ipc;
-void Check(bool condition)
+void Check(bool condition, const char* expression, const char* file, int line)
 {
     if (!condition) {
+        ADD_FAILURE_AT(file, line) << expression;
         throw std::runtime_error("IPC test check failed");
     }
 }
+#define Check(expression) Check((expression), #expression, __FILE__, __LINE__)
+
 void Reject(const std::function<void()>& operation)
 {
     bool failed = false;
@@ -37,7 +42,7 @@ void Reject(const std::function<void()>& operation)
     }
     Check(failed);
 }
-void TestCodecs()
+TEST(NpuComputeIpcProtocol, Codecs)
 {
     Config config;
     config.sections = {
@@ -114,7 +119,7 @@ void TestCodecs()
     const Error error{3, "failed", "transport", "handshake"};
     Check(DecodeError(EncodeError(error)).phase == error.phase);
 }
-void TestProcessHandshake()
+TEST(NpuComputeIpcProtocol, ProcessHandshake)
 {
     const auto bootstrap = MakeBootstrap();
     const auto child = fork();
@@ -147,7 +152,7 @@ void TestProcessHandshake()
     Check(waitpid(child, &status, 0) == child);
     Check(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
-void TestMalformedPackets()
+TEST(NpuComputeIpcProtocol, MalformedPackets)
 {
     const auto bootstrap = MakeBootstrap();
     Listener listener(bootstrap.name);
@@ -208,7 +213,7 @@ void TestMalformedPackets()
     sender.Shutdown();
     Reject([&] { receiver.Receive(bootstrap.handshakeDeadline); });
 }
-void TestCancellation()
+TEST(NpuComputeIpcProtocol, Cancellation)
 {
     const auto bootstrap = MakeBootstrap();
     auto cancelAt = After(std::chrono::milliseconds(30));
@@ -234,7 +239,7 @@ void TestCancellation()
     });
     Check(std::chrono::steady_clock::now() < cancelAt + std::chrono::seconds(1));
 }
-void TestCredentialsAndTimeouts()
+TEST(NpuComputeIpcProtocol, CredentialsAndTimeouts)
 {
     auto bootstrap = MakeBootstrap();
     Reject([&] {
@@ -277,7 +282,7 @@ void TestCredentialsAndTimeouts()
         }
     });
 }
-void TestInvalidPeerDoesNotConsumeListener()
+TEST(NpuComputeIpcProtocol, InvalidPeerDoesNotConsumeListener)
 {
     const auto bootstrap = MakeBootstrap();
     Listener listener(bootstrap.name);
@@ -302,20 +307,3 @@ void TestInvalidPeerDoesNotConsumeListener()
     Check(listener.Fd() == -1);
 }
 } // namespace
-
-int main()
-{
-    try {
-        TestCodecs();
-        TestProcessHandshake();
-        TestMalformedPackets();
-        TestCancellation();
-        TestCredentialsAndTimeouts();
-        TestInvalidPeerDoesNotConsumeListener();
-        std::puts("IPC protocol tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
-}
