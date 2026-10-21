@@ -1713,6 +1713,15 @@ class TestAscendump(unittest.TestCase):
         json_file = os.path.join(self.test_dir, "dump_data", "index_dtype.json")
         self.assertTrue(os.path.exists(json_file))
 
+    def test_dump_core_content_index_dtype_is_instance_local(self):
+        first = DumpCoreContent()
+        second = DumpCoreContent()
+
+        first.index_dtype_dt[101] = "int32"
+
+        self.assertIsNot(first.index_dtype_dt, second.index_dtype_dt)
+        self.assertEqual(second.index_dtype_dt, {})
+
     def _merged_ParseDumpBin__build_fifo_block_info(self, core_id=0, length=64, flag=0):
         return struct.pack(
             FifoBlockInfo.get_format(),

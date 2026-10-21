@@ -731,7 +731,7 @@ class DumpCoreContent:
     print_list: List[str] = field(default_factory=list)
     simt_print_map: Dict[str, List[str]] = field(default_factory=dict)
     time_stamp_list: List[TimeStampInfo] = field(default_factory=list)
-    index_dtype_dt = {}
+    index_dtype_dt: Dict[int, str] = field(default_factory=dict)
     shape: List[int] = field(default_factory=list)
 
     @staticmethod
