@@ -357,6 +357,21 @@ class Racechecker::LaunchProcessor {
         size_t consumed = 0;
     };
     std::map<CrossFlag, CrossCounter> crossCounters;
+    // GET/RLS BUF is the device-level representation of a Mutex. A mutex is
+    // shared by all supported pipes in one execution domain. Only one GET may
+    // be active for a mutex, while GET/RLS itself must pair on the same pipe,
+    // buffer id and mode.
+    using MutexKey = std::pair<Domain, uint64_t>;
+    struct MutexGet {
+        size_t node;
+        uint32_t pipe;
+        uint32_t mode;
+    };
+    struct MutexState {
+        std::map<uint32_t, size_t> releases;
+        std::optional<MutexGet> get;
+    };
+    std::map<MutexKey, MutexState> mutexes;
     using Pipe = std::pair<Domain, uint32_t>;
     Racechecker& checker;
     Launch& launch;
@@ -576,6 +591,26 @@ private:
         }
     }
 
+    void PartitionUnitRange(UnitPartition& partition, const Access& access, size_t start, const Interval& range)
+    {
+        const auto& a = access.data;
+        for (uint64_t begin = range.begin; begin < range.end;) {
+            const auto& boundaries = partition.boundaries.at(DomainOf(a.header));
+            const auto next = boundaries.upper_bound(begin / unitBytes);
+            const uint64_t end = next == boundaries.end() || *next > UINT64_MAX / unitBytes ?
+                                     range.end :
+                                     std::min(range.end, *next * unitBytes);
+            const uint64_t length = end - begin;
+            AddUnitFragment(partition, access, start, {Interval{begin, begin + length}}, true);
+            begin += length;
+            if (graphExhausted || partition.expanded.size() >= limits_.segments) {
+                if (begin < range.end)
+                    launch.reasons.insert("unit_flag_budget");
+                break;
+            }
+        }
+    }
+
     void PartitionUnitAccesses(UnitPartition& partition)
     {
         for (const auto& access : accesses) {
@@ -603,23 +638,53 @@ private:
                 continue;
             }
             for (const auto& range : access.ranges) {
-                for (uint64_t begin = range.begin; begin < range.end;) {
-                    const auto& boundaries = partition.boundaries.at(DomainOf(a.header));
-                    const auto next = boundaries.upper_bound(begin / unitBytes);
-                    const uint64_t end = next == boundaries.end() || *next > UINT64_MAX / unitBytes ?
-                                             range.end :
-                                             std::min(range.end, *next * unitBytes);
-                    const uint64_t length = end - begin;
-                    AddUnitFragment(partition, access, start->second, {Interval{begin, begin + length}}, true);
-                    begin += length;
-                    if (graphExhausted || partition.expanded.size() >= limits_.segments) {
-                        if (begin < range.end)
-                            launch.reasons.insert("unit_flag_budget");
-                        break;
-                    }
-                }
+                PartitionUnitRange(partition, access, start->second, range);
             }
         }
+    }
+
+    void MatchUnitQueue(const UnitQueues& q)
+    {
+        size_t w = 0, r = 0;
+        std::optional<size_t> released;
+        while (w < q.writes.size()) {
+            std::optional<size_t> published;
+            while (w < q.writes.size()) {
+                const auto current = q.writes[w++];
+                if (released)
+                    AddEdge(*released, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                if (current.mode == 3) {
+                    published = current.node;
+                    break;
+                }
+            }
+            if (!published) {
+                if (r < q.reads.size())
+                    launch.reasons.insert("unit_flag_missing_publish");
+                break;
+            }
+            released.reset();
+            std::optional<size_t> previousRead;
+            while (r < q.reads.size()) {
+                const auto current = q.reads[r++];
+                AddEdge(*published, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                // Hardware completes the preceding L0C read/flag action before
+                // the next FIX instruction's unit action. This does not order GM writes.
+                if (previousRead)
+                    AddEdge(*previousRead, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                previousRead = current.node;
+                if (current.mode == 3) {
+                    released = current.node;
+                    break;
+                }
+            }
+            if (!released && w < q.writes.size()) {
+                launch.reasons.insert("unit_flag_missing_release");
+                break;
+            }
+        }
+        if (r < q.reads.size())
+            launch.reasons.insert("unit_flag_missing_publish");
     }
 
     void MatchUnitFlags(const UnitPartition& partition)
@@ -627,49 +692,8 @@ private:
         // Match generations independently in each physical L0C unit. Callback
         // interleaving across M and FIX is not ordering evidence. Mode 2 holds
         // ownership; only mode 3 hands the unit to the opposite pipeline.
-        for (const auto& item : partition.units) {
-            const auto& q = item.second;
-            size_t w = 0, r = 0;
-            std::optional<size_t> released;
-            while (w < q.writes.size()) {
-                std::optional<size_t> published;
-                while (w < q.writes.size()) {
-                    const auto current = q.writes[w++];
-                    if (released)
-                        AddEdge(*released, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                    if (current.mode == 3) {
-                        published = current.node;
-                        break;
-                    }
-                }
-                if (!published) {
-                    if (r < q.reads.size())
-                        launch.reasons.insert("unit_flag_missing_publish");
-                    break;
-                }
-                released.reset();
-                std::optional<size_t> previousRead;
-                while (r < q.reads.size()) {
-                    const auto current = q.reads[r++];
-                    AddEdge(*published, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                    // Hardware completes the preceding L0C read/flag action before
-                    // the next FIX instruction's unit action. This does not order GM writes.
-                    if (previousRead)
-                        AddEdge(*previousRead, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                    previousRead = current.node;
-                    if (current.mode == 3) {
-                        released = current.node;
-                        break;
-                    }
-                }
-                if (!released && w < q.writes.size()) {
-                    launch.reasons.insert("unit_flag_missing_release");
-                    break;
-                }
-            }
-            if (r < q.reads.size())
-                launch.reasons.insert("unit_flag_missing_publish");
-        }
+        for (const auto& item : partition.units)
+            MatchUnitQueue(item.second);
     }
 
     void ExpandUnitFlagAccesses()
@@ -681,6 +705,23 @@ private:
         PartitionUnitAccesses(partition);
         accesses = std::move(partition.expanded);
         MatchUnitFlags(partition);
+    }
+
+    void RecordNotification(
+        const AclsanDeviceSyncData& s, const Domain& receiver, uint64_t receiverFlag, size_t node,
+        const std::set<Domain>& domains)
+    {
+        auto& counter = crossCounters[{receiver, s.mode == 4, receiverFlag}];
+        auto [streamIt, inserted] = counter.modes.try_emplace(s.mode);
+        auto& stream = streamIt->second;
+        if (inserted) {
+            // A notification requires every active participant in this
+            // mode's scope. A missing SET must not shrink that scope.
+            for (const auto& peer : domains)
+                if (CrossParticipant(s.mode, peer, receiver, receiverFlag))
+                    stream.senders[peer];
+        }
+        stream.senders[DomainOf(s.header)].push_back(node);
     }
 
     void RouteCrossCoreNotifications()
@@ -732,17 +773,7 @@ private:
                     launch.reasons.insert("graph_budget");
                     break;
                 }
-                auto& counter = crossCounters[{receiver, intra, receiverFlag}];
-                auto [streamIt, inserted] = counter.modes.try_emplace(s.mode);
-                auto& stream = streamIt->second;
-                if (inserted) {
-                    // A notification requires every active participant in this
-                    // mode's scope. A missing SET must not shrink that scope.
-                    for (const auto& peer : domains)
-                        if (CrossParticipant(s.mode, peer, receiver, receiverFlag))
-                            stream.senders[peer];
-                }
-                stream.senders[sender].push_back(e.node);
+                RecordNotification(s, receiver, receiverFlag, e.node, domains);
             }
             if (!delivered)
                 launch.reasons.insert("pending_cross_core_set");
@@ -751,32 +782,34 @@ private:
         }
     }
 
+    void BuildStreamTokens(NotificationStream& stream)
+    {
+        size_t complete = std::numeric_limits<size_t>::max();
+        for (const auto& sender : stream.senders)
+            complete = std::min(complete, sender.second.size());
+        if (stream.senders.empty())
+            return;
+        for (size_t i = 0; i < complete; ++i) {
+            std::optional<size_t> joined;
+            std::vector<size_t> contributors;
+            for (const auto& sender : stream.senders) {
+                const auto node = sender.second[i];
+                contributors.push_back(node);
+                MergePrefix(joined, node, HappensBeforeGraph::Reason::TokenMatch);
+            }
+            // Per-core scalar SET order makes successive complete
+            // notifications in one participant stream ordered as well.
+            if (!stream.tokens.empty())
+                AddEdge(stream.tokens.back().node, *joined, HappensBeforeGraph::Reason::TokenMatch);
+            stream.tokens.push_back({*joined, std::move(contributors)});
+        }
+    }
+
     void BuildNotificationTokens()
     {
-        for (auto& entry : crossCounters) {
-            for (auto& mode : entry.second.modes) {
-                auto& stream = mode.second;
-                size_t complete = std::numeric_limits<size_t>::max();
-                for (const auto& sender : stream.senders)
-                    complete = std::min(complete, sender.second.size());
-                if (stream.senders.empty())
-                    continue;
-                for (size_t i = 0; i < complete; ++i) {
-                    std::optional<size_t> joined;
-                    std::vector<size_t> contributors;
-                    for (const auto& sender : stream.senders) {
-                        const auto node = sender.second[i];
-                        contributors.push_back(node);
-                        MergePrefix(joined, node, HappensBeforeGraph::Reason::TokenMatch);
-                    }
-                    // Per-core scalar SET order makes successive complete
-                    // notifications in one participant stream ordered as well.
-                    if (!stream.tokens.empty())
-                        AddEdge(stream.tokens.back().node, *joined, HappensBeforeGraph::Reason::TokenMatch);
-                    stream.tokens.push_back({*joined, std::move(contributors)});
-                }
-            }
-        }
+        for (auto& entry : crossCounters)
+            for (auto& mode : entry.second.modes)
+                BuildStreamTokens(mode.second);
     }
 
     void BuildLocalEdges()
@@ -824,6 +857,10 @@ private:
                 } else {
                     launch.reasons.insert("barrier_coverage_unknown");
                 }
+                continue;
+            }
+            if (s.syncKind == ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF) {
+                BuildMutexEdges(domain, e, s);
                 continue;
             }
             if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || !ValidPipe(s.srcPipe) || !ValidPipe(s.dstPipe) ||
@@ -889,6 +926,127 @@ private:
         }
         if (!flags.empty())
             launch.reasons.insert("pending_set");
+        for (const auto& entry : mutexes)
+            if (entry.second.get)
+                launch.reasons.insert("pending_get_buf");
+    }
+
+    void BuildMutexEdges(const Domain& domain, const Event& event, const AclsanDeviceSyncData& sync)
+    {
+        if (sync.scope != ACLSAN_DEVICE_SYNC_SCOPE_PIPE || !ValidPipe(sync.dstPipe) || sync.mode > 1U ||
+            sync.objectId > 31U) {
+            launch.reasons.insert("sync_coverage_unknown");
+            return;
+        }
+        auto& state = mutexes[{domain, sync.objectId}];
+        const uint32_t pipe = sync.dstPipe;
+        if (sync.action == ACLSAN_DEVICE_SYNC_ACTION_GET) {
+            if (state.get) {
+                launch.reasons.insert("duplicate_get_buf");
+                return;
+            }
+            // BLOCK mode waits for every pipe's preceding release. NON_BLOCK
+            // deliberately contributes no acquire edge because the API does
+            // not block the selected pipe in that mode.
+            if (sync.mode == 0) {
+                for (const auto& release : state.releases)
+                    AddEdge(release.second, event.node, HappensBeforeGraph::Reason::TokenMatch);
+            }
+            if (sync.mode == 0)
+                MergePrefix(acquired[{domain, pipe}], event.node, HappensBeforeGraph::Reason::AcquireSuffix);
+            state.get = MutexGet{event.node, pipe, sync.mode};
+            return;
+        }
+        if (sync.action != ACLSAN_DEVICE_SYNC_ACTION_RELEASE) {
+            launch.reasons.insert("invalid_sync_action");
+            return;
+        }
+        if (!state.get || state.get->pipe != pipe || state.get->mode != sync.mode) {
+            launch.reasons.insert("unmatched_release_buf");
+            return;
+        }
+        if (const auto prior = prefix[{domain, pipe}])
+            AddEdge(*prior, event.node, HappensBeforeGraph::Reason::PublishPrefix);
+        if (sync.mode == 1) {
+            for (const auto& release : state.releases)
+                if (release.first != pipe)
+                    AddEdge(release.second, event.node, HappensBeforeGraph::Reason::TokenMatch);
+        }
+        AddEdge(state.get->node, event.node, HappensBeforeGraph::Reason::TokenMatch);
+        state.get.reset();
+        state.releases[pipe] = event.node;
+        // The release waits for the pipe prefix (and, in NON_BLOCK mode,
+        // preceding releases), so its suffix must observe that completion.
+        acquired[{domain, pipe}] = event.node;
+        prefix[{domain, pipe}] = event.node;
+    }
+
+    std::vector<NotificationStream*> PendingWaitCandidates(CrossCounter& counter, size_t wait)
+    {
+        std::vector<NotificationStream*> candidates;
+        for (auto& mode : counter.modes) {
+            auto& stream = mode.second;
+            if (stream.consumed == stream.tokens.size())
+                continue;
+            bool future = false;
+            for (auto source : stream.tokens[stream.consumed].contributors) {
+                const auto path = graph.PrecedesDuringBuild(wait, source);
+                if (!path) {
+                    launch.reasons.insert("graph_query_budget");
+                    break;
+                }
+                future |= *path;
+            }
+            if (!future)
+                candidates.push_back(&stream);
+        }
+        return candidates;
+    }
+
+    bool NotificationPrecedes(const Notification& notification, size_t other)
+    {
+        for (auto source : notification.contributors) {
+            const auto path = graph.PrecedesDuringBuild(source, other);
+            if (!path)
+                launch.reasons.insert("graph_query_budget");
+            if (!path || !*path)
+                return false;
+        }
+        return true;
+    }
+
+    NotificationStream* SelectFirstNotification(const std::vector<NotificationStream*>& candidates)
+    {
+        for (auto* candidate : candidates) {
+            bool first = true;
+            for (auto* other : candidates) {
+                if (candidate == other)
+                    continue;
+                if (!NotificationPrecedes(
+                        candidate->tokens[candidate->consumed], other->tokens[other->consumed].node)) {
+                    first = false;
+                    break;
+                }
+            }
+            if (first)
+                return candidate;
+        }
+        return nullptr;
+    }
+
+    bool ResolveCounterWait(CrossCounter& counter)
+    {
+        if (counter.consumed == counter.waits.size())
+            return false;
+        const auto wait = counter.waits[counter.consumed];
+        const auto candidates = PendingWaitCandidates(counter, wait);
+        auto* selected = SelectFirstNotification(candidates);
+        if (selected && launch.reasons.empty()) {
+            AddEdge(selected->tokens[selected->consumed++].node, wait, HappensBeforeGraph::Reason::TokenMatch);
+            ++counter.consumed;
+            return true;
+        }
+        return false;
     }
 
     void ResolveCrossCoreWaits()
@@ -900,57 +1058,9 @@ private:
         bool progress = true;
         while (progress && launch.reasons.empty()) {
             progress = false;
-            for (auto& entry : crossCounters) {
-                auto& counter = entry.second;
-                if (counter.consumed == counter.waits.size())
-                    continue;
-                const auto wait = counter.waits[counter.consumed];
-                std::vector<NotificationStream*> candidates;
-                for (auto& mode : counter.modes) {
-                    auto& stream = mode.second;
-                    if (stream.consumed == stream.tokens.size())
-                        continue;
-                    bool future = false;
-                    for (auto source : stream.tokens[stream.consumed].contributors) {
-                        const auto path = graph.PrecedesDuringBuild(wait, source);
-                        if (!path) {
-                            launch.reasons.insert("graph_query_budget");
-                            break;
-                        }
-                        future |= *path;
-                    }
-                    if (!future)
-                        candidates.push_back(&stream);
-                }
-                NotificationStream* selected = nullptr;
-                for (auto* candidate : candidates) {
-                    bool first = true;
-                    for (auto* other : candidates) {
-                        if (candidate == other)
-                            continue;
-                        for (auto source : candidate->tokens[candidate->consumed].contributors) {
-                            const auto path = graph.PrecedesDuringBuild(source, other->tokens[other->consumed].node);
-                            if (!path)
-                                launch.reasons.insert("graph_query_budget");
-                            if (!path || !*path) {
-                                first = false;
-                                break;
-                            }
-                        }
-                        if (!first)
-                            break;
-                    }
-                    if (first) {
-                        selected = candidate;
-                        break;
-                    }
-                }
-                if (selected && launch.reasons.empty()) {
-                    AddEdge(selected->tokens[selected->consumed++].node, wait, HappensBeforeGraph::Reason::TokenMatch);
-                    ++counter.consumed;
+            for (auto& entry : crossCounters)
+                if (ResolveCounterWait(entry.second))
                     progress = true;
-                }
-            }
         }
         for (const auto& entry : crossCounters) {
             const auto& counter = entry.second;
@@ -993,6 +1103,186 @@ private:
         return relation;
     }
 
+    // Checker-owned replay state. The graph is already sealed; this stage
+    // queries ordering and drives memstate without changing either module's role.
+    struct MemoryReplay {
+        LaunchProcessor& processor;
+        const std::vector<AclsanDeviceMemoryAccessData>& records;
+        MemStateTracker& memory;
+        size_t stateBytes = 0;
+        size_t stateSegments = 0;
+
+        struct ConflictBatch {
+            std::vector<AccessPair> confirmed;
+            std::vector<NpuCheckRacecheckReport> reports;
+            std::set<std::pair<uint64_t, uint64_t>> ranges;
+        };
+
+        racecheck::PreparedAccess PrepareAccess(size_t index) const
+        {
+            racecheck::PreparedAccess prepared{
+                racecheck::MakeKey(records[index]), racecheck::AccessMode(records[index]), {}};
+            // unitFlag graph nodes may cover only a fragment of the raw operand.
+            for (const auto range : processor.accesses[index].ranges)
+                prepared.ranges.push_back({range.begin, range.end});
+            return prepared;
+        }
+
+        static size_t StateStorageBytes(const MemState& state)
+        {
+            size_t history = state.readers.capacity();
+            for (const auto& writers : state.atomicWriters)
+                history += writers.capacity();
+            return sizeof(MemState) + 4 * sizeof(void*) + history * sizeof(CbIndex);
+        }
+
+        // Account only touched intervals and their merge neighbours. This avoids a
+        // full-table scan on every access while retaining history-capacity costs.
+        std::pair<size_t, size_t> MeasureUsage(const PhysicalSpaceKey& key, const std::vector<Interval>& windows) const
+        {
+            std::pair<size_t, size_t> result{};
+            const auto table = memory.Tables().find(key);
+            if (table == memory.Tables().end())
+                return result;
+            for (const auto window : windows) {
+                auto it = table->second.lower_bound(window.begin);
+                if (it != table->second.begin() && std::prev(it)->second.end > window.begin)
+                    --it;
+                for (; it != table->second.end() && it->first < window.end; ++it) {
+                    ++result.first;
+                    result.second += StateStorageBytes(it->second);
+                }
+            }
+            return result;
+        }
+
+        void CommitConflicts(size_t current, const racecheck::PreparedAccess& prepared, ConflictBatch& batch)
+        {
+            if (batch.confirmed.empty())
+                return;
+            // Allocate the complete batch before mutating MemStateTracker. If
+            // report construction fails, neither reports nor memory state change.
+            auto pending = processor.reports;
+            for (auto& evidence : batch.reports)
+                pending.emplace_back(std::move(evidence));
+            memory.UpdateMemState(current, batch.confirmed, prepared);
+            processor.reports.swap(pending);
+            for (const auto& evidence : batch.reports) {
+                if (evidence.kind == ConflictKind::RAW)
+                    ++processor.checker.raw_;
+                else if (evidence.kind == ConflictKind::WAR)
+                    ++processor.checker.war_;
+                else if (evidence.kind == ConflictKind::WAW)
+                    ++processor.checker.waw_;
+                else
+                    ++processor.checker.atomic_;
+            }
+        }
+
+        bool CheckAccess(size_t current)
+        {
+            const auto prepared = PrepareAccess(current);
+            const auto candidates = memory.CheckPotentialRace(current, prepared);
+            ConflictBatch batch;
+            for (const auto& candidate : candidates) {
+                const auto relation = processor.CompareAccesses(candidate.prevIndex, current);
+                if (relation == HappensBeforeGraph::Relation::Unordered) {
+                    batch.confirmed.push_back(candidate);
+                    // A single current access can have multiple historical
+                    // candidates for the same range. Keep one user-facing
+                    // report for that memory range, while submitting every
+                    // candidate to the tracker so the range is frozen safely.
+                    if (batch.ranges.emplace(candidate.begin, candidate.end).second) {
+                        auto evidence = MakeRacecheckDiagnostics({candidate}, records, current, prepared);
+                        evidence.front().reportId = processor.checker.raw_ + processor.checker.war_ +
+                                                    processor.checker.waw_ + processor.checker.atomic_ +
+                                                    batch.reports.size() + 1;
+                        batch.reports.push_back(std::move(evidence.front()));
+                    }
+                    continue;
+                }
+                if (relation != HappensBeforeGraph::Relation::Before) {
+                    CommitConflicts(current, prepared, batch);
+                    return false;
+                }
+            }
+            CommitConflicts(current, prepared, batch);
+            return true;
+        }
+
+        bool CheckInstruction(const std::vector<size_t>& indices)
+        {
+            // Check every operand against the prior instruction state before any
+            // operand updates it. Overlapping source/destination fragments cannot
+            // hide an earlier inter-instruction hazard or create a self-race.
+            for (auto current : indices)
+                if (!CheckAccess(current))
+                    return false;
+            return true;
+        }
+
+        std::vector<Interval> AffectedWindows(const racecheck::PreparedAccess& prepared) const
+        {
+            std::vector<Interval> windows;
+            const auto table = memory.Tables().find(prepared.key);
+            for (const auto range : prepared.ranges) {
+                Interval window{range.begin, range.end};
+                if (table != memory.Tables().end() && !table->second.empty()) {
+                    auto first = table->second.lower_bound(range.begin);
+                    if (first != table->second.begin())
+                        window.begin = std::prev(first)->first;
+                    auto last = table->second.upper_bound(range.end);
+                    if (last != table->second.end())
+                        window.end = std::max(window.end, last->second.end);
+                    else
+                        window.end = std::max(window.end, table->second.rbegin()->second.end);
+                }
+                windows.push_back(window);
+            }
+            MergeIntervals(windows);
+            return windows;
+        }
+
+        bool UpdateAccess(size_t current)
+        {
+            const auto prepared = PrepareAccess(current);
+            if (prepared.ranges.empty())
+                return true;
+            if (processor.limits_.stateBytes < sizeof(MemState) + 4 * sizeof(void*)) {
+                processor.launch.reasons.insert("state_plan_budget");
+                return false;
+            }
+            const auto windows = AffectedWindows(prepared);
+            const auto before = MeasureUsage(prepared.key, windows);
+            memory.UpdateMemState(current, {}, prepared);
+            const auto after = MeasureUsage(prepared.key, windows);
+            stateSegments = stateSegments - before.first + after.first;
+            stateBytes = stateBytes - before.second + after.second;
+            processor.checker.stateBytesPeak_ = std::max(processor.checker.stateBytesPeak_, stateBytes);
+            processor.checker.stateSegmentsPeak_ = std::max(processor.checker.stateSegmentsPeak_, stateSegments);
+            if (stateSegments > processor.limits_.stateSegments || stateBytes > processor.limits_.stateBytes) {
+                processor.launch.reasons.insert("memory_state_budget");
+                return false;
+            }
+            return true;
+        }
+
+        bool UpdateInstruction(const std::vector<size_t>& indices)
+        {
+            // Source reads commit before ordinary destination writes. This retains
+            // the destination writer when an in-place instruction has both operands.
+            auto updates = indices;
+            std::stable_sort(updates.begin(), updates.end(), [&](size_t a, size_t b) {
+                return (records[a].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ) >
+                       (records[b].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+            });
+            for (auto current : updates)
+                if (!UpdateAccess(current))
+                    return false;
+            return true;
+        }
+    };
+
     void ReplayMemory()
     {
         // Freeze before querying: a missing path is meaningful only after all
@@ -1011,138 +1301,15 @@ private:
             diagnostics.emit = [](void*, const char* message) { ASCTOOL_DEBUG("%s", message); };
         diagnostics.emitError = [](void*, const char* message) { ASCTOOL_ERROR("%s", message); };
         MemStateTracker memory(records, diagnostics);
-        size_t stateBytes = 0, stateSegments = 0;
-        const auto preparedAccess = [&](size_t index) {
-            racecheck::PreparedAccess prepared{
-                racecheck::MakeKey(records[index]), racecheck::AccessMode(records[index]), {}};
-            // unitFlag graph nodes may cover only a fragment of the raw operand.
-            for (const auto range : accesses[index].ranges)
-                prepared.ranges.push_back({range.begin, range.end});
-            return prepared;
-        };
-        // Account only touched intervals and their merge neighbours. This avoids a
-        // full-table scan on every access while retaining history-capacity costs.
-        const auto usage = [&](const PhysicalSpaceKey& key, const std::vector<Interval>& windows) {
-            std::pair<size_t, size_t> result{};
-            const auto table = memory.Tables().find(key);
-            if (table == memory.Tables().end())
-                return result;
-            for (const auto window : windows) {
-                auto it = table->second.lower_bound(window.begin);
-                if (it != table->second.begin() && std::prev(it)->second.end > window.begin)
-                    --it;
-                for (; it != table->second.end() && it->first < window.end; ++it) {
-                    const auto& state = it->second;
-                    size_t history = state.readers.capacity();
-                    for (const auto& writers : state.atomicWriters)
-                        history += writers.capacity();
-                    ++result.first;
-                    result.second += sizeof(MemState) + 4 * sizeof(void*) + history * sizeof(CbIndex);
-                }
-            }
-            return result;
-        };
+        MemoryReplay replay{*this, records, memory};
         for (auto node : graph.Order()) {
             auto instruction = instructions.find(node);
             if (instruction == instructions.end())
                 continue;
-            // Check every operand against the prior instruction state before any
-            // operand updates it. Overlapping source/destination fragments cannot
-            // hide an earlier inter-instruction hazard or create a self-race.
-            for (auto current : instruction->second) {
-                const auto prepared = preparedAccess(current);
-                const auto candidates = memory.CheckPotentialRace(current, prepared);
-                std::vector<AccessPair> confirmed;
-                std::vector<NpuCheckRacecheckReport> pendingReports;
-                std::set<std::pair<uint64_t, uint64_t>> reportedRanges;
-                const auto commit = [&] {
-                    if (confirmed.empty())
-                        return;
-                    // Allocate the complete batch before mutating MemStateTracker. If
-                    // report construction fails, neither reports nor memory state change.
-                    auto pending = reports;
-                    for (auto& evidence : pendingReports)
-                        pending.emplace_back(std::move(evidence));
-                    memory.UpdateMemState(current, confirmed, prepared);
-                    reports.swap(pending);
-                    for (const auto& evidence : pendingReports) {
-                        if (evidence.kind == ConflictKind::RAW)
-                            ++checker.raw_;
-                        else if (evidence.kind == ConflictKind::WAR)
-                            ++checker.war_;
-                        else if (evidence.kind == ConflictKind::WAW)
-                            ++checker.waw_;
-                        else
-                            ++checker.atomic_;
-                    }
-                };
-                for (const auto& candidate : candidates) {
-                    const auto relation = CompareAccesses(candidate.prevIndex, current);
-                    if (relation == HappensBeforeGraph::Relation::Unordered) {
-                        confirmed.push_back(candidate);
-                        // A single current access can have multiple historical
-                        // candidates for the same range. Keep one user-facing
-                        // report for that memory range, while submitting every
-                        // candidate to the tracker so the range is frozen safely.
-                        if (reportedRanges.emplace(candidate.begin, candidate.end).second) {
-                            auto evidence = MakeRacecheckDiagnostics({candidate}, records, current, prepared);
-                            evidence.front().reportId = checker.raw_ + checker.war_ + checker.waw_ + checker.atomic_ +
-                                                        pendingReports.size() + 1;
-                            pendingReports.push_back(std::move(evidence.front()));
-                        }
-                        continue;
-                    }
-                    if (relation != HappensBeforeGraph::Relation::Before) {
-                        commit();
-                        return;
-                    }
-                }
-                commit();
-            }
-            // Source reads commit before ordinary destination writes. This retains
-            // the destination writer when an in-place instruction has both operands.
-            auto updates = instruction->second;
-            std::stable_sort(updates.begin(), updates.end(), [&](size_t a, size_t b) {
-                return (records[a].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ) >
-                       (records[b].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
-            });
-            for (auto current : updates) {
-                const auto prepared = preparedAccess(current);
-                if (prepared.ranges.empty())
-                    continue;
-                if (limits_.stateBytes < sizeof(MemState) + 4 * sizeof(void*)) {
-                    launch.reasons.insert("state_plan_budget");
-                    return;
-                }
-                std::vector<Interval> windows;
-                const auto table = memory.Tables().find(prepared.key);
-                for (const auto range : prepared.ranges) {
-                    Interval window{range.begin, range.end};
-                    if (table != memory.Tables().end() && !table->second.empty()) {
-                        auto first = table->second.lower_bound(range.begin);
-                        if (first != table->second.begin())
-                            window.begin = std::prev(first)->first;
-                        auto last = table->second.upper_bound(range.end);
-                        if (last != table->second.end())
-                            window.end = std::max(window.end, last->second.end);
-                        else
-                            window.end = std::max(window.end, table->second.rbegin()->second.end);
-                    }
-                    windows.push_back(window);
-                }
-                MergeIntervals(windows);
-                const auto before = usage(prepared.key, windows);
-                memory.UpdateMemState(current, {}, prepared);
-                const auto after = usage(prepared.key, windows);
-                stateSegments = stateSegments - before.first + after.first;
-                stateBytes = stateBytes - before.second + after.second;
-                checker.stateBytesPeak_ = std::max(checker.stateBytesPeak_, stateBytes);
-                checker.stateSegmentsPeak_ = std::max(checker.stateSegmentsPeak_, stateSegments);
-                if (stateSegments > limits_.stateSegments || stateBytes > limits_.stateBytes) {
-                    launch.reasons.insert("memory_state_budget");
-                    return;
-                }
-            }
+            if (!replay.CheckInstruction(instruction->second))
+                return;
+            if (!replay.UpdateInstruction(instruction->second))
+                return;
         }
     }
 };

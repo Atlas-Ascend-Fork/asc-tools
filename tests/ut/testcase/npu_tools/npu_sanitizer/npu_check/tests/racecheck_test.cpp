@@ -56,6 +56,26 @@ AclsanDeviceSyncData Flag(
     s.objectId = token;
     return s;
 }
+AclsanDeviceSyncData Mutex(uint64_t n, uint32_t action, uint32_t pipe, uint64_t mutexId = 1, uint32_t mode = 0)
+{
+    AclsanDeviceSyncData s{};
+    s.header = Memory(n).header;
+    s.header.size = sizeof(s);
+    s.header.flags = 0;
+    s.syncKind = ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF;
+    s.action = action;
+    s.scope = ACLSAN_DEVICE_SYNC_SCOPE_PIPE;
+    s.dstPipe = pipe;
+    s.mode = mode;
+    s.objectId = mutexId;
+    return s;
+}
+AclsanDeviceMemoryAccessData MutexMemory(uint64_t n, uint32_t mode, uint32_t pipe)
+{
+    auto memory = Memory(n, mode, pipe);
+    memory.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    return memory;
+}
 AclsanDeviceBarrierData Barrier(uint64_t n, uint32_t pipe)
 {
     AclsanDeviceBarrierData b{};
@@ -760,6 +780,98 @@ TEST(RacecheckTest, FlagOnlyOrdersSourcePrefixAndDestinationSuffix)
         ASSERT_EQ(h.reports.size(), 1U);
         EXPECT_TRUE(h.checker.AnalysisComplete());
     }
+}
+
+TEST(RacecheckTest, MutexOrdersProtectedAccessAcrossPipelines)
+{
+    Harness h;
+    h.Add(Mutex(1, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE3, 7));
+    h.Add(MutexMemory(2, 2, ACLSAN_DEVICE_PIPE_MTE3));
+    h.Add(Mutex(3, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE3, 7));
+    h.Add(Mutex(4, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE2, 7));
+    h.Add(MutexMemory(5, 1, ACLSAN_DEVICE_PIPE_MTE2));
+    h.Add(Mutex(6, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE2, 7));
+    h.Sync();
+    EXPECT_TRUE(h.reports.empty());
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+}
+
+TEST(RacecheckTest, MutexPairingUsesPipeIdAndMode)
+{
+    Harness h;
+    h.Add(Mutex(1, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE2, 3, 0));
+    h.Add(Mutex(2, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE3, 3, 0));
+    h.Add(Mutex(3, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE2, 3, 1));
+    h.Sync();
+    EXPECT_TRUE(h.reports.empty());
+    EXPECT_FALSE(h.checker.AnalysisComplete());
+}
+
+TEST(RacecheckTest, MutexRejectsNestedGetsAcrossPipelines)
+{
+    Harness h;
+    h.Add(Mutex(1, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE2, 5, 0));
+    h.Add(Mutex(2, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_VECTOR, 5, 1));
+    h.Add(Mutex(3, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE2, 5, 0));
+    h.Sync();
+    EXPECT_TRUE(h.reports.empty());
+    EXPECT_FALSE(h.checker.AnalysisComplete());
+}
+
+TEST(RacecheckTest, NonBlockingMutexReleaseWaitsPreviousReleases)
+{
+    Harness h;
+    h.Add(Mutex(1, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE3, 9, 0));
+    h.Add(MutexMemory(2, 2, ACLSAN_DEVICE_PIPE_MTE3));
+    h.Add(Mutex(3, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE3, 9, 0));
+    h.Add(Mutex(4, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE2, 9, 1));
+    h.Add(Mutex(5, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE2, 9, 1));
+    h.Add(MutexMemory(6, 1, ACLSAN_DEVICE_PIPE_MTE2));
+    h.Sync();
+    EXPECT_TRUE(h.reports.empty());
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+}
+
+TEST(RacecheckTest, DifferentMutexIdsDoNotOrderAccesses)
+{
+    Harness h;
+    h.Add(Mutex(1, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE3, 7));
+    h.Add(MutexMemory(2, 2, ACLSAN_DEVICE_PIPE_MTE3));
+    h.Add(Mutex(3, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE3, 7));
+    h.Add(Mutex(4, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE2, 8));
+    h.Add(MutexMemory(5, 1, ACLSAN_DEVICE_PIPE_MTE2));
+    h.Add(Mutex(6, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE2, 8));
+    h.Sync();
+    EXPECT_EQ(h.reports.size(), 1U);
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+}
+
+TEST(RacecheckTest, NonBlockingMutexGetDoesNotAcquireBeforeRelease)
+{
+    Harness h;
+    h.Add(Mutex(1, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE3, 7));
+    h.Add(MutexMemory(2, 2, ACLSAN_DEVICE_PIPE_MTE3));
+    h.Add(Mutex(3, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE3, 7));
+    h.Add(Mutex(4, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE2, 7, 1));
+    h.Add(MutexMemory(5, 1, ACLSAN_DEVICE_PIPE_MTE2));
+    h.Add(Mutex(6, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE2, 7, 1));
+    h.Sync();
+    EXPECT_EQ(h.reports.size(), 1U);
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+}
+
+TEST(RacecheckTest, MutexGetPreservesEarlierFlagDependencies)
+{
+    Harness h;
+    h.Add(MutexMemory(1, 2, ACLSAN_DEVICE_PIPE_MTE3));
+    h.Add(Flag(2, ACLSAN_DEVICE_SYNC_ACTION_SET, ACLSAN_DEVICE_PIPE_MTE3, ACLSAN_DEVICE_PIPE_MTE2));
+    h.Add(Flag(3, ACLSAN_DEVICE_SYNC_ACTION_WAIT, ACLSAN_DEVICE_PIPE_MTE3, ACLSAN_DEVICE_PIPE_MTE2));
+    h.Add(Mutex(4, ACLSAN_DEVICE_SYNC_ACTION_GET, ACLSAN_DEVICE_PIPE_MTE2, 7));
+    h.Add(MutexMemory(5, 1, ACLSAN_DEVICE_PIPE_MTE2));
+    h.Add(Mutex(6, ACLSAN_DEVICE_SYNC_ACTION_RELEASE, ACLSAN_DEVICE_PIPE_MTE2, 7));
+    h.Sync();
+    EXPECT_TRUE(h.reports.empty());
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
 }
 
 TEST(RacecheckTest, TransitiveSynchronizationWithoutIntermediateMemoryAndTokenReuse)
