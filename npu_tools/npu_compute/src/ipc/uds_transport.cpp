@@ -18,8 +18,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
+#include <fstream>
 #include <limits>
 #include <poll.h>
+#include <sstream>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -140,15 +142,48 @@ int Socket()
     }
     return fd;
 }
-void VerifyPeer(int fd, pid_t expectedPid, uid_t expectedUid)
+ucred PeerCredentials(int fd)
 {
     ucred credentials{};
     socklen_t size = sizeof(credentials);
     if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &size) < 0) {
         SystemError("UDS SO_PEERCRED");
     }
+    Check(size == sizeof(credentials), "UDS peer credentials mismatch");
+    return credentials;
+}
+bool IsDescendant(pid_t pid, pid_t ancestor)
+{
+    while (pid > 0) {
+        if (pid == ancestor) {
+            return true;
+        }
+        std::ifstream input("/proc/" + std::to_string(pid) + "/stat");
+        std::string stat;
+        if (!std::getline(input, stat)) {
+            return false;
+        }
+        // comm may contain spaces and parentheses; ppid follows the final ')'.
+        const auto end = stat.rfind(')');
+        if (end == std::string::npos) {
+            return false;
+        }
+        std::istringstream fields(stat.substr(end + 1));
+        char state = 0;
+        pid_t parent = 0;
+        if (!(fields >> state >> parent) || parent == pid) {
+            return false;
+        }
+        pid = parent;
+    }
+    return false;
+}
+void VerifyPeer(int fd, pid_t expectedPid, uid_t expectedUid, bool allowDescendants = false)
+{
+    const auto credentials = PeerCredentials(fd);
     Check(
-        size == sizeof(credentials) && credentials.pid == expectedPid && credentials.uid == expectedUid,
+        credentials.uid == expectedUid &&
+            (credentials.pid == expectedPid || (allowDescendants && IsDescendant(credentials.pid, expectedPid))),
         "UDS peer credentials mismatch");
 }
 void Append(Bytes& bytes, uint64_t value, size_t size)
@@ -300,9 +335,10 @@ void Channel::Shutdown() noexcept
         shutdown(fd_, SHUT_RDWR);
     }
 }
+pid_t Channel::PeerPid() const { return PeerCredentials(fd_).pid; }
 Channel Channel::Connect(
     const std::string& name, uint64_t session, pid_t peerPid, uid_t peerUid, Deadline deadline,
-    const std::function<bool()>& cancelled)
+    const std::function<bool()>& cancelled, bool allowDescendants)
 {
     Check(session != 0, "zero UDS session");
     const auto address = Address(name);
@@ -313,7 +349,7 @@ Channel Channel::Connect(
         Remaining(deadline);
         Channel result(Socket(), session);
         if (connect(result.fd_, reinterpret_cast<const sockaddr*>(&address), AddressLength(name)) == 0) {
-            VerifyPeer(result.fd_, peerPid, peerUid);
+            VerifyPeer(result.fd_, peerPid, peerUid, allowDescendants);
             return result;
         }
         int connectError = errno;
@@ -325,7 +361,7 @@ Channel Channel::Connect(
                 SystemError("UDS connect status");
             }
             if (error == 0) {
-                VerifyPeer(result.fd_, peerPid, peerUid);
+                VerifyPeer(result.fd_, peerPid, peerUid, allowDescendants);
                 return result;
             }
             connectError = error;
@@ -338,7 +374,7 @@ Channel Channel::Connect(
         const auto retryAt = std::min(deadline, After(std::chrono::milliseconds(retryDelay)));
         while (std::chrono::steady_clock::now() < retryAt) {
             CheckCancellation(cancelled);
-            const int delay = std::min(20, Remaining(retryAt));
+            const int delay = std::min(20, Remaining(deadline));
             if (poll(nullptr, 0, delay) < 0 && errno != EINTR) {
                 SystemError("UDS connect retry");
             }

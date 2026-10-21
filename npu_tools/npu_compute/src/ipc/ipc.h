@@ -162,10 +162,11 @@ public:
     Channel& operator=(const Channel&) = delete;
     static Channel Connect(
         const std::string& name, uint64_t session, pid_t peerPid, uid_t peerUid, Deadline deadline,
-        const std::function<bool()>& cancelled = {});
+        const std::function<bool()>& cancelled = {}, bool allowDescendants = false);
     void Send(Type type, const Bytes& payload, Deadline deadline, const std::function<bool()>& cancelled = {});
     Frame Receive(Deadline deadline, const std::function<bool()>& cancelled = {});
     int Fd() const { return fd_; }
+    pid_t PeerPid() const;
     void Close() noexcept;
     void Shutdown() noexcept;
 

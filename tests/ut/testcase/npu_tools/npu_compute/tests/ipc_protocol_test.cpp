@@ -251,6 +251,15 @@ TEST(NpuComputeIpcProtocol, CredentialsAndTimeouts)
     });
     auto closed = listener.Accept(bootstrap.session, getpid(), getuid(), bootstrap.handshakeDeadline);
     Reject([&] { closed.Receive(bootstrap.handshakeDeadline); });
+    // Allowing descendants must still reject a peer outside the target process tree.
+    bootstrap = MakeBootstrap();
+    Listener descendantListener(bootstrap.name);
+    Reject([&] {
+        Channel::Connect(
+            bootstrap.name, bootstrap.session, getpid() + 1, getuid(), bootstrap.handshakeDeadline, {}, true);
+    });
+    closed = descendantListener.Accept(bootstrap.session, getpid(), getuid(), bootstrap.handshakeDeadline);
+    Reject([&] { closed.Receive(bootstrap.handshakeDeadline); });
     bootstrap = MakeBootstrap();
     Listener secondListener(bootstrap.name);
     auto sender = Channel::Connect(bootstrap.name, bootstrap.session, getpid(), getuid(), bootstrap.handshakeDeadline);
@@ -259,6 +268,7 @@ TEST(NpuComputeIpcProtocol, CredentialsAndTimeouts)
     });
     sender = Channel::Connect(bootstrap.name, bootstrap.session, getpid(), getuid(), bootstrap.handshakeDeadline);
     auto receiver = secondListener.Accept(bootstrap.session, getpid(), getuid(), bootstrap.handshakeDeadline);
+    Check(sender.PeerPid() == getpid());
     for (int fd : {sender.Fd(), receiver.Fd()}) {
         Check(fcntl(fd, F_GETFL) & O_NONBLOCK);
         Check(fcntl(fd, F_GETFD) & FD_CLOEXEC);

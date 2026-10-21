@@ -15,6 +15,8 @@
 #include <unistd.h>
 namespace npucompute {
 namespace {
+constexpr uint64_t kMaxHandshakeTimeoutMs = 120000;
+
 std::string Environment(const char* name)
 {
     const char* value = std::getenv(name);
@@ -42,15 +44,10 @@ ipc::Hello UdsServer::Accept()
     const auto session = Number("NPU_COMPUTE_SESSION_ID");
     const auto pid = Number("NPU_COMPUTE_CLI_PID");
     const auto timeout = Number("NPU_COMPUTE_HANDSHAKE_TIMEOUT_MS");
-    const auto deadline = Number("NPU_COMPUTE_HANDSHAKE_DEADLINE_MS");
-    if (pid > static_cast<uint64_t>(std::numeric_limits<pid_t>::max()) || timeout < 100 || timeout > 120000 ||
-        deadline > static_cast<uint64_t>(std::numeric_limits<int64_t>::max() / 1000000)) {
-        throw ipc::Exception({1, "invalid PID or handshake deadline", "BOOTSTRAP", "initialize"});
+    if (pid > static_cast<uint64_t>(std::numeric_limits<pid_t>::max()) || timeout > kMaxHandshakeTimeoutMs) {
+        throw ipc::Exception({1, "invalid PID or handshake timeout", "BOOTSTRAP", "initialize"});
     }
-    deadline_ = ipc::Deadline(std::chrono::milliseconds(deadline));
-    if (deadline_ > ipc::After(std::chrono::milliseconds(timeout))) {
-        throw ipc::Exception({1, "handshake deadline exceeds timeout", "BOOTSTRAP", "initialize"});
-    }
+    deadline_ = ipc::After(std::chrono::milliseconds(timeout));
     ipc::Listener listener(name);
     channel_ = listener.Accept(session, static_cast<pid_t>(pid), getuid(), deadline_);
     const auto frame = channel_.Receive(deadline_);

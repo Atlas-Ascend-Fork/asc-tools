@@ -9,6 +9,7 @@
 # ----------------------------------------------------------------------------------------------------------
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -196,6 +197,93 @@ def test_program_is_found_through_path(tmp_path):
     result = run_cli(program.name, env=environment, collect=True)
 
     assert result.returncode == 0
+
+
+@pytest.mark.parametrize("mode", ("child", "capture", "nested", "delayed"))
+def test_script_collects_descendant_process(tmp_path, mode):
+    command = shlex.quote(str(FIXTURE))
+    if mode == "capture":
+        command = f'output=$({command} 2>&1)\nprintf "%s\\n" "$output"'
+    elif mode == "nested":
+        inner = tmp_path / "inner.sh"
+        inner.write_text(f"#!/bin/bash\n{command}\nexit $?\n", encoding="utf-8")
+        command = f"bash {shlex.quote(str(inner))}"
+    elif mode == "delayed":
+        # Compilation/preparation may take longer than the handshake timeout.
+        command = f"sleep 11\n{command}"
+    script = tmp_path / "run.sh"
+    script.write_text(
+        f"#!/bin/bash\nset -e\n{command}\necho script-finished\n", encoding="utf-8"
+    )
+
+    result = subprocess.run(
+        [*BASE_COMMAND, "bash", str(script)],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "script-finished" in result.stdout
+    assert len(list(tmp_path.glob("*.npu-rep"))) == 1
+
+
+def test_script_failure_after_collection_is_preserved(tmp_path):
+    script = tmp_path / "run.sh"
+    script.write_text(
+        f"#!/bin/bash\n{shlex.quote(str(FIXTURE))}\nexit 7\n", encoding="utf-8"
+    )
+
+    result = run_cli("bash", str(script), cwd=tmp_path)
+
+    assert result.returncode == 7, result.stderr
+    assert not list(tmp_path.glob("*.npu-rep"))
+
+
+@pytest.mark.parametrize("exit_code", (0, 7))
+def test_script_exits_without_collector(tmp_path, exit_code):
+    result = subprocess.run(
+        [*BASE_COMMAND, "bash", "-c", f"exit {exit_code}"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == (exit_code or 3), result.stderr
+    assert (
+        "target command exited before a collection process connected" in result.stderr
+    )
+    assert not list(tmp_path.glob("*.npu-rep"))
+
+
+def test_interrupt_while_script_prepares_inputs(tmp_path):
+    marker = tmp_path / "started"
+    script = tmp_path / "run.sh"
+    script.write_text(
+        f"#!/bin/bash\necho ready > {shlex.quote(str(marker))}\nsleep 30\n",
+        encoding="utf-8",
+    )
+    process = subprocess.Popen(
+        [*BASE_COMMAND, "bash", str(script)],
+        cwd=tmp_path,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        wait_for_file(marker, process)
+        process.send_signal(signal.SIGTERM)
+        _, stderr = process.communicate(timeout=5)
+        assert process.returncode == 128 + signal.SIGTERM, stderr
+        assert not list(tmp_path.glob("*.npu-rep"))
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def test_direct_nested_collection_is_rejected(tmp_path):

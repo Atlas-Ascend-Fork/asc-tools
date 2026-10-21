@@ -20,14 +20,25 @@ void UdsClient::Run(
     const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled)
 {
     const auto stopHandshake = [&] { return childExited.load() || cancelled.load(); };
-    auto channel = ipc::Channel::Connect(
-        bootstrap.name, bootstrap.session, childPid, getuid(), bootstrap.handshakeDeadline, stopHandshake);
+    ipc::Channel channel;
+    try {
+        // Scripts may compile or prepare inputs before a descendant loads the collector.
+        channel = ipc::Channel::Connect(
+            bootstrap.name, bootstrap.session, childPid, getuid(), ipc::Deadline::max(), stopHandshake, true);
+    } catch (...) {
+        if (childExited && !cancelled) {
+            throw std::runtime_error("UDS: target command exited before a collection process connected");
+        }
+        throw;
+    }
+    const pid_t targetPid = channel.PeerPid();
+    const auto handshakeDeadline = ipc::After(std::chrono::milliseconds(bootstrap.timeoutMs));
     try {
         channel.Send(
             ipc::Type::Connect,
             ipc::EncodeHello({static_cast<uint32_t>(getpid()), static_cast<uint32_t>(getuid()), config}),
-            bootstrap.handshakeDeadline);
-        auto frame = channel.Receive(bootstrap.handshakeDeadline, stopHandshake);
+            handshakeDeadline, stopHandshake);
+        auto frame = channel.Receive(handshakeDeadline, stopHandshake);
         if (frame.type == ipc::Type::Error) {
             throw ipc::Exception(ipc::DecodeError(frame.payload));
         }
@@ -35,7 +46,7 @@ void UdsClient::Run(
             throw std::runtime_error("PROTOCOL: READY required");
         }
         auto ready = ipc::DecodeReady(frame.payload);
-        if (ready.pid != static_cast<uint32_t>(childPid) || ready.uid != getuid() || ready.status != 0) {
+        if (ready.pid != static_cast<uint32_t>(targetPid) || ready.uid != getuid() || ready.status != 0) {
             throw std::runtime_error("AUTHENTICATION: READY identity or status mismatch");
         }
         ArtifactReceiver receiver(directory);

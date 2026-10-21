@@ -51,9 +51,6 @@ int CollectionSession::Run(
     SetEnvironment("NPU_COMPUTE_CLI_PID", std::to_string(bootstrap.cliPid), request.environment);
     SetEnvironment("NPU_COMPUTE_HANDSHAKE_TIMEOUT_MS", std::to_string(bootstrap.timeoutMs), request.environment);
     bootstrap.handshakeDeadline = ipc::After(std::chrono::milliseconds(bootstrap.timeoutMs));
-    const auto deadlineMs =
-        std::chrono::duration_cast<std::chrono::milliseconds>(bootstrap.handshakeDeadline.time_since_epoch()).count();
-    SetEnvironment("NPU_COMPUTE_HANDSHAKE_DEADLINE_MS", std::to_string(deadlineMs), request.environment);
     ProcessHandle child;
     if (!child.Start(request, error, bootstrap.handshakeDeadline)) {
         const int signal = child.PendingSignal();
