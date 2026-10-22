@@ -22,11 +22,15 @@
 1. `python3 skills/tool-npu-objdump/scripts/gen_interface.py --source-root <asc-tools 根目录>` 重新生成 `interface.json`。
 2. 新增 `add_argument` 选项必须先在 `gen_interface.py` 的 `OPTION_CLASS` 中分类，否则生成直接失败——这是刻意的守护点，强制评审者对每个新选项表态。
 3. 语义变化（选项增删改、字段映射增删、跟踪文案改写）需同步修订 `SKILL.md`、references 和 eval；无关重构不改变快照（提取语义而非整文件哈希，误报率低）。
-4. 快照 provenance 记录生成时的 commit，仅作溯源；HEAD 前移不算漂移，不参与 `--check` 比较。
+4. 快照 provenance 记录生成时的 commit，仅作溯源；HEAD 前移不算漂移，不参与 `--check` 的语义比较（semantic_payload），但参与删除方向判定（见下节）。
 
 ## 合入前自查
 
-改动 msobjdump 接口（参数、字段映射、跟踪文案）的 MR 应附带快照更新：`gen_interface.py --check` 比对源码提取与快照，不一致时给出再生成与评审指引。方向感知：本 checkout 的 msobjdump 早于快照记载的接口（skill PR 与接口 MR 分开评审的正常堆叠）时 `--check` 报 guard inactive 而非失败，两边 MR 可独立合入；接口侧合入后再执行 `--check` 即正常比对。
+改动 msobjdump 接口（参数、字段映射、跟踪文案）的 MR 应附带快照更新：`gen_interface.py --check` 比对源码提取与快照，不一致时给出再生成与评审指引。方向感知分三种：
+
+- 本 checkout 的 msobjdump 早于快照记载的接口（skill PR 与接口 MR 分开评审的正常堆叠）时 `--check` 报 guard inactive 而非失败，两边 MR 可独立合入；接口侧合入后再执行 `--check` 即正常比对。
+- 快照 provenance 为当前 HEAD 的 git 祖先、且 msobjdump 源文件无未提交修改时，选项只减不增判定为接口删除，`--check` 报错退出 1——删除必须重新生成快照并同步修订 SKILL.md、references 和 eval。
+- provenance 不可解析、git 不可用或源文件工作区 dirty（快照可能取自未提交修改）时，删除方向证据不足，维持 guard inactive 的保守行为。
 
 ## 约束
 

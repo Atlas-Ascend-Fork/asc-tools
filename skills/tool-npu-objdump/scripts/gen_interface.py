@@ -183,6 +183,55 @@ def git_commit(source_root: Path) -> Optional[str]:
     return result.stdout.strip() or None
 
 
+def commit_is_ancestor(source_root: Path, commit: str) -> bool:
+    """快照 provenance commit 是否为当前 HEAD 的祖先；git 不可用或 commit
+    不可解析时返回 False（无法证明删除，维持 guard inactive 的保守行为）。"""
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_root),
+                "merge-base",
+                "--is-ancestor",
+                commit,
+                "HEAD",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def worktree_file_clean(source_root: Path, relative_path: str) -> bool:
+    """目标文件相对 HEAD 是否无未提交修改（含未跟踪）。provenance 只记录
+    生成时的 HEAD，快照选项却取自工作区：文件 dirty 时 provenance 不能
+    证明快照取自该 checkout 的提交历史，删除判定不成立。"""
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_root),
+                "status",
+                "--porcelain",
+                "--",
+                relative_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and not result.stdout.strip()
+
+
 def build_interface(source_root: Path, strict: bool = True) -> Dict[str, Any]:
     main_py = source_root / MAIN_PY
     source_text = main_py.read_text(encoding="utf-8")
@@ -281,9 +330,26 @@ def main() -> int:
                 print("interface snapshot: in sync (%s)" % source_root)
                 return 0
         elif stored_names > current_names:
+            gained = sorted(stored_names - current_names)
+            provenance_commit = (stored.get("provenance") or {}).get("asc_tools_commit")
+            # 快照基于当前 checkout 的提交历史（provenance 是 HEAD 祖先）且
+            # 源文件无未提交修改时，选项只减不增只能是删除——快照已过期；
+            # 工作区 dirty（快照取自未提交修改）时该证据不成立，走容错路径
+            if (
+                provenance_commit
+                and commit_is_ancestor(source_root, provenance_commit)
+                and worktree_file_clean(source_root, MAIN_PY)
+            ):
+                print(
+                    "[ERROR]: msobjdump options were removed but the skill "
+                    "snapshot still documents them: %s\n"
+                    "Regenerate and review SKILL.md / references / evals for "
+                    "the removal, then commit together." % gained,
+                    file=sys.stderr,
+                )
+                return 1
             # 本 checkout 的 msobjdump 早于快照记载的接口（如 skill PR 基于
             # 旧 master 而接口改动在另一 MR）。这不是快照过期，守护不适用。
-            gained = sorted(stored_names - current_names)
             print(
                 "interface snapshot: guard inactive (%s predates the snapshot "
                 "interface: %s missing here); guard engages once the interface "
