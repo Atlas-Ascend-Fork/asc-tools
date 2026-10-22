@@ -56,6 +56,7 @@ def run_tool(command: str, timeout: int = 10) -> Dict[str, Any]:
             [command, "-h"],
             capture_output=True,
             text=True,
+            errors="backslashreplace",
             timeout=timeout,
             check=False,
         )
@@ -75,6 +76,7 @@ def module_source() -> Optional[str]:
             ["python3", "-c", "import msobjdump; print(msobjdump.__file__)"],
             capture_output=True,
             text=True,
+            errors="backslashreplace",
             timeout=10,
             check=False,
         )
