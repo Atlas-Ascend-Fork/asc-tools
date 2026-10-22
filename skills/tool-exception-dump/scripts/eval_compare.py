@@ -307,18 +307,24 @@ def collect_activated_skills(ses_data):
 
 
 def stream_skill_fallback(full_output, expected):
-    """skill_activated 流式回退：扫描流事件（兼容旧格式 tool_use/tool 两种形态）"""
+    """skill_activated 流式回退：扫描流事件（兼容旧格式 tool_use/tool 两种形态）
+
+    仅按 input.name 与技能名做大小写敏感的精确等值匹配：bash 命令等输入
+    文本中提到技能名不构成激活证据，子串匹配会虚增 skill_activated 评分；
+    技能名即目录名，大小写敏感，不做 lower() 归一。
+    """
     for data in iter_ndjson_objects(full_output):
+        part = data.get("part") or {}
         # 旧格式一：type=tool_use 且 part.tool 为 skill
         if (
             data.get("type") == "tool_use"
-            and (data.get("part") or {}).get("tool", "").lower() == "skill"
+            and (part.get("tool") or "").lower() == "skill"
         ):
-            state = (data.get("part") or {}).get("state") or {}
-            if any(expected in str(v) for v in (state.get("input") or {}).values()):
+            state = part.get("state") or {}
+            if ((state.get("input") or {}).get("name") or "") == expected:
                 return True
         # 旧格式二：type=tool 且 tool 为 skill
-        if data.get("type") == "tool" and data.get("tool") == "skill":
+        if data.get("type") == "tool" and (data.get("tool") or "") == "skill":
             if ((data.get("state") or {}).get("input") or {}).get(
                 "name", ""
             ) == expected:
