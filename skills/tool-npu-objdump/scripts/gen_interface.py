@@ -300,16 +300,6 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-        print(
-            "[ERROR]: msobjdump interface changed but the skill snapshot is stale.\n"
-            "Regenerate and review:\n"
-            "  python3 skills/tool-npu-objdump/scripts/gen_interface.py \\\n"
-            "    --source-root <asc-tools root>\n"
-            "Then review SKILL.md / references / evals for semantic changes "
-            "(new options need classification in OPTION_CLASS) and commit together.",
-            file=sys.stderr,
-        )
-        return 1
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(rendered, encoding="utf-8")
