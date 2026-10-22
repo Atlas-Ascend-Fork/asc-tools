@@ -37,7 +37,7 @@ For a tool usage demonstration, refer to the [show_kernel_debug_data example](..
         </tr>
         <tr>
             <td>output_path</td>
-            <td>The path to save parsing results. String type. Defaults to the directory of the calling script. Automatically created if the directory does not exist.</td>
+            <td>The path to save parsing results. String type. Defaults to the current working directory. Automatically created if the directory does not exist.</td>
         </tr>
         <tr>
             <td><strong>Parameters (OUT)</strong></td>

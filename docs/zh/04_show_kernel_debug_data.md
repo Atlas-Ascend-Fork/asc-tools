@@ -37,7 +37,7 @@ kernel侧算子调试信息（AscendC::DumpTensor, AscendC::printf等）可通�
         </tr>
         <tr>
             <td>output_path</td>
-            <td>解析结果保存路径，字符串类型。默认是当前接口调用脚本目录，目录不存在时自动创建。</td>
+            <td>解析结果保存路径，字符串类型。默认是当前工作目录，目录不存在时自动创建。</td>
         </tr>
         <tr>
             <td><strong>参数（OUT）</strong></td>
