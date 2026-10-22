@@ -156,7 +156,9 @@ def test_full_mode_without_arm_only_failure_keeps_exit_zero(tmp_path, monkeypatc
     assert result["meta"]["invalid_arms"]["with"] == 0
 
 
-def test_dry_run_mock_flow_stays_green_and_exits_zero(tmp_path):
+def test_dry_run_mock_flow_stays_green_and_exits_zero(tmp_path, monkeypatch):
+    # 封闭性：真实 check_skill_leak 扫描运行机 HOME，结果因机器而异
+    monkeypatch.setattr(eval_compare, "check_skill_leak", lambda: [])
     out_dir = tmp_path / "out"
     exit_code = eval_compare.main(["--mode", "dry-run", "--out-dir", str(out_dir)])
     assert exit_code == 0
@@ -167,3 +169,20 @@ def test_dry_run_mock_flow_stays_green_and_exits_zero(tmp_path):
         assert dim["with_invalid"] == 0
         assert dim["without_invalid"] == 0
         assert dim["with_rate"] == 1.0
+
+
+def test_dry_run_reports_skill_leak_warnings(tmp_path, monkeypatch):
+    fake_leak_path = (
+        tmp_path / ".config" / "opencode" / "skills" / "tool-exception-dump"
+    )
+    monkeypatch.setattr(eval_compare, "check_skill_leak", lambda: [fake_leak_path])
+    out_dir = tmp_path / "out"
+    exit_code = eval_compare.main(["--mode", "dry-run", "--out-dir", str(out_dir)])
+    assert exit_code == 0
+
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["meta"]["leak_warnings"] == [str(fake_leak_path)]
+
+    report = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert "检测到用户级技能目录" in report
+    assert str(fake_leak_path) in report
