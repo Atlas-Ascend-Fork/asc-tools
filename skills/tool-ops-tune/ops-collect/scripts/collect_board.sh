@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
     --exe) EXE="$2"; shift 2 ;;
     --args) EXE_ARGS="$2"; shift 2 ;;
     --mode) MODE="$2"; shift 2 ;;
-    --output) OUTPUT="$2"; shift 2 ;;
+    -o|--output) OUTPUT="$2"; shift 2 ;;
     --timeout) MSPROF_TIMEOUT="$2"; shift 2 ;;
     --ranks) RANKS="$2"; shift 2 ;;
     --kernel-name) KERNEL_NAME="$2"; shift 2 ;;
@@ -93,8 +93,8 @@ fi
 pick_device_structured() {
   command -v npu-smi >/dev/null 2>&1 || { echo "0"; return; }
   local total dev util
-  total=$(npu-smi info -l 2>/dev/null | grep -c "Total Count" 2>/dev/null)
-  # 设备总数探测（-l 输出 "Total Count : N"；探测失败按 1 台）
+  # 设备总数探测（-l 输出 "Total Count : N"；探测失败按 1 台。注：不用
+  # grep -c 探测——无匹配时 grep 退 1，pipefail+errexit 会终止整个脚本）
   total=$(npu-smi info -l 2>/dev/null | sed -n 's/.*Total Count *: *\([0-9]*\).*/\1/p' | head -1)
   [[ "$total" =~ ^[0-9]+$ ]] || total=1
   for ((dev = 0; dev < total; dev++)); do
@@ -315,16 +315,16 @@ case "$MODE" in
     # 本脚本归档到 $OUTPUT/ 并 manifest 记账；warmup/repeat 是口径字段由 harness 持有。
     TIMING_JSON="$OUTPUT/result.json"
     TIMING_LOG="$OUTPUT/timing_harness.log"
-    if timeout "$MSPROF_TIMEOUT" bash -c "cd '$PWD' && '${EXE}' ${EXE_ARGS}" >"$TIMING_LOG" 2>&1 \
-        && [[ -f "result.json" ]]; then
+    # 退出码先捕获再判定（跨 [[ ]] 取 $? 会拿到测试结果而非 harness 退出码——检视 #9 修复）
+    timeout "$MSPROF_TIMEOUT" bash -c "cd '$PWD' && '${EXE}' ${EXE_ARGS}" >"$TIMING_LOG" 2>&1
+    harness_rc=$?
+    if [[ $harness_rc -eq 0 ]] && [[ -f "result.json" ]]; then
       mv "result.json" "$TIMING_JSON"
       record_block "timing_harness" ok "$TIMING_JSON" "harness 直跑（event 口径，warmup/repeat 见 result.json）"
     elif [[ -f "result.json" ]]; then
-      harness_rc=$?
       mv "result.json" "$TIMING_JSON"
       record_block "timing_harness" failed "$TIMING_JSON" "harness 产出 result.json 但退出非 0（rc=$harness_rc），日志: $TIMING_LOG"
     else
-      harness_rc=$?
       record_block "timing_harness" failed "$TIMING_LOG" "harness 退出非 0 且无 result.json（rc=$harness_rc），日志: $TIMING_LOG"
     fi
     ;;

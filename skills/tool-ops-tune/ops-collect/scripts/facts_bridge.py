@@ -259,6 +259,8 @@ def main() -> int:
     )
     ap.add_argument(
         "--prof-dir",
+        "--prof",  # 入口文档（SKILL.md）使用的别名
+        dest="prof_dir",
         default=None,
         help="产物根目录（manifest 只有相对路径时指定；缺省取 manifest 所在目录）",
     )
@@ -282,10 +284,35 @@ def main() -> int:
         "--no-db", action="store_true", help="禁用 DB 双源探测（纯 CSV 口径）"
     )
     ap.add_argument("--output", default=None, help="scalars.json 输出（缺省只打印）")
+    ap.add_argument(
+        "--print-scalar",
+        action="store_true",
+        help="stdout 只打印 verdict.py 可直接消费的 --scalar 串（供管道拼接）",
+    )
     args = ap.parse_args()
 
     manifest_path = Path(args.manifest)
-    root = Path(args.prof_dir) if args.prof_dir else manifest_path.parent
+    # 入参二义性按 help 文档口径消解（检视 #12/High 修复）：--manifest 可传
+    # manifest 文件或产物根目录——传目录时 root 取该目录本身（取 .parent 会在
+    # prof/{baseline,after} 布局下 rglob 命中字母序靠前的另一轮采集，
+    # 把「优化后」CSV 当「基线」标量喂给 verdict，结论方向反转）；
+    # 目录不存在时 fail loud，不静默上移搜索范围。
+    if args.prof_dir:
+        root = Path(args.prof_dir)
+    elif manifest_path.is_dir():
+        root = manifest_path
+    elif manifest_path.is_file():
+        root = manifest_path.parent
+    else:
+        # 路径不存在（拼错）：fail loud——不静默上移到 parent 的 rglob
+        print(
+            f"ERROR: --manifest 路径不存在（文件或目录）: {manifest_path}",
+            file=sys.stderr,
+        )
+        return 1
+    if not root.is_dir():
+        print(f"ERROR: 产物根目录不存在: {root}", file=sys.stderr)
+        return 1
     # manifest 本体只做合法性校验（坏 JSON 应 fail loud）；产物定位走 root rglob
     if manifest_path.is_file():
         json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -366,22 +393,45 @@ def main() -> int:
     # ---- L2：task_duration_us / block_dim（OpBasicInfo per-op 行）----
     if opbi_csv and Path(opbi_csv).exists():
         rows = _load_rows(Path(opbi_csv))
-        if args.kernel_name and rows and "Op Name" in rows[0]:
+        op_names = {
+            str(r.get("Op Name") or "").strip() for r in rows if r.get("Op Name")
+        }
+        if args.kernel_name and op_names:
             rows = [
                 r
                 for r in rows
                 if str(r.get("Op Name") or "").strip() == args.kernel_name
             ]
+        elif len(op_names) > 1:
+            # G15 同款防护（检视 #19 修复）：多 Op Name 且无 --kernel-name →
+            # 不取 rows[0] 张冠李戴，记 missing 待补采
+            missing.append(
+                {
+                    "metric": "task_duration_us",
+                    "reason": f"OpBasicInfo 含多个 Op Name（{sorted(op_names)}）且未指定 "
+                    "--kernel-name：不产出张冠李戴标量，请补 --kernel-name 重跑",
+                }
+            )
+            rows = []
         if rows:
-            td = _first_float(rows[0], OPBI_TASK_COLS)
-            if td is not None:
-                scalars["task_duration_us"] = round(td, 2)
+            # 指定 kernel 时按其全部行聚合（mean），不取首行
+            tds = [
+                v
+                for v in (_first_float(r, OPBI_TASK_COLS) for r in rows)
+                if v is not None
+            ]
+            bds = [
+                v
+                for v in (_first_float(r, OPBI_BLOCKDIM_COLS) for r in rows)
+                if v is not None
+            ]
+            if tds:
+                scalars["task_duration_us"] = round(sum(tds) / len(tds), 2)
                 sources["task_duration_us"] = str(opbi_csv)
-            bd = _first_float(rows[0], OPBI_BLOCKDIM_COLS)
-            if bd is not None:
-                scalars["block_dim"] = round(bd, 2)
+            if bds:
+                scalars["block_dim"] = round(sum(bds) / len(bds), 2)
                 sources["block_dim"] = str(opbi_csv)
-        else:
+        elif not missing or missing[-1].get("metric") != "task_duration_us":
             missing.append(
                 {
                     "metric": "task_duration_us",
@@ -397,7 +447,14 @@ def main() -> int:
     if "task_duration_us" not in scalars and not args.no_db:
         db_path = Path(args.db) if args.db else find_metric_db(root)
         if db_path and db_path.exists():
-            db_out = extract_from_db(db_path, args.kernel_name)
+            # G15 同款防护（检视 #14 修复）：DB 无 kernel 名维度，指定
+            # --kernel-name 时拒绝 DB 补位——不产出跨 kernel 平均标量
+            if args.kernel_name:
+                db_out = {
+                    "error": "指定 --kernel-name 时 DB 源不可过滤（无 kernel 名维度）"
+                }
+            else:
+                db_out = extract_from_db(db_path, args.kernel_name)
             if "task_duration_us" in db_out:
                 scalars["task_duration_us"] = db_out["task_duration_us"]
                 sources["task_duration_us"] = (
@@ -460,10 +517,15 @@ def main() -> int:
             json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
         print(f"→ {out}")
-    print(f"scalars: {scalar_str}")
+    if args.print_scalar:
+        # 管道模式：stdout 只有裸 --scalar 串（human 摘要走 stderr，不污染管道）
+        print(scalar_str)
+    else:
+        print(f"scalars: {scalar_str}")
     for m in missing:
         print(f"  ⚠ missing: {m['metric']} — {m['reason']}", file=sys.stderr)
-    print(f"下一步：{result['next']}")
+    if not args.print_scalar:
+        print(f"下一步：{result['next']}")
     return 0
 
 

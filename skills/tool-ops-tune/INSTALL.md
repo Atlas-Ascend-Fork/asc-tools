@@ -38,6 +38,7 @@
 - Claude Code：输入含「算子调优 / 瓶颈判定 / Bound 判定 / 性能采集」等触发词的问题，观察是否按五阶段流程进入采集与判定。
 - Codex：启动后使用 `/skills` 浏览（或输入含触发词的问题），确认 `tool-ops-tune` 出现在可用技能列表。
 - CLI 直跑验证（不依赖助手）：`python3 ops-verdict/scripts/verdict.py --rules ops-verdict/rules/L1-single-core.yaml --csv ops-verdict/fixtures/mte2_bound_a2.csv --soc a2 -o /tmp/v.json`，产出合法判定书即安装完整。
+- 回归自检（测试框架）：`python3 ops-verdict/evals/run_evals.py`（执行式判定回归，38 用例）+ `bash ops-verdict/evals/smoke/run_smoke.sh`（离线干跑冒烟，msprof shim 无 NPU 可跑）——退出码 0 才可用；变更规则/脚本后必须先过双绿再交付。
 
 ## 使用示例
 

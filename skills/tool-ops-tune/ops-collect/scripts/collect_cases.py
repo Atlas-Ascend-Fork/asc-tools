@@ -182,7 +182,7 @@ def main() -> int:
         choices=["quick", "standard", "timing"],
         help="采集模式：quick=时间复核 / standard=7 组指标（判定输入）/ timing=event harness",
     )
-    ap.add_argument("--output", required=True, help="采集根目录")
+    ap.add_argument("-o", "--output", required=True, help="采集根目录")
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument(
         "--kernel-name", default=None, help="多 kernel 程序过滤（透传 collect_board）"
@@ -201,12 +201,8 @@ def main() -> int:
     args = ap.parse_args()
 
     cases = load_cases(args.cases)
-    if args.max_cases and len(cases) > args.max_cases:
-        cases = cases[: args.max_cases]
-        print(
-            f"WARN: cases 截断为前 {args.max_cases}（A1 铁律，报告必须告知用户）",
-            file=sys.stderr,
-        )
+    # 定向补采先于截断过滤：subset 指定的 case 必须全量可见（否则 >max-cases
+    # 工程的定向补采会误报「无匹配」或漏采——检视 #8 修复）
     if args.cases_subset:
         wanted = {c.strip() for c in args.cases_subset.split(",") if c.strip()}
         cases = [c for c in cases if c["case_id"] in wanted]
@@ -216,6 +212,12 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+    elif args.max_cases and len(cases) > args.max_cases:
+        cases = cases[: args.max_cases]
+        print(
+            f"WARN: cases 截断为前 {args.max_cases}（A1 铁律，报告必须告知用户）",
+            file=sys.stderr,
+        )
 
     variants = [("custom", args.exe, args.exe_args)]
     if args.ref_exe:
@@ -261,7 +263,14 @@ def main() -> int:
                     continue
             vdir = out_root / cid / vname
             if (vdir / "collection_manifest.json").exists():
-                dur = task_duration_of(None, vdir)
+                # 复用分支读取已有 manifest（传 None 会被 task_duration_of 短路
+                # 恒返 None → 已采 case 从对比矩阵消失——检视 #11 修复）
+                dur = task_duration_of(
+                    json.loads(
+                        (vdir / "collection_manifest.json").read_text(encoding="utf-8")
+                    ),
+                    vdir,
+                )
                 perf_rows.append(
                     {
                         "case_id": cid,

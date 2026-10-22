@@ -40,7 +40,7 @@ Step 执行手册：`agent/workflows/task-prompts.md`；故障分流：`agent/wo
 | 子域 | 回答的问题 | 关键资产 | 交付状态 |
 |------|-----------|---------|---------|
 | `ops-collect/` | 数据怎么采对采全 | 采集模式路由决策树 + collect_board/collect_cases/facts_bridge/jsonl_to_cases/collect_sim + manifest 契约（opstune.collection/1.0） | ✅ 本期交付（MC² 隔离测试随多卡域 PR 交付） |
-| `ops-verdict/` ★ | 瓶颈是什么、为什么不是别的；改好了吗 | 判定引擎 6 脚本 + L0-L3 规则包 24 条 + 口径指纹互锁（snapshot/delta_compare） + soc-spec 峰值标尺 | ✅ 已交付 |
+| `ops-verdict/` ★ | 瓶颈是什么、为什么不是别的；改好了吗 | 判定引擎 6 脚本 + L0-L3 规则包 24 条 + 口径指纹互锁（snapshot/delta_compare） + soc-spec 峰值标尺 + 执行式回归（evals 38 用例 + 离线冒烟 smoke） | ✅ 已交付 |
 | `ops-mechanism/` | 怎么改、能涨多少、风险在哪 | 机制卡八要素 + 案例证据库（A-E 证据分级） | 🟡 随优化卡片知识 PR 交付 |
 | `ops-family/` | 代码怎么写（模板货架） | 算子族 A/B 双型文档 + 可拷贝代码模板 + tiling 候选生成器 | 🟡 随算子族模板 PR 交付 |
 | `ops-report/` | 结果怎么呈现 | 调优结果可视化报告（单文件静态 HTML） | 🟡 随报告 PR 交付 |

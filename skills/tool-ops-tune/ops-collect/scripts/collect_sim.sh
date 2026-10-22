@@ -90,7 +90,10 @@ echo "[sim] cannsim record（soc=$SOC_VERSION）…"
 if timeout "$TIMEOUT" "$CANNBIN" record "$EXE" -s "$SOC_VERSION" -o "$OUTPUT" -g \
      ${EXE_ARGS:+-u "$EXE_ARGS"} > "$OUTPUT/cannsim_record.log" 2>&1; then
   # cannsim 输出目录形态：{output}/cannsim_<timestamp>_<appname>/
-  SIM_DIR=$(ls -dt "$OUTPUT"/cannsim_* 2>/dev/null | head -1 || true)
+  # 只匹配目录（-d 投影；cannsim_record.log 同样命中 cannsim_* 通配且 mtime
+  # 更晚，会把 head -1 顶成日志文件——检视 #15 修复）
+  SIM_DIR=$(find "$OUTPUT" -maxdepth 1 -type d -name 'cannsim_*' 2>/dev/null \
+            | sort -r | head -1 || true)
   if [[ -n "${SIM_DIR:-}" && -d "$SIM_DIR/report" ]]; then
     record_block "cannsim_record" ok "$SIM_DIR" "soc=$SOC_VERSION args=${EXE_ARGS:-<none>}"
     record_block "cannsim_report" ok "$SIM_DIR/report" "trace_core*.json（Chrome Trace Format）"

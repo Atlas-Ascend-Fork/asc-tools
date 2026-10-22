@@ -35,6 +35,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -139,14 +140,13 @@ def main() -> int:
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
+    # csv.writer 统一转义（检视 #16 修复）：case_id/shape/dtype 来自外部 JSONL
+    # 属不可信输入，手写拼接在含逗号/引号时产生错位或非法 CSV
     with open(out, "w", encoding="utf-8", newline="") as f:
-        f.write("case_id,shape,dtype,attrs\n")
+        writer = csv.writer(f)
+        writer.writerow(["case_id", "shape", "dtype", "attrs"])
         for r in rows_out:
-            # attrs 内含逗号时整体加引号（CSV 转义）
-            attrs = r["attrs"]
-            if "," in attrs:
-                attrs = f'"{attrs}"'
-            f.write(f"{r['case_id']},{r['shape']},{r['dtype']},{attrs}\n")
+            writer.writerow([r["case_id"], r["shape"], r["dtype"], r["attrs"]])
 
     print(
         f"cases.csv → {out}（{len(rows_out)} 行"

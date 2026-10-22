@@ -1,0 +1,84 @@
+{
+  "skill_name": "tool-ops-tune",
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "title": "verdict-entry-routing",
+      "prompt": "我有一份 msprof 导出的 PipeUtilization.csv，想知道这个算子的瓶颈是什么，帮我判定。",
+      "expected_output": "应加载 tool-ops-tune 套件并路由到 ops-verdict 判定引擎：说明判定只出自脚本（LLM 只解释不判定），引导使用 ops-verdict/scripts/verdict.py 以规则包 + CSV 输入产出 verdict.json 判定书；判定书每条命中带证据数值、阈值溯源、反证评估与机制路由。不凭经验直接给出瓶颈结论。",
+      "expectations": [
+        {"type": "contains", "pattern": "verdict", "description": "路由到判定引擎入口"},
+        {"type": "contains", "pattern": "规则", "description": "说明按规则包判定"},
+        {"type": "contains", "pattern": "证据", "description": "强调判定带证据可审计"},
+        {"type": "not_contains", "pattern": "我猜测", "description": "不凭空猜测瓶颈"},
+        {"type": "skill_activated", "pattern": "tool-ops-tune", "description": "确认激活算子调优套件"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "collect-mode-routing",
+      "prompt": "我要给一个 fork 多进程绑卡的 MC² 融合算子做性能采集，应该用什么命令？",
+      "expected_output": "路由到 ops-collect 采集编排：MC²/fork 多 rank 场景必须走 collect_board.sh --mode mc2（msprof --aic-mode=task-based），禁止 msprof op（对 fork 行为未定义、数据不可靠）；已有 collection_manifest.json 的目录禁止重复采集；MC² 禁 host 侧计时，性能数据出自 op_summary 的 Task Duration。",
+      "expectations": [
+        {"type": "contains", "pattern": "mc2", "description": "给出 MC² 专用采集模式"},
+        {"type": "contains", "pattern": "task-based", "description": "说明 msprof task-based 强制"},
+        {"type": "contains", "pattern": "manifest", "description": "提及采集契约与防重采"},
+        {"type": "not_contains", "pattern": "msprof op 采集", "description": "不推荐对 fork 程序用 msprof op"},
+        {"type": "skill_activated", "pattern": "tool-ops-tune", "description": "确认激活算子调优套件"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "verdict-before-mechanism-discipline",
+      "prompt": "还没做性能采集，你先看看优化机制文档，猜一下我的算子可能是什么瓶颈？",
+      "expected_output": "拒绝在无证据时猜测瓶颈：证据先行是套件纪律——判定之前禁止加载机制卡/案例猜瓶颈。正确路径是先采集（ops-collect 模式路由）再判定（verdict.py 规则求值），判定书 findings 的 mechanism_refs 才是机制路由入口。条件三值逻辑下数据不足只会得到 INSUFFICIENT_DATA，不会冒充结论。",
+      "expectations": [
+        {"type": "contains", "pattern": "证据", "description": "强调证据先行"},
+        {"type": "contains", "pattern": "先采集", "description": "给出正确路径：先采集再判定"},
+        {"type": "contains", "pattern": "机制", "description": "说明机制卡判定后才加载"},
+        {"type": "not_contains", "pattern": "可能是 MTE2", "description": "不给出猜测性瓶颈结论"},
+        {"type": "skill_activated", "pattern": "tool-ops-tune", "description": "确认激活算子调优套件"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "comparison-gate-semantics",
+      "prompt": "优化后性能从 100us 提升到 97us，快 3%，这轮优化应该 KEEP 吧？",
+      "expected_output": "3% 在 ±5% 噪声带内：不判收益也不判劣化，处置是 repeat 翻倍复测（同步重采基线与优化侧、重建两侧快照后再比）；仍带内则按无稳定收益处置。不得把噪声带内的变化当收益宣称——这是口径铁律。且任何比较前 delta_compare 会做口径与精度双门禁（不一致 exit 2）。",
+      "expectations": [
+        {"type": "contains", "pattern": "噪声带", "description": "识别 3% 在 ±5% 带内"},
+        {"type": "contains", "pattern": "复测", "description": "给出 repeat 翻倍复测处置"},
+        {"type": "contains", "pattern": "不", "description": "明确不判收益"},
+        {"type": "not_contains", "pattern": "建议保留", "description": "不直接建议 KEEP"},
+        {"type": "skill_activated", "pattern": "tool-ops-tune", "description": "确认激活算子调优套件"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "insufficient-data-honesty",
+      "prompt": "verdict.json 显示 verdict 是 INSUFFICIENT_DATA，全部规则 SKIPPED，这说明我的算子没有瓶颈吗？",
+      "expected_output": "不是。INSUFFICIENT_DATA 表示指标未采齐（绑定契约：REQUIRED 缺失 → SKIPPED，未采集不判定），不是「无瓶颈」。应按 skipped[].missing 列表补采（≤2 轮），仍缺则如实上报禁止猜测式判定。NO_BOUND_FOUND 才是数据完整但无命中的语义。",
+      "expectations": [
+        {"type": "contains", "pattern": "不是", "description": "纠正「无瓶颈」误读"},
+        {"type": "contains", "pattern": "补采", "description": "给出按 missing 补采的路径"},
+        {"type": "contains", "pattern": "SKIPPED", "description": "解释绑定契约语义"},
+        {"type": "not_contains", "pattern": "没有瓶颈", "description": "不确认错误结论"},
+        {"type": "skill_activated", "pattern": "tool-ops-tune", "description": "确认激活算子调优套件"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "single-mechanism-iron-law",
+      "prompt": "为了节省时间，这一轮能不能同时改双缓冲和 tiling 切分两个优化？",
+      "expected_output": "不能：单变量铁律——每轮只改一个可归因机制，多机制混入导致收益无法归因（KEEP 了无法归因的收益）。diff_audit 机器闸门会比对实际改动与方案卡声明范围，超范围判 UNATTRIBUTABLE 禁止进 KEEP 仲裁。两机制应分两轮，各自对照同口径基线。",
+      "expectations": [
+        {"type": "contains", "pattern": "单变量", "description": "引用单变量铁律"},
+        {"type": "contains", "pattern": "归因", "description": "说明归因失效原因"},
+        {"type": "contains", "pattern": "diff_audit", "description": "提及机器闸门"},
+        {"type": "not_contains", "pattern": "可以同时", "description": "不允许多机制并行"},
+        {"type": "skill_activated", "pattern": "tool-ops-tune", "description": "确认激活算子调优套件"}
+      ]
+    }
+  ]
+}
