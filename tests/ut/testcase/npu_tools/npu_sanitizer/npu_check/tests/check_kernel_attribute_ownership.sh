@@ -51,14 +51,18 @@ if rg -q 'kCommonCallbacks' "${tool_manager}"; then
     Fail "launch callback must not be common to all tools"
 fi
 
-synccheck_callbacks=$(sed -n '/Synccheck::Callbacks/,/return callbacks/p' "${sync_checker}")
+synccheck_callbacks=$(sed -n '/Synccheck::GetSubscribedID/,/return callbacks/p' "${sync_checker}")
 if ! rg -q 'ACLSAN_CB_DOMAIN_LAUNCH.*ACLSAN_CBID_LAUNCH_KERNEL' <<< "${synccheck_callbacks}"; then
     Fail "Synccheck callbacks do not subscribe to the launch callback"
 fi
 
-memcheck_callbacks=$(sed -n '/Memcheck::Callbacks/,/return callbacks/p' "${mem_checker}")
-if rg -q 'ACLSAN_CB_DOMAIN_LAUNCH.*ACLSAN_CBID_LAUNCH_KERNEL' <<< "${memcheck_callbacks}"; then
-    Fail "Memcheck callbacks must not subscribe to the launch callback"
+memcheck_callbacks=$(sed -n '/Memcheck::GetSubscribedID/,/return callbacks/p' "${mem_checker}")
+# Memcheck observes launch failures to avoid reporting an incomplete run as clean.
+if ! rg -q 'ACLSAN_CB_DOMAIN_LAUNCH.*ACLSAN_CBID_LAUNCH_KERNEL' <<< "${memcheck_callbacks}"; then
+    Fail "Memcheck callbacks must subscribe to launch results"
+fi
+if rg -q 'QueryKernelAttributes' "${mem_checker}"; then
+    Fail "Memcheck must not query kernel attributes"
 fi
 
 rg -q 'QueryKernelAttributes' "${sync_checker}" || Fail "Synccheck does not query kernel attributes"

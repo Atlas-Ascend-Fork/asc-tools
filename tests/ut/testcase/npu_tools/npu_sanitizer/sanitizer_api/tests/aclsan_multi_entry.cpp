@@ -264,7 +264,8 @@ int main(int argc, char**)
     assert(aclrtLaunchKernelWithHostArgs(missing, 1, stream, nullptr, nullptr, 0, nullptr, 0) != 0);
     assert(launches == before);
     assert(aclrtLaunchKernelWithHostArgs(missing, 1, stream, nullptr, nullptr, 0, nullptr, 0) != 0);
-    assert(TuneCount("<--tiling-key=2>") == 1);
+    // Missing entry metadata is rejected during symbol selection, before Tune.
+    assert(TuneCount("<--tiling-key=2>") == 0);
     unloadResult = 82;
     const auto unloadedFailures = unloads.load();
     assert(aclrtBinaryUnLoad(parent) == 82 && unloads == unloadedFailures);

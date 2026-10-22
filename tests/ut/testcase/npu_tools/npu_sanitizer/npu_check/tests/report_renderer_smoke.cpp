@@ -199,6 +199,14 @@ ReportRecord MakeInitcheckRecord()
             {"pipeName", "PIPE_MTE2"},
             {"launchId", "42"},
             {"address", "3000"},
+            {"uninitBytes", "32"},
+            {"firstUninitAddress", "3000"},
+            {"base", "3000"},
+            {"allocationInitializedBytes", "0"},
+            {"allocSerialNo", "1"},
+            {"deviceId", "0"},
+            {"pc", "1234"},
+            {"location", "init_kernel+0x12 in init.cpp:21"},
         }};
 }
 
@@ -488,8 +496,7 @@ TEST(ReportRendererTest, ListsAndRendersBuiltinTemplates)
                   "=========     Address 0x1000 is out of bounds\n");
 
     EXPECT_EQ(npucheck::RenderReportRecord(MakeInitcheckRecord(), {}, &rendered), ReportRenderStatus::SUCCESS);
-    EXPECT_NE(
-        rendered.find("========= ERROR:[INITCHECK] Uninitialized GM memory read of size 32 bytes"), std::string::npos);
+    EXPECT_NE(rendered.find("========= ERROR:[INITCHECK] Uninitialized GM memory read\n"), std::string::npos);
 
     const auto registerReport = MakeRegisterInitcheckReport();
     EXPECT_EQ(
@@ -1473,8 +1480,7 @@ TEST(ReportRendererTest, RendersStructuredReportsFromEachCheckerStruct)
     }
     EXPECT_EQ(npucheck::RenderNpuCheckReportBundle(records, {}, &rendered), ReportRenderStatus::SUCCESS);
     EXPECT_NE(rendered.find("========= ERROR:[MEMCHECK] Invalid GM read of size 16 bytes"), std::string::npos);
-    EXPECT_NE(
-        rendered.find("========= ERROR:[INITCHECK] Uninitialized GM memory read of size 32 bytes"), std::string::npos);
+    EXPECT_NE(rendered.find("========= ERROR:[INITCHECK] Uninitialized GM memory read\n"), std::string::npos);
     EXPECT_NE(rendered.find("========= WARNING:[RACECHECK] RAW (read after write) race detected."), std::string::npos);
     EXPECT_NE(
         rendered.find(

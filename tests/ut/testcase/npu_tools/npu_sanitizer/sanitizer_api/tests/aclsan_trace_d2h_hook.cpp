@@ -256,6 +256,15 @@ aclError OriginalLaunch(
         return ACL_SUCCESS;
     }
     if (g_writeMemoryRecord) {
+        // DMA loops must be initialized before the GM-to-UB access.
+        auto* state = record;
+        state->instrId = 128;
+        state->args[0] = 1ULL | (1ULL << 21U);
+        state->category = aclsan::DeviceInstructionCategory::RegisterState;
+        state->pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+        state->blockId = 1;
+        record++;
+        record->pc = 0x1234;
         record->args[0] = 0;
         record->args[1] = 0x120000025000ULL;
         record->args[2] = (1ULL << 4) | (8256ULL << 25);
@@ -279,7 +288,7 @@ aclError OriginalLaunch(
     record->blockId = 1;
     record->reserved = 0;
     slice->phyCoreId = phyCoreId;
-    slice->recordCount = 1;
+    slice->recordCount = g_writeMemoryRecord ? 2 : 1;
     slice->overflowCount = 0;
     if (!g_writeMemoryRecord) {
         auto* second = record + 1;
@@ -504,7 +513,7 @@ int main(int argc, char** argv)
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
-    CHECK(g_memoryAccesses.size() == 2);
+    CHECK(g_memoryAccesses.size() == 3);
     CHECK(g_memoryAccesses[1].address == 0x130000000000ULL);
     CHECK(g_memoryAccesses[1].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM);
     CHECK(g_memoryAccesses[1].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
@@ -512,6 +521,11 @@ int main(int argc, char** argv)
     CHECK(g_memoryAccesses[1].rank == 2);
     CHECK(g_memoryAccesses[1].firstCount == 4);
     CHECK(g_memoryAccesses[1].secondCount == 2);
+    CHECK(g_memoryAccesses[2].address == 0);
+    CHECK(g_memoryAccesses[2].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L1);
+    CHECK(g_memoryAccesses[2].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    CHECK(g_memoryAccesses[2].layoutKind == ACLSAN_MEM_LAYOUT_ND_AFFINE);
+    CHECK(g_memoryAccesses[2].rank == 3);
     g_writeMultiMemoryRecords = false;
 
     const size_t recordsBeforeTimedOutSync = g_records.size();

@@ -75,14 +75,18 @@ int32_t CaptureInstrumentedBinary(const void* data, size_t length, void* userdat
     return 73;
 }
 
-TEST(DefaultBinaryInstrumentationConfigTest, BuildsRuntimeConfigWithoutDbiEnvironment)
+TEST(DefaultBinaryInstrumentationConfigTest, IgnoresDbiOverridesExceptTemporaryFileRetention)
 {
     EnvironmentRestore environment(
         {"NPU_CHECK_DBI_ARCH", "NPU_CHECK_DBI_TOOLCHAIN_ROOT", "NPU_CHECK_DBI_WORK_DIR", "NPU_CHECK_DBI_CACHE_DIR",
          "NPU_CHECK_DBI_STRICT", "NPU_CHECK_DBI_KEEP_TEMP", "NPU_CHECK_DBI_PROBE_SET"});
+    ASSERT_EQ(unsetenv("NPU_CHECK_DBI_KEEP_TEMP"), 0);
     ASSERT_EQ(setenv("NPU_CHECK_DBI_ARCH", "forged", 1), 0);
     ASSERT_EQ(setenv("NPU_CHECK_DBI_TOOLCHAIN_ROOT", "/forged", 1), 0);
     ASSERT_EQ(setenv("NPU_CHECK_DBI_PROBE_SET", "sync", 1), 0);
+    ASSERT_EQ(setenv("NPU_CHECK_DBI_WORK_DIR", "/forged", 1), 0);
+    ASSERT_EQ(setenv("NPU_CHECK_DBI_CACHE_DIR", "/forged", 1), 0);
+    ASSERT_EQ(setenv("NPU_CHECK_DBI_STRICT", "0", 1), 0);
 
     const auto cannRoot = boost::filesystem::temp_directory_path() / "dbi-runtime-config-test";
     const auto tools = cannRoot / "tools/bisheng_compiler/bin";
@@ -116,6 +120,14 @@ TEST(DefaultBinaryInstrumentationConfigTest, BuildsRuntimeConfigWithoutDbiEnviro
             BuildRuntimeInstrumentationConfig(socName, runtime.c_str(), PROBE_GROUP_MTE2, config, diagnostic, true));
         EXPECT_EQ(config.probeGroups, (std::vector<ProbeGroup>{ProbeGroup::Mte2, ProbeGroup::Scalar}));
         EXPECT_TRUE(config.useCompleteProbeSet);
+    }
+    // The debug option is independent of the SoC alias.
+    for (const char* value : {"1", "0", "true", ""}) {
+        ASSERT_EQ(setenv("NPU_CHECK_DBI_KEEP_TEMP", value, 1), 0);
+        ASSERT_TRUE(BuildRuntimeInstrumentationConfig(
+            GetSocVersionMappings().begin()->first.c_str(), runtime.c_str(), PROBE_GROUP_MTE2, config, diagnostic))
+            << diagnostic;
+        EXPECT_EQ(config.keepTemp, std::string(value) == "1");
     }
     boost::filesystem::remove_all(cannRoot);
 }

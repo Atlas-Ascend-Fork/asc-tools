@@ -17,4 +17,13 @@
 #include "acl_san/aclsan_cbdata_resource.h"
 #include "acl_san/aclsan_cbdata_synchronize.h"
 
+// Completed synchronous host-to-device writes only.
+typedef struct AclsanMemoryWriteData {
+    AclsanCallbackCommonData common; // Callback metadata and result.
+    void* destination;               // Device destination address.
+    uint64_t bytes;                  // Number of bytes written.
+    uint32_t deviceId;               // Target device ID.
+    uint32_t reserved;               // Reserved for future use.
+} AclsanMemoryWriteData;
+
 #endif // NPU_TOOLS_NPU_CHECK_INCLUDE_ACL_SAN_ACLSAN_CBDATA_H

@@ -41,4 +41,5 @@ if [[ "${actual_symbols[*]}" != "${expected_symbols[*]}" ]]; then
     exit 1
 fi
 
-readelf --version-info "${library}" | grep -Fq 'Name: ACLSAN_1.0'
+# Consume readelf output fully to avoid SIGPIPE under pipefail.
+readelf --version-info "${library}" | grep -F 'Name: ACLSAN_1.0' > /dev/null

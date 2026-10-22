@@ -8,6 +8,10 @@ foreach(required IN ITEMS SAMPLE FAKE_TOOL TEST_ROOT RUNTIME_ROOT)
   endif()
 endforeach()
 
+# Shared executables must not be overwritten while another test is running.
+file(MAKE_DIRECTORY "${RUNTIME_ROOT}")
+file(LOCK "${RUNTIME_ROOT}/fake-toolchain.lock" GUARD PROCESS TIMEOUT 120)
+
 file(REMOVE_RECURSE "${TEST_ROOT}")
 set(tool_bin "${RUNTIME_ROOT}/tools/bisheng_compiler/bin")
 file(MAKE_DIRECTORY

@@ -131,6 +131,7 @@ std::string FormatLocation(const ReportFrame& frame, bool includeAt)
 
 void PutExecFields(const NpuCheckReportExecContext& exec, ReportFields* fields)
 {
+    (*fields)["deviceId"] = std::to_string(exec.deviceId);
     (*fields)["function"] = OrUnknown(exec.function);
     (*fields)["offset"] = Hex(exec.offset);
     (*fields)["file"] = OrUnknown(exec.file);

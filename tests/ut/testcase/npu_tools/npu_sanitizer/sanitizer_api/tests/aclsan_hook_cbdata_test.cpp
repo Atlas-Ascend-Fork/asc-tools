@@ -52,6 +52,7 @@ struct CallbackCapture {
     AclsanCallbackDomain domain = ACLSAN_CB_DOMAIN_INVALID;
     AclsanCallbackId callbackId{};
     AclsanResourceData resource{};
+    AclsanMemoryWriteData memoryWrite{};
     AclsanSynchronizeData synchronize{};
     AclsanLaunchData launch{};
     std::string launchFunctionName;
@@ -80,6 +81,7 @@ size_t g_lastMallocSize = 0;
 bool g_hostInputAllocation = false;
 aclError g_hostInputMallocResult = ACL_SUCCESS;
 aclError g_hostInputMemcpyResult = ACL_SUCCESS;
+aclError g_hostWriteResult = ACL_SUCCESS;
 std::array<uint8_t, 64> g_hostInputStorage{};
 
 void ResetCapture()
@@ -103,6 +105,7 @@ void ResetCapture()
     g_hostInputAllocation = false;
     g_hostInputMallocResult = ACL_SUCCESS;
     g_hostInputMemcpyResult = ACL_SUCCESS;
+    g_hostWriteResult = ACL_SUCCESS;
 }
 
 void* Address(uintptr_t value) { return reinterpret_cast<void*>(value); }
@@ -1060,6 +1063,8 @@ bool CaptureInvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId callbac
     ++g_callbackCapture.calls;
     if (domain == ACLSAN_CB_DOMAIN_RESOURCE) {
         g_callbackCapture.resource = *static_cast<const AclsanResourceData*>(callbackData);
+    } else if (domain == ACLSAN_CB_DOMAIN_MEMORY) {
+        g_callbackCapture.memoryWrite = *static_cast<const AclsanMemoryWriteData*>(callbackData);
     } else if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
         g_callbackCapture.synchronize = *static_cast<const AclsanSynchronizeData*>(callbackData);
     } else if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && callbackId == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
@@ -1090,6 +1095,9 @@ namespace {
 aclError FakeAclrtMemcpy(void* destination, size_t capacity, const void* source, size_t bytes, aclrtMemcpyKind)
 {
     assert(bytes <= capacity);
+    if (g_hostWriteResult != ACL_SUCCESS) {
+        return g_hostWriteResult;
+    }
     if (g_hostInputAllocation && g_hostInputMemcpyResult != ACL_SUCCESS) {
         return g_hostInputMemcpyResult;
     }
@@ -1100,6 +1108,15 @@ aclError FakeAclrtMemcpy(void* destination, size_t capacity, const void* source,
         std::memcpy(destination, source, bytes);
     }
     return ACL_SUCCESS;
+}
+
+aclError FakeAclrtMemset(void* destination, size_t capacity, int32_t value, size_t bytes)
+{
+    EXPECT_LE(bytes, capacity);
+    if (g_hostWriteResult == ACL_SUCCESS) {
+        std::memset(destination, value, bytes);
+    }
+    return g_hostWriteResult;
 }
 
 void* CaptureGetOriginalRuntimeApi(aclrtApiId apiId)
@@ -1121,6 +1138,8 @@ void* CaptureGetOriginalRuntimeApi(aclrtApiId apiId)
             return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&FakeAclrtSynchronizeStream));
         case ACL_RT_API_aclrtSynchronizeStreamWithTimeout:
             return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&FakeAclrtSynchronizeStreamWithTimeout));
+        case ACL_RT_API_aclrtMemset:
+            return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&FakeAclrtMemset));
         case ACL_RT_API_aclrtMemcpy:
             return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&FakeAclrtMemcpy));
         case ACL_RT_API_aclrtGetDevice:
@@ -1371,4 +1390,50 @@ TEST(AclsanHookCbdata, AtomicCtrlReplayPersistsAcrossSnapshotsAndRestoresMode)
     EXPECT_EQ(g_deviceMemoryCallbacks[5].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
     EXPECT_EQ(g_deviceMemoryCallbacks[5].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
     EXPECT_EQ(g_deviceSyncCallbackCount, 0U);
+}
+
+TEST(AclsanHookCbdata, HostWritesReportCompletionAndExcludeOtherCopyDirections)
+{
+    aclsan_test::Boundary boundary;
+    boundary.getOriginalRuntimeApi = &CaptureGetOriginalRuntimeApi;
+    boundary.invokeCallback = &aclsan::CaptureInvokeCallback;
+    const aclsan_test::BoundaryGuard boundaryGuard{boundary};
+    // -1 selects memset; the other cases exercise actual memcpy directions.
+    for (const int operation :
+         {-1, int(ACL_MEMCPY_HOST_TO_DEVICE), int(ACL_MEMCPY_DEVICE_TO_HOST), int(ACL_MEMCPY_DEVICE_TO_DEVICE),
+          int(ACL_MEMCPY_HOST_TO_HOST)}) {
+        for (int failure = 0; failure < 3; ++failure) {
+            SCOPED_TRACE(::testing::Message() << "operation=" << operation << " failure=" << failure);
+            ResetCapture();
+            g_hostWriteResult = failure == 1 ? ACL_ERROR_INVALID_PARAM : ACL_SUCCESS;
+            g_getDeviceResult = failure == 2 ? ACL_ERROR_FAILURE : ACL_SUCCESS;
+            std::array<uint8_t, 8> destination{};
+            const std::array<uint8_t, 4> source{7, 7, 7, 7};
+            const auto result = operation == -1 ?
+                                    aclrtMemsetHook(destination.data(), destination.size(), 7, source.size()) :
+                                    aclrtMemcpyHook(
+                                        destination.data(), destination.size(), source.data(), source.size(),
+                                        static_cast<aclrtMemcpyKind>(operation));
+            EXPECT_EQ(result, g_hostWriteResult);
+            EXPECT_EQ(destination[0], failure == 1 ? 0 : 7);
+            EXPECT_EQ(destination[4], 0); // capacity must not replace the actual write length.
+            const bool reportsWrite = operation == -1 || operation == ACL_MEMCPY_HOST_TO_DEVICE;
+            ASSERT_EQ(g_callbackCapture.calls, reportsWrite ? 1U : 0U);
+            if (!reportsWrite) {
+                continue;
+            }
+            EXPECT_EQ(g_callbackCapture.domain, ACLSAN_CB_DOMAIN_MEMORY);
+            EXPECT_EQ(g_callbackCapture.callbackId, ACLSAN_CBID_MEMORY_WRITE_END);
+            const auto& data = g_callbackCapture.memoryWrite;
+            EXPECT_EQ(data.common.version, ACLSAN_API_VERSION);
+            EXPECT_EQ(data.common.size, sizeof(data));
+            EXPECT_EQ(data.common.result, failure == 2 ? ACL_ERROR_FAILURE : g_hostWriteResult);
+            EXPECT_EQ(data.destination, destination.data());
+            EXPECT_EQ(data.bytes, source.size());
+            if (failure != 2) {
+                EXPECT_EQ(data.deviceId, 3U);
+            }
+        }
+    }
+    ResetCapture();
 }

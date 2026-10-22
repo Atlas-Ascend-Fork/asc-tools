@@ -366,7 +366,8 @@ struct NpuCheckInitcheckReport {
     std::uint64_t firstUninitAddress = 0;
     std::uint64_t firstUninitOffset = 0;
     std::uint64_t uninitBytes = 0;
-    std::uint64_t initializedBytes = 0;
+    std::uint64_t initializedBytes = 0;           // Initialized bytes in the effective read range.
+    std::uint64_t allocationInitializedBytes = 0; // Initialized bytes in the entire allocation.
 
     std::uint64_t unusedBytes = 0;
     std::uint32_t unusedPercent = 0; // Integer percentage of allocation bytes never initialized.

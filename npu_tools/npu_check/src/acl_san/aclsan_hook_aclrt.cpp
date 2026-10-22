@@ -420,6 +420,41 @@ aclError aclrtMallocWithCfgHook(void** ptr, size_t bytes, aclrtMemMallocPolicy p
     return result;
 }
 
+void ReportHostWrite(
+    const char* apiName, aclError result, void* destination, uint64_t bytes, bool hasDevice, uint32_t deviceId) noexcept
+{
+    // Missing device identity must reach the checker as an incomplete operation,
+    // rather than making a completed write look like uninitialized memory.
+    const AclsanMemoryWriteData data{
+        MakeCallbackCommonData(apiName, hasDevice ? result : ACL_ERROR_FAILURE, sizeof(AclsanMemoryWriteData)),
+        destination, bytes, deviceId, 0};
+    aclsan::AclsanCallbackDispatcher::DispatchMemoryWrite(data);
+}
+
+aclError aclrtMemsetHook(void* destination, size_t capacity, int32_t value, size_t count) noexcept
+{
+    const auto original = GetOriginalRuntimeFunction<aclrtMemsetFunc>(ACL_RT_API_aclrtMemset, "aclrtMemset");
+    uint32_t deviceId = 0;
+    const bool hasDevice = GetCurrentDeviceId(deviceId);
+    const aclError result = original(destination, capacity, value, count);
+    ReportHostWrite("aclrtMemset", result, destination, count, hasDevice, deviceId);
+    return result;
+}
+
+aclError aclrtMemcpyHook(
+    void* destination, size_t capacity, const void* source, size_t count, aclrtMemcpyKind kind) noexcept
+{
+    const auto original = GetOriginalRuntimeFunction<aclrtMemcpyFunc>(ACL_RT_API_aclrtMemcpy, "aclrtMemcpy");
+    if (kind != ACL_MEMCPY_HOST_TO_DEVICE) {
+        return original(destination, capacity, source, count, kind);
+    }
+    uint32_t deviceId = 0;
+    const bool hasDevice = GetCurrentDeviceId(deviceId);
+    const aclError result = original(destination, capacity, source, count, kind);
+    ReportHostWrite("aclrtMemcpy", result, destination, count, hasDevice, deviceId);
+    return result;
+}
+
 // DONE
 aclError aclrtFreeHook(void* deviceAddress) noexcept
 {
@@ -1161,7 +1196,9 @@ constexpr RuntimeHookBinding MakeRuntimeHookBinding(const char* hookName) noexce
 }
 
 // aclrtApiId + acl_tool_inject提供的注册aclrt的函数 + 我们实现的hook函数
-const std::array<RuntimeHookBinding, 15> g_runtimeHookBindings = {{
+const std::array<RuntimeHookBinding, 17> g_runtimeHookBindings = {{
+    MakeRuntimeHookBinding<ACL_RT_API_aclrtMemset, acltoolRegisterAclrtMemsetCallbacks, aclrtMemsetHook>("aclrtMemset"),
+    MakeRuntimeHookBinding<ACL_RT_API_aclrtMemcpy, acltoolRegisterAclrtMemcpyCallbacks, aclrtMemcpyHook>("aclrtMemcpy"),
     MakeRuntimeHookBinding<
         ACL_RT_API_aclrtMallocWithCfg, acltoolRegisterAclrtMallocWithCfgCallbacks, aclrtMallocWithCfgHook>(
         "aclrtMallocWithCfg"),

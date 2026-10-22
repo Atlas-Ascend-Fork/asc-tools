@@ -13,6 +13,8 @@
 #include "checker/checker.h"
 #include "checker/mem_state_tracker.h"
 #include "checker/racecheck/types.h"
+#include "checker/racecheck/dependency_graph.h"
+#include "checker/racecheck/happens_before_graph.h"
 #include <map>
 #include <memory>
 #include <set>

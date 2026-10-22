@@ -76,6 +76,7 @@ struct CallbackKey {
 
 // 记录每组 domain + callback id 需要开启 Hook 的 Runtime API。
 const std::map<CallbackKey, std::vector<aclrtApiId>> g_callbackRoutes = {
+    {{ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END}, {ACL_RT_API_aclrtMemset, ACL_RT_API_aclrtMemcpy}},
     {{ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC},
      {ACL_RT_API_aclrtMalloc, ACL_RT_API_aclrtMallocAlign32, ACL_RT_API_aclrtMallocWithCfg}},
     {{ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE}, {ACL_RT_API_aclrtFree}},
@@ -161,6 +162,8 @@ AclsanSubscriber& AclsanSubscriber::Instance() noexcept
 bool AclsanSubscriber::IsValidCallbackId(AclsanCallbackDomain domain, AclsanCallbackId callbackId) noexcept
 {
     switch (domain) {
+        case ACLSAN_CB_DOMAIN_MEMORY:
+            return callbackId == ACLSAN_CBID_MEMORY_WRITE_END;
         case ACLSAN_CB_DOMAIN_RESOURCE:
             return callbackId >= ACLSAN_CBID_RESOURCE_MEMORY_ALLOC && callbackId <= ACLSAN_CBID_RESOURCE_MEMORY_FREE;
         case ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION:
@@ -178,7 +181,8 @@ bool AclsanSubscriber::IsValidCallbackId(AclsanCallbackDomain domain, AclsanCall
 bool AclsanSubscriber::IsValidCallbackDomain(AclsanCallbackDomain domain) noexcept
 {
     return domain == ACLSAN_CB_DOMAIN_RESOURCE || domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION ||
-           domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE || domain == ACLSAN_CB_DOMAIN_LAUNCH;
+           domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE || domain == ACLSAN_CB_DOMAIN_LAUNCH ||
+           domain == ACLSAN_CB_DOMAIN_MEMORY;
 }
 
 // 根据现在订阅的domain + id，确认哪些aclrt函数需要被hook

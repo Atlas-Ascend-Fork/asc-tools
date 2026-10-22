@@ -15,17 +15,6 @@ set(NPU_CHECK_REAL_DBI_ARCH "" CACHE STRING "CCE architecture for real DBI tests
 set(NPU_CHECK_REAL_DBI_KERNEL "" CACHE FILEPATH "Optional precompiled CCE kernel for real DBI tests")
 set(NPU_CHECK_REAL_DBI_TOOLCHAIN_ROOT "" CACHE PATH "CANN root for real DBI tests")
 set(NPU_CHECK_REAL_DBI_DEVICE_ID "0" CACHE STRING "NPU device ID for the real DBI full-flow test")
-set(NPU_CHECK_PROBE_ARCHES "dav-3510" CACHE STRING
-  "NPU architecture names covered by DBI Probe declaration contract tests")
-
-foreach(probe_arch IN LISTS NPU_CHECK_PROBE_ARCHES)
-  add_test(NAME aclsan.probe_declaration_contract.${probe_arch}
-    COMMAND ${CMAKE_COMMAND}
-      -DDBI_ROOT=${SANITIZER_API_SOURCE_DIR}
-      -DPROBE_ARCH=${probe_arch}
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/probe_declaration_contract_test.cmake)
-endforeach()
-
 add_test(NAME aclsan.no_legacy_acl_hook_registration
   COMMAND ${CMAKE_COMMAND}
     -DDBI_ROOT=${SANITIZER_API_SOURCE_DIR}

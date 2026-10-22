@@ -105,6 +105,11 @@ typedef enum AclsanCallbackIdDeviceInstruction {
     ACLSAN_CBID_DEVICE_INSTRUCTION_INVALID = 0x7fffffff
 } AclsanCallbackIdDeviceInstruction;
 
+typedef enum AclsanCallbackIdMemory {
+    ACLSAN_CBID_MEMORY_WRITE_END = 1,
+    ACLSAN_CBID_MEMORY_INVALID = 0x7fffffff
+} AclsanCallbackIdMemory;
+
 typedef enum AclsanCallbackIdLaunch {
     ACLSAN_CBID_LAUNCH_KERNEL = 1,
     ACLSAN_CBID_LAUNCH_INVALID = 0x7fffffff

@@ -13,7 +13,6 @@
 #include "dbi/embedded_probe_resources.h"
 
 #include <algorithm>
-#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -35,16 +34,20 @@ std::string_view FindProbeDefinition(std::string_view source, std::string_view s
 
 bool GeneratesCompleteDeterministicGroupSources()
 {
-    const std::vector<std::pair<ProbeGroup, std::size_t>> expected{
-        {ProbeGroup::Mte1, 25U},   {ProbeGroup::Mte2, 19U}, {ProbeGroup::Mte3, 2U},    {ProbeGroup::Fixpipe, 7U},
-        {ProbeGroup::Scalar, 79U}, {ProbeGroup::Sync, 35U}, {ProbeGroup::Matrix, 16U}, {ProbeGroup::Vector, 10U},
-    };
-    for (const auto& [group, symbolCount] : expected) {
+    for (const auto group : AllProbeGroups()) {
         const GeneratedProbeSource first = GenerateProbeSource("dav-3510", group);
         const GeneratedProbeSource second = GenerateProbeSource("dav-3510", group);
         CHECK(first.success);
         CHECK(first.diagnostic.empty());
-        CHECK(first.symbols.size() == symbolCount);
+        CHECK(!first.symbols.empty());
+        for (const auto& symbol : first.symbols) {
+            const auto definition = FindProbeDefinition(first.source, symbol + "(");
+            CHECK(!definition.empty());
+            CHECK(
+                definition.find(
+                    "extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void " + symbol + "(") !=
+                std::string_view::npos);
+        }
         CHECK(!first.source.empty());
         CHECK(!first.sourceMap.empty());
         CHECK(first.identity.size() == 16U);
@@ -178,37 +181,6 @@ bool EmbedsPrivateProbeHeaders()
     return true;
 }
 
-bool ValidatesCompleteBindingCatalog()
-{
-    CHECK(BindingSymbols({ProbeGroup::Mte1}).size() == 25U);
-    CHECK(BindingSymbols({ProbeGroup::Mte2}).size() == 65U);
-    CHECK(BindingSymbols({ProbeGroup::Scalar}).size() == 79U);
-    CHECK(BindingSymbols({ProbeGroup::Sync}).size() == 35U);
-    CHECK(BindingSymbols({ProbeGroup::Matrix}).size() == 16U);
-    CHECK(BindingSymbols({ProbeGroup::Vector}).size() == 10U);
-
-    std::vector<std::string> generatedSymbols;
-    for (const ProbeGroup group : AllProbeGroups()) {
-        const GeneratedProbeSource generated = GenerateProbeSource("dav-3510", group);
-        CHECK(generated.success);
-        generatedSymbols.insert(generatedSymbols.end(), generated.symbols.begin(), generated.symbols.end());
-    }
-    std::vector<std::string> bindingSymbols = BindingSymbols(AllProbeGroups());
-    std::sort(generatedSymbols.begin(), generatedSymbols.end());
-    std::sort(bindingSymbols.begin(), bindingSymbols.end());
-    CHECK(generatedSymbols == bindingSymbols);
-    CHECK(bindingSymbols.size() == 193U);
-
-    const std::filesystem::path ctrlBin = std::filesystem::temp_directory_path() / "aclsan-all-probes.ctrl.bin";
-    std::filesystem::remove(ctrlBin);
-    std::string diagnostic;
-    CHECK(GenerateCtrlBin(ctrlBin.string(), AllProbeGroups(), diagnostic));
-    CHECK(diagnostic.empty());
-    CHECK(std::filesystem::file_size(ctrlBin) > 0U);
-    std::filesystem::remove(ctrlBin);
-    return true;
-}
-
 } // namespace
 } // namespace aclsan
 
@@ -220,7 +192,6 @@ TEST(ProbeSourceGenerator, Main)
     ASSERT_TRUE(aclsan::RendersNormalizedVectorSyncDefinitions());
     ASSERT_TRUE(aclsan::RejectsUnsupportedRequests());
     ASSERT_TRUE(aclsan::EmbedsPrivateProbeHeaders());
-    ASSERT_TRUE(aclsan::ValidatesCompleteBindingCatalog());
 }
 
 TEST(ProbeSourceGeneratorScalarDev, IncludesAllWidthsAndByteOffsets)

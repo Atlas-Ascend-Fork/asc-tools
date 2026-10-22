@@ -96,6 +96,7 @@ ReportRecord ToReportRecord(const NpuCheckInitcheckReport& report)
     fields["firstUninitOffset"] = Hex(report.firstUninitOffset);
     fields["uninitBytes"] = std::to_string(report.uninitBytes);
     fields["initializedBytes"] = std::to_string(report.initializedBytes);
+    fields["allocationInitializedBytes"] = std::to_string(report.allocationInitializedBytes);
     fields["unusedBytes"] = std::to_string(report.unusedBytes);
     fields["unusedPercent"] = std::to_string(report.unusedPercent);
     fields["registerId"] = std::to_string(report.registerId);

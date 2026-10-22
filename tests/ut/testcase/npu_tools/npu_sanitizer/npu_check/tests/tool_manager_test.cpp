@@ -246,8 +246,18 @@ TEST(ToolManagerTest, ThreeToolsReportIndependentlyAndShareCallbacks)
         false, false, true);
     ASSERT_EQ(result.initialized, 0);
     ASSERT_TRUE(result.error.empty()) << result.error;
-    EXPECT_EQ(enableCalls, 7U);
-    EXPECT_EQ(enabled.size(), 7U);
+    const decltype(enabled) expected{
+        {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC},
+        {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE},
+        {ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS},
+        {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
+        {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END}};
+    EXPECT_EQ(enabled, expected);
+    EXPECT_EQ(enableCalls, expected.size());
     EXPECT_NE(result.text.find("tool=memcheck"), std::string::npos);
     EXPECT_NE(result.text.find("tool=synccheck"), std::string::npos);
     EXPECT_NE(result.text.find("tool=initcheck"), std::string::npos);

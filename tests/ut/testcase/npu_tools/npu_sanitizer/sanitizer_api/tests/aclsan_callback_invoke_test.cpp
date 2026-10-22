@@ -78,3 +78,32 @@ TEST(AclsanCallbackInvoke, Main)
 
     assert(aclsanUnsubscribe(subscriber) == ACLSAN_STATUS_SUCCESS);
 }
+
+TEST(AclsanCallbackInvoke, CompletedHostWriteDomainCanBeEnabledAndDispatched)
+{
+    AclsanSubscriberHandle subscriber = nullptr;
+    uint64_t observedBytes = 0;
+    const auto capture = [](void* userdata, AclsanCallbackDomain domain, AclsanCallbackId id, const void* data) {
+        EXPECT_EQ(domain, ACLSAN_CB_DOMAIN_MEMORY);
+        EXPECT_EQ(id, ACLSAN_CBID_MEMORY_WRITE_END);
+        *static_cast<uint64_t*>(userdata) = static_cast<const AclsanMemoryWriteData*>(data)->bytes;
+    };
+    ASSERT_EQ(aclsanSubscribe(&subscriber, capture, &observedBytes), ACLSAN_STATUS_SUCCESS);
+    EXPECT_EQ(aclsanEnableDomain(subscriber, ACLSAN_CB_DOMAIN_MEMORY, 1), ACLSAN_STATUS_SUCCESS);
+    uint32_t enabled = 0;
+    EXPECT_EQ(
+        aclsanGetCallbackState(subscriber, ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END, &enabled),
+        ACLSAN_STATUS_SUCCESS);
+    EXPECT_EQ(enabled, 1U);
+    AclsanMemoryWriteData write{};
+    write.common.version = ACLSAN_API_VERSION;
+    write.common.size = sizeof(write);
+    write.bytes = 64;
+    EXPECT_TRUE(aclsan::InvokeCallback(ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END, &write));
+    EXPECT_EQ(observedBytes, 64U);
+    EXPECT_EQ(aclsanEnableDomain(subscriber, ACLSAN_CB_DOMAIN_MEMORY, 0), ACLSAN_STATUS_SUCCESS);
+    write.bytes = 128;
+    EXPECT_TRUE(aclsan::InvokeCallback(ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END, &write));
+    EXPECT_EQ(observedBytes, 64U);
+    EXPECT_EQ(aclsanUnsubscribe(subscriber), ACLSAN_STATUS_SUCCESS);
+}

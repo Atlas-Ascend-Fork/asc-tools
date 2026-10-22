@@ -67,7 +67,22 @@ int main(int argc, char** argv)
         const std::string contents{std::istreambuf_iterator<char>(artifact), std::istreambuf_iterator<char>()};
         const std::set<std::string> symbols = ExtractReportSymbols(contents);
         if (symbols.empty()) {
-            std::cout << "00000000 g F .text.kernel 00000010 FullFlowKernel\n";
+            constexpr std::string_view prefix = ".ascend.meta.";
+            std::set<std::string> kernels;
+            for (size_t pos = contents.find(prefix); pos != std::string::npos;
+                 pos = contents.find(prefix, pos + prefix.size())) {
+                const size_t begin = pos + prefix.size();
+                const size_t end = contents.find('\0', begin);
+                if (end != std::string::npos && end > begin) {
+                    kernels.insert(contents.substr(begin, end - begin));
+                }
+            }
+            if (kernels.empty()) {
+                kernels.insert("FullFlowKernel");
+            }
+            for (const auto& kernel : kernels) {
+                std::cout << "00000000 g F .text.kernel 00000010 " << kernel << '\n';
+            }
         } else {
             for (const std::string& symbol : symbols) {
                 std::cout << "00000000 w F .text.probe 00000010 " << symbol << '\n';

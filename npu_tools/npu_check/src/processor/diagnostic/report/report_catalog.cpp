@@ -90,21 +90,25 @@ const PatternCatalog& Catalog()
 
         MakePattern(
             ReportTool::INITCHECK, NpuCheckReportPattern::INITCHECK_UNINITIALIZED_READ, "uninitialized_read",
-            "========= {{Severity}}:[INITCHECK] Uninitialized {{space}} memory read of size {{accessBytes}} bytes\n"
-            "=========     {{location}}\n"
-            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe ({{pipeName}}) "
-            "in launch ({{launchId}})\n"
-            "=========     Address 0x{{address}}\n"),
+            "========= {{Severity}}:[INITCHECK] Uninitialized {{space}} memory read\n"
+            "=========     Read size: {{accessBytes}} bytes; uninitialized: {{uninitBytes}} bytes\n"
+            "=========     Access start: 0x{{address}}; first uninitialized byte: 0x{{firstUninitAddress}}\n"
+            "=========     Allocation base: 0x{{base}}; initialized bytes: {{allocationInitializedBytes}}; allocation "
+            "instance: {{allocSerialNo}}\n"
+            "=========     {{location}}, pc=0x{{pc}}\n"
+            "=========     device {{deviceId}}, aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe "
+            "({{pipeName}}) in launch ({{launchId}})\n"),
         MakePattern(
             ReportTool::INITCHECK, NpuCheckReportPattern::INITCHECK_PARTIAL_UNINITIALIZED_READ,
             "partial_uninitialized_read",
-            "========= {{Severity}}:[INITCHECK] Partially uninitialized {{space}} memory read of size "
-            "{{accessBytes}} bytes\n"
-            "=========     {{location}}\n"
-            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe ({{pipeName}}) "
-            "in launch ({{launchId}})\n"
-            "=========     First uninitialized byte at 0x{{firstUninitAddress}}, {{uninitBytes}} bytes are "
-            "uninitialized\n"),
+            "========= {{Severity}}:[INITCHECK] Partially uninitialized {{space}} memory read\n"
+            "=========     Read size: {{accessBytes}} bytes; uninitialized: {{uninitBytes}} bytes\n"
+            "=========     Access start: 0x{{address}}; first uninitialized byte: 0x{{firstUninitAddress}}\n"
+            "=========     Allocation base: 0x{{base}}; initialized bytes: {{allocationInitializedBytes}}; allocation "
+            "instance: {{allocSerialNo}}\n"
+            "=========     {{location}}, pc=0x{{pc}}\n"
+            "=========     device {{deviceId}}, aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe "
+            "({{pipeName}}) in launch ({{launchId}})\n"),
         MakePattern(
             ReportTool::INITCHECK, NpuCheckReportPattern::INITCHECK_UNUSED_MEMORY, "unused_memory",
             "========= {{Severity}}:[INITCHECK] Unused {{space}} memory in allocation 0x{{base}} of size "

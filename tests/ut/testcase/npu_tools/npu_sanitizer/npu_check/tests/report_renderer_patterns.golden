@@ -57,16 +57,20 @@
 =========     Address 0x<address>, size <accessBytes> bytes
 
 ===== initcheck.partial_uninitialized_read =====
-========= ERROR:[INITCHECK] Partially uninitialized <space> memory read of size <accessBytes> bytes
-=========     <location>
-=========     by aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>) in launch (<launchId>)
-=========     First uninitialized byte at 0x<firstUninitAddress>, <uninitBytes> bytes are uninitialized
+========= ERROR:[INITCHECK] Partially uninitialized <space> memory read
+=========     Read size: <accessBytes> bytes; uninitialized: <uninitBytes> bytes
+=========     Access start: 0x<address>; first uninitialized byte: 0x<firstUninitAddress>
+=========     Allocation base: 0x<base>; initialized bytes: <allocationInitializedBytes>; allocation instance: <allocSerialNo>
+=========     <location>, pc=0x<pc>
+=========     device <deviceId>, aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>) in launch (<launchId>)
 
 ===== initcheck.uninitialized_read =====
-========= ERROR:[INITCHECK] Uninitialized <space> memory read of size <accessBytes> bytes
-=========     <location>
-=========     by aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>) in launch (<launchId>)
-=========     Address 0x<address>
+========= ERROR:[INITCHECK] Uninitialized <space> memory read
+=========     Read size: <accessBytes> bytes; uninitialized: <uninitBytes> bytes
+=========     Access start: 0x<address>; first uninitialized byte: 0x<firstUninitAddress>
+=========     Allocation base: 0x<base>; initialized bytes: <allocationInitializedBytes>; allocation instance: <allocSerialNo>
+=========     <location>, pc=0x<pc>
+=========     device <deviceId>, aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>) in launch (<launchId>)
 
 ===== initcheck.uninitialized_register_use =====
 ========= ERROR:[INITCHECK] Register <registerName> was used before initialization

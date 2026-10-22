@@ -139,6 +139,7 @@ if(ENABLE_TEST)
 
     add_executable(aclsan_symbolizer_api_test ${SANITIZER_API_TEST_DIR}/aclsan_symbolizer_api_test.cpp)
     target_compile_features(aclsan_symbolizer_api_test PRIVATE cxx_std_17)
+    target_compile_definitions(aclsan_symbolizer_api_test PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
     target_compile_options(aclsan_symbolizer_api_test PRIVATE
       -Wall -Wextra -Werror -Wno-error=cast-function-type)
     target_include_directories(aclsan_symbolizer_api_test PRIVATE
