@@ -117,8 +117,15 @@ def test_full_mode_with_arm_error_marks_invalid_and_exits_nonzero(
     assert with_arm["invalid"] is True
     assert result["meta"]["invalid_arms"]["with"] == 1
     dimensions = result["dimensions"]
-    assert dimensions["tool_use_adherence"]["with_invalid"] == 1
-    assert dimensions["tool_use_adherence"]["with_rate"] is None
+    dim_key = result["per_case"][0]["dimension"]
+    # 维度 key 从结果反取以解耦数据位置，但语义必须锁定：evals.json id 1
+    # 的维度变化时应在此显式失败（提示同步更新），而非静默适配假绿
+    assert dim_key == "tool_use_adherence", (
+        "evals.json id 1 的 dimension 已不再是 tool_use_adherence，"
+        "请确认变化是否符合预期并同步更新本断言"
+    )
+    assert dimensions[dim_key]["with_invalid"] == 1
+    assert dimensions[dim_key]["with_rate"] is None
 
     report = (out_dir / "report.md").read_text(encoding="utf-8")
     assert "invalid" in report
