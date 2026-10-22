@@ -311,12 +311,13 @@ case "$MODE" in
     # harness 来源：工程自带 benchmark，或拷
     #   ops-family/references/common/timing_harness/timing_harness_aclrt_event.cpp
     # （模板拷贝纪律；[MODIFY] 点见模板头注释）。
-    # 产物约定：harness 在当前工作目录落 result.json（C++ 模板 --output 默认值），
-    # 本脚本归档到 $OUTPUT/ 并 manifest 记账；warmup/repeat 是口径字段由 harness 持有。
+    # 产物契约：harness 的 --output 必填（本脚本显式指定），结果落 $OUTPUT/ 并
+    # manifest 记账；warmup/repeat 是口径字段由 harness 持有。EXE_ARGS 由调用方
+    # 提供（含 --output 时以调用方为准；缺省追加本脚本的目标路径）。
     TIMING_JSON="$OUTPUT/result.json"
     TIMING_LOG="$OUTPUT/timing_harness.log"
     # 退出码先捕获再判定（跨 [[ ]] 取 $? 会拿到测试结果而非 harness 退出码——检视 #9 修复）
-    timeout "$MSPROF_TIMEOUT" bash -c "cd '$PWD' && '${EXE}' ${EXE_ARGS}" >"$TIMING_LOG" 2>&1
+    timeout "$MSPROF_TIMEOUT" bash -c "cd '$PWD' && '${EXE}' ${EXE_ARGS} --output '$PWD/result.json'" >"$TIMING_LOG" 2>&1
     harness_rc=$?
     if [[ $harness_rc -eq 0 ]] && [[ -f "result.json" ]]; then
       mv "result.json" "$TIMING_JSON"

@@ -1,0 +1,56 @@
+{
+  "schema": "opstune.knowledge-gaps/1.0",
+  "description": "ops-family 知识缺口计数落盘（SKILL.md 承诺的「未收录返回并计数上报」的载体）。Agent/人工在路由时发现族未收录/族内文档为骨架时追加 gap 条目；每季度由缺口感知回路（27-4）读取排产。",
+  "gaps": [
+    {
+      "family": "fa",
+      "kind": "family_missing",
+      "note": "FlashAttention 族无专项文档（SKILL.md 已标 ❌ 已知缺口）。部分解决（2026-10-15）：方法论三篇已蒸馏（guide/roofline/mix-kernel，源自 参考实现 四层方法论）——设计参考就位；货架代码与 E 级实战案例仍缺（无同型降级策略执行中）",
+      "first_seen": "2026-10-14",
+      "count": 0,
+      "resolved": "partial",
+      "resolved_at": "2026-10-15"
+    },
+    {
+      "family": "elementwise",
+      "kind": "guide_missing",
+      "note": "无 guide.md（仅 index + 2 篇设计文档），模板数为 0。已解决（2026-10-15 P1-7③）：guide.md 路由层已补，模板货架已补（templates/add_custom 可裁剪工程模板 ×5，蒸馏自 direct-invoke-template）",
+      "first_seen": "2026-10-14",
+      "resolved": true,
+      "resolved_at": "2026-10-15",
+      "count": 0
+    },
+    {
+      "family": "sort",
+      "kind": "guide_skeleton",
+      "note": "guide 4 行；radix_sort.md 实质。已解决（2026-10-15）：guide 蒸馏为 M-way 归并三 Pattern 决策树 + Pattern C 四阶段架构（源自 Ascend C Tiling 设计方法论·sort 分册）",
+      "first_seen": "2026-10-14",
+      "count": 0,
+      "resolved": true,
+      "resolved_at": "2026-10-15"
+    },
+    {
+      "family": "simt",
+      "kind": "guide_skeleton",
+      "note": "guide 4 行；optimization-guide 实质。已解决（2026-10-15）：guide 蒸馏为 VF 三件套范式 + 共享内存/多核同步 + verdict 映射（源自 参考实现 13 篇）",
+      "first_seen": "2026-10-14",
+      "count": 0,
+      "resolved": true,
+      "resolved_at": "2026-10-15"
+    },
+    {
+      "family": "matmul",
+      "kind": "no_shelf_code",
+      "note": "六策略均为设计文档，无可拷贝模板（族表已改标「设计参考（无货架代码）」）",
+      "first_seen": "2026-10-14",
+      "count": 0
+    },
+    {
+      "family": "mc2",
+      "kind": "no_shelf_code",
+      "note": "3 策略均为设计文档，无可拷贝模板（族表已改标「设计参考（无货架代码）」）",
+      "first_seen": "2026-10-14",
+      "count": 0
+    }
+  ]
+}

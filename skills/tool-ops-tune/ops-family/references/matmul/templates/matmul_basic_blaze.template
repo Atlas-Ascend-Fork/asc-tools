@@ -1,0 +1,165 @@
+# matmul_basic_blaze.template — 基础 MatMul 可拷贝模板（Blaze/tensor_api 路径，DAV_3510）
+
+> **来源（P1-7②/G14 回流）**：内容回流自 Ascend C Blaze/tensor_api Matmul 最佳实践
+> skill 的 `references/scenarios/basic-matmul-development.md`（已通过 480 case
+> 工程穿刺验证：fp16/bf16/fp32 × ND/NZ × transpose × bias 组合）——
+> ops-tune 模板拷贝纪律的「货」，此前 matmul 族只有设计文档无可拷贝代码。
+>
+> **[MODIFY] 标注点**：只改这些——dtype 类型别名、ProblemShape、tiling 字段映射；
+> 组件链（Kernel/BlockMmad/Scheduler/Epilogue）结构**不许改**。
+> 转换规则见同目录 `usage_guide.md`。
+
+## §1 Kernel 入口（op_kernel/matmul_kernel.h）
+
+```cpp
+template <bool TransA, bool TransB, CubeFormat FormatA, CubeFormat FormatB>
+__global__ __aicore__ __cube__ void matmul_kernel(
+    GM_ADDR dA, GM_ADDR dB, GM_ADDR dBias, GM_ADDR dC,
+    const MatmulTilingData tilingData)
+{
+    // [MODIFY] 按用户需求固定 dtype：fp16=half / bf16=bfloat16_t / fp32=float(IsFp32=true)
+    using AType = half;
+    using BType = half;
+    using CType = half;
+    using BiasType = float;
+
+    using LayoutA = AscendC::Std::conditional_t<
+        (FormatA == CubeFormat::NZ),
+        AscendC::Std::conditional_t<TransA, AscendC::Te::ZNLayoutPtn, AscendC::Te::NZLayoutPtn>,
+        AscendC::Std::conditional_t<TransA, AscendC::Te::DNExtLayoutPtn, AscendC::Te::NDExtLayoutPtn>>;
+    using LayoutB = AscendC::Std::conditional_t<
+        (FormatB == CubeFormat::NZ),
+        AscendC::Std::conditional_t<TransB, AscendC::Te::ZNLayoutPtn, AscendC::Te::NZLayoutPtn>,
+        AscendC::Std::conditional_t<TransB, AscendC::Te::DNExtLayoutPtn, AscendC::Te::NDExtLayoutPtn>>;
+    using LayoutC = AscendC::Te::NDExtLayoutPtn;
+    using LayoutBias = AscendC::Te::NDExtLayoutPtn;
+
+    constexpr uint64_t FUSED_OP_TYPE = 0;
+    constexpr bool IS_ND_FORMAT = (FormatA == CubeFormat::ND && FormatB == CubeFormat::ND);
+    constexpr bool IS_FP32 = AscendC::Std::is_same_v<AType, float>;
+
+    using ProblemShape = AscendC::Te::Shape<int64_t, int64_t, int64_t, int64_t>;
+    using DispatchPolicy = Blaze::Gemm::MatmulMultiBlockBasic<NO_FULL_LOAD_MODE, FUSED_OP_TYPE>;
+    using BlockMmad = Blaze::Gemm::Block::BlockMmad<
+        DispatchPolicy, AType, LayoutA, BType, LayoutB, CType, LayoutC, BiasType, LayoutBias>;
+    using BlockScheduler = Blaze::Gemm::Block::BlockSchedulerMatmulBasic<
+        ProblemShape, NO_FULL_LOAD_MODE, IS_FP32, IS_ND_FORMAT>;
+    using BlockEpilogue = Blaze::Gemm::Block::BlockEpilogueEmpty;
+    using KernelImpl = Blaze::Gemm::Kernel::GemmUniversal<
+        ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
+
+    using Params = typename KernelImpl::Params;
+    using BlockMmadParams = typename BlockMmad::Params;
+    using BlockSchedulerParams = typename BlockScheduler::Params;
+    using BlockEpilogueParams = typename BlockEpilogue::Params;
+
+    // [MODIFY] batch 固定 1；多 batch 场景改第 4 维
+    ProblemShape problemShape{
+        static_cast<int64_t>(tilingData.m),
+        static_cast<int64_t>(tilingData.n),
+        static_cast<int64_t>(tilingData.k),
+        1L};
+
+    BlockMmadParams mmParams;
+    mmParams.aGmAddr = dA;
+    mmParams.bGmAddr = dB;
+    mmParams.cGmAddr = dC;
+    mmParams.biasGmAddr = hasBias ? dBias : nullptr;
+    mmParams.ml1 = tilingData.mL1;
+    mmParams.nl1 = tilingData.nL1;
+    mmParams.kl1 = tilingData.kL1;
+    mmParams.ml0 = tilingData.baseM;
+    mmParams.nl0 = tilingData.baseN;
+    mmParams.kl0 = tilingData.baseK;
+    mmParams.l1Stages = tilingData.l1BufferNum;
+    mmParams.l0cStages = static_cast<uint16_t>(tilingData.l0cDB);
+
+    BlockSchedulerParams schParams;
+    schParams.mL1 = tilingData.mL1;
+    schParams.nL1 = tilingData.nL1;
+    schParams.kL1 = tilingData.kL1;
+    schParams.baseM = tilingData.baseM;
+    schParams.baseN = tilingData.baseN;
+    schParams.baseK = tilingData.baseK;
+    schParams.mTailCnt = tilingData.mTailCnt;
+    schParams.nTailCnt = tilingData.nTailCnt;
+    schParams.mBaseTailSplitCnt = tilingData.mBaseTailSplitCnt;
+    schParams.nBaseTailSplitCnt = tilingData.nBaseTailSplitCnt;
+    schParams.mTailMain = tilingData.mTailMain;
+    schParams.nTailMain = tilingData.nTailMain;
+    schParams.isHf32 = 0;
+    schParams.l2CacheMode = Blaze::Gemm::L2_CACHE_DEFAULT;
+    schParams.sliceM = 0;
+    schParams.srcNdStride = 1;
+    schParams.innerBatch = 1;
+
+    BlockEpilogueParams epilogueParams;
+
+    Params params;
+    params.problemShape = problemShape;
+    params.mmadParams = mmParams;
+    params.epilogueParams = epilogueParams;
+    params.schParams = schParams;
+
+    KernelImpl kernel;
+    kernel(params);
+}
+```
+
+## §2 Launcher 分发（transA × transB × formatA × formatB = 16 组合，分层分发禁手写扁平 16 分支）
+
+```cpp
+template <bool TransA, bool TransB, CubeFormat FormatA>
+void LaunchByBLayout(
+    aclrtStream stream,
+    GM_ADDR dA, GM_ADDR dB, GM_ADDR dBias, GM_ADDR dC,
+    const MatmulTilingData tilingData,
+    CubeFormat formatB)
+{
+    if (formatB == CubeFormat::NZ) {
+        matmul_kernel<TransA, TransB, FormatA, CubeFormat::NZ>
+            <<<tilingData.usedCoreNum, nullptr, stream>>>(dA, dB, dBias, dC, tilingData);
+    } else {
+        matmul_kernel<TransA, TransB, FormatA, CubeFormat::ND>
+            <<<tilingData.usedCoreNum, nullptr, stream>>>(dA, dB, dBias, dC, tilingData);
+    }
+}
+
+template <bool TransA, bool TransB>
+void LaunchByALayout(
+    aclrtStream stream,
+    GM_ADDR dA, GM_ADDR dB, GM_ADDR dBias, GM_ADDR dC,
+    const MatmulTilingData tilingData,
+    CubeFormat formatA,
+    CubeFormat formatB)
+{
+    if (formatA == CubeFormat::NZ) {
+        LaunchByBLayout<TransA, TransB, CubeFormat::NZ>(stream, dA, dB, dBias, dC, tilingData, formatB);
+    } else {
+        LaunchByBLayout<TransA, TransB, CubeFormat::ND>(stream, dA, dB, dBias, dC, tilingData, formatB);
+    }
+}
+```
+
+## §3 TilingData → Params 映射表（核对清单）
+
+| Params 字段 | TilingData 来源 | 说明 |
+|------------|----------------|------|
+| `problemShape` | `{m, n, k, 1}` | batch 固定 1 |
+| `mmadParams.ml1/nl1/kl1` | `mL1/nL1/kL1` | L1 tile 尺寸 |
+| `mmadParams.ml0/nl0/kl0` | `baseM/baseN/baseK` | L0 tile 尺寸 |
+| `mmadParams.l1Stages` | `l1BufferNum` | SWAT 默认 L1 buffer 数 |
+| `mmadParams.l0cStages` | `l0cDB` | L0C buffer 数 |
+| `schParams.mTailCnt/nTailCnt` | `mTailCnt/nTailCnt` | 尾块 split（普通 SWAT 语义等价 tail split factor，默认 1/1） |
+
+## §4 候选参数生成
+
+tiling 候选不再人工拍：`ops-family/scripts/tiling_candidates.py --family matmul`
+（容量预算校验 + 候选表）。
+
+## §5 与优化策略文档的关系
+
+本模板是 pingpong/swat/streamk 等六策略（`guide.md`）的**基础实现底座**——
+优化策略在 Blaze 层多由 Scheduler/BlockMmad 组件参数承载（如 `l1BufferNum`
+即 pingpong 双缓冲份数），调优时先读 `guide.md` 判定策略，回本模板改参数，
+不改组件链。

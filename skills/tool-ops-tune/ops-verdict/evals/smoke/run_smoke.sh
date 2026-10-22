@@ -123,7 +123,7 @@ else
   pass "顶层 local 注入 → mc2 模式退出非 0（F1 类 bug 冒烟可抓）"
 fi
 
-echo "=== smoke 6: 族表资产静态断言（family_asset_audit.py 随算子族 PR 交付，当前跳过）==="
+echo "=== smoke 6: 族表资产静态断言（防 SKILL.md 数据漂移）==="
 if [ -f "$REPO_ROOT/ops-family/scripts/family_asset_audit.py" ]; then
   python3 "$REPO_ROOT/ops-family/scripts/family_asset_audit.py" >/dev/null 2>&1
   check "family_asset_audit.py（族表模板数与实测一致）"
@@ -186,7 +186,7 @@ else
 fi
 
 
-echo "=== smoke 9: tiling_candidates 四族干跑（tiling_candidates.py 随算子族 PR 交付，当前跳过）==="
+echo "=== smoke 9: tiling_candidates 四族干跑（候选生成 + 容量校验）==="
 if [ ! -f "$REPO_ROOT/ops-family/scripts/tiling_candidates.py" ]; then
   echo "[SKIP] tiling_candidates.py 未交付（随算子族 PR），smoke 9 暂跳过——交付后本段自动生效"
 else
