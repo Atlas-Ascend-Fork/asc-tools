@@ -255,7 +255,11 @@ TEST(CtrlbinGeneratorTest, FiltersBindingsToSelectedProbeGroups)
     EXPECT_NE(std::find(symbols.begin(), symbols.end(), "__sanitizer_report_set_l1_2d_b16"), symbols.end());
 
     EXPECT_EQ(BindingSymbols({ProbeGroup::Matrix}).size(), 16U);
-    EXPECT_EQ(BindingSymbols({ProbeGroup::Vector}).size(), 10U);
+    const auto vectorSymbols = BindingSymbols({ProbeGroup::Vector});
+    EXPECT_EQ(vectorSymbols.size(), 10U);
+    EXPECT_NE(
+        std::find(vectorSymbols.begin(), vectorSymbols.end(), "__sanitizer_report_copy_ubuf_to_ubuf"),
+        vectorSymbols.end());
 }
 
 TEST(CtrlbinGeneratorTest, IncludesScalarStateBindingsForMte3AndFixpipeConsumers)

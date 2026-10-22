@@ -666,28 +666,31 @@ void TestNdDmaPadCountStatePreservesExactGmFootprint()
     aclsan::ParsedTraceRecord loop0Stride = base;
     loop0Stride.record.instrId = 132;
     loop0Stride.record.category = aclsan::DeviceInstructionCategory::RegisterState;
-    loop0Stride.record.args[0] = UINT64_C(1) << 20U;
+    loop0Stride.record.args[0] = (UINT64_C(1) << 20U) | 1;
     loop0Stride.instrExecId = 2;
 
     aclsan::ParsedTraceRecord loop1Stride = base;
     loop1Stride.record.instrId = 133;
     loop1Stride.record.category = aclsan::DeviceInstructionCategory::RegisterState;
-    loop1Stride.record.args[0] = UINT64_C(8) << 20U;
+    loop1Stride.record.args[0] = (UINT64_C(8) << 20U) | 16;
     loop1Stride.instrExecId = 3;
 
     aclsan::ParsedTraceRecord loop2Stride = base;
     loop2Stride.record.instrId = 134;
     loop2Stride.record.category = aclsan::DeviceInstructionCategory::RegisterState;
+    loop2Stride.record.args[0] = 128;
     loop2Stride.instrExecId = 4;
 
     aclsan::ParsedTraceRecord loop3Stride = base;
     loop3Stride.record.instrId = 135;
     loop3Stride.record.category = aclsan::DeviceInstructionCategory::RegisterState;
+    loop3Stride.record.args[0] = 1024;
     loop3Stride.instrExecId = 5;
 
     aclsan::ParsedTraceRecord loop4Stride = base;
     loop4Stride.record.instrId = 136;
     loop4Stride.record.category = aclsan::DeviceInstructionCategory::RegisterState;
+    loop4Stride.record.args[0] = 16384;
     loop4Stride.instrExecId = 6;
 
     aclsan::ParsedTraceRecord memory = base;
@@ -705,7 +708,7 @@ void TestNdDmaPadCountStatePreservesExactGmFootprint()
             {padding, loop0Stride, loop1Stride, loop2Stride, loop3Stride, loop4Stride, memory}, *decoder);
     });
 
-    assert(g_deviceMemoryCallbackCount == 1);
+    assert(g_deviceMemoryCallbackCount == 2);
     const auto& access = g_deviceMemoryCallbacks[0];
     assert(access.address == 0x4000);
     assert(access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
@@ -715,13 +718,26 @@ void TestNdDmaPadCountStatePreservesExactGmFootprint()
     assert(access.layout.ndAffine.dims[1] == 2);
     assert(access.layout.ndAffine.strides[0] == 1);
     assert(access.layout.ndAffine.strides[1] == 8);
+    const auto& local = g_deviceMemoryCallbacks[1];
+    assert(local.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB);
+    assert(local.address == 0x2000 && local.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    assert(local.layoutKind == ACLSAN_MEM_LAYOUT_ND_AFFINE);
+    assert(local.layout.ndAffine.rank == 5 && local.layout.ndAffine.elementBytes == 1);
+    const std::array<uint64_t, 5> paddedCounts{8, 5, 8, 12, 16};
+    const std::array<int64_t, 5> dstStrides{1, 16, 128, 1024, 16384};
+    for (size_t axis = 0; axis < paddedCounts.size(); ++axis) {
+        assert(local.layout.ndAffine.dims[axis] == paddedCounts[axis]);
+        assert(local.layout.ndAffine.strides[axis] == dstStrides[axis]);
+    }
+    assert(local.accessCount == 2 && local.header.instrExecId == access.header.instrExecId);
     assert(logs.find("type=NdDmaPadCountParamField left=[1,3,5,7] right=[2,4,6,8]") != std::string::npos);
 
     ResetCapture();
     const std::vector<aclsan::PreparedTraceLaunch::HostInput> internalInputs{{Address(0x4000), 32}};
     aclsan::DispatchTraceRecords(
         {padding, loop0Stride, loop1Stride, loop2Stride, loop3Stride, loop4Stride, memory}, *decoder, &internalInputs);
-    assert(g_deviceMemoryCallbackCount == 0);
+    assert(g_deviceMemoryCallbackCount == 1);
+    assert(g_deviceMemoryCallbacks[0].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB);
 }
 
 void TestDmaOuterLoopStateReachesMemoryCallback()
@@ -762,12 +778,12 @@ void TestDmaOuterLoopStateReachesMemoryCallback()
     memory.record.args[0] = 0x2000;
     memory.record.args[1] = 0x6000;
     memory.record.args[2] = (UINT64_C(2) << 4U) | (UINT64_C(32) << 25U);
-    memory.record.args[3] = 64;
+    memory.record.args[3] = UINT64_C(64) | (UINT64_C(96) << 40U);
     memory.instrExecId = 4;
 
     aclsan::DispatchTraceRecords({loopSize, loop1Stride, loop2Stride, memory}, *decoder);
 
-    assert(g_deviceMemoryCallbackCount == 1);
+    assert(g_deviceMemoryCallbackCount == 2);
     const auto& access = g_deviceMemoryCallbacks[0];
     assert(access.address == 0x6000);
     assert(access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
@@ -777,6 +793,15 @@ void TestDmaOuterLoopStateReachesMemoryCallback()
     assert(access.layout.ndAffine.dims[0] == 2 && access.layout.ndAffine.strides[0] == 64);
     assert(access.layout.ndAffine.dims[1] == 2 && access.layout.ndAffine.strides[1] == 0x200);
     assert(access.layout.ndAffine.dims[2] == 3 && access.layout.ndAffine.strides[2] == 0x1000);
+    const auto& local = g_deviceMemoryCallbacks[1];
+    assert(local.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB);
+    assert(local.address == 0x2000 && local.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    assert(local.layoutKind == ACLSAN_MEM_LAYOUT_ND_AFFINE);
+    assert(local.layout.ndAffine.elementBytes == 32);
+    assert(local.layout.ndAffine.dims[0] == 2 && local.layout.ndAffine.strides[0] == 96);
+    assert(local.layout.ndAffine.dims[1] == 2 && local.layout.ndAffine.strides[1] == 0x20);
+    assert(local.layout.ndAffine.dims[2] == 3 && local.layout.ndAffine.strides[2] == 0x40);
+    assert(local.accessCount == 2 && local.header.instrExecId == access.header.instrExecId);
 }
 
 void TestUbufToGmOuterLoopStateReachesMemoryCallback()
@@ -814,14 +839,14 @@ void TestUbufToGmOuterLoopStateReachesMemoryCallback()
     memory.record.args[0] = 0x7000;
     memory.record.args[1] = 0x2000;
     memory.record.args[2] = (UINT64_C(2) << 4U) | (UINT64_C(32) << 25U);
-    memory.record.args[3] = 64;
+    memory.record.args[3] = UINT64_C(64) | (UINT64_C(96) << 40U);
 
     auto ctrl = base;
     ctrl.record.instrId = 159;
     ctrl.record.args[0] = 0;
     aclsan::DispatchTraceRecords({ctrl, loopSize, loop1Stride, loop2Stride, memory}, *decoder);
 
-    assert(g_deviceMemoryCallbackCount == 1);
+    assert(g_deviceMemoryCallbackCount == 2);
     const auto& access = g_deviceMemoryCallbacks[0];
     assert(access.address == 0x7000);
     assert(access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
@@ -831,6 +856,15 @@ void TestUbufToGmOuterLoopStateReachesMemoryCallback()
     assert(access.layout.ndAffine.dims[0] == 2 && access.layout.ndAffine.strides[0] == 64);
     assert(access.layout.ndAffine.dims[1] == 2 && access.layout.ndAffine.strides[1] == 0x400);
     assert(access.layout.ndAffine.dims[2] == 3 && access.layout.ndAffine.strides[2] == 0x2000);
+    const auto& local = g_deviceMemoryCallbacks[1];
+    assert(local.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB);
+    assert(local.address == 0x2000 && local.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    assert(local.layoutKind == ACLSAN_MEM_LAYOUT_ND_AFFINE);
+    assert(local.layout.ndAffine.elementBytes == 32);
+    assert(local.layout.ndAffine.dims[0] == 2 && local.layout.ndAffine.strides[0] == 96);
+    assert(local.layout.ndAffine.dims[1] == 2 && local.layout.ndAffine.strides[1] == 0x20);
+    assert(local.layout.ndAffine.dims[2] == 3 && local.layout.ndAffine.strides[2] == 0x40);
+    assert(local.accessCount == 2 && local.header.instrExecId == access.header.instrExecId);
 }
 
 void TestGmToL1OuterLoopStateReachesMemoryCallback()
@@ -1361,35 +1395,40 @@ TEST(AclsanHookCbdata, AtomicCtrlReplayPersistsAcrossSnapshotsAndRestoresMode)
     EXPECT_EQ(g_deviceMemoryCallbackCount, 0U);
     EXPECT_EQ(g_deviceSyncCallbackCount, 0U);
     aclsan::DispatchTraceRecords({memory}, decoder, nullptr, &state);
-    ASSERT_EQ(g_deviceMemoryCallbackCount, 1U);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 2U);
     EXPECT_EQ(g_deviceMemoryCallbacks[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
     EXPECT_NE(g_deviceMemoryCallbacks[0].regDependencyMask0 & (UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CTRL), 0U);
     ctrl.record.args[0] = UINT64_C(2) << 9U; // none，但保留旧的 min 位
     aclsan::DispatchTraceRecords({ctrl, memory}, decoder, nullptr, &state);
-    ASSERT_EQ(g_deviceMemoryCallbackCount, 2U);
-    EXPECT_EQ(g_deviceMemoryCallbacks[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 4U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[2].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
     ctrl.record.args[0] = 64; // set_ctrl(savedCtrl)
     aclsan::DispatchTraceRecords({ctrl, memory}, decoder, nullptr, &state);
-    ASSERT_EQ(g_deviceMemoryCallbackCount, 3U);
-    EXPECT_EQ(g_deviceMemoryCallbacks[2].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 6U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[4].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
     EXPECT_EQ(g_deviceMemoryCallbacks[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
     ctrl.record.args[0] = 64 | (UINT64_C(1) << 9U); // max 替换 add
     aclsan::DispatchTraceRecords({ctrl, memory}, decoder, nullptr, &state);
-    ASSERT_EQ(g_deviceMemoryCallbackCount, 4U);
-    EXPECT_EQ(g_deviceMemoryCallbacks[3].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX);
-    EXPECT_EQ(g_deviceMemoryCallbacks[3].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 8U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[6].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX);
+    EXPECT_EQ(g_deviceMemoryCallbacks[6].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
     ctrl.record.args[0] = 64 | (UINT64_C(2) << 9U); // min 替换 max
     aclsan::DispatchTraceRecords({ctrl, memory}, decoder, nullptr, &state);
-    ASSERT_EQ(g_deviceMemoryCallbackCount, 5U);
-    EXPECT_EQ(g_deviceMemoryCallbacks[4].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN);
-    EXPECT_EQ(g_deviceMemoryCallbacks[4].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 10U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[8].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN);
+    EXPECT_EQ(g_deviceMemoryCallbacks[8].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
     memory.phyCoreId = 3;
     loops.phyCoreId = 3;
     aclsan::DispatchTraceRecords({loops, memory}, decoder, nullptr, &state);
-    ASSERT_EQ(g_deviceMemoryCallbackCount, 6U);
-    EXPECT_EQ(g_deviceMemoryCallbacks[5].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-    EXPECT_EQ(g_deviceMemoryCallbacks[5].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 12U);
+    EXPECT_EQ(g_deviceMemoryCallbacks[10].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    EXPECT_EQ(g_deviceMemoryCallbacks[10].header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
     EXPECT_EQ(g_deviceSyncCallbackCount, 0U);
+    for (size_t i = 1; i < g_deviceMemoryCallbackCount; i += 2) {
+        EXPECT_EQ(g_deviceMemoryCallbacks[i].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+        EXPECT_EQ(g_deviceMemoryCallbacks[i].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+        EXPECT_EQ(g_deviceMemoryCallbacks[i].accessCount, 2U);
+    }
 }
 
 TEST(AclsanHookCbdata, HostWritesReportCompletionAndExcludeOtherCopyDirections)

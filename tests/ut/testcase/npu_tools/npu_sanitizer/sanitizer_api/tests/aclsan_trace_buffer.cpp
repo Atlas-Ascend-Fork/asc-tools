@@ -164,12 +164,11 @@ bool ParsesMultipleLogicalBlocksInOnePhysicalSlice()
     const auto parsed = aclsan::ParseTraceBuffer(buffer.data(), buffer.size(), 12, 20, 19, deviceId);
     CHECK(parsed.ok);
     CHECK(parsed.records.size() == 5);
-    constexpr uint32_t instructionIds[] = {1, 2, 1, 2, 3};
     for (uint32_t index = 0; index < 5; ++index) {
         CHECK(parsed.records[index].blockId == blockIds[index]);
         CHECK(parsed.records[index].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
         CHECK(parsed.records[index].phyCoreId == 2);
-        CHECK(parsed.records[index].instrExecId == instructionIds[index]);
+        CHECK(parsed.records[index].instrExecId == 2U * aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + index + 1U);
         CHECK(parsed.records[index].deviceId == deviceId);
         CHECK(parsed.records[index].launchId == 19);
         CHECK(parsed.records[index].record.parameterBase == 0x10100 + index);
@@ -195,11 +194,11 @@ bool ParsesTwoPartPhysicalCoreTopology()
     CHECK(parsed.records[0].blockId == 1);
     CHECK(parsed.records[0].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
     CHECK(parsed.records[0].phyCoreId == 1);
-    CHECK(parsed.records[0].instrExecId == 1);
+    CHECK(parsed.records[0].instrExecId == aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 1U);
     CHECK(parsed.records[1].blockId == 1);
     CHECK(parsed.records[1].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
     CHECK(parsed.records[1].phyCoreId == 2);
-    CHECK(parsed.records[1].instrExecId == 1);
+    CHECK(parsed.records[1].instrExecId == 2U * aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 1U);
     CHECK(parsed.records[2].blockId == 0);
     CHECK(parsed.records[2].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
     CHECK(parsed.records[2].phyCoreId == 7);
@@ -286,9 +285,9 @@ bool DoesNotValidateLogicalBlockPlacement()
     CHECK(parsed.records[0].blockId == 1);
     CHECK(parsed.records[0].instrExecId == 1);
     CHECK(parsed.records[1].blockId == 0);
-    CHECK(parsed.records[1].instrExecId == 1);
+    CHECK(parsed.records[1].instrExecId == aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 1U);
     CHECK(parsed.records[2].blockId == 1);
-    CHECK(parsed.records[2].instrExecId == 2);
+    CHECK(parsed.records[2].instrExecId == aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 2U);
     return true;
 }
 
@@ -348,6 +347,47 @@ bool RejectsInvalidShape()
 }
 
 } // namespace
+
+TEST(AclsanTraceBuffer, InstructionIdsAreUniqueAcrossCoresAndLogicalBlocks)
+{
+    std::vector<uint8_t> buffer;
+    std::string error;
+    ASSERT_TRUE(aclsan::InitializeTraceBuffer(buffer, 6, 2, 31, error));
+    ASSERT_TRUE(PutRecord(buffer, 0, 0, 0, 0x100, ACLSAN_DEVICE_PIPE_MTE1, 0));
+    ASSERT_TRUE(PutRecord(buffer, 1, 0, 0, 0x200, ACLSAN_DEVICE_PIPE_MTE3, 1));
+    ASSERT_TRUE(PutRecord(buffer, 1, 1, 1, 0x200, ACLSAN_DEVICE_PIPE_MTE3, 1));
+    ASSERT_TRUE(PutRecord(buffer, 2, 0, 1, 0x200, ACLSAN_DEVICE_PIPE_MTE3, 2));
+    const auto parsed = aclsan::ParseTraceBuffer(buffer.data(), buffer.size(), 6, 2, 31, 0);
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    ASSERT_EQ(parsed.records.size(), 4u);
+    for (size_t i = 0; i < parsed.records.size(); ++i) {
+        EXPECT_NE(parsed.records[i].instrExecId, 0u);
+        for (size_t j = 0; j < i; ++j) {
+            EXPECT_NE(parsed.records[i].instrExecId, parsed.records[j].instrExecId);
+        }
+    }
+    EXPECT_LT(parsed.records[1].instrExecId, parsed.records[2].instrExecId);
+}
+
+TEST(AclsanTraceBuffer, InstructionIdsStayStableAcrossGrowingSnapshots)
+{
+    std::vector<uint8_t> buffer;
+    std::string error;
+    ASSERT_TRUE(aclsan::InitializeTraceBuffer(buffer, 6, 2, 31, error));
+    ASSERT_TRUE(PutRecord(buffer, 2, 0, 1, 0x200, ACLSAN_DEVICE_PIPE_MTE3, 2));
+    const auto first = aclsan::ParseTraceBuffer(buffer.data(), buffer.size(), 6, 2, 31, 0);
+    ASSERT_TRUE(first.ok) << first.error;
+    ASSERT_EQ(first.records.size(), 1u);
+
+    ASSERT_TRUE(PutRecord(buffer, 0, 0, 0, 0x100, ACLSAN_DEVICE_PIPE_MTE1, 0));
+    ASSERT_TRUE(PutRecord(buffer, 1, 0, 0, 0x200, ACLSAN_DEVICE_PIPE_MTE3, 1));
+    ASSERT_TRUE(PutRecord(buffer, 2, 1, 1, 0x204, ACLSAN_DEVICE_PIPE_MTE3, 2));
+    const auto next = aclsan::ParseTraceBuffer(buffer.data(), buffer.size(), 6, 2, 31, 0);
+    ASSERT_TRUE(next.ok) << next.error;
+    ASSERT_EQ(next.records.size(), 4u);
+    EXPECT_EQ(next.records[2].instrExecId, first.records[0].instrExecId);
+    EXPECT_LT(next.records[2].instrExecId, next.records[3].instrExecId);
+}
 
 TEST(AclsanTraceBuffer, Main)
 {

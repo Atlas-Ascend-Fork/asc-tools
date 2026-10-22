@@ -43,7 +43,7 @@ using MemoryInstructionField = std::variant<
     CopyGmToCbufMultiDn2NzParamField, CopyGmToCbufV2ParamField, CopyUbufToGmAlignV2ParamField, FixL0cToOutParamField,
     LoadGmToCbuf2DV2ParamField, NdDmaOutToUbufParamField, SetL12DParamField, MmadParamField, LoadL1MxParamField,
     LocalMemoryTransferParamField, LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField, Img2ColParamField,
-    ScalarGmParamField, ScalarDevParamField, ScalarPreloadParamField, ScalarAtomicParamField>;
+    ScalarGmParamField, ScalarDevParamField, ScalarPreloadParamField, ScalarAtomicParamField, CopyUbufToUbufParamField>;
 
 struct MemoryRegisterState {
     std::optional<CtrlRegisterParamField> ctrl;
@@ -79,6 +79,7 @@ struct MemoryCbdataContext {
     const std::vector<InternalMemoryRange>* internalInputs = nullptr;
     const std::vector<InternalMemoryRange>* readOnlyBinaryRanges = nullptr;
     uint32_t instructionId = 0;
+    uint32_t physicalCoreCount = 0;
 };
 
 using MemoryCbdata = std::vector<AclsanDeviceMemoryAccessData>;

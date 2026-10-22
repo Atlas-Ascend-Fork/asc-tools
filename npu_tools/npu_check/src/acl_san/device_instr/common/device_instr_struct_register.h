@@ -70,6 +70,7 @@ struct NdDmaPadCountParamField {
 struct NdDmaLoopStrideParamField {
     uint32_t loopIndex = 0;
     uint64_t srcStride = 0;
+    uint32_t dstStride = 0; // config [19:0], in elements; srcStride is config [59:20].
 };
 
 struct Mte2NzParamField {

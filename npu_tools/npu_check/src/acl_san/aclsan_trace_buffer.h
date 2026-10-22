@@ -23,13 +23,15 @@ namespace aclsan {
 
 struct ParsedTraceRecord {
     AclsanRawTraceRecord record{};
-    uint64_t instrExecId = 0; // 该(blockType, blockId)运行的第几条probe指令，从1开始
+    // Launch 内唯一的固定 trace 槽位编号，从 1 开始；跨快照稳定，跨核大小不表示执行先后。
+    uint64_t instrExecId = 0;
     uint64_t launchId = 0;
     uint32_t blockId = 0;
     uint32_t blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
     uint32_t phyCoreId = 0;
     uint32_t deviceId = 0;
     uint64_t parameterBytes = 0; // Filled from the owning launch, never inferred from an access.
+    uint32_t physicalCoreCount = 0;
 };
 
 struct TraceBufferParseResult {

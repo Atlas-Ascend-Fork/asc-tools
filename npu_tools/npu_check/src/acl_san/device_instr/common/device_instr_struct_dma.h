@@ -77,6 +77,17 @@ using CopyGmToUbufAlignV2ParamField =
 using CopyGmToCbufAlignV2ParamField =
     MovAlignV2ParamField<ACLSAN_DEVICE_MEMORY_SPACE_GM, ACLSAN_DEVICE_MEMORY_SPACE_L1>;
 
+// MOV_UB_TO_UB. Lengths and gaps use 32-byte units.
+struct CopyUbufToUbufParamField {
+    uint32_t instrId = 0;
+    uint64_t dstAddr = 0;
+    uint64_t srcAddr = 0;
+    uint16_t burstNum = 0; // config [0:15]
+    uint16_t burstLen = 0; // config [16:31]
+    uint16_t srcGap = 0;   // config [32:47]
+    uint16_t dstGap = 0;   // config [48:63]
+};
+
 // - MOV_OUT_TO_L1_MULTI_DN2NZ.<b8/b16/b32>
 // - MOV_OUT_TO_L1_MULTI_ND2NZ.<b8/b16/b32>
 template <NdNzConversionMode ConversionMode>

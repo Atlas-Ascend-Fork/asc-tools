@@ -52,6 +52,40 @@ constexpr bool IsAicPhysicalCore(uint32_t phyCoreId, uint32_t physicalCoreCount)
     return dieLocalCoreId < aicCoresPerDie;
 }
 
+// dav-3510 maps each AIC to two adjacent AIVs in the same die partition.
+// Return UINT32_MAX when the topology or selector is invalid.
+constexpr uint32_t AivPhysicalCoreForAic(uint32_t aicPhyCoreId, uint32_t subBlockId, uint32_t physicalCoreCount)
+{
+    if (subBlockId > 1U || !IsAicPhysicalCore(aicPhyCoreId, physicalCoreCount)) {
+        return UINT32_MAX;
+    }
+    const uint32_t coresPerDie = physicalCoreCount / ASCSAN_PHYSICAL_CORE_PART_COUNT;
+    const uint32_t aicCoresPerDie = coresPerDie / ASCSAN_AIC_CORE_RATIO_DENOMINATOR;
+    const uint32_t dieBase = (aicPhyCoreId / coresPerDie) * coresPerDie;
+    const uint32_t aicLocal = aicPhyCoreId % coresPerDie;
+    return dieBase + aicCoresPerDie + 2U * aicLocal + subBlockId;
+}
+
+constexpr uint32_t AicPhysicalCoreForAiv(uint32_t aivPhyCoreId, uint32_t physicalCoreCount)
+{
+    if (!IsTracePhysicalCoreTopologyValid(physicalCoreCount) || aivPhyCoreId >= physicalCoreCount) {
+        return UINT32_MAX;
+    }
+    const uint32_t coresPerDie = physicalCoreCount / ASCSAN_PHYSICAL_CORE_PART_COUNT;
+    const uint32_t aicCoresPerDie = coresPerDie / ASCSAN_AIC_CORE_RATIO_DENOMINATOR;
+    const uint32_t dieBase = (aivPhyCoreId / coresPerDie) * coresPerDie;
+    const uint32_t aivLocal = aivPhyCoreId % coresPerDie;
+    if (aivLocal < aicCoresPerDie) {
+        return UINT32_MAX;
+    }
+    return dieBase + (aivLocal - aicCoresPerDie) / 2U;
+}
+
+constexpr uint32_t AivBlockIdForAic(uint32_t aicBlockId, uint32_t subBlockId)
+{
+    return subBlockId <= 1U && aicBlockId <= (UINT32_MAX - subBlockId) / 2U ? 2U * aicBlockId + subBlockId : UINT32_MAX;
+}
+
 constexpr bool IsTraceBlockIdValid(uint64_t blockId, bool isAic, uint32_t blockCount)
 {
     if (blockCount == 0U || blockId > UINT32_MAX) {

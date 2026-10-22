@@ -44,7 +44,12 @@ MemoryCbdataResult ConvertRaw(
         [&](const auto& f) -> MemoryCbdataResult {
             using T = std::decay_t<decltype(f)>;
             if constexpr (std::is_constructible_v<MemoryInstructionField, T>) {
-                return MemoryFieldToCbdataConverter{{}, state}.Convert(MemoryInstructionField{f});
+                MemoryCbdataContext context{};
+                context.physicalCoreCount = 6;
+                context.blockType =
+                    id == 173 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                context.coreId = id == 173 ? 1 : 0;
+                return MemoryFieldToCbdataConverter{context, state}.Convert(MemoryInstructionField{f});
             }
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         },
@@ -298,7 +303,8 @@ TEST(CubeMemory, FixpipeReadsFullAccumulatorRowsForEveryDestination)
         checker.QueueDeviceMemoryAccess(bad);
         EXPECT_EQ(checker.OnSynchronization().size(), 1u);
         if (id == 170 || id == 171) {
-            EXPECT_EQ(r.data.size(), 1u);
+            EXPECT_EQ(r.data.size(), 2u);
+            EXPECT_EQ(r.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
         }
     }
 }

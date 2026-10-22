@@ -27,6 +27,7 @@ constexpr bool HasParamFieldLogger() noexcept
            std::is_same_v<ParamField, aclsan::CopyGmToUbufAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyUbufToGmAlignV2ParamField> ||
+           std::is_same_v<ParamField, aclsan::CopyUbufToUbufParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufV2ParamField> ||
            std::is_same_v<ParamField, aclsan::LoadGmToCbuf2DV2ParamField> ||
            std::is_same_v<ParamField, aclsan::NdDmaParamField> ||
@@ -171,8 +172,17 @@ void LogParamField(const aclsan::Mte2SourceParamField& value) noexcept
 void LogParamField(const aclsan::NdDmaLoopStrideParamField& value) noexcept
 {
     ASCTOOL_DEBUG(
-        "[param] type=NdDmaLoopStrideParamField loopIndex=%u srcStride=%llu", value.loopIndex,
-        static_cast<unsigned long long>(value.srcStride));
+        "[param] type=NdDmaLoopStrideParamField loopIndex=%u srcStride=%llu dstStride=%u", value.loopIndex,
+        static_cast<unsigned long long>(value.srcStride), value.dstStride);
+}
+
+void LogParamField(const aclsan::CopyUbufToUbufParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=CopyUbufToUbufParamField instrId=%u dstAddr=0x%llx srcAddr=0x%llx "
+        "burstNum=%u burstLen=%u srcGap=%u dstGap=%u",
+        value.instrId, static_cast<unsigned long long>(value.dstAddr), static_cast<unsigned long long>(value.srcAddr),
+        value.burstNum, value.burstLen, value.srcGap, value.dstGap);
 }
 
 void LogParamField(const aclsan::Mte2NzParamField& value) noexcept

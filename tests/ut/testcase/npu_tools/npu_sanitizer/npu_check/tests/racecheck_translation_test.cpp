@@ -55,6 +55,7 @@ TEST(RacecheckTranslation, UnitFlagModesTravelWithMemoryBehavior)
             raw.launchId = 1;
             raw.instrExecId = 1;
             raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+            raw.physicalCoreCount = 6;
             raw.record.instrId = id;
             raw.record.pipeline = id == 400 ? ACLSAN_DEVICE_PIPE_MATRIX : ACLSAN_DEVICE_PIPE_FIXPIPE;
             if (id == 400) {
@@ -73,7 +74,7 @@ TEST(RacecheckTranslation, UnitFlagModesTravelWithMemoryBehavior)
             ASSERT_FALSE(accesses->empty());
             bool l0c = false;
             for (const auto& access : *accesses) {
-                EXPECT_EQ(access.unitFlag, mode) << id;
+                EXPECT_EQ(access.unitFlag, access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB ? 0 : mode) << id;
                 l0c |= access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C;
             }
             EXPECT_TRUE(l0c) << id;

@@ -56,6 +56,7 @@ template <typename ParamField>
 constexpr bool IsMemoryAccessParamField() noexcept
 {
     return std::is_same_v<ParamField, aclsan::CopyGmToUbufAlignV2ParamField> ||
+           std::is_same_v<ParamField, aclsan::CopyUbufToUbufParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufMultiNd2NzParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufMultiDn2NzParamField> ||
@@ -163,7 +164,8 @@ private:
             parsed.parameterBytes,
             internalInputs,
             readOnlyBinaryRanges,
-            parsed.record.instrId};
+            parsed.record.instrId,
+            parsed.physicalCoreCount};
         MemoryCbdataResult result =
             MemoryFieldToCbdataConverter{context, registerState}.Convert(MemoryInstructionField{params});
         const RegisterDependencyMask dependencies =
@@ -180,7 +182,11 @@ private:
                     case aclsan::LocalMemoryTransferKind::FixL0cToCbufS32:
                     case aclsan::LocalMemoryTransferKind::FixL0cToUbufF32:
                     case aclsan::LocalMemoryTransferKind::FixL0cToUbufS32:
-                        access.unitFlag = static_cast<uint32_t>((params.config1 >> 32) & 3);
+                        // The unit flag belongs to the Cube-side handshake.
+                        // UB endpoints carry the destination Vector owner.
+                        access.unitFlag = access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB ?
+                                              0 :
+                                              static_cast<uint32_t>((params.config1 >> 32) & 3);
                         break;
                     default:
                         break;

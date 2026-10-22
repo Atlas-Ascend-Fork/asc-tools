@@ -70,6 +70,8 @@ struct LocalMemoryTransferParamField {
     uint16_t srcGap = 0;     // BT: source gap in 32-byte units.
     uint16_t dstGap = 0;     // BT: destination gap in 32-byte units.
     bool cvtEnable = false;  // BT: conversion control.
+    bool subBlockId = false; // L1->UB config0[0].
+    uint8_t dualDstCtl = 0;  // L0C->UB config1[16:17].
 };
 
 // 对应 CCE 指令：MOV_L1_TO_FB_V2

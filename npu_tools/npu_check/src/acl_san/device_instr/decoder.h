@@ -36,6 +36,7 @@ enum class DeviceInstructionKind : uint32_t {
     CopyGmToUbufAlignV2, // InstructionId::CopyGmToUbufAlignV2B8/B16/B32 -> CopyGmToUbufAlignV2ParamField
     CopyGmToCbufAlignV2, // InstructionId::CopyGmToCbufAlignV2B8/B16/B32 -> CopyGmToCbufAlignV2ParamField
     CopyUbufToGmAlignV2, // InstructionId::CopyUbufToGmAlignV2           -> CopyUbufToGmAlignV2ParamField
+    CopyUbufToUbuf,      // InstructionId::CopyUbufToUbuf -> CopyUbufToUbufParamField
     CopyGmToCbufMulti,   // InstructionId::CopyGmToCbufMulti*            -> CopyGmToCbufMultiParamField<DN2NZ/ND2NZ>
     CopyGmToCbufV2,      // InstructionId::CopyGmToCbufV2                -> CopyGmToCbufV2ParamField
     LoadGmToCbuf2DV2,    // InstructionId::LoadGmToCbuf2DV2              -> LoadGmToCbuf2DV2ParamField
@@ -84,7 +85,7 @@ using DeviceInstructionParamField = std::variant<
     FftsSyncParamField, DeviceFlagParamField, SyncBufParamField, ScalarDevParamField, ScalarPreloadParamField,
     ScalarAtomicParamField, MmadParamField, LoadL1MxParamField, LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField,
     Img2ColParamField, FmatrixParamField, L3dRptParamField, ScalarGmParamField, PipeBarrierParamField,
-    CrossCoreParamField, CtrlRegisterParamField>;
+    CrossCoreParamField, CtrlRegisterParamField, CopyUbufToUbufParamField>;
 
 struct DecodedInstruction {
     DeviceInstructionKind kind = DeviceInstructionKind::InvalidInstruction;

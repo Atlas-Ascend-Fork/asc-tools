@@ -194,6 +194,20 @@ TEST(ProbeSourceGenerator, Main)
     ASSERT_TRUE(aclsan::EmbedsPrivateProbeHeaders());
 }
 
+TEST(ProbeSourceGenerator, VectorGroupIncludesUbufTransfer)
+{
+    const auto generated = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Vector);
+    ASSERT_TRUE(generated.success) << generated.diagnostic;
+    EXPECT_EQ(generated.symbols.size(), 10U);
+    EXPECT_EQ(generated.symbols, aclsan::BindingSymbols({aclsan::ProbeGroup::Vector}));
+    EXPECT_NE(
+        std::find(generated.symbols.begin(), generated.symbols.end(), "__sanitizer_report_copy_ubuf_to_ubuf"),
+        generated.symbols.end());
+    EXPECT_NE(generated.source.find("static_cast<uint16_t>(PIPE_V), 174"), std::string::npos);
+    EXPECT_NE(generated.source.find("__sanitizer_report_vtranspose"), std::string::npos);
+    EXPECT_NE(generated.source.find("__sanitizer_report_ldva"), std::string::npos);
+}
+
 TEST(ProbeSourceGeneratorScalarDev, IncludesAllWidthsAndByteOffsets)
 {
     const auto generated = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Scalar);

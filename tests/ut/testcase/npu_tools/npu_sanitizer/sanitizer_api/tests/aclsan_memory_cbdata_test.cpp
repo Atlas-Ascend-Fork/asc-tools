@@ -32,6 +32,9 @@ public:
     static aclsan::MemoryRegisterState WithAtomicDisabled(aclsan::MemoryRegisterState s)
     {
         s.ctrl = aclsan::CtrlRegisterParamField{0};
+        if (!s.ndDmaPadCount) {
+            s.ndDmaPadCount = aclsan::NdDmaPadCountParamField{};
+        }
         return s;
     }
     aclsan::MemoryCbdataResult Convert(const aclsan::MemoryInstructionField& f) const
@@ -369,8 +372,9 @@ void TestAddressExtentOverflowIsRejected()
 
     const auto state = SingletonDmaState(aclsan::DmaLoopDirection::GM_TO_UBUF);
     const auto result = GmProjectionConverter{{}, state}.Convert(aclsan::MemoryInstructionField{field});
-    assert(result.status == aclsan::MemoryCbdataStatus::ARITHMETIC_OVERFLOW);
+    assert(result.status == aclsan::MemoryCbdataStatus::PARTIAL_COVERAGE);
     assert(result.data.empty());
+    assert(result.requiresIncompleteEvent);
 }
 
 void TestDmaOuterLoopsProduceAffineLayout()
@@ -1023,7 +1027,9 @@ TEST(AclsanMemoryCbdata, InternalRangeUsesEntireStridedFootprintAndLaunchContext
     context.parameterBase = 0x4000;
     context.parameterBytes = 256;
     const auto contained = aclsan::MemoryFieldToCbdataConverter{context, state}.Convert(field);
-    EXPECT_EQ(contained.status, aclsan::MemoryCbdataStatus::NO_ACCESS);
+    EXPECT_EQ(contained.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    ASSERT_EQ(contained.data.size(), 1u);
+    EXPECT_EQ(contained.data.front().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     context.parameterBytes = 32;
     const auto partial = aclsan::MemoryFieldToCbdataConverter{context, state}.Convert(field);
     EXPECT_EQ(partial.status, aclsan::MemoryCbdataStatus::SUCCESS);
@@ -1342,13 +1348,15 @@ TEST(AclsanMemoryCbdata, GmOutputWithoutCtrlPublishesExactOrdinaryWrite)
             field);
     ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
     EXPECT_FALSE(result.requiresIncompleteEvent);
-    ASSERT_EQ(result.data.size(), 1U);
+    ASSERT_EQ(result.data.size(), 2U);
     const auto& access = result.data.front();
     EXPECT_EQ(access.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
     EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
     EXPECT_EQ(access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
     EXPECT_EQ(access.address, 0x1000U);
     EXPECT_EQ(access.layout.range.bytes, 32U);
+    EXPECT_EQ(result.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+    EXPECT_EQ(result.data[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
 }
 
 TEST(AclsanMemoryCbdata, GmDmaAtomicConfigurationFreezesOnlyOutputAccesses)

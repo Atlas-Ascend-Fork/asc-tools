@@ -56,6 +56,7 @@ add_executable(npu_tools_utest
   # sanitizer api（含原"桩家族"用例：分歧桩已收敛到 aclsan_boundary_stub 可安装边界）
   "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_log_test.cpp"
   "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_memory_cbdata_test.cpp"
+  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/ub_memory_test.cpp"
   "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_callback_invoke_test.cpp"
   "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_probe_plan_callback_test.cpp"
   "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_hook_cbdata_test.cpp"

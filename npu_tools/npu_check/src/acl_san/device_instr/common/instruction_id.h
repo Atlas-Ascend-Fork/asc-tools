@@ -157,6 +157,7 @@ enum class InstructionId : uint32_t {
     // MTE3
     CopyUbufToGmAlignV2 = 83, // 已完成：CopyUbufToGmAlignV2ParamField
     CopyUbufToCbuf = 173,     // LocalMemoryTransferParamField：L1 WRITE
+    CopyUbufToUbuf = 174,     // CopyUbufToUbufParamField: UB READ / WRITE
 
     // FIX
     FixL0cToOutF32 = 91,   // 已完成：FixL0cToOutParamField
@@ -278,6 +279,7 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::SetMte2NzPara:
         case InstructionId::CopyUbufToGmAlignV2:
         case InstructionId::CopyUbufToCbuf:
+        case InstructionId::CopyUbufToUbuf:
         case InstructionId::FixL0cToOutF32:
         case InstructionId::FixL0cToOutS32:
         case InstructionId::CopyCbufToFbuf:

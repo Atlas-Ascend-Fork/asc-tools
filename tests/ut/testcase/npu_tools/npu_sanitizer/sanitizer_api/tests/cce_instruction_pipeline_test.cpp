@@ -102,6 +102,43 @@ void TestUnknownInstructionReturnsNoDecodedResult()
 
 } // namespace
 
+TEST(CceInstructionPipeline, UbCopyProducesReadAndWriteWithSameExecutionIdentity)
+{
+    aclsan::ParsedTraceRecord parsed{};
+    parsed.record.instrId = 174;
+    parsed.record.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
+    parsed.record.args[0] = 0x100;
+    parsed.record.args[1] = 0x400;
+    parsed.record.args[2] = 2ULL | (1ULL << 16);
+    parsed.instrExecId = 11;
+    parsed.launchId = 9;
+    parsed.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    parsed.phyCoreId = 4;
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    const auto decoded = decoder->decode(parsed.record);
+    ASSERT_TRUE(decoded);
+    const auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+    ASSERT_TRUE(callback);
+    const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
+    ASSERT_NE(accesses, nullptr);
+    ASSERT_EQ(accesses->size(), 2u);
+    for (size_t i = 0; i < accesses->size(); ++i) {
+        const auto& a = (*accesses)[i];
+        EXPECT_EQ(a.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+        EXPECT_EQ(a.accessMode, i == 0 ? ACLSAN_DEVICE_MEMORY_ACCESS_READ : ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+        EXPECT_EQ(a.header.instrExecId, 11u);
+        EXPECT_EQ(a.header.phyCoreId, 4u);
+        EXPECT_EQ(a.header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+        EXPECT_EQ(a.header.pipeline, ACLSAN_DEVICE_PIPE_VECTOR);
+        EXPECT_EQ(a.header.sourceKind, ACLSAN_DEVICE_SOURCE_VECTOR);
+        EXPECT_EQ(a.instructionId, 174u);
+        ASSERT_EQ(a.layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
+        EXPECT_EQ(a.layout.range.bytes, 64u);
+        EXPECT_EQ(a.accessIndex, i);
+        EXPECT_EQ(a.accessCount, 2u);
+    }
+}
+
 TEST(CceInstructionPipeline, Main)
 {
     TestCallbackUsesRawRecordPipeline();

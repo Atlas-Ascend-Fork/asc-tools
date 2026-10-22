@@ -740,6 +740,7 @@ void TestTranslateStateDependentDmaFieldsToCallbackData()
     record.args[2] = (3ULL << 4U) | (2ULL << 24U) | (1ULL << 44U);
     record.args[3] = 1ULL | (1ULL << 20U);
     aclsan::MemoryRegisterState ndDmaState{};
+    ndDmaState.ndDmaPadCount = aclsan::NdDmaPadCountParamField{};
     ndDmaState.ndDmaLoopStrides[0] = aclsan::NdDmaLoopStrideParamField{0, 1};
     ndDmaState.ndDmaLoopStrides[1] = aclsan::NdDmaLoopStrideParamField{1, 8};
     ndDmaState.ndDmaLoopStrides[2] = aclsan::NdDmaLoopStrideParamField{2, 0};
@@ -827,30 +828,82 @@ void TestConditionalRegisterDependencies()
     assert(noAccess.mask0 == 0);
 }
 
-void TestTranslatesLocalMemoryTransfersToExplicitEmptyGmAccessList()
+void TestTranslatesLocalMemoryTransfersToOwnedAccesses()
 {
-    const aclsan::ParsedTraceRecord parsed = MakeParsedTraceRecord(14, 2, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE, 5, 3);
-    constexpr uint64_t LOCAL_INSTRUCTION_IDS[] = {167, 168, 169, 170, 171, 173};
+    constexpr uint32_t AIC_CORE = 5;
+    constexpr uint32_t AIV_CORE = 29; // 18 AICs per die + 2 * AIC_CORE + subBlockId 1.
+    constexpr uint32_t AIC_BLOCK = 2;
+    constexpr uint32_t AIV_BLOCK = 5;
+    const auto parsed = MakeParsedTraceRecord(14, AIC_BLOCK, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE, AIC_CORE, 3);
+    constexpr uint32_t LOCAL_INSTRUCTION_IDS[] = {158, 167, 168, 169, 170, 171, 173};
     for (const uint64_t instructionId : LOCAL_INSTRUCTION_IDS) {
-        aclsan::AclsanRawTraceRecord record{};
+        SCOPED_TRACE(instructionId);
+        auto trace = parsed;
+        trace.physicalCoreCount = 108;
+        auto& record = trace.record;
         record.instrId = instructionId;
         record.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
         record.args[0] = 0x2000;
         record.args[1] = 0x1000;
-        // Use supported parameters: an unsupported conversion now returns no callback.
         record.args[2] = (16ULL << 4) | (16ULL << 16) | (256ULL << 32);
         record.args[3] = 16;
-        if (instructionId == 173) {
+        if (instructionId == 158 || instructionId == 173) {
+            record.pipeline = ACLSAN_DEVICE_PIPE_MTE3;
             record.args[2] = (1ULL << 4) | (1ULL << 16);
             record.args[3] = 0;
+            if (instructionId == 158) {
+                record.args[2] |= 1; // Select the second AIV for the UB destination.
+            } else {
+                trace.phyCoreId = AIV_CORE;
+                trace.blockId = AIV_BLOCK;
+                trace.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+            }
+        } else if (instructionId == 170 || instructionId == 171) {
+            record.args[3] |= 1ULL << 18; // FIXPIPE subBlockId 1.
         }
 
-        const auto callback = TranslateRecordToCallbackData(record, parsed);
-
-        assert(callback.has_value());
+        const auto decoded = DecodeRecord(record);
+        ASSERT_TRUE(decoded.has_value());
+        aclsan::MemoryRegisterState state{};
+        state.ctrl = aclsan::CtrlRegisterParamField{0};
+        // Verify the complete callback; the legacy GM-only helper filters out local accesses.
+        const auto callback = aclsan::TranslateDecodedTraceToCallbackData(trace, *decoded, state);
+        ASSERT_TRUE(callback.has_value());
         const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
-        assert(accesses != nullptr);
-        assert(accesses->empty());
+        ASSERT_NE(accesses, nullptr);
+        ASSERT_EQ(accesses->size(), instructionId == 167 ? 1U : 2U);
+
+        const uint32_t sourceSpace = instructionId == 173                         ? ACLSAN_DEVICE_MEMORY_SPACE_UB :
+                                     instructionId == 158 || instructionId == 167 ? ACLSAN_DEVICE_MEMORY_SPACE_L1 :
+                                                                                    ACLSAN_DEVICE_MEMORY_SPACE_L0C;
+        const uint32_t destinationSpace = instructionId == 158 || instructionId == 170 || instructionId == 171 ?
+                                              ACLSAN_DEVICE_MEMORY_SPACE_UB :
+                                              ACLSAN_DEVICE_MEMORY_SPACE_L1;
+        for (const auto& access : *accesses) {
+            const bool read = access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+            const bool ub = access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
+            EXPECT_EQ(access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+            EXPECT_EQ(access.instructionId, instructionId);
+            EXPECT_EQ(access.header.instrExecId, trace.instrExecId);
+            EXPECT_EQ(access.header.pipeline, record.pipeline);
+            EXPECT_EQ(access.memorySpace, read ? sourceSpace : destinationSpace);
+            EXPECT_EQ(access.address, read ? record.args[1] : record.args[0]);
+            EXPECT_EQ(access.header.phyCoreId, ub ? AIV_CORE : AIC_CORE);
+            EXPECT_EQ(access.header.blockId, ub ? AIV_BLOCK : AIC_BLOCK);
+            EXPECT_EQ(
+                access.header.blockType,
+                ub ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+        }
+        EXPECT_EQ(
+            std::count_if(
+                accesses->begin(), accesses->end(),
+                [](const auto& access) { return access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ; }),
+            1);
+        EXPECT_EQ(
+            std::count_if(
+                accesses->begin(), accesses->end(),
+                [](const auto& access) { return access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE; }),
+            instructionId == 167 ? 0 : 1);
     }
 
     aclsan::AclsanRawTraceRecord logged{};
@@ -966,7 +1019,7 @@ TEST(AclsanTranslateDeviceData, Main)
     TestTranslateStateDependentDmaFieldsToCallbackData();
     TestMissingRegisterStateProducesEstimatedDependencyEvent();
     TestConditionalRegisterDependencies();
-    TestTranslatesLocalMemoryTransfersToExplicitEmptyGmAccessList();
+    TestTranslatesLocalMemoryTransfersToOwnedAccesses();
     TestKeepsScalarPreloadInTraceWithoutMemoryAccessCbdata();
     TestTranslatesScalarGmInstructionsToMemoryAccessCbdata();
     TestRejectsUnsupportedCallbackParamField();

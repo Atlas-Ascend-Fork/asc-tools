@@ -124,12 +124,14 @@ RegisterDependencyMask ResolveRegisterDependencies(
                         return {};
                     }
                 }
-                RegisterDependencyMask result{};
-                if (value.paddingMode) {
-                    result.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_NDDMA_PAD_COUNT);
-                }
+                RegisterDependencyMask result{RegisterBit(ACLSAN_DEVICE_REGISTER_NDDMA_PAD_COUNT), 0};
                 for (size_t index = 0; index < counts.size(); ++index) {
-                    if (counts[index] > 1) {
+                    const uint64_t padding =
+                        index == 0          ? uint64_t(value.loop0LeftPaddingCount) + value.loop0RightPaddingCount :
+                        state.ndDmaPadCount ? uint64_t(state.ndDmaPadCount->leftPaddingCounts[index - 1]) +
+                                                  state.ndDmaPadCount->rightPaddingCounts[index - 1] :
+                                              0;
+                    if (counts[index] + padding > 1) {
                         result.mask0 |= RegisterBit(
                             static_cast<AclsanDeviceRegisterId>(ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE + index));
                     }

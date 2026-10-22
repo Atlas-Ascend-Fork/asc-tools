@@ -13,22 +13,8 @@
 #include "dbi/trace_buffer_abi.h"
 
 #include <cstring>
-#include <map>
 
 namespace aclsan {
-namespace {
-
-struct TraceBlockKey {
-    uint32_t blockType;
-    uint32_t blockId;
-
-    bool operator<(const TraceBlockKey& other) const noexcept
-    {
-        return blockType < other.blockType || (blockType == other.blockType && blockId < other.blockId);
-    }
-};
-
-} // namespace
 
 bool InitializeTraceBuffer(
     std::vector<uint8_t>& buffer, uint32_t physicalCoreCount, uint32_t blockCount, uint64_t launchId,
@@ -104,7 +90,6 @@ TraceBufferParseResult ParseTraceBuffer(
         }
     }
 
-    std::map<TraceBlockKey, uint64_t> instructionCounts;
     result.records.reserve(recordCount);
     for (uint32_t sliceIndex = 0; sliceIndex < expectedPhysicalCoreCount; ++sliceIndex) {
         const size_t sliceOffset =
@@ -140,13 +125,17 @@ TraceBufferParseResult ParseTraceBuffer(
                 result.error = "raw trace logical block ID exceeds the launch-owned range";
                 return result;
             }
-            const TraceBlockKey blockKey{blockType, wire.blockId};
-            parsed.instrExecId = ++instructionCounts[blockKey];
+            // Endpoint owner mapping can place instructions from different
+            // issuing cores under the same callback header. Use the fixed
+            // trace slot, not a per-block counter, to keep IDs launch-unique
+            // and stable when other slices grow between trace snapshots.
+            parsed.instrExecId = uint64_t(sliceIndex) * aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + index + 1U;
             parsed.launchId = header.launchId;
             parsed.blockId = wire.blockId;
             parsed.blockType = blockType;
             parsed.phyCoreId = expectedPhyCoreId;
             parsed.deviceId = deviceId;
+            parsed.physicalCoreCount = expectedPhysicalCoreCount;
             result.records.push_back(parsed);
         }
     }

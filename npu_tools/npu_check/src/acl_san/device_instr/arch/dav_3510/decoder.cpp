@@ -73,6 +73,20 @@ std::optional<DecodedInstruction> DecodeCopyUbufToGmAlignV2(const aclsan::Aclsan
     return DecodedInstruction{DeviceInstructionKind::CopyUbufToGmAlignV2, params};
 }
 
+std::optional<DecodedInstruction> DecodeCopyUbufToUbuf(const aclsan::AclsanRawTraceRecord& record) noexcept
+{
+    CopyUbufToUbufParamField params{};
+    params.instrId = record.instrId;
+    params.dstAddr = record.args[0];
+    params.srcAddr = record.args[1];
+    params.burstNum = static_cast<uint16_t>(ExtractBitRange(record.args[2], CopyUbufToUbufLayout::BURST_NUM));
+    params.burstLen = static_cast<uint16_t>(ExtractBitRange(record.args[2], CopyUbufToUbufLayout::BURST_LEN));
+    params.srcGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], CopyUbufToUbufLayout::SRC_GAP));
+    params.dstGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], CopyUbufToUbufLayout::DST_GAP));
+
+    return DecodedInstruction{DeviceInstructionKind::CopyUbufToUbuf, params};
+}
+
 template <typename ParamField>
 DecodedInstruction DecodeCopyGmToCbufMulti(const aclsan::AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
 {
@@ -201,7 +215,9 @@ DecodedInstruction DecodeNdDmaLoopStride(const aclsan::AclsanRawTraceRecord& rec
     const uint32_t first = static_cast<uint32_t>(InstructionId::NdDmaLoop0Stride);
     const auto loopIndex = record.instrId - first;
     const uint64_t stride = (record.args[0] >> 20U) & ((1ULL << 40U) - 1U);
-    return DecodedInstruction{DeviceInstructionKind::NdDmaLoopStride, NdDmaLoopStrideParamField{loopIndex, stride}};
+    return DecodedInstruction{
+        DeviceInstructionKind::NdDmaLoopStride,
+        NdDmaLoopStrideParamField{loopIndex, stride, static_cast<uint32_t>(record.args[0] & 0xfffff)}};
 }
 
 DecodedInstruction DecodeMte2NzParam(const aclsan::AclsanRawTraceRecord& record) noexcept
@@ -265,6 +281,12 @@ DecodedInstruction DecodeLocalMemoryTransfer(
         params.srcGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], {32, 47}));
         params.dstGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], {48, 63}));
         params.cvtEnable = ExtractBitRange(record.args[2], {3, 3}) != 0;
+    }
+    if (kind == LocalMemoryTransferKind::CopyCbufToUbuf) {
+        params.subBlockId = ExtractBitRange(record.args[2], {0, 0}) != 0;
+    } else if (kind == LocalMemoryTransferKind::FixL0cToUbufF32 || kind == LocalMemoryTransferKind::FixL0cToUbufS32) {
+        params.dualDstCtl = static_cast<uint8_t>(ExtractBitRange(record.args[3], {16, 17}));
+        params.subBlockId = ExtractBitRange(record.args[3], {18, 18}) != 0;
     }
     return DecodedInstruction{DeviceInstructionKind::LocalMemoryTransfer, params};
 }
@@ -519,11 +541,7 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
                 static_cast<uint16_t>(record.args[3])}};
     }
     if (record.instrId == 158) {
-        return DecodedInstruction{
-            DeviceInstructionKind::LocalMemoryTransfer,
-            LocalMemoryTransferParamField{
-                record.instrId, record.args[0], record.args[1], record.args[2], record.args[3],
-                LocalMemoryTransferKind::CopyCbufToUbuf}};
+        return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToUbuf);
     }
     switch (record.instrId) {
         case RawId(InstructionId::StAtomicB32):
@@ -589,6 +607,9 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
 
         case RawId(InstructionId::CopyUbufToGmAlignV2):
             return DecodeCopyUbufToGmAlignV2(record);
+
+        case RawId(InstructionId::CopyUbufToUbuf):
+            return DecodeCopyUbufToUbuf(record);
 
         case RawId(InstructionId::CopyGmToUbufAlignV2B8):
             return DecodeMovAlignV2<CopyGmToUbufAlignV2ParamField>(

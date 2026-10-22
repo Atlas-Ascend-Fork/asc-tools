@@ -85,10 +85,10 @@ TEST(AclsanProbePlanCallback, Main)
     using aclsan::PROBE_GROUP_VECTOR;
 
     constexpr uint32_t memoryProbeMask = PROBE_GROUP_MTE1 | PROBE_GROUP_MTE2 | PROBE_GROUP_MTE3 | PROBE_GROUP_FIXPIPE |
-                                         PROBE_GROUP_SCALAR | aclsan::PROBE_GROUP_MATRIX;
+                                         PROBE_GROUP_SCALAR | PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR;
 
     CHECK((memoryProbeMask & PROBE_GROUP_MATRIX) != 0);
-    CHECK((memoryProbeMask & PROBE_GROUP_VECTOR) == 0);
+    CHECK((memoryProbeMask & PROBE_GROUP_VECTOR) != 0);
     CHECK(
         (aclsan::PROBE_GROUP_ALL & (PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR)) ==
         (PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR));

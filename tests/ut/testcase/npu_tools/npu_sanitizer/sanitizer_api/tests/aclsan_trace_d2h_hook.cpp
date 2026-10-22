@@ -476,7 +476,7 @@ int main(int argc, char** argv)
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
     CHECK(g_records.size() == 2);
     CHECK(g_records[0].launchId == 1);
-    CHECK(g_records[0].instrExecId == 1);
+    CHECK(g_records[0].instrExecId == aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 1U);
     CHECK(g_records[0].deviceId == 3);
     CHECK(g_records[0].phyCoreId == 1);
     CHECK(g_records[0].blockId == 1);
@@ -486,7 +486,7 @@ int main(int argc, char** argv)
     CHECK(g_records[0].dstPipe == 3);
     CHECK(g_records[0].objectId == 7);
     CHECK(g_records[1].launchId == 1);
-    CHECK(g_records[1].instrExecId == 2);
+    CHECK(g_records[1].instrExecId == aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 2U);
     CHECK(g_records[1].deviceId == 3);
     CHECK(g_records[1].phyCoreId == 1);
     CHECK(g_records[1].blockId == 1);

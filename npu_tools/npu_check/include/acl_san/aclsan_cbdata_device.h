@@ -89,10 +89,10 @@ typedef struct AclsanDeviceEventHeader {
     uint32_t size;
     uint64_t launchId;
     uint64_t pc;
-    uint32_t siteId;      // 插桩id
-    uint32_t sourceKind;  // AclsanDeviceSourceKind
-    uint64_t instrExecId; // TODO: 看下和serialNo之间的关系
-    uint64_t serialNo;    //       例如：指令DataCopy中的第一(read) / 第二条 (write)
+    uint32_t siteId;     // 插桩id
+    uint32_t sourceKind; // AclsanDeviceSourceKind
+    uint64_t instrExecId; // Launch 内唯一的动态指令 ID；同条指令的所有访问共享，跨核大小不表示时序。
+    uint64_t serialNo; //       例如：指令DataCopy中的第一(read) / 第二条 (write)
     uint32_t deviceId;
     uint32_t phyCoreId;
     uint32_t blockId;

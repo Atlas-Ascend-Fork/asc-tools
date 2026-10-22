@@ -30,6 +30,13 @@ struct MovAlignV2Layout {
     static constexpr BitRange BURST_DST_STRIDE{40, 60};
 };
 
+struct CopyUbufToUbufLayout {
+    static constexpr BitRange BURST_NUM{0, 15};
+    static constexpr BitRange BURST_LEN{16, 31};
+    static constexpr BitRange SRC_GAP{32, 47};
+    static constexpr BitRange DST_GAP{48, 63};
+};
+
 struct CopyGmToCbufMultiLayout {
     static constexpr BitRange SID{0, 3};
     static constexpr BitRange LOOP1_SRC_STRIDE{4, 43};
