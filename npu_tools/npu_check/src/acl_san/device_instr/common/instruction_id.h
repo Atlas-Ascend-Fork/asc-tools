@@ -182,7 +182,7 @@ enum class InstructionId : uint32_t {
     WaitFlagI = 443, // 已完成：FlagParamField
     WaitFlagDev = 445,
     WaitFlagDevI = 446,
-    SetCrossCore = 447,
+    FftsCrossCoreSync = 447,
     GetBuf = 448,  // 已完成：SyncBufParamField
     GetBufI = 449, // 已完成：SyncBufParamField
     RlsBuf = 450,  // 已完成：SyncBufParamField
@@ -203,10 +203,9 @@ enum class InstructionId : uint32_t {
     SetIntraBlockIV = 465,
     WaitIntraBlockV = 466,
     WaitIntraBlockIV = 467,
-    SetCrossCoreV = 468,
+    FftsCrossCoreSyncV = 468,
     WaitFlagDevV = 469,
     WaitFlagDevIV = 470,
-
     // Cross-core hardware flag synchronization. These IDs are emitted by the
     // DBI probes for HSET_FLAG/HWAIT_FLAG and their immediate forms.
     HSetFlag = 471,
@@ -301,10 +300,15 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::WaitFlagI:
         case InstructionId::WaitFlagDev:
         case InstructionId::WaitFlagDevI:
+        case InstructionId::FftsCrossCoreSync:
         case InstructionId::GetBuf:
         case InstructionId::GetBufI:
         case InstructionId::RlsBuf:
         case InstructionId::RlsBufI:
+        case InstructionId::SetIntraBlock:
+        case InstructionId::SetIntraBlockI:
+        case InstructionId::WaitIntraBlock:
+        case InstructionId::WaitIntraBlockI:
         case InstructionId::SetFlagV:
         case InstructionId::SetFlagIV:
         case InstructionId::WaitFlagV:
@@ -313,16 +317,11 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::GetBufIV:
         case InstructionId::RlsBufV:
         case InstructionId::RlsBufIV:
-        case InstructionId::SetIntraBlock:
-        case InstructionId::SetIntraBlockI:
-        case InstructionId::WaitIntraBlock:
-        case InstructionId::WaitIntraBlockI:
         case InstructionId::SetIntraBlockV:
         case InstructionId::SetIntraBlockIV:
         case InstructionId::WaitIntraBlockV:
         case InstructionId::WaitIntraBlockIV:
-        case InstructionId::SetCrossCore:
-        case InstructionId::SetCrossCoreV:
+        case InstructionId::FftsCrossCoreSyncV:
         case InstructionId::WaitFlagDevV:
         case InstructionId::WaitFlagDevIV:
         case InstructionId::HSetFlag:

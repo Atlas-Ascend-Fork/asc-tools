@@ -970,12 +970,12 @@ aclError aclrtLaunchKernelWithHostArgsHook(
     ASCTOOL_DEBUG(
         "aclrtLaunchKernelWithHostArgs: function=%p blocks=%u stream=%p instrumented=%u result=%d", funcHandle,
         numBlocks, stream, static_cast<unsigned>(prepared.instrumented), result);
-    aclsan::CompleteTraceLaunch(std::move(prepared), funcHandle, stream, result);
     std::string functionName;
     (void)aclsan::GetTraceFunctionName(funcHandle, functionName);
     const AclsanLaunchData callbackData =
         MakeLaunchData(launchId, funcHandle, stream, functionName, numBlocks, result, "aclrtLaunchKernelWithHostArgs");
     aclsan::AclsanCallbackDispatcher::DispatchLaunch(callbackData);
+    aclsan::CompleteTraceLaunch(std::move(prepared), funcHandle, stream, result);
     return result;
 }
 
@@ -1028,12 +1028,12 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
     } catch (...) {
         result = ACL_ERROR_FAILURE;
     }
-    aclsan::CompleteTraceLaunch(std::move(prepared), func, stream, result);
     std::string functionName;
     (void)aclsan::GetTraceFunctionName(func, functionName);
     const AclsanLaunchData callbackData = MakeLaunchData(
         prepared.launchId, func, stream, functionName, numBlocks, result, "aclrtLaunchKernelWithArgsArray");
     aclsan::AclsanCallbackDispatcher::DispatchLaunch(callbackData);
+    aclsan::CompleteTraceLaunch(std::move(prepared), func, stream, result);
     return result;
 }
 

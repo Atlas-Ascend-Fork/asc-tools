@@ -51,6 +51,7 @@ target_compile_definitions(npu_check_unit_tests PRIVATE
 target_include_directories(npu_check_unit_tests PRIVATE
   "${NPU_CHECK_SOURCE_DIR}"
   "${NPU_CHECK_DBI_INCLUDE_DIR}"
+  "${INJECTION_ACL_INCLUDE_DIR}"
 )
 target_link_libraries(npu_check_unit_tests PRIVATE
   npu_check_core acl_san npu_sanitizer_plog Threads::Threads GTest::gtest Boost::filesystem)

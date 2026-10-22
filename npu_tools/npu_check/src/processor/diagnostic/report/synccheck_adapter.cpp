@@ -82,6 +82,8 @@ const char* PairKindName(NpuCheckSyncPairKind pairKind)
             return "SET_WAIT_FLAG";
         case NpuCheckSyncPairKind::GET_RLS_BUF:
             return "GET_RLS_BUF";
+        case NpuCheckSyncPairKind::CROSS_CORE_TOKEN:
+            return "CROSS_CORE_TOKEN";
         case NpuCheckSyncPairKind::UNKNOWN:
             return "UNKNOWN";
     }
@@ -116,12 +118,36 @@ bool IsValidPrimitiveKind(NpuCheckSyncPrimitiveKind primitiveKind)
 
 const char* OpenOperation(NpuCheckSyncPairKind pairKind)
 {
-    return pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG ? "SET_FLAG" : "GET_BUF";
+    if (pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG)
+        return "SET_FLAG";
+    if (pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN)
+        return "CROSS_CORE_SET";
+    return "GET_BUF";
 }
 
 const char* CloseOperation(NpuCheckSyncPairKind pairKind)
 {
-    return pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG ? "WAIT_FLAG" : "RLS_BUF";
+    if (pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG)
+        return "WAIT_FLAG";
+    if (pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN)
+        return "CROSS_CORE_WAIT";
+    return "RLS_BUF";
+}
+
+bool IsCrossOpenOperation(const std::string& operation)
+{
+    return operation == "FFTS_CROSS_CORE_SYNC" || operation == "SET_INTRA_BLOCK";
+}
+
+bool IsCrossCloseOperation(const std::string& operation)
+{
+    return operation == "WAIT_FLAG_DEV" || operation == "WAIT_INTRA_BLOCK";
+}
+
+bool IsMatchingCrossInstructionFamily(const std::string& open, const std::string& close)
+{
+    return (open == "FFTS_CROSS_CORE_SYNC" && close == "WAIT_FLAG_DEV") ||
+           (open == "SET_INTRA_BLOCK" && close == "WAIT_INTRA_BLOCK");
 }
 
 struct PairingReasonRule {
@@ -155,17 +181,22 @@ bool ValidatePairingReport(const NpuCheckSynccheckReport& report, const NpuCheck
     const PairingReasonRule* rule = FindPairingReasonRule(detail.reason);
     if (!report.hasRelatedPoint || rule == nullptr ||
         (detail.key.pairKind != NpuCheckSyncPairKind::SET_WAIT_FLAG &&
-         detail.key.pairKind != NpuCheckSyncPairKind::GET_RLS_BUF)) {
+         detail.key.pairKind != NpuCheckSyncPairKind::GET_RLS_BUF &&
+         detail.key.pairKind != NpuCheckSyncPairKind::CROSS_CORE_TOKEN)) {
         return false;
     }
     if ((detail.key.pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG && detail.key.mode != 0) ||
-        (detail.key.pairKind == NpuCheckSyncPairKind::GET_RLS_BUF && detail.key.srcPipe != 0)) {
+        (detail.key.pairKind == NpuCheckSyncPairKind::GET_RLS_BUF && detail.key.srcPipe != 0) ||
+        (detail.key.pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN &&
+         (detail.key.srcPipe != 0 || detail.key.dstPipe != 0))) {
         return false;
     }
     if ((detail.key.pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG &&
          report.primitiveKind != NpuCheckSyncPrimitiveKind::SET_WAIT_FLAG) ||
         (detail.key.pairKind == NpuCheckSyncPairKind::GET_RLS_BUF &&
-         report.primitiveKind != NpuCheckSyncPrimitiveKind::GET_RLS_BUF)) {
+         report.primitiveKind != NpuCheckSyncPrimitiveKind::GET_RLS_BUF) ||
+        (detail.key.pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN &&
+         report.primitiveKind != NpuCheckSyncPrimitiveKind::SYNC_OBJECT)) {
         return false;
     }
 
@@ -175,6 +206,14 @@ bool ValidatePairingReport(const NpuCheckSynccheckReport& report, const NpuCheck
     const char* relatedOperation = rule->relatedIsOpen ? open : close;
     const bool relatedKindMatches =
         rule->relatedIsActual ? IsActualPoint(report.relatedPoint) : IsExpectedPoint(report.relatedPoint);
+    if (detail.key.pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN) {
+        const std::string& openOperation =
+            rule->triggerIsOpen ? report.triggerPoint.operation : report.relatedPoint.operation;
+        const std::string& closeOperation =
+            rule->triggerIsOpen ? report.relatedPoint.operation : report.triggerPoint.operation;
+        return relatedKindMatches && IsCrossOpenOperation(openOperation) && IsCrossCloseOperation(closeOperation) &&
+               IsMatchingCrossInstructionFamily(openOperation, closeOperation);
+    }
     return relatedKindMatches && report.triggerPoint.operation == triggerOperation &&
            report.relatedPoint.operation == relatedOperation;
 }
@@ -245,6 +284,13 @@ std::string FormatPairKey(const NpuCheckSyncPairKey& key)
     if (key.pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG) {
         os << "srcPipe=" << DevicePipelineName(key.srcPipe) << ", dstPipe=" << DevicePipelineName(key.dstPipe)
            << ", id=" << key.id;
+    } else if (key.pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN) {
+        const char* role = key.participantRole == 1 ? "AIC" :
+                           key.participantRole == 2 ? "AIV0" :
+                           key.participantRole == 3 ? "AIV1" :
+                                                      "UNKNOWN";
+        os << "participant=group" << key.groupId << '/' << role << ", flagId=" << key.id << ", mode=" << key.mode
+           << ", tokens=" << key.tokenCount;
     } else {
         os << "pipe=" << DevicePipelineName(key.dstPipe) << ", id=" << key.id << ", mode=" << key.mode;
     }
@@ -316,6 +362,11 @@ ReportRecord ToReportRecord(const NpuCheckSynccheckReport& report)
             fields["reasonText"] = rule.relatedIsActual ? "duplicate " + std::string(open) :
                                                           report.triggerPoint.operation + " without matching " +
                                                               report.relatedPoint.operation;
+            if (detail.key.pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN) {
+                fields["reasonText"] = detail.reason == NpuCheckSyncMismatchReason::UNCONSUMED_OPEN ?
+                                           "remaining counter token" :
+                                           "wait without sync token";
+            }
             if (rule.relatedIsActual) {
                 fields["relatedPointLine"] = "=========     related point: previous " + report.relatedPoint.operation +
                                              " at " + fields["relatedLocation"] + " is still pending\n";

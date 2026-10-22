@@ -195,6 +195,7 @@ enum class NpuCheckSyncPairKind {
     UNKNOWN = 0,
     SET_WAIT_FLAG = 1,
     GET_RLS_BUF = 2,
+    CROSS_CORE_TOKEN = 3,
 };
 
 enum class NpuCheckSyncDetailKind {
@@ -292,6 +293,9 @@ struct NpuCheckSyncPairKey {
     std::uint32_t dstPipe = 0; // AclsanDevicePipeline destination or buffer-pipeline value.
     std::uint32_t mode = 0;    // GET_BUF/RLS_BUF mode; 0 for SET_FLAG/WAIT_FLAG pairs.
     std::uint64_t id = 0;
+    std::uint32_t groupId = 0;
+    std::uint32_t participantRole = 0;
+    std::uint32_t tokenCount = 0;
 };
 
 struct NpuCheckSyncBarrierError {

@@ -15,6 +15,38 @@
 
 namespace {
 using namespace aclsan;
+TEST(RacecheckTranslation, SharedCrossCoreInstructionsRetainCallbackFormat)
+{
+    for (uint32_t id : {447U, 468U, 445U, 446U, 469U, 470U, 452U, 453U, 464U, 465U, 454U, 455U, 466U, 467U}) {
+        SCOPED_TRACE(id);
+        const bool ffts = id == 447 || id == 468;
+        const bool intra = (id >= 452 && id <= 455) || (id >= 464 && id <= 467);
+        const bool set = ffts || id == 452 || id == 453 || id == 464 || id == 465;
+        const bool vectorWait = id == 469 || id == 470;
+        ParsedTraceRecord raw{};
+        raw.launchId = 1;
+        raw.instrExecId = 1;
+        raw.record.instrId = id;
+        raw.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+        raw.record.args[0] = vectorWait ? 24 : ACLSAN_DEVICE_PIPE_VECTOR;
+        raw.record.args[1] = ffts ? (8U << 8) | (2U << 4) : 24;
+        auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+        ASSERT_TRUE(decoded.has_value());
+        auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded);
+        ASSERT_TRUE(translated.has_value());
+        const auto* sync = std::get_if<AclsanDeviceSyncData>(&*translated);
+        ASSERT_NE(sync, nullptr);
+        EXPECT_EQ(sync->header.sourceKind, ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC);
+        EXPECT_EQ(sync->syncKind, intra ? ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK : ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE);
+        EXPECT_EQ(sync->scope, ACLSAN_DEVICE_SYNC_SCOPE_DEVICE);
+        EXPECT_EQ(sync->action, set ? ACLSAN_DEVICE_SYNC_ACTION_SET : ACLSAN_DEVICE_SYNC_ACTION_WAIT);
+        EXPECT_EQ(set ? sync->srcPipe : sync->dstPipe, ACLSAN_DEVICE_PIPE_VECTOR);
+        EXPECT_EQ(set ? sync->dstPipe : sync->srcPipe, 0U);
+        EXPECT_EQ(sync->mode, ffts ? 2U : set ? 4U : 0U);
+        EXPECT_EQ(sync->objectId, ffts ? 8U : 24U);
+    }
+}
+
 TEST(RacecheckTranslation, UnitFlagModesTravelWithMemoryBehavior)
 {
     for (uint32_t mode : {0, 2, 3}) {

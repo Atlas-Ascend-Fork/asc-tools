@@ -49,16 +49,21 @@ struct SyncBufParamField {
     uint8_t mode = 0;
 };
 
-// =====================================
-// ========    暂时用不到       =========
-// =====================================
-
 // 核间同步指令，对应CrossCoreWaitFlag
 // WAIT_FLAG_DEV.<pipe> / WAIT_FLAG_DEVI.<pipe>
 // WAIT_FLAG_DEV_V / WAIT_FLAG_DEVI_V，pipe 固定为 PIPE_V
 struct DeviceFlagParamField {
     uint32_t instrId = 0;
     uint32_t pipe = 0;
+    uint64_t flagId = 0;
+};
+
+// ffts_cross_core_sync、wait_flag_dev 和 set/wait_intra_block 统一后的语义字段。
+// WAIT 不解析聚合 mode，保留默认值 0；checker 根据 instrId 区分 WAIT 指令族。
+struct CrossCoreParamField {
+    uint32_t instrId = 0;
+    uint32_t pipe = 0;
+    uint32_t mode = 0;
     uint64_t flagId = 0;
 };
 

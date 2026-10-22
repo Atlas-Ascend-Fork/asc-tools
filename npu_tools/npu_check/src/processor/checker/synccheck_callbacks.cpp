@@ -30,10 +30,26 @@ bool Synccheck::OnCallback(
         const auto* syncData = static_cast<const AclsanDeviceSyncData*>(data);
         OnDeviceSync(*syncData);
     } else if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
-        npucheck::AppendCheckerReports(OnSynchronization(), reports);
+        const auto* syncData = static_cast<const AclsanSynchronizeData*>(data);
+        auto completed = OnSynchronization(syncData->stream);
+        ASCTOOL_INFO(
+            "synchronization observed reports=%zu stream=%p result=%d", completed.size(), syncData->stream,
+            syncData->common.result);
+        npucheck::AppendCheckerReports(std::move(completed), reports);
     } else if (domain == ACLSAN_CB_DOMAIN_LAUNCH) {
         const auto* launchData = static_cast<const AclsanLaunchData*>(data);
         const npucheck::KernelAttributes attributes = npucheck::QueryKernelAttributes(launchData->function);
+        npucheck::LaunchTopology topology;
+        topology.kernelType = static_cast<uint32_t>(attributes.kernelType);
+        topology.aicRatio = attributes.aicRatio;
+        topology.aivRatio = attributes.aivRatio;
+        topology.groupCount = launchData->numBlocks;
+        topology.schedMode = static_cast<uint32_t>(attributes.kernelSchedMode);
+        topology.kernelTypeValid = attributes.kernelTypeStatus == ACL_SUCCESS;
+        topology.ratioValid = attributes.kernelRatioStatus == ACL_SUCCESS;
+        topology.groupCountValid = launchData->numBlocks != 0;
+        OnKernelLaunch(launchData->launchId, topology, launchData->stream);
+
         const char* functionName = launchData->functionName == nullptr ? "<unknown>" : launchData->functionName;
         ASCTOOL_DEBUG(
             "kernel attributes launch=%llu function=%p function_name=%s num_blocks=%u "
@@ -64,18 +80,30 @@ bool Synccheck::OnCallback(
 bool Synccheck::HasErrors() const
 {
     const auto stats = Stats();
-    return stats.duplicateOpens != 0 || stats.unmatchedCloses != 0 || stats.unconsumedOpens != 0;
+    return stats.duplicateOpens != 0 || stats.unmatchedCloses != 0 || stats.unconsumedOpens != 0 ||
+           stats.participantMismatches != 0 || stats.sequenceMismatches != 0 || stats.invalidArguments != 0 ||
+           stats.unconsumedSyncTokens != 0 || stats.waitWithoutSyncTokens != 0;
 }
 bool Synccheck::AnalysisComplete() const { return Stats().pendingOpens == 0; }
 std::string Synccheck::Summary() const
 {
     const auto stats = Stats();
+    const uint64_t errors = stats.duplicateOpens + stats.unmatchedCloses + stats.unconsumedOpens +
+                            stats.participantMismatches + stats.sequenceMismatches + stats.invalidArguments +
+                            stats.unconsumedSyncTokenReports + stats.waitWithoutSyncTokens;
     std::ostringstream output;
     output << "tool=synccheck sync_events=" << stats.syncEvents << " synchronizations=" << stats.synchronizationEvents
            << " matched_pairs=" << stats.matchedPairs << " duplicate_opens=" << stats.duplicateOpens
            << " unmatched_closes=" << stats.unmatchedCloses << " unconsumed_opens=" << stats.unconsumedOpens
-           << " pending_opens=" << stats.pendingOpens
-           << " errors=" << (stats.duplicateOpens + stats.unmatchedCloses + stats.unconsumedOpens) << " warnings=0";
+           << " pending_opens=" << stats.pendingOpens << " matched_cross_rounds=" << stats.matchedCrossRounds
+           << " produced_cross_tokens=" << stats.producedCrossTokens
+           << " consumed_cross_tokens=" << stats.consumedCrossTokens
+           << " unconsumed_sync_tokens=" << stats.unconsumedSyncTokens
+           << " wait_without_sync_tokens=" << stats.waitWithoutSyncTokens
+           << " counter_overflows=" << stats.counterOverflows
+           << " participant_mismatches=" << stats.participantMismatches
+           << " sequence_mismatches=" << stats.sequenceMismatches << " invalid_arguments=" << stats.invalidArguments
+           << " errors=" << errors << " warnings=0";
     return output.str();
 }
 } // namespace npucheck

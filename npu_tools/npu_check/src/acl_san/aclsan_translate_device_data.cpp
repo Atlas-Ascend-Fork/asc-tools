@@ -13,6 +13,7 @@
 #include "npu_tool_log.h"
 #include "aclsan_memory_cbdata.h"
 #include "aclsan_register_dependency.h"
+#include "device_instr/common/instruction_id.h"
 
 #include <cstdint>
 #include <optional>
@@ -83,7 +84,8 @@ constexpr bool IsSyncParamField() noexcept
            std::is_same_v<ParamField, aclsan::HardwareFlagParamField> ||
            std::is_same_v<ParamField, aclsan::FftsSyncParamField> ||
            std::is_same_v<ParamField, aclsan::DeviceFlagParamField> ||
-           std::is_same_v<ParamField, aclsan::SyncBufParamField>;
+           std::is_same_v<ParamField, aclsan::SyncBufParamField> ||
+           std::is_same_v<ParamField, aclsan::CrossCoreParamField>;
 }
 
 class Translator final {
@@ -318,6 +320,31 @@ private:
         callbackData.dstPipe = params.pipe;
         callbackData.mode = params.mode;
         callbackData.objectId = params.bufId;
+        return callbackData;
+    }
+
+    static DeviceCallbackData MakeDeviceSyncData(
+        const ParsedTraceRecord& parsed, aclsan::DeviceInstructionKind kind, AclsanDevicePipeline pipeline,
+        const aclsan::CrossCoreParamField& params) noexcept
+    {
+        AclsanDeviceSyncData callbackData{};
+        callbackData.header =
+            MakeDeviceEventHeader(parsed, pipeline, 0, static_cast<uint32_t>(sizeof(AclsanDeviceSyncData)));
+        callbackData.header.sourceKind = ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC;
+        const bool isSet =
+            kind == aclsan::DeviceInstructionKind::CrossCoreSet || kind == aclsan::DeviceInstructionKind::IntraBlockSet;
+        const bool isIntraBlock = kind == aclsan::DeviceInstructionKind::IntraBlockSet ||
+                                  kind == aclsan::DeviceInstructionKind::IntraBlockWait;
+        callbackData.syncKind = isIntraBlock ? ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK : ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE;
+        callbackData.action = isSet ? ACLSAN_DEVICE_SYNC_ACTION_SET : ACLSAN_DEVICE_SYNC_ACTION_WAIT;
+        callbackData.scope = ACLSAN_DEVICE_SYNC_SCOPE_DEVICE;
+        callbackData.mode = params.mode;
+        callbackData.objectId = params.flagId;
+        if (callbackData.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
+            callbackData.srcPipe = params.pipe;
+        } else {
+            callbackData.dstPipe = params.pipe;
+        }
         return callbackData;
     }
 };

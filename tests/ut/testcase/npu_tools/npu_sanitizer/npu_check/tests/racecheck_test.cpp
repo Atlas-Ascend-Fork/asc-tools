@@ -430,6 +430,48 @@ TEST(RacecheckTest, CrossMode1OrdersBothSubblocksOnEitherDie)
     }
 }
 
+TEST(RacecheckTest, CrossCoreCallbackFormatsPreserveModeMatching)
+{
+    for (bool crossCoreFormat : {false, true}) {
+        for (uint32_t mode : {0U, 1U, 2U, 4U}) {
+            for (bool matching : {false, true}) {
+                SCOPED_TRACE(::testing::Message() << crossCoreFormat << '/' << mode << '/' << matching);
+                Harness h;
+                const auto addSync = [&](AclsanDeviceSyncData s) {
+                    if (crossCoreFormat) {
+                        s.header.sourceKind = ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC;
+                        s.syncKind =
+                            mode == 4 ? ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK : ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE;
+                        s.scope = ACLSAN_DEVICE_SYNC_SCOPE_DEVICE;
+                        if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET)
+                            s.dstPipe = 0;
+                        else {
+                            s.srcPipe = 0;
+                            s.mode = 0;
+                        }
+                    }
+                    h.Add(s);
+                };
+                const bool cube = mode == 4;
+                const uint32_t writer = cube ? 0 : 18;
+                const uint32_t reader = mode == 2 ? 0 : 19;
+                h.Add(CrossMemory(1, writer, cube, true));
+                addSync(CrossSync(2, writer, cube, true, mode, mode == 4 ? 24 : 8));
+                if (mode != 4)
+                    addSync(CrossSync(2, 19, false, true, mode));
+                addSync(CrossSync(3, reader, mode == 2, false, mode, matching ? 8 : 9));
+                h.Add(CrossMemory(4, reader, mode == 2, false));
+                h.Sync();
+                EXPECT_EQ(h.checker.AnalysisComplete(), matching) << h.checker.Summary();
+                EXPECT_TRUE(h.reports.empty());
+                if (!matching) {
+                    EXPECT_NE(h.checker.Summary().find("unmatched_cross_core_wait"), std::string::npos);
+                }
+            }
+        }
+    }
+}
+
 TEST(RacecheckTest, CrossMode4RoutesBothSubblocksInBothDirectionsAndReusesFlags)
 {
     for (uint32_t die : {0U, 1U})

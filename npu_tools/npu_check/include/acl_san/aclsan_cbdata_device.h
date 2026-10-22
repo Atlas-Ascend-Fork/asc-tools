@@ -47,7 +47,8 @@ typedef enum AclsanDeviceSourceKind {
     ACLSAN_DEVICE_SOURCE_ST = 7,
     ACLSAN_DEVICE_SOURCE_VECTOR = 8,
     ACLSAN_DEVICE_SOURCE_CUBE = 9,
-    ACLSAN_DEVICE_SOURCE_SCALAR = 10
+    ACLSAN_DEVICE_SOURCE_SCALAR = 10,
+    ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC = 11
 } AclsanDeviceSourceKind;
 
 // device对应的物理位置
@@ -210,8 +211,19 @@ typedef struct AclsanDeviceRegisterStateData {
 typedef enum AclsanDeviceSyncKind {
     ACLSAN_DEVICE_SYNC_KIND_UNKNOWN = 0,
     ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG = 1,
-    ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF = 2
+    ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF = 2,
+    ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE = 3,
+    ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK = 4
 } AclsanDeviceSyncKind;
+
+// Cross-core synchronization participant selection mode.
+typedef enum AclsanDeviceSyncMode {
+    ACLSAN_DEVICE_SYNC_MODE_GLOBAL = 0,        // All groups participate.
+    ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV = 1,     // AIV cores in the current group participate.
+    ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV = 2, // AIC and AIV cores in the current group participate.
+    ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV = 4,    // AIC and one designated AIV core participate.
+    ACLSAN_DEVICE_SYNC_MODE_UNKNOWN = 0xffffffffU
+} AclsanDeviceSyncMode;
 
 // TODO: 看SET / GET能否合并   OPEN / CLOSE ?
 typedef enum AclsanDeviceSyncAction {
@@ -240,8 +252,8 @@ typedef struct AclsanDeviceSyncData {
     uint32_t scope;    // AclsanDeviceSyncScope
     uint32_t srcPipe;
     uint32_t dstPipe;  // GET_BUF的pipe直接写dstPipe
-    uint32_t mode;     // mode for GET_BUF / RLS_BUF
-    uint64_t objectId; // event id for SET_FLAG, bufId for GET_BUF
+    uint32_t mode;     // mode for GET/RLS or cross-core SET; UNKNOWN for cross-core WAIT
+    uint64_t objectId; // event id, buffer id, or cross-core flag id
     uint32_t reserved[2];
 } AclsanDeviceSyncData;
 
