@@ -19,8 +19,8 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -76,8 +76,16 @@ EXIT_CODES = {
 
 MAIN_PY = "utils/msobjdump/msobjdump/msobjdump_main.py"
 
-ARGUMENT_CALL = re.compile(r"add_argument\(\s*\"(--[a-z-]+)\"([^)]*)\)", re.DOTALL)
-SHORT_OPTION = re.compile(r"\"(-[A-Za-z])\"")
+
+def _is_store_true(call: ast.Call) -> bool:
+    for keyword in call.keywords:
+        if (
+            keyword.arg == "action"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value == "store_true"
+        ):
+            return True
+    return False
 
 
 def skill_dir() -> Path:
@@ -99,11 +107,39 @@ def infer_source_root() -> Optional[Path]:
     return None
 
 
-def extract_options(source_text: str) -> List[Dict[str, Any]]:
+def extract_options(source_text: str, strict: bool = True) -> List[Dict[str, Any]]:
+    """AST 遍历 add_argument 调用提取选项——不依赖文本括号/引号配平，
+    help 文案再复杂的括号与任意书写风格（单引号、短选项前置）均不影响提取。"""
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError as error:
+        raise SystemExit(
+            "[ERROR]: %s is not valid Python: %s" % (MAIN_PY, error)
+        ) from error
     options: List[Dict[str, Any]] = []
-    for match in ARGUMENT_CALL.finditer(source_text):
-        name = match.group(1)
-        rest = match.group(2)
+    total_calls = 0
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_argument"
+        ):
+            continue
+        total_calls += 1
+        str_args = [
+            arg.value
+            for arg in node.args
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+        ]
+        longs = [value for value in str_args if value.startswith("--")]
+        shorts = [
+            value for value in str_args if len(value) == 2 and value.startswith("-")
+        ]
+        if not longs:
+            # 位置参数或纯短选项调用：计入 total_calls 但不产出选项，
+            # 由下方计数守护拦截，不会静默漂移
+            continue
+        name = longs[0]
         classified = OPTION_CLASS.get(name)
         if classified is None:
             raise SystemExit(
@@ -111,16 +147,34 @@ def extract_options(source_text: str) -> List[Dict[str, Any]]:
                 "in gen_interface.py OPTION_CLASS; classify it and rerun so the "
                 "skill snapshot stays intentional." % (name, MAIN_PY)
             )
-        option = {"names": [name]}
-        shorts = SHORT_OPTION.findall(rest)
-        option["names"] = [shorts[0], name] if shorts else [name]
+        option: Dict[str, Any] = {"names": [shorts[0], name] if shorts else [name]}
         option["kind"] = classified["kind"]
         option["takes_value"] = (
-            False if "store_true" in rest else classified["takes_value"]
+            False if _is_store_true(node) else classified["takes_value"]
         )
         if classified.get("optional_capability"):
             option["optional_capability"] = True
         options.append(option)
+    # 计数守护：源内 add_argument 调用数与产出选项数必须一致（位置参数、
+    # 纯短选项调用会拉开差距），否则说明存在未分类的参数形态——静默
+    # 漏掉会绕过上面的分类守护。仅重新生成（strict）时硬失败；
+    # --check 模式沿用 check_messages 的 strict 约定只告警，交由 main()
+    # 的方向判定，保持 guard inactive 容错路径
+    if total_calls != len(options):
+        if strict:
+            raise SystemExit(
+                "[ERROR]: %d add_argument calls in %s but only %d options "
+                "extracted; a positional or short-only argument is skipping "
+                "the snapshot — classify it in OPTION_CLASS or extend the "
+                "extraction instead of letting it drift."
+                % (total_calls, MAIN_PY, len(options))
+            )
+        print(
+            "[WARN]: %d add_argument calls in %s but only %d options "
+            "extracted; the direction comparison below may be unreliable — "
+            "regenerate the snapshot to verify." % (total_calls, MAIN_PY, len(options)),
+            file=sys.stderr,
+        )
     if not options:
         raise SystemExit("[ERROR]: no add_argument options found in %s" % MAIN_PY)
     return options
@@ -249,7 +303,7 @@ def build_interface(source_root: Path, strict: bool = True) -> Dict[str, Any]:
         "commands": COMMANDS,
         "cli": {
             "prog": "msobjdump",
-            "options": extract_options(source_text),
+            "options": extract_options(source_text, strict=strict),
             "exit_codes": EXIT_CODES,
         },
         "fields": extract_maps(source_root),
