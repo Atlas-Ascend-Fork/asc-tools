@@ -43,6 +43,7 @@ import argparse
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -112,6 +113,7 @@ LEAK_CHECK_PATHS = [
 ]
 
 EXPORT_TIMEOUT_SEC = 120  # opencode export 会话导出的独立超时
+KILL_GRACE_SEC = 10  # 超时杀进程组后收集残余输出的宽限上界
 
 
 # ---------------------------------------------------------------------------
@@ -429,8 +431,30 @@ def prepare_arm_dir(out_dir, eval_id, arm, skill_dir):
     return arm_dir
 
 
+def _kill_process_tree(proc):
+    """杀整个进程组：opencode 派生的子孙进程可能继承持有 stdout/stderr 管道，
+    仅杀直接子进程会让收尾的 communicate() 挂死到管道关闭为止。"""
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        else:
+            proc.kill()
+    except OSError:
+        # ProcessLookupError/PermissionError 均为其子类；进程已退出时兜底
+        # kill 也可能抛同类异常，需再防护一层
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 def run_opencode_once(arm_dir, prompt, model, variant, timeout):
-    """运行一次 opencode run，返回 (原始 stdout 全流, 错误信息；空串表示成功)"""
+    """运行一次 opencode run，返回 (原始 stdout 全流, 错误信息；空串表示成功)
+
+    以新会话（独立进程组）启动，超时杀整个进程组——subprocess.run 的
+    timeout 只杀直接子进程，管道被子孙持有时内部 communicate() 会在
+    超时之后继续阻塞。
+    """
     cmd = ["opencode", "run", "--format", "json", "--dangerously-skip-permissions"]
     if model:
         cmd += ["--model", model]
@@ -438,28 +462,54 @@ def run_opencode_once(arm_dir, prompt, model, variant, timeout):
         cmd += ["--variant", variant]
     cmd += ["--dir", str(arm_dir), "--", prompt]
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(arm_dir),
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        # subprocess.run 超时后会杀掉子进程；记 error=timeout
-        return "", f"timeout: 进程超过 {timeout}s 被终止"
     except FileNotFoundError:
         return "", "opencode 命令未找到，请先安装 opencode 并加入 PATH"
     except OSError as exc:
         return "", f"执行异常: {exc}"
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        try:
+            proc.communicate(timeout=KILL_GRACE_SEC)
+        except subprocess.TimeoutExpired:
+            # killpg 覆盖不到的残留（脱离进程组的守护进程、无 killpg 平台）
+            # 仍持有管道：关闭读端放弃残余输出并兜底杀进程，避免无上界阻塞
+            for stream in (proc.stdout, proc.stderr):
+                if stream:
+                    stream.close()
+            _kill_process_tree(proc)
+            try:
+                proc.wait(timeout=KILL_GRACE_SEC)
+            except subprocess.TimeoutExpired:
+                # 进程组杀不净且 wait 超时：进程仍存活，记录 pid 供人工排查，
+                # 不把未收尾的进程当作已完成
+                logger.warning(
+                    f"警告：eval 臂进程组收尾超时，pid={proc.pid} 可能残留，"
+                    f"returncode={proc.returncode}（未回收）"
+                )
+        return "", f"timeout: 进程超过 {timeout}s 被终止"
+    except BaseException:
+        # 对齐 subprocess.run 语义：任何异常（含 Ctrl-C 的 KeyboardInterrupt）
+        # 先终止进程组再抛出，独立会话中的子进程不会成为孤儿
+        _kill_process_tree(proc)
+        raise
     if proc.returncode != 0:
-        stderr = (proc.stderr or "").strip()
-        detail = stderr[:2000] if stderr else f"退出码 {proc.returncode}"
-        return proc.stdout or "", f"opencode 退出码 {proc.returncode}: {detail}"
-    return proc.stdout or "", ""
+        stderr_text = (stderr or "").strip()
+        detail = stderr_text[:2000] if stderr_text else f"退出码 {proc.returncode}"
+        return stdout or "", f"opencode 退出码 {proc.returncode}: {detail}"
+    return stdout or "", ""
 
 
 def export_session(arm_dir, session_id, dest_path):
