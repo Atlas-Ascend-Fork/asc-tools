@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -87,6 +88,31 @@ def module_source() -> Optional[str]:
     return process.stdout.strip() or None
 
 
+def run_command(vector: List[str], timeout: int = 10) -> Dict[str, Any]:
+    """按参数向量取命令输出（module 形态探测用）。"""
+    try:
+        process = subprocess.run(
+            vector,
+            capture_output=True,
+            text=True,
+            errors="backslashreplace",
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {"returncode": None, "stdout": "", "stderr": str(error)}
+    return {
+        "returncode": process.returncode,
+        "stdout": process.stdout,
+        "stderr": process.stderr,
+    }
+
+
+def module_help_vector(module_cmd: str) -> List[str]:
+    """interface.json commands.module（如 python3 -m msobjdump）转为 -h 参数向量。"""
+    return shlex.split(module_cmd) + ["-h"]
+
+
 def options_in_help(help_text: str) -> List[str]:
     """从帮助文本提取选项名；优先只看 options 段，缺段时回退全文。"""
     section = ""
@@ -118,41 +144,10 @@ def resolve_command(command: str) -> Optional[str]:
     return shutil.which(command)
 
 
-def probe(interface: Dict[str, Any], tool: Optional[str]) -> Dict[str, Any]:
-    commands = interface.get("commands", {})
-    primary = commands.get("primary", "npu-objdump")
-    compat = commands.get("compat", "msobjdump")
-
-    tool_presence = {
-        primary: shutil.which(primary),
-        compat: shutil.which(compat),
-    }
-
-    resolved_tool = tool or (primary if tool_presence.get(primary) else compat)
-    resolved_path = resolve_command(resolved_tool) if resolved_tool else None
-
-    result: Dict[str, Any] = {
-        "tool": resolved_tool,
-        "tool_resolved": resolved_path,
-        "tool_presence": tool_presence,
-    }
-    if resolved_tool is None or resolved_path is None:
-        result["status"] = "unavailable"
-        result["message"] = (
-            "no usable msobjdump command (checked: %s, %s%s); "
-            "source the matching CANN environment first"
-            % (primary, compat, ", %s" % tool if tool else "")
-        )
-        return result
-
-    help_result = run_tool(resolved_tool)
-    result["returncode"] = help_result["returncode"]
-    result["module_file"] = module_source()
-    if help_result["returncode"] != 0:
-        result["status"] = "failed"
-        result["message"] = help_result["stderr"].strip() or "msobjdump -h failed"
-        return result
-
+def _assess_help(
+    result: Dict[str, Any], help_result: Dict[str, Any], interface: Dict[str, Any]
+) -> Dict[str, Any]:
+    """按 -h 输出与快照比对选项，填充 present/missing/undocumented 与 status。"""
     help_text = help_result["stdout"] + help_result["stderr"]
     present = options_in_help(help_text)
     result["present_options"] = present
@@ -204,6 +199,65 @@ def probe(interface: Dict[str, Any], tool: Optional[str]) -> Dict[str, Any]:
     else:
         result["status"] = "ok"
     return result
+
+
+def probe(interface: Dict[str, Any], tool: Optional[str]) -> Dict[str, Any]:
+    commands = interface.get("commands", {})
+    primary = commands.get("primary", "npu-objdump")
+    compat = commands.get("compat", "msobjdump")
+    module_cmd = commands.get("module", "")
+
+    tool_presence = {
+        primary: shutil.which(primary),
+        compat: shutil.which(compat),
+    }
+
+    resolved_tool = tool or (primary if tool_presence.get(primary) else compat)
+    resolved_path = resolve_command(resolved_tool) if resolved_tool else None
+
+    result: Dict[str, Any] = {
+        "tool": resolved_tool,
+        "tool_resolved": resolved_path,
+        "tool_presence": tool_presence,
+    }
+    if resolved_tool is None or resolved_path is None:
+        # 二进制形态不可用时回退探测 module 形态（--tool 显式指定时尊重用户选择，
+        # 不回退）；interface.json commands 记载的形态不应产生假阴性 unavailable
+        module_note = ""
+        if not tool and module_cmd:
+            module_result = run_command(module_help_vector(module_cmd))
+            if module_result["returncode"] == 0:
+                result["tool"] = module_cmd
+                result["tool_resolved"] = None
+                result["module_fallback"] = True
+                result["returncode"] = module_result["returncode"]
+                result["module_file"] = module_source()
+                return _assess_help(result, module_result, interface)
+            if module_result["returncode"] is None:
+                # 探测超时/执行异常（如网络盘或慢环境下 10s 不够），
+                # 明确标注而非笼统归为不可用
+                module_note = "; module probe %r failed: %s" % (
+                    module_cmd,
+                    module_result["stderr"].strip()[:120],
+                )
+        result["status"] = "unavailable"
+        checked = ", ".join(x for x in (primary, compat, module_cmd or None) if x)
+        result["message"] = (
+            "no usable msobjdump command (checked: %s%s%s); "
+            "source the matching CANN environment first"
+            % (checked, ", %s" % tool if tool else "", module_note)
+        )
+        return result
+
+    help_result = run_tool(resolved_tool)
+    result["returncode"] = help_result["returncode"]
+    result["module_file"] = module_source()
+    if help_result["returncode"] != 0:
+        result["status"] = "failed"
+        result["message"] = help_result["stderr"].strip() or "msobjdump -h failed"
+        return result
+
+    return _assess_help(result, help_result, interface)
 
 
 def human_summary(result: Dict[str, Any]) -> str:
