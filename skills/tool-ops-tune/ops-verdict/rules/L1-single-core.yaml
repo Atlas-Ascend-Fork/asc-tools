@@ -1,0 +1,316 @@
+# L1 单核层判定规则包：核内 pipe 级 Bound
+#
+# 阈值来源（知识契约：每条阈值可溯源，变更须过 evals/run_evals.py 回归）：
+#   [msprof-doc]        msprof 官方文档与 CSV 字段说明（MindStudio 8.3 口径）
+#   [tuning-practice]   一线调优实践沉淀（阈值实测来源，标定于 A2/A5 真机案例）
+schema: opstune.rules/1.0
+layer: L1
+title: 单核流水判定（核内 pipe 级）
+soc: [a2, a3, a5]
+
+# ---------------------------------------------------------------------------
+# 指标词汇表：规则-指标绑定契约的解析层。
+# columns 为候选列名（按序取首个可解析者，兼容 A5 aic_/aiv_ 双列名与旧版百分数格式）。
+# normalize: ratio_to_pct — 0~1.5 视为比例 ×100（仅限 ratio 类指标，时间/计数类禁止）。
+# group: pipe — 参与主导 pipe 排序（rank 聚合）与串行指纹求和。
+# source: scalar — 由调用方经 --scalar 提供（如带宽占峰值百分比），缺失时反证不可评估。
+# ---------------------------------------------------------------------------
+metrics:
+  vec_ratio:
+    source: pipe
+    columns: [aiv_vec_ratio, aic_vec_ratio, "VectorUtilization(%)", vec_ratio, VECTOR(%)]
+    normalize: ratio_to_pct
+    group: pipe
+  cube_ratio:
+    source: pipe
+    columns: [aic_cube_ratio, aiv_cube_ratio, "CubeUtilization(%)", cube_ratio, CUBE(%)]
+    normalize: ratio_to_pct
+    group: pipe
+  mte2_ratio:
+    source: pipe
+    columns: [aic_mte2_ratio, aiv_mte2_ratio, ai_mte2_ratio, "Mte2Utilization(%)", mte2_ratio, MTE2(%)]
+    normalize: ratio_to_pct
+    group: pipe
+  mte3_ratio:
+    source: pipe
+    columns: [aic_mte3_ratio, aiv_mte3_ratio, ai_mte3_ratio, "Mte3Utilization(%)", mte3_ratio, MTE3(%)]
+    normalize: ratio_to_pct
+    group: pipe
+  mte1_ratio:
+    source: pipe
+    columns: [aic_mte1_ratio, aiv_mte1_ratio, "Mte1Utilization(%)", mte1_ratio, MTE1(%)]
+    normalize: ratio_to_pct
+    group: pipe
+  fixpipe_ratio:
+    source: pipe
+    columns: [aic_fixpipe_ratio, aiv_fixpipe_ratio, "FixpipeUtilization(%)", fixp_ratio, FIXP(%)]
+    normalize: ratio_to_pct
+    group: pipe
+  scalar_ratio:
+    source: pipe
+    columns: [aic_scalar_ratio, aiv_scalar_ratio, ai_scalar_ratio, "ScalarUtilization(%)", scalar_ratio, SCALAR(%)]
+    normalize: ratio_to_pct
+    group: pipe
+  mte2_active_bw_pct_of_peak:
+    source: scalar
+    description: MTE2 活跃带宽占理论峰值百分比（调用方按目标 SoC 峰值换算后提供）
+  vec_total_cflt_ratio:
+    source: scalar
+    description: Vector 指令 Bank conflict 比例（ResourceConflictRatio.csv ai*_vec_total_cflt_ratio，调用方换算后提供）
+  vec_fp32_ratio:
+    source: scalar
+    description: Vector 中 fp32 指令占比（ArithmeticUtilization.csv，调用方换算后提供）
+  fixpipe_align_hint:
+    source: scalar
+    description: 保留位（未使用）
+
+rules:
+  # ---------------------------------------------------------------- MTE2 搬入
+  - id: L1_MTE2_BOUND
+    name: MTE2 搬入瓶颈
+    priority: 10
+    parent: L1_MEMORY_SATURATION
+    threshold_source: "[msprof-doc] >80% 直接判 / 最大且 >70%；watch 50% 档取 [tuning-practice]"
+    metrics_required: [mte2_ratio]
+    metrics_optional: [mte2_active_bw_pct_of_peak, fixpipe_ratio]
+    condition:
+      any:
+        - {metric: mte2_ratio, agg: mean, op: gt, value: 80}
+        - all:
+            - {metric: mte2_ratio, agg: mean, op: gt, value: 70}
+            - {metric: mte2_ratio, agg: rank, op: eq, value: 1}
+    watch:
+      condition: {metric: mte2_ratio, agg: mean, op: gt, value: 50}
+      note: MTE2 占比 50~70%，暂非主导，已具备搬运优化价值
+    severity:
+      metric: mte2_ratio
+      bands:
+        - {min: 85, level: critical, note: 接近极限，单机制收益有限，需数据量/复用级优化}
+        - {min: 70, level: moderate}
+      default: light
+    counter_evidence:
+      - id: true-bandwidth-saturation
+        condition: {metric: mte2_active_bw_pct_of_peak, agg: value, op: gt, value: 80}
+        note: active_bw 已达理论 80%+：真带宽饱和。优化在数据量削减/复用，不在搬运组织
+        action: annotate
+      - id: fake-mte2-small-packet
+        condition: {metric: mte2_active_bw_pct_of_peak, agg: value, op: lt, value: 40}
+        note: busy 高但带宽 <40% 峰值：疑似小包/非对齐/频繁同步（假 MTE2 bound）
+        action: annotate
+      - id: fixpipe-misalignment
+        condition: {metric: fixpipe_ratio, agg: mean, op: gt, value: 15}
+        note: fixpipe >15%：GM 地址未 512B 对齐问题叠加 [tuning-practice]
+        action: annotate
+    confidence: high
+    speedup_range: [1.2, 2.0]
+    speedup_source: "[tuning-practice] MTE2 优化方法预期收益，🟡 首期标定值"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/data-copy.md
+      - ops-mechanism:references/optimize/memory-hierarchy.md
+
+  # ---------------------------------------------------------------- CUBE 计算
+  - id: L1_CUBE_BOUND
+    name: Cube 矩阵计算瓶颈
+    priority: 20
+    parent: L1_COMPUTE_SATURATION
+    threshold_source: "[msprof-doc]"
+    metrics_required: [cube_ratio]
+    metrics_optional: []
+    condition:
+      any:
+        - {metric: cube_ratio, agg: mean, op: gt, value: 80}
+        - all:
+            - {metric: cube_ratio, agg: mean, op: gt, value: 70}
+            - {metric: cube_ratio, agg: rank, op: eq, value: 1}
+    watch:
+      condition: {metric: cube_ratio, agg: mean, op: gt, value: 40}
+      note: Cube 占比 >40%（MatMul 类正常水位 [msprof-doc]）
+    severity:
+      metric: cube_ratio
+      bands:
+        - {min: 85, level: critical, note: 接近理论极限，先核 fops 折算的真实利用率}
+        - {min: 70, level: moderate}
+      default: light
+    counter_evidence:
+      - id: check-real-flops
+        condition: {metric: cube_ratio, agg: mean, op: gt, value: 85}
+        note: busy 接近饱和时必须用 aic_cube_fops 折算理论利用率，排除空转指令 [tuning-practice]
+        action: annotate
+    confidence: high
+    speedup_range: [1.1, 1.5]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/ascendc-tiling.md
+      - ops-family:references/matmul/guide.md
+
+  # ---------------------------------------------------------------- VEC 向量
+  - id: L1_VEC_BOUND
+    name: Vector 向量计算瓶颈
+    priority: 30
+    parent: L1_COMPUTE_SATURATION
+    threshold_source: "[msprof-doc] 主判定表；[tuning-practice] 50-65/65-80/>80 三档"
+    metrics_required: [vec_ratio]
+    metrics_optional: []
+    condition:
+      any:
+        - {metric: vec_ratio, agg: mean, op: gt, value: 80}
+        - all:
+            - {metric: vec_ratio, agg: mean, op: gt, value: 70}
+            - {metric: vec_ratio, agg: rank, op: eq, value: 1}
+    watch:
+      condition: {metric: vec_ratio, agg: mean, op: gt, value: 50}
+      note: VEC 占比 50~70%，UB 融合/减 Cast 已有收益空间 [tuning-practice]
+    severity:
+      metric: vec_ratio
+      bands:
+        - {min: 80, level: critical, note: VEC 接近理论极限，优化空间有限，转数据量/算法侧}
+        - {min: 65, level: moderate, note: 需减少 Cast 或融合指令}
+        - {min: 50, level: light, note: DoubleBuffer + UB 融合有较大收益}
+      default: light
+    counter_evidence:
+      - id: bank-conflict-amplify
+        condition: {metric: vec_total_cflt_ratio, agg: mean, op: gt, value: 5}
+        note: Bank conflict 放大了 VEC 耗时，先解冲突再谈向量化 [tuning-practice 交叉关联诊断]
+        action: annotate
+      - id: cast-heavy
+        condition: {metric: vec_fp32_ratio, agg: mean, op: gt, value: 60}
+        note: fp32 指令占比高：存在大量 fp16→fp32 转换，减 Cast 优先 [tuning-practice]
+        action: annotate
+    confidence: high
+    speedup_range: [1.1, 1.5]
+    speedup_source: "[tuning-practice] UB 融合 20-50% / 减 Cast 10-30%（档位内取保守下界），🟡 待校准"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/api-usage.md
+      - ops-mechanism:references/optimize/pipeline.md
+      - ops-mechanism:references/optimize/ascendc-regbase-vf.md
+
+  # ---------------------------------------------------------------- MTE3 搬出
+  - id: L1_MTE3_BOUND
+    name: MTE3 搬出瓶颈
+    priority: 40
+    parent: L1_MEMORY_SATURATION
+    threshold_source: "[msprof-doc]"
+    metrics_required: [mte3_ratio]
+    metrics_optional: []
+    condition:
+      any:
+        - {metric: mte3_ratio, agg: mean, op: gt, value: 80}
+        - all:
+            - {metric: mte3_ratio, agg: mean, op: gt, value: 70}
+            - {metric: mte3_ratio, agg: rank, op: eq, value: 1}
+    severity:
+      metric: mte3_ratio
+      bands:
+        - {min: 85, level: critical}
+        - {min: 70, level: moderate}
+      default: light
+    confidence: high
+    speedup_range: [1.1, 1.4]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/data-copy.md
+
+  # ---------------------------------------------------------------- FIXP
+  - id: L1_FIXP_BOUND
+    name: FixPipe 输出瓶颈
+    priority: 50
+    parent: L1_MEMORY_SATURATION
+    threshold_source: "[msprof-doc] >80% 判 bound；>15% 对齐预警取 [tuning-practice]"
+    metrics_required: [fixpipe_ratio]
+    metrics_optional: []
+    condition: {metric: fixpipe_ratio, agg: mean, op: gt, value: 80}
+    watch:
+      condition: {metric: fixpipe_ratio, agg: mean, op: gt, value: 15}
+      note: fixpipe >15%：GM 地址未 512B 对齐的直接信号，修复成本低收益显著 [tuning-practice FA 案例]
+    severity:
+      metric: fixpipe_ratio
+      bands:
+        - {min: 85, level: critical}
+        - {min: 80, level: moderate}
+      default: light
+    confidence: high
+    speedup_range: [1.1, 1.3]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/data-copy.md
+
+  # ---------------------------------------------------------------- SCALAR
+  - id: L1_SCALAR_BOUND
+    name: Scalar 标量瓶颈
+    priority: 60
+    parent: L1_SCALAR_SATURATION
+    threshold_source: "[tuning-practice] >30% 判定；[tuning-practice] >90% 且 vec/mte 低 → 标量访问/地址计算"
+    metrics_required: [scalar_ratio, vec_ratio]
+    metrics_optional: []
+    condition:
+      any:
+        - {metric: scalar_ratio, agg: mean, op: gt, value: 80}
+        - all:
+            - {metric: scalar_ratio, agg: mean, op: gt, value: 70}
+            - {metric: scalar_ratio, agg: rank, op: eq, value: 1}
+    watch:
+      condition: {metric: scalar_ratio, agg: mean, op: gt, value: 30}
+      note: scalar >30%：常见于数据量小、头开销占比大场景；检查 TilingData 体积与核数 [tuning-practice]
+    severity:
+      metric: scalar_ratio
+      bands:
+        - {min: 85, level: critical}
+        - {min: 70, level: moderate}
+      default: light
+    counter_evidence:
+      - id: address-compute-heavy
+        condition: {metric: scalar_ratio, agg: mean, op: gt, value: 90}
+        note: scalar >90% 而 vec/mte 低：标量访问/地址计算主导，查指针运算与分支 [tuning-practice]
+        action: annotate
+    confidence: high
+    speedup_range: [1.1, 1.5]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/api-usage.md
+
+  # ------------------------------------------------- LATENCY/SYNC 可疑档
+  - id: L1_LATENCY_SYNC_SUSPECT
+    name: 全流水低占用（LATENCY/SYNC 可疑）
+    priority: 70
+    parent: L1_LATENCY
+    threshold_source: "[tuning-practice] 全 pipe busy 均值 <50% 不是『无 bound』"
+    metrics_required: [vec_ratio, cube_ratio, mte2_ratio, mte3_ratio, scalar_ratio]
+    metrics_optional: []
+    condition:
+      all:
+        - {metric: __max_pipe_mean, op: lt, value: 50}
+    severity:
+      metric: __max_pipe_mean
+      bands:
+        - {max: 30, level: critical, note: 全 pipe <30%，重度等待}
+        - {max: 50, level: moderate}
+      default: light
+    counter_evidence:
+      - id: serial-fingerprint
+        condition: {metric: __pipe_sum_mean, op: between, value: [85, 115]}
+        note: 多 pipe 互补求和≈100%：串行无重叠指纹，Double Buffer / 流水掩盖是首选机制 [tuning-practice]
+        action: annotate
+    confidence: medium
+    speedup_range: [1.2, 2.5]
+    speedup_source: "[tuning-practice] Double Buffer 类机制实测区间，🟡 待校准"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/pipeline.md
+
+  # ------------------------------------------------- 串行无重叠指纹（独立发现）
+  - id: L1_SERIAL_NO_OVERLAP
+    name: 串行无重叠指纹
+    priority: 80
+    parent: L1_LATENCY
+    threshold_source: "[tuning-practice] cube 0.44+mte2 0.42+mte1 0.18≈1 案例"
+    metrics_required: [vec_ratio, cube_ratio, mte2_ratio, mte3_ratio, mte1_ratio, scalar_ratio, fixpipe_ratio]
+    metrics_optional: []
+    condition:
+      all:
+        - {metric: __max_pipe_mean, op: lt, value: 70}
+        - {metric: __pipe_sum_mean, op: between, value: [85, 115]}
+    severity: {default: moderate}
+    confidence: medium
+    speedup_range: [1.3, 2.0]
+    speedup_source: "单缓冲→双缓冲典型收益，🟡 待校准"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/pipeline.md

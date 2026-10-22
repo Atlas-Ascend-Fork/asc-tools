@@ -1,0 +1,67 @@
+# L0 指令/源码层判定规则包：PC 采样 stall 枚举（A5 PcSampling / 仿真）
+#
+# 阈值来源：
+#   [tuning-practice] 无 Roofline 产物时不得推断 Roofline Bound
+#   [msprof-doc]     icache_miss_rate >15% 需关注（msprof 官方文档口径）
+# M2 阶段扩展：SIMT/VF 档（divergence_stack_spill / register_bank_conflict / warp_level_sync）
+schema: opstune.rules/1.0
+layer: L0
+title: 指令级判定（PC 采样 / 仿真）
+soc: [a2, a3, a5]
+
+metrics:
+  icache_miss_rate:
+    source: scalar
+    description: ICache 缺失率（PipeUtilization ai*_icache_miss_rate）
+  top_stall_pct:
+    source: scalar
+    description: PC 采样 top stall 枚举占比
+  l2_hit_rate:
+    source: scalar
+    description: L2Cache.csv ai*_total_hit_rate(%)
+
+rules:
+  - id: L0_ICACHE_MISS
+    name: ICache 缺失率高
+    priority: 10
+    threshold_source: "[msprof-doc] >15% 需关注"
+    metrics_required: [icache_miss_rate]
+    metrics_optional: []
+    condition: {metric: icache_miss_rate, agg: value, op: gt, value: 15}
+    severity: {default: moderate}
+    confidence: medium
+    speedup_range: [1.0, 1.1]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/api-usage.md
+
+  - id: L0_L2_LOW_HIT
+    name: L2 命中率低
+    priority: 20
+    threshold_source: "[tuning-practice] ai*_total_hit_rate <50%"
+    metrics_required: [l2_hit_rate]
+    metrics_optional: []
+    condition:
+      all:
+        - {metric: l2_hit_rate, agg: value, op: gte, value: 0}
+        - {metric: l2_hit_rate, agg: value, op: lt, value: 50}
+    severity: {default: moderate}
+    confidence: medium
+    speedup_range: [1.1, 1.4]
+    speedup_source: "[tuning-practice] L2 CacheMode 方法，🟡 待校准"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/memory-hierarchy.md
+
+  - id: L0_STALL_DOMINANT
+    name: stall 主因枚举（占位，M2 启用）
+    priority: 30
+    threshold_source: 🟡 PcSampling 字段口径 M1 末期标定
+    metrics_required: [top_stall_pct]
+    metrics_optional: []
+    condition: {metric: top_stall_pct, agg: value, op: gt, value: 40}
+    severity: {default: moderate}
+    confidence: low
+    speedup_range: [1.0, 1.2]
+    speedup_source: 🟡 待标定
+    mechanism_refs:
+      - ops-mechanism:references/optimize/pipeline.md

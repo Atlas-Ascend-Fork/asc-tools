@@ -1,0 +1,173 @@
+# L2 核间层判定规则包：多核负载与占用
+#
+# 阈值来源：
+#   [tuning-practice] 一线调优实践沉淀：长尾 1.25x 档 / A5 典型 28 AIC·56 AIV（soc-spec.yaml 实测勘误）
+#   [tuning-practice] 逐核耗时离散度三档（<10 达标 / 10~30 警告 / >30 严重，A2/A5 实测标定）
+#   [tuning-practice] 头开销参考值（Atlas A2 满核 ~20-21us，实测；A5 未标定，见 soc-spec.yaml 🟡）
+schema: opstune.rules/1.0
+layer: L2
+title: 核间负载判定
+soc: [a2, a3, a5]
+
+metrics:
+  row_count:
+    source: derived
+    description: PipeUtilization 有效 block 行数（活跃核数）
+  block_dim:
+    source: scalar
+    description: OpBasicInfo Block Dim（逻辑核数）
+  physical_cores:
+    source: scalar
+    description: 目标 SoC 物理核数（调用方提供：优先按 soc-spec.yaml skus 解析实际 SKU；a5 典型 28 AIC/56 AIV、a2 典型 24 AIC/48 AIV——旧注释「A5 约 48 AIV/28 AIC」已按 ini 实测勘误）
+  task_duration_us:
+    source: scalar
+    description: OpBasicInfo Task Duration(us)
+  dominant_time_us:
+    source: derived
+    description: max(aic_time, aiv_time) 逐核均值（核执行主体时间；引擎按 CSV 逐核耗时均值计算）
+  time_mean_us:
+    source: derived
+    description: 逐核耗时均值（活跃核）
+  time_max_us:
+    source: derived
+    description: 逐核耗时最大值（最慢核）
+  time_min_us:
+    source: derived
+    description: 逐核耗时最小值
+  host_dispatch_us:
+    source: scalar
+    description: host 下发间隙（launch → task start，µs；scene=cluster 由 host 侧时间轴产物换算后提供——P2-4 规划态，暂无生产者）
+
+rules:
+  - id: L2_CORE_TAIL
+    name: 核间长尾
+    priority: 10
+    threshold_source: "[tuning-practice] max > mean×1.25；[tuning-practice] 离散度三档"
+    metrics_required: [time_mean_us, time_max_us, time_min_us]
+    metrics_optional: []
+    condition:
+      all:
+        - {metric: time_mean_us, op: gt, value: 0}
+        - {metric: time_max_us, op: gt_ratio, value: {metric: time_mean_us, factor: 1.25}}
+    severity:
+      metric: __tail_ratio
+      bands:
+        - {min: 1.6, level: critical}
+        - {min: 1.25, level: moderate}
+      default: light
+    counter_evidence:
+      - id: numa-two-cluster
+        condition: {metric: __two_cluster_gap_pct, op: gt, value: 2}
+        note: 前后半段核均值差距 ≥2%：疑似 NUMA/L2 slice 负载偏斜，block swat / 尾轮均衡优先 [tuning-practice]
+        action: annotate
+    confidence: high
+    speedup_range: [1.05, 1.3]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/ascendc-tiling.md
+
+  - id: L2_IMBALANCE_MILD
+    name: 核间负载不均衡（离散度警告档）
+    priority: 15
+    threshold_source: "[tuning-practice] (max-min)/max：10~30% 警告"
+    metrics_required: [time_mean_us, time_max_us, time_min_us]
+    metrics_optional: []
+    condition:
+      all:
+        - {metric: __imbalance_pct, op: gt, value: 10}
+        - {metric: __imbalance_pct, op: lte, value: 30}
+    severity: {default: light}
+    confidence: medium
+    speedup_range: [1.0, 1.1]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/ascendc-tiling.md
+
+  - id: L2_IMBALANCE_SEVERE
+    name: 核间负载不均衡（离散度严重档）
+    priority: 16
+    threshold_source: "[tuning-practice] (max-min)/max >30% 严重问题"
+    metrics_required: [time_mean_us, time_max_us, time_min_us]
+    metrics_optional: []
+    condition: {metric: __imbalance_pct, op: gt, value: 30}
+    severity: {default: critical}
+    confidence: high
+    speedup_range: [1.1, 1.5]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/ascendc-tiling.md
+
+  - id: L2_UNDERUTILIZATION
+    name: 切核不足（occupancy 可疑）
+    priority: 20
+    threshold_source: "[tuning-practice] block 行数 ≪ 物理核数；[tuning-practice] Block Dim 不足是最常见低垂果实"
+    metrics_required: [row_count, physical_cores]
+    metrics_optional: [block_dim]
+    condition:
+      all:
+        - {metric: row_count, op: gt, value: 0}
+        - {metric: row_count, op: lt_ratio, value: {metric: physical_cores, factor: 0.33}}
+    severity:
+      metric: __occupancy_pct
+      bands:
+        - {max: 10, level: critical, note: 活跃核不足物理核 10%，切分严重不足}
+        - {max: 33, level: moderate}
+      default: light
+    counter_evidence:
+      - id: small-case-fewer-cores
+        condition: {metric: task_duration_us, op: lt, value: 25}
+        note: Task 极短（<25us）：数据量小，增核可能放大头开销（A2 满核头开销 ~20-21us），需权衡 [tuning-practice]
+        action: annotate
+    confidence: medium
+    speedup_range: [1.2, 3.0]
+    speedup_source: "[tuning-practice] Block Dim 4→20 核案例 4.75x（区间下界保守化），🟡 待校准"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/ascendc-tiling.md
+
+  - id: L2_HEAD_OVERHEAD
+    name: 头开销占比过高
+    priority: 30
+    threshold_source: "[tuning-practice] overhead = TaskDuration − max(aic,aiv)；[tuning-practice] 头开销占比 >30% 说明数据量太小或核数太多"
+    metrics_required: [task_duration_us, dominant_time_us]
+    metrics_optional: []
+    condition:
+      all:
+        - {metric: task_duration_us, op: gt, value: 0}
+        # 木桶口径：头开销以最慢核为基准（Task 总时长 − 最慢核主体时间）/ Task 总时长
+        - {metric: __head_overhead_pct, op: gt, value: 30}
+    severity:
+      metric: __head_overhead_pct
+      bands:
+        - {min: 50, level: critical}
+        - {min: 30, level: moderate}
+      default: light
+    confidence: medium
+    speedup_range: [1.05, 1.2]
+    speedup_source: 🟡 首期标定值
+    mechanism_refs:
+      - ops-mechanism:references/optimize/api-usage.md
+
+  # ------------------------------------------------ host 下发档（P2-4/G17，scene=cluster）
+  # 集群视角的 host 侧证据：下发阻塞（launch → task start 的 host 间隙）主导时，
+  # 算子侧优化收益有限，先解 host 下发（流组织 / launch 合并 / host 占用）。
+  - id: L2_HOST_DISPATCH_BLOCK
+    name: host 下发阻塞（scene=cluster 专用档）
+    priority: 35
+    threshold_source: "🟡 host_dispatch_us > 50 且占 task_duration >30% 为初值占位（首个集群场景实战后标定）"
+    metrics_required: [host_dispatch_us, task_duration_us]
+    metrics_optional: []
+    condition:
+      all:
+        - {metric: host_dispatch_us, op: gt, value: 50}
+        - {metric: __host_dispatch_pct, op: gt, value: 30}
+    severity:
+      metric: __host_dispatch_pct
+      bands:
+        - {min: 50, level: critical, note: 下发间隙超过 task 半程：host 侧完全主导}
+        - {min: 30, level: moderate}
+      default: light
+    confidence: low
+    speedup_range: [1.0, 1.2]
+    speedup_source: 🟡 待标定（P2-4 规划态规则，缺真实集群数据）
+    mechanism_refs:
+      - ops-mechanism:references/optimize/api-usage.md

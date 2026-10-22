@@ -1,0 +1,156 @@
+# L3 卡间层判定规则包：MC² 通算融合通信-计算比
+#
+# 阈值来源：
+#   [mc2-practice] MC² 通算融合一线调优实践：R 值五档（真机实测 R 从 0.3 到 9.8）
+#   [mc2-practice] 掩盖率公式 / 跨 rank max 口径（多卡实测沉淀）
+#
+# 前置要求（由 ops-collect 隔离测试产出，缺失时本规则包整体降级为 UNRESOLVED）：
+#   - T_comm：tileCnt=1 注释计算 process，多 rank 并行采集，取各 rank 稳态均值最大值
+#   - T_compute：tileCnt=1 注释通信 process，同上口径
+schema: opstune.rules/1.0
+layer: L3
+title: 卡间通算比判定（MC²）
+soc: [a5]
+requires_experiment:
+  kind: isolation_test
+  outputs: [t_comm_us, t_compute_us, m_rows]
+  note: 隔离测试数据缺失时本包所有规则不触发，输出 UNRESOLVED + 补采指令
+
+metrics:
+  t_comm_us:
+    source: scalar
+    description: 纯通信耗时（隔离测试，跨 rank max 稳态均值）
+  t_compute_us:
+    source: scalar
+    description: 纯计算耗时（隔离测试，跨 rank max 稳态均值）
+  r_value:
+    source: derived
+    description: R = T_compute / T_comm
+  mask_ratio:
+    source: scalar
+    description: 掩盖率 = (融合前耗时−融合后耗时)/min(T_comm,T_compute)
+  rank_imbalance:
+    source: scalar
+    description: max(rank 稳态均值)/mean(rank 稳态均值)
+  mte2_ratio_full:
+    source: scalar
+    description: 完整算子 aic_mte2_ratio（含通信等待，跨 rank max）
+  mte2_ratio_pure:
+    source: scalar
+    description: 隔离测试纯计算路径 aic_mte2_ratio（无通信等待）
+
+rules:
+  - id: L3_MC2_BALANCED
+    name: 通算完美平衡
+    priority: 10
+    threshold_source: "[mc2-practice] R≈1 (0.9~1.1)"
+    metrics_required: [t_comm_us, t_compute_us]
+    metrics_optional: []
+    condition:
+      all:
+        - {metric: r_value, op: between, value: [0.9, 1.1]}
+    severity: {default: light}
+    confidence: high
+    speedup_range: [1.0, 1.1]
+    speedup_source: "[mc2-practice] 等分切分即最优"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/mc2.md
+
+  - id: L3_MC2_COMPUTE_BOUND
+    name: 通算计算 Bound
+    priority: 20
+    threshold_source: "[mc2-practice] 1.1 < R ≤ 2"
+    metrics_required: [t_comm_us, t_compute_us]
+    metrics_optional: [mask_ratio]
+    condition:
+      all:
+        - {metric: r_value, op: gt, value: 1.1}
+        - {metric: r_value, op: lte, value: 2}
+    severity: {default: moderate}
+    confidence: high
+    speedup_range: [1.1, 1.8]
+    speedup_source: "[mc2-practice] 用通信掩盖计算，增大 tileCnt；🟡 待校准"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/mc2.md
+      - ops-mechanism:references/optimize/mc2-balancing.md
+
+  - id: L3_MC2_STRONG_COMPUTE
+    name: 通算强计算 Bound
+    priority: 21
+    threshold_source: "[mc2-practice] R > 2"
+    metrics_required: [t_comm_us, t_compute_us]
+    metrics_optional: []
+    condition: {metric: r_value, op: gt, value: 2}
+    severity: {default: critical}
+    confidence: high
+    speedup_range: [1.0, 1.2]
+    speedup_source: "[mc2-practice] 增大 tileCnt 收益极小，倾向少切分；须搜索确认"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/mc2.md
+      - ops-family:references/matmul/guide.md
+
+  - id: L3_MC2_COMM_BOUND
+    name: 通算通信 Bound
+    priority: 30
+    threshold_source: "[mc2-practice] R < 0.9（上界 0.9 与 BALANCED 下界 0.9 对齐，消除区间重叠）"
+    metrics_required: [t_comm_us, t_compute_us]
+    metrics_optional: [mask_ratio]
+    condition:
+      all:
+        - {metric: r_value, op: lt, value: 0.9}
+        - {metric: r_value, op: gte, value: 0.5}
+    severity: {default: moderate}
+    confidence: high
+    speedup_range: [1.1, 1.8]
+    speedup_source: "[mc2-practice] 用计算掩盖通信，增大 tileCnt；🟡 待校准"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/mc2.md
+      - ops-mechanism:references/optimize/mc2-balancing.md
+
+  - id: L3_MC2_STRONG_COMM
+    name: 通算强通信 Bound
+    priority: 31
+    threshold_source: "[mc2-practice] R < 0.5"
+    metrics_required: [t_comm_us, t_compute_us]
+    metrics_optional: []
+    condition: {metric: r_value, op: lt, value: 0.5}
+    severity: {default: critical}
+    confidence: high
+    speedup_range: [1.2, 2.0]
+    speedup_source: "[mc2-practice] 从短块出发搜索，最大化 tileCnt；🟡 待校准"
+    mechanism_refs:
+      - ops-mechanism:references/optimize/mc2.md
+      - ops-mechanism:references/optimize/mc2-balancing.md
+
+  - id: L3_MTE2_POLLUTED
+    name: MTE2 指标被通信等待污染（路由规则）
+    priority: 5
+    threshold_source: "[mc2-practice] ratio_full−ratio_pure > 0.1 或 ratio_pure/ratio_full < 0.8"
+    metrics_required: [mte2_ratio_full, mte2_ratio_pure]
+    metrics_optional: []
+    condition:
+      any:
+        - {metric: __mte2_pollution_gap, op: gt, value: 10}
+        - {metric: __mte2_pure_ratio_pct, op: lt, value: 80}
+    severity: {default: moderate}
+    confidence: high
+    routing:
+      on_hit: [disable_rule, L1_MTE2_BOUND]
+      reroute_to: ops-mechanism:references/optimize/mc2.md
+      note: MTE2 含通信等待空转，单核访存优化无效，路由到通信掩盖策略
+    mechanism_refs:
+      - ops-mechanism:references/optimize/mc2.md
+
+  - id: L3_RANK_IMBALANCE
+    name: 跨 rank 木桶不均衡
+    priority: 40
+    threshold_source: 🟡 M1 实测标定（初值 1.1 为工程经验占位）
+    metrics_required: [rank_imbalance]
+    metrics_optional: []
+    condition: {metric: rank_imbalance, op: gt, value: 1.1}
+    severity: {default: moderate}
+    confidence: low
+    speedup_range: [1.0, 1.15]
+    speedup_source: 🟡 待标定
+    mechanism_refs:
+      - ops-mechanism:references/optimize/mc2.md
