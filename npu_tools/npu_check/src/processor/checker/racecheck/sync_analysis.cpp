@@ -260,25 +260,7 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
     if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS)
         state.memory.push_back(*static_cast<const AclsanDeviceMemoryAccessData*>(data));
     else if (id == ACLSAN_CBID_DEVICE_SYNC) {
-        auto sync = *static_cast<const AclsanDeviceSyncData*>(data);
-        // synccheck代码增加了syncKind枚举，scope枚举，以及修改了WAIT_INTRA_BLOCK不携带mode，
-        // 在核间同步时SET和WAIT时分别不记录dstpipe和scrpipe等逻辑
-        // 此处把data格式转换回原racecheck的预期格式，保证兼容性
-        if (sync.syncKind == ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE ||
-            sync.syncKind == ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK) {
-            const bool intraBlock = sync.syncKind == ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK;
-            const uint32_t pipe = sync.action == ACLSAN_DEVICE_SYNC_ACTION_SET ? sync.srcPipe : sync.dstPipe;
-            sync.header.sourceKind = ACLSAN_DEVICE_SOURCE_SET_WAIT_FLAG;
-            sync.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
-            sync.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
-            sync.srcPipe = pipe;
-            sync.dstPipe = pipe;
-            if (intraBlock)
-                sync.mode = 4;
-            else if (sync.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT)
-                sync.objectId &= 0x1FU;
-        }
-        state.sync.push_back(sync);
+        state.sync.push_back(race::NormalizeSync(*static_cast<const AclsanDeviceSyncData*>(data)));
     } else {
         const auto& b = *static_cast<const AclsanDeviceBarrierData*>(data);
         // Keep barrier transport separate at the ACLSan boundary, but normalize

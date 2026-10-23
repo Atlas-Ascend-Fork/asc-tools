@@ -1448,7 +1448,8 @@ public:
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         const uint64_t padding = uint64_t(f.leftPaddingCount + f.rightPaddingCount) * (f.dataBits / 8);
-        if (f.dataSelectBit || f.leftPaddingCount * (f.dataBits / 8) > 32 ||
+        // With no padding, the padding-value selector cannot change the written bytes.
+        if ((f.dataSelectBit && padding != 0) || f.leftPaddingCount * (f.dataBits / 8) > 32 ||
             f.rightPaddingCount * (f.dataBits / 8) > 32) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }

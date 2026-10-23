@@ -28,85 +28,153 @@
 
 namespace npucheck {
 
-// 状态字：[7] 同步辅助标志，[6:4] 访问状态，[3:0] 流水编号。
-// 此阶段仅维护 DEFAULT/WRITE；读取不修改状态，避免将“读过”误认为“写过”。
-enum class GmMemoryStatus : uint8_t { DEFAULT = 0, READ = 1, GLOBAL_READ = 2, WRITE = 3, RACE = 4 };
-
-struct GmInitQuery {
+// One state byte per application byte: [6:4] access state, [3:0] writer pipeline.
+// Reads never change initialization state. This model does not propagate value taint.
+enum class InitMemoryStatus : uint8_t { DEFAULT = 0, READ = 1, GLOBAL_READ = 2, WRITE = 3, RACE = 4 };
+struct InitStateQuery {
     uint64_t uninitializedBytes = 0;
     uint64_t firstUninitializedAddress = 0;
 };
+class InitStateTable {
+public:
+    static constexpr uint64_t kPageBytes = UINT64_C(1) << 16;
+    virtual ~InitStateTable() = default;
+    virtual InitStateQuery Query(uint64_t address, uint64_t bytes) const = 0;
+    virtual void Write(uint64_t address, uint64_t bytes, uint8_t pipe) = 0;
+    virtual void Clear(uint64_t address, uint64_t bytes) = 0;
+    virtual uint64_t LeafCount() const = 0;
+};
+namespace detail {
+constexpr uint8_t kInitWrite = static_cast<uint8_t>(InitMemoryStatus::WRITE) << 4;
+inline bool InitWritten(uint8_t state) { return (state & 0x70) == kInitWrite; }
+struct InitStatePage {
+    std::array<uint8_t, InitStateTable::kPageBytes> states{};
+    uint32_t writtenBytes = 0;
+};
+} // namespace detail
 
-class GmInitState {
+class GmInitStateTable final : public InitStateTable {
 public:
     static constexpr uint64_t kAddressLimit = UINT64_C(1) << 48;
-    static constexpr uint64_t kPageBytes = UINT64_C(1) << 16;
-    GmInitState();
+    GmInitStateTable();
     static bool ValidRange(uint64_t address, uint64_t bytes);
-    GmInitQuery Query(uint64_t address, uint64_t bytes) const;
-    void Write(uint64_t address, uint64_t bytes, uint8_t pipe);
-    void Clear(uint64_t address, uint64_t bytes);
-    uint64_t LeafCount() const { return leafCount_; }
+    InitStateQuery Query(uint64_t address, uint64_t bytes) const override;
+    void Write(uint64_t address, uint64_t bytes, uint8_t pipe) override;
+    void Clear(uint64_t address, uint64_t bytes) override;
+    uint64_t LeafCount() const override { return leafCount_; }
 
 private:
-    struct Leaf {
-        std::array<uint8_t, kPageBytes> states{};
-        uint32_t writtenBytes = 0;
-    };
+    using Leaf = detail::InitStatePage;
     using Middle = std::array<std::unique_ptr<Leaf>, kPageBytes>;
     using Root = std::array<std::unique_ptr<Middle>, kPageBytes>;
+    void ValidateRange(uint64_t address, uint64_t bytes) const;
+    const Leaf* FindLeaf(uint64_t address) const;
+    std::unique_ptr<Leaf>& LeafSlot(uint64_t address);
     std::unique_ptr<Root> root_;
     uint64_t leafCount_ = 0;
 };
 
-struct GmScope {
+// Shared bounded-page mechanics. Only named memory-space tables can be constructed.
+class LocalInitStateTable : public InitStateTable {
+public:
+    InitStateQuery Query(uint64_t address, uint64_t bytes) const override;
+    void Write(uint64_t address, uint64_t bytes, uint8_t pipe) override;
+    void Clear(uint64_t address, uint64_t bytes) override;
+    uint64_t LeafCount() const override { return leafCount_; }
+
+protected:
+    explicit LocalInitStateTable(uint64_t capacity);
+
+private:
+    using Leaf = detail::InitStatePage;
+    void ValidateRange(uint64_t address, uint64_t bytes) const;
+    const Leaf* FindLeaf(uint64_t address) const;
+    std::unique_ptr<Leaf>& LeafSlot(uint64_t address);
+    const uint64_t capacity_;
+    std::vector<std::unique_ptr<Leaf>> pages_;
+    uint64_t leafCount_ = 0;
+};
+
+class L1InitStateTable final : public LocalInitStateTable {
+public:
+    // dav-3510 local memory capacity, in bytes.
+    static constexpr uint64_t kCapacity = 512 * 1024;
+    L1InitStateTable();
+};
+
+class L0CInitStateTable final : public LocalInitStateTable {
+public:
+    // dav-3510 local memory capacity, in bytes.
+    static constexpr uint64_t kCapacity = 256 * 1024;
+    L0CInitStateTable();
+};
+
+struct InitStateKey {
     uint32_t deviceId = 0;
     uint64_t contextId = 0;
-    bool operator<(const GmScope& other) const
+    uint64_t launchId = 0;
+    uint32_t blockType = 0;
+    uint32_t blockId = 0;
+    uint32_t space = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    static InitStateKey Local(uint32_t device, uint64_t launch, uint32_t type, uint32_t block, uint32_t space)
     {
-        return std::tie(deviceId, contextId) < std::tie(other.deviceId, other.contextId);
+        return {device, 0, launch, type, block, space};
+    }
+    bool operator<(const InitStateKey& other) const
+    {
+        return std::tie(space, deviceId, contextId, launchId, blockType, blockId) <
+               std::tie(other.space, other.deviceId, other.contextId, other.launchId, other.blockType, other.blockId);
     }
 };
-enum class GmCheckStatus {
+
+class InitStateTableIndex {
+public:
+    static uint64_t LocalCapacity(uint32_t space);
+    static bool ValidKey(const InitStateKey& key);
+    InitStateTable& GetOrCreate(const InitStateKey& key);
+    InitStateTable* Find(const InitStateKey& key);
+    void Erase(const InitStateKey& key);
+    void EraseLaunch(uint32_t device, uint64_t launch);
+
+private:
+    std::map<InitStateKey, std::unique_ptr<InitStateTable>> tables_;
+};
+
+enum class InitCheckStatus {
     OK,
     INVALID_ALLOCATION,
     INVALID_RECORD,
     INCOMPLETE_RECORD,
     RESOURCE_EXHAUSTED,
 };
-struct GmCheckResult {
-    GmCheckStatus status = GmCheckStatus::OK;
+struct InitCheckResult {
+    InitCheckStatus status = InitCheckStatus::OK;
     std::vector<NpuCheckInitcheckReport> reports;
 };
 
-// Host 内存检查核心；默认 GM，片上实例使用固定空间容量且由调用方按 launch/core 隔离。
-// 同步回放传入已证明先行的写范围并关闭 commitWrites，避免任意回放顺序污染基线。
-// 普通顺序调用方必须按依赖顺序提交完整指令，并在写入完成后调用 MarkInitialized。
-// free 必须晚于使用该分配的记录回放；contextId 必须标识上下文实例而非可复用裸句柄。
-// 非 OK 表示该操作未完成检测，不能当作“无错误”；记录丢失后应停止使用该上下文并重建。
-class GmInitcheck {
+// Memory-space-neutral instruction checker. State tables are owned by the index;
+// allocation registries exist only for GM. Local keys identify device/launch/core/space.
+// Replay checks all reads before publishing writes, with visibility proven by dependency edges.
+// Non-OK means analysis did not complete and must not be reported as error-free.
+class MemoryInitcheck {
 public:
-    explicit GmInitcheck(uint32_t space = ACLSAN_DEVICE_MEMORY_SPACE_GM, uint64_t capacity = 0)
-        : space_(space), capacity_(capacity)
-    {}
     // Half-open, sorted and disjoint ranges from writes proven to precede this instruction.
     using InitializedRanges = std::vector<std::pair<uint64_t, uint64_t>>;
-    AllocationUpdateStatus RegisterAllocation(GmScope scope, uint64_t id, uint64_t address, uint64_t bytes);
-    AllocationUpdateStatus ReleaseAllocation(GmScope scope, uint64_t id, uint64_t address);
-    GmCheckStatus MarkInitialized(GmScope scope, uint64_t address, uint64_t bytes, uint8_t pipe = 0);
-    GmCheckResult CheckInstruction(
-        GmScope scope, const std::vector<AclsanDeviceMemoryAccessData>& accesses,
-        const InitializedRanges& precedingWrites = {}, bool commitWrites = true);
-    void ResetContext(GmScope scope);
+    AllocationUpdateStatus RegisterAllocation(InitStateKey scope, uint64_t id, uint64_t address, uint64_t bytes);
+    AllocationUpdateStatus ReleaseAllocation(InitStateKey scope, uint64_t id, uint64_t address);
+    InitCheckStatus MarkInitialized(InitStateKey scope, uint64_t address, uint64_t bytes, uint8_t pipe = 0);
+    // Local dependency replay restricts reads to table bytes covered by proven
+    // preceding writes. Other stored writes must not establish visibility.
+    InitCheckResult CheckInstruction(
+        InitStateKey scope, const std::vector<AclsanDeviceMemoryAccessData>& accesses,
+        const InitializedRanges& precedingWrites = {}, bool commitWrites = true,
+        bool restrictToPrecedingWrites = false);
+    void ResetContext(InitStateKey scope);
+    void ResetLaunch(uint32_t device, uint64_t launch) { tables_.EraseLaunch(device, launch); }
 
 private:
-    struct Context {
-        AllocationRegistry allocations;
-        GmInitState state;
-    };
-    uint32_t space_;
-    uint64_t capacity_;
-    std::map<GmScope, Context> contexts_;
+    InitStateTableIndex tables_;
+    std::map<InitStateKey, AllocationRegistry> gmAllocations_;
     uint64_t nextReportId_ = 1;
     uint64_t nextGroupId_ = 1;
 };
@@ -157,7 +225,7 @@ private:
     InitcheckStats stats_{};
     uint64_t nextReportId_ = 1;
     uint64_t nextGroupId_ = 1;
-    GmInitcheck gmInitcheck_;
+    MemoryInitcheck memoryInitcheck_;
     std::set<void*> pendingLaunchStreams_;
     std::vector<AclsanDeviceMemoryAccessData> pendingMemoryAccesses_;
     std::vector<AclsanDeviceSyncData> pendingSyncEvents_;

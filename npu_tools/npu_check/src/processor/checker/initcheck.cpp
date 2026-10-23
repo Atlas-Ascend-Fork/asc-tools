@@ -27,31 +27,42 @@
 namespace npucheck {
 
 namespace {
-constexpr uint64_t kMask = GmInitState::kPageBytes - 1;
-constexpr uint8_t kWrite = static_cast<uint8_t>(GmMemoryStatus::WRITE) << 4;
-bool Written(uint8_t state) { return (state & 0x70) == kWrite; }
-void Validate(uint64_t address, uint64_t bytes)
-{
-    if (!GmInitState::ValidRange(address, bytes)) {
-        throw std::out_of_range("GM initialization range exceeds 48-bit address space");
-    }
-}
+constexpr uint64_t kMask = InitStateTable::kPageBytes - 1;
 } // namespace
 
-GmInitState::GmInitState() : root_(std::make_unique<Root>()) {}
+GmInitStateTable::GmInitStateTable() : root_(std::make_unique<Root>()) {}
 
-bool GmInitState::ValidRange(uint64_t address, uint64_t bytes)
+bool GmInitStateTable::ValidRange(uint64_t address, uint64_t bytes)
 {
     return address < kAddressLimit && bytes <= kAddressLimit - address;
 }
 
-GmInitQuery GmInitState::Query(uint64_t address, uint64_t bytes) const
+void GmInitStateTable::ValidateRange(uint64_t address, uint64_t bytes) const
 {
-    Validate(address, bytes);
-    GmInitQuery result;
+    if (!ValidRange(address, bytes))
+        throw std::out_of_range("GM initialization range exceeds 48-bit address space");
+}
+
+const GmInitStateTable::Leaf* GmInitStateTable::FindLeaf(uint64_t address) const
+{
+    const auto& middle = (*root_)[address >> 32];
+    return middle ? (*middle)[(address >> 16) & kMask].get() : nullptr;
+}
+
+std::unique_ptr<GmInitStateTable::Leaf>& GmInitStateTable::LeafSlot(uint64_t address)
+{
+    auto& middle = (*root_)[address >> 32];
+    if (!middle)
+        middle = std::make_unique<Middle>();
+    return (*middle)[(address >> 16) & kMask];
+}
+
+InitStateQuery GmInitStateTable::Query(uint64_t address, uint64_t bytes) const
+{
+    ValidateRange(address, bytes);
+    InitStateQuery result;
     while (bytes != 0) {
-        const auto& middle = (*root_)[address >> 32];
-        const Leaf* leaf = middle ? (*middle)[(address >> 16) & kMask].get() : nullptr;
+        const Leaf* leaf = FindLeaf(address);
         const uint64_t offset = address & kMask;
         const uint64_t count = std::min(bytes, kPageBytes - offset);
         if (!leaf || leaf->writtenBytes == 0) {
@@ -64,14 +75,15 @@ GmInitQuery GmInitState::Query(uint64_t address, uint64_t bytes) const
             // Allocation-level reports need the count, not a byte-by-byte scan
             // of every full page. Only locate the first missing byte once.
             if (result.uninitializedBytes == 0) {
-                const auto first = std::find_if(
-                    leaf->states.begin(), leaf->states.end(), [](uint8_t state) { return !Written(state); });
+                const auto first = std::find_if(leaf->states.begin(), leaf->states.end(), [](uint8_t state) {
+                    return !detail::InitWritten(state);
+                });
                 result.firstUninitializedAddress = address + (first - leaf->states.begin());
             }
             result.uninitializedBytes += kPageBytes - leaf->writtenBytes;
         } else {
             for (uint64_t i = 0; i < count; ++i) {
-                if (!Written(leaf->states[offset + i])) {
+                if (!detail::InitWritten(leaf->states[offset + i])) {
                     if (result.uninitializedBytes == 0)
                         result.firstUninitializedAddress = address + i;
                     ++result.uninitializedBytes;
@@ -84,17 +96,14 @@ GmInitQuery GmInitState::Query(uint64_t address, uint64_t bytes) const
     return result;
 }
 
-void GmInitState::Write(uint64_t address, uint64_t bytes, uint8_t pipe)
+void GmInitStateTable::Write(uint64_t address, uint64_t bytes, uint8_t pipe)
 {
-    Validate(address, bytes);
+    ValidateRange(address, bytes);
     if (pipe > 15)
         throw std::invalid_argument("GM initialization pipeline exceeds four bits");
     // 先完成全部页的分配，分配失败时不留下只更新一半的 WRITE 状态。
     for (uint64_t current = address, remaining = bytes; remaining != 0;) {
-        auto& middle = (*root_)[current >> 32];
-        if (!middle)
-            middle = std::make_unique<Middle>();
-        auto& leaf = (*middle)[(current >> 16) & kMask];
+        auto& leaf = LeafSlot(current);
         if (!leaf) {
             leaf = std::make_unique<Leaf>();
             ++leafCount_;
@@ -104,39 +113,38 @@ void GmInitState::Write(uint64_t address, uint64_t bytes, uint8_t pipe)
         remaining -= count;
     }
     while (bytes != 0) {
-        auto& leaf = (*(*root_)[address >> 32])[(address >> 16) & kMask];
+        auto& leaf = LeafSlot(address);
         const uint64_t offset = address & kMask;
         const uint64_t count = std::min(bytes, kPageBytes - offset);
         for (uint64_t i = 0; i < count; ++i) {
             auto& state = leaf->states[offset + i];
-            if (!Written(state))
+            if (!detail::InitWritten(state))
                 ++leaf->writtenBytes;
-            state = kWrite | pipe;
+            state = detail::kInitWrite | pipe;
         }
         address += count;
         bytes -= count;
     }
 }
 
-void GmInitState::Clear(uint64_t address, uint64_t bytes)
+void GmInitStateTable::Clear(uint64_t address, uint64_t bytes)
 {
-    Validate(address, bytes);
+    ValidateRange(address, bytes);
     while (bytes != 0) {
-        auto& middle = (*root_)[address >> 32];
         // 跳过不存在的 4GB 目录，释放巨大但未展开的分配不逐字节遍历。
-        if (!middle) {
+        if (!(*root_)[address >> 32]) {
             const uint64_t count = std::min(bytes, (UINT64_C(1) << 32) - (address & UINT64_C(0xffffffff)));
             address += count;
             bytes -= count;
             continue;
         }
-        auto& leaf = (*middle)[(address >> 16) & kMask];
+        auto& leaf = LeafSlot(address);
         const uint64_t offset = address & kMask;
         const uint64_t count = std::min(bytes, kPageBytes - offset);
         if (leaf) {
             for (uint64_t i = 0; i < count; ++i) {
                 auto& state = leaf->states[offset + i];
-                if (Written(state))
+                if (detail::InitWritten(state))
                     --leaf->writtenBytes;
                 state = 0;
             }
@@ -149,6 +157,181 @@ void GmInitState::Clear(uint64_t address, uint64_t bytes)
         bytes -= count;
     }
     // 根目录保留；空中间目录在作用域销毁时释放。
+}
+
+LocalInitStateTable::LocalInitStateTable(uint64_t capacity)
+    : capacity_(capacity), pages_((capacity + kPageBytes - 1) / kPageBytes)
+{}
+
+void LocalInitStateTable::ValidateRange(uint64_t address, uint64_t bytes) const
+{
+    if (address > capacity_ || bytes > capacity_ - address)
+        throw std::out_of_range("Local initialization range exceeds memory capacity");
+}
+
+const LocalInitStateTable::Leaf* LocalInitStateTable::FindLeaf(uint64_t address) const
+{
+    return pages_[address >> 16].get();
+}
+
+std::unique_ptr<LocalInitStateTable::Leaf>& LocalInitStateTable::LeafSlot(uint64_t address)
+{
+    return pages_[address >> 16];
+}
+
+InitStateQuery LocalInitStateTable::Query(uint64_t address, uint64_t bytes) const
+{
+    ValidateRange(address, bytes);
+    InitStateQuery result;
+    while (bytes != 0) {
+        const Leaf* leaf = FindLeaf(address);
+        const uint64_t offset = address & kMask;
+        const uint64_t count = std::min(bytes, kPageBytes - offset);
+        if (!leaf || leaf->writtenBytes == 0) {
+            if (result.uninitializedBytes == 0)
+                result.firstUninitializedAddress = address;
+            result.uninitializedBytes += count;
+        } else if (leaf->writtenBytes == kPageBytes) {
+            // A fully written page cannot contain an uninitialized byte.
+        } else if (offset == 0 && count == kPageBytes) {
+            // Allocation-level reports need the count, not a byte-by-byte scan
+            // of every full page. Only locate the first missing byte once.
+            if (result.uninitializedBytes == 0) {
+                const auto first = std::find_if(leaf->states.begin(), leaf->states.end(), [](uint8_t state) {
+                    return !detail::InitWritten(state);
+                });
+                result.firstUninitializedAddress = address + (first - leaf->states.begin());
+            }
+            result.uninitializedBytes += kPageBytes - leaf->writtenBytes;
+        } else {
+            for (uint64_t i = 0; i < count; ++i) {
+                if (!detail::InitWritten(leaf->states[offset + i])) {
+                    if (result.uninitializedBytes == 0)
+                        result.firstUninitializedAddress = address + i;
+                    ++result.uninitializedBytes;
+                }
+            }
+        }
+        address += count;
+        bytes -= count;
+    }
+    return result;
+}
+
+void LocalInitStateTable::Write(uint64_t address, uint64_t bytes, uint8_t pipe)
+{
+    ValidateRange(address, bytes);
+    if (pipe > 15)
+        throw std::invalid_argument("Local initialization pipeline exceeds four bits");
+    // 先完成全部页的分配，分配失败时不留下只更新一半的 WRITE 状态。
+    for (uint64_t current = address, remaining = bytes; remaining != 0;) {
+        auto& leaf = LeafSlot(current);
+        if (!leaf) {
+            leaf = std::make_unique<Leaf>();
+            ++leafCount_;
+        }
+        const uint64_t count = std::min(remaining, kPageBytes - (current & kMask));
+        current += count;
+        remaining -= count;
+    }
+    while (bytes != 0) {
+        auto& leaf = LeafSlot(address);
+        const uint64_t offset = address & kMask;
+        const uint64_t count = std::min(bytes, kPageBytes - offset);
+        for (uint64_t i = 0; i < count; ++i) {
+            auto& state = leaf->states[offset + i];
+            if (!detail::InitWritten(state))
+                ++leaf->writtenBytes;
+            state = detail::kInitWrite | pipe;
+        }
+        address += count;
+        bytes -= count;
+    }
+}
+
+void LocalInitStateTable::Clear(uint64_t address, uint64_t bytes)
+{
+    ValidateRange(address, bytes);
+    while (bytes != 0) {
+        auto& leaf = LeafSlot(address);
+        const uint64_t offset = address & kMask;
+        const uint64_t count = std::min(bytes, kPageBytes - offset);
+        if (leaf) {
+            for (uint64_t i = 0; i < count; ++i) {
+                auto& state = leaf->states[offset + i];
+                if (detail::InitWritten(state))
+                    --leaf->writtenBytes;
+                state = 0;
+            }
+            if (leaf->writtenBytes == 0) {
+                leaf.reset();
+                --leafCount_;
+            }
+        }
+        address += count;
+        bytes -= count;
+    }
+}
+
+L1InitStateTable::L1InitStateTable() : LocalInitStateTable(kCapacity) {}
+
+L0CInitStateTable::L0CInitStateTable() : LocalInitStateTable(kCapacity) {}
+
+uint64_t InitStateTableIndex::LocalCapacity(uint32_t space)
+{
+    switch (space) {
+        case ACLSAN_DEVICE_MEMORY_SPACE_L1:
+            return L1InitStateTable::kCapacity;
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
+            return L0CInitStateTable::kCapacity;
+        default:
+            return 0;
+    }
+}
+bool InitStateTableIndex::ValidKey(const InitStateKey& key)
+{
+    if (key.space == ACLSAN_DEVICE_MEMORY_SPACE_GM)
+        return key.launchId == 0 && key.blockType == 0 && key.blockId == 0;
+    return LocalCapacity(key.space) != 0 && key.contextId == 0;
+}
+InitStateTable& InitStateTableIndex::GetOrCreate(const InitStateKey& key)
+{
+    if (!ValidKey(key))
+        throw std::invalid_argument("Invalid initialization table key");
+    if (auto* table = Find(key))
+        return *table;
+    std::unique_ptr<InitStateTable> table;
+    switch (key.space) {
+        case ACLSAN_DEVICE_MEMORY_SPACE_GM:
+            table = std::make_unique<GmInitStateTable>();
+            break;
+        case ACLSAN_DEVICE_MEMORY_SPACE_L1:
+            table = std::make_unique<L1InitStateTable>();
+            break;
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
+            table = std::make_unique<L0CInitStateTable>();
+            break;
+        default:
+            throw std::invalid_argument("Unsupported initialization memory space");
+    }
+    // Construct first: failed allocation must not publish a null table entry.
+    return *tables_.emplace(key, std::move(table)).first->second;
+}
+InitStateTable* InitStateTableIndex::Find(const InitStateKey& key)
+{
+    auto found = tables_.find(key);
+    return found == tables_.end() ? nullptr : found->second.get();
+}
+void InitStateTableIndex::Erase(const InitStateKey& key) { tables_.erase(key); }
+void InitStateTableIndex::EraseLaunch(uint32_t device, uint64_t launch)
+{
+    for (auto it = tables_.begin(); it != tables_.end();) {
+        const auto& key = it->first;
+        if (key.space != ACLSAN_DEVICE_MEMORY_SPACE_GM && key.deviceId == device && key.launchId == launch)
+            it = tables_.erase(it);
+        else
+            ++it;
+    }
 }
 
 namespace {
@@ -165,7 +348,7 @@ bool ExpandRanges(const AclsanDeviceMemoryAccessData& data, std::vector<Range>& 
 {
     bool valid = true;
     auto append = [&](uint64_t address, uint64_t bytes) {
-        if (!GmInitState::ValidRange(address, bytes))
+        if (!GmInitStateTable::ValidRange(address, bytes))
             valid = false;
         if (bytes != 0)
             ranges.push_back({address, bytes});
@@ -269,12 +452,6 @@ NpuCheckInitcheckReport MakeMemoryReport(const AclsanDeviceMemoryAccessData& dat
         case ACLSAN_DEVICE_MEMORY_SPACE_L1:
             report.access.memorySpace = NpuCheckReportMemorySpace::L1;
             break;
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
-            report.access.memorySpace = NpuCheckReportMemorySpace::L0_A;
-            break;
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0B:
-            report.access.memorySpace = NpuCheckReportMemorySpace::L0_B;
-            break;
         case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
             report.access.memorySpace = NpuCheckReportMemorySpace::L0_C;
             break;
@@ -296,60 +473,71 @@ NpuCheckInitcheckReport MakeMemoryReport(const AclsanDeviceMemoryAccessData& dat
 }
 } // namespace
 
-AllocationUpdateStatus GmInitcheck::RegisterAllocation(GmScope scope, uint64_t id, uint64_t address, uint64_t bytes)
+AllocationUpdateStatus MemoryInitcheck::RegisterAllocation(
+    InitStateKey scope, uint64_t id, uint64_t address, uint64_t bytes)
 {
-    if (!GmInitState::ValidRange(address, bytes))
+    if (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM || !InitStateTableIndex::ValidKey(scope) ||
+        !GmInitStateTable::ValidRange(address, bytes))
         return AllocationUpdateStatus::INVALID_RANGE;
-    // std::bad_alloc 向上传递；状态内存不足不能伪装为 DEFAULT。
-    auto& context = contexts_[scope];
-    const auto status = context.allocations.Register(id, address, bytes, scope.deviceId);
+    auto& table = tables_.GetOrCreate(scope);
+    auto& allocations = gmAllocations_[scope];
+    const auto status = allocations.Register(id, address, bytes, scope.deviceId);
     if (status == AllocationUpdateStatus::OK)
-        context.state.Clear(address, bytes);
+        table.Clear(address, bytes);
     return status;
 }
 
-AllocationUpdateStatus GmInitcheck::ReleaseAllocation(GmScope scope, uint64_t id, uint64_t address)
+AllocationUpdateStatus MemoryInitcheck::ReleaseAllocation(InitStateKey scope, uint64_t id, uint64_t address)
 {
-    auto context = contexts_.find(scope);
-    if (context == contexts_.end())
+    auto context = gmAllocations_.find(scope);
+    if (context == gmAllocations_.end())
         return AllocationUpdateStatus::NOT_FOUND;
-    const auto allocation = context->second.allocations.Classify(scope.deviceId, address, 1).allocation;
-    const auto status = context->second.allocations.Release(id, address, scope.deviceId);
-    if (status == AllocationUpdateStatus::OK && allocation) {
-        context->second.state.Clear(allocation->base, allocation->bytes);
-    }
+    const auto allocation = context->second.Classify(scope.deviceId, address, 1).allocation;
+    const auto status = context->second.Release(id, address, scope.deviceId);
+    if (status == AllocationUpdateStatus::OK && allocation)
+        tables_.Find(scope)->Clear(allocation->base, allocation->bytes);
     return status;
 }
 
-GmCheckStatus GmInitcheck::MarkInitialized(GmScope scope, uint64_t address, uint64_t bytes, uint8_t pipe)
+InitCheckStatus MemoryInitcheck::MarkInitialized(InitStateKey scope, uint64_t address, uint64_t bytes, uint8_t pipe)
 {
-    if (!GmInitState::ValidRange(address, bytes) || pipe > 15)
-        return GmCheckStatus::INVALID_RECORD;
+    if (!InitStateTableIndex::ValidKey(scope) || !GmInitStateTable::ValidRange(address, bytes) || pipe > 15)
+        return InitCheckStatus::INVALID_RECORD;
     if (bytes == 0)
-        return GmCheckStatus::OK;
-    auto context = contexts_.find(scope);
-    if (context == contexts_.end() ||
-        context->second.allocations.Classify(scope.deviceId, address, bytes).status != RangeStatus::VALID) {
-        return GmCheckStatus::INVALID_ALLOCATION;
+        return InitCheckStatus::OK;
+    if (scope.space == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+        const auto context = gmAllocations_.find(scope);
+        if (context == gmAllocations_.end() ||
+            context->second.Classify(scope.deviceId, address, bytes).status != RangeStatus::VALID)
+            return InitCheckStatus::INVALID_ALLOCATION;
+    } else {
+        const auto capacity = InitStateTableIndex::LocalCapacity(scope.space);
+        if (address > capacity || bytes > capacity - address)
+            return InitCheckStatus::INVALID_ALLOCATION;
     }
     try {
-        context->second.state.Write(address, bytes, pipe);
-        return GmCheckStatus::OK;
+        tables_.GetOrCreate(scope).Write(address, bytes, pipe);
+        return InitCheckStatus::OK;
     } catch (const std::bad_alloc&) {
-        return GmCheckStatus::RESOURCE_EXHAUSTED;
+        return InitCheckStatus::RESOURCE_EXHAUSTED;
     }
 }
 
-GmCheckResult GmInitcheck::CheckInstruction(
-    GmScope scope, const std::vector<AclsanDeviceMemoryAccessData>& accesses, const InitializedRanges& precedingWrites,
-    bool commitWrites)
+InitCheckResult MemoryInitcheck::CheckInstruction(
+    InitStateKey scope, const std::vector<AclsanDeviceMemoryAccessData>& accesses,
+    const InitializedRanges& precedingWrites, bool commitWrites, bool restrictToPrecedingWrites)
 {
-    GmCheckResult result;
-    auto fail = [&](GmCheckStatus status) { return GmCheckResult{status, {}}; };
+    InitCheckResult result;
+    auto fail = [&](InitCheckStatus status) { return InitCheckResult{status, {}}; };
+    if (!InitStateTableIndex::ValidKey(scope))
+        return fail(InitCheckStatus::INVALID_RECORD);
     if (accesses.empty())
         return result;
     try {
         const auto& first = accesses.front().header;
+        if (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM &&
+            (scope.launchId != first.launchId || scope.blockType != first.blockType || scope.blockId != first.blockId))
+            return fail(InitCheckStatus::INVALID_RECORD);
         std::vector<bool> seen(accesses.size(), false);
         std::vector<Operand> operands;
         // 完整性检查先于任何状态更新。调用方必须已校验配置寄存器依赖，并按同步依赖排序。
@@ -360,63 +548,72 @@ GmCheckResult GmInitcheck::CheckInstruction(
                 h.blockId != first.blockId || h.pipeline > 15 || access.accessIndex >= accesses.size() ||
                 seen[access.accessIndex] || access.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
                 access.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
-                return fail(GmCheckStatus::INVALID_RECORD);
+                return fail(InitCheckStatus::INVALID_RECORD);
             }
             if (access.accessCount != accesses.size() || !(h.flags & ACLSAN_DEVICE_EVENT_FLAG_EXACT) ||
                 (h.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED |
                             ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR))) {
-                return fail(GmCheckStatus::INCOMPLETE_RECORD);
+                return fail(InitCheckStatus::INCOMPLETE_RECORD);
             }
             seen[access.accessIndex] = true;
-            if (access.memorySpace != space_)
+            if (access.memorySpace != scope.space)
                 continue;
             if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) && access.predicateMask0 == 0 &&
                 access.predicateMask1 == 0)
                 continue;
             Operand operand{&access, {}};
             if (!ExpandRanges(access, operand.ranges))
-                return fail(GmCheckStatus::INVALID_RECORD);
+                return fail(InitCheckStatus::INVALID_RECORD);
             operands.push_back(std::move(operand));
         }
-        if (space_ != ACLSAN_DEVICE_MEMORY_SPACE_GM)
-            contexts_.try_emplace(scope);
-        auto found = contexts_.find(scope);
+        const auto found = gmAllocations_.find(scope);
         const auto classify = [&](uint64_t address, uint64_t bytes) -> RangeResult {
-            if (space_ != ACLSAN_DEVICE_MEMORY_SPACE_GM) {
-                if (address > capacity_ || bytes > capacity_ - address)
+            if (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+                const auto capacity = InitStateTableIndex::LocalCapacity(scope.space);
+                if (address > capacity || bytes > capacity - address)
                     return {RangeStatus::OUT_OF_BOUNDS, std::nullopt};
                 Allocation allocation{};
-                allocation.bytes = capacity_;
+                allocation.bytes = capacity;
                 allocation.deviceId = scope.deviceId;
                 return {RangeStatus::VALID, allocation};
             }
-            return found == contexts_.end() ? RangeResult{} :
-                                              found->second.allocations.Classify(scope.deviceId, address, bytes);
+            return found == gmAllocations_.end() ? RangeResult{} :
+                                                   found->second.Classify(scope.deviceId, address, bytes);
         };
         for (const auto& operand : operands) {
             uint64_t total = 0;
             for (const auto& range : operand.ranges) {
                 if (classify(range.address, range.bytes).status != RangeStatus::VALID) {
-                    return fail(GmCheckStatus::INVALID_ALLOCATION);
+                    return fail(InitCheckStatus::INVALID_ALLOCATION);
                 }
                 total += range.bytes;
             }
             // 报告 ABI 的 accessBytes 为 uint32_t，不静默截断读取大小。
             if (total > std::numeric_limits<uint32_t>::max())
-                return fail(GmCheckStatus::RESOURCE_EXHAUSTED);
+                return fail(InitCheckStatus::RESOURCE_EXHAUSTED);
         }
-        if (found == contexts_.end())
-            return result; // 无 GM 有效访问。
-        auto& context = found->second;
-        // Only query gaps not covered by proven preceding writes. Never mutate the
-        // launch baseline while checking individual reads; unrelated writes must not leak in.
+        if (operands.empty())
+            return result;
+        auto& table = tables_.GetOrCreate(scope);
+        // GM combines its launch baseline with proven preceding writes. Local
+        // replay queries actual state bytes only where a preceding write proves
+        // visibility; topologically earlier but unordered writes cannot leak in.
         const auto queryInitialized = [&](uint64_t address, uint64_t bytes) {
-            GmInitQuery result;
+            InitStateQuery result;
             const auto append = [&](uint64_t begin, uint64_t end) {
-                const auto q = context.state.Query(begin, end - begin);
+                const auto q = table.Query(begin, end - begin);
                 if (!result.uninitializedBytes && q.uninitializedBytes)
                     result.firstUninitializedAddress = q.firstUninitializedAddress;
                 result.uninitializedBytes += q.uninitializedBytes;
+            };
+            const auto appendGap = [&](uint64_t begin, uint64_t end) {
+                if (!restrictToPrecedingWrites) {
+                    append(begin, end);
+                } else if (begin < end) {
+                    if (!result.uninitializedBytes)
+                        result.firstUninitializedAddress = begin;
+                    result.uninitializedBytes += end - begin;
+                }
             };
             const uint64_t end = address + bytes;
             for (const auto& range : precedingWrites) {
@@ -425,11 +622,15 @@ GmCheckResult GmInitcheck::CheckInstruction(
                 if (range.first >= end)
                     break;
                 if (range.first > address)
-                    append(address, range.first);
-                address = std::min(end, std::max(address, range.second));
+                    appendGap(address, range.first);
+                const auto coveredBegin = std::max(address, range.first);
+                const auto coveredEnd = std::min(end, range.second);
+                if (restrictToPrecedingWrites)
+                    append(coveredBegin, coveredEnd);
+                address = coveredEnd;
             }
             if (address < end)
-                append(address, end);
+                appendGap(address, end);
             return result;
         };
         const uint64_t group = nextGroupId_++;
@@ -475,36 +676,24 @@ GmCheckResult GmInitcheck::CheckInstruction(
             if (!commitWrites || !(operand.access->accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE))
                 continue;
             for (const auto& range : operand.ranges) {
-                context.state.Write(range.address, range.bytes, static_cast<uint8_t>(operand.access->header.pipeline));
+                table.Write(range.address, range.bytes, static_cast<uint8_t>(operand.access->header.pipeline));
             }
         }
         return result;
     } catch (const std::bad_alloc&) {
-        return fail(GmCheckStatus::RESOURCE_EXHAUSTED);
+        return fail(InitCheckStatus::RESOURCE_EXHAUSTED);
     } catch (const std::length_error&) {
-        return fail(GmCheckStatus::RESOURCE_EXHAUSTED);
+        return fail(InitCheckStatus::RESOURCE_EXHAUSTED);
     }
 }
 
-void GmInitcheck::ResetContext(GmScope scope) { contexts_.erase(scope); }
+void MemoryInitcheck::ResetContext(InitStateKey scope)
+{
+    tables_.Erase(scope);
+    gmAllocations_.erase(scope);
+}
 
 namespace {
-// Same dav3510 capacities as Memcheck. Shared/remote vector owners are rejected
-// by the shared dependency builder, rather than assigned an invented local owner.
-uint64_t LocalCapacity(uint32_t space)
-{
-    switch (space) {
-        case ACLSAN_DEVICE_MEMORY_SPACE_L1:
-            return 512 * 1024;
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0B:
-            return 64 * 1024;
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
-            return 256 * 1024;
-        default:
-            return 0;
-    }
-}
 bool Overlap(const std::vector<race::Interval>& a, const std::vector<race::Interval>& b)
 {
     size_t i = 0, j = 0;
@@ -547,7 +736,7 @@ bool Initcheck::OnDeviceSync(AclsanCallbackId cbid, const void* data)
         const auto& sync = *static_cast<const AclsanDeviceSyncData*>(data);
         if (sync.syncKind == ACLSAN_DEVICE_SYNC_KIND_UNKNOWN)
             replayReasons_[h.launchId].insert("unsupported_sync_kind");
-        pendingSyncEvents_.push_back(sync);
+        pendingSyncEvents_.push_back(race::NormalizeSync(sync));
     } else {
         AclsanDeviceSyncData sync{};
         sync.header = h;
@@ -668,6 +857,12 @@ void Initcheck::ReplayLaunch(
     }
     for (const auto& s : sync)
         checkDevice(s.header);
+    struct LocalTablesGuard {
+        MemoryInitcheck& checker;
+        uint32_t device;
+        uint64_t launch;
+        ~LocalTablesGuard() { checker.ResetLaunch(device, launch); }
+    } localTablesGuard{memoryInitcheck_, device.value_or(0), launchId};
     DependencyGraph dependency(limits);
     if (reasons.empty())
         BuildDependencyGraph(memory, sync, {}, limits, reasons, dependency);
@@ -711,7 +906,6 @@ void Initcheck::ReplayLaunch(
         if (accesses[i].data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE)
             writers[StorageOf(accesses[i].data)].push_back(i);
     }
-    std::map<Storage, GmInitcheck> locals;
     CheckerReportList staged;
     size_t comparisons = 0, candidates = 0;
     for (auto node : graph.Order()) {
@@ -728,7 +922,7 @@ void Initcheck::ReplayLaunch(
         }
         for (const auto& storage : byStorage) {
             const auto space = std::get<0>(storage.first);
-            if (space != ACLSAN_DEVICE_MEMORY_SPACE_GM && !LocalCapacity(space))
+            if (space != ACLSAN_DEVICE_MEMORY_SPACE_GM && !InitStateTableIndex::LocalCapacity(space))
                 continue;
             std::vector<Interval> preceding;
             const bool hasRead = std::any_of(storage.second.begin(), storage.second.end(), [&](size_t i) {
@@ -767,14 +961,16 @@ void Initcheck::ReplayLaunch(
             if (!reasons.empty())
                 break;
             MergeIntervals(preceding);
-            GmInitcheck::InitializedRanges initialized;
+            MemoryInitcheck::InitializedRanges initialized;
             for (auto range : preceding)
                 initialized.emplace_back(range.begin, range.end);
-            GmInitcheck* checker = &gmInitcheck_;
-            if (space != ACLSAN_DEVICE_MEMORY_SPACE_GM)
-                checker = &locals.try_emplace(storage.first, space, LocalCapacity(space)).first->second;
-            const auto result = checker->CheckInstruction({*device, 0}, operands, initialized, false);
-            if (result.status != GmCheckStatus::OK) {
+            const auto& h = accesses[storage.second.front()].data.header;
+            const auto key = space == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
+                                 InitStateKey{*device, 0} :
+                                 InitStateKey::Local(h.deviceId, h.launchId, h.blockType, h.blockId, space);
+            const auto result = memoryInitcheck_.CheckInstruction(
+                key, operands, initialized, false, space != ACLSAN_DEVICE_MEMORY_SPACE_GM);
+            if (result.status != InitCheckStatus::OK) {
                 reasons.insert("invalid_memory_operation");
                 break;
             }
@@ -785,6 +981,24 @@ void Initcheck::ReplayLaunch(
                 staged.emplace_back(std::move(report));
             }
         }
+        // All read operands of this instruction have been checked. Record each
+        // local write in its byte table, even when the source read was uninitialized
+        // (initialization checking does not propagate value taint).
+        if (reasons.empty())
+            for (auto i : instruction->second) {
+                const auto& access = accesses[i];
+                const auto space = access.data.memorySpace;
+                if (!InitStateTableIndex::LocalCapacity(space) ||
+                    !(access.data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE))
+                    continue;
+                const auto& h = access.data.header;
+                const auto key = InitStateKey::Local(h.deviceId, h.launchId, h.blockType, h.blockId, space);
+                for (const auto& range : access.ranges)
+                    if (memoryInitcheck_.MarkInitialized(
+                            key, range.begin, range.end - range.begin,
+                            static_cast<uint8_t>(access.data.header.pipeline)) != InitCheckStatus::OK)
+                        reasons.insert("write_commit_failed");
+            }
     }
     // Commit device writes only once the entire launch has been validated. The
     // next synchronized launch sees these writes, never an arbitrary replay prefix.
@@ -800,9 +1014,9 @@ void Initcheck::ReplayLaunch(
                 if (pending.first != launchId && (current == launchStreams_.end() || pending.second != current->second))
                     replayReasons_[pending.first].insert("cross_stream_initialization_unknown");
             for (const auto range : access.ranges)
-                if (gmInitcheck_.MarkInitialized(
+                if (memoryInitcheck_.MarkInitialized(
                         {access.data.header.deviceId, 0}, range.begin, range.end - range.begin,
-                        static_cast<uint8_t>(access.data.header.pipeline)) != GmCheckStatus::OK)
+                        static_cast<uint8_t>(access.data.header.pipeline)) != InitCheckStatus::OK)
                     reasons.insert("write_commit_failed");
         }
     }
@@ -988,8 +1202,8 @@ bool Initcheck::OnHostWrite(const AclsanMemoryWriteData& data)
         return false;
     }
     const auto status =
-        gmInitcheck_.MarkInitialized({data.deviceId, 0}, reinterpret_cast<uint64_t>(data.destination), data.bytes);
-    if (status != GmCheckStatus::OK) {
+        memoryInitcheck_.MarkInitialized({data.deviceId, 0}, reinterpret_cast<uint64_t>(data.destination), data.bytes);
+    if (status != InitCheckStatus::OK) {
         ++stats_.malformedEvents;
         ASCTOOL_WARNING("initcheck: cannot record completed Host write, status=%u", static_cast<unsigned>(status));
         return false;
@@ -1002,7 +1216,7 @@ void Initcheck::OnAllocation(const AclsanResourceData& data)
     if (data.memorySpace != ACLSAN_MEMORY_SPACE_DEVICE || data.common.result != 0) {
         return;
     }
-    (void)gmInitcheck_.RegisterAllocation(
+    (void)memoryInitcheck_.RegisterAllocation(
         {data.deviceId, 0}, data.resourceId, reinterpret_cast<uint64_t>(data.ptr), data.bytes);
 }
 
@@ -1011,7 +1225,7 @@ void Initcheck::OnFree(const AclsanResourceData& data)
     if (data.memorySpace != ACLSAN_MEMORY_SPACE_DEVICE || data.common.result != 0) {
         return;
     }
-    (void)gmInitcheck_.ReleaseAllocation({data.deviceId, 0}, data.resourceId, reinterpret_cast<uint64_t>(data.ptr));
+    (void)memoryInitcheck_.ReleaseAllocation({data.deviceId, 0}, data.resourceId, reinterpret_cast<uint64_t>(data.ptr));
 }
 
 bool Initcheck::OnRegisterState(const AclsanDeviceRegisterStateData& data)

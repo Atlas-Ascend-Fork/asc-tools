@@ -33,6 +33,7 @@ add_executable(npu_check_unit_tests
   memcheck_test.cpp
   mem_state_tracker_test.cpp
   gm_initcheck_test.cpp
+  init_state_table_test.cpp
   racecheck_report_test.cpp
   initcheck_test.cpp
   racecheck_test.cpp

@@ -41,6 +41,8 @@ struct Limits {
 bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::vector<Interval>& result);
 void MergeIntervals(std::vector<Interval>& intervals);
 bool ValidPipe(uint32_t pipe);
+// Adapt ACLSan cross-core callbacks to the SET/WAIT representation used by dependency graphs.
+AclsanDeviceSyncData NormalizeSync(const AclsanDeviceSyncData& data);
 
 using Storage = std::tuple<uint32_t, Domain>;
 Storage StorageOf(const AclsanDeviceMemoryAccessData& access);

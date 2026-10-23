@@ -97,6 +97,27 @@ TEST(CubeMemory, AllRequestedIdsProduceLocalAccesses)
     }
 }
 
+TEST(CubeMemory, PaddingSelectorWithoutPaddingPreservesL1Write)
+{
+    // CANN 9.3 DataCopy sets bit 58 even when both padding counts are zero.
+    for (uint32_t id : {74u, 75u, 76u}) {
+        SCOPED_TRACE(id);
+        auto result = ConvertRaw(
+            id, {0x400, 0x2000, (1ULL << 4) | (512ULL << 25) | (1ULL << 58), 512ULL | (512ULL << 40)},
+            SingleGmToL1Iteration());
+        ASSERT_EQ(result.status, MemoryCbdataStatus::SUCCESS);
+        ASSERT_EQ(result.data.size(), 2u);
+        EXPECT_EQ(result.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+        const auto& write = result.data[1];
+        EXPECT_EQ(write.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
+        EXPECT_EQ(write.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+        EXPECT_EQ(write.address, 0x400u);
+        ASSERT_EQ(write.layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
+        EXPECT_EQ(write.layout.range.bytes, 512u);
+        EXPECT_EQ(write.accessCount, 2u);
+    }
+}
+
 TEST(CubeMemory, GmToL1ChecksIndependentDestinationStrideAndDmaLoops)
 {
     MemoryRegisterState state{};

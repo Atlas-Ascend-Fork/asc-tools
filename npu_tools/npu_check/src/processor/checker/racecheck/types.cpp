@@ -15,6 +15,26 @@
 
 namespace npucheck::race {
 bool ValidPipe(uint32_t p) { return p <= ACLSAN_DEVICE_PIPE_MTE3 || p == ACLSAN_DEVICE_PIPE_FIXPIPE; }
+AclsanDeviceSyncData NormalizeSync(const AclsanDeviceSyncData& data)
+{
+    auto sync = data;
+    if (sync.syncKind == ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE || sync.syncKind == ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK) {
+        const bool intraBlock = sync.syncKind == ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK;
+        const uint32_t pipe = sync.action == ACLSAN_DEVICE_SYNC_ACTION_SET ? sync.srcPipe : sync.dstPipe;
+        sync.header.sourceKind = ACLSAN_DEVICE_SOURCE_SET_WAIT_FLAG;
+        sync.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
+        sync.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+        // SET/WAIT expose only their selected pipe; INTRA_BLOCK WAIT also omits mode.
+        sync.srcPipe = pipe;
+        sync.dstPipe = pipe;
+        if (intraBlock)
+            sync.mode = 4;
+        else if (sync.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT)
+            sync.objectId &= 0x1FU;
+    }
+    return sync;
+}
+
 void MergeIntervals(std::vector<Interval>& ranges)
 {
     std::sort(ranges.begin(), ranges.end(), [](auto a, auto b) { return a.begin < b.begin; });
