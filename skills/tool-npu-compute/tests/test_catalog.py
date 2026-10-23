@@ -222,10 +222,24 @@ class CatalogContractTest(unittest.TestCase):
         for category in actual_categories:
             fields = category["fields"]
             for field in fields:
-                self.assertEqual(set(field), required_metadata)
+                self.assertEqual(set(field) - {"allow_empty"}, required_metadata)
+                if "allow_empty" in field:
+                    self.assertIs(type(field["allow_empty"]), bool)
+                    self.assertEqual(field["json_type"], "string")
                 self.assertTrue(all(value != "" for value in field.values()))
             field_names = [field["name"] for field in fields]
             self.assertEqual(len(field_names), len(set(field_names)), category["name"])
+
+    def test_only_unavailable_device_strings_allow_empty_values(self):
+        allowed = {
+            (category["name"], field["name"])
+            for category in self.hardware_info_catalog["categories"]
+            for field in category["fields"]
+            if field.get("allow_empty") is True
+        }
+        self.assertEqual(
+            allowed, {("Device Info", "chip info"), ("Device Info", "arch info")}
+        )
 
     def test_hardware_info_reference_covers_every_field_in_category_order(self):
         rows = reference_field_rows(REFERENCE_ROOT / "hardware-info.md")

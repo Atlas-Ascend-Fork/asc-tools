@@ -96,6 +96,7 @@
         {
           "name": "chip info",
           "json_type": "string",
+          "allow_empty": true,
           "meaning": "SoC 名称和芯片版本组成的设备型号信息。",
           "unit": "无",
           "source": "aclrtGetSocName 的结果与非空芯片版本以空格连接。",
@@ -106,6 +107,7 @@
         {
           "name": "arch info",
           "json_type": "string",
+          "allow_empty": true,
           "meaning": "NPU 架构属性的十进制字符串。",
           "unit": "无",
           "source": "Runtime 的 NPU 架构设备属性转换为字符串。",

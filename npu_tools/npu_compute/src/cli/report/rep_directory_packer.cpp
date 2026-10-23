@@ -168,8 +168,11 @@ bool CollectDirectoryItems(
 
 bool PackDirectoryInternal(
     const boost::filesystem::path& directory, std::vector<uint8_t>* encoded, std::string* error,
-    std::vector<std::string>& issues, std::size_t& fileCount, bool root, bool includeStatus)
+    std::vector<std::string>& issues, std::size_t& fileCount, bool root, bool includeStatus, std::size_t depth = 1U)
 {
+    if (depth > kNpuRepMaxDepth) {
+        return Fail("maximum nested report depth exceeded: " + directory.string(), error);
+    }
     std::vector<DirectoryItem> items;
     std::string itemError;
     if (!CollectDirectoryItems(directory, &items, &itemError, issues)) {
@@ -187,7 +190,7 @@ bool PackDirectoryInternal(
         entry.file_name = item.stored_name;
         if (item.is_directory) {
             entry.file_type = NpuRepFileType::NpuRep;
-            if (!PackDirectoryInternal(item.path, &entry.payload, error, issues, fileCount, false, false)) {
+            if (!PackDirectoryInternal(item.path, &entry.payload, error, issues, fileCount, false, false, depth + 1U)) {
                 return false;
             }
             if (entry.payload.empty()) {

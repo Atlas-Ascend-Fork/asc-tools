@@ -25,6 +25,8 @@ inline constexpr std::size_t kNpuRepHeadSize = 36U;
 inline constexpr std::size_t kNpuRepHeaderFieldsEnd = 28U + sizeof(uint64_t);
 inline constexpr std::size_t kNpuRepFileInfoSize = 160U;
 inline constexpr std::size_t kNpuRepFileNameSize = 128U;
+// Includes the outermost report (or the collection root directory when packing).
+inline constexpr std::size_t kNpuRepMaxDepth = 64U;
 
 enum class NpuRepFileType : uint16_t {
     NpuRep = 1,

@@ -34,7 +34,73 @@ aclError ResolveEntryKernelName(aclrtFuncHandle, uint32_t bytes, char* name)
 }
 
 aclError RejectEntryKernelName(aclrtFuncHandle, uint32_t, char*) { return ACL_ERROR_INVALID_PARAM; }
+
+aclError GetDeviceZero(int32_t* deviceId)
+{
+    *deviceId = 0;
+    return ACL_SUCCESS;
+}
+
+aclError GetDeviceOne(int32_t* deviceId)
+{
+    *deviceId = 1;
+    return ACL_SUCCESS;
+}
+
+aclError RejectDeviceQuery(int32_t* deviceId)
+{
+    *deviceId = 99;
+    return ACL_ERROR_INVALID_PARAM;
+}
+
+class NpuComputeKernelDeviceMetadata : public ::testing::Test {
+protected:
+    void TearDown() override { EXPECT_EQ(RuntimeStubClearOrigin("aclrtGetDevice"), ACL_SUCCESS); }
+
+    void ExpectDevice(std::optional<int32_t> expected)
+    {
+        aclptiAclrtLaunchKernelParams launch{};
+        aclptiAclrtLaunchKernelWithHostArgsParams hostLaunch{};
+        aclptiAclrtLaunchKernelWithArgsArrayParams arrayLaunch{};
+        aclptiAclrtLaunchSIMTKernelWithHostArgsParams simtHostLaunch{};
+        aclptiAclrtLaunchSIMTKernelWithArgsArrayParams simtArrayLaunch{};
+        const std::pair<aclptiCallbackId, void*> launches[] = {
+            {ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, &launch},
+            {ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithHostArgs, &hostLaunch},
+            {ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithArgsArray, &arrayLaunch},
+            {ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithHostArgs, &simtHostLaunch},
+            {ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithArgsArray, &simtArrayLaunch},
+        };
+        for (const auto& entry : launches) {
+            SCOPED_TRACE(entry.first);
+            npucompute::KernelMetadataCollector collector;
+            aclptiCallbackData data{};
+            data.callbackSite = ACLPTI_API_ENTER;
+            data.functionParams = entry.second;
+            collector.OnCallback(entry.first, data);
+            EXPECT_EQ(collector.Snapshot().deviceId, expected);
+        }
+    }
+};
 } // namespace
+
+TEST_F(NpuComputeKernelDeviceMetadata, RecordsCurrentDeviceZero)
+{
+    ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtGetDevice", &GetDeviceZero), ACL_SUCCESS);
+    ExpectDevice(0);
+}
+
+TEST_F(NpuComputeKernelDeviceMetadata, RecordsCurrentDeviceOne)
+{
+    ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtGetDevice", &GetDeviceOne), ACL_SUCCESS);
+    ExpectDevice(1);
+}
+
+TEST_F(NpuComputeKernelDeviceMetadata, LeavesDeviceUnavailableWhenQueryFails)
+{
+    ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtGetDevice", &RejectDeviceQuery), ACL_SUCCESS);
+    ExpectDevice(std::nullopt);
+}
 
 #define CHECK(condition)                                      \
     do {                                                      \

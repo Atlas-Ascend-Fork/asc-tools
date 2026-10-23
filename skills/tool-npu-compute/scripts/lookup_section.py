@@ -27,7 +27,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "assets" / "section-catalog
 class SelectionAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         selections = list(getattr(namespace, self.dest, None) or [])
-        selection_kind = option_string.removeprefix("--")
+        selection_kind = option_string[2:]
         selections.append((selection_kind, values))
         setattr(namespace, self.dest, selections)
 

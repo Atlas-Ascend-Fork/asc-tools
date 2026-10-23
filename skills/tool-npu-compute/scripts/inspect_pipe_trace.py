@@ -178,7 +178,7 @@ def summarize_pipelines(events, catalog):
         {
             "name": name,
             "event_count": len(grouped[name]),
-            "duration_sum_us": sum(event["duration"] for event in grouped[name]),
+            "duration_sum_us": math.fsum(event["duration"] for event in grouped[name]),
         }
         for name in catalog["pipelines"]
         if name in grouped
@@ -206,7 +206,9 @@ def summarize_tracks(events):
                 "event_count": len(track_events),
                 "trace_start_us": min(event["timestamp"] for event in track_events),
                 "trace_end_us": max(event["end"] for event in track_events),
-                "duration_sum_us": sum(event["duration"] for event in track_events),
+                "duration_sum_us": math.fsum(
+                    event["duration"] for event in track_events
+                ),
             }
         )
     return tracks

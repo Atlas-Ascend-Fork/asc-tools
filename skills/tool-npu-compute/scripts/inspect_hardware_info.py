@@ -84,6 +84,8 @@ def validate_type(category, field, value):
     if json_type == "string":
         if not isinstance(value, str):
             raise InspectionError(f"{category}.{name} 类型应为 string")
+        if value == "" and field.get("allow_empty") is True:
+            return
         if not value.strip():
             raise InspectionError(f"{category}.{name} 不能为空")
         return

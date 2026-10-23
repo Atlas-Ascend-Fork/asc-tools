@@ -304,7 +304,6 @@ void KernelMetadataCollector::OnCallback(aclptiCallbackId cbid, const aclptiCall
     }
     aclrtFuncHandle handle = nullptr;
     KernelMetadata candidate;
-    candidate.deviceId = 0;
     switch (cbid) {
         case ACLPTI_RUNTIME_CBID_aclrtLaunchKernel: {
             const auto& params = *static_cast<const aclptiAclrtLaunchKernelParams*>(data.functionParams);
@@ -340,6 +339,10 @@ void KernelMetadataCollector::OnCallback(aclptiCallbackId cbid, const aclptiCall
         }
         default:
             return;
+    }
+    int32_t deviceId = 0;
+    if (aclrtGetDevice(&deviceId) == ACL_SUCCESS) {
+        candidate.deviceId = deviceId;
     }
     const auto found = names_.find(handle);
     if (found != names_.end()) {

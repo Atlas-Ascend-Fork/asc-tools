@@ -95,8 +95,12 @@ bool IsKnownLeafType(NpuRepFileType type)
 }
 
 bool ValidateImportedEntries(
-    const std::vector<ImportedProfileEntry>& entries, const std::string& logical_path, std::string* error)
+    const std::vector<ImportedProfileEntry>& entries, const std::string& logical_path, std::string* error,
+    std::size_t depth = 1U)
 {
+    if (depth > kNpuRepMaxDepth) {
+        return Fail("maximum nested report depth exceeded: " + logical_path, error);
+    }
     std::unordered_set<std::string> output_names;
     output_names.reserve(entries.size());
     for (const ImportedProfileEntry& entry : entries) {
@@ -112,7 +116,7 @@ bool ValidateImportedEntries(
             if (!entry.payload.empty()) {
                 return Fail("imported child rep contains leaf payload: " + entry.name, error);
             }
-            if (!ValidateImportedEntries(entry.children, logical_path + "/" + output_name, error)) {
+            if (!ValidateImportedEntries(entry.children, logical_path + "/" + output_name, error, depth + 1U)) {
                 return false;
             }
             continue;
@@ -345,8 +349,11 @@ bool InvalidReport(const std::string& file, const std::string& reason, std::stri
 
 bool DecodeImportedEntries(
     const std::vector<uint8_t>& encoded, const std::string& logical_path, std::vector<ImportedProfileEntry>* results,
-    std::string* error, bool nested = false)
+    std::string* error, std::size_t depth = 1U)
 {
+    if (depth > kNpuRepMaxDepth) {
+        return InvalidReport(logical_path, "maximum nested report depth exceeded", error);
+    }
     DecodedRep decoded;
     std::string decode_error;
     RepDecodeError category;
@@ -357,7 +364,7 @@ bool DecodeImportedEntries(
             case RepDecodeError::UnsupportedVersion:
                 return InvalidReport(logical_path, "unsupported report version", error);
             case RepDecodeError::InvalidFormat:
-                if (!nested) {
+                if (depth == 1U) {
                     return InvalidReport(
                         logical_path,
                         encoded.empty() ? "invalid file format: the file is empty" : "invalid file format", error);
@@ -375,7 +382,7 @@ bool DecodeImportedEntries(
         entry.name = std::move(decoded_entry.file_name);
         entry.type = decoded_entry.file_type;
         if (entry.type == NpuRepFileType::NpuRep) {
-            if (!DecodeImportedEntries(decoded_entry.payload, logical_path, &entry.children, error, true)) {
+            if (!DecodeImportedEntries(decoded_entry.payload, logical_path, &entry.children, error, depth + 1U)) {
                 return false;
             }
         } else {

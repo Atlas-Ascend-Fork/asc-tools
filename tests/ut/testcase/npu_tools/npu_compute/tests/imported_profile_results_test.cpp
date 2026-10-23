@@ -159,6 +159,73 @@ bool SameDirectoryTrees(const boost::filesystem::path& left, const boost::filesy
     return true;
 }
 
+TEST(NpuComputeImportedProfileResults, EnforcesReportDepthLimits)
+{
+    TempDirectory temporary;
+    ASSERT_TRUE(!temporary.Path().empty());
+    const boost::filesystem::path input = temporary.Path() / "depth.npu-rep";
+    std::string error;
+    for (std::size_t depth : {1U, 3U, 64U, 65U, 5000U}) {
+        std::vector<uint8_t> encoded;
+        ASSERT_TRUE(EncodeRep({{"value.json", NpuRepFileType::Json, Bytes("{}")}}, &encoded, &error));
+        for (std::size_t level = 1; level < depth; ++level) {
+            std::vector<uint8_t> parent;
+            ASSERT_TRUE(EncodeRep({{"d.npu.rep", NpuRepFileType::NpuRep, encoded}}, &parent, &error));
+            encoded = std::move(parent);
+        }
+        ASSERT_TRUE(WriteFile(input, encoded));
+        std::vector<ImportedProfileEntry> results(1);
+        const bool read = ReadImportedProfileResults(input, &results, &error);
+        ASSERT_TRUE(read == (depth <= 64U));
+        if (read) {
+            const auto* entries = &results;
+            for (std::size_t level = 1; level < depth; ++level) {
+                ASSERT_TRUE(entries->size() == 1U);
+                entries = &entries->front().children;
+            }
+            ASSERT_TRUE(entries->size() == 1U);
+            ASSERT_TRUE(entries->front().payload == Bytes("{}"));
+        } else {
+            ASSERT_TRUE(results.empty());
+            ASSERT_TRUE(error.find("maximum nested report depth exceeded") != std::string::npos);
+        }
+    }
+
+    const boost::filesystem::path source = temporary.Path() / "source";
+    const boost::filesystem::path output = temporary.Path() / "output";
+    ASSERT_TRUE(boost::filesystem::create_directory(source));
+    ASSERT_TRUE(boost::filesystem::create_directory(output));
+    boost::filesystem::path deepest = source;
+    for (std::size_t level = 1; level < 64U; ++level) {
+        deepest /= "d";
+        ASSERT_TRUE(boost::filesystem::create_directory(deepest));
+    }
+    ASSERT_TRUE(WriteFile(deepest / "value.json", Bytes("{}")));
+    std::vector<uint8_t> encoded;
+    ASSERT_TRUE(PackDirectoryToRep(source, &encoded, &error));
+    ASSERT_TRUE(WriteFile(input, encoded));
+    std::vector<ImportedProfileEntry> results;
+    ASSERT_TRUE(ReadImportedProfileResults(input, &results, &error));
+    ASSERT_TRUE(UnpackImportedProfileResults(results, output, &error));
+    ASSERT_TRUE(SameDirectoryTrees(source, output));
+
+    ASSERT_TRUE(boost::filesystem::create_directory(deepest / "d"));
+    ASSERT_TRUE(!PackDirectoryToRep(source, &encoded, &error));
+    ASSERT_TRUE(encoded.empty());
+    ASSERT_TRUE(error.find("maximum nested report depth exceeded") != std::string::npos);
+
+    ImportedProfileEntry parent;
+    parent.name = "d.npu.rep";
+    parent.type = NpuRepFileType::NpuRep;
+    parent.children = std::move(results);
+    results = {std::move(parent)};
+    const boost::filesystem::path rejected = temporary.Path() / "rejected";
+    ASSERT_TRUE(boost::filesystem::create_directory(rejected));
+    ASSERT_TRUE(!UnpackImportedProfileResults(results, rejected, &error));
+    ASSERT_TRUE(error.find("maximum nested report depth exceeded") != std::string::npos);
+    ASSERT_TRUE(boost::filesystem::is_empty(rejected));
+}
+
 TEST(NpuComputeImportedProfileResults, ReadsNestedProfileResults)
 {
     TempDirectory temporary;

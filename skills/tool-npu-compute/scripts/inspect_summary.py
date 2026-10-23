@@ -50,7 +50,7 @@ def load_catalogs():
 
 def load_records(path, record_types):
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").split("\n")
     except (OSError, UnicodeError) as error:
         raise InspectionError(f"读取 summary.jsonl 失败：{error}") from error
 

@@ -301,11 +301,11 @@ class InspectHardwareInfoTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def inspect_records(self, records):
+    def inspect_records(self, records, output_format="json"):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "HardwareInfo.jsonl"
             self.write_records(path, records)
-            return self.run_inspect(path)
+            return self.run_inspect(path, output_format)
 
     def copied_records(self):
         return json.loads(json.dumps(self.fixture_records))
@@ -434,12 +434,56 @@ class InspectHardwareInfoTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("hbm used(MB) 必须是有限非负数", result.stderr)
 
-    def test_empty_string_is_reported(self):
+    def test_empty_device_information_is_accepted(self):
+        for names in (("chip info",), ("arch info",), ("chip info", "arch info")):
+            for output_format in ("json", "markdown"):
+                with self.subTest(names=names, output_format=output_format):
+                    records = self.copied_records()
+                    for name in names:
+                        records[1][name] = ""
+                    result = self.inspect_records(records, output_format)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                    if output_format == "json":
+                        output = json.loads(result.stdout)
+                        device = next(
+                            category
+                            for category in output["categories"]
+                            if category["name"] == "Device Info"
+                        )
+                        fields = {
+                            field["name"]: field["value"] for field in device["fields"]
+                        }
+                        for name in names:
+                            self.assertEqual(fields[name], "")
+                    else:
+                        self.assertIn("## Device Info", result.stdout)
+
+    def test_whitespace_only_device_information_is_reported(self):
+        for name in ("chip info", "arch info"):
+            with self.subTest(name=name):
+                records = self.copied_records()
+                records[1][name] = " \t "
+                result = self.inspect_records(records)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(f"{name} 不能为空", result.stderr)
+
+    def test_empty_category_is_reported(self):
         records = self.copied_records()
-        records[1]["chip info"] = ""
+        records[1]["category"] = ""
         result = self.inspect_records(records)
         self.assertEqual(result.returncode, 2)
-        self.assertIn("chip info 不能为空", result.stderr)
+        self.assertIn("category 必须是非空字符串", result.stderr)
+
+    def test_optional_device_information_still_requires_strings(self):
+        for name in ("chip info", "arch info"):
+            for value in (None, 3510, False):
+                with self.subTest(name=name, value=value):
+                    records = self.copied_records()
+                    records[1][name] = value
+                    result = self.inspect_records(records)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(f"{name} 类型应为 string", result.stderr)
 
 
 class InspectPipeTraceTest(unittest.TestCase):

@@ -292,9 +292,16 @@ def validate_hardware_catalog():
         )
         for field in fields:
             require(
-                set(field) == HARDWARE_FIELD_KEYS,
+                set(field) - {"allow_empty"} == HARDWARE_FIELD_KEYS,
                 f"HardwareInfo {category['name']}.{field.get('name')} 属性不完整",
             )
+            if "allow_empty" in field:
+                require(
+                    type(field["allow_empty"]) is bool
+                    and field["json_type"] == "string",
+                    f"HardwareInfo {category['name']}.{field['name']} "
+                    "allow_empty 必须是字符串字段的布尔属性",
+                )
             require(
                 all(value != "" for value in field.values()),
                 f"HardwareInfo {category['name']}.{field['name']} 存在空属性",

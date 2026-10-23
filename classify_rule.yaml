@@ -37,6 +37,8 @@ python@asc-tools:
       - utils/msobjdump
       - utils/show_kernel_debug_data
       - utils/templates
+      - skills/tool-npu-compute
+      - skills/tool-npu-objdump
   llt:
     ut_check: true
     st_check: false
@@ -49,6 +51,8 @@ cpp@asc-tools:
     release:
       - cpudebug
       - utils/opbuild
+      - npu_tools/npu_compute
+      - tests/ut/testcase/npu_tools/npu_compute
     unrelease:
       - cpudebug/src/regfwk/stub_backtrace.cpp
       - cpudebug/src/regfwk/stub_base.cpp
