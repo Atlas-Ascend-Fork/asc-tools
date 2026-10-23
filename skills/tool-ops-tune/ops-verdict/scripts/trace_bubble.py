@@ -25,7 +25,7 @@ trace 格式（cannsim report 实测，与 ops-simulator 文档一致）：
   Chrome Trace Format：traceEvents[]，ph="X" duration 事件（ts/dur，单位 ns），
   metadata 事件（ph="M" name="process_name"）携带 pid → pipeline 名映射。
   cannsim 把 VECTOR 细分为 RVECSU/RVECEX/RVECLD/RVECST/RVECLP、FIXPIPE 写作
-  FIXP——归并处理（与 cannbot ops-simulator 同款认知，独立实现）。
+  FIXP——归并处理（与业界仿真分析实践同款认知，独立实现）。
 
 用法：
   python3 trace_bubble.py --trace report/trace_core0.json [--scalar-out scalars.json]

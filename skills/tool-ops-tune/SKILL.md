@@ -1,6 +1,6 @@
 ---
 name: tool-ops-tune
-description: 昇腾算子性能调优 AGENT/SKILL 套件（OpsTune）。对「已可运行、精度通过」的算子工程做性能调优：分层瓶颈判定引擎（规则-指标绑定契约，判定只出自脚本）、性能采集编排（msprof 模式路由与 manifest 契约）、机制卡与案例证据库、算子族模板货架、五阶段调优工作流（基线→分层判定→机制路由→单变量迭代→对比归档）。触发：算子调优、瓶颈判定、Bound 判定、性能采集、profiling 编排、调优前后对比、加速比结论时使用。
+description: 昇腾算子性能调优 AGENT/SKILL 套件（OpsTune）。对「已可运行、精度通过」的算子工程做性能调优：分层瓶颈判定引擎（规则-指标绑定契约，判定只出自脚本）、性能采集编排（msprof 模式路由与 manifest 契约）、机制卡与案例证据库、算子族模板货架、调优主循环（采集→问题判定→机制路由候选方案→单变量执行优化→对比确认）。触发：算子调优、瓶颈判定、Bound 判定、性能采集、profiling 编排、调优前后对比、加速比结论时使用。
 ---
 
 # 昇腾算子调优套件（OpsTune）
@@ -9,7 +9,7 @@ description: 昇腾算子性能调优 AGENT/SKILL 套件（OpsTune）。对「�
 > 给「已可运行、精度通过」的昇腾算子做性能调优的完整 Agent + SKILL 工具链：
 > Bound 判定可审计、阈值可回归、结论可复现。
 
-## 套件总览（五阶段调优闭环）
+## 套件总览（调优主循环闭环）
 
 ```
 工程 + cases（精度已通过）
@@ -32,7 +32,7 @@ Phase 4 单变量迭代 ─ perf-implementer 单机制实施 → diff_audit 范�
 Phase 5 归档回灌 ── REPORT 六要素 + E 级案例候选 + 预估-实测校准数据
 ```
 
-编排规范：`agent/AGENTS.md`（OpsTuningAgent 五阶段主循环 + 三道精度门禁 + 口径铁律）；
+编排规范：`agent/AGENTS.md`（OpsTuningAgent 调优主循环 + 三道精度门禁 + 口径铁律）；
 Step 执行手册：`agent/workflows/task-prompts.md`；故障分流：`agent/workflows/troubleshooting.md`。
 
 ## 子域路由表（按调优阶段加载）

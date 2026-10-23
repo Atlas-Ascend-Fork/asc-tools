@@ -5,7 +5,7 @@
 
 ## 模板来源与验证状态
 
-回流自 Ascend C Kernel 直调工程模板（Vector 样例工程）
+源自 Ascend C Kernel 直调工程模板（Vector 样例工程）
 （经真机验证的 Vector 样例工程：双缓冲 TQue + DataCopyPad 尾块处理 +
 多核均分 + 尾核特化 + torch 扩展双通路）。与本仓真机 E2E 走查同款工程形态
 （square_add@910B3）。

@@ -5,7 +5,7 @@ description: 调优结果可视化报告。把 tuning_artifacts（verdict 判定
 
 # 调优结果可视化报告（ops-report）
 
-> **来源（蒸馏）**：报告形态与模块合同蒸馏自 同类工具实践
+> **来源（蒸馏）**：报告形态与模块合同借鉴 NPU profiling 可视化最佳实践
 > （独立 HTML 报告 + 数据解析/渲染分离 + 缺失如实呈现三原则）；数据真源与口径
 > 校验是本仓自有（verdict/snapshot/delta_compare 契约），渲染入口为
 > `ops-verdict/scripts/render_html.py`（P2-3 交付）。

@@ -56,7 +56,7 @@ python3 ../ops-verdict/scripts/trace_bubble.py --trace-dir ./prof/sim/cannsim_*/
 上板无 trace 设施时，`__pipe_sum_mean` 间接指纹照旧（medium 置信度如实保留），
 报告标注「重叠度为间接推断」。
 
-## 无 Bound 形态（NO_BOUND_FOUND / 全 pipe 低占用，蒸馏自一线调优实践沉淀）
+## 无 Bound 形态（NO_BOUND_FOUND / 全 pipe 低占用，沉淀自一线调优实践）
 
 各单元利用率均不高、无明显单一瓶颈时，流水化优先于单点优化：
 

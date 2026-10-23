@@ -25,5 +25,5 @@
 ## 边界
 
 - 融合 epilogue（vector 后处理）不在此模板（BlockEpilogueEmpty）——
-  融合 matmul 见 blaze skill 的 fusion-matmul-development 场景；
-- Grouped MatMul / MX 量化变体见 blaze skill 对应场景（本仓 M3+ 规划）。
+  融合 matmul 见 Blaze/tensor_api 融合开发场景；
+- Grouped MatMul / MX 量化变体为后续规划项。

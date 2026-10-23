@@ -1,7 +1,7 @@
 # 规则 Schema 规范（opstune.rules/1.0）
 
 > 规则是判定引擎的唯一知识形态。每条规则 = 触发条件（指标+阈值）+ 反证 + 置信度 + 机制路由，
-> 声明式 YAML 承载，`verdict.py` 解释执行。设计对标 Nsight Compute Guided Analysis 的
+> 声明式 YAML 承载，`verdict.py` 解释执行。设计对标业界领先 GPU Profiling 工具 Guided Analysis 的
 > 「规则-Section 绑定契约 + REQUIRED/OPTIONAL 分级」，阈值取自真机调优实践标定。
 
 ## 顶层字段

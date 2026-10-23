@@ -31,7 +31,7 @@ mul+add → Axpy 类、mul+sub 等可融合序列查表合并；`Compare+Select`
 
 Task Duration − max(aic,aiv) 占比 >30%：数据量太小或核数太多——先减核再谈其它。
 
-## 减少计算量（深度 VEC BOUND 核心策略，蒸馏自一线调优实践沉淀）
+## 减少计算量（深度 VEC BOUND 核心策略，沉淀自一线调优实践）
 
 VEC >80% 时微架构调整（DoubleBuffer/融合指令/Bank Align）收益有限——瓶颈在
 计算量本身，须从**算法层减少向量指令数**：

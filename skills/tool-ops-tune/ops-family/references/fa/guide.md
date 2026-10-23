@@ -1,8 +1,8 @@
 # FA 族指南（guide）——FlashAttention 类算子调优入口
 
-> **来源（蒸馏）**：内容蒸馏自 Ascend C Tiling 设计方法论·FlashAttention 分册
+> **来源（蒸馏）**：内容整理自 Ascend C Tiling 设计方法论·FlashAttention 分册
 > 四层方法论（patterns / foundation / design / subfamilies，约 2000 行）+
-> `catlass-op-design/references/kernels/flash-attention*.md`（CATLASS 路径与标杆
+> 业界 Attention 设计实践（CATLASS 路径与标杆
 > 对齐）——P1-7① 台账残留项的先期知识就位（真实 FA 工程接入时方法论文档已可用，
 > 实战案例仍按无同型降级策略沉淀）。
 
@@ -50,7 +50,7 @@ FA 是 mix kernel，瓶颈形态跨 L1/L2/L3 三层，本仓 verdict 的消费�
 | Compute-bound | Mmad m/n/k 对齐 16；Cube/Vector 重叠；减 PipeBarrier |
 | Cross-core-bound | 提 AIC:AIV 比（如 `__mix__(1,2)`→更多 AIV）；per-stage 同步；双缓冲重叠；减 PipeBarrier |
 
-## 标杆对齐（蒸馏自 catlass-op-design）
+## 标杆对齐（对照业界 Attention 设计实践）
 
 | 标杆 | 位置 | 用途 |
 |------|------|------|

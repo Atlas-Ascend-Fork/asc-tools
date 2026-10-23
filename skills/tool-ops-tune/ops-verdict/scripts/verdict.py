@@ -12,7 +12,7 @@
 """verdict.py — 算子调优判定引擎（规则-指标绑定契约 + 分层路由 + 反证 + 置信度）
 
 设计对齐（见 docs/算子调优AGENT设计文档.md §5 核心设计决策）：
-  - 对标 Nsight Compute Guided Analysis：规则声明绑定指标，未采集则规则不触发
+  - 对标业界领先 GPU Profiling 工具的 Guided Analysis：规则声明绑定指标，未采集则规则不触发
     （机制上杜绝「指标没采却报规则」）；REQUIRED 缺失 → rule: SKIPPED，OPTIONAL 缺失 → 降级不阻断（optional 仅用于反证；condition 内引用必须 required——加载校验 V4 强制）。
   - 判定进脚本、解释进 LLM：本引擎输出结构化 verdict.json（机器可读契约），
     Agent/LLM 只消费判定书做解释与编排，不做判定。

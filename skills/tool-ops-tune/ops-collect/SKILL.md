@@ -42,7 +42,7 @@ description: NPU 性能采集编排。统一采集入口：上板（msprof 7 组
 | `scripts/collect_cases.py` | **逐 case 采集编排 + 标杆双路径**（P0-1，A1 铁律工具化）：cases.csv + exe [--ref-exe] → 逐 case×variant 调 collect_board → `perf_data.csv`（batch_pipeline `--from-collect` 直接输入）+ 逐 case manifest 归档；case 间串行同卡同口径；防重采闸门（已有 manifest 跳过）；`--cases-subset` 定向补采；failed/partial 如实进 collect_summary（伪 Green 防护） |
 | `scripts/isolation_test.py` | MC² 隔离测试编排：T_comm/T_compute（逐 rank 稳态均值，跨 rank max）+ mte2_ratio_full/pure / rank_imbalance / mask_ratio → R 值与 --scalar 串 → 喂 verdict |
 | `scripts/facts_bridge.py` | msprof 7 组产物 → verdict `--scalar` 串（G2 桥接）：L2Cache/Arithmetic/ResourceConflict/OpBasicInfo 提取 + soc-spec 峰值换算，产出 `mte2_active_bw_pct_of_peak` / `l2_hit_rate` / `vec_fp32_ratio` 等——L0 规则与 L1 反证的标量生产者；missing 列表即补采闭环真源；**DB 双源**（P1-6）：CSV OpBasicInfo 缺失时 sqlite（`ai_core_op_summary.db` task_time）备位 task 级时长（等价查询固化在脚本，ns→us 换算 + DB 口径注记防混比；`--no-db` 关闭） |
-| `scripts/jsonl_to_cases.py` | **JSONL 用例适配**（P1-5，G11）：cannbot 生态 JSONL 用例（torch-ops-profiler 规范）→ cases.csv（A1 铁律输入契约）；转换规则全落脚本（dtype 归一 / attrs 拼接 / CSV 转义），歧义行 skipped 列明原因不猜测 |
+| `scripts/jsonl_to_cases.py` | **JSONL 用例适配**（P1-5，G11）：生态内 JSONL 用例（torch-ops-profiler 规范）→ cases.csv（A1 铁律输入契约）；转换规则全落脚本（dtype 归一 / attrs 拼接 / CSV 转义），歧义行 skipped 列明原因不猜测 |
 | `scripts/collect_sim.sh` | **仿真路径采集编排**（P1-1，G7）：cannsim record（精度+性能仿真）→ report（trace_core*.json）→ mode=sim 的 collection_manifest 归档；cannsim 探测门禁（不可用明确报错）；sim 数字与上板禁混比（snapshot timing_method=sim 专用） |
 
 **自动化分级**（如实宣称）：

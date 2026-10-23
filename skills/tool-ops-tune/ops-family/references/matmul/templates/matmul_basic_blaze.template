@@ -1,6 +1,6 @@
 # matmul_basic_blaze.template — 基础 MatMul 可拷贝模板（Blaze/tensor_api 路径，DAV_3510）
 
-> **来源（P1-7②/G14 回流）**：内容回流自 Ascend C Blaze/tensor_api Matmul 最佳实践
+> **来源**：内容整理自 Ascend C Blaze/tensor_api Matmul 最佳实践
 > skill 的 `references/scenarios/basic-matmul-development.md`（已通过 480 case
 > 工程穿刺验证：fp16/bf16/fp32 × ND/NZ × transpose × bias 组合）——
 > ops-tune 模板拷贝纪律的「货」，此前 matmul 族只有设计文档无可拷贝代码。

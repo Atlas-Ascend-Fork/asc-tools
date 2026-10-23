@@ -9,11 +9,11 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""jsonl_to_cases.py — cannbot JSONL 用例 → cases.csv 适配（REVIEW2 G11 / 反馈 P1-5①）
+"""jsonl_to_cases.py — JSONL 用例 → cases.csv 适配（REVIEW2 G11 / 反馈 P1-5①）
 
 设计对齐：
   - cases.csv 是本仓 A1 全量铁律的输入契约（io-contracts.md §1：case_id/shape/
-    dtype/attrs），但 cannbot 生态的存量算子工程用 JSONL 用例（torch-ops-profiler
+    dtype/attrs），但生态内存量算子工程用 JSONL 用例（torch-ops-profiler
     规范：每行 {"inputs": [{name/type/dtype/shape|value}...]})——两格式不通，
     存量工程进不了 Phase 0（REVIEW2 G11 定性）。
   - 本脚本做单向适配：JSONL → cases.csv。转换规则全落脚本（判定/转换逻辑
@@ -91,7 +91,7 @@ def convert_row(idx: int, row: dict) -> tuple[dict | None, str | None]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="cannbot JSONL 用例 → cases.csv（A1 铁律输入适配）"
+        description="JSONL 用例 → cases.csv（A1 铁律输入适配）"
     )
     ap.add_argument(
         "--jsonl", required=True, help="JSONL 用例文件（torch-ops-profiler 规范）"

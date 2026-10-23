@@ -15,10 +15,10 @@ description: 算子族实践库与模板代码货架。按算子族（matmul/mc2
 
 | 族 | 典型算子 | 架构 | 模板数 | 状态 | 文档 |
 |----|---------|------|-------|------|------|
-| matmul | MatMul/BatchMatMul/MXFP4/A16W16 | DAV_3510 | 1 | ✅（Blaze 基础模板 ×1，回流自 blaze skill 480-case 穿刺验证） | `references/matmul/guide.md`（六策略互斥判定树）+ `references/matmul/templates/` |
+| matmul | MatMul/BatchMatMul/MXFP4/A16W16 | DAV_3510 | 1 | ✅（Blaze 基础模板 ×1，经 480-case 穿刺验证） | `references/matmul/guide.md`（六策略互斥判定树）+ `references/matmul/templates/` |
 | mc2 | matmul_all_reduce/allgather_matmul/alltoall_matmul | DAV_3510 | 0 | ✅ 设计参考（无货架代码） | `references/mc2/guide.md`（3 策略） |
 | reduce | ReduceSum/Softmax/LayerNorm/RMSNorm | DAV_3510 | 10 | ✅（Softmax 模板 ×8 + kernel_utils + tiling） | `references/reduce/guide.md` |
-| elementwise | Sin/Cos/Abs/Exp | DAV_3510 | 5 | ✅（add_custom 可裁剪工程模板：kernel .asc/.h + host .asc + torch 扩展 ×2，回流自 direct-invoke-template；scripts/ 验证脚本不计模板数） | `references/elementwise/guide.md` + `references/elementwise/templates/`（usage_guide + add_custom） |
+| elementwise | Sin/Cos/Abs/Exp | DAV_3510 | 5 | ✅（add_custom 可裁剪工程模板：kernel .asc/.h + host .asc + torch 扩展 ×2，经真机验证的可裁剪工程模板；scripts/ 验证脚本不计模板数） | `references/elementwise/guide.md` + `references/elementwise/templates/`（usage_guide + add_custom） |
 | broadcast | 含广播轴 Add/Mul/Sub | DAV_3510 | 5 | ✅（code/ 可裁剪源码） | B 型选型（OneDim 快路径 + NDDMA/DataCopyPad/UB 三实现） |
 | conversion | Transpose/Concat/Split | DAV_3510 | 11 | ✅（transpose 模板 + tiling_data） | `references/conversion/`（12 篇 transpose） |
 | sort | TopK/KthValue/Sort/ArgSort | A2+A5 | 0 | 🟡 设计参考（M-way 归并三 Pattern 路由 + Pattern C 四阶段架构已蒸馏；radix 路线 radix_sort.md；无货架代码） | `references/sort/guide.md`（Pattern 决策树）+ `references/sort/radix_sort.md` |

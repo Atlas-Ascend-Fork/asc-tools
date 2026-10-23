@@ -17,7 +17,7 @@
    转 ops-family:references/matmul/guide.md（pingpong/streamk/fullload…）。
 ```
 
-### ① 的模式选型（蒸馏自 MC² 通算融合实践沉淀）
+### ① 的模式选型（沉淀自 MC² 通算融合实践）
 
 | 执行顺序 | 推荐模式 | 机制 |
 |---------|---------|------|

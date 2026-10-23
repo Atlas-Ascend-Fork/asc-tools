@@ -17,7 +17,7 @@
 #   facts_bridge.py（ops-collect）峰值换算（mte2_active_bw_pct_of_peak 等）
 #   tiling_candidates.py（ops-family）核数 / UB / L1 / L0 容量约束
 # 使用规则：reference 为判定默认值；调用方知道实际 SKU 时应从 skus 解析精确值
-#   （npu-smi 型号 → skus.sku 匹配）。本表不搬用 msAgent 910B 峰值表（训练卡口径
+#   （npu-smi 型号 → skus.sku 匹配）。本表不搬用其他工具的 910B 峰值表（训练卡口径
 #   来源不同，数值仅作交叉验证：910B3 fp16 294.91 与本表公式推导一致）。
 schema: opstune.soc-spec/1.0
 

@@ -31,7 +31,7 @@ python3 ops-family/scripts/tiling_candidates.py \
 
 ## 模板货架（templates/）
 
-[`templates/add_custom/`](templates/add_custom/)——可裁剪工程模板（回流自
+[`templates/add_custom/`](templates/add_custom/)——可裁剪工程模板（源自
 参考实现 验证样例）：双缓冲 TQue kernel + 多核均分/尾核
 特化 + DataCopyPad 尾块 + host 直调 + torch 扩展双通路 + 验证脚本。
 转换纪律见 [`templates/usage_guide.md`](templates/usage_guide.md)（只改

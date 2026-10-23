@@ -14,7 +14,7 @@
     {
       "family": "elementwise",
       "kind": "guide_missing",
-      "note": "无 guide.md（仅 index + 2 篇设计文档），模板数为 0。已解决（2026-10-15 P1-7③）：guide.md 路由层已补，模板货架已补（templates/add_custom 可裁剪工程模板 ×5，蒸馏自 direct-invoke-template）",
+      "note": "无 guide.md（仅 index + 2 篇设计文档），模板数为 0。已解决（2026-10-15 P1-7③）：guide.md 路由层已补，模板货架已补（templates/add_custom 可裁剪工程模板 ×5，源自 Kernel 直调工程模板）",
       "first_seen": "2026-10-14",
       "resolved": true,
       "resolved_at": "2026-10-15",
