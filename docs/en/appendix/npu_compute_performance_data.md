@@ -32,9 +32,13 @@ NA means inapplicable to the current Core or unavailable data; it does not mean 
 | `aiv_time(us)` | Execution time on the AI Vector Core for this row, converted from total cycles using its frequency, in us. |
 | `aiv_total_cycles` | Total execution cycles on the AI Vector Core for this row. |
 | `aiv_vec_ratio` | Vector active cycles as a fraction of total AI Vector Core cycles. |
-| `aiv_vec_vf_ratio` | Vector VF instructions active cycles as a fraction of total AI Vector Core cycles. |
 | `aiv_vec_sfu_ratio` | Vector SFU instructions active cycles as a fraction of total AI Vector Core cycles. |
-| `aiv_vec_simt_vf_ratio` | SIMT VF instructions active cycles as a fraction of total AI Vector Core cycles. |
+| `aiv_simd_vf_ratio` | AIV SIMD VF instruction issue cycles as a fraction of total AIV cycles. |
+| `aiv_simt_vf_ratio` | AIV SIMT VF instruction issue cycles as a fraction of total AIV cycles. |
+| `aiv_simd_vf_time` | Total time spent issuing AIV SIMD VF instructions, in us. |
+| `aiv_simd_vf_ipc` | Average number of AIV SIMD VF instructions issued per cycle. |
+| `aiv_simt_vf_time` | Total time spent issuing AIV SIMT VF instructions, in us. |
+| `aiv_simt_vf_ipc` | Average number of AIV SIMT VF instructions issued per cycle. |
 
 ## L2Cache (L2 cache access counts and hit rates)
 

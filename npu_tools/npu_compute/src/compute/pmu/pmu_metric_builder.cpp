@@ -19,6 +19,7 @@
 #include <optional>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace npucompute {
@@ -120,6 +121,10 @@ CsvCell MetricCell(const Metric& value, MissingReason missingReason)
                                                         MissingCell(missingReason);
 }
 
+CsvCell MetricCell(double value) { return CsvCell{Number(value), MissingReason::None, value, false}; }
+
+CsvCell MissingMetricCell(MissingReason reason) { return CsvCell{"NA", reason, std::nullopt, false}; }
+
 CsvCell CounterCell(const Metric& value, MissingReason missingReason)
 {
     return value.has_value() && std::isfinite(*value) && *value >= 0.0 ?
@@ -137,6 +142,16 @@ bool HasEvents(const TypeMetrics& metrics, std::initializer_list<uint32_t> event
         }
     }
     return true;
+}
+
+MissingReason ValidDenominatorReason(std::initializer_list<double> paras)
+{
+    for (const double& para : paras) {
+        if (para <= 0.0 || !std::isfinite(para)) {
+            return MissingReason::InvalidDenominator;
+        }
+    }
+    return MissingReason::Unknown;
 }
 
 MissingReason EventReason(const TypeMetrics& metrics, std::initializer_list<uint32_t> events)
@@ -863,9 +878,73 @@ std::vector<std::string> ArithmeticHeader()
         "aiv_time(us)",
         "aiv_total_cycles",
         "aiv_vec_ratio",
-        "aiv_vec_vf_ratio",
+        "aiv_simd_vf_ratio",
         "aiv_vec_sfu_ratio",
-        "aiv_vec_simt_vf_ratio"};
+        "aiv_simt_vf_ratio",
+        "aiv_simd_vf_time",
+        "aiv_simd_vf_ipc",
+        "aiv_simt_vf_time",
+        "aiv_simt_vf_ipc"};
+}
+
+CsvCell ComputeVfTime(const TypeMetrics& aiv, uint32_t cycleEvent, double frequencyMhz)
+{
+    MissingReason eventReason = EventReason(aiv, {cycleEvent});
+    if (eventReason != MissingReason::Unknown) {
+        return MissingMetricCell(eventReason);
+    }
+
+    eventReason = TimeReason(aiv, frequencyMhz);
+    if (eventReason != MissingReason::Unknown) {
+        return MissingMetricCell(eventReason);
+    }
+
+    const double cycles = *aiv.Value(cycleEvent);
+    const double value = cycles / frequencyMhz;
+    if (!std::isfinite(value)) {
+        return MissingMetricCell(MissingReason::Unknown);
+    }
+    return MetricCell(value);
+}
+
+CsvCell ComputeVfIpc(const TypeMetrics& aiv, uint32_t cycleEvent, Metric count)
+{
+    MissingReason eventReason = EventReason(aiv, {cycleEvent});
+    if (eventReason != MissingReason::Unknown) {
+        return MissingMetricCell(eventReason);
+    }
+
+    if (!count) {
+        return MissingMetricCell(MissingReason::EventMissing);
+    }
+
+    const Metric cycles = aiv.Value(cycleEvent);
+    eventReason = ValidDenominatorReason({*cycles});
+    if (eventReason != MissingReason::Unknown) {
+        return MissingMetricCell(eventReason);
+    }
+    const double value = *count / *cycles;
+    if (!std::isfinite(value)) {
+        return MissingMetricCell(MissingReason::Unknown);
+    }
+    return MetricCell(value);
+}
+
+CsvCell ComputeSimdVfTime(const TypeMetrics& aiv, double frequencyMhz)
+{
+    return ComputeVfTime(aiv, 1282, frequencyMhz);
+}
+
+CsvCell ComputeSimdVfIpc(const TypeMetrics& aiv) { return ComputeVfIpc(aiv, 1282, aiv.Value(1320)); }
+
+CsvCell ComputeSimtVfTime(const TypeMetrics& aiv, double frequencyMhz)
+{
+    return ComputeVfTime(aiv, 1284, frequencyMhz);
+}
+
+CsvCell ComputeSimtVfIpc(const TypeMetrics& aiv)
+{
+    return ComputeVfIpc(aiv, 1284, Scale(SumEvents(aiv, {1466, 1467, 1468}), 0.25));
 }
 
 CsvRow ArithmeticRow(const RowMetrics& row, const ReportConfig& config)
@@ -878,13 +957,22 @@ CsvRow ArithmeticRow(const RowMetrics& row, const ReportConfig& config)
     SetEvent(fields, "aic_cube_total_instr_number", row.aic, 768);
     SetEvent(fields, "aic_cube_fp_instr_number", row.aic, 789);
     SetEvent(fields, "aic_cube_int_instr_number", row.aic, 790);
-    for (const auto& [name, event] : std::initializer_list<std::pair<const char*, uint32_t>>{
-             {"aiv_vec_ratio", 1281},
-             {"aiv_vec_vf_ratio", 1282},
-             {"aiv_vec_sfu_ratio", 1283},
-             {"aiv_vec_simt_vf_ratio", 1284}}) {
-        SetMetric(fields, name, ValueRatio(row.aiv, event), RatioReason(row.aiv, {event}));
+    const Metric aivRatio = ValueRatio(row.aiv, 1281);
+    const Metric simdVfRatio = ValueRatio(row.aiv, 1282);
+    const Metric aivSfuRatio = ValueRatio(row.aiv, 1283);
+    const Metric simtVfRatio = ValueRatio(row.aiv, 1284);
+    for (const auto& [name, event, metric] : std::initializer_list<std::tuple<const char*, uint32_t, Metric>>{
+             {"aiv_vec_ratio", 1281, aivRatio},
+             {"aiv_simd_vf_ratio", 1282, simdVfRatio},
+             {"aiv_vec_sfu_ratio", 1283, aivSfuRatio},
+             {"aiv_simt_vf_ratio", 1284, simtVfRatio}}) {
+        SetMetric(fields, name, metric, RatioReason(row.aiv, {event}));
     }
+    const double frequencyMhz = AivFrequencyMhz(config);
+    fields.emplace("aiv_simd_vf_time", ComputeSimdVfTime(row.aiv, frequencyMhz));
+    fields.emplace("aiv_simd_vf_ipc", ComputeSimdVfIpc(row.aiv));
+    fields.emplace("aiv_simt_vf_time", ComputeSimtVfTime(row.aiv, frequencyMhz));
+    fields.emplace("aiv_simt_vf_ipc", ComputeSimtVfIpc(row.aiv));
     return BuildRow(ArithmeticHeader(), fields);
 }
 

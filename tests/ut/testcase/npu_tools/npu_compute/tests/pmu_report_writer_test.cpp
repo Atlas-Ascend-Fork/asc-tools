@@ -263,6 +263,113 @@ static int RunSuiteMain()
         CHECK(!npucompute::cli::ValidateCollectionFile(malformed, npucompute::cli::NpuRepFileType::Jsonl, &error));
     }
     boost::filesystem::remove_all(directory);
+
+    // VF summary metrics average valid AIV task rows and represent unavailable values as null.
+    {
+        const auto ipcDirectory =
+            boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("vf-ipc-summary-%%%%-%%%%");
+        boost::filesystem::create_directories(ipcDirectory);
+        npucompute::ReportConfig ipcConfig;
+        ipcConfig.outputDirectory = ipcDirectory.string();
+        ipcConfig.frequencyMhz = 800;
+        ipcConfig.aivFrequencyMhz = 800;
+        ipcConfig.pmuDataLevel = npucompute::PmuDataLevel::Block;
+
+        // AIV task rows have SIMD IPCs 1, 3 and NA; SIMT IPCs are 0.6, 0.6 and NA.
+        aclptiProfilingDataResult ipcResult;
+        for (const auto type : {ACLPTI_CORE_TYPE_AIC, ACLPTI_CORE_TYPE_AIV}) {
+            for (uint16_t block = 0; block < 3; ++block) {
+                aclptiPmuDataRow row{};
+                row.coreType = type;
+                row.blockId = block;
+                row.totalCycles = 1000;
+                row.values = {{1281, 800}, {1282, block == 0 ? 100.0 : 300.0},
+                              {1284, 100}, {1320, block == 0 ? 100.0 : 900.0},
+                              {1466, 40},  {1467, 80},
+                              {1468, 120}};
+                if (block == 2) {
+                    row.values.erase(1320);
+                    row.values.erase(1467);
+                }
+                if (type == ACLPTI_CORE_TYPE_AIC) {
+                    // Large AIC counts must not contribute to AIV summary metrics.
+                    row.values = {{1281, 100},  {1282, 100},  {1284, 100}, {1320, 9000},
+                                  {1466, 9000}, {1467, 9000}, {1468, 9000}};
+                }
+                ipcResult.taskPmuLogs.emplace(aclptiBlockKey{block, 0, type, 0}, row);
+
+                // Large block counts distinguish task-based summaries from the configured CSV level.
+                row.values = {{1281, 100},  {1282, 100},  {1284, 100}, {1320, 9000},
+                              {1466, 9000}, {1467, 9000}, {1468, 9000}};
+                ipcResult.pmuLogs.emplace(aclptiBlockKey{block, 0, type, 0}, row);
+            }
+        }
+
+        // Average valid per-row IPCs: (1+3)/2 = 2, rather than dividing summed counts by summed cycles.
+        CHECK(npucompute::WritePmuReport(ipcResult, {"ArithmeticUtilization"}, ipcConfig) == ACLPTI_SUCCESS);
+        auto ipcRecords = ReadSummary(ipcDirectory);
+        CHECK(!ipcRecords.empty());
+        CHECK(!ipcRecords[0].get_child_optional("aiv_simd_ipc"));
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_ipc") - 2.0) < 1e-12);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_ipc") - 0.6) < 1e-12);
+
+        // Missing instruction counts do not invalidate ratios or times; all three AIV task rows contribute.
+        CHECK(!ipcRecords[0].get_child_optional("aiv_vec_vf_ratio"));
+        CHECK(!ipcRecords[0].get_child_optional("aiv_vec_simt_vf_ratio"));
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_ratio") - 0.233333) < 1e-6);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_ratio") - 0.1) < 1e-12);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_time") - 0.291667) < 1e-6);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_time") - 0.125) < 1e-12);
+
+        // A zero time is valid and participates in the mean; a missing cycle event does not.
+        ipcResult.taskPmuLogs.at({0, 0, ACLPTI_CORE_TYPE_AIV, 0}).values[1282] = 0;
+        ipcResult.taskPmuLogs.at({0, 0, ACLPTI_CORE_TYPE_AIV, 0}).values[1284] = 0;
+        ipcResult.taskPmuLogs.at({2, 0, ACLPTI_CORE_TYPE_AIV, 0}).values.erase(1282);
+        ipcResult.taskPmuLogs.at({2, 0, ACLPTI_CORE_TYPE_AIV, 0}).values.erase(1284);
+        CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
+        ipcRecords = ReadSummary(ipcDirectory);
+        CHECK(!ipcRecords.empty());
+        // SIMD: (0 + 300/800)/2; SIMT: (0 + 100/800)/2.
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_time") - 0.1875) < 1e-12);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_time") - 0.0625) < 1e-12);
+
+        // Zero VF cycles make all IPC samples unavailable, while ratios and times remain valid zeros.
+        for (auto& [key, row] : ipcResult.taskPmuLogs) {
+            row.values[1282] = 0;
+            row.values[1284] = 0;
+        }
+        CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
+        ipcRecords = ReadSummary(ipcDirectory);
+        CHECK(!ipcRecords.empty());
+        CHECK(ipcRecords[0].get<std::string>("aiv_simd_vf_ipc") == "NA");
+        CHECK(ipcRecords[0].get<std::string>("aiv_simt_vf_ipc") == "NA");
+        CHECK(ipcRecords[0].get<double>("aiv_simd_vf_ratio") == 0);
+        CHECK(ipcRecords[0].get<double>("aiv_simt_vf_ratio") == 0);
+
+        CHECK(ipcRecords[0].get<double>("aiv_simd_vf_time") == 0);
+        CHECK(ipcRecords[0].get<double>("aiv_simt_vf_time") == 0);
+
+        // An AIC-only task collection retains the AIV VF time and IPC fields as NA.
+        ipcResult.taskPmuLogs.erase({0, 0, ACLPTI_CORE_TYPE_AIV, 0});
+        ipcResult.taskPmuLogs.erase({1, 0, ACLPTI_CORE_TYPE_AIV, 0});
+        ipcResult.taskPmuLogs.erase({2, 0, ACLPTI_CORE_TYPE_AIV, 0});
+        CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
+        ipcRecords = ReadSummary(ipcDirectory);
+        CHECK(ipcRecords[0].get<std::string>("aiv_simd_vf_time") == "NA");
+        CHECK(ipcRecords[0].get<std::string>("aiv_simd_vf_ipc") == "NA");
+        CHECK(ipcRecords[0].get<std::string>("aiv_simt_vf_time") == "NA");
+        CHECK(ipcRecords[0].get<std::string>("aiv_simt_vf_ipc") == "NA");
+
+        // A summary requested only for PipeUtilization does not expose the ArithmeticUtilization IPCs.
+        CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"PipeUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
+        ipcRecords = ReadSummary(ipcDirectory);
+        CHECK(!ipcRecords.empty());
+        CHECK(!ipcRecords[0].get_child_optional("aiv_simd_vf_ipc"));
+        CHECK(!ipcRecords[0].get_child_optional("aiv_simt_vf_ipc"));
+
+        boost::filesystem::remove_all(ipcDirectory);
+    }
+
     return 0;
 }
 

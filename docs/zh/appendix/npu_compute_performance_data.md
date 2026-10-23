@@ -32,9 +32,13 @@ NA表示当前Core不适用或所需数据不可用，不表示数值零。
 | `aiv_time(us)` | 当前数据行对应AI Vector Core的执行时间，根据总周期数和该Core频率换算，单位为us。 |
 | `aiv_total_cycles` | 当前数据行对应AI Vector Core执行的总周期数。 |
 | `aiv_vec_ratio` | AIV Vector活跃周期占AIV总周期的比值。 |
-| `aiv_vec_vf_ratio` | AIV Vector VF指令活跃周期占AIV总周期的比值。 |
 | `aiv_vec_sfu_ratio` | AIV Vector SFU指令活跃周期占AIV总周期的比值。 |
-| `aiv_vec_simt_vf_ratio` | AIV SIMT VF指令活跃周期占AIV总周期的比值。 |
+| `aiv_simd_vf_ratio` | AIV SIMD VF指令发射周期占AIV总周期的比值。 |
+| `aiv_simt_vf_ratio` | AIV SIMT VF指令发射周期占AIV总周期的比值。 |
+| `aiv_simd_vf_time` | AIV SIMD VF指令发射总时长，单位为 us。 |
+| `aiv_simd_vf_ipc` | 单位周期平均AIV SIMD VF指令发射数。 |
+| `aiv_simt_vf_time` | AIV SIMT VF指令发射总时长，单位为 us。 |
+| `aiv_simt_vf_ipc` | 单位周期平均AIV SIMT VF指令发射数。 |
 
 ## L2Cache（L2 Cache访问计数和命中率）
 

@@ -30,7 +30,8 @@ struct SectionDefinition {
     std::size_t eventCount;
 };
 
-constexpr uint32_t kArithmeticUtilization[] = {768, 789, 790, 808, 809, 810, 1281, 1282, 1283, 1284};
+constexpr uint32_t kArithmeticUtilization[] = {768,  789,  790,  808,  809,  810,  1281,
+                                               1282, 1283, 1284, 1320, 1466, 1467, 1468};
 constexpr uint32_t kPipeUtilization[] = {0, 1, 10, 36, 52, 53, 514, 515, 810, 1281, 1794, 1812, 1813};
 constexpr uint32_t kResourceConflictRatio[] = {11, 12, 13, 14, 15, 1344, 1366, 1376, 1377, 1378, 1379};
 constexpr uint32_t kMemory[] = {512,  513,  514,  515,  516,  518,  1058, 1059, 1391, 1395, 1396, 1397,
