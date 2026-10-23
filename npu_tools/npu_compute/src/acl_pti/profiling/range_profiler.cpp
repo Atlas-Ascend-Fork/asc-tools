@@ -244,16 +244,15 @@ aclptiResult RangeProfiler::PrepareReplayEnvironment(
 std::vector<RangeProfiler::ReplayRound> RangeProfiler::BuildReplayRounds() const
 {
     std::vector<ReplayRound> rounds;
-    const std::size_t payloadPmuSlots = COMPUTE_AICORE_METRICS_NUM - 1;
-    const std::size_t pmuRoundCount = (pmuEvents_.size() + payloadPmuSlots - 1) / payloadPmuSlots;
+    const std::size_t pmuRoundCount = (pmuEvents_.size() + COMPUTE_AICORE_METRICS_NUM - 1) / COMPUTE_AICORE_METRICS_NUM;
     rounds.reserve(
         pmuRoundCount + static_cast<std::size_t>(collectPipeline_) + static_cast<std::size_t>(collectPcSampling_));
     for (std::size_t round = 0; round < pmuRoundCount; ++round) {
-        const std::size_t firstEvent = round * payloadPmuSlots;
+        const std::size_t firstEvent = round * COMPUTE_AICORE_METRICS_NUM;
         rounds.push_back(ReplayRound{
             data::ReplayKind::Pmu,
             firstEvent,
-            std::min(pmuEvents_.size() - firstEvent, payloadPmuSlots),
+            std::min(pmuEvents_.size() - firstEvent, static_cast<std::size_t>(COMPUTE_AICORE_METRICS_NUM)),
         });
     }
     if (collectPipeline_) {
@@ -277,12 +276,10 @@ void RangeProfiler::ConfigureProfilingRound(
         config->msprof.profSwitch = PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK;
         primaryAttr.id = PROF_CONFIG_ATTR_AICORE_METRICS;
         std::fill_n(primaryAttr.value.aicoreMetrics, COMPUTE_AICORE_METRICS_NUM, MSPROF_INVALID_AICORE_METRIC);
-        primaryAttr.value.aicoreMetrics[0] = data::kRedundantPmuEvent;
-        config->prepareInfo.pmuEventIds[0] = data::kRedundantPmuEvent;
         for (std::size_t index = 0; index < round.pmuEventCount; ++index) {
             const uint32_t event = pmuEvents_[round.firstPmuEvent + index];
-            primaryAttr.value.aicoreMetrics[index + 1] = event;
-            config->prepareInfo.pmuEventIds[index + 1] = event;
+            primaryAttr.value.aicoreMetrics[index] = event;
+            config->prepareInfo.pmuEventIds[index] = event;
         }
     } else {
         config->msprof.profSwitch = PROF_TASK_TIME_MASK | PROF_INSTR_MASK;

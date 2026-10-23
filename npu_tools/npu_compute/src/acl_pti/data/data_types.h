@@ -23,7 +23,6 @@ namespace aclpti::data {
 
 inline constexpr std::size_t kMaxPmuSlots = 10;
 inline constexpr uint32_t kInvalidPmuEvent = 0xffffffffU;
-inline constexpr uint32_t kRedundantPmuEvent = 796U;
 // Hardware slot order matters; unused slots form a suffix filled with kInvalidPmuEvent.
 using PmuSlots = std::array<uint32_t, kMaxPmuSlots>;
 

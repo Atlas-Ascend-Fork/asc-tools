@@ -296,11 +296,11 @@ TEST(NpuComputePtiDataModule, RawDataDecoder)
     ASSERT_TRUE(blockPmuRecord.subBlockId == 0x5678);
     ASSERT_TRUE(blockPmuRecord.pmuValues.at(0x10) == 0x100000000ULL);
 
-    const auto redundantSlot = data::DecodeRawRecord(pmu.data(), pmu.size(), 6, PmuEvents({796, 0x10}));
-    ASSERT_TRUE(redundantSlot.Ok());
-    const auto& redundantSlotRecord = std::get<data::PmuRecord128>(redundantSlot.Value().payload);
-    ASSERT_TRUE(redundantSlotRecord.pmuValues.at(796) == 0x100000000ULL);
-    ASSERT_TRUE(redundantSlotRecord.pmuValues.at(0x10) == 0x100000001ULL);
+    const auto twoSlotRecord = data::DecodeRawRecord(pmu.data(), pmu.size(), 6, PmuEvents({0x11, 0x10}));
+    ASSERT_TRUE(twoSlotRecord.Ok());
+    const auto& twoSlotPmu = std::get<data::PmuRecord128>(twoSlotRecord.Value().payload);
+    ASSERT_TRUE(twoSlotPmu.pmuValues.at(0x11) == 0x100000000ULL);
+    ASSERT_TRUE(twoSlotPmu.pmuValues.at(0x10) == 0x100000001ULL);
 
     StoreWord(pmu.data(), 0, 0x6bd3002aU);
 
