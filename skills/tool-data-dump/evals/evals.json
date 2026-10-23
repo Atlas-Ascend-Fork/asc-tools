@@ -1,0 +1,1088 @@
+{
+  "eval_mode": "text",
+  "skill_name": "tool-data-dump",
+  "evals": [
+    {
+      "id": 1,
+      "title": "ACLNN 单算子输入输出采集与 golden 比对（正向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 90000,
+        "timeout": 300
+      },
+      "prompt": "已有一个可运行的 CANN ACLNN 算子工程和同一输入对应的 golden.npy，工程声明 atol=0.0001、rtol=0.001，Host 已有 --acl-config 参数。请用 tool-data-dump 说明如何采集该次调用的真实输入输出并报告精度结果，只定位到异常调用和张量，不修改计算逻辑。当前只需要操作方案。",
+      "expected_output": "确认同输入、调用身份和工程判据；本例目标调用明确，可复用 Host 首次 aclInit 配置入口直接采该次调用的 input/output tensor，不强制先跑 stats，也不混用 aclmdlInitDump。检查进程最终状态、新文件和调用覆盖；用配套 msaccucmp convert、file_compare 对齐张量，按工程判据报告超差与坐标。已确认 NPY/NPZ 配对且工程判据在脚本支持范围时，优先使用 summarize.py 调用官方 file_compare 并补充完整超差掩码和坐标，不以是否批量作为使用条件；超出支持范围时沿用工程 evaluator，不简化判据。不插入 Kernel 内部采集或修复计算代码，不声称已经执行。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "模型只有最终输出 golden 时的定位范围（正向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "我的 CANN 模型最终输出精度异常，只有最终输出的 golden，没有中间层参考。模型中的节点经过 ATC 融合和重命名，工程提供了模型信息和运行入口。请用 tool-data-dump 给出输入输出采集与比对方案，并说明能定位到哪里。",
+      "expected_output": "采用模型 Dump 配置，依据实际模型信息确认 model_name 和可采集层；需要关联原始节点且已有信息不足时，可从现有 .om 按配套 ATC 导出模型 JSON 并核对实际融合关系；无需为 Dump 重新转换模型，文件加载时可按实际加载的模型文件名去后缀或 ATC JSON 顶层 name 确认，内存加载则按模型信息确认。在模型加载前选择已有 aclInit 配置或配对 Dump 生命周期接口启用，不能混用；显式配置不影响此前已加载的模型，需要时先卸载并重新加载，限定采集范围并核对新文件。先比较有可靠对应关系的最终输出，缺少判据时只给统计并标为待判定；明确中间层缺少 golden，不能宣称找到首个错误算子或源码根因。需要继续缩小数据范围时补充中间观察点参考或重采。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "重复调用的来源匹配与非连续张量对齐（正向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "多个批次重复调用同一 ACLNN API，转换后出现同名 output.0 张量。一个输入还是带 stride 和 viewOffset 的非连续张量，部分可选输出传了 nullptr。已有 conversion.json、工程调用记录、张量元数据和各批次 golden。请用 tool-data-dump 说明如何建立可靠对应关系。",
+      "expected_output": "依据工程调用记录、原始目录和输入输出索引建立唯一对应，核对逻辑 shape、dtype、stride 和 viewOffset，不通过排序或数值相似度推测。辅助脚本不重建复杂视图，必要时依据可靠元数据和工程 evaluator 核验，无法确认就保留未完成状态，不裁剪或试探偏移。可选输出为 nullptr 时，核对实参与实际可见索引，不为未传入的输出补造配对。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "观察路径重新超差与最终输出统计（正向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "已确认同一输入下的观察依赖为 A→B→C，三个点都有可靠 golden 和工程判据，比较结果是 A 超差、B 在容差内、C 再次超差。工程声明最终输出为 C 和 D，但 D 本次没有采集到。请用 tool-data-dump 解释结论及最终统计方式，不分析 Kernel 源码。",
+      "expected_output": "A 是所给路径中最早已观察到的输出偏差；未核验全部必要输入时，不能进一步认定偏差由 A 首次引入。保留经过 B 的异常历史，即使 C 的输入均在容差内，也不能抹去 A 已出现的差异，或将 C 认定为全图唯一的首个异常点。最终输出 C 超差、D 未覆盖，应单独列出覆盖缺项，不将中间观察点数量当成最终输出数量。仅引用已有统计、官方结果及坐标，缺项如实说明，不推断代码根因。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "空 Dump 与超时运行不能判成功（边界）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "CANN 工程开启 Dump 后目录是空的，外层超时器曾终止运行，但 shell 最后显示退出码 0。我想延长超时一直重跑，或者换一组简单输入验证后就宣布采集成功。请用 tool-data-dump 判断该怎么处理。",
+      "expected_output": "保留 timeout 状态，指出 shell 最后命令或管道末端退出码不能证明工程成功，空目录也不证明采集成功。检查配置实际加载、首次初始化时序、入口支持、路径权限、同步和目标调用覆盖。可按原输入通过工程已有请求选择缩小范围并保持有界运行时间，保存运行记录；无法恢复时交付阻碍和已有数据。不同输入成功不能替代本次采集结果，不无限延长超时，不绕过保护调用内部 worker，也不转向 Kernel 根因定位或修复。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "缺少精度判据与特殊值处理（边界）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "已有转换后的 actual.npy 和可信 golden.npy，调用、shape、dtype、布局均已核对一致，但项目没有 atol/rtol，也没有其他验收判据。数据包含零值、NaN 和 Inf。请用 tool-data-dump 说明能交付哪些结果，是否可以直接用默认容差宣布通过。",
+      "expected_output": "先给误差统计并将是否通过标为待判定，不自行设置容差或加入未声明的 epsilon。说明 golden 为零而实际值非零时相对误差为无穷，均零为零；单列 NaN/Inf 状态，按工具或工程明确的特殊值规则处理，不将含 NaN 的结果静默视为通过。报告异常分布、Top-K、最大绝对/相对误差与未完成判定原因，后续取得项目判据后再下通过结论，不降低 dtype 或调整输入以获得通过。 已有可信转换 NPY 时直接从配对与精度比对继续，不重跑采集；没有逐元素判据时不生成超差掩码或超差计数。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "裸 Kernel 内部插桩与源码修复（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "我的工程直接 launch 一个自定义 Ascend C Kernel，没有受支持的模型或 ACLNN Dump 入口。请在 Kernel 内插入 DumpTensor，找出哪一行算错，并直接修复精度问题。",
+      "expected_output": "识别请求属于 Kernel 内部调测、源码定位和修复，不属于本 Skill 的 Runtime 输入输出采集与数据层定位范围。不因出现 kernel 直调就生成与请求无关的 Dump 方案，不自行插入内部 DumpTensor 或修复。说明 Host 输入输出采集与 Kernel 内部调试的边界，建议交由支持该范围的调试能力处理。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "结果正确时的纯性能调优（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "我的 Ascend C 算子结果已经通过精度验收，但吞吐不达标。请分析性能瓶颈，优化 Tiling 和流水并提升利用率，不需要采集或比较任何数值数据。",
+      "expected_output": "不触发输入输出 Dump 与 golden 比对流程，不创建 Dump 配置或张量对应关系。识别该请求为纯性能分析与调优，交由相应性能能力处理，不将性能优化扩展为本 Skill 的工作。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "原生 stats 失败与统计盲点",
+      "prompt": "原生 stats 没有 CSV。能否从 tensor 重算统计就宣布 stats 已跑通？另一个调用的所有统计都与 golden 相同，能否直接判精度通过？",
+      "expected_output": "均不能。tensor 重算统计必须标明来源，不能替代原生 stats 采集成功的核验；统计摘要不保留元素位置，置换等差异仍可能导致逐元素错误。任务需要且允许继续验证精度时，按原输入采 tensor，用官方工具比较并按工程判据核验；只要求 stats 时先报告未采到及排查情况，不擅自扩大采集范围，不改源码或 golden。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ],
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      }
+    },
+    {
+      "id": 10,
+      "title": "首异常调用的常量输入证据（边界）",
+      "prompt": "一个模型调用有 input.0 主输入和 input.1 常量偏置，输出已经与同输入 golden 超差。已用 Runtime tensor 证明 input.0 正确，参考文件中的偏置全零，但尚未核对实际 input.1。能否直接写全部输入正常、异常由该调用首次引入？请用 tool-data-dump 给出下一步，不修改计算代码。",
+      "expected_output": "不能宣称全部输入正常。根据模型或调用元数据列出全部参与计算的张量输入及索引，包括常量偏置，将 input.1 的原始 Dump、官方转换结果与同输入参考逐项对应并核验；同一 raw 已含 input.1 时复用采集。参考文件全零不是实际输入证据；若 Runtime 未暴露该输入或缺少参考，明确覆盖缺口，只报告已观察到的输出异常，不将缺口变成代码根因结论。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ],
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 90000,
+        "timeout": 300
+      }
+    },
+    {
+      "id": 11,
+      "title": "报告区域与保存坐标矛盾（边界）",
+      "prompt": "转换后的 actual 与 golden 都为 shape [4,10]，判据已经确定。报告写异常只在第 2 行的第 0 到 2 列（坐标从 0 开始），保存的 Top-K 却含 [2,8]。总超差数量看起来正确，能否交付？请用 tool-data-dump 说明如何核验。",
+      "expected_output": "不能把总数正确当作区域正确。使用相同实际数组、golden 和工程判据重新核对完整超差掩码，确认 shape、坐标起点与区间开闭，分别核对正文区域内的实际超差数量、合计、Top-K 和双方值；少量 Top-K 或包围范围不能证明完整区域。修正文案而不篡改数据，数据不足时只保留已确认位置并标注范围待确认。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ],
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      }
+    },
+    {
+      "id": 12,
+      "title": "输出全为 0 的隐式触发",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 90000,
+        "timeout": 300
+      },
+      "prompt": "CANN ACLNN 工程运行成功，但输出异常、全为 0，golden 并非全零。已有相同输入和 atol/rtol 判据，请给出 Runtime 数据采集与定位方案，只定位到张量边界。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "应加载 tool-data-dump。确认输入与调用；目标小且已知时可直接采同输入 tensor，大范围排查时可先用原生 stats 筛查再补 tensor；用官方 msaccucmp 核验并报告超差数量及位置，不将全零直接认定为代码根因。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "随机值与疑似未初始化的隐式触发",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 90000,
+        "timeout": 300
+      },
+      "prompt": "同一输入反复运行 CANN 模型，输出有时出现随机值，怀疑未初始化。某请求必须保留前三次预热调用，第 4 次才可能复现，单独执行第 4 次不复现。已有独立 golden 和调用记录，请给出保存每次 Runtime 输入输出并比对的方案。当前仅需文本说明，不要求实机执行。",
+      "expected_output": "应加载 tool-data-dump。保留前三次预热、原始输入、计算参数及第 4 次调用身份，不能为单请求重跑而删掉复现所需步骤，也不假定中途启用 Dump 对已缓存模型生效。目标明确且采集成本可接受时直接采输入输出 tensor，优先保留偶发异常同一轮的数据；范围大且有可配对中间 golden 时可先采 stats，但不同轮次行为不一致就分别报告，不拼成同一次异常链。逐项核验对应 golden、NaN/Inf 和差异坐标，按工程判据验收，缺判据时保持未判定。未采原生 stats 时如实说明，不用 tensor 重算统计代替；不把未初始化怀疑写成根因或修改 Kernel。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "rtol/atol 精度验证失败的隐式触发",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 90000,
+        "timeout": 300
+      },
+      "prompt": "ACLNN 算子的精度验证失败，rtol/atol 不达标。已有明确判据、同输入 golden 和可运行工程，请说明如何通过 Runtime Dump 找到异常调用与超差坐标。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "应加载 tool-data-dump。保留项目 atol/rtol，区分统计筛查阈值和逐元素判据；目标调用明确且数据量小时可直接采 tensor，大范围排查时先用原生 stats 筛查；再用官方转换和比较核验，提供数量、比例及坐标，不放宽判据。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "FP16 精度差于预期的隐式触发",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "CANN 模型的 FP16 精度差于预期，有同输入的可信 FP32 golden 和工程精度判据。请给出输入输出数据层的排查方案。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "应加载 tool-data-dump。核对同输入、shape、布局、原始 dtype、golden 语义及工程期望的输出类型；目标小可直接采 tensor，大范围可先用原生 stats 筛查。已确认可比的 FP16 actual 与 FP32 golden 保留原文件，用官方 file_compare 和辅助脚本的升精度数值诊断，并按工程判据给结论；输出类型契约单独核验，不为通过比较静默降精度，不修改计算逻辑。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Cast 后数据错误的隐式触发",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "CANN 模型 Cast 后数据错误，最终输出精度不一致。已有 Cast 前后同输入 golden 及 ATC 模型元信息，请给出 Runtime 采集和精度定位方案。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "应加载 tool-data-dump。依据模型连接、dtype 和融合元数据明确 Cast 前后真实可见的观察边界；目标已锁定且采集成本可接受时可直接采输入输出 tensor，候选多、数据量大且有可配对 golden 时先用原生 stats 筛查再补采 tensor，并说明选择依据。通过官方工具分别与 Cast 前后的对应 golden 核验，按工程已有判据定位坐标，缺判据时保持未判定。未采原生 stats 时如实说明，不能用 tensor 重算统计冒充；不将转换前后的张量仅因数值相似就视为同一边界，融合后不可见的边界保留缺口，不分析错误代码行。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "EnQue/DeQue 同步怀疑的数据核验触发",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 90000,
+        "timeout": 300
+      },
+      "prompt": "CANN 算子输出偶发与 golden 不一致，怀疑流水线同步 EnQue/DeQue。工程有受支持的 ACLNN Runtime Dump 入口，请只给出实际输入输出的采集与核验方案。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "应加载 tool-data-dump。保持输入，核对 Host Dump 生命周期与同步，采集请求身份明确的 stats/tensor，逐项核验异常边界全部输入；只给数据差异，不依据怀疑断言 EnQue/DeQue 根因，不插桩或修复 Kernel。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "DataCopy 对齐怀疑的数据核验触发",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 90000,
+        "timeout": 300
+      },
+      "prompt": "ACLNN 算子尾部数据异常，怀疑 DataCopy 对齐问题。已有 golden、shape、dtype、布局和运行入口，请给出 Runtime Dump 方案，定位异常坐标与区域即可。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "应加载 tool-data-dump。确认受支持入口与相同输入；已知尾部坐标且目标小可直接采 tensor，大范围排查时可先用原生 stats 筛查。使用官方工具核验布局与原始坐标，依据完整超差掩码给出区域，不据此断言 DataCopy 源码根因或提交修复。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "统计异常与非有限值的隐式触发",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "Runtime 原生 stats 中 Max、Avg 异常，NaN 和正负 Inf 计数与同输入 golden 不一致。请说明如何筛选调用并通过 tensor 确认差异。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "应加载 tool-data-dump。保留原生指标名称和来源，精确核对非有限计数，按调用身份选择候选，在相同输入上采集 tensor 并官方比较；L2norm 按支持情况处理，不能把缺失当零。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Runtime Dump 字样出现在普通日志任务（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "我说的 Runtime Dump 是普通 Python 服务导出的文本日志，不是 CANN 张量。只想统计日志行数和错误级别，是否需要这个技能？不要给张量采集命令。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "不适用 tool-data-dump；这是普通日志处理，不开启 CANN Runtime Dump，也不调用张量比较工具。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "title": "golden 为界面快照参考（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "我要做网页截图与 golden 图片的像素比对，不涉及 CANN 模型、算子或 Runtime。只判断是否适合这个技能。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "不适用 tool-data-dump；golden 一词不能让截图回归任务变成 Runtime 张量采集，不生成 CANN 配置或 msaccucmp 命令。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "stats 为设备利用率统计（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "npu-smi 的 stats 显示利用率异常，输出精度完全正常。我只要查看设备负载，不需要数值数据采集，是否适合这个技能？ 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "不适用输入输出 Dump 与 golden 精度比对；识别为设备负载或性能统计，不生成张量采集配置。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "title": "全零和随机值是预期测试输入（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "单测按设计生成全为 0 和随机值，未初始化保护也已通过验收，没有实际输出异常。我只想重命名这些测试，是否需要 Runtime 精度定位技能？ 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "不适用 tool-data-dump。关键词出现在测试整理上下文而非精度异常，不启动 Runtime 采集或 golden 比对。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "title": "只解释 rtol/atol 数学含义（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "只解释 NumPy allclose 的 rtol/atol 公式，用一个小数值例子说明，不涉及 CANN 工程，也没有精度验证失败。不要给 Runtime 命令。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "直接解释容差公式，不将术语查询当作工程精度故障，不触发 Runtime Dump 配置与采集。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "title": "FP16 仅讨论存储成本（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "输出已通过验收，我只想计算 FP16 相比 FP32 节约多少显存，不存在 FP16 精度差于预期的问题。是否需要这个 Runtime 数据诊断技能？ 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "不适用 tool-data-dump。说明存储位宽关系即可，不启动原生 stats 或 tensor 采集。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "title": "Cast 仅指 SQL 类型转换（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "这里的 Cast 是 SQL CAST，我只想把字符串列转成整数，没有 CANN 或张量数据错误。是否需要这个技能？ 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "不适用 tool-data-dump；SQL 类型转换不属于 CANN Runtime 输入输出采集范围，不给出 Dump 或张量精度比较方案。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "title": "直接修改 EnQue/DeQue 同步代码（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "我的需求是审查数值 Kernel 中 EnQue/DeQue 的时序并直接修改同步代码，不需要采集输入输出或比较 golden。请判断是否属于这个技能的范围。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "识别为代码级调试和修复，超出 tool-data-dump 范围；不启动数据采集，也不借该技能插入 Kernel 调试代码或提交修复。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "title": "仅查 DataCopy 对齐接口要求（负向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "我只需要查阅 DataCopy 对齐要求的 API 文档，没有运行工程、输出异常或 golden 比对任务。请判断是否需要 Runtime Dump 技能。 当前仅需文本说明，不要求实机执行。",
+      "expected_output": "识别为 API 知识查询，不适用 tool-data-dump 的采集定位流程；不生成 Runtime Dump 配置或执行张量比较。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "not_contains",
+          "pattern": "msaccucmp.py file_compare"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "\"dump_data\""
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "title": "aclInit 配置入口与完整参数参考保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "配置模型或单算子 Runtime Dump 时，Skill 引用的 aclInit 官方说明最新入口是哪一页？执行端 CANN 版本与主线文档不同，NPU 型号也不支持 dump_stats 自选项时，应如何选择配置？",
+      "expected_output": "给出 https://raw.gitcode.com/cann/runtime/raw/master/docs/zh/api_ref/02_initialization_and_deinitialization.md 作为 Runtime 基础接口与模型/单算子配置入口，同时指出 references/acl-json.md 已集中整理完整字段。基础 Raw 未列出全部可选项，不将缺项当成不支持；实际支持以配套 CANN 和设备为准。不支持 dump_stats 自选项时省略该字段，核对原生 CSV，不认定整个 stats 模式不可用。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.gitcode.com/cann/runtime/raw/master/docs/zh/api_ref/02_initialization_and_deinitialization.md"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "title": "显式 Dump 生命周期接口外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "已初始化的工程要显式开启 Dump 窗口，Skill 引用的 aclmdlSetDump 接口说明最新入口是哪一页？请给出链接，说明与执行端 CANN 版本或 NPU 支持范围不匹配时如何核对本机接口与配置。",
+      "expected_output": "回复应给出 https://raw.gitcode.com/cann/runtime/raw/master/docs/zh/api_ref/18_dump_configuration.md，说明该文档的相关用途；实际参数和支持范围仍以执行端配套 CANN 为准，不虚构已进行实机采集。 master 是官方主线入口，不保证适用当前 NPU；核对产品及参数限制，配置须在模型加载前设置。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.gitcode.com/cann/runtime/raw/master/docs/zh/api_ref/18_dump_configuration.md"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "title": "msaccucmp convert 官方命令实现外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "原始 Runtime Dump 应用哪个工具转换？给出 Skill 引用的 msaccucmp convert 官方命令实现链接，说明主线源码与本机工具帮助不一致时如何选择参数。",
+      "expected_output": "给出 https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/msaccucmp.py。用配套 CANN 的 convert 将带头信息的 raw 解析为 NPY，确认真实目标产物；按本机帮助选择参数，不将 Raw 当裸 bin，也不将 msprobe parse 的参数混入命令。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/msaccucmp.py"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "title": "Dump Host 接入头文件与库文件外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "工程需要最小 Host 接入来调用 Dump 接口，应参考哪份最新头文件和库文件说明？执行端 CANN 版本与主线文档不同时，如何确认 include 和链接依赖？",
+      "expected_output": "给出 https://raw.gitcode.com/cann/runtime/raw/master/docs/zh/api_ref/01_overview.md，说明其用途是确认头文件与库依赖；当前页面列出 acl/acl_dump.h 与 libascend_dump.so，但实际接入须按执行端 CANN 版本、NPU 型号及本机文件核对，头文件与库来自同一套安装，不盲目替换现有工程链接配置。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.gitcode.com/cann/runtime/raw/master/docs/zh/api_ref/01_overview.md"
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "title": "已知单算子直接 tensor 的选择",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "已有可运行的 ACLNN 单算子工程和同输入 golden.npy，只调用一次，两个小张量，明确要看超差坐标。请说明是否必须先做 stats，如何用 Runtime Dump 和 msaccucmp 快速完成数据层定位。",
+      "expected_output": "直接选择目标调用的 input/output tensor 是合理且更省时的路线；不将 stats 当固定前置。核对同输入、实际采集文件、方向索引、shape/dtype、官方转换与 file_compare，按工程判据给坐标，不生成 golden 或改计算代码。 明确交接产物为配置/运行日志/raw、转换 NPY/对应关系、官方结果/逐元素明细与报告，跳过 stats 阶段；若使用 summarize.py，完整掩码与 Top-K 分别保存。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "title": "大模型先筛查及整网比对的可选条件",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "已有 .om 模型、多个请求和独立中间 golden，tensor 全量采集很大，节点经 ATC 融合。请给出最小有效采集和比对路线，说明何时需要模型 JSON，是否必须做整网 compare。",
+      "expected_output": "先按可比观察点采 stats，比较已有 golden 的统计，再补采候选和必要输入的 tensor。用 convert 解析、配对后 file_compare，并按工程判据报告坐标。仅映射不足时从已有 OM 导出模型 JSON，不重新生成 golden。成套模型数据和映射满足时 compare 可选，不作为每次任务的默认步骤。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "title": "stats 与官方指标的区别",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "一个模型的 stats CSV 中 Max/Min/Avg 与 golden 一致，最终输出按工程 rtol/atol 却超差；msaccucmp 余弦相似度很高。请解释两个结果的含义以及下一步，不生成 golden。",
+      "expected_output": "stats 是单侧张量摘要，统计相同可能有位置差异；余弦等是两份张量的整体比较指标，高相似度也不代替逐元素 rtol/atol。保持原输入采 tensor，用官方工具保存指标，再由工程 evaluator 或 summarize.py 保存坐标及完整超差掩码，并说明最早可观察边界受 golden 覆盖限制。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "title": "离线模型 Dump 数据准备外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "模型和单算子采集前，应从 Skill 引用的哪份官方资料核对 dump_data 与 dump_list？请给出最新入口，说明参数以执行端配套版本为准。",
+      "expected_output": "给出 https://raw.gitcode.com/cann/runtime/raw/master/docs/zh/api_ref/02_initialization_and_deinitialization.md；说明该页面的用途，并按执行端 CANN 版本、工具帮助和实际输入条件决定是否适用，不虚构实机结果。 核对该文档的“模型Dump配置、单算子Dump配置”；不能声称它完整覆盖 dump_stats 自选指标。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.gitcode.com/cann/runtime/raw/master/docs/zh/api_ref/02_initialization_and_deinitialization.md"
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "title": "整网结果说明及命令入口区分外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "已有成套模型 Dump 和可映射 golden，Skill 引用哪个官方页面说明离线数据比对和结果字段？请给出链接，并区分页面的 msprobe 命令与现有 msaccucmp.py compare。",
+      "expected_output": "给出 https://msprobe.readthedocs.io/zh-cn/latest/zh/user_guide/accuracy_compare/offline_data_compare_instruct.html。该页展示 msprobe compare -m offline_data，其 -tp/-gp/-fr/-o 与底层 msaccucmp compare 的 -m/-g/-f/-out 不混写。现有配套工具可继续使用，不要求为了引用文档安装 msprobe。只有数据成套、映射可靠时才采用整网 compare。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://msprobe.readthedocs.io/zh-cn/latest/zh/user_guide/accuracy_compare/offline_data_compare_instruct.html"
+        }
+      ]
+    },
+    {
+      "id": 38,
+      "title": "官方指标整数计算精度外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "int64 张量原始整数值不同，msaccucmp 却显示 MaxAbsoluteError 为零。Skill 引用哪份官方计算实现？给出链接，并说明如何保留实际差异。",
+      "expected_output": "给出 https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/algorithm_manager/algorithm_manager.py，说明部分实现先转 float32，可能丢失大整数低位。保留官方指标，工程判定、精确整数误差和坐标从保留原整数的转换 NPY，用工程 evaluator 或 summarize.py 的 details 核验，不能仅依据零误差摘要判定通过。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/algorithm_manager/algorithm_manager.py"
+        }
+      ]
+    },
+    {
+      "id": 39,
+      "title": "统计字段默认值与设备限制",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "只想配置 Runtime 原生 stats，希望得到 Max、Min、Avg、NaN、正负 Inf 和 L2norm。设备不支持 dump_stats 自选项，能否随便加上这些字段或把缺失的 L2norm 记成零？当前只要方案。",
+      "expected_output": "查本地 acl.json 参数参考：dump_data=stats，dump_stats 的自选参数有产品和版本限制；默认包含 Max、Min、Avg、Nan、Negative Inf、Positive Inf，不包含 L2norm。不支持时省略 dump_stats 并核对实际 CSV，L2norm 缺失记为不可用，不记零。当前仅提供方案，不运行工程，不将 tensor 重算统计充作原生 stats。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "title": "计算精度评价指标外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "解释余弦相似度和相对欧氏距离时，Skill 引用哪个官方指标页面？请给出最新入口，说明参数以执行端配套版本为准。",
+      "expected_output": "给出 https://msprobe.readthedocs.io/zh-cn/latest/zh/user_guide/accuracy_compare/offline_data_compare_instruct.html，用于解释余弦、相对欧氏距离和其他实际指标。区分整网字段与 file_compare 的支持范围，沿用真实输出。相似度不代替工程逐元素判据、允许比例、有效区和特殊值规则。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://msprobe.readthedocs.io/zh-cn/latest/zh/user_guide/accuracy_compare/offline_data_compare_instruct.html"
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "title": "NPY file_compare 命令实现外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "只有已配对 actual.npy 和 golden.npy，应怎样用 msaccucmp 比较？给出 Skill 引用的官方 file_compare 命令实现链接，并说明如何获得超差坐标。",
+      "expected_output": "给出 https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/msaccucmp.py，用配套 file_compare -m actual.npy -g golden.npy -out 结果目录获取官方指标。它不接收工程 atol/rtol，也不提供异常坐标；由 summarize.py 或工程 evaluator 按已有完整判据补充数量、比例、误差、坐标及掩码。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/msaccucmp.py"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "title": "ATC 已有 OM 导出 JSON 外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "已有 .om 且需要确认融合后的模型节点时，Skill 引用的 ATC 离线模型转 JSON 官方最新入口是哪一页？说明这一步是否要重新制作 golden。",
+      "expected_output": "给出 https://raw.gitcode.com/cann/ge/raw/master/docs/zh/user_guides/atc_tools/basic_feature/basic_features.md；只在映射信息不足时从已有 .om 导出模型 JSON，按执行端 ATC 版本确认参数，不重新制作 golden，也不将 ATC 转换设为每次 Dump 的必经步骤。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.gitcode.com/cann/ge/raw/master/docs/zh/user_guides/atc_tools/basic_feature/basic_features.md"
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "title": "模型范围与两种黑名单的合法配置",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "模型文件名为 net.om，ATC JSON 中的 conv1、relu1 都是非 Data 节点。只需配置该模型 conv1 到 relu1 的输出采集，并演示排除 Conv2D 类型的 input0 和名为 relu1 的 input1。请给合法 acl.json、说明各字段位置和限制，不运行工程。",
+      "expected_output": "配置 dump_list 的模型条目包含 model_name=net、opname_range 的 begin=conv1/end=relu1、optype_blacklist 的 name=Conv2D/pos=[input0] 和 opname_blacklist 的 name=relu1/pos=[input1]。dump_level=op，dump_mode=output，dump_path 在 dump 根对象内。解释范围为闭区间、端点非 Data，黑名单与范围仅模型/op 级生效、两种黑名单各最多 100 项、空 name/pos 不生效；当前只采输出，两个 input 过滤项不会进一步减少这轮输出量。给出的 JSON 可解析，不要求 golden 或实跑。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 44,
+      "title": "msaccucmp 常用命令格式外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "这个 Skill 日常使用 msaccucmp 的哪些命令？请给出官方参数实现链接，说明是否需要展开所有功能。",
+      "expected_output": "给出 https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/msaccucmp.py。主流程只需 convert 解析和必要布局转换、file_compare 对已配对 NPY 比较；成套模型数据的 compare 为可选参考，按执行端帮助确认参数。不要求安装完整 msprobe 或默认启用 Advisor。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/msaccucmp.py"
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "title": "kernel 直调输入输出 Dump（正向）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 140000,
+        "timeout": 300
+      },
+      "prompt": "现有工程使用 add<<<blocks,0,stream>>>，已有同输入 golden、实际 shape/dtype/stride/设备地址，Host 首次 aclInit 可以加载 JSON。我需要 kernel 直调输入输出 Dump 和精度比对，请用 tool-data-dump 给操作方案，不做 Kernel 内部插桩或修复。",
+      "expected_output": "核对执行端 aclDumpOpTensors 的头文件和库支持；aclInit 的 JSON 只启用配置，不能认为裸 launch 自动落盘。设置单算子 dump_op_switch=on，在 Host 根据真实元数据构造 aclTensor，在同一 stream 上提交输入/输出 Dump 并保持生命周期。按数据规模选择 tensor 或实测 stats；检查新文件及方向、索引、shape/dtype，再用官方 convert/file_compare 和工程判据比较。不虚构模型节点或实际执行结果。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        },
+        {
+          "type": "contains",
+          "pattern": "aclDumpOpTensors"
+        }
+      ]
+    },
+    {
+      "id": 46,
+      "title": "原地直调必须保留计算前输入（边界）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "kernel 直调的输出与输入 x 使用同一设备地址。Host 在 launch 后一次调用 aclDumpOpTensors，文件里的 input.0 与 output.0 完全相同，但 input.0 不等于输入 golden。能认定输入本来就是错的吗？请用 tool-data-dump 说明如何核实。",
+      "expected_output": "不能认定调用前输入错误；晚采的 input.0 可能已经被原地结果覆盖。保持计算逻辑不变，在覆盖前用同一 stream 显式采输入，在 launch 后采输出，记录请求/方向及地址别名，等待完成后再释放。用真实新 raw/CSV 和转换 NPY 重新确认边界；标签 input 本身不保证数据来自计算前。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        },
+        {
+          "type": "contains",
+          "pattern": "aclDumpOpTensors"
+        }
+      ]
+    },
+    {
+      "id": 47,
+      "title": "显式 Dump 返回成功但目录为空（边界）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "我的直调工程调用 aclDumpOpTensors 返回 0。aclInit JSON 只有 dump_path、dump_list=[]、dump_mode=all、dump_data=stats，没有 dump_op_switch，目录一直为空。请用 tool-data-dump 分析，不假定所有机器行为相同。",
+      "expected_output": "返回 0 不证明采集已开启；核对首次有效 aclInit、目标目录和本机支持，补查单算子 dump_op_switch=on、Host 张量描述及 stream。不能只看到 dump_list=[] 就宣布配置非法，也不能从空目录直接断言所有 kernel 直调不支持 stats。必须看到目标原生 CSV 并核对元数据才能宣称 stats 成功；必要时独立 tensor 路线验证并记录限制。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 48,
+      "title": "aclDumpOpTensors 官方接口外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "kernel 直调在 Host 采集输入输出，应参考哪份官方 aclDumpOpTensors 文档？给出 Skill 采用的官方最新文档链接，并说明本机还需核对什么。",
+      "expected_output": "给出 https://raw.gitcode.com/cann/opbase/raw/master/docs/zh/api/nnopbase/aclnn/aclDumpOpTensors.md；说明文档包含 <<<>>> 与 Host Dump 接入，仍需核对安装版本的头文件/库、启用配置、张量元数据和真实产物，不将示例当作所有设备已验证。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://raw.gitcode.com/cann/opbase/raw/master/docs/zh/api/nnopbase/aclnn/aclDumpOpTensors.md"
+        }
+      ]
+    },
+    {
+      "id": 49,
+      "title": "convert 返回零但没有 NPY（边界）",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "msaccucmp convert -d 指向包含时间戳和设备子目录的 dump 根目录，命令返回 0，但转换目录没有 NPY。原始 raw 明明存在。请用 tool-data-dump 判断是否已经转换成功。",
+      "expected_output": "没有 NPY 不能判转换成功。核对当前工具帮助及目录层级，找到实际 raw，以具体文件、受支持的文件列表或叶目录重新转换到新目录。核对方向、索引、shape/dtype 与来源，再进入比较；不能生成空报告当精度通过。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 50,
+      "title": "单算子 OM 按执行接口分流",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "现有工程的产物是 single_add.om，Host 用 aclopSetModelDir 加载所在目录、用 aclopExecuteV2 执行单算子，已有同输入 golden。请用 tool-data-dump 判断应采用模型还是单算子 Dump，并给出阶段输入输出。只说明方案。",
+      "expected_output": "按实际执行接口走单算子路线 2B，不能仅凭 .om 后缀走模型路线。设置 dump_op_switch=on，在受支持的配置入口启用采集，按目标范围选择 tensor 或 stats；核对调用归属，交接 raw/CSV、转换数据、可信配对和精度报告，不将 golden 或完整掩码当成采集阶段的自动产物。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 51,
+      "title": "Format 转换与原始解析的区别及外链保护",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "同一次模型运行的 NC1HWC0 raw 已经用 msaccucmp convert -t npy 解析，golden 是原始 NCHW 布局。现在能直接 reshape 后 file_compare 吗？请用 tool-data-dump 说明阶段 4 的正确处理，并给出官方 Format 转换最新入口。",
+      "expected_output": "普通 convert -t npy 只解析，不保证逻辑布局已经对齐。按工程真实格式使用 convert -f NCHW，并按元数据核对 shape、类型和输入输出索引；不任意 reshape 消除差异。给出 https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/msaccucmp.py，按配套工具帮助确认。若目录转布局时需要 -o/-i/-s，应改为具体 raw 文件，以免这些参数被忽略。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        },
+        {
+          "type": "contains",
+          "pattern": "https://raw.githubusercontent.com/Ascend/msprobe/master/python/msprobe/msaccucmp/msaccucmp.py"
+        }
+      ]
+    },
+    {
+      "id": 52,
+      "title": "无 golden 的纯采集任务",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 90000,
+        "timeout": 300
+      },
+      "prompt": "已有可运行的 CANN ACLNN 工程和固定输入，Host 已支持 --acl-config。我只要采该次调用的真实输入输出并交付文件，没有 golden，也不做精度判定。请说明流程和产物，当前只要操作方案。",
+      "expected_output": "适用本 Skill。仅配置和采集不要求 golden，选择 dump_list:[{}]、dump_op_switch=on、dump_mode=all、dump_data=tensor 和独立可写目录，沿用实际 Host 配置入口。说明真正执行时如何核验新文件、进程最终状态、调用与方向索引的归属；交付配置、命令和数据位置即可，不为完成流程制作 golden 或强制执行 file_compare。当前只说明方案。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 53,
+      "title": "模型全量配置与单算子调用过滤边界",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "我只问 acl.json 写法：一份要采全部模型的全部算子输出；另一份要采单算子 API 的第 3 次调用。能用 opname_range、两种 blacklist 或 dump_step 来筛第 3 次调用吗？不要运行工程。",
+      "expected_output": "模型全量用 dump_list:[{}]，省略 layer，dump_mode=output，提供合法 JSON。单算子启用 dump_op_switch=on，建议 dump_list:[{}]；opname_range 和两种 blacklist 限模型/op 级，dump_step 是训练迭代，均不能当作第 3 次 API 调用过滤器。优先在不改变复现条件下单请求重跑或保留实际 Host 调用记录，必要时核对有效采集窗口。只给配置与入口说明，无 golden 不阻塞咨询。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 54,
+      "title": "无 golden 的已有 raw 解析交付",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "已有 CANN 单算子的原始 Runtime tensor Dump、Host 调用记录和张量元数据，没有 golden。我只想将现有 raw 解析为 NPY 并说明每个数组的来源，不重跑工程、不做精度判定。请用 tool-data-dump 给出处理方案。",
+      "expected_output": "从阶段 4 继续，沿用配套 msaccucmp convert，在新目录解析实际 raw 文件、受支持的文件列表或叶目录，保存日志并逐份确认目标 NPY 生成。核对请求、调用、方向、索引、shape、原始 dtype 和布局，记录 raw 与 NPY 的来源关系及未转换项。无需 golden，不补采 stats、不重跑工程、不强制 file_compare，也不生成精度通过结论。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 55,
+      "title": "自选统计子集与必需列缺失的区别",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 60000,
+        "timeout": 300
+      },
+      "prompt": "第一份原生 stats CSV 按我的要求只采了 Max/Min，这两列都正常生成且有对应 golden。第二份默认 stats CSV 的 Min 为 NA，Max 已超出声明的筛查阈值，其余必需项可读，两份都没有 L2norm。请用 tool-data-dump 说明如何整理，dump_stats.py 的状态和已有差异应怎样保留。只说明方案。",
+      "expected_output": "第一份已完成所要求的 Max/Min 采集，可直接按这两列与 golden 整理差异；dump_stats.py 要求 Max/Min/Avg 和三类特殊值计数齐全，不能为满足脚本强制补采未请求的指标，也不能据脚本 incomplete 否认已完成的指定采集。第二份若用该脚本，Min 不可用使配对状态为 incomplete、整批返回 2，但 Max 的差异仍保存在 statistics，对应张量仍列入 candidates，不能将配对状态误写成 candidate 或丢掉发现。L2norm 为可选项，未采到记为不可用，不填零，也不因此判未完成。所有统计结论均不替代逐元素验收。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 56,
+      "title": "工程有效区和允许超差比例的完整判定",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 50000,
+        "timeout": 300
+      },
+      "prompt": "summarize.py 对 1024 个元素给出 mismatch，共 15 个逐元素超差。工程完整判据规定只验收原数组前 1000 个元素，允许不超过 1% 超差；按原始坐标和已声明容差核验后，有效区内有 5 个超差，类型和特殊值规则也已通过，没有其他验收条件。请用 tool-data-dump 说明最终判定和报告比例。只分析这些已核验结果。",
+      "expected_output": "区分脚本的全张量诊断与工程完整验收。题给有效区内为 5/1000=0.5%，不超过 1%，其他条件已核验，因此按题给工程判据通过；不能因脚本 mismatch 或使用全张量 15/1024 的比例直接判项目失败。保留全张量诊断和完整掩码，引用任务原有有效区及原始坐标映射，分别报告两个范围，不改实际数组或事后裁剪以减少超差，也不将此规则当成其他工程的默认值。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    },
+    {
+      "id": 57,
+      "title": "批量比对中断后的复用与恢复",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 130000,
+        "timeout": 300
+      },
+      "prompt": "一批 summarize.py 比较中断，进程已确认结束。summary.json 中 A 已完成，B 是 running，C 是 pending；B 的目录里有部分官方输出。A 的 actual、golden、判据和官方工具身份均已核对未变。有人建议在原非空目录重跑全部，并把 --timeout 设为无限。请用 tool-data-dump 给出恢复方案，当前只要说明。",
+      "expected_output": "引用 A 已核验的有效结果并保留原目录；B 的 running 和 C 的 pending 都按未完成处理，不能仅凭 B 存在官方文件推断成功。将 B、C 整理为新的 pairs，在新目录执行；脚本不自动续跑非空目录，无需为汇总重新比较 A。--timeout 约束单对官方比较而非整批，按实际调用时限分批并设置有限的单对时间；逐项核验官方结果、脚本状态和判据，报告已完成范围及未完成项，不在方案中声称已恢复执行。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-data-dump"
+        }
+      ]
+    }
+  ]
+}
