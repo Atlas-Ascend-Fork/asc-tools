@@ -18,10 +18,10 @@
 | L2_CORE_TAIL / L2_IMBALANCE_* | [ascendc-tiling.md](ascendc-tiling.md) | 尾块均衡 / swat / NUMA 偏斜处置 |
 | L2_UNDERUTILIZATION | [ascendc-tiling.md](ascendc-tiling.md) | Block Dim 提升（头开销权衡） |
 | L2_HEAD_OVERHEAD | [api-usage.md](api-usage.md) | 减核 / 缩 TilingData / TPipe 外置 |
-| L3_MC2_*（全档） | mc2.md（随多卡域 PR 交付） | Local Matmul 首选 + 通信掩盖 + 膨胀控制 |
-| L3 配平环节 | mc2-balancing.md（随多卡域 PR 交付） | TilingData 驱动系统搜索（四剪枝 + Top-N） |
-| L3_MTE2_POLLUTED | mc2.md（随多卡域 PR 交付） | 单核访存机制无效，改道通信掩盖 |
-| L3_RANK_IMBALANCE | mc2.md（随多卡域 PR 交付） | 跨 rank 长尾排查 |
+| L3_MC2_*（全档） | [mc2.md](mc2.md) | Local Matmul 首选 + 通信掩盖 + 膨胀控制 |
+| L3 配平环节 | [mc2-balancing.md](mc2-balancing.md) | TilingData 驱动系统搜索（四剪枝 + Top-N） |
+| L3_MTE2_POLLUTED | [mc2.md](mc2.md) | 单核访存机制无效，改道通信掩盖 |
+| L3_RANK_IMBALANCE | [mc2.md](mc2.md) | 跨 rank 长尾排查 |
 | L0_ICACHE_MISS | [api-usage.md](api-usage.md) | 代码布局/分支整理 |
 | L0_L2_LOW_HIT | [memory-hierarchy.md](memory-hierarchy.md) | CacheMode 二分 + 工作集切分 |
 | L0_STALL_DOMINANT | [pipeline.md](pipeline.md) | stall 枚举 → 对应流水机制（M2 细化） |

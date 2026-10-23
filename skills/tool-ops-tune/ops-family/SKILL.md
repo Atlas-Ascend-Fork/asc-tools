@@ -16,7 +16,7 @@ description: 算子族实践库与模板代码货架。按算子族（matmul/mc2
 | 族 | 典型算子 | 架构 | 模板数 | 状态 | 文档 |
 |----|---------|------|-------|------|------|
 | matmul | MatMul/BatchMatMul/MXFP4/A16W16 | DAV_3510 | 1 | ✅（Blaze 基础模板 ×1，回流自 blaze skill 480-case 穿刺验证） | `references/matmul/guide.md`（六策略互斥判定树）+ `references/matmul/templates/` |
-| mc2 | matmul_all_reduce/allgather_matmul/alltoall_matmul | DAV_3510 | 0 | ✅ 设计参考（无货架代码；族文档随多卡域 PR 交付） | `references/mc2/guide.md`（3 策略，随多卡域 PR 交付） |
+| mc2 | matmul_all_reduce/allgather_matmul/alltoall_matmul | DAV_3510 | 0 | ✅ 设计参考（无货架代码） | `references/mc2/guide.md`（3 策略） |
 | reduce | ReduceSum/Softmax/LayerNorm/RMSNorm | DAV_3510 | 10 | ✅（Softmax 模板 ×8 + kernel_utils + tiling） | `references/reduce/guide.md` |
 | elementwise | Sin/Cos/Abs/Exp | DAV_3510 | 5 | ✅（add_custom 可裁剪工程模板：kernel .asc/.h + host .asc + torch 扩展 ×2，回流自 direct-invoke-template；scripts/ 验证脚本不计模板数） | `references/elementwise/guide.md` + `references/elementwise/templates/`（usage_guide + add_custom） |
 | broadcast | 含广播轴 Add/Mul/Sub | DAV_3510 | 5 | ✅（code/ 可裁剪源码） | B 型选型（OneDim 快路径 + NDDMA/DataCopyPad/UB 三实现） |

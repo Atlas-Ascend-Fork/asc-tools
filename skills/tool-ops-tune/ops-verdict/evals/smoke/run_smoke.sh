@@ -68,7 +68,7 @@ assert m['blocks'] and all(b['status'] == 'ok' for b in m['blocks']), m['blocks'
   fi
 done
 
-echo "=== smoke 3: isolation from-prof 干跑（isolation_test.py 随多卡域 PR 交付，当前跳过）==="
+echo "=== smoke 3: isolation from-prof 干跑（R 值档位从规则 YAML 派生）==="
 if [ ! -f "$REPO_ROOT/ops-collect/scripts/isolation_test.py" ]; then
   echo "[SKIP] isolation_test.py 未交付（随多卡域 PR），smoke 3 暂跳过——交付后本段自动生效"
 else
