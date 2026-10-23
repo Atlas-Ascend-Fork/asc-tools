@@ -1421,7 +1421,7 @@ def _collect_bin_files(input_path):
     if os.path.isfile(input_path):
         return [input_path]
     if os.path.isdir(input_path):
-        search_re = os.path.join(input_path, "**", "*.bin")
+        search_re = os.path.join(glob.escape(input_path), "**", "*.bin")
         return sorted(
             [
                 bin_file

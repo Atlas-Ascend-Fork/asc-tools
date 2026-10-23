@@ -816,6 +816,38 @@ class TestAscendump(unittest.TestCase):
                 dump_parser.execute_parse()
             self.assertIn("does not exist", str(context.exception))
 
+    def test_directory_discovery_keeps_literal_glob_characters(self):
+        for dirname, sibling in (
+            ("input[1]", "input1"),
+            ("input*", "input-other"),
+            ("input?", "input2"),
+        ):
+            with self.subTest(dirname=dirname):
+                input_dir = os.path.join(self.test_dir, dirname)
+                nested = os.path.join(input_dir, "nested")
+                neighbor = os.path.join(self.test_dir, sibling)
+                os.makedirs(nested)
+                os.makedirs(neighbor)
+                expected = os.path.join(nested, "actual.bin")
+                decoy = os.path.join(neighbor, "other.bin")
+                for filename in (expected, decoy):
+                    with open(filename, "wb") as stream:
+                        stream.write(b"\x00")
+
+                self.assertEqual(dump_parser._collect_bin_files(input_dir), [expected])
+                with (
+                    patch(
+                        "sys.argv", ["show_kernel_debug_data", input_dir, self.test_dir]
+                    ),
+                    patch(
+                        "show_kernel_debug_data.dump_parser.parse_dump_bin",
+                        return_value=0,
+                    ) as parse_mock,
+                ):
+                    self.assertEqual(dump_parser.execute_parse(), 0)
+                    self.assertEqual(parse_mock.call_count, 1)
+                    self.assertEqual(parse_mock.call_args.args[0], expected)
+
     def test_directory_mode(self):
         input_dir = os.path.join(self.test_dir, "input_bins")
         sub_dir = os.path.join(input_dir, "sub")
