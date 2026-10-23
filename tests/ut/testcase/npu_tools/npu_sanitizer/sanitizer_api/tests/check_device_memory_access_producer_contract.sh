@@ -34,7 +34,7 @@ if grep -Fq 'MakeMovAlignV2MemoryAccessData' "${translator}"; then
     Fail 'converter-covered MOV_ALIGN_V2 helper must be removed'
 fi
 converter="${api_dir}/aclsan_memory_cbdata.cpp"
-grep -Fq 'data.accessIndex = accessIndex;' "${converter}" || Fail 'accessIndex is not derived from the list index'
-grep -Fq 'data.accessCount = accessCount;' "${converter}" || Fail 'accessCount is not derived from the final list size'
+grep -Fq 'data.accessIndex = sequence.nextIndex++;' "${converter}" || Fail 'accessIndex is not derived from the owner sequence'
+grep -Fq 'data.accessCount = sequence.count;' "${converter}" || Fail 'accessCount is not derived from the owner access count'
 
 printf 'device memory access producer contract passed\n'

@@ -13,6 +13,7 @@
 #include "aclsan_active_probe_plan.h"
 #include "aclsan_trace_buffer.h"
 #include "device_instr/arch/dav_3510/decoder.h"
+#include "device_instr/common/instruction_id.h"
 #include "dbi/trace_buffer_abi.h"
 #include <algorithm>
 #include <cstring>
@@ -302,6 +303,35 @@ TEST(UbMemory, L0cUbFixpipeWritesSelectedAndDualVectorOwners)
     EXPECT_EQ(dualN.data[2].layout.range.bytes, 1024u);
 }
 
+TEST(MemoryAccessIndexing, PackedFixAtAccessLimitIncludesGmAndLocalFragments)
+{
+    FixL0cToOutParamField field{};
+    field.instrId = static_cast<uint32_t>(InstructionId::FixL0cToOutF32);
+    field.srcAddr = 0x800;
+    field.dstAddr = 0x100000;
+    field.nSize = 16;
+    field.mSize = 31;
+    field.loopSrtStride = 32;
+    field.loopDstStride = 64;
+    field.quantPre = 25;
+    field.nz2ndEnable = true;
+    MemoryRegisterState state{};
+    state.ctrl = CtrlRegisterParamField{0};
+    state.loop3 = Loop3ParamField{128, 1024, 4096};
+
+    const auto result = MemoryFieldToCbdataConverter{{}, state}.Convert(field);
+    ASSERT_EQ(result.status, MemoryCbdataStatus::SUCCESS);
+    ASSERT_EQ(result.data.size(), 4096u);
+    EXPECT_EQ(result.data.front().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+    EXPECT_EQ(result.data[3967].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+    EXPECT_EQ(result.data[3968].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L0C);
+    EXPECT_EQ(result.data.back().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L0C);
+    for (size_t i = 0; i < result.data.size(); ++i) {
+        EXPECT_EQ(result.data[i].accessIndex, i);
+        EXPECT_EQ(result.data[i].accessCount, 4096u);
+    }
+}
+
 TEST(UbMemory, CrossCoreTopologyRoundTripsAcrossBothDies)
 {
     for (uint32_t count : {6u, 108u}) {
@@ -359,6 +389,13 @@ TEST(UbMemory, DualTargetNz2NdPreservesRowsAndMatrixStrideOnEachUb)
             {0x400, 0x800, (30ULL << 4) | (48ULL << 16) | (64ULL << 32), 64ULL | (uint64_t(dual) << 16) | (1ULL << 43)},
             context, state);
         ASSERT_EQ(r.status, MemoryCbdataStatus::SUCCESS);
+        ASSERT_EQ(r.data.size(), 6u);
+        // Four L0C fragments belong to the AIC; each UB target has its own
+        // sequence, even though its result was merged before the outer merge.
+        for (size_t i = 0; i < r.data.size(); ++i) {
+            EXPECT_EQ(r.data[i].accessIndex, i < 4 ? i : 0u);
+            EXPECT_EQ(r.data[i].accessCount, i < 4 ? 4u : 1u);
+        }
         size_t targets = 0;
         for (const auto& a : r.data) {
             if (a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UB) {

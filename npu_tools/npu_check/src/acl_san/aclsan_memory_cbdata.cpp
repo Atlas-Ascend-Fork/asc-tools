@@ -23,6 +23,7 @@
 #include <optional>
 #include <stdexcept>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 
@@ -429,9 +430,8 @@ public:
         try {
             data.reserve(descriptors_.size());
             const AclsanDeviceEventHeader header = MakeHeader();
-            const uint32_t accessCount = static_cast<uint32_t>(descriptors_.size());
-            for (uint32_t index = 0; index < accessCount; ++index) {
-                data.push_back(MakeCbdata(header, descriptors_[index], index, accessCount, context_.instructionId));
+            for (const auto& descriptor : descriptors_) {
+                data.push_back(MakeCbdata(header, descriptor, context_.instructionId));
             }
         } catch (const std::bad_alloc&) {
             return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
@@ -500,8 +500,8 @@ private:
     }
 
     static AclsanDeviceMemoryAccessData MakeCbdata(
-        const AclsanDeviceEventHeader& header, const MemoryAccessDescriptor& descriptor, uint32_t accessIndex,
-        uint32_t accessCount, uint32_t instructionId) noexcept
+        const AclsanDeviceEventHeader& header, const MemoryAccessDescriptor& descriptor,
+        uint32_t instructionId) noexcept
     {
         AclsanDeviceMemoryAccessData data{};
         data.header = header;
@@ -511,8 +511,6 @@ private:
         data.address = descriptor.address;
         data.memorySpace = descriptor.memorySpace;
         data.accessMode = descriptor.accessMode;
-        data.accessIndex = accessIndex;
-        data.accessCount = accessCount;
         data.dataBits = descriptor.dataBits;
         data.instructionId = instructionId;
         std::visit(
@@ -1601,26 +1599,6 @@ public:
         } else {
             first.status = first.data.empty() ? MemoryCbdataStatus::NO_ACCESS : MemoryCbdataStatus::SUCCESS;
         }
-        // A local transfer may publish endpoints owned by different physical
-        // cores.  accessIndex/accessCount are per callback identity, so keep
-        // a separate fragment sequence for each owner header while preserving
-        // the ordinary single-header sequence for all other instructions.
-        for (size_t i = 0; i < first.data.size(); ++i) {
-            uint32_t index = 0;
-            uint32_t count = 0;
-            for (size_t j = 0; j < first.data.size(); ++j) {
-                if (first.data[j].header.phyCoreId == first.data[i].header.phyCoreId &&
-                    first.data[j].header.blockId == first.data[i].header.blockId &&
-                    first.data[j].header.blockType == first.data[i].header.blockType) {
-                    if (j < i) {
-                        ++index;
-                    }
-                    ++count;
-                }
-            }
-            first.data[i].accessIndex = index;
-            first.data[i].accessCount = count;
-        }
         return first;
     }
 
@@ -2021,6 +1999,34 @@ private:
     const MemoryRegisterState& state_;
 };
 
+MemoryCbdataResult FinalizeMemoryAccesses(MemoryCbdataResult result) noexcept
+{
+    struct Sequence {
+        uint32_t count = 0;
+        uint32_t nextIndex = 0;
+    };
+
+    // A local transfer may publish endpoints owned by different physical cores.
+    // This result covers one dynamic instruction, so phyCoreId identifies each
+    // owner. Finalize once after all merges, keeping an ordered sequence per core.
+    try {
+        std::unordered_map<uint32_t, Sequence> sequences;
+        for (const auto& data : result.data) {
+            ++sequences[data.header.phyCoreId].count;
+        }
+        for (auto& data : result.data) {
+            auto& sequence = sequences.at(data.header.phyCoreId);
+            data.accessIndex = sequence.nextIndex++;
+            data.accessCount = sequence.count;
+        }
+    } catch (const std::bad_alloc&) {
+        return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
+    } catch (const std::length_error&) {
+        return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
+    }
+    return result;
+}
+
 void ApplyAtomicConfiguration(MemoryCbdataResult& output, const MemoryRegisterState& state) noexcept
 {
     const bool hasGmWrite = std::any_of(output.data.begin(), output.data.end(), [](const auto& access) {
@@ -2100,7 +2106,7 @@ MemoryCbdataResult MemoryFieldToCbdataConverter::Convert(const MemoryInstruction
     gm.requiresIncompleteEvent = gm.requiresIncompleteEvent ||
                                  (atomicConfiguration && (gm.status == MemoryCbdataStatus::MISSING_REGISTER_STATE ||
                                                           gm.status == MemoryCbdataStatus::PARTIAL_COVERAGE));
-    return gm;
+    return FinalizeMemoryAccesses(std::move(gm));
 }
 
 } // namespace aclsan
