@@ -24,7 +24,7 @@
     msobjdump --extract-elf ${elf_file} [--out-dir ${out_path}]
     ```
 
-    `--extract-elf ${elf_file}`为必选，表示待解析ELF文件路径。[--out-dir ${out_path}]为可选，用于设置解压文件的落盘路径。
+    `--extract-elf ${elf_file}`为必选，表示待解析ELF文件路径。[--out-dir ${out_path}]为可选，用于设置解压文件的落盘路径。指定的目录必须已存在且可写，工具不会自动创建；未指定时使用当前工作目录。
 
 - 获取ELF文件列表的命令
 

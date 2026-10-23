@@ -24,7 +24,7 @@ When using this tool through an Agent, refer to the [tool-npu-objdump Skill](../
     msobjdump --extract-elf ${elf_file} [--out-dir ${out_path}]
     ```
 
-    `--extract-elf ${elf_file}` is required and specifies the path of the ELF file to parse. [--out-dir ${out_path}] is optional and sets the output path for extracted files.
+    `--extract-elf ${elf_file}` is required and specifies the path of the ELF file to parse. [--out-dir ${out_path}] is optional and sets the output path for extracted files. The specified directory must already exist and be writable; the tool does not create it. If omitted, the current working directory is used.
 
 - Command to list ELF file contents
 
