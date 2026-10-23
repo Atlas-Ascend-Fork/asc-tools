@@ -176,6 +176,22 @@ NA表示当前Core不适用或所需数据不可用，不表示数值零。
 | `aiv_ub_read_bw_gm(GB/s)` | 从UB读取数据并搬往GM的带宽，单位为GB/s。当前所需插桩数据未提供，固定显示为NA。 |
 | `aiv_ub_write_bw_gm(GB/s)` | 代表GM向UB写入数据的平均带宽，单位为GB/s。 |
 
+## PcSampling（PC采样状态累计计数）
+
+`PmSampling`采集的指令地址及状态累计计数保存在`summary.db`的`PcSampling`表中。`address`保存业务指令地址，同一地址的多条采样记录按状态分别累加。
+
+| 字段名 | 字段解释 |
+|---|---|
+| `address` | 业务指令地址。 |
+| `ibuf_empty` | 指令缓冲区为空，等待获取下一条指令。 |
+| `nop_cycles` | 空操作（NOP）导致的等待。 |
+| `scoreboard_not_ready` | 记分牌未就绪，当前指令等待前序指令的数据或资源就绪。 |
+| `register_bank_conflict` | 多个寄存器访问竞争同一个寄存器Bank，导致等待。 |
+| `resource_conflict` | 多条指令竞争同一硬件资源，导致等待。 |
+| `warp_level_sync` | 等待同一Warp内线程满足同步条件。 |
+| `divergence_stack_spill` | 分支发散栈空间不足，需要溢出处理时的等待。 |
+| `others` | 未归入上述类别的其他等待或阻塞。 |
+
 ## PipeUtilization（计算和搬运单元耗时占比）
 
 计算和搬运单元的活跃时间、周期占比、活跃带宽及指令缓存未命中率保存在PipeUtilization.csv中。可用于查看各流水的活跃时间和周期占比。详情介绍请参见下表中的字段说明。

@@ -80,10 +80,13 @@ add_executable(npu_compute_binary_registry_test binary_registry_test.cpp
 target_include_directories(npu_compute_binary_registry_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
 target_link_libraries(npu_compute_binary_registry_test PRIVATE
   acl_pti_unit ${NPU_COMPUTE_ACLPTI_UNIT_BACKENDS})
+set_target_properties(npu_compute_binary_registry_test PROPERTIES
+  ENABLE_EXPORTS YES CXX_VISIBILITY_PRESET hidden)
 add_test(NAME npu_compute.binary_registry COMMAND npu_compute_binary_registry_test)
 
 add_executable(npu_compute_binary_instrumenter_test binary_instrumenter_test.cpp
-  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_instrumenter.cpp)
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_instrumenter.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/pm_sampling_instruction_map.cpp)
 target_compile_definitions(npu_compute_binary_instrumenter_test PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_include_directories(npu_compute_binary_instrumenter_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
 target_link_libraries(npu_compute_binary_instrumenter_test PRIVATE Boost::filesystem Threads::Threads ${CMAKE_DL_LIBS})
@@ -141,6 +144,9 @@ set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/uds_server.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/npu_compute.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/npu_compute_runtime.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_artifacts.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_decoder.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_data_consumer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/pmu_csv_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
@@ -158,7 +164,7 @@ target_include_directories(npu_compute_test PRIVATE
 )
 target_link_libraries(npu_compute_test
   PUBLIC npu_compute_test_headers
-  PRIVATE acl_pti_test ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc
+  PRIVATE acl_pti_test ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc npu_compute_sqlite_runtime
 )
 set(NPU_COMPUTE_TEST_VERSION_SCRIPT
   "${NPU_COMPUTE_SOURCE_DIR}/src/compute/libnpu_compute.map")
@@ -181,8 +187,12 @@ add_custom_command(TARGET npu_compute_test POST_BUILD
   COMMENT "Stage libnpu_compute_processor.so for CLI/launcher tests")
 
 add_library(npu_compute_launcher_core_test STATIC
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/csv_reader.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/csv_sqlite_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/summary_sqlite_finalizer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/ipc/artifact_receiver.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/ipc/uds_client.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/pm_sampling_file_validator.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/collection_file_validator.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/pipe_trace_finalizer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/config.cpp
@@ -204,7 +214,7 @@ target_include_directories(npu_compute_launcher_core_test PUBLIC
   "${NPU_COMPUTE_SOURCE_DIR}/src/cli")
 target_link_libraries(npu_compute_launcher_core_test
   PUBLIC npu_compute_test_headers Boost::filesystem)
-target_link_libraries(npu_compute_launcher_core_test PRIVATE npu_compute_ipc Threads::Threads)
+target_link_libraries(npu_compute_launcher_core_test PRIVATE npu_compute_ipc Threads::Threads npu_compute_sqlite_runtime)
 
 add_executable(npu_compute_cli_test_bin
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/main.cpp
@@ -256,11 +266,12 @@ add_test(NAME npu_compute.launcher COMMAND npu_compute_launcher_test)
 
 add_executable(npu_compute_rep_fixture_app
   rep_fixture_app.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/artifact_publisher.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/uds_server.cpp
 )
 target_include_directories(npu_compute_rep_fixture_app PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
-target_link_libraries(npu_compute_rep_fixture_app PRIVATE npu_compute_ipc Threads::Threads)
+target_link_libraries(npu_compute_rep_fixture_app PRIVATE npu_compute_ipc Threads::Threads npu_compute_sqlite_runtime)
 add_dependencies(npu_compute_rep_fixture_app npu_compute_cli_test_bin npu_compute_test)
 npu_compute_set_test_output(npu_compute_rep_fixture_app)
 target_compile_definitions(npu_compute_launcher_test PRIVATE
@@ -503,6 +514,9 @@ set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/npu_compute_runtime.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_data_consumer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_decoder.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_artifacts.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/pmu_csv_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_jsonl_writer.cpp
@@ -528,6 +542,7 @@ target_link_libraries(npu_compute_runtime_callback_test PRIVATE
   ${CMAKE_DL_LIBS}
   Threads::Threads
   Boost::filesystem
+  npu_compute_sqlite_runtime
 )
 set_target_properties(npu_compute_runtime_callback_test PROPERTIES
   ENABLE_EXPORTS YES
@@ -556,6 +571,7 @@ if(ENABLE_TEST)
     ${CMAKE_DL_LIBS}
     Threads::Threads
     Boost::filesystem
+    npu_compute_sqlite_runtime
   )
   set(NPU_COMPUTE_HW_STUB_VERSION_SCRIPT
     "${CMAKE_CURRENT_BINARY_DIR}/hardware_stub_test.map"
@@ -654,6 +670,121 @@ add_test(
     ${NPU_COMPUTE_PY_TEST_DIR}/test_rep_packaging_integration.py
 )
 
+if(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS)
+  add_library(npu_compute_real_hardware_test_library SHARED
+    ${NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES}
+  )
+  target_include_directories(
+    npu_compute_real_hardware_test_library PRIVATE
+    ${NPU_COMPUTE_SOURCE_DIR}/src
+    ${NPU_COMPUTE_SOURCE_DIR}/src/compute
+  )
+  target_link_libraries(npu_compute_real_hardware_test_library PRIVATE
+    acl_pti_callback_stub
+    npu_compute_test_headers
+    acl_pti_test
+    ${CMAKE_DL_LIBS}
+    Threads::Threads
+    Boost::filesystem
+    npu_compute_sqlite_runtime
+  )
+  set(NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT
+    "${CMAKE_CURRENT_BINARY_DIR}/runtime_test.map"
+  )
+  file(WRITE "${NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT}"
+    "{ global: acltoolInitialize; acltoolShutdown; NpuComputeTestConfigure; local: *; };\n")
+  target_link_options(npu_compute_real_hardware_test_library PRIVATE
+    "LINKER:--version-script=${NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT}"
+  )
+  set_target_properties(
+    npu_compute_real_hardware_test_library PROPERTIES
+    OUTPUT_NAME npu-compute-real-hardware-test
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+    LINK_DEPENDS "${NPU_COMPUTE_REAL_HARDWARE_VERSION_SCRIPT}"
+  )
+  npu_compute_set_test_output(npu_compute_real_hardware_test_library)
+
+  find_library(NPU_COMPUTE_REAL_ASCENDCL_LIBRARY
+    NAMES ascendcl
+    HINTS
+      "${NPUCOMPUTE_CANN_ROOT}/lib64"
+      "${ASCEND_CANN_PACKAGE_PATH}/${CMAKE_SYSTEM_PROCESSOR}-linux/lib64"
+      "$ENV{ASCEND_HOME_PATH}/lib64"
+    NO_DEFAULT_PATH
+  )
+  if(NOT NPU_COMPUTE_REAL_ASCENDCL_LIBRARY)
+    message(FATAL_ERROR
+      "Real HardwareInfo tests require libascendcl.so from the CANN installation")
+  endif()
+
+  add_executable(npu_compute_real_hardware_callback_app
+    real_hardware_callback_app.cpp
+  )
+  target_link_libraries(
+    npu_compute_real_hardware_callback_app PRIVATE
+    acl_pti_callback_stub
+    npu_compute_test_headers
+    "${NPU_COMPUTE_REAL_ASCENDCL_LIBRARY}"
+    ${CMAKE_DL_LIBS}
+    Boost::filesystem
+  )
+  set_target_properties(
+    npu_compute_real_hardware_callback_app PROPERTIES
+    OUTPUT_NAME npu_compute_real_hardware_callback_app
+  )
+  npu_compute_set_test_output(npu_compute_real_hardware_callback_app)
+endif()
+
+# 桩库（libruntime.so/libprofapi.so 等）与 CANN 真实库同名；DSO 族统一转 DT_RPATH
+# （优先于 LD_LIBRARY_PATH），使构建树桩目录在任意环境下稳定抢占。
+foreach(target IN ITEMS
+    npu_compute_binary_instrumenter_test
+    npu_compute_injection_path_test
+    npu_compute_imported_profile_results_test
+    npu_compute_launcher_test
+    npu_compute_rep_fixture_app
+    npu_compute_stub_demo_app
+    acl_pti_public_api_test
+    acl_pti_callback_api_test
+    acl_pti_replay_test
+    acl_pti_simt_replay_test
+    acl_pti_args_array_replay_test
+    acl_pti_shadow_memory_test
+    acl_pti_launch_without_config_test
+    acl_pti_initialize_failure_test
+    acl_pti_runtime_failure_short_circuit_test
+    acl_pti_hook_failure_domain_test
+    acl_pti_callback_stub_test
+    acl_prof_api_loader_test
+    acl_prof_api_stub_test
+    npu_compute_runtime_callback_test
+    npu_compute_biu_pipeline_test
+  )
+  if(TARGET ${target})
+    target_link_options(${target} PRIVATE -Wl,--disable-new-dtags)
+  endif()
+endforeach()
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+
+if(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS)
+  add_test(
+    NAME npu_compute.real_hardware_with_callback_stub
+    COMMAND ${CMAKE_COMMAND} -E env
+      "NPU_COMPUTE_REAL_HW_APP=$<TARGET_FILE:npu_compute_real_hardware_callback_app>"
+      "NPU_COMPUTE_REAL_HW_LIBRARY=$<TARGET_FILE:npu_compute_real_hardware_test_library>"
+      "NPU_COMPUTE_REAL_HW_OUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}"
+      ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+      ${NPU_COMPUTE_PY_TEST_DIR}/test_real_hardware_collection.py
+  )
+  set_tests_properties(
+    npu_compute.real_hardware_with_callback_stub PROPERTIES
+    LABELS "requires_npu"
+  )
+endif()
+
 add_test(
   NAME npu_compute.hardware_info_integration
   COMMAND ${CMAKE_COMMAND} -E env
@@ -701,6 +832,118 @@ add_test(
     ${CMAKE_SOURCE_DIR}/tests/py_ut/testcase/npu_compute/test_npu_compute_install.py
 )
 
+add_executable(npu_compute_pm_sampling_config_test
+  pm_sampling_config_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/section_config.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/config.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/option_registry.cpp
+)
+target_include_directories(npu_compute_pm_sampling_config_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute
+)
+target_link_libraries(npu_compute_pm_sampling_config_test PRIVATE
+  npu_compute_test_headers npu_compute_ipc
+)
+add_test(NAME npu_compute.pm_sampling_config COMMAND npu_compute_pm_sampling_config_test)
+
+add_executable(npu_compute_pm_sampling_registration_test pm_sampling_registration_test.cpp)
+target_include_directories(npu_compute_pm_sampling_registration_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+target_link_libraries(npu_compute_pm_sampling_registration_test PRIVATE
+  acl_pti_unit ${NPU_COMPUTE_ACLPTI_UNIT_BACKENDS})
+set_target_properties(npu_compute_pm_sampling_registration_test PROPERTIES CXX_VISIBILITY_PRESET hidden)
+add_test(NAME npu_compute.pm_sampling_registration COMMAND npu_compute_pm_sampling_registration_test)
+
+add_executable(npu_compute_pm_sampling_replay_test pm_sampling_replay_test.cpp)
+target_include_directories(npu_compute_pm_sampling_replay_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+target_link_libraries(npu_compute_pm_sampling_replay_test PRIVATE
+  acl_pti_unit ${NPU_COMPUTE_ACLPTI_UNIT_BACKENDS})
+set_target_properties(npu_compute_pm_sampling_replay_test PROPERTIES CXX_VISIBILITY_PRESET hidden ENABLE_EXPORTS YES)
+add_test(NAME npu_compute.pm_sampling_replay COMMAND npu_compute_pm_sampling_replay_test)
+
+add_executable(npu_compute_pm_sampling_decoder_test
+  pm_sampling_decoder_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_decoder.cpp)
+target_include_directories(npu_compute_pm_sampling_decoder_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
+target_link_libraries(npu_compute_pm_sampling_decoder_test PRIVATE npu_compute_test_headers)
+add_test(NAME npu_compute.pm_sampling_decoder COMMAND npu_compute_pm_sampling_decoder_test)
+
+add_executable(npu_compute_pm_sampling_sqlite_test
+  pm_sampling_sqlite_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp)
+target_include_directories(npu_compute_pm_sampling_sqlite_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
+target_link_libraries(npu_compute_pm_sampling_sqlite_test PRIVATE npu_compute_test_headers npu_compute_sqlite_runtime)
+add_test(NAME npu_compute.pm_sampling_sqlite COMMAND npu_compute_pm_sampling_sqlite_test)
+
+add_executable(npu_compute_pm_sampling_artifacts_test
+  pm_sampling_artifacts_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_artifacts.cpp)
+target_include_directories(npu_compute_pm_sampling_artifacts_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
+target_link_libraries(npu_compute_pm_sampling_artifacts_test PRIVATE
+  npu_compute_test_headers Boost::filesystem Threads::Threads)
+add_test(NAME npu_compute.pm_sampling_artifacts COMMAND npu_compute_pm_sampling_artifacts_test)
+set_tests_properties(npu_compute.pm_sampling_artifacts PROPERTIES TIMEOUT 30)
+
+add_executable(npu_compute_pm_sampling_runtime_test
+  pm_sampling_runtime_test.cpp
+  ${NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES}
+)
+target_include_directories(npu_compute_pm_sampling_runtime_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute
+)
+target_link_libraries(npu_compute_pm_sampling_runtime_test PRIVATE
+  acl_pti_callback_stub acl_runtime_stub npu_compute_test_headers acl_pti_test
+  npu_compute_launcher_core_test
+  ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_sqlite_runtime
+)
+set_target_properties(npu_compute_pm_sampling_runtime_test PROPERTIES ENABLE_EXPORTS YES)
+add_test(NAME npu_compute.pm_sampling_runtime
+  COMMAND ${CMAKE_COMMAND} -E env
+    "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:acl_runtime_stub>:$ENV{LD_LIBRARY_PATH}"
+    $<TARGET_FILE:npu_compute_pm_sampling_runtime_test>
+)
+set_tests_properties(npu_compute.pm_sampling_runtime PROPERTIES TIMEOUT 60)
+
+add_executable(npu_compute_pm_sampling_report_test
+  pm_sampling_report_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/artifact_publisher.cpp
+)
+target_include_directories(npu_compute_pm_sampling_report_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src ${NPU_COMPUTE_SOURCE_DIR}/src/compute
+)
+target_link_libraries(npu_compute_pm_sampling_report_test PRIVATE
+  npu_compute_launcher_core_test npu_compute_sqlite_runtime
+)
+add_test(NAME npu_compute.pm_sampling_report COMMAND npu_compute_pm_sampling_report_test)
+set_tests_properties(npu_compute.pm_sampling_report PROPERTIES TIMEOUT 60)
+
+add_test(
+  NAME npu_compute.pm_sampling_integration
+  COMMAND ${CMAKE_COMMAND} -E env
+    "NPU_COMPUTE_TEST_CLI=$<TARGET_FILE:npu_compute_cli_test_bin>"
+    "NPU_COMPUTE_REP_FIXTURE_APP=$<TARGET_FILE:npu_compute_rep_fixture_app>"
+    ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+    ${NPU_COMPUTE_PY_TEST_DIR}/test_pm_sampling_integration.py
+)
+set_tests_properties(npu_compute.pm_sampling_integration PROPERTIES TIMEOUT 120)
+# Loader tests use environment SQLite only; stubs are test fault injection.
+add_executable(npu_compute_sqlite_runtime_loader_test sqlite_runtime_loader_test.cpp)
+target_link_libraries(npu_compute_sqlite_runtime_loader_test PRIVATE npu_compute_sqlite_runtime)
+add_library(npu_compute_sqlite_loader_stub SHARED sqlite_loader_stub.cpp)
+target_link_libraries(npu_compute_sqlite_loader_stub PRIVATE ${CMAKE_DL_LIBS})
+add_library(npu_compute_sqlite_incomplete_stub SHARED sqlite_incomplete_stub.cpp)
+target_include_directories(npu_compute_sqlite_incomplete_stub PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+add_test(NAME npu_compute.sqlite_runtime_loader
+  COMMAND ${CMAKE_COMMAND} -E env
+    "NPU_COMPUTE_BUILD_DIR=${CMAKE_BINARY_DIR}"
+    "NPU_COMPUTE_TEST_CLI=$<TARGET_FILE:npu_compute_cli_test_bin>"
+    "NPU_COMPUTE_REP_FIXTURE_APP=$<TARGET_FILE:npu_compute_rep_fixture_app>"
+    ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+    ${NPU_COMPUTE_PY_TEST_DIR}/test_sqlite_runtime_loader.py)
+set_tests_properties(npu_compute.sqlite_runtime_loader PROPERTIES TIMEOUT 120)
+
 # Keep upstream Python-driven integration entries available for focused runs.
 set(npu_compute_python_wrappers
   npu_compute.rep_packaging_integration
@@ -717,7 +960,9 @@ if(DEFINED ENV{LD_LIBRARY_PATH} AND NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
   string(APPEND NPU_COMPUTE_TEST_LD_LIBRARY_PATH ":$ENV{LD_LIBRARY_PATH}")
 endif()
 foreach(test_name IN LISTS npu_compute_tests)
-  if(test_name IN_LIST npu_compute_python_wrappers)
+  if(test_name STREQUAL "npu_compute.real_hardware_with_callback_stub")
+    set_tests_properties(${test_name} PROPERTIES LABELS "requires_npu")
+  elseif(test_name IN_LIST npu_compute_python_wrappers)
     set_tests_properties(${test_name} PROPERTIES LABELS "npu_compute_python_wrapper")
   else()
     set_tests_properties(${test_name} PROPERTIES LABELS "npu_compute_ci_host")

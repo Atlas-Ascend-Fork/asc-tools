@@ -12,16 +12,17 @@ The following Sections are currently supported:
 
 | Section | Description | Included in |
 | :--- | :--- | :--- |
-| `ArithmeticUtilization` | Cube FP/INT instruction counts and Cube/Vector active cycle ratios | `basic`, `full` |
-| `L2Cache` | L2 Cache access data | `basic`, `full` |
-| `Memory` | Main memory and on-chip memory access data | `basic`, `full` |
-| `MemoryL0` | L0 memory access data | `basic`, `full` |
-| `MemoryUB` | Unified Buffer access data | `basic`, `full` |
-| `Pipeline` | Pipeline timeline data, written to `PipeTrace.json` | `basic`, `full` |
-| `PipeUtilization` | Compute and pipeline utilization data | `basic`, `full` |
-| `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios | `full` |
+| <a name="section-arithmeticutilization"></a> `ArithmeticUtilization` | Cube FP/INT instruction counts and Cube/Vector active cycle ratios | `basic`, `full` |
+| <a name="section-l2cache"></a> `L2Cache` | L2 Cache access data | `basic`, `full` |
+| <a name="section-memory"></a> `Memory` | Main memory and on-chip memory access data | `basic`, `full` |
+| <a name="section-memoryl0"></a> `MemoryL0` | L0 memory access data | `basic`, `full` |
+| <a name="section-memoryub"></a> `MemoryUB` | Unified Buffer access data | `basic`, `full` |
+| <a name="section-pipeline"></a> `Pipeline` | Pipeline timeline data, written to `PipeTrace.json` | `basic`, `full` |
+| <a name="section-pipeutilization"></a> `PipeUtilization` | Compute and pipeline utilization data | `basic`, `full` |
+| <a name="section-pmsampling"></a> `PmSampling` | PC/state totals, disassembly and function/inline information | `full` |
+| <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios | `full` |
 
-Two predefined sets are available: `basic` contains the seven Sections other than `ResourceConflictRatio`, and `full` contains all eight Sections.
+Two predefined sets are available: `basic` contains the seven Sections other than `ResourceConflictRatio` and `PmSampling`, and `full` contains all nine Sections.
 
 For the meaning and calculation method of the fields in each Section, see [Performance Data](appendix/npu_compute_performance_data.md).
 
@@ -191,13 +192,34 @@ A report can contain the following files:
 | `HardwareInfo.jsonl` | Every collection | Host and NPU hardware information. |
 | `summary.jsonl` | A kernel is executed | Performance summary and operator overview. |
 | `PipeTrace.json` | `Pipeline` is selected | Pipeline timeline data in Chrome Trace format, viewable with Chrome Trace-compatible tools. |
-| `<Section-name>.csv` | Metric data is collected (except for `Pipeline`) | Metric data for the Section. |
+| `summary.db` | Valid CSV or PmSampling data is available | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database) |
+| `objdump.txt` | When `PmSampling` is selected | Original operator disassembly. Compile with `-lineinfo` to include source line information. |
+| `symbolizer.json` | When `PmSampling` is selected | Function and inline information for sampled addresses. |
+| `<Section-name>.csv` | Metric data is collected (except for `Pipeline` and `PmSampling`) | Metric data for the Section. |
 
 `Pipeline` uses sampling to generate the pipeline diagram, independent of the number of cores enabled; even when all cores are enabled, the diagram shows data for at most six sampled Groups.
 
 `NA` in a CSV means that no valid value was collected for that metric; other metrics remain available.
 
 For field definitions, calculation methods, and the relationship between CSV files and the summary, see [Performance Data](appendix/npu_compute_performance_data.md).
+
+### SQLite Database
+
+Collected CSV data is automatically written to `summary.db` in the same result directory. The original CSV files are retained. The database can contain the following tables, depending on the collected results:
+
+| Table | Generated when | Content |
+| :--- | :--- | :--- |
+| `ArithmeticUtilization` | Its CSV is imported successfully | [ArithmeticUtilization](#section-arithmeticutilization) |
+| `L2Cache` | Its CSV is imported successfully | [L2Cache](#section-l2cache) |
+| `Memory` | Its CSV is imported successfully | [Memory](#section-memory) |
+| `MemoryL0` | Its CSV is imported successfully | [MemoryL0](#section-memoryl0) |
+| `MemoryUB` | Its CSV is imported successfully | [MemoryUB](#section-memoryub) |
+| `PcSampling` | PmSampling data is written successfully | Sampling counts for eight wait or stall states, aggregated by business instruction address; see [PC Sampling States](appendix/npu_compute_performance_data.md#pcsampling-pc-sampling-state-totals) |
+| `PipeUtilization` | Its CSV is imported successfully | [PipeUtilization](#section-pipeutilization) |
+| `ResourceConflictRatio` | Its CSV is imported successfully | [ResourceConflictRatio](#section-resourceconflictratio) |
+| `FieldUnitMap` | At least one CSV containing data records is imported successfully | `field_name` stores the column name and `unit` stores its unit, or NULL for a column without a unit. |
+
+Database generation depends on a compatible SQLite shared library in the environment. If generation fails, the terminal reports the reason and other successful results can still be packaged.
 
 ### Unpacking a Report
 
@@ -206,6 +228,8 @@ Use `--import` to specify an existing `.npu-rep` report. The tool unpacks it int
 ```bash
 npu-compute --import ./reports/profile.npu-rep
 ```
+
+The tool prints the result directory path:
 
 ```text
 npu-compute: unpacked= <unpacked-result-directory>
@@ -226,6 +250,8 @@ The result directory contains the collected files listed in [Report Files](#repo
 - Programming language: operators to be collected must currently be written in Ascend C.
 - Operator invocation: currently, a single invocation of a single operator using `<<<>>>` or aclnn is supported.
 - `Pipeline` collection is limited by hardware: only one process on the same device can collect `Pipeline` at a time. If multiple processes collect `Pipeline` concurrently, only one produces output normally; the others fail.
-- When collecting `Pipeline` data for a SIMT operator, `noinline` `__aicore__` functions are not supported, including `printf` and `asc_dump`.
+- `PmSampling` collection is limited by hardware: on the same device, `PmSampling` cannot run concurrently with `PmSampling` or `Pipeline` collection in other processes. Concurrent collection may leave samples missing or cause collection to fail.
+- `PmSampling` supports sampling only SIMT instructions. Operators that use only SIMD instructions cannot generate the `PcSampling` table; successful results from other Sections are retained.
+- When collecting `Pipeline` or `PmSampling` data for a SIMT operator, `noinline` `__aicore__` functions are not supported, including `printf` and `asc_dump`.
 - The target program must have execute permission, can be an executable or a script, must run independently without `npu-compute`, and must successfully execute at least one NPU kernel during its run.
 - One collection command runs one target program; run separate commands to collect multiple programs. The target program and scripts started by it must not start another `npu-compute` collection. When nested collection is detected, the collection fails and no report is produced.

@@ -9,7 +9,7 @@
  */
 #include "artifact_sink.h"
 #include "report/report_writer.h"
-#include <boost/json/src.hpp>
+#include <boost/json.hpp>
 #include <gtest/gtest.h>
 #include <cmath>
 #include <filesystem>
@@ -21,7 +21,11 @@
 #include <vector>
 
 namespace {
-using namespace npucompute;
+using npucompute::ArtifactSink;
+using npucompute::KernelKind;
+using npucompute::KernelMetadata;
+using npucompute::ReportConfig;
+using npucompute::WriteSummaryJsonl;
 class MetricsSink final : public ArtifactSink {
 public:
     void Begin(const std::string&) override { content.clear(); }

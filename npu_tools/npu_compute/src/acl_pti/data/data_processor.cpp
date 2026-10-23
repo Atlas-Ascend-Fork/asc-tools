@@ -7,9 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-#include "data_types.h"
-
 #include "data_processor.h"
+
+#include "data_types.h"
 #include "common/debug_log.h"
 #include "raw_data_decoder.h"
 #include <cstdlib>
@@ -82,9 +82,16 @@ aclptiResult DataProcessor::PrepareReplay(const ReplayPrepareInfo& info)
         if (!PrepareReplayResult(info.replayId, info.kind)) {
             return ACLPTI_ERROR_INVALID_PARAMETER;
         }
+        // Keep parsing context for the complete result, independently of per-round data.
+        if (info.kind == ReplayKind::PcSampling && info.pmSamplingContext) {
+            result_.pmSamplingContexts.emplace(info.replayId, info.pmSamplingContext);
+        }
         active_.emplace();
         active_->info = info;
     } catch (const std::bad_alloc&) {
+        replays_.erase(info.replayId);
+        result_.pmSamplingContexts.erase(info.replayId);
+        active_.reset();
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     }
     return ACLPTI_SUCCESS;

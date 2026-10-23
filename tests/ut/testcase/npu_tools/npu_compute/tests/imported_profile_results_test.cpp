@@ -115,8 +115,8 @@ bool BuildRecursiveFixture(const boost::filesystem::path& fixture, std::vector<u
     if (!boost::filesystem::create_directories(fixture / "device_0" / "details") ||
         !WriteFile(fixture / "HardwareInfo.jsonl", HardwareInfoBytes()) ||
         !WriteFile(fixture / "metadata.json", Bytes("{\"version\":1}\n")) ||
-        !WriteFile(fixture / "profile.sqlite3", {0x53U, 0x51U, 0x4cU, 0x00U, 0xffU}) ||
-        !WriteFile(fixture / "trace.pb", {0x08U, 0x96U, 0x01U, 0x00U}) ||
+        !WriteFile(fixture / "profile.db", {0x53U, 0x51U, 0x4cU, 0x00U, 0xffU}) ||
+        !WriteFile(fixture / "trace.txt", Bytes("instruction text\n")) ||
         !WriteFile(fixture / "device_0" / "Memory.csv", Bytes("name,value\nmemory,2\n")) ||
         !WriteFile(fixture / "device_0" / "details" / "L2Cache.csv", Bytes("name,value\nl2,3\n"))) {
         return false;
@@ -274,10 +274,10 @@ TEST(NpuComputeImportedProfileResults, UnpacksRecursiveProfileResults)
     ASSERT_TRUE(actual == HardwareInfoBytes());
     ASSERT_TRUE(ReadFile(output / "metadata.json", &actual));
     ASSERT_TRUE(actual == Bytes("{\"version\":1}\n"));
-    ASSERT_TRUE(ReadFile(output / "profile.sqlite3", &actual));
+    ASSERT_TRUE(ReadFile(output / "profile.db", &actual));
     ASSERT_TRUE(actual == std::vector<uint8_t>({0x53U, 0x51U, 0x4cU, 0x00U, 0xffU}));
-    ASSERT_TRUE(ReadFile(output / "trace.pb", &actual));
-    ASSERT_TRUE(actual == std::vector<uint8_t>({0x08U, 0x96U, 0x01U, 0x00U}));
+    ASSERT_TRUE(ReadFile(output / "trace.txt", &actual));
+    ASSERT_TRUE(actual == Bytes("instruction text\n"));
     ASSERT_TRUE(ReadFile(output / "device_0" / "Memory.csv", &actual));
     ASSERT_TRUE(actual == Bytes("name,value\nmemory,2\n"));
     ASSERT_TRUE(ReadFile(output / "device_0" / "details" / "L2Cache.csv", &actual));
@@ -320,13 +320,13 @@ TEST(NpuComputeImportedProfileResults, RejectsExistingOutputWithoutPartialWrites
     const boost::filesystem::path output = temporary.Path() / "unpacked";
     ASSERT_TRUE(boost::filesystem::create_directory(output));
     const std::vector<uint8_t> existing = Bytes("keep-existing");
-    ASSERT_TRUE(WriteFile(output / "trace.pb", existing));
+    ASSERT_TRUE(WriteFile(output / "trace.txt", existing));
     ASSERT_TRUE(!UnpackImportedProfileResults(results, output, &error));
     ASSERT_TRUE(error.find("exists") != std::string::npos);
     ASSERT_TRUE(!boost::filesystem::exists(output / "HardwareInfo.jsonl"));
     ASSERT_TRUE(!boost::filesystem::exists(output / "device_0"));
     std::vector<uint8_t> actual;
-    ASSERT_TRUE(ReadFile(output / "trace.pb", &actual));
+    ASSERT_TRUE(ReadFile(output / "trace.txt", &actual));
     ASSERT_TRUE(actual == existing);
 }
 

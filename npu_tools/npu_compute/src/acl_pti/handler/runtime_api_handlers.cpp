@@ -17,6 +17,7 @@
 #include "aclpti/aclpti_runtime_api.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -25,6 +26,9 @@
 
 namespace aclpti::handler {
 namespace {
+// Host kernel argument slots use eight-byte alignment in the runtime ABI.
+constexpr std::size_t kHostArgumentAlignment = 8;
+constexpr std::size_t kHostArgumentAlignmentMask = kHostArgumentAlignment - 1;
 
 aclError MissingOriginalFunction(const char* apiName)
 {
@@ -198,7 +202,7 @@ aclError BuildInstrumentedReplayHostArgs(
             return ACL_ERROR_INVALID_PARAM;
         }
     } else {
-        if (argsSize > std::numeric_limits<std::size_t>::max() - 7U) {
+        if (argsSize > std::numeric_limits<std::size_t>::max() - kHostArgumentAlignmentMask) {
             npucompute::detail::DebugLog(
                 "aclpti",
                 "error operation=instrumented_replay_host_args status=%d function=%p reason=alignment_overflow "
@@ -206,7 +210,7 @@ aclError BuildInstrumentedReplayHostArgs(
                 ACL_ERROR_INVALID_PARAM, function, argsSize);
             return ACL_ERROR_INVALID_PARAM;
         }
-        insertionOffset = (argsSize + 7U) & ~static_cast<std::size_t>(7U);
+        insertionOffset = (argsSize + kHostArgumentAlignmentMask) & ~kHostArgumentAlignmentMask;
     }
     if (insertionOffset > hiddenOffset || hiddenOffset > std::numeric_limits<std::size_t>::max() - hiddenSize) {
         npucompute::detail::DebugLog(
@@ -230,12 +234,14 @@ aclError BuildInstrumentedReplayHostArgs(
     const std::size_t expandedSize = prefixSize + paddingBytes + hiddenSize;
     prepared.hostArguments.assign(expandedSize, 0);
     if (insertionOffset != 0) {
-        std::memcpy(prepared.hostArguments.data(), originalArgs, std::min(argsSize, insertionOffset));
+        std::copy_n(
+            static_cast<const std::uint8_t*>(originalArgs), std::min(argsSize, insertionOffset),
+            prepared.hostArguments.begin());
     }
     if (argsSize > insertionOffset) {
-        std::memcpy(
-            prepared.hostArguments.data() + hiddenOffset + hiddenSize,
-            static_cast<const std::uint8_t*>(originalArgs) + insertionOffset, argsSize - insertionOffset);
+        std::copy_n(
+            static_cast<const std::uint8_t*>(originalArgs) + insertionOffset, argsSize - insertionOffset,
+            prepared.hostArguments.begin() + hiddenOffset + hiddenSize);
     }
     if (placeholderCount != 0) {
         prepared.placeholders.assign(originalPlaceholders, originalPlaceholders + placeholderCount);
@@ -254,7 +260,9 @@ aclError BuildInstrumentedReplayHostArgs(
             }
         }
     }
-    std::memcpy(prepared.hostArguments.data() + hiddenOffset, &prepared.hiddenArgument, hiddenSize);
+    std::copy_n(
+        reinterpret_cast<const std::byte*>(&prepared.hiddenArgument), hiddenSize,
+        reinterpret_cast<std::byte*>(prepared.hostArguments.data() + hiddenOffset));
     return ACL_SUCCESS;
 }
 

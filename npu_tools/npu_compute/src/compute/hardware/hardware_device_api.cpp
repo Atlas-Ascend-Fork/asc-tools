@@ -61,9 +61,8 @@ Function ToFunction(void* symbol)
 {
     static_assert(std::is_pointer_v<Function>);
     static_assert(sizeof(Function) == sizeof(symbol));
-    Function function = nullptr;
-    std::memcpy(&function, &symbol, sizeof(function));
-    return function;
+    // POSIX dlsym returns function addresses through void*.
+    return reinterpret_cast<Function>(symbol);
 }
 
 template <typename Character, std::size_t Size>

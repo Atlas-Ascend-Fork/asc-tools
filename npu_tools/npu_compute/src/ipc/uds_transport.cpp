@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <poll.h>
 #include <sstream>
@@ -103,7 +104,7 @@ sockaddr_un Address(const std::string& name)
             name.find('\0') == std::string::npos,
         "invalid abstract UDS name");
     result.sun_family = AF_UNIX;
-    std::memcpy(result.sun_path + 1, name.data() + 1, name.size() - 1);
+    std::copy(name.begin() + 1, name.end(), std::begin(result.sun_path) + 1);
     return result;
 }
 socklen_t AddressLength(const std::string& name)
@@ -216,6 +217,7 @@ void ValidateType(Type type)
         case Type::Pmu:
         case Type::Pipeline:
         case Type::Hardware:
+        case Type::PmSampling:
             valid = true;
             break;
         default:

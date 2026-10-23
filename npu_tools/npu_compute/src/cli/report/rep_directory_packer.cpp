@@ -10,6 +10,7 @@
 #include "report/rep_directory_packer.h"
 
 #include "report/collection_file_validator.h"
+#include "report/pm_sampling_file_validator.h"
 #include "report/rep_encoder.h"
 
 #include <boost/filesystem.hpp>
@@ -199,7 +200,7 @@ bool PackDirectoryInternal(
         } else {
             if (!ResolveCollectionFileType(item.path, &entry.file_type, &itemError) ||
                 !ValidateCollectionFile(item.path, entry.file_type, &itemError) ||
-                !ReadFile(item.path, &entry.payload, &itemError)) {
+                !ValidatePmSamplingFile(item.path, &itemError) || !ReadFile(item.path, &entry.payload, &itemError)) {
                 issues.push_back(itemError);
                 continue;
             }

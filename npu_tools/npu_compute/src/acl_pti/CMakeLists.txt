@@ -28,6 +28,7 @@ add_library(acl_pti SHARED
   handler/runtime_api_handlers.cpp
   profiling/binary_registry.cpp
   profiling/binary_instrumenter.cpp
+  profiling/pm_sampling_instruction_map.cpp
 )
 target_include_directories(acl_pti PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/..

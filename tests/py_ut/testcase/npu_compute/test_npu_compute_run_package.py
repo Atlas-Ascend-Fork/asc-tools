@@ -84,6 +84,23 @@ FORBIDDEN_PATH_PREFIXES = (
 )
 LIST_PATH_PATTERN = re.compile(r"(?:^|\s)(\./\S+)")
 RUN_PACKAGE = os.environ.get("ASC_TOOLS_RUN_PACKAGE")
+UNINSTALL_SCRIPT = (
+    Path(__file__).parents[4]
+    / "scripts/package/asc-tools/scripts/asc-tools_custom_uninstall.sh"
+)
+
+
+def runtime_manifest():
+    repo_root = Path(__file__).parents[4]
+    package_config = ET.parse(
+        repo_root / "scripts/package/asc-tools/asc-tools.xml"
+    ).getroot()
+    return {
+        (file_info.attrib["dst_path"], file_node.attrib["value"])
+        for file_info in package_config.findall("file_info")
+        if file_info.attrib["value"].startswith("npu_tools_")
+        for file_node in file_info.findall("file")
+    }
 
 
 def list_package_paths(package):
@@ -155,6 +172,85 @@ def create_run_package(tmp_path, paths, return_code=0):
         encoding="utf-8",
     )
     return package
+
+
+def test_uninstall_delegates_runtime_removal_to_package_parser(tmp_path):
+    script = (UNINSTALL_SCRIPT.parent / "run_asc-tools_uninstall.sh").read_text(
+        encoding="utf-8"
+    )
+    body = (
+        "uninstallTool()"
+        + script.split("uninstallTool()", 1)[1].split("uninstallProfiling()", 1)[0]
+    )
+    parser = tmp_path / "parser.sh"
+    arguments = tmp_path / "arguments.txt"
+    parser.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$TEST_ARGUMENTS"\n', encoding="utf-8"
+    )
+    parser.chmod(0o750)
+    common = tmp_path / "common.inc"
+    common.write_text('is_multi_version_pkg() { eval "$1=false"; }\n', encoding="utf-8")
+    version = tmp_path / "version.info"
+    version.write_text("version=1\n", encoding="utf-8")
+    filelist = tmp_path / "filelist.csv"
+    filelist.touch()
+    install_root = tmp_path / "cann"
+    install_root.mkdir()
+    environment = os.environ.copy()
+    environment.update(
+        TEST_ARGUMENTS=str(arguments),
+        TEST_ROOT=str(install_root),
+        TEST_VERSION=str(version),
+        TEST_COMMON=str(common),
+        TEST_PARSER=str(parser),
+        TEST_FILELIST=str(filelist),
+    )
+    commands = [
+        body,
+        "log() { :; }",
+        "log_and_print() { :; }",
+        'install_dir="$TEST_ROOT"',
+        'input_install_path="$TEST_ROOT"',
+        'VERSION_INFO="$TEST_VERSION"',
+        'COMMON_INC="$TEST_COMMON"',
+        'INSTALL_COMMON_PARSER_PATH="$TEST_PARSER"',
+        'FILELIST_PATH="$TEST_FILELIST"',
+        "PACKAGE_NAME=asc-tools",
+        "install_type=full",
+        "feature_type=all",
+        "removeVersionInfo() { :; }",
+        "uninstallTool",
+    ]
+    result = subprocess.run(
+        ["bash", "-c", "\n".join(commands)],
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    actual = arguments.read_text().splitlines()
+    assert actual[0] == "--uninstall"
+    assert "--use-share-info" in actual and "--remove-install-info" in actual
+    assert actual[-4:] == ["full", str(install_root), str(filelist), "all"]
+
+
+def test_runtime_manifest_does_not_own_unrelated_shared_files():
+    files = runtime_manifest()
+    assert ("tools/npu_tools/lib64", "libanother_tool.so") not in files
+    assert ("$(TARGET_ENV)/bin", "keep") not in files
+    assert all(name != "*" for _, name in files)
+
+
+def test_custom_uninstall_leaves_manifest_owned_runtime_files_to_parser():
+    custom = UNINSTALL_SCRIPT.read_text(encoding="utf-8")
+    assert "uninstallNpuTools" not in custom
+    assert not re.search(r"rm[^\n]*npu_tools", custom)
+    script = (UNINSTALL_SCRIPT.parent / "run_asc-tools_uninstall.sh").read_text(
+        encoding="utf-8"
+    )
+    body = script.split("uninstallTool()", 1)[1].split("uninstallProfiling()", 1)[0]
+    assert '"$INSTALL_COMMON_PARSER_PATH" --uninstall' in body
+    assert '"${FILELIST_PATH}"' in body
 
 
 def test_complete_run_package_passes(tmp_path):
@@ -265,17 +361,7 @@ def test_npu_compute_install_rules_are_owned_by_product_cmake():
 
 
 def test_npu_compute_package_manifest_registers_runtime_files_only():
-    repo_root = Path(__file__).parents[4]
-    package_config = ET.parse(
-        repo_root / "scripts/package/asc-tools/asc-tools.xml"
-    ).getroot()
-    packaged_files = {
-        (file_info.attrib["dst_path"], file_node.attrib["value"])
-        for file_info in package_config.findall("file_info")
-        if file_info.attrib.get("value", "").startswith("npu_tools_")
-        for file_node in file_info.findall("file")
-    }
-    assert packaged_files == {
+    assert runtime_manifest() == {
         ("$(TARGET_ENV)/bin", "npu-compute"),
         ("$(TARGET_ENV)/bin", "npu-check"),
         ("tools/npu_tools/bin", "npu-compute"),
@@ -283,8 +369,8 @@ def test_npu_compute_package_manifest_registers_runtime_files_only():
         ("tools/npu_tools/lib64", "libacl_pti.so"),
         ("tools/npu_tools/lib64", "libacl_tool_injection.so"),
         ("tools/npu_tools/lib64", "libnpu_compute_processor.so"),
-        ("tools/npu_tools/lib64", "libnpu_check_processor.so"),
         ("tools/npu_tools/lib64", "libacl_san.so"),
+        ("tools/npu_tools/lib64", "libnpu_check_processor.so"),
     }
 
 

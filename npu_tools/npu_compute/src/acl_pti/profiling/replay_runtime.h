@@ -31,6 +31,11 @@ public:
     aclptiResult SetConfig(const aclptiRangeProfilerSetConfigParams* params);
 
     bool CollectPipeline() const { return rangeProfiler_.CollectPipeline(); }
+    bool CollectPcSampling() const { return rangeProfiler_.CollectPcSampling(); }
+    bool GetPmSamplingSnapshot(aclrtFuncHandle function, PmSamplingBinarySnapshot& snapshot)
+    {
+        return binaryRegistry_.GetPmSamplingSnapshot(function, snapshot);
+    }
     bool GetInstrumentedTraceArgumentOffset(aclrtFuncHandle function, std::uint32_t& offset)
     {
         return binaryRegistry_.GetInstrumentedTraceArgumentOffset(function, offset);

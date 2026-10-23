@@ -8,11 +8,15 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "runtime/npu_compute_runtime.h"
+#include <vector>
 
 #include "artifact_sink.h"
 #include "common/debug_log.h"
 #include "hardware/hardware_device_api.h"
 #include "report/report_writer.h"
+#include "pm_sampling/pm_sampling_decoder.h"
+#include "pm_sampling/pm_sampling_sqlite_writer.h"
+#include "pm_sampling/pm_sampling_artifacts.h"
 
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
@@ -202,6 +206,7 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
         csv_config_.aivFrequencyMhz = parsed;
         csv_frequency_override_ = true;
     }
+    pm_sampling_enabled_ = section_config_.Params()->collectPcSampling;
     pipeline_enabled_ = section_config_.PipelineEnabled();
     if (pipeline_enabled_) {
         if (!CreatePrivatePipelineRoot(&pipeline_temporary_root_, &error)) {
@@ -380,6 +385,11 @@ int NpuComputeRuntime::ShutdownAfterPtiDrain()
             status = ACLPTI_ERROR_TRACE_WRITE;
         }
     }
+    if (pm_sampling_enabled_ && (!PmSamplingComplete() || error_count_ != 0)) {
+        if (error_count_ == 0)
+            ++error_count_;
+        status = ACLPTI_ERROR_TRACE_INCOMPLETE;
+    }
     const int result = status == ACLPTI_SUCCESS ? 0 : kInitializeFailed;
     return on_drained_ ? on_drained_(result) : result;
 }
@@ -432,10 +442,20 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
             replayIds.insert(row.replayId);
         }
     }
+    for (const auto& entry : result->pipelineData)
+        replayIds.insert(entry.first);
+    for (const auto& entry : result->pmSamplingContexts)
+        replayIds.insert(entry.first);
+    for (const auto& chunk : result->pcSamplingData)
+        replayIds.insert(chunk.replayId);
     replay_count_ += replayIds.size();
-    const aclptiResult csvStatus = WritePmuReport(
-        *result, section_config_.Sections(), csvConfig, metadata, artifact_sink_, ReportPrefix(report_sequence_),
-        &degraded_);
+    const auto prefix = ReportPrefix(report_sequence_);
+    aclptiResult csvStatus = ACLPTI_SUCCESS;
+    if (!section_config_.Sections().empty() || pipeline_enabled_) {
+        csvStatus = WritePmuReport(
+            *result, section_config_.Sections(), csvConfig, metadata, artifact_sink_, prefix, &degraded_);
+    }
+
     ++report_sequence_;
     aclptiResult firstStatus = result->status == ACLPTI_SUCCESS ? csvStatus : result->status;
 
@@ -528,8 +548,151 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
         }
         ++pipeline_result_sequence_;
     }
+    if (pm_sampling_enabled_) {
+        const auto samplingStatus = ProcessPmSampling(*result, prefix);
+        if (samplingStatus != ACLPTI_SUCCESS) {
+            ++pm_sampling_failures_;
+            ++error_count_;
+            if (firstStatus == ACLPTI_SUCCESS)
+                firstStatus = samplingStatus;
+        }
+    }
     // Preserve the source failure while still writing data from successful replays.
     return firstStatus;
+}
+
+aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix)
+{
+    // Only this consumer worker writes sampling files. Keep both ELF images alive
+    // through symbolization, even if the application has already unloaded them.
+    struct Staging {
+        boost::filesystem::path directory;
+        ~Staging()
+        {
+            boost::system::error_code ignored;
+            if (!directory.empty())
+                boost::filesystem::remove_all(directory, ignored);
+        }
+    } staging;
+    try {
+        // Current replay configuration creates exactly one PmSampling replay for
+        // each original launch. Never merge PC keys from unrelated ELF contexts.
+        if (result.pmSamplingContexts.size() != 1 || !result.pmSamplingContexts.begin()->second) {
+            throw std::runtime_error("missing or ambiguous PmSampling ELF context");
+        }
+        const auto& context = *result.pmSamplingContexts.begin();
+        PmSamplingResult sampling;
+        bool complete = true;
+        const auto failed = [&](const std::string& file, const std::string& stage, const std::string& reason) {
+            complete = false;
+            std::fprintf(
+                stderr,
+                "[libnpu-compute] %s%s: PmSampling %s failed: %s; "
+                "excluded this file; other valid results are retained\n",
+                prefix.c_str(), file.c_str(), stage.c_str(), reason.c_str());
+        };
+        try {
+            if (!context.second->instructionMapError.empty()) {
+                throw std::runtime_error("instruction mapping failed: " + context.second->instructionMapError);
+            }
+            const auto failedReplay = result.errorStats.failedRecordCountByReplay.find(context.first);
+            if (failedReplay != result.errorStats.failedRecordCountByReplay.end() && failedReplay->second != 0) {
+                throw std::runtime_error(
+                    "sampling replay " + std::to_string(context.first) + " contains " +
+                    std::to_string(failedReplay->second) + " failed records");
+            }
+            PmSamplingDecoder decoder(context.first, context.second);
+            for (const auto& chunk : result.pcSamplingData) {
+                if (!decoder.Consume(chunk))
+                    throw std::runtime_error(decoder.Error());
+            }
+            if (!decoder.Finish(sampling))
+                throw std::runtime_error(decoder.Error());
+            if (sampling.rows.empty())
+                throw std::runtime_error(
+                    result.pcSamplingData.empty() ?
+                        "Msprof returned no PC sampling records; PC/state sampling requires SIMT instructions" :
+                        "no business samples received after excluding instrumentation instructions");
+        } catch (const std::exception& error) {
+            sampling = {};
+            failed("summary.db", "sample decoding", error.what());
+        }
+
+        const boost::filesystem::path parent("/tmp");
+        std::string pattern = (parent / ".npu-compute-pm-sampling-XXXXXX").string();
+        if (::mkdtemp(pattern.data()) == nullptr) {
+            throw std::runtime_error("cannot create PmSampling staging: " + std::string(std::strerror(errno)));
+        }
+        staging.directory = pattern;
+        std::string error;
+        const auto database = staging.directory / "summary.db";
+        std::vector<boost::filesystem::path> files;
+        bool databaseReady = false;
+        if (!sampling.rows.empty()) {
+            databaseReady = WritePmSamplingSqlite(database.string(), sampling, error);
+            if (databaseReady)
+                files.push_back(database);
+            else
+                failed("summary.db", "database writing", error);
+        }
+        PmSamplingArtifacts artifacts;
+        // Both LLVM inputs default to the original ELF, matching the normalized
+        // sampling addresses. Each output can succeed independently.
+        if (!GeneratePmSamplingArtifacts(
+                staging.directory.string(), *context.second, sampling, PmSamplingArtifactOptions{}, artifacts, error)) {
+            complete = false;
+            std::fprintf(stderr, "[libnpu-compute] PmSampling LLVM generation: %s\n", error.c_str());
+        }
+        if (!artifacts.disassemblyPath.empty())
+            files.emplace_back(artifacts.disassemblyPath);
+        if (!artifacts.pcStackPath.empty())
+            files.emplace_back(artifacts.pcStackPath);
+        // Transport errors still abort this collection: file boundaries and the
+        // receiver state cannot be trusted after a failed Begin/Write/Commit.
+        for (const auto& file : files) {
+            bool started = false;
+            try {
+                std::ifstream input(file.string(), std::ios::binary);
+                if (!input)
+                    throw std::runtime_error("cannot read PmSampling artifact");
+                artifact_sink_->Begin(prefix + file.filename().string());
+                started = true;
+                constexpr std::size_t kArtifactTransferBufferBytes = 16 * 1024;
+                std::array<char, kArtifactTransferBufferBytes> buffer{};
+                while (input) {
+                    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                    if (input.gcount() > 0) {
+                        artifact_sink_->Write(
+                            std::string_view(buffer.data(), static_cast<std::size_t>(input.gcount())));
+                    }
+                }
+                if (!input.eof())
+                    throw std::runtime_error("cannot read complete PmSampling artifact");
+                artifact_sink_->Commit(file == database ? sampling.rows.size() : 0);
+                started = false;
+            } catch (...) {
+                if (started)
+                    artifact_sink_->Abort();
+                throw;
+            }
+        }
+        boost::filesystem::remove_all(staging.directory);
+        staging.directory.clear();
+        if (databaseReady)
+            row_count_ += sampling.rows.size();
+        if (complete)
+            ++pm_sampling_completed_;
+        detail::DebugLog(
+            "npu-compute", "PmSampling completed: rows=%llu unresolvedPCs=%llu",
+            static_cast<unsigned long long>(sampling.rows.size()),
+            static_cast<unsigned long long>(artifacts.unresolvedPcCount));
+        return complete ? ACLPTI_SUCCESS : ACLPTI_ERROR_TRACE_INCOMPLETE;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[libnpu-compute] PmSampling processing failed: %s\n", error.what());
+    } catch (...) {
+        std::fprintf(stderr, "[libnpu-compute] PmSampling processing failed: unexpected exception\n");
+    }
+    return ACLPTI_ERROR_TRACE_WRITE;
 }
 
 aclptiResult NpuComputeRuntime::PublishPipelineArtifacts()
@@ -566,7 +729,8 @@ aclptiResult NpuComputeRuntime::PublishPipelineArtifacts()
             try {
                 artifact_sink_->Begin(artifactName);
                 artifactStarted = true;
-                std::array<char, 16384> buffer{};
+                constexpr std::size_t kArtifactTransferBufferBytes = 16 * 1024;
+                std::array<char, kArtifactTransferBufferBytes> buffer{};
                 while (input.good()) {
                     input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
                     const auto count = input.gcount();

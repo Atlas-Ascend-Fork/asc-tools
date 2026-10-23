@@ -7,9 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-#include <gtest/gtest.h>
-
 #include "report/collection_file_validator.h"
+
+#include <gtest/gtest.h>
 
 #include <cstdio>
 #include <boost/filesystem.hpp>
@@ -94,8 +94,8 @@ int TestFileTypeResolution(const boost::filesystem::path& directory)
     };
     const Case cases[] = {
         {"metadata.json", NpuRepFileType::Json},      {"HardwareInfo.jsonl", NpuRepFileType::Jsonl},
-        {"PipeUtilization.csv", NpuRepFileType::Csv}, {"records.sqlite3", NpuRepFileType::Sqlite3},
-        {"records.pb", NpuRepFileType::Protobuf},     {"records.protobuf", NpuRepFileType::Protobuf},
+        {"PipeUtilization.csv", NpuRepFileType::Csv}, {"records.db", NpuRepFileType::Sqlite},
+        {"records.txt", NpuRepFileType::Txt},
     };
 
     for (const Case& test_case : cases) {
@@ -108,9 +108,10 @@ int TestFileTypeResolution(const boost::filesystem::path& directory)
 
     NpuRepFileType actual = NpuRepFileType::NpuRep;
     std::string error;
-    const boost::filesystem::path unknown = directory / "unknown.txt";
+    const boost::filesystem::path unknown = directory / "unknown.bin";
     CHECK(!ResolveCollectionFileType(unknown, &actual, &error));
     CHECK(error.find(unknown.string()) != std::string::npos);
+    CHECK(!ResolveCollectionFileType(directory / "legacy.sqlite3", &actual, &error));
     return 0;
 }
 
@@ -177,14 +178,13 @@ int TestOtherSupportedFiles(const boost::filesystem::path& directory)
 {
     const NpuRepFileType types[] = {
         NpuRepFileType::Json,
-        NpuRepFileType::Sqlite3,
-        NpuRepFileType::Protobuf,
-        NpuRepFileType::Protobuf,
+        NpuRepFileType::Sqlite,
+        NpuRepFileType::Txt,
     };
-    const char* names[] = {"metadata.json", "records.sqlite3", "records.pb", "records.protobuf"};
+    const char* names[] = {"metadata.json", "records.db", "records.txt"};
     std::string error;
 
-    for (std::size_t index = 0; index < 4U; ++index) {
+    for (std::size_t index = 0; index < 3U; ++index) {
         const boost::filesystem::path path = directory / names[index];
         CHECK(WriteFile(path, "payload"));
         CHECK(ValidateCollectionFile(path, types[index], &error));

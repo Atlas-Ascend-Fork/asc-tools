@@ -85,8 +85,8 @@ bool IsKnownLeafType(NpuRepFileType type)
         case NpuRepFileType::Json:
         case NpuRepFileType::Jsonl:
         case NpuRepFileType::Csv:
-        case NpuRepFileType::Sqlite3:
-        case NpuRepFileType::Protobuf:
+        case NpuRepFileType::Sqlite:
+        case NpuRepFileType::Txt:
             return true;
         case NpuRepFileType::NpuRep:
             return false;

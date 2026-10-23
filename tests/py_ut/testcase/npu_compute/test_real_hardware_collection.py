@@ -143,8 +143,9 @@ def _assert_callback_flow(stderr, callback_id):
         for line in stderr.splitlines()
         if "[acl_pti_callback_stub] enable=1" in line
     ]
-    assert len(enable_lines) == 4
-    for line, cbid in zip(enable_lines, (13, 0, 16, 17)):
+    callbacks = (13, 0, 16, 17, 18, 3, 12, 15, 14)
+    assert len(enable_lines) == len(callbacks)
+    for line, cbid in zip(enable_lines, callbacks):
         assert f"cbid={cbid}" in line
         assert "result=0" in line
 
@@ -153,8 +154,8 @@ def _assert_callback_flow(stderr, callback_id):
         for line in stderr.splitlines()
         if "[acl_pti_callback_stub] enable=0" in line
     ]
-    assert len(disable_lines) == 4
-    for line, cbid in zip(disable_lines, (17, 16, 0, 13)):
+    assert len(disable_lines) == len(callbacks)
+    for line, cbid in zip(disable_lines, reversed(callbacks)):
         assert f"cbid={cbid}" in line
         assert "result=0" in line
 

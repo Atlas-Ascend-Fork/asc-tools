@@ -654,6 +654,7 @@ TEST(NpuComputePtiDataModule, OpaquePcSamplingChunk)
     ASSERT_TRUE(result->status == ACLPTI_SUCCESS);
     ASSERT_TRUE(result->pcSamplingData.at(0).deviceId == 3);
     ASSERT_TRUE(result->pipelineData.empty());
+    ASSERT_TRUE(result->pmSamplingContexts.empty());
     ASSERT_TRUE(result->pcSamplingData.size() == 1);
     ASSERT_TRUE(result->pcSamplingData[0].replayId == 11);
     ASSERT_TRUE(result->pcSamplingData[0].deviceId == 3);
@@ -661,6 +662,48 @@ TEST(NpuComputePtiDataModule, OpaquePcSamplingChunk)
     ASSERT_TRUE(result->pcSamplingData[0].offset == 0);
     ASSERT_TRUE(result->pcSamplingData[0].isLastChunk);
     ASSERT_TRUE((result->pcSamplingData[0].bytes == std::vector<uint8_t>{0xaa, 0xbb, 0xcc, 0xdd}));
+}
+
+TEST(NpuComputePtiDataModule, PcSamplingContextSurvivesReleaseAndResetsOnRestart)
+{
+    constexpr uint64_t kReplayId = 11;
+    constexpr std::size_t kCollectionCount = 2;
+    auto& module = data::ProfilingDataManager::Instance();
+    for (std::size_t collection = 0; collection < kCollectionCount; ++collection) {
+        ResultSink sink;
+        aclptiProfilingDataCallback callback = [&sink](const auto& result) { return sink.Accept(result); };
+        ASSERT_TRUE(module.Initialize(std::move(callback)) == ACLPTI_SUCCESS);
+        data::ReplayPrepareInfo info{kReplayId, PmuEvents({}), data::ReplayKind::PcSampling};
+        std::weak_ptr<const aclptiPmSamplingContext> contextLifetime;
+        const bool hasContext = collection == 0;
+        if (hasContext) {
+            auto context = std::make_shared<aclptiPmSamplingContext>();
+            context->instructionMapError = "instruction mapping failed";
+            contextLifetime = context;
+            info.pmSamplingContext = std::move(context);
+        }
+        ASSERT_TRUE(module.PrepareReplay(info) == ACLPTI_SUCCESS);
+        info.pmSamplingContext.reset();
+        ASSERT_TRUE(
+            module.RecordReplayStatus({kReplayId, ACLPTI_ERROR_PROFILING_FAILED}).status ==
+            ACLPTI_ERROR_PROFILING_FAILED);
+        ASSERT_TRUE(module.ReleaseReplay(kReplayId) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(contextLifetime.expired() != hasContext);
+
+        // Rejected duplicate IDs must not replace the context of the prepared replay.
+        info.pmSamplingContext = std::make_shared<aclptiPmSamplingContext>();
+        ASSERT_TRUE(module.PrepareReplay(info) == ACLPTI_ERROR_INVALID_PARAMETER);
+        ASSERT_TRUE(module.Shutdown() == ACLPTI_SUCCESS);
+        const auto result = sink.Wait();
+        ASSERT_TRUE(result != nullptr);
+        ASSERT_TRUE(result->status == ACLPTI_ERROR_PROFILING_FAILED);
+        ASSERT_TRUE(result->pcSamplingData.empty());
+        ASSERT_TRUE(result->pmSamplingContexts.size() == (hasContext ? 1U : 0U));
+        if (hasContext) {
+            ASSERT_TRUE(result->pmSamplingContexts.at(kReplayId) == contextLifetime.lock());
+            ASSERT_TRUE(result->pmSamplingContexts.at(kReplayId)->instructionMapError == "instruction mapping failed");
+        }
+    }
 }
 
 TEST(NpuComputePtiDataModule, OpaqueAggregationAllocationFailure)

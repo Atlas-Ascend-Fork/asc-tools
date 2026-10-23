@@ -42,6 +42,7 @@ public:
     aclptiResult SetConfig(const aclptiRangeProfilerSetConfigParams* params);
 
     bool CollectPipeline() const { return collectPipeline_; }
+    bool CollectPcSampling() const { return collectPcSampling_; }
 
     /// Replays a kernel and distinguishes profiling-only failures from unreliable device results.
     aclptiResult ReplayKernel(

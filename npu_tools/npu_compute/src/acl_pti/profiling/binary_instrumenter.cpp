@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "binary_instrumenter.h"
+#include <sys/stat.h>
 #include "common/debug_log.h"
 
 #include <algorithm>
@@ -20,6 +21,7 @@
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <fstream>
+#include <fcntl.h>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -482,7 +484,7 @@ bool WriteProbeFiles(const fs::path& directory)
            WriteKernelEndControl(directory);
 }
 
-bool Run(std::initializer_list<std::string> arguments)
+bool Run(std::initializer_list<std::string> arguments, const fs::path& stdoutFile = {})
 {
     std::vector<char*> argv;
     for (const auto& argument : arguments) {
@@ -490,7 +492,18 @@ bool Run(std::initializer_list<std::string> arguments)
     }
     argv.push_back(nullptr);
     pid_t child = -1;
-    const int error = posix_spawnp(&child, argv[0], nullptr, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions) != 0) {
+        return false;
+    }
+    if (!stdoutFile.empty() &&
+        posix_spawn_file_actions_addopen(
+            &actions, STDOUT_FILENO, stdoutFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR) != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+        return false;
+    }
+    const int error = posix_spawnp(&child, argv[0], &actions, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
     int status = 0;
     pid_t waited = -1;
     if (error == 0) {
@@ -624,9 +637,13 @@ bool PatchKernelParamMetadata(
 } // namespace
 
 bool InstrumentKernelEnd(
-    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* outputTraceArgumentOffset)
+    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* outputTraceArgumentOffset,
+    PmSamplingInstructionMap* pmSamplingMap)
 {
     output.clear();
+    if (pmSamplingMap != nullptr) {
+        *pmSamplingMap = {};
+    }
     if (outputTraceArgumentOffset != nullptr) {
         *outputTraceArgumentOffset = 0;
     }
@@ -683,7 +700,41 @@ bool InstrumentKernelEnd(
         npucompute::detail::DebugLog("aclpti", "kernel-end parameter metadata update failed: %s", diagnostic.c_str());
         return false;
     }
-    output.assign(patchedImage.begin(), patchedImage.end());
+    std::vector<char> result(patchedImage.begin(), patchedImage.end());
+    if (pmSamplingMap != nullptr) {
+        try {
+            const std::vector<char> original(static_cast<const char*>(data), static_cast<const char*>(data) + size);
+            if (!BuildPmSamplingFunctionMap(original, result, *pmSamplingMap, diagnostic)) {
+                throw std::runtime_error(diagnostic);
+            }
+            fs::path objdump;
+            Require(
+                FindTool(tools.tuner.parent_path(), "llvm-objdump", objdump),
+                "cannot find llvm-objdump for PmSampling instruction mapping");
+            const auto oldDisasm = temporary.path / "original.txt";
+            const auto newDisasm = temporary.path / "companion.txt";
+            Require(
+                Run({objdump.string(), "-d", input.string()}, oldDisasm) &&
+                    Run({objdump.string(), "-d", patched.string()}, newDisasm),
+                "llvm-objdump failed during PmSampling instruction mapping");
+            const auto read = [](const fs::path& path) {
+                std::ifstream stream(path.string(), std::ios::binary);
+                std::string text{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+                Require(!stream.bad(), "cannot read disassembly");
+                return text;
+            };
+            if (!BuildPmSamplingInstructionMap(
+                    original, result, read(oldDisasm), read(newDisasm), *pmSamplingMap, diagnostic)) {
+                npucompute::detail::DebugLog("aclpti", "PmSampling instruction map failed: %s", diagnostic.c_str());
+            }
+        } catch (const std::exception& error) {
+            pmSamplingMap->business.clear();
+            pmSamplingMap->excluded.clear();
+            pmSamplingMap->error = error.what();
+            npucompute::detail::DebugLog("aclpti", "PmSampling disassembly failed: %s", error.what());
+        }
+    }
+    output.swap(result);
     if (outputTraceArgumentOffset != nullptr) {
         *outputTraceArgumentOffset = traceArgumentOffset;
     }

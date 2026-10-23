@@ -33,6 +33,7 @@ struct ReplayPrepareInfo {
     uint64_t replayId;
     PmuSlots pmuEventIds;
     ReplayKind kind = ReplayKind::Pmu;
+    std::shared_ptr<const aclptiPmSamplingContext> pmSamplingContext;
 };
 
 struct ReplayStopInfo {

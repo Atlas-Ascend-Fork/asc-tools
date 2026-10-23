@@ -18,6 +18,9 @@ add_library(npu_compute SHARED
   ipc/artifact_publisher.cpp
   ipc/uds_server.cpp
   npu_compute.cpp
+  pm_sampling/pm_sampling_artifacts.cpp
+  pm_sampling/pm_sampling_decoder.cpp
+  pm_sampling/pm_sampling_sqlite_writer.cpp
   pmu/pmu_data_consumer.cpp
   report/pmu_csv_writer.cpp
   pmu/pmu_metric_builder.cpp
@@ -41,7 +44,7 @@ else()
 endif()
 target_link_libraries(npu_compute
   PUBLIC ${NPU_COMPUTE_LIBRARY_HEADERS}
-  PRIVATE ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc
+  PRIVATE ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc npu_compute_sqlite_runtime
 )
 if(TARGET acl_pti)
   target_link_libraries(npu_compute PRIVATE acl_pti)

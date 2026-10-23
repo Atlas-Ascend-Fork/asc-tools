@@ -39,24 +39,24 @@ aclptiResult ReplayRuntime::SetConfig(const aclptiRangeProfilerSetConfigParams* 
 aclptiResult ReplayRuntime::RegisterBinary(
     const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary)
 {
-    if (!CollectPipeline() || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling()) || !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(binaryRegistry_.RegisterBinary(data, size, options, binary));
+    return HandleProfilingResult(binaryRegistry_.RegisterBinary(data, size, options, binary, CollectPcSampling()));
 }
 
 aclptiResult ReplayRuntime::RegisterBinaryFromFile(
     const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary)
 {
-    if (!CollectPipeline() || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling()) || !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(binaryRegistry_.RegisterBinaryFromFile(path, options, binary));
+    return HandleProfilingResult(binaryRegistry_.RegisterBinaryFromFile(path, options, binary, CollectPcSampling()));
 }
 
 aclptiResult ReplayRuntime::RegisterBinaryFunction(aclrtBinHandle binary, const char* name, aclrtFuncHandle function)
 {
-    if (!CollectPipeline() || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling()) || !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
     return HandleProfilingResult(binaryRegistry_.RegisterBinaryFunction(binary, name, function));
@@ -64,7 +64,7 @@ aclptiResult ReplayRuntime::RegisterBinaryFunction(aclrtBinHandle binary, const 
 
 aclptiResult ReplayRuntime::RegisterBinaryFunction(aclrtBinHandle binary, std::uint64_t entry, aclrtFuncHandle function)
 {
-    if (!CollectPipeline() || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling()) || !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
     return HandleProfilingResult(binaryRegistry_.RegisterBinaryFunction(binary, entry, function));
@@ -72,10 +72,10 @@ aclptiResult ReplayRuntime::RegisterBinaryFunction(aclrtBinHandle binary, std::u
 
 aclptiResult ReplayRuntime::RegisterSymbolFunction(aclrtFuncHandle function)
 {
-    if (!CollectPipeline() || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling()) || !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(binaryRegistry_.RegisterSymbolFunction(function));
+    return HandleProfilingResult(binaryRegistry_.RegisterSymbolFunction(function, CollectPcSampling()));
 }
 
 aclptiResult ReplayRuntime::PrepareBinaryUnload(aclrtBinHandle binary, BinaryRegistry::UnloadContext& context)

@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include <gtest/gtest.h>
+#include <algorithm>
 
 #include "acl_pti/profiling/binary_instrumenter.h"
 #include "acl_pti/profiling/binary_registry.h"
@@ -16,7 +17,8 @@
 #include <fstream>
 #include <vector>
 
-using namespace aclpti::profiling;
+using aclpti::profiling::BinaryRegistry;
+using aclpti::profiling::PmSamplingBinarySnapshot;
 namespace {
 int binaryTokens[32];
 int functionTokens[32];
@@ -27,6 +29,12 @@ void* failUnload = nullptr;
 bool failTools = false;
 bool failBinary = false;
 bool failName = false;
+bool failAddress = false;
+bool invalidFallbackElf = false;
+int instrumentationCalls = 0;
+int snapshotAddressCalls = 0;
+std::uint64_t lastEntry = 0;
+std::vector<char> fallbackElf(64, 0);
 std::vector<void*> unloaded;
 const void* images[32]{};
 std::size_t imageSizes[32]{};
@@ -70,8 +78,9 @@ aclError Lookup(aclrtBinHandle binary, const char*, aclrtFuncHandle* result)
     *result = &functionTokens[static_cast<int*>(binary) - binaryTokens];
     return ACL_SUCCESS;
 }
-aclError Entry(aclrtBinHandle binary, std::uint64_t, aclrtFuncHandle* result)
+aclError Entry(aclrtBinHandle binary, std::uint64_t entry, aclrtFuncHandle* result)
 {
+    lastEntry = entry;
     return Lookup(binary, "kernel", result);
 }
 } // namespace
@@ -79,6 +88,15 @@ aclError Entry(aclrtBinHandle binary, std::uint64_t, aclrtFuncHandle* result)
 extern "C" void* acltoolGetOriginalRuntimeApi(aclrtApiId id)
 {
     switch (id) {
+        case ACL_RT_API_aclrtMemcpy:
+            return reinterpret_cast<void*>(
+                +[](void* target, std::size_t max, const void* source, std::size_t size, aclrtMemcpyKind) -> aclError {
+                    if (size > max)
+                        return ACL_ERROR_INVALID_PARAM;
+                    std::copy_n(
+                        reinterpret_cast<const unsigned char*>(source), size, reinterpret_cast<unsigned char*>(target));
+                    return ACL_SUCCESS;
+                });
         case ACL_RT_API_aclrtBinaryLoadFromData:
             return reinterpret_cast<void*>(&Load);
         case ACL_RT_API_aclrtBinaryUnLoad:
@@ -107,12 +125,49 @@ extern "C" aclError BinaryRegistryTestGetFunctionName(aclrtFuncHandle, uint32_t,
 {
     if (failName)
         return ACL_ERROR_RT_FAILURE;
-    std::strcpy(name, "kernel");
+    constexpr char kKernelName[] = "kernel";
+    std::copy_n(kKernelName, sizeof(kKernelName), name);
+    return ACL_SUCCESS;
+}
+extern "C" __attribute__((visibility("default"))) aclError
+BinaryRegistryTestGetFunctionAddr(const void*, void**, void**) __asm__("aclrtGetFunctionAddr");
+extern "C" __attribute__((visibility("default"))) aclError
+BinaryRegistryTestGetFunctionAddr(const void*, void** aic, void** aiv)
+{
+    ++snapshotAddressCalls;
+    if (failAddress)
+        return ACL_ERROR_RT_FAILURE;
+    *aic = nullptr;
+    *aiv = reinterpret_cast<void*>(0x12000000100ULL);
+    return ACL_SUCCESS;
+}
+extern "C" __attribute__((visibility("default"))) aclError
+BinaryRegistryTestGetBinaryAddress(aclrtBinHandle, void**, std::size_t*) __asm__("aclrtBinaryGetDevAddress");
+extern "C" __attribute__((visibility("default"))) aclError
+BinaryRegistryTestGetBinaryAddress(aclrtBinHandle, void** address, std::size_t* size)
+{
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(
+            invalidFallbackElf ? "BAD!" :
+                                 "\x7f"
+                                 "ELF"),
+        4, reinterpret_cast<unsigned char*>(fallbackElf.data()));
+    *address = fallbackElf.data();
+    *size = fallbackElf.size();
     return ACL_SUCCESS;
 }
 namespace aclpti::profiling {
-bool InstrumentKernelEnd(const void*, std::size_t, std::vector<char>& output, std::uint32_t* traceArgumentOffset)
+bool InstrumentKernelEnd(
+    const void*, std::size_t, std::vector<char>& output, std::uint32_t* traceArgumentOffset,
+    PmSamplingInstructionMap* pmSamplingMap)
 {
+    ++instrumentationCalls;
+    if (pmSamplingMap != nullptr) {
+        pmSamplingMap->business = {{0x100, 0}};
+        pmSamplingMap->excluded = {0x104};
+        pmSamplingMap->functionEntries = {{"kernel", 0x100}};
+        pmSamplingMap->relocatedEntries = {{0, 0x100}};
+    }
     if (traceArgumentOffset != nullptr) {
         *traceArgumentOffset = 56;
     }
@@ -222,4 +277,53 @@ TEST(NpuComputeBinaryRegistry, RegistersCompanionsAndPreservesOriginalsOnFailure
         ASSERT_TRUE(registry.CompleteBinaryUnload(context) == ACLPTI_SUCCESS);
     }
     ASSERT_TRUE(unloaded.size() == count + 1);
+
+    // PmSampling owns both ELF copies, the complete map and launch-time addresses.
+    aclrtBinHandle samplingBinary = nullptr;
+    aclrtFuncHandle samplingFunction = nullptr;
+    ASSERT_TRUE(Load(input, sizeof(input), nullptr, &samplingBinary) == ACL_SUCCESS);
+    const auto toolsBefore = instrumentationCalls;
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, true) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, true) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, false) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(instrumentationCalls == toolsBefore + 1); // Pipeline + PmSampling share a companion.
+    ASSERT_TRUE(Lookup(samplingBinary, "kernel", &samplingFunction) == ACL_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinaryFunction(samplingBinary, "kernel", samplingFunction) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinaryFunction(samplingBinary, std::uint64_t(0), samplingFunction) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(lastEntry == 0x100);
+    PmSamplingBinarySnapshot snapshot;
+    failAddress = true;
+    ASSERT_TRUE(!registry.GetPmSamplingSnapshot(samplingFunction, snapshot));
+    ASSERT_TRUE(!snapshot.image);
+    failAddress = false;
+    ASSERT_TRUE(registry.GetPmSamplingSnapshot(samplingFunction, snapshot));
+    ASSERT_TRUE(
+        snapshot.image && snapshot.elfEntry == 0x100 && snapshot.aicRuntimeEntry == 0 &&
+        snapshot.aivRuntimeEntry == 0x12000000100ULL);
+    ASSERT_TRUE(snapshot.image->instructions.business.at(0x100) == 0);
+    ASSERT_TRUE(snapshot.image->instructions.excluded.count(0x104) == 1);
+    ASSERT_TRUE(std::memcmp(snapshot.image->originalElf.data(), input, sizeof(input)) == 0);
+    {
+        BinaryRegistry::UnloadContext context;
+        ASSERT_TRUE(registry.PrepareBinaryUnload(samplingBinary, context) == ACLPTI_SUCCESS);
+        ASSERT_TRUE(Unload(samplingBinary) == ACL_SUCCESS);
+        ASSERT_TRUE(registry.CompleteBinaryUnload(context) == ACLPTI_SUCCESS);
+    }
+    const auto addressCalls = snapshotAddressCalls;
+    ASSERT_TRUE(snapshot.image->instructions.business.at(0x100) == 0);
+    ASSERT_TRUE(snapshot.image->companionElf == std::vector<char>({'E', 'L', 'F'}));
+    ASSERT_TRUE(snapshotAddressCalls == addressCalls); // Workers read snapshots without a Runtime call.
+    PmSamplingBinarySnapshot missing;
+    ASSERT_TRUE(!registry.GetPmSamplingSnapshot(samplingFunction, missing));
+
+    // A binary loaded before hooks can only be registered from a copied complete ELF.
+    aclrtBinHandle preloaded = nullptr;
+    aclrtFuncHandle preloadedFunction = nullptr;
+    ASSERT_TRUE(Load(input, sizeof(input), nullptr, &preloaded) == ACL_SUCCESS);
+    ASSERT_TRUE(Lookup(preloaded, "kernel", &preloadedFunction) == ACL_SUCCESS);
+    invalidFallbackElf = true;
+    ASSERT_TRUE(registry.RegisterSymbolFunction(preloadedFunction, true) == ACLPTI_ERROR_PROFILING_FAILED);
+    invalidFallbackElf = false;
+    ASSERT_TRUE(registry.RegisterSymbolFunction(preloadedFunction, true) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.GetPmSamplingSnapshot(preloadedFunction, missing));
 }

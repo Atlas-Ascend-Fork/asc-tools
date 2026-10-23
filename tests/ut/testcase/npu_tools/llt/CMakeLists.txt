@@ -80,6 +80,9 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/cli_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/option_registry_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/collection_file_validator_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/csv_reader_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/csv_sqlite_writer_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_sqlite_finalizer_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/import_output_directory_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/rep_test_decoder.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/rep_decoder_test.cpp"
@@ -128,7 +131,11 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/launch/launcher.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/launch/process_launcher.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/launch/staging_directory.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/pm_sampling_file_validator.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/collection_file_validator.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/csv_reader.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/csv_sqlite_writer.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/summary_sqlite_finalizer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/rep_decoder.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/rep_directory_packer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/rep_encoder.cpp"
@@ -163,6 +170,12 @@ target_compile_options(npu_tools_utest PRIVATE -UNDEBUG)
 
 # 原单测目标显式开启 -Wall -Wextra -Werror 的源文件按原样保留，其余沿用全局选项。
 set(NPU_TOOLS_LLT_WERROR_SOURCES
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/csv_reader.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/csv_sqlite_writer.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/summary_sqlite_finalizer.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/csv_reader_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/csv_sqlite_writer_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_sqlite_finalizer_test.cpp"
   "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_log_test.cpp"
   "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_callback_invoke_test.cpp"
   "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_probe_plan_callback_test.cpp"
@@ -196,6 +209,7 @@ target_include_directories(npu_tools_utest PRIVATE
 )
 
 target_link_libraries(npu_tools_utest PRIVATE
+  npu_compute_sqlite_runtime
   npu_compute_test_process
   npu_compute_headers
   npu_compute_ipc

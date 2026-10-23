@@ -20,6 +20,15 @@
 namespace npucompute {
 namespace {
 
+constexpr uint32_t kKernelTypeMetadata = 1;
+constexpr uint32_t kMixRatioMetadata = 3;
+constexpr uint32_t kCubeKernelType = 2;
+constexpr uint32_t kVectorKernelType = 3;
+constexpr uint32_t kMixCubeMainKernelType = 4;
+constexpr uint32_t kMixVectorMainKernelType = 5;
+constexpr uint32_t kCubeRollbackKernelType = 6;
+constexpr uint32_t kVectorRollbackKernelType = 7;
+
 template <typename Value>
 bool ReadElfValue(std::ifstream& input, uint64_t offset, uint64_t fileSize, Value& value)
 {
@@ -174,17 +183,23 @@ void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata
             metadata.kind = KernelKind::Mix;
         }
     }
+    const auto rawType = FunctionMetadata<uint32_t>(function, kKernelTypeMetadata);
     if (!metadata.kind) {
-        const auto rawType = FunctionMetadata<uint32_t>(function, 1);
         if (rawType) {
-            if (*rawType == 2 || *rawType == 6) {
+            if (*rawType == kCubeKernelType || *rawType == kCubeRollbackKernelType) {
                 metadata.kind = KernelKind::Cube;
-            } else if (*rawType == 3 || *rawType == 7) {
+            } else if (*rawType == kVectorKernelType || *rawType == kVectorRollbackKernelType) {
                 metadata.kind = KernelKind::Vector;
-            } else if (*rawType == 4 || *rawType == 5) {
+            } else if (*rawType == kMixCubeMainKernelType || *rawType == kMixVectorMainKernelType) {
                 metadata.kind = KernelKind::Mix;
             }
         }
+    }
+    // Pure kernels need not contain MIX_TASK_RATION. Querying this absent tag
+    // produces an EE1014 runtime error even though the kernel itself is valid.
+    if (rawType && (*rawType == kCubeKernelType || *rawType == kVectorKernelType ||
+                    *rawType == kCubeRollbackKernelType || *rawType == kVectorRollbackKernelType)) {
+        return;
     }
     using GetSoc = const char* (*)();
     const auto getSoc = OriginalRuntimeFunction<GetSoc>("aclrtGetSocName");
@@ -193,7 +208,7 @@ void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata
         return;
     }
     // npu-compute supports 950 only; ACL_FUNC_ATTR_KERNEL_RATIO is unsupported on this product.
-    const auto rawRatio = FunctionMetadata<std::array<uint16_t, 2>>(function, 3);
+    const auto rawRatio = FunctionMetadata<std::array<uint16_t, 2>>(function, kMixRatioMetadata);
     if (!rawRatio) {
         return;
     }

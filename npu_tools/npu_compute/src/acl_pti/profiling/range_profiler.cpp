@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "range_profiler.h"
+#include <memory>
 #include "binary_registry.h"
 
 #include "common/debug_log.h"
@@ -350,8 +351,6 @@ aclptiResult RangeProfiler::ResolveProfilingRoundStatus(
 aclptiResult RangeProfiler::StartProfilingRound(
     const ReplayRound& round, std::size_t roundId, std::int32_t deviceId, ProfilingRoundConfig* config)
 {
-    ConfigureProfilingRound(round, roundId, deviceId, config);
-
     const aclptiResult prepareStatus = dataManager_.PrepareReplay(config->prepareInfo);
     if (prepareStatus != ACLPTI_SUCCESS) {
         npucompute::detail::DebugLog(
@@ -427,6 +426,50 @@ aclptiResult RangeProfiler::ReplayKernel(
         npucompute::detail::DebugLog("aclpti", "replay rounds=%zu events=%zu", rounds.size(), pmuEvents_.size());
 
         for (std::size_t round = 0; round < rounds.size(); ++round) {
+            ProfilingRoundConfig config{};
+            ConfigureProfilingRound(rounds[round], round, deviceId, &config);
+            const bool pcSampling = rounds[round].kind == data::ReplayKind::PcSampling;
+            bool snapshotReady = true;
+            bool pmSamplingMapFailed = false;
+            if (pcSampling) {
+                PmSamplingBinarySnapshot snapshot;
+                snapshotReady = binaryRegistry.GetPmSamplingSnapshot(originalFunction, snapshot);
+                if (snapshotReady) {
+                    auto context = std::make_shared<aclptiPmSamplingContext>();
+                    context->originalElf = {snapshot.image, &snapshot.image->originalElf};
+                    context->companionElf = {snapshot.image, &snapshot.image->companionElf};
+                    context->businessInstructions = {snapshot.image, &snapshot.image->instructions.business};
+                    context->excludedInstructions = {snapshot.image, &snapshot.image->instructions.excluded};
+                    context->instructionMapError = snapshot.error;
+                    pmSamplingMapFailed = !snapshot.error.empty();
+                    context->elfEntry = snapshot.elfEntry;
+                    context->aicRuntimeEntry = snapshot.aicRuntimeEntry;
+                    context->aivRuntimeEntry = snapshot.aivRuntimeEntry;
+                    npucompute::detail::DebugLog(
+                        "aclpti", "PmSampling context replay=%llu elfEntry=0x%llx aicEntry=0x%llx aivEntry=0x%llx",
+                        static_cast<unsigned long long>(config.prepareInfo.replayId),
+                        static_cast<unsigned long long>(context->elfEntry),
+                        static_cast<unsigned long long>(context->aicRuntimeEntry),
+                        static_cast<unsigned long long>(context->aivRuntimeEntry));
+                    config.prepareInfo.pmSamplingContext = std::move(context);
+                }
+            }
+            if (pmSamplingMapFailed) {
+                // Do not restore device buffers for a round that will not launch:
+                // the preceding successful launch must remain visible to the APP.
+                status = dataManager_.PrepareReplay(config.prepareInfo);
+                if (status != ACLPTI_SUCCESS) {
+                    return status;
+                }
+                const auto failed = dataManager_.RecordReplayStatus({round, ACLPTI_ERROR_PROFILING_FAILED});
+                const auto released = dataManager_.ReleaseReplay(round);
+                if (failed.status != ACLPTI_ERROR_PROFILING_FAILED) {
+                    return failed.status;
+                }
+                // The published result carries the collection failure. The original
+                // kernel succeeded, so a mapping error must not fail its launch API.
+                return released;
+            }
             status = replayMemory.Restore();
             if (status != ACLPTI_SUCCESS) {
                 npucompute::detail::DebugLog(
@@ -434,7 +477,6 @@ aclptiResult RangeProfiler::ReplayKernel(
                     round);
                 return status;
             }
-            ProfilingRoundConfig config{};
             status = StartProfilingRound(rounds[round], round, deviceId, &config);
             if (status != ACLPTI_SUCCESS) {
                 return status;
@@ -442,25 +484,26 @@ aclptiResult RangeProfiler::ReplayKernel(
 
             npucompute::detail::DebugLog("aclpti", "launch replay kernel round=%zu", round);
             const bool pipeline = rounds[round].kind == data::ReplayKind::Pipeline;
+            const bool instrumented = pipeline || pcSampling;
             const auto function =
-                pipeline ? binaryRegistry.FindInstrumentedFunction(originalFunction) : originalFunction;
+                instrumented ? binaryRegistry.FindInstrumentedFunction(originalFunction) : originalFunction;
             npucompute::detail::DebugLog(
                 "aclpti", "replay function round=%zu kind=%s replay_id=%llu original=%p selected=%p device=%d", round,
-                pipeline ? "pipeline" : "pmu", static_cast<unsigned long long>(config.prepareInfo.replayId),
-                originalFunction, function, deviceId);
+                pcSampling ? "PmSampling" : (pipeline ? "pipeline" : "pmu"),
+                static_cast<unsigned long long>(config.prepareInfo.replayId), originalFunction, function, deviceId);
             aclError launchStatus;
-            if (pipeline && function == nullptr) {
+            if (instrumented && (function == nullptr || !snapshotReady)) {
                 // The original launch validated originalFunction, but does not guarantee an
                 // instrumented companion exists. Skip launch and let FinishProfilingRound
                 // below stop and release the profiling round already started above.
                 npucompute::detail::DebugLog(
                     "aclpti",
-                    "error operation=pipeline_function_lookup status=%d round=%zu originalFunction=%p; "
-                    "enable pipeline before binary load and obtain the function by name or entry",
+                    "error operation=instrumented_function_lookup status=%d round=%zu originalFunction=%p; "
+                    "enable Pipeline/PmSampling before binary load and obtain the function by name or entry",
                     ACL_ERROR_PROFILING_FAILURE, round, originalFunction);
                 launchStatus = ACL_ERROR_PROFILING_FAILURE;
             } else {
-                launchStatus = launchFunction(function, pipeline);
+                launchStatus = launchFunction(function, instrumented);
             }
             npucompute::detail::DebugLog(
                 "aclpti", "launch replay kernel result round=%zu result=%d", round, launchStatus);

@@ -19,7 +19,11 @@ add_library(npu_compute_launcher_core STATIC
   launch/launcher.cpp
   launch/process_launcher.cpp
   launch/staging_directory.cpp
+  report/pm_sampling_file_validator.cpp
   report/collection_file_validator.cpp
+  report/csv_reader.cpp
+  report/csv_sqlite_writer.cpp
+  report/summary_sqlite_finalizer.cpp
   report/pipe_trace_finalizer.cpp
   report/rep_decoder.cpp
   report/rep_directory_packer.cpp
@@ -33,6 +37,7 @@ target_link_libraries(npu_compute_launcher_core PUBLIC
   npu_compute_ipc
   Boost::filesystem
   Threads::Threads
+  npu_compute_sqlite_runtime
 )
 
 add_executable(npu_compute_cli main.cpp)

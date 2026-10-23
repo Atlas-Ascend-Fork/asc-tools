@@ -154,10 +154,12 @@ void CheckReportContents(const boost::filesystem::path& report)
     std::vector<ImportedProfileEntry> results;
     std::string error;
     ASSERT_TRUE(ReadImportedProfileResults(report, &results, &error));
-    ASSERT_TRUE(results.size() == 3U);
+    ASSERT_TRUE(results.size() == 4U);
     ASSERT_TRUE(results[0].name == "HardwareInfo.jsonl");
     ASSERT_TRUE(results[1].name == "PipeUtilization.csv");
-    ASSERT_TRUE(results[2].name == "summary.jsonl");
+    ASSERT_TRUE(results[2].name == "summary.db");
+    ASSERT_TRUE(results[2].type == npucompute::cli::NpuRepFileType::Sqlite);
+    ASSERT_TRUE(results[3].name == "summary.jsonl");
 }
 
 TEST(NpuComputeLauncher, WithoutExportPublishesReportInCurrentDirectory)

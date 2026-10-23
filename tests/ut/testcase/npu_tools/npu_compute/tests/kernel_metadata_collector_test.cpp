@@ -278,6 +278,7 @@ uint32_t g_rawKernelType = 4;             // Runtime kernel metadata: MIX_AIC_MA
 std::array<uint16_t, 2> g_rawRatio{1, 2}; // Metadata order is AIC then AIV.
 bool g_rawQueryFailure = true;
 bool g_rawTypeQueryFailure = false;
+uint32_t g_rawRatioQueryCount = 0;
 std::string g_metadataSoc = "Ascend950PR_9599";
 
 aclError QueryKernelAttribute(const void*, aclrtFuncAttribute attr, int64_t* value)
@@ -300,6 +301,7 @@ protected:
         g_metadataQueryFailure = false;
         g_rawQueryFailure = false;
         g_rawTypeQueryFailure = false;
+        g_rawRatioQueryCount = 0;
         g_rawKernelType = 4;
         g_rawRatio = {1, 2};
         g_metadataSoc = "Ascend950PR_9599";
@@ -338,6 +340,9 @@ protected:
 // Real runtime exports are discovered dynamically; these fixtures exercise the same query boundary.
 extern "C" int32_t rtFunctionGetMetaInfoSize(const void*, uint32_t type, size_t* size)
 {
+    if (type == 3) {
+        ++g_rawRatioQueryCount;
+    }
     if (g_rawQueryFailure || (type == 1 && g_rawTypeQueryFailure) || (type != 1 && type != 3)) {
         return 1;
     }
@@ -434,6 +439,30 @@ TEST_F(MetadataInputTest, PreservesPureKernelTypeWithoutPmu)
     EXPECT_FALSE(Capture().kind); // The legacy generic type is not proof of MIX.
     g_metadataKernelType = ACL_KERNEL_TYPE_AICPU;
     EXPECT_FALSE(Capture().kind);
+}
+
+TEST_F(MetadataInputTest, DoesNotQueryMixRatioForKnownPureKernel)
+{
+    for (const uint32_t type : {2U, 3U, 6U, 7U}) {
+        g_rawKernelType = type;
+        const bool vector = type == 3U || type == 7U;
+        g_metadataKernelType = vector ? ACL_KERNEL_TYPE_VECTOR : ACL_KERNEL_TYPE_CUBE;
+        const auto metadata = Capture();
+        EXPECT_EQ(metadata.kind, vector ? npucompute::KernelKind::Vector : npucompute::KernelKind::Cube);
+        EXPECT_FALSE(metadata.mixBlockDim);
+        EXPECT_EQ(g_rawRatioQueryCount, 0U);
+    }
+}
+
+TEST_F(MetadataInputTest, StillQueriesMixRatioForVectorMainMixedKernel)
+{
+    constexpr uint32_t kMixVectorMainType = 5;
+    g_rawKernelType = kMixVectorMainType;
+    g_metadataKernelType = ACL_KERNEL_TYPE_VECTOR;
+    const auto metadata = Capture();
+    EXPECT_EQ(metadata.kind, npucompute::KernelKind::Mix);
+    EXPECT_EQ(metadata.mixBlockDim, 16U);
+    EXPECT_EQ(g_rawRatioQueryCount, 1U);
 }
 
 TEST_F(MetadataInputTest, UsesKernelMetadataRatioOn950)

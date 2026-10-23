@@ -7,10 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-#ifndef NPU_COMPUTE_IPC_H
-#define NPU_COMPUTE_IPC_H
+#ifndef NPU_TOOLS_NPU_COMPUTE_SRC_IPC_IPC_H
+#define NPU_TOOLS_NPU_COMPUTE_SRC_IPC_IPC_H
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -47,10 +48,11 @@ enum class Type : uint16_t {
     Pmu = 0x101,
     Pipeline = 0x102,
     Hardware = 0x103,
-    DataEnd = 0x104
+    DataEnd = 0x104,
+    PmSampling = 0x105
 };
-enum class DataKind : uint16_t { PmuCsv = 1, PipelineTrace = 2, HardwareInfo = 3 };
-enum class ArtifactType : uint16_t { Csv = 1, Jsonl = 2, Json = 3 };
+enum class DataKind : uint16_t { PmuCsv = 1, PipelineTrace = 2, HardwareInfo = 3, PmSampling = 4 };
+enum class ArtifactType : uint16_t { Csv = 1, Jsonl = 2, Json = 3, Db = 4, Txt = 5 };
 struct Config {
     std::vector<std::string> sections;
     std::string replayMode = "kernel";
@@ -193,4 +195,4 @@ private:
 };
 
 } // namespace npucompute::ipc
-#endif // NPU_COMPUTE_IPC_H
+#endif // NPU_TOOLS_NPU_COMPUTE_SRC_IPC_IPC_H

@@ -15,6 +15,7 @@
 #include "profiling/prof_api.h"
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -153,7 +154,13 @@ int RealMemcpy(void* destination, std::size_t destination_size, const void* sour
     if (destination == nullptr || source == nullptr || count > destination_size) {
         return -1;
     }
-    std::memmove(destination, source, count);
+    const auto* first = static_cast<const unsigned char*>(source);
+    auto* output = static_cast<unsigned char*>(destination);
+    if (std::less<const void*>{}(source, destination)) {
+        std::copy_backward(first, first + count, output + count);
+    } else {
+        std::copy_n(first, count, output);
+    }
     return 0;
 }
 
@@ -162,7 +169,7 @@ int RealMemset(void* destination, std::size_t destination_size, int value, std::
     if (destination == nullptr || count > destination_size) {
         return -1;
     }
-    std::memset(destination, value, count);
+    std::fill_n(static_cast<unsigned char*>(destination), count, static_cast<unsigned char>(value));
     return 0;
 }
 
@@ -200,7 +207,9 @@ int RealLaunch(void* function, uint32_t, const void* args_data, std::size_t args
             return -1;
         }
         void* hidden = reinterpret_cast<void*>(1);
-        std::memcpy(&hidden, bytes + 56, sizeof(hidden));
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(bytes + 56), sizeof(hidden),
+            reinterpret_cast<unsigned char*>(&hidden));
         if (hidden != nullptr) {
             return -1;
         }
@@ -209,7 +218,8 @@ int RealLaunch(void* function, uint32_t, const void* args_data, std::size_t args
         return -1;
     }
     KernelArgs args{};
-    std::memcpy(&args, args_data, sizeof(args));
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(args_data), sizeof(args), reinterpret_cast<unsigned char*>(&args));
     g_kernel_inputs.push_back(*args.value);
     ++*args.value;
     return 0;
@@ -276,9 +286,9 @@ int ProfilerStart(uint32_t, const void* config, uint32_t length)
         {},
     };
     if (observed.primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS) {
-        std::memcpy(
-            observed.pmuEvents.data(), msprofConfig->configInfo.attrs[0].value.aicoreMetrics,
-            sizeof(observed.pmuEvents));
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(msprofConfig->configInfo.attrs[0].value.aicoreMetrics),
+            sizeof(observed.pmuEvents), reinterpret_cast<unsigned char*>(observed.pmuEvents.data()));
     } else if (observed.primaryAttr == PROF_CONFIG_ATTR_INSTR) {
         observed.instrMode = msprofConfig->configInfo.attrs[0].value.instrMode;
     } else {
@@ -358,7 +368,16 @@ extern "C" aclError ReplayTestGetFunctionName(aclrtFuncHandle, uint32_t, char*) 
 
 extern "C" aclError ReplayTestGetFunctionName(aclrtFuncHandle, uint32_t, char* name)
 {
-    std::strcpy(name, "sample");
+    constexpr char kSampleName[] = "sample";
+    std::copy_n(kSampleName, sizeof(kSampleName), name);
+    return ACL_SUCCESS;
+}
+
+extern "C" aclError ReplayTestGetFunctionAddr(const void*, void**, void**) __asm__("aclrtGetFunctionAddr");
+extern "C" aclError ReplayTestGetFunctionAddr(const void*, void** aic, void** aiv)
+{
+    *aic = nullptr;
+    *aiv = reinterpret_cast<void*>(0x100100);
     return ACL_SUCCESS;
 }
 
@@ -488,7 +507,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
         &profilingLog));
     ASSERT_TRUE(firstLaunchStatus == ACL_SUCCESS);
     ASSERT_TRUE(g_parameter_query_calls == 0);
-    ASSERT_TRUE(g_instrumented_launch_calls == 1);
+    ASSERT_TRUE(g_instrumented_launch_calls == 2);
     ASSERT_TRUE(g_start_calls == 5);
     ASSERT_TRUE(g_stop_calls == 5);
     ASSERT_TRUE(g_start_data_type == 8);
@@ -499,7 +518,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(
         (g_launch_handles == std::vector<void*>{
                                  expectedOriginal, expectedOriginal, expectedOriginal, expectedOriginal,
-                                 expectedPatched, expectedOriginal}));
+                                 expectedPatched, expectedPatched}));
     ASSERT_TRUE(aclrtBinaryGetFunctionByEntry(entryBinary, 43, &entryFunction) == ACL_ERROR_INVALID_PARAM);
     ASSERT_TRUE(aclrtBinaryUnLoad(binary) == ACL_SUCCESS);
     ASSERT_TRUE(aclrtBinaryUnLoad(entryBinary) == ACL_SUCCESS);

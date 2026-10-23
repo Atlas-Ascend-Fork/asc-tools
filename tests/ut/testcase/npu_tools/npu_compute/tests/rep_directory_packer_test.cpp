@@ -7,9 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-#include <gtest/gtest.h>
-
 #include "report/rep_directory_packer.h"
+
+#include <gtest/gtest.h>
 #include "rep_test_decoder.h"
 
 #include <cstdio>
@@ -199,8 +199,8 @@ int TestRejectsTemporaryUnknownAndSpecialFiles()
     {
         TempDirectory temporary;
         CHECK(!temporary.Path().empty());
-        CHECK(WriteFile(temporary.Path() / "notes.txt", "unknown"));
-        CHECK(ExpectPackFailure(temporary.Path(), "notes.txt"));
+        CHECK(WriteFile(temporary.Path() / "notes.bin", "unknown"));
+        CHECK(ExpectPackFailure(temporary.Path(), "notes.bin"));
     }
     {
         TempDirectory temporary;

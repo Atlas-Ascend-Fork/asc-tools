@@ -21,6 +21,8 @@
 #include <map>
 #include <memory>
 #include <tuple>
+#include <set>
+#include <string>
 #include <vector>
 
 enum aclptiCoreType : uint8_t {
@@ -140,6 +142,19 @@ struct aclptiPipelineData {
     std::map<aclptiPipelineKey, std::vector<uint32_t>> channels;
 };
 
+// Immutable per-replay context. Aliasing shared pointers keep both images and instruction
+// classification alive after Runtime binary unload, without copying ELF bytes.
+struct aclptiPmSamplingContext {
+    std::shared_ptr<const std::vector<char>> originalElf;
+    std::shared_ptr<const std::vector<char>> companionElf;
+    std::shared_ptr<const std::map<uint64_t, uint64_t>> businessInstructions;
+    std::shared_ptr<const std::set<uint64_t>> excludedInstructions;
+    std::string instructionMapError;
+    uint64_t elfEntry = 0; // Companion ELF address of the launched function.
+    uint64_t aicRuntimeEntry = 0;
+    uint64_t aivRuntimeEntry = 0;
+};
+
 // Complete collection for one original launch, including all of its profiling replays.
 // PMU events are merged before delivery; distinct original launches must never share a result.
 struct aclptiProfilingDataResult {
@@ -150,6 +165,7 @@ struct aclptiProfilingDataResult {
     std::map<aclptiBlockKey, aclptiPmuDataRow> taskPmuLogs;
     std::map<uint64_t, aclptiPipelineData> pipelineData;
     std::vector<aclptiRawDataChunk> pcSamplingData;
+    std::map<uint64_t, std::shared_ptr<const aclptiPmSamplingContext>> pmSamplingContexts;
     aclptiReplayStats stats; // Totals across the complete profiling collection.
     struct ErrorStats {
         uint64_t failedRecordCount = 0;

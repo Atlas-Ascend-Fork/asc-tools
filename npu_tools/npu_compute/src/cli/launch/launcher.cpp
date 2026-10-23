@@ -14,6 +14,7 @@
 #include "launch/process_launcher.h"
 #include "report/rep_directory_packer.h"
 #include "report/pipe_trace_finalizer.h"
+#include "report/summary_sqlite_finalizer.h"
 #include "report/rep_report_writer.h"
 #include "report/report_name.h"
 #include "launch/staging_directory.h"
@@ -244,6 +245,8 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     if (!FinalizePipeTrace(collection_data.Path(), config.collect_pipeline, &stage_error, &issues)) {
         issues.push_back("finalize PipeTrace failed: " + stage_error);
     }
+    const auto databaseResults = FinalizeSummarySqlite(collection_data.Path());
+    issues.insert(issues.end(), databaseResults.issues.begin(), databaseResults.issues.end());
 
     std::vector<uint8_t> encoded;
     if (!PackDirectoryToRep(collection_data.Path(), &encoded, &stage_error, &issues)) {

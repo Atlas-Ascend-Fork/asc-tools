@@ -29,20 +29,20 @@ bool Fail(const std::string& message, std::string* error)
 void WriteLe16(uint16_t value, uint8_t* output)
 {
     output[0] = static_cast<uint8_t>(value);
-    output[1] = static_cast<uint8_t>(value >> 8U);
+    output[1] = static_cast<uint8_t>(value >> kNpuRepByteBits);
 }
 
 void WriteLe32(uint32_t value, uint8_t* output)
 {
     for (std::size_t index = 0; index < sizeof(value); ++index) {
-        output[index] = static_cast<uint8_t>(value >> (index * 8U));
+        output[index] = static_cast<uint8_t>(value >> (index * kNpuRepByteBits));
     }
 }
 
 void WriteLe64(uint64_t value, uint8_t* output)
 {
     for (std::size_t index = 0; index < sizeof(value); ++index) {
-        output[index] = static_cast<uint8_t>(value >> (index * 8U));
+        output[index] = static_cast<uint8_t>(value >> (index * kNpuRepByteBits));
     }
 }
 
@@ -53,8 +53,8 @@ bool IsKnownFileType(NpuRepFileType type)
         case NpuRepFileType::Json:
         case NpuRepFileType::Jsonl:
         case NpuRepFileType::Csv:
-        case NpuRepFileType::Sqlite3:
-        case NpuRepFileType::Protobuf:
+        case NpuRepFileType::Sqlite:
+        case NpuRepFileType::Txt:
             return true;
     }
     return false;
@@ -133,25 +133,25 @@ bool EncodeRep(const std::vector<RepEntry>& entries, std::vector<uint8_t>* encod
         encoded->assign(static_cast<std::size_t>(total_length), 0);
         uint8_t* output = encoded->data();
         std::copy(kNpuRepMagic.begin(), kNpuRepMagic.end(), output);
-        WriteLe32(kNpuRepVersion, output + 8);
-        WriteLe16(kNpuRepOrigin, output + 12);
-        WriteLe16(static_cast<uint16_t>(kNpuRepHeadSize), output + 14);
-        WriteLe32(static_cast<uint32_t>(entries.size()), output + 16);
-        WriteLe32(static_cast<uint32_t>(kNpuRepFileInfoSize), output + 20);
-        WriteLe32(0, output + 24);
-        WriteLe64(total_length, output + 28);
+        WriteLe32(kNpuRepVersion, output + kNpuRepHeaderVersionOffset);
+        WriteLe16(kNpuRepOrigin, output + kNpuRepHeaderOriginOffset);
+        WriteLe16(static_cast<uint16_t>(kNpuRepHeadSize), output + kNpuRepHeaderHeaderLengthOffset);
+        WriteLe32(static_cast<uint32_t>(entries.size()), output + kNpuRepHeaderFileCountOffset);
+        WriteLe32(static_cast<uint32_t>(kNpuRepFileInfoSize), output + kNpuRepHeaderFileInfoLengthOffset);
+        WriteLe32(0, output + kNpuRepHeaderReservedOffset);
+        WriteLe64(total_length, output + kNpuRepHeaderLengthOffset);
 
         std::size_t payload_offset = kNpuRepHeadSize + entries.size() * kNpuRepFileInfoSize;
         for (std::size_t index = 0; index < entries.size(); ++index) {
             const RepEntry& entry = entries[index];
             uint8_t* info = output + kNpuRepHeadSize + index * kNpuRepFileInfoSize;
             std::copy(kNpuRepMagic.begin(), kNpuRepMagic.end(), info);
-            std::memcpy(info + 8, entry.file_name.data(), entry.file_name.size());
-            WriteLe16(static_cast<uint16_t>(entry.file_type), info + 136);
-            WriteLe16(0, info + 138);
-            WriteLe32(0, info + 140);
-            WriteLe64(static_cast<uint64_t>(entry.payload.size()), info + 144);
-            WriteLe64(static_cast<uint64_t>(payload_offset), info + 152);
+            std::copy(entry.file_name.begin(), entry.file_name.end(), info + kNpuRepEntryNameOffset);
+            WriteLe16(static_cast<uint16_t>(entry.file_type), info + kNpuRepEntryTypeOffset);
+            WriteLe16(0, info + kNpuRepEntryReserved16Offset);
+            WriteLe32(0, info + kNpuRepEntryReserved32Offset);
+            WriteLe64(static_cast<uint64_t>(entry.payload.size()), info + kNpuRepEntryLengthOffset);
+            WriteLe64(static_cast<uint64_t>(payload_offset), info + kNpuRepEntryPayloadOffset);
             std::copy(entry.payload.begin(), entry.payload.end(), output + payload_offset);
             payload_offset += entry.payload.size();
         }

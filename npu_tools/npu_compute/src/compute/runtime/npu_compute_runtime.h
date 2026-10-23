@@ -22,6 +22,7 @@
 #include <boost/filesystem/path.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -46,6 +47,11 @@ public:
     std::uint64_t ErrorCount() const { return error_count_; }
     std::uint64_t ReplayCount() const { return replay_count_; }
     bool Degraded() const { return degraded_; }
+    // Read after worker drain, together with RowCount/ErrorCount.
+    bool PmSamplingComplete() const
+    {
+        return !pm_sampling_enabled_ || (pm_sampling_completed_ > 0 && pm_sampling_failures_ == 0);
+    }
 
 private:
     static void HardwareInfoTriggerCallback(
@@ -55,6 +61,7 @@ private:
     void DisableHardwareCallbacks() noexcept;
     aclptiResult ProcessPmuData(std::shared_ptr<const aclptiProfilingDataResult> result);
     aclptiResult PublishPipelineArtifacts();
+    aclptiResult ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix);
 
     std::mutex mutex_;
     std::shared_ptr<PmuDataConsumer> pmu_consumer_;
@@ -62,6 +69,9 @@ private:
     std::size_t enabled_hardware_callback_count_ = 0;
     bool csv_frequency_override_ = false;
     bool csv_device_info_loaded_ = false;
+    bool pm_sampling_enabled_ = false;
+    std::uint64_t pm_sampling_completed_ = 0;
+    std::uint64_t pm_sampling_failures_ = 0;
     bool pipeline_enabled_ = false;
     bool pipeline_finalized_ = false;
     uint64_t pipeline_result_sequence_ = 0;

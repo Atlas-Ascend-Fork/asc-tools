@@ -57,7 +57,8 @@ constexpr std::array<aclptiCallbackId, 9> kHardwareInfoTriggerCbids = {
     ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad,
     ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol,
 };
-using namespace std::chrono_literals;
+using std::chrono_literals::operator""s;
+using std::chrono_literals::operator""ms;
 
 std::mutex g_deviceCountMutex;
 std::condition_variable g_deviceCountCondition;

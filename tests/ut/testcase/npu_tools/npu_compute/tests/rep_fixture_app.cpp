@@ -7,14 +7,18 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "compute/ipc/artifact_publisher.h"
+#include "compute/ipc/npu_compute_uds_server.h"
+#include "pm_sampling/pm_sampling_sqlite_writer.h"
+
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include "compute/ipc/artifact_publisher.h"
-#include "compute/ipc/npu_compute_uds_server.h"
-
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
+#include <unistd.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,6 +35,28 @@ constexpr std::string_view kPipeCsv = "block_id,pipe_utilization\n0,75\n";
 constexpr std::string_view kMemoryCsv = "block_id,read_bytes\n0,128\n";
 constexpr std::string_view kL2CacheCsv = "block_id,hit_rate\n0,99\n";
 constexpr std::string_view kSummary = "{\"category\":\"PipeUtilization\"}\n{\"category\":\"OpInfoSummary\"}\n";
+
+std::string SamplingDatabase()
+{
+    struct TemporaryFile {
+        char path[64] = "/tmp/npu-compute-sampling-fixture-XXXXXX";
+        ~TemporaryFile() { ::unlink(path); }
+    } temporary;
+    const int descriptor = ::mkstemp(temporary.path);
+    if (descriptor < 0)
+        throw std::runtime_error("cannot create sampling fixture");
+    ::close(descriptor);
+    npucompute::PmSamplingResult sampling;
+    sampling.rows[0x268] = {0, 215, 16320, 0, 0, 0, 0, 0};
+    std::string error;
+    if (!npucompute::WritePmSamplingSqlite(temporary.path, sampling, error))
+        throw std::runtime_error(error);
+    std::ifstream input(temporary.path, std::ios::binary);
+    std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    if (input.bad() || bytes.empty())
+        throw std::runtime_error("cannot read sampling fixture");
+    return bytes;
+}
 
 bool ParseExitCode(const char* value, int* exit_code)
 {
@@ -94,6 +120,32 @@ int main(int argc, char** argv)
                 std::printf("\n");
             }
         }
+        if (mode == "protocol-bad-offset") {
+            namespace ipc = npucompute::ipc;
+            auto channel = server.TakeChannel();
+            const auto deadline = server.Deadline();
+            channel.Send(
+                ipc::Type::ConnectAck,
+                ipc::EncodeReady({static_cast<uint32_t>(getpid()), static_cast<uint32_t>(getuid()), 0}), deadline);
+            channel.Send(
+                ipc::Type::DataBegin,
+                ipc::EncodeArtifactBegin(
+                    {1, ipc::DataKind::HardwareInfo, "HardwareInfo.jsonl", ipc::ArtifactType::Jsonl}),
+                deadline);
+            channel.Send(
+                ipc::Type::Hardware,
+                ipc::EncodeArtifactChunk({1, 0, ipc::Bytes(kHardwareInfo.begin(), kHardwareInfo.end())}), deadline);
+            channel.Send(ipc::Type::DataEnd, ipc::EncodeArtifactEnd({1, kHardwareInfo.size(), 5}), deadline);
+            channel.Send(
+                ipc::Type::DataBegin,
+                ipc::EncodeArtifactBegin({2, ipc::DataKind::PmuCsv, "Memory.csv", ipc::ArtifactType::Csv}), deadline);
+            channel.Send(ipc::Type::Pmu, ipc::EncodeArtifactChunk({2, 1, {'x'}}), deadline);
+            const auto response = channel.Receive(deadline);
+            if (response.type != ipc::Type::Error)
+                throw std::runtime_error("expected protocol rejection");
+            std::fprintf(stderr, "[rep-fixture] %s\n", ipc::DecodeError(response.payload).message.c_str());
+            return 0;
+        }
         npucompute::ArtifactPublisher publisher(server.TakeChannel(), server.Deadline());
         const auto publish = [&](const std::string& name, std::string_view bytes) {
             publisher.Begin(name);
@@ -104,9 +156,11 @@ int main(int argc, char** argv)
             if (mode != "missing-hardware") {
                 publish("HardwareInfo.jsonl", kHardwareInfo);
             }
+            bool summarySelected = false;
             for (const auto& section : hello.config.sections) {
                 if (section == "Pipeline") {
-                    if (mode == "cli-echo") {
+                    summarySelected = true;
+                    if (mode == "cli-echo" || mode.rfind("pm-sampling", 0) == 0) {
                         publish(
                             ".biu-staging/process-uds/manifest.json",
                             R"({"version":1,"state":"complete","status":0,"fragments":[{"resultSequence":"0","replayId":"0","deviceId":0,"file":"result-0.json","eventCount":"1"}]})");
@@ -116,13 +170,47 @@ int main(int argc, char** argv)
                     }
                     continue;
                 }
+                if (section == "PmSampling" && (mode.rfind("pm-sampling", 0) == 0 || mode == "cli-echo")) {
+                    if (mode == "pm-sampling-simd") {
+                        publish("objdump.txt", "Disassembly of section .text:\n0: 0000000000000000 VF X2, #9\n");
+                        continue;
+                    }
+                    if (mode != "pm-sampling-missing-all") {
+                        if (mode != "pm-sampling-missing-db")
+                            publish(
+                                "summary.db",
+                                mode == "pm-sampling-invalid-db" ? "broken database" : SamplingDatabase());
+                        if (mode != "pm-sampling-missing-objdump")
+                            publish(
+                                "objdump.txt", mode == "pm-sampling-invalid-objdump" ?
+                                                   "no instructions" :
+                                                   "Disassembly of section .text:\n268: 00 00 STG\n");
+                        if (mode != "pm-sampling-missing-symbolizer")
+                            publish(
+                                "symbolizer.json", mode == "pm-sampling-invalid-symbolizer" ?
+                                                       "broken JSON" :
+                                                       "[{\"Address\":\"0x0000000000000268\",\"Symbol\":[]}]\n");
+                    }
+                    continue;
+                }
+                summarySelected = true;
+                if (mode == "csv-directories" && section == "Memory") {
+                    publish("collection-p1-0001/Memory.csv", "block_id,read_bytes\n1,256\n");
+                    publish("collection-p1-0001/PipeUtilization.csv", kPipeCsv);
+                    publish("collection-p1-0001/summary.jsonl", kSummary);
+                }
                 publish(
-                    section + ".csv", mode == "invalid-csv"        ? "header\n" :
+                    section + ".csv", mode == "invalid-csv"                            ? "header\n" :
+                                      mode == "csv-field-count" && section == "Memory" ? "block_id,read_bytes\n0\n" :
+                                      mode == "csv-unit-conflict" && section == "Memory" ?
+                                                                                         "block_id,latency(us)\n0,2\n" :
+                                      mode == "csv-unit-conflict"  ? "block_id,latency(ms)\n0,1\n" :
                                       section == "PipeUtilization" ? kPipeCsv :
                                       section == "L2Cache"         ? kL2CacheCsv :
                                                                      kMemoryCsv);
             }
-            publish("summary.jsonl", kSummary);
+            if (mode.rfind("pm-sampling", 0) != 0 || summarySelected)
+                publish("summary.jsonl", kSummary);
         }
         npucompute::ipc::Result result;
         result.sections = hello.config.sections;

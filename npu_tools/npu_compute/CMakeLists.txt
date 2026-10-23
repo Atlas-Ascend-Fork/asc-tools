@@ -122,6 +122,18 @@ target_link_libraries(acl_prof_api_backend INTERFACE injection_prof_api_backend)
 add_subdirectory(src/acl_pti)
 add_subdirectory(src/ipc)
 
+# Private adapter only; SQLite itself is supplied by the runtime environment.
+add_library(npu_compute_sqlite_runtime STATIC src/shared/sqlite_runtime_loader.cpp)
+target_include_directories(npu_compute_sqlite_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_features(npu_compute_sqlite_runtime PUBLIC cxx_std_17)
+target_compile_definitions(npu_compute_sqlite_runtime PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
+target_link_libraries(npu_compute_sqlite_runtime PUBLIC ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem)
+set_target_properties(npu_compute_sqlite_runtime PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+  CXX_VISIBILITY_PRESET hidden
+  VISIBILITY_INLINES_HIDDEN YES
+)
+
 add_subdirectory(src/compute)
 add_subdirectory(src/cli)
 

@@ -8,6 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "data_processor.h"
+#include <array>
+#include <algorithm>
+#include <cstddef>
 #include "data_types.h"
 #include "common/debug_log.h"
 #include "raw_data_decoder.h"
@@ -21,6 +24,12 @@ namespace {
 // Temporary SDK compatibility values; remove when the build SDK provides these enumerators.
 constexpr int BIU_PERF_AIV0_DATA_TYPE = 10;
 constexpr int BIU_PERF_AIV1_DATA_TYPE = 11;
+constexpr int kMaxBiuGroupId = 5;
+constexpr size_t kRawLogBytesPerLine = 16;
+constexpr char kHexAlphabet[] = "0123456789abcdef";
+constexpr unsigned kHexDigitBits = 4;
+constexpr unsigned kHexDigitMask = (1U << kHexDigitBits) - 1;
+constexpr size_t kRawLogCharsPerByte = 3;
 
 void LogRawData(uint64_t replayId, const MsprofRawData& raw, bool biu, uint64_t acceptedBytes)
 {
@@ -44,15 +53,17 @@ void LogRawData(uint64_t replayId, const MsprofRawData& raw, bool biu, uint64_t 
         }
         return;
     }
-    for (size_t offset = 0; offset < raw.chunkSize; offset += 16) {
-        char hex[49]{};
-        size_t count = 0;
-        for (size_t index = offset; index < raw.chunkSize && index < offset + 16; ++index) {
-            count += static_cast<size_t>(std::snprintf(hex + count, sizeof(hex) - count, "%02x ", bytes[index]));
+    for (size_t offset = 0; offset < raw.chunkSize; offset += kRawLogBytesPerLine) {
+        std::array<char, kRawLogBytesPerLine * kRawLogCharsPerByte + 1> hex{};
+        size_t position = 0;
+        for (size_t index = offset; index < raw.chunkSize && index < offset + kRawLogBytesPerLine; ++index) {
+            hex[position++] = kHexAlphabet[bytes[index] >> kHexDigitBits];
+            hex[position++] = kHexAlphabet[bytes[index] & kHexDigitMask];
+            hex[position++] = ' ';
         }
         npucompute::detail::DebugLog(
             "aclpti-data", "[DEBUG-rawdata] payload replay=%llu offset=%zu bytes=%s",
-            static_cast<unsigned long long>(replayId), offset, hex);
+            static_cast<unsigned long long>(replayId), offset, hex.data());
     }
 }
 
@@ -97,7 +108,7 @@ aclptiResult DataProcessor::ReceiveDataChunk(const MsprofRawData& raw, std::opti
     aclptiPipelineKey key{};
     ReceiveState* state = nullptr;
     if (core) {
-        if (raw.chunkModule < 0 || raw.chunkModule > 5 || raw.offset % 4 != 0) {
+        if (raw.chunkModule < 0 || raw.chunkModule > kMaxBiuGroupId || raw.offset % sizeof(uint32_t) != 0) {
             return ACLPTI_ERROR_INVALID_RAW_DATA;
         }
         if (replay.stats.acceptedBytes > kMaxBiuReplayBytes - raw.chunkSize) {
@@ -205,7 +216,7 @@ aclptiResult DataProcessor::ReceiveRawData(const MsprofRawData* raw)
                 record.size = recordSize;
                 record.recordIndex = replay.nextRecordIndex;
                 record.events = replay.info.pmuEventIds;
-                std::memcpy(record.bytes.data(), raw->chunk + offset, recordSize);
+                std::copy_n(reinterpret_cast<const std::byte*>(raw->chunk + offset), recordSize, record.bytes.begin());
                 if (!Submit(DataItem{replay.info.replayId, std::move(record)})) {
                     return fail(ACLPTI_ERROR_INVALID_STATE, primary);
                 }

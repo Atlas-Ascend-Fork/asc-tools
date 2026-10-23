@@ -383,6 +383,7 @@ int TestSets()
                                             "L2Cache",  "ArithmeticUtilization"};
     auto full = basic;
     full.push_back("ResourceConflictRatio");
+    full.push_back("PmSampling");
     CHECK(Parse({"npu-compute", "--set", "basic", "./app"}, &config, &errors));
     CHECK(config.sections == basic && config.collect_pipeline);
     CHECK(Parse({"npu-compute", "./app"}, &config, &errors));
@@ -396,8 +397,8 @@ int TestSets()
     CHECK(Parse({"npu-compute", "--section", "Memory", "--set", "basic", "./app"}, &config, &errors));
     CHECK(config.sections == reordered);
     CHECK(Parse(
-        {"npu-compute", "--set", "basic", "--section", "ResourceConflictRatio", "--replay-mode=kernel", "-o",
-         "x.npu-rep", "./app", "--set", "full"},
+        {"npu-compute", "--set", "basic", "--section", "ResourceConflictRatio", "--section", "PmSampling",
+         "--replay-mode=kernel", "-o", "x.npu-rep", "./app", "--set", "full"},
         &config, &errors));
     CHECK(config.sections == full);
     CHECK(config.program_arguments == std::vector<std::string>({"--set", "full"}));

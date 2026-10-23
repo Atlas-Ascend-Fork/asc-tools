@@ -11,6 +11,7 @@ import os
 import json
 import re
 import struct
+import sqlite3
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ FILE_INFO = struct.Struct("<8s128sHHIQQ")
 TYPE_NPU_REP = 1
 TYPE_JSONL = 3
 TYPE_CSV = 4
+TYPE_SQLITE = 5
 
 HARDWARE_INFO = (
     b'{"category":"Host Info","cpu physical count":1}\n'
@@ -175,6 +177,122 @@ def test_empty_collection_does_not_publish_status_only_report(tmp_path):
     assert list(work.glob("*.npu-rep")) == []
 
 
+def test_protocol_failure_does_not_publish_already_received_files(tmp_path):
+    report = tmp_path / "protocol.npu-rep"
+    result = subprocess.run(
+        [
+            str(CLI),
+            "--section",
+            "Memory",
+            "--export",
+            str(report),
+            str(FIXTURE_APP),
+            "--mode",
+            "protocol-bad-offset",
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 3, result.stderr
+    assert "offset" in result.stderr and "UDS collection failed" in result.stderr
+    assert not report.exists()
+    assert_no_collection_data_directories(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "mode", ["success", "csv-field-count", "csv-unit-conflict", "csv-directories"]
+)
+def test_csv_tables_are_automatically_packaged(tmp_path, mode):
+    report = tmp_path / "sampling.npu-rep"
+    result = subprocess.run(
+        [
+            str(CLI),
+            "--section",
+            "Memory",
+            "--section",
+            "PipeUtilization",
+            "--export",
+            str(report),
+            str(FIXTURE_APP),
+            "--mode",
+            mode,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    partial = mode in ("csv-field-count", "csv-unit-conflict")
+    assert result.returncode == (3 if partial else 0), result.stderr
+    assert report.is_file()
+    output = tmp_path / "restored"
+    output.mkdir()
+    imported = subprocess.run(
+        [str(CLI), "--import", str(report), "--export", str(output)],
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert imported.returncode == 0, imported.stderr
+    databases = list(output.rglob("summary.db"))
+    assert len(databases) == (2 if mode == "csv-directories" else 1)
+    main = next(path for path in databases if path.parent.name != "collection-p1-0001")
+    with sqlite3.connect(main) as database:
+        tables = {
+            row[0]
+            for row in database.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        expected = {"Memory", "PipeUtilization", "FieldUnitMap"}
+        if partial:
+            expected.remove(
+                "PipeUtilization" if mode == "csv-unit-conflict" else "Memory"
+            )
+        assert tables == expected
+        if "Memory" in tables:
+            assert database.execute("SELECT * FROM Memory").fetchall() == [
+                (0, 2 if mode == "csv-unit-conflict" else 128)
+            ]
+        if "PipeUtilization" in tables:
+            assert database.execute("SELECT * FROM PipeUtilization").fetchall() == [
+                (0, 75)
+            ]
+    assert len(list(output.rglob("Memory.csv"))) == (
+        2 if mode == "csv-directories" else 1
+    )
+    if mode == "csv-field-count":
+        for text in (
+            "Memory.csv",
+            "Memory",
+            "record 2",
+            "physical line 2",
+            "expected 2 fields",
+            "found 1",
+        ):
+            assert text in result.stderr, result.stderr
+    if mode == "csv-unit-conflict":
+        for text in ("PipeUtilization.csv", "latency", "us", "ms"):
+            assert text in result.stderr, result.stderr
+    if mode == "csv-directories":
+        child = next(
+            path for path in databases if path.parent.name == "collection-p1-0001"
+        )
+        with sqlite3.connect(child) as database:
+            assert database.execute("SELECT * FROM Memory").fetchall() == [(1, 256)]
+            assert database.execute("SELECT * FROM PipeUtilization").fetchall() == [
+                (0, 75)
+            ]
+            assert {
+                row[0]
+                for row in database.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            } == {"Memory", "PipeUtilization", "FieldUnitMap"}
+
+
 def assert_no_collection_data_directories(work_directory: Path):
     assert list(work_directory.glob("npu-compute-*")) == []
 
@@ -198,11 +316,14 @@ def assert_imported_fixture_files(output: Path):
     assert files == [
         "HardwareInfo.jsonl",
         "PipeUtilization.csv",
+        "summary.db",
         "summary.jsonl",
     ]
     assert (output / "HardwareInfo.jsonl").read_bytes() == HARDWARE_INFO
     assert (output / "PipeUtilization.csv").read_bytes() == PIPE_CSV
     assert (output / "summary.jsonl").read_bytes() == SUMMARY
+    with sqlite3.connect(output / "summary.db") as database:
+        assert database.execute("SELECT * FROM PipeUtilization").fetchall() == [(0, 75)]
     assert not (output / ".hardware_info.lock").exists()
 
 
@@ -224,17 +345,20 @@ def test_cli_recursively_packages_fixture_files(tmp_path):
     assert [entry.name for entry in top.entries] == [
         "HardwareInfo.jsonl",
         "PipeUtilization.csv",
+        "summary.db",
         "summary.jsonl",
     ]
     assert [entry.file_type for entry in top.entries] == [
         TYPE_JSONL,
         TYPE_CSV,
+        TYPE_SQLITE,
         TYPE_JSONL,
     ]
-    assert top.entries[0].offset == HEAD.size + 3 * FILE_INFO.size
+    assert top.entries[0].offset == HEAD.size + 4 * FILE_INFO.size
     assert top.entries[0].payload == HARDWARE_INFO
     assert top.entries[1].payload == PIPE_CSV
-    assert top.entries[2].payload == SUMMARY
+    assert top.entries[2].payload.startswith(b"SQLite format 3\0")
+    assert top.entries[3].payload == SUMMARY
 
 
 def test_cli_uses_explicit_report_file_and_existing_report_directory(tmp_path):

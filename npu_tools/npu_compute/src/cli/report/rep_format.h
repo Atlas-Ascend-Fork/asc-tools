@@ -28,13 +28,29 @@ inline constexpr std::size_t kNpuRepFileNameSize = 128U;
 // Includes the outermost report (or the collection root directory when packing).
 inline constexpr std::size_t kNpuRepMaxDepth = 64U;
 
+// Little-endian wire offsets; independent of native structure padding.
+inline constexpr std::size_t kNpuRepHeaderVersionOffset = 8;
+inline constexpr std::size_t kNpuRepHeaderOriginOffset = 12;
+inline constexpr std::size_t kNpuRepHeaderHeaderLengthOffset = 14;
+inline constexpr std::size_t kNpuRepHeaderFileCountOffset = 16;
+inline constexpr std::size_t kNpuRepHeaderFileInfoLengthOffset = 20;
+inline constexpr std::size_t kNpuRepHeaderReservedOffset = 24;
+inline constexpr std::size_t kNpuRepHeaderLengthOffset = 28;
+inline constexpr std::size_t kNpuRepEntryNameOffset = 8;
+inline constexpr std::size_t kNpuRepEntryTypeOffset = 136;
+inline constexpr std::size_t kNpuRepEntryReserved16Offset = 138;
+inline constexpr std::size_t kNpuRepEntryReserved32Offset = 140;
+inline constexpr std::size_t kNpuRepEntryLengthOffset = 144;
+inline constexpr std::size_t kNpuRepEntryPayloadOffset = 152;
+inline constexpr unsigned kNpuRepByteBits = 8;
+
 enum class NpuRepFileType : uint16_t {
     NpuRep = 1,
     Json = 2,
     Jsonl = 3,
     Csv = 4,
-    Sqlite3 = 5,
-    Protobuf = 6,
+    Sqlite = 5,
+    Txt = 6,
 };
 
 } // namespace npucompute::cli

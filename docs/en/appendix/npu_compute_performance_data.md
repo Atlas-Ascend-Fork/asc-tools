@@ -176,6 +176,22 @@ NA means inapplicable to the current Core or unavailable data; it does not mean 
 | `aiv_ub_read_bw_gm(GB/s)` | Bandwidth for reading UB data for transfer to GM, in GB/s. Currently always NA because the required instrumentation data is unavailable. |
 | `aiv_ub_write_bw_gm(GB/s)` | Average bandwidth for transferring data from GM into UB, in GB/s. |
 
+## PcSampling (PC sampling state totals)
+
+Instruction addresses and state totals collected by `PmSampling` are stored in the `PcSampling` table in `summary.db`. `address` stores the business instruction address, and records for the same address are summed separately for each state.
+
+| Field | Description |
+|---|---|
+| `address` | Business instruction address. |
+| `ibuf_empty` | The instruction buffer is empty, waiting for the next instruction. |
+| `nop_cycles` | Waiting caused by no-operation (NOP) instructions. |
+| `scoreboard_not_ready` | The scoreboard is not ready; the instruction waits for data or resources from previous instructions. |
+| `register_bank_conflict` | Register accesses contend for the same register bank, causing a stall. |
+| `resource_conflict` | Multiple instructions contend for the same hardware resource, causing a stall. |
+| `warp_level_sync` | Waiting for threads in the same warp to meet synchronization conditions. |
+| `divergence_stack_spill` | Waiting for spill handling when the divergence stack has insufficient space. |
+| `others` | Other waiting or stall states outside the categories above. |
+
 ## PipeUtilization (Compute and transfer pipeline utilization)
 
 PipeUtilization.csv contains compute and transfer pipeline active times, cycle ratios, active bandwidth, and instruction-cache miss rates. Use it to examine pipeline active times and cycle ratios. See the field descriptions in the table below for details.

@@ -8,10 +8,13 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "artifact_receiver.h"
+#include "report/pm_sampling_file_validator.h"
 #include <algorithm>
 #include <boost/filesystem.hpp>
 #include <cerrno>
 #include <cstring>
+#include <fstream>
+#include <regex>
 #include <stdexcept>
 #include <map>
 #include <set>
@@ -63,6 +66,26 @@ void RenameNoReplace(const boost::filesystem::path& directory, const std::string
         errno = error.value();
         FileError("publish artifact");
     }
+}
+bool HasOnlySimdVectorCode(const boost::filesystem::path& disassembly)
+{
+    std::ifstream input(disassembly.string());
+    // Inspect instruction lines only: source text and symbol names are not evidence
+    // that a kernel contains a SIMT launch.
+    const std::regex vectorInstruction(R"(^\s*[0-9a-fA-F]+:\s+[0-9a-fA-F]+\s+(VF_SIMT|VF)\s)");
+    bool simd = false;
+    std::string line;
+    while (std::getline(input, line)) {
+        std::smatch match;
+        if (!std::regex_search(line, match, vectorInstruction)) {
+            continue;
+        }
+        if (match[1] == "VF_SIMT") {
+            return false;
+        }
+        simd = true;
+    }
+    return input.eof() && simd;
 }
 } // namespace
 ArtifactReceiver::ArtifactReceiver(const std::string& directory)
@@ -150,7 +173,8 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
             return;
         }
         Require(file_ >= 0, "ARTIFACT: data without begin");
-        if (frame.type == ipc::Type::Pmu || frame.type == ipc::Type::Pipeline || frame.type == ipc::Type::Hardware) {
+        if (frame.type == ipc::Type::Pmu || frame.type == ipc::Type::Pipeline || frame.type == ipc::Type::Hardware ||
+            frame.type == ipc::Type::PmSampling) {
             Require(frame.type == ipc::TypeForKind(active_.kind), "ARTIFACT: data kind mismatch");
             auto chunk = ipc::DecodeArtifactChunk(frame.payload);
             Require(chunk.id == active_.id && chunk.offset == offset_, "ARTIFACT: invalid offset or id");
@@ -215,18 +239,22 @@ bool ArtifactReceiver::Validate(
         "ARTIFACT: manifest mismatch");
     std::set<std::string> expectedPmu;
     bool pipelineExpected = false;
+    bool samplingExpected = false;
     for (const auto& section : config.sections) {
         if (section == "Pipeline") {
             pipelineExpected = true;
+        } else if (section == "PmSampling") {
+            samplingExpected = true;
         } else {
             expectedPmu.insert(section + ".csv");
         }
     }
-    if (!config.sections.empty()) {
+    if (!expectedPmu.empty() || pipelineExpected) {
         expectedPmu.insert("summary.jsonl");
     }
     std::set<uint64_t> ids;
     std::map<std::string, std::set<std::string>> pmuGroups;
+    std::map<std::string, std::set<std::string>> samplingGroups;
     bool hardwareFound = false;
     bool pipelineManifestFound = false;
     std::size_t pipelineFragments = 0;
@@ -249,6 +277,9 @@ bool ArtifactReceiver::Validate(
             } else {
                 ++pipelineFragments;
             }
+        } else if (ipc::KindForName(entry.name) == ipc::DataKind::PmSampling) {
+            Require(samplingExpected, "ARTIFACT: unexpected PmSampling artifact");
+            Require(samplingGroups[parent].insert(base).second, "ARTIFACT: duplicate PmSampling artifact");
         } else {
             Require(expectedPmu.count(base) == 1, "ARTIFACT: unexpected PMU artifact");
             Require(pmuGroups[parent].insert(base).second, "ARTIFACT: duplicate PMU artifact");
@@ -258,6 +289,30 @@ bool ArtifactReceiver::Validate(
     checkCollection(
         pipelineExpected == (pipelineManifestFound && pipelineFragments > 0),
         "ARTIFACT: required Pipeline artifact missing");
+    if (samplingExpected) {
+        checkCollection(!samplingGroups.empty(), "PmSampling collection: no result files received");
+        const std::set<std::string> expected = {"summary.db", "objdump.txt", "symbolizer.json"};
+        for (const auto& [parent, files] : samplingGroups) {
+            if (!files.count("summary.db") && files.count("objdump.txt") &&
+                HasOnlySimdVectorCode(directory_path_ / parent / "objdump.txt")) {
+                checkCollection(
+                    false,
+                    (directory_path_ / parent / "objdump.txt").string() +
+                        ": PmSampling requires SIMT instructions (VF_SIMT); only SIMD VF instructions were found. "
+                        "PC/state samples are unavailable; other valid results are retained");
+            }
+            for (const auto& name : expected) {
+                checkCollection(
+                    files.count(name) != 0, (directory_path_ / parent / name).string() +
+                                                ": PmSampling result missing; other valid results are retained");
+            }
+            for (const auto& name : files) {
+                std::string error;
+                const bool valid = ValidatePmSamplingFile(directory_path_ / parent / name, &error);
+                checkCollection(valid, error);
+            }
+        }
+    }
     if (!expectedPmu.empty()) {
         checkCollection(!pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
         for (const auto& [parent, files] : pmuGroups) {

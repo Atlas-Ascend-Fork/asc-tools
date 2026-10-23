@@ -78,7 +78,7 @@ void UdsClient::Run(
             frame = channel.Receive(ipc::After(ipc::kIoTimeout));
             if (frame.type == ipc::Type::DataBegin || frame.type == ipc::Type::DataEnd ||
                 frame.type == ipc::Type::Pmu || frame.type == ipc::Type::Pipeline ||
-                frame.type == ipc::Type::Hardware) {
+                frame.type == ipc::Type::Hardware || frame.type == ipc::Type::PmSampling) {
                 receiver.Receive(frame);
                 artifact_count_ = receiver.Count();
             } else if (frame.type == ipc::Type::Result) {

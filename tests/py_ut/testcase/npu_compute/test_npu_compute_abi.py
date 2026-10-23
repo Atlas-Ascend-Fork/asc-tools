@@ -241,8 +241,13 @@ def test_product_cmake_uses_cann_runtime_and_profapi():
 def test_replay_waits_after_msprof_start_before_launching_kernel():
     source = RANGE_PROFILER_SOURCE.read_text(encoding="utf-8")
 
-    assert source.index("MsprofStart(") < source.index(
-        "launchStatus = launchFunction(function, pipeline);"
+    start_body = source.split("aclptiResult RangeProfiler::StartProfilingRound", 1)[
+        1
+    ].split("aclptiResult RangeProfiler::FinishProfilingRound", 1)[0]
+    assert "MsprofStart(" in start_body
+    replay_body = source.split("aclptiResult RangeProfiler::ReplayKernel", 1)[1]
+    assert replay_body.index("StartProfilingRound(") < replay_body.index(
+        "launchStatus = launchFunction(function, instrumented);"
     )
 
 

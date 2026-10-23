@@ -12,16 +12,17 @@
 
 | Section | 说明 | 所属Set |
 | :--- | :--- | :--- |
-| `ArithmeticUtilization` | Cube FP/INT指令数与Cube、Vector活跃周期占比 | `basic`、`full` |
-| `L2Cache` | L2 Cache访问数据 | `basic`、`full` |
-| `Memory` | 主存和片上存储访问数据 | `basic`、`full` |
-| `MemoryL0` | L0存储访问数据 | `basic`、`full` |
-| `MemoryUB` | Unified Buffer访问数据 | `basic`、`full` |
-| `Pipeline` | 流水时间线数据，输出为`PipeTrace.json` | `basic`、`full` |
-| `PipeUtilization` | 计算与流水线利用率数据 | `basic`、`full` |
-| `ResourceConflictRatio` | 流水等待率与Vector资源冲突率 | `full` |
+| <a name="section-arithmeticutilization"></a> `ArithmeticUtilization` | Cube FP/INT指令数与Cube、Vector活跃周期占比 | `basic`、`full` |
+| <a name="section-l2cache"></a> `L2Cache` | L2 Cache访问数据 | `basic`、`full` |
+| <a name="section-memory"></a> `Memory` | 主存和片上存储访问数据 | `basic`、`full` |
+| <a name="section-memoryl0"></a> `MemoryL0` | L0存储访问数据 | `basic`、`full` |
+| <a name="section-memoryub"></a> `MemoryUB` | Unified Buffer访问数据 | `basic`、`full` |
+| <a name="section-pipeline"></a> `Pipeline` | 流水时间线数据，输出为`PipeTrace.json` | `basic`、`full` |
+| <a name="section-pipeutilization"></a> `PipeUtilization` | 计算与流水线利用率数据 | `basic`、`full` |
+| <a name="section-pmsampling"></a> `PmSampling` | 指令地址及各采样状态累计计数、反汇编和函数/内联信息 | `full` |
+| <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | 流水等待率与Vector资源冲突率 | `full` |
 
-当前提供`basic`和`full`两个预定义Set：`basic`包含除`ResourceConflictRatio`外的7个Section，`full`包含全部8个Section。
+当前提供`basic`和`full`两个预定义Set：`basic`包含除`ResourceConflictRatio`和`PmSampling`外的7个Section，`full`包含全部9个Section。
 
 各Section的字段含义和计算方法请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
 
@@ -191,13 +192,34 @@ npu-compute --section Memory --export ./reports ./application
 | `HardwareInfo.jsonl` | 每次采集时生成 | 主机和NPU硬件信息。 |
 | `summary.jsonl` | 执行Kernel时生成 | 性能汇总及算子概览。 |
 | `PipeTrace.json` | 选择`Pipeline`时生成 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
-| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`除外） | 该Section的指标数据。 |
+| `summary.db` | 存在有效CSV或PmSampling采样数据时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库) |
+| `objdump.txt` | 选择`PmSampling`时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
+| `symbolizer.json` | 选择`PmSampling`时生成 | 采样地址对应的函数和内联调用信息。 |
+| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`和`PmSampling`除外） | 该Section的指标数据。 |
 
 `Pipeline` Section基于采样机制生成流水图，与用户启用的核数无直接关系；即使启用全部核，流水图最多展示6个采样Group的数据。
 
 CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常查看。
 
 各文件的字段含义、计算方法及CSV与summary的关系，请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
+
+### SQLite数据库
+
+采集生成的CSV自动写入同一结果目录的`summary.db`，原CSV继续保留。数据库包含以下表，实际生成的表取决于采集结果：
+
+| 数据表 | 生成条件 | 内容 |
+| :--- | :--- | :--- |
+| `ArithmeticUtilization` | 对应CSV入库成功 | [ArithmeticUtilization](#section-arithmeticutilization) |
+| `L2Cache` | 对应CSV入库成功 | [L2Cache](#section-l2cache) |
+| `Memory` | 对应CSV入库成功 | [Memory](#section-memory) |
+| `MemoryL0` | 对应CSV入库成功 | [MemoryL0](#section-memoryl0) |
+| `MemoryUB` | 对应CSV入库成功 | [MemoryUB](#section-memoryub) |
+| `PcSampling` | PmSampling采样数据写入成功 | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数) |
+| `PipeUtilization` | 对应CSV入库成功 | [PipeUtilization](#section-pipeutilization) |
+| `ResourceConflictRatio` | 对应CSV入库成功 | [ResourceConflictRatio](#section-resourceconflictratio) |
+| `FieldUnitMap` | 至少一个含数据记录的CSV成功入库 | `field_name`保存字段名，`unit`保存单位；无单位时为NULL。 |
+
+数据库生成依赖环境中的SQLite动态库。生成失败时，终端提示原因，其他成功结果仍可生成报告。
 
 ### 报告解包
 
@@ -228,6 +250,8 @@ npu-compute --import ./reports/profile.npu-rep --export ./restored
 - 编程语言：待采集的算子当前仅支持Ascend C。
 - 算子调用方式：当前支持通过`<<<>>>`或aclnn方式进行单算子单次调用。
 - `Pipeline`采集受硬件限制：同一Device上只能有一个进程采集`Pipeline`；多个进程同时采集时，只有一个进程能正常输出，其他进程采集失败。
-- 采集SIMT算子的`Pipeline`数据时，不支持使用`noinline`的`__aicore__`函数，比如`printf`和`asc_dump`。
+- `PmSampling`采集受硬件限制：同一Device上，`PmSampling`不能与其他进程的`PmSampling`或`Pipeline`采集同时执行；并发采集可能导致采样数据缺失或采集失败。
+- `PmSampling`仅支持对SIMT指令进行采样；仅使用SIMD指令的算子无法生成`PcSampling`表，其他采集项的成功结果仍保留。
+- 采集SIMT算子的`Pipeline`或`PmSampling`数据时，不支持使用`noinline`的`__aicore__`函数，比如`printf`和`asc_dump`。
 - 目标程序必须具有执行权限，可以是可执行文件或脚本，能够在未使用`npu-compute`时独立运行，并在运行过程中至少成功执行一次NPU核函数。
 - 一条采集命令只运行一个目标程序；需要采集多个程序时，分别执行多条命令。目标程序及其启动的脚本不能再次运行`npu-compute`，检测到嵌套采集时本次采集失败且不会生成报告。

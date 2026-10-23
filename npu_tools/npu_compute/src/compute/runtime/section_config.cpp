@@ -16,9 +16,9 @@
 namespace npucompute {
 namespace {
 
-constexpr std::array<const char*, 8> kSupportedSections = {
-    "PipeUtilization",       "Memory", "MemoryL0", "MemoryUB", "L2Cache", "Pipeline", "ArithmeticUtilization",
-    "ResourceConflictRatio",
+constexpr std::array kSupportedSections = {
+    "PipeUtilization",       "Memory",     "MemoryL0", "MemoryUB", "L2Cache", "Pipeline", "ArithmeticUtilization",
+    "ResourceConflictRatio", "PmSampling",
 };
 
 bool Fail(const std::string& message, std::string* error)
@@ -50,7 +50,12 @@ bool SectionConfig::Load(const std::vector<std::string>& parsed_sections, std::s
     }
     sections_ = std::move(parsed_sections);
     const bool pipelineSection = std::find(sections_.begin(), sections_.end(), "Pipeline") != sections_.end();
-    sections_.erase(std::remove(sections_.begin(), sections_.end(), "Pipeline"), sections_.end());
+    const bool pmSamplingSection = std::find(sections_.begin(), sections_.end(), "PmSampling") != sections_.end();
+    sections_.erase(
+        std::remove_if(
+            sections_.begin(), sections_.end(),
+            [](const std::string& section) { return section == "Pipeline" || section == "PmSampling"; }),
+        sections_.end());
     section_pointers_.clear();
     section_pointers_.reserve(sections_.size());
     for (const std::string& section : sections_) {
@@ -60,7 +65,7 @@ bool SectionConfig::Load(const std::vector<std::string>& parsed_sections, std::s
     params_.numSections = section_pointers_.size();
     params_.blockResult = ACLPTI_BLOCK_RESULT_ALL;
     params_.collectPipeline = pipelineSection;
-    params_.collectPcSampling = false;
+    params_.collectPcSampling = pmSamplingSection;
     return true;
 }
 
@@ -80,6 +85,12 @@ std::string SectionConfig::JoinedSections() const
             joined += ',';
         }
         joined += "Pipeline";
+    }
+    if (params_.collectPcSampling) {
+        if (!joined.empty()) {
+            joined += ',';
+        }
+        joined += "PmSampling";
     }
     return joined;
 }

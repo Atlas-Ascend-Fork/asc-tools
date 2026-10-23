@@ -15,6 +15,7 @@
 #include <functional>
 #include <iterator>
 #include <set>
+#include <iostream>
 
 #include <algorithm>
 #include <atomic>
@@ -22,6 +23,8 @@
 #include <cstring>
 #include <elf.h>
 #include <string>
+#include <string_view>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -34,12 +37,22 @@ std::vector<char> MakeElfWithKernelArgumentSizes(
 {
     constexpr char sectionNames[] = "\0.shstrtab\0__CCE_KernelArgSize\0.ascend.meta.test_kernel\0";
     const std::string names(sectionNames, sizeof(sectionNames));
-    const std::size_t sectionCount = argumentSizes.empty() && parameters.empty() ? 2 : 4;
+    constexpr std::size_t kNamesSection = 1;
+    constexpr std::size_t kArgumentsSection = 2;
+    constexpr std::size_t kMetadataSection = 3;
+    constexpr std::size_t kMetadataAlignment = sizeof(std::uint32_t);
+    constexpr std::size_t kSummaryWordCount = 3;
+    constexpr std::size_t kParameterWordCount = 9;
+    constexpr std::uint16_t kSummaryTag = 16;
+    constexpr std::uint16_t kParameterTag = 17;
+    const std::size_t sectionCount =
+        argumentSizes.empty() && parameters.empty() ? kNamesSection + 1 : kMetadataSection + 1;
     const std::size_t sectionHeadersOffset = sizeof(Elf64_Ehdr);
     const std::size_t sectionNamesOffset = sectionHeadersOffset + sectionCount * sizeof(Elf64_Shdr);
     const std::size_t argumentSizesOffset = sectionNamesOffset + names.size();
     const std::size_t argumentSizesBytes = argumentSizes.size() * sizeof(std::uint32_t);
-    const std::size_t metadataOffset = (argumentSizesOffset + argumentSizesBytes + 3U) & ~std::size_t(3U);
+    const std::size_t metadataOffset =
+        (argumentSizesOffset + argumentSizesBytes + kMetadataAlignment - 1) & ~(kMetadataAlignment - 1);
     std::string metadata;
     if (!argumentSizes.empty() || !parameters.empty()) {
         auto append = [&](std::uint16_t tag, const std::string& value) {
@@ -48,30 +61,41 @@ std::vector<char> MakeElfWithKernelArgumentSizes(
             metadata.append(reinterpret_cast<const char*>(&length), sizeof(length));
             metadata += value;
         };
-        std::string summary(12, '\0');
+        std::string summary(kSummaryWordCount * sizeof(std::uint32_t), '\0');
         const std::uint32_t parameterCount = static_cast<std::uint32_t>(parameters.size());
         std::uint32_t argumentBytes = 0;
         for (const auto& parameter : parameters) {
             argumentBytes = std::max(argumentBytes, parameter.first + parameter.second);
         }
-        std::memcpy(summary.data(), &parameterCount, sizeof(parameterCount));
-        std::memcpy(summary.data() + sizeof(parameterCount), &argumentBytes, sizeof(argumentBytes));
-        append(16, summary);
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(&parameterCount), sizeof(parameterCount),
+            reinterpret_cast<unsigned char*>(summary.data()));
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(&argumentBytes), sizeof(argumentBytes),
+            reinterpret_cast<unsigned char*>(summary.data() + sizeof(parameterCount)));
+        append(kSummaryTag, summary);
 
         for (std::uint32_t index = 0; index < parameterCount; ++index) {
-            std::string parameter(36, '\0');
+            std::string parameter(kParameterWordCount * sizeof(std::uint32_t), '\0');
             const auto& source = parameters[index];
-            std::memcpy(parameter.data() + 4, &index, sizeof(index));
-            std::memcpy(parameter.data() + 8, &source.first, sizeof(source.first));
-            std::memcpy(parameter.data() + 12, &source.second, sizeof(source.second));
-            append(17, parameter);
+            std::copy_n(
+                reinterpret_cast<const unsigned char*>(&index), sizeof(index),
+                reinterpret_cast<unsigned char*>(parameter.data() + sizeof(std::uint32_t)));
+            std::copy_n(
+                reinterpret_cast<const unsigned char*>(&source.first), sizeof(source.first),
+                reinterpret_cast<unsigned char*>(parameter.data() + 2 * sizeof(std::uint32_t)));
+            std::copy_n(
+                reinterpret_cast<const unsigned char*>(&source.second), sizeof(source.second),
+                reinterpret_cast<unsigned char*>(parameter.data() + 3 * sizeof(std::uint32_t)));
+            append(kParameterTag, parameter);
         }
     }
     const std::size_t metadataEnd = metadataOffset + metadata.size();
     std::vector<char> image(metadataEnd, 0);
 
     Elf64_Ehdr header{};
-    std::memcpy(header.e_ident, ELFMAG, SELFMAG);
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(ELFMAG), SELFMAG, reinterpret_cast<unsigned char*>(header.e_ident));
     header.e_ident[EI_CLASS] = ELFCLASS64;
     header.e_ident[EI_DATA] = ELFDATA2LSB;
     header.e_ident[EI_VERSION] = EV_CURRENT;
@@ -80,25 +104,30 @@ std::vector<char> MakeElfWithKernelArgumentSizes(
     header.e_shoff = sectionHeadersOffset;
     header.e_shentsize = sizeof(Elf64_Shdr);
     header.e_shnum = static_cast<Elf64_Half>(sectionCount);
-    header.e_shstrndx = 1;
-    std::memcpy(image.data(), &header, sizeof(header));
+    header.e_shstrndx = kNamesSection;
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(&header), sizeof(header),
+        reinterpret_cast<unsigned char*>(image.data()));
 
     Elf64_Shdr namesHeader{};
-    namesHeader.sh_name = 1;
+    namesHeader.sh_name = static_cast<Elf64_Word>(names.find(".shstrtab"));
     namesHeader.sh_type = SHT_STRTAB;
     namesHeader.sh_offset = sectionNamesOffset;
     namesHeader.sh_size = names.size();
-    std::memcpy(image.data() + sectionHeadersOffset + sizeof(Elf64_Shdr), &namesHeader, sizeof(namesHeader));
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(&namesHeader), sizeof(namesHeader),
+        reinterpret_cast<unsigned char*>(image.data() + sectionHeadersOffset + kNamesSection * sizeof(Elf64_Shdr)));
 
     if (!argumentSizes.empty()) {
         Elf64_Shdr argumentSizesHeader{};
-        argumentSizesHeader.sh_name = 11;
+        argumentSizesHeader.sh_name = static_cast<Elf64_Word>(names.find("__CCE_KernelArgSize"));
         argumentSizesHeader.sh_type = SHT_NOTE;
         argumentSizesHeader.sh_offset = argumentSizesOffset;
         argumentSizesHeader.sh_size = argumentSizesBytes;
-        std::memcpy(
-            image.data() + sectionHeadersOffset + 2 * sizeof(Elf64_Shdr), &argumentSizesHeader,
-            sizeof(argumentSizesHeader));
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(&argumentSizesHeader), sizeof(argumentSizesHeader),
+            reinterpret_cast<unsigned char*>(
+                image.data() + sectionHeadersOffset + kArgumentsSection * sizeof(Elf64_Shdr)));
     }
     if (!metadata.empty()) {
         Elf64_Shdr metadataHeader{};
@@ -106,19 +135,25 @@ std::vector<char> MakeElfWithKernelArgumentSizes(
         metadataHeader.sh_type = SHT_NOTE;
         metadataHeader.sh_offset = metadataOffset;
         metadataHeader.sh_size = metadata.size();
-        metadataHeader.sh_addralign = 4;
-        std::memcpy(
-            image.data() + sectionHeadersOffset + 3 * sizeof(Elf64_Shdr), &metadataHeader, sizeof(metadataHeader));
+        metadataHeader.sh_addralign = kMetadataAlignment;
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(&metadataHeader), sizeof(metadataHeader),
+            reinterpret_cast<unsigned char*>(
+                image.data() + sectionHeadersOffset + kMetadataSection * sizeof(Elf64_Shdr)));
     }
 
-    std::memcpy(image.data() + sectionNamesOffset, names.data(), names.size());
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(names.data()), names.size(),
+        reinterpret_cast<unsigned char*>(image.data() + sectionNamesOffset));
     for (std::size_t index = 0; index < argumentSizes.size(); ++index) {
-        std::memcpy(
-            image.data() + argumentSizesOffset + index * sizeof(std::uint32_t), &argumentSizes[index],
-            sizeof(std::uint32_t));
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(&argumentSizes[index]), sizeof(std::uint32_t),
+            reinterpret_cast<unsigned char*>(image.data() + argumentSizesOffset + index * sizeof(std::uint32_t)));
     }
     if (!metadata.empty()) {
-        std::memcpy(image.data() + metadataOffset, metadata.data(), metadata.size());
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(metadata.data()), metadata.size(),
+            reinterpret_cast<unsigned char*>(image.data() + metadataOffset));
     }
     return image;
 }
@@ -126,6 +161,103 @@ std::vector<char> MakeElfWithKernelArgumentSizes(
 } // namespace
 
 namespace {
+
+std::vector<char> MakeCodeElf(std::uint64_t address, std::uint64_t size)
+{
+    constexpr char kSectionNames[] = "\0.shstrtab\0.text\0.strtab\0.symtab\0";
+    constexpr char kSymbolNames[] = "\0kernel\0";
+    constexpr std::size_t kNamesSection = 1;
+    constexpr std::size_t kCodeSection = 2;
+    constexpr std::size_t kStringsSection = 3;
+    constexpr std::size_t kSymbolsSection = 4;
+    constexpr std::size_t kSectionCount = kSymbolsSection + 1;
+    constexpr std::size_t kSymbolCount = 2; // Null symbol followed by the kernel symbol.
+    const std::string names(kSectionNames, sizeof(kSectionNames));
+    const std::string symbols(kSymbolNames, sizeof(kSymbolNames) - 1);
+    const std::size_t data = sizeof(Elf64_Ehdr) + kSectionCount * sizeof(Elf64_Shdr);
+    const auto strings = data + names.size() + size;
+    const auto table = strings + symbols.size();
+    std::vector<char> image(table + kSymbolCount * sizeof(Elf64_Sym), 0);
+    Elf64_Ehdr h{};
+    std::copy_n(reinterpret_cast<const unsigned char*>(ELFMAG), SELFMAG, reinterpret_cast<unsigned char*>(h.e_ident));
+    h.e_ident[EI_CLASS] = ELFCLASS64;
+    h.e_ident[EI_DATA] = ELFDATA2LSB;
+    h.e_shoff = sizeof(h);
+    h.e_shentsize = sizeof(Elf64_Shdr);
+    h.e_shnum = kSectionCount;
+    h.e_shstrndx = kNamesSection;
+    std::copy_n(reinterpret_cast<const unsigned char*>(&h), sizeof(h), reinterpret_cast<unsigned char*>(image.data()));
+    const auto section = [&](std::size_t index, const char* name, std::uint32_t type, std::uint64_t offset,
+                             std::uint64_t length, std::uint64_t flags = 0) {
+        Elf64_Shdr entry{};
+        entry.sh_name = names.find(name);
+        entry.sh_type = type;
+        entry.sh_offset = offset;
+        entry.sh_size = length;
+        entry.sh_flags = flags;
+        if (index == kCodeSection)
+            entry.sh_addr = address;
+        if (index == kSymbolsSection)
+            entry.sh_link = kStringsSection;
+        std::copy_n(
+            reinterpret_cast<const unsigned char*>(&entry), sizeof(entry),
+            reinterpret_cast<unsigned char*>(image.data() + sizeof(h) + index * sizeof(entry)));
+    };
+    section(kNamesSection, ".shstrtab", SHT_STRTAB, data, names.size());
+    section(kCodeSection, ".text", SHT_PROGBITS, data + names.size(), size, SHF_ALLOC | SHF_EXECINSTR);
+    section(kStringsSection, ".strtab", SHT_STRTAB, strings, symbols.size());
+    section(kSymbolsSection, ".symtab", SHT_SYMTAB, table, kSymbolCount * sizeof(Elf64_Sym));
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(names.data()), names.size(),
+        reinterpret_cast<unsigned char*>(image.data() + data));
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(symbols.data()), symbols.size(),
+        reinterpret_cast<unsigned char*>(image.data() + strings));
+    Elf64_Sym function{};
+    function.st_name = static_cast<Elf64_Word>(symbols.find("kernel"));
+    function.st_info = ELF64_ST_INFO(STB_GLOBAL, STT_FUNC);
+    function.st_shndx = kCodeSection;
+    function.st_value = address;
+    function.st_size = size;
+    std::copy_n(
+        reinterpret_cast<const unsigned char*>(&function), sizeof(function),
+        reinterpret_cast<unsigned char*>(image.data() + table + sizeof(function)));
+    return image;
+}
+
+bool TestInstructionMap()
+{
+    using aclpti::profiling::BuildPmSamplingInstructionMap;
+    using aclpti::profiling::PmSamplingInstructionMap;
+    const auto original = MakeCodeElf(0, 8);
+    const auto companion = MakeCodeElf(0x100, 16);
+    const std::string before = "Disassembly of section .text:\n0: 00000000 MOV X0, X1\n4: 00000000 END\n";
+    const std::string after = "Disassembly of section .text:\n100: 00000000 MOV X0, X1\n"
+                              "104: 00000000 CALL probe\n108: 00000000 NOP\n10c: 00000000 END\n";
+    PmSamplingInstructionMap map;
+    std::string error;
+    if (!BuildPmSamplingInstructionMap(original, companion, before, after, map, error) ||
+        map.business != std::map<std::uint64_t, std::uint64_t>{{0x100, 0}, {0x10c, 4}} ||
+        map.excluded != std::set<std::uint64_t>{0x104, 0x108}) {
+        std::cerr << error << '\n';
+        return false;
+    }
+    auto reject = [&](std::vector<char> elf, std::string text) {
+        const bool validElf = elf == companion;
+        return !BuildPmSamplingInstructionMap(original, elf, before, text, map, error) && map.business.empty() &&
+               !error.empty() && map.error == error && (!validElf || map.relocatedEntries.at(0) == 0x100);
+    };
+    auto ambiguous = after;
+    ambiguous.replace(ambiguous.find("CALL probe"), std::string_view("CALL probe").size(), "MOV X0, X1");
+    auto deleted = after;
+    deleted.replace(deleted.find("MOV X0, X1"), std::string_view("MOV X0, X1").size(), "SUB X0, X1");
+    auto wrongBytes = after;
+    wrongBytes.replace(wrongBytes.find("00000000"), std::string_view("00000000").size(), "00000001");
+    auto gap = after;
+    gap.replace(gap.find("104:"), std::string_view("104:").size(), "106:");
+    return reject(companion, ambiguous) && reject(companion, deleted) && reject(companion, wrongBytes) &&
+           reject(companion, gap) && reject(std::vector<char>(10), after);
+}
 
 std::vector<std::string> ReadLines(const boost::filesystem::path& path)
 {
@@ -239,4 +371,96 @@ TEST(NpuComputeBinaryInstrumenter, ReusesProbeAcrossLinkFailureAndConcurrentInst
             aggregateInput.data(), aggregateInput.size(), aggregateOutput, &traceOffset));
         EXPECT_EQ(traceOffset, 48U);
     });
+}
+
+TEST(NpuComputeBinaryInstrumenter, MapsBusinessInstructionsAndExcludesProbes) { EXPECT_TRUE(TestInstructionMap()); }
+
+namespace {
+struct InstructionMapInput {
+    std::vector<char> image;
+    std::string disassembly;
+};
+
+InstructionMapInput ScalarInstructions(std::uint64_t entry, const std::vector<std::string>& operations)
+{
+    constexpr std::size_t kInstructionBytes = sizeof(std::uint32_t);
+    std::ostringstream text;
+    text << "Disassembly of section .text:\n";
+    for (std::size_t index = 0; index < operations.size(); ++index) {
+        text << std::hex << entry + index * kInstructionBytes << ": 00000000 " << operations[index] << '\n';
+    }
+    return {MakeCodeElf(entry, operations.size() * kInstructionBytes), text.str()};
+}
+} // namespace
+
+TEST(NpuComputeBinaryInstrumenter, MapsExpandedForwardAndBackwardBranches)
+{
+    const auto original = ScalarInstructions(0, {"MOV X2, X3", "JUMPCI #16", "MOV X4, X5", "JUMPI #0", "END"});
+    const auto companion = ScalarInstructions(
+        0x100, {"MOV X2, X3", "ST_IO.b64 X0, [X30], #-1960, #0", "MOVI X0, #8", "MOVK X0, #0, #1", "MOVK X0, #0, #2",
+                "JUMPC X0", "LD_IO.b64 X0, [X30], #-1960, #0", "MOV X4, X5", "ST_IO.b64 X0, [X30], #-1960, #0",
+                "MOVI X0, #65524", "MOVK X0, #65535, #1", "MOVK X0, #65535, #2", "JUMP X0",
+                "LD_IO.b64 X0, [X30], #-1960, #0", "NOP", "END"});
+    aclpti::profiling::PmSamplingInstructionMap map;
+    std::string error;
+    ASSERT_TRUE(aclpti::profiling::BuildPmSamplingInstructionMap(
+        original.image, companion.image, original.disassembly, companion.disassembly, map, error))
+        << error;
+    const std::map<std::uint64_t, std::uint64_t> expected{{0x100, 0}, {0x114, 4}, {0x11c, 8}, {0x130, 12}, {0x13c, 16}};
+    EXPECT_EQ(map.business, expected);
+    EXPECT_EQ(map.excluded.size(), 11U);
+    // Malformed expansions and altered targets must not become plausible PC maps.
+    for (const auto& replacement : std::vector<std::pair<std::string, std::string>>{
+             {"MOVI X0, #8", "MOVI X0, #7"},
+             {"MOVK X0, #0, #1", "MOVK X0, #0, #2"},
+             {"JUMPC X0", "JUMP X0"},
+             {"ST_IO.b64 X0, [X30], #-1960, #0", "ST_IO.b64 X0, [X30], #-1968, #0"}}) {
+        auto invalid = companion.disassembly;
+        invalid.replace(invalid.find(replacement.first), replacement.first.size(), replacement.second);
+        EXPECT_FALSE(aclpti::profiling::BuildPmSamplingInstructionMap(
+            original.image, companion.image, original.disassembly, invalid, map, error))
+            << invalid;
+        EXPECT_TRUE(map.business.empty());
+        EXPECT_FALSE(error.empty());
+    }
+}
+
+TEST(NpuComputeBinaryInstrumenter, ValidatesRelocatedDirectBranchTargets)
+{
+    const auto original = ScalarInstructions(0, {"MOV X0, X1", "JUMPCI #12", "MOV X2, X3", "END"});
+    const auto companion = ScalarInstructions(0x100, {"MOV X0, X1", "JUMPCI #272", "MOV X2, X3", "NOP", "END"});
+    aclpti::profiling::PmSamplingInstructionMap map;
+    std::string error;
+    ASSERT_TRUE(aclpti::profiling::BuildPmSamplingInstructionMap(
+        original.image, companion.image, original.disassembly, companion.disassembly, map, error))
+        << error;
+    auto wrongTarget = companion.disassembly;
+    wrongTarget.replace(wrongTarget.find("#272"), std::string("#272").size(), "#264");
+    EXPECT_FALSE(aclpti::profiling::BuildPmSamplingInstructionMap(
+        original.image, companion.image, original.disassembly, wrongTarget, map, error));
+    EXPECT_TRUE(map.business.empty());
+    EXPECT_NE(error.find("branch target"), std::string::npos) << error;
+}
+
+TEST(NpuComputeBinaryInstrumenter, MapsRelocatedVectorEntryAddress)
+{
+    const std::vector<std::string> setup{"MOV X0, PC",      "MOVI X2, #7",        "NOP",      "NOP",
+                                         "SHLI.b64 X2, #2", "ADD.s64 X2, X2, X0", "VF X2, #9"};
+    auto before = setup;
+    before.insert(before.end(), {"MOV X4, X5", "END"});
+    auto after = setup;
+    after[1] = "MOVI X2, #9";
+    after.insert(after.end(), {"CALL probe", "NOP", "MOV X4, X5", "END"});
+    const auto original = ScalarInstructions(0, before);
+    const auto companion = ScalarInstructions(0x100, after);
+    aclpti::profiling::PmSamplingInstructionMap map;
+    std::string error;
+    ASSERT_TRUE(aclpti::profiling::BuildPmSamplingInstructionMap(
+        original.image, companion.image, original.disassembly, companion.disassembly, map, error))
+        << error;
+    EXPECT_EQ(map.business.at(0x104), 4U);
+    after[1] = "MOVI X2, #10";
+    const auto wrong = ScalarInstructions(0x100, after);
+    EXPECT_FALSE(aclpti::profiling::BuildPmSamplingInstructionMap(
+        original.image, wrong.image, original.disassembly, wrong.disassembly, map, error));
 }

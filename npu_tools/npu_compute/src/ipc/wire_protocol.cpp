@@ -19,6 +19,8 @@
 
 namespace npucompute::ipc {
 namespace {
+constexpr std::size_t kMaximumSectionCount = 9;
+constexpr std::size_t kMaximumPmSamplingPathComponents = 2;
 void Check(bool condition, const char* reason)
 {
     if (!condition) {
@@ -78,7 +80,7 @@ private:
 };
 void WriteSections(Writer& writer, const std::vector<std::string>& sections)
 {
-    Check(!sections.empty() && sections.size() <= 8, "invalid section count");
+    Check(!sections.empty() && sections.size() <= kMaximumSectionCount, "invalid section count");
     writer.Integer(sections.size(), 4);
     for (const auto& section : sections) {
         writer.String(section);
@@ -87,7 +89,7 @@ void WriteSections(Writer& writer, const std::vector<std::string>& sections)
 std::vector<std::string> ReadSections(Reader& reader)
 {
     const auto count = reader.Integer(4);
-    Check(count > 0 && count <= 8, "invalid section count");
+    Check(count > 0 && count <= kMaximumSectionCount, "invalid section count");
     std::vector<std::string> result;
     for (uint64_t i = 0; i < count; ++i) {
         result.push_back(reader.String());
@@ -163,13 +165,13 @@ std::vector<std::string> ArtifactPathComponents(const std::string& name)
 
 void ValidateConfig(const Config& config)
 {
-    Check(!config.sections.empty() && config.sections.size() <= 8, "invalid section count");
+    Check(!config.sections.empty() && config.sections.size() <= kMaximumSectionCount, "invalid section count");
     std::set<std::string> seen;
     for (const auto& section : config.sections) {
         Check(
             section == "PipeUtilization" || section == "Memory" || section == "MemoryL0" || section == "MemoryUB" ||
                 section == "L2Cache" || section == "Pipeline" || section == "ArithmeticUtilization" ||
-                section == "ResourceConflictRatio",
+                section == "ResourceConflictRatio" || section == "PmSampling",
             "unknown section");
         Check(seen.insert(section).second, "duplicate section");
     }
@@ -190,6 +192,10 @@ DataKind KindForName(const std::string& name)
     if ((base == "PipeTrace.json" && components.size() == 1) || pipelinePath) {
         return DataKind::PipelineTrace;
     }
+    if (base == "summary.db" || base == "objdump.txt" || base == "symbolizer.json") {
+        Check(components.size() <= kMaximumPmSamplingPathComponents, "invalid PmSampling artifact path");
+        return DataKind::PmSampling;
+    }
     if (base == "summary.jsonl" || base == "PipeUtilization.csv") {
         return DataKind::PmuCsv;
     }
@@ -204,6 +210,12 @@ ArtifactType ArtifactTypeForName(const std::string& name)
     const auto kind = KindForName(name);
     const auto components = ArtifactPathComponents(name);
     const std::string& base = components.back();
+    if (base == "summary.db")
+        return ArtifactType::Db;
+    if (base == "objdump.txt")
+        return ArtifactType::Txt;
+    if (base == "symbolizer.json")
+        return ArtifactType::Json;
     if (kind == DataKind::PipelineTrace) {
         return ArtifactType::Json;
     }
@@ -215,8 +227,11 @@ ArtifactType ArtifactTypeForName(const std::string& name)
 Type TypeForKind(DataKind kind)
 {
     Check(
-        kind == DataKind::PmuCsv || kind == DataKind::PipelineTrace || kind == DataKind::HardwareInfo,
+        kind == DataKind::PmuCsv || kind == DataKind::PipelineTrace || kind == DataKind::HardwareInfo ||
+            kind == DataKind::PmSampling,
         "unknown artifact kind");
+    if (kind == DataKind::PmSampling)
+        return Type::PmSampling;
     if (kind == DataKind::PipelineTrace) {
         return Type::Pipeline;
     }

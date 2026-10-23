@@ -124,10 +124,10 @@ bool ResolveCollectionFileType(const boost::filesystem::path& path, NpuRepFileTy
         *type = NpuRepFileType::Jsonl;
     } else if (extension == ".csv") {
         *type = NpuRepFileType::Csv;
-    } else if (extension == ".sqlite3") {
-        *type = NpuRepFileType::Sqlite3;
-    } else if (extension == ".pb" || extension == ".protobuf") {
-        *type = NpuRepFileType::Protobuf;
+    } else if (extension == ".db") {
+        *type = NpuRepFileType::Sqlite;
+    } else if (extension == ".txt") {
+        *type = NpuRepFileType::Txt;
     } else {
         return Fail("unknown collection file type: " + path.string(), error);
     }
@@ -160,8 +160,8 @@ bool ValidateCollectionFile(const boost::filesystem::path& path, NpuRepFileType 
 
     switch (type) {
         case NpuRepFileType::Json:
-        case NpuRepFileType::Sqlite3:
-        case NpuRepFileType::Protobuf:
+        case NpuRepFileType::Sqlite:
+        case NpuRepFileType::Txt:
             return true;
         case NpuRepFileType::Jsonl:
         case NpuRepFileType::Csv:
