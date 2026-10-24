@@ -208,6 +208,7 @@ target_include_directories(npu_tools_utest PRIVATE
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/device_runtime"
 )
 
+target_link_libraries(npu_tools_utest PRIVATE c_sec_static)
 target_link_libraries(npu_tools_utest PRIVATE
   npu_compute_sqlite_runtime
   npu_compute_test_process

@@ -175,13 +175,13 @@ bool IsKnownMustUnderstandType(uint16_t type)
 
 std::vector<uint8_t> EncodeFrame(const Frame& frame)
 {
-    if (frame.payload.size() > kMaxPayloadSize) {
+    if (frame.payload.size() > MAX_PAYLOAD_SIZE) {
         return {};
     }
     // 帧头布局（偏移 / 字段 / 宽度）：
     //   0  magic        u32     4  major  u16     6  minor u16
     //   8  type         u16    10  flags  u16
-    //  12  length       u32   —— 整帧字节数 = kWireHeaderSize + payload_size
+    //  12  length       u32   —— 整帧字节数 = WIRE_HEADER_SIZE + payload_size
     //  16  payload_size u32
     //  20  session_id   u64    28  sequence u64    36  payload
     //
@@ -189,12 +189,12 @@ std::vector<uint8_t> EncodeFrame(const Frame& frame)
     // 没有影响（各字段连续写入、不含 padding），但实现必须逐字段读写，不得把帧头映射成
     // C 结构体再 memcpy。
     Encoder encoder;
-    encoder.PutU32(kProtocolMagic);
-    encoder.PutU16(kProtocolMajor);
-    encoder.PutU16(kProtocolMinor);
+    encoder.PutU32(PROTOCOL_MAGIC);
+    encoder.PutU16(PROTOCOL_MAJOR);
+    encoder.PutU16(PROTOCOL_MINOR);
     encoder.PutU16(static_cast<uint16_t>(frame.type));
     encoder.PutU16(frame.flags);
-    encoder.PutU32(static_cast<uint32_t>(kWireHeaderSize + frame.payload.size()));
+    encoder.PutU32(static_cast<uint32_t>(WIRE_HEADER_SIZE + frame.payload.size()));
     encoder.PutU32(static_cast<uint32_t>(frame.payload.size()));
     encoder.PutU64(frame.sessionId);
     encoder.PutU64(frame.sequence);
@@ -205,10 +205,10 @@ std::vector<uint8_t> EncodeFrame(const Frame& frame)
 
 bool DecodeFrame(const uint8_t* data, size_t size, Frame& frame, std::string& error)
 {
-    if (data == nullptr || size < kWireHeaderSize) {
+    if (data == nullptr || size < WIRE_HEADER_SIZE) {
         return Fail(error, "short frame header");
     }
-    Decoder decoder(data, kWireHeaderSize);
+    Decoder decoder(data, WIRE_HEADER_SIZE);
     uint32_t magic = 0;
     uint16_t major = 0;
     uint16_t minor = 0;
@@ -223,22 +223,22 @@ bool DecodeFrame(const uint8_t* data, size_t size, Frame& frame, std::string& er
         !decoder.GetU64(sessionId) || !decoder.GetU64(sequence)) {
         return Fail(error, "malformed frame header");
     }
-    if (magic != kProtocolMagic) {
+    if (magic != PROTOCOL_MAGIC) {
         return Fail(error, "invalid protocol magic");
     }
-    if (major != kProtocolMajor) {
+    if (major != PROTOCOL_MAJOR) {
         return Fail(error, "incompatible protocol major version");
     }
     // minor 不参与拒绝判定：同一 major 下帧头格式稳定，收到比自己高的 minor 只说明对端
     // 更新，不说明这一帧无法解析。原样带回给上层去 NegotiateMinor，高位 minor 新增的
     // 消息类型和标志位分别由 must-ignore 规则兜住。
-    // 曾经这里是 `minor > kProtocolMinor 即拒绝`，那会让新版本永远连不上旧版本。
-    // length 与 payload_size 表达的是同一信息（相差常数 kWireHeaderSize），任何一侧编码
+    // 曾经这里是 `minor > PROTOCOL_MINOR 即拒绝`，那会让新版本永远连不上旧版本。
+    // length 与 payload_size 表达的是同一信息（相差常数 WIRE_HEADER_SIZE），任何一侧编码
     // 出错都会让它们矛盾，因此必须强制交叉校验。三条都在分配 payload 缓冲区之前执行。
-    if (payloadSize > kMaxPayloadSize) {
+    if (payloadSize > MAX_PAYLOAD_SIZE) {
         return Fail(error, "invalid frame payload size");
     }
-    if (length != kWireHeaderSize + payloadSize) {
+    if (length != WIRE_HEADER_SIZE + payloadSize) {
         return Fail(error, "frame length does not match payload size");
     }
     // SOCK_SEQPACKET 保留消息边界，length 必然等于收到的数据报长度；不等说明对端实现
@@ -248,7 +248,7 @@ bool DecodeFrame(const uint8_t* data, size_t size, Frame& frame, std::string& er
     }
     // bit 3-7 是 must-understand 的保留位，非零即协议错误。bit 8-15 是 must-ignore 的
     // 保留位，这里不做任何校验，原样交给上层忽略。
-    if ((flags & kFlagsReservedMustUnderstand) != 0) {
+    if ((flags & FLAGS_RESERVED_MUST_UNDERSTAND) != 0) {
         return Fail(error, "reserved must-understand flag bits are set");
     }
     // 未知类型的处理取决于最高位：must-understand 直接拒绝，must-ignore 照常解出来，
@@ -261,7 +261,7 @@ bool DecodeFrame(const uint8_t* data, size_t size, Frame& frame, std::string& er
     frame.minor = minor;
     frame.sessionId = sessionId;
     frame.sequence = sequence;
-    frame.payload.assign(data + kWireHeaderSize, data + size);
+    frame.payload.assign(data + WIRE_HEADER_SIZE, data + size);
     return true;
 }
 
@@ -334,7 +334,7 @@ std::vector<uint8_t> EncodeConfigure(const ConfigureRequest& request)
         }
     }
     auto payload = encoder.Take();
-    return payload.size() <= kMaxPayloadSize ? payload : std::vector<uint8_t>{};
+    return payload.size() <= MAX_PAYLOAD_SIZE ? payload : std::vector<uint8_t>{};
 }
 
 bool DecodeConfigure(const std::vector<uint8_t>& payload, ConfigureRequest& request, std::string& error)
@@ -424,7 +424,7 @@ std::vector<uint8_t> EncodeError(const ErrorPayload& payload)
     //
     // 超长文案截断而不是整体失败：Error 本身就是"出事了"的通道，若因为文案太长而编不出
     // 帧，对端就只剩连接关闭可看，反而丢掉了最需要的那点信息。
-    const size_t messageSize = std::min(payload.message.size(), kMaxErrorMessageSize);
+    const size_t messageSize = std::min(payload.message.size(), MAX_ERROR_MESSAGE_SIZE);
     Encoder encoder;
     encoder.PutU16(static_cast<uint16_t>(payload.domain));
     encoder.PutU16(payload.code);
@@ -449,11 +449,11 @@ bool DecodeError(const std::vector<uint8_t>& payload, ErrorPayload& decoded, std
     if (reserved != 0) {
         return Fail(error, "reserved error field is not zero");
     }
-    if (messageSize > kMaxErrorMessageSize) {
+    if (messageSize > MAX_ERROR_MESSAGE_SIZE) {
         return Fail(error, "error message exceeds the maximum size");
     }
     // 8 字节头之后必须恰好剩 message_size 字节，不允许尾随数据。
-    if (payload.size() != kErrorHeaderSize + messageSize) {
+    if (payload.size() != ERROR_HEADER_SIZE + messageSize) {
         return Fail(error, "error payload length does not match the declared message size");
     }
     if (domain < static_cast<uint16_t>(ErrorDomain::INJECTION) ||
@@ -462,13 +462,13 @@ bool DecodeError(const std::vector<uint8_t>& payload, ErrorPayload& decoded, std
     }
     decoded.domain = static_cast<ErrorDomain>(domain);
     decoded.code = code;
-    decoded.message.assign(payload.begin() + static_cast<std::ptrdiff_t>(kErrorHeaderSize), payload.end());
+    decoded.message.assign(payload.begin() + static_cast<std::ptrdiff_t>(ERROR_HEADER_SIZE), payload.end());
     return true;
 }
 
 std::vector<uint8_t> EncodeText(const std::string& text)
 {
-    if (text.size() > kMaxPayloadSize) {
+    if (text.size() > MAX_PAYLOAD_SIZE) {
         return {};
     }
     return std::vector<uint8_t>(text.begin(), text.end());

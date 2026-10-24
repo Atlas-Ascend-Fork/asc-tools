@@ -12,9 +12,15 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_INSTR_COMMON_DEVICE_INSTR_STRUCT_REGISTER_H
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace aclsan {
+inline constexpr std::size_t MATRIX_REGISTER_BANK_COUNT = 2; // Normal and _B banks.
+inline constexpr std::size_t NDDMA_LOOP_COUNT = 5;
+inline constexpr std::size_t NDDMA_PADDING_LOOP_COUNT = NDDMA_LOOP_COUNT - 1;
+inline constexpr std::size_t DMA_DIRECTION_COUNT = 3;   // UBUF->GM, GM->UBUF, GM->CBUF.
+inline constexpr std::size_t DMA_STRIDE_LOOP_COUNT = 2; // Loop 1 and loop 2.
 
 // SET_FMATRIX / SET_FMATRIX_B. Bit ranges refer to the raw config operand.
 struct FmatrixParamField {
@@ -63,8 +69,8 @@ struct Mte2SourceParamField {
 
 struct NdDmaPadCountParamField {
     // PAD_CNT_NDDMA carries loop 1 through loop 4. Loop 0 padding belongs to the NDDMA instruction itself.
-    std::array<uint8_t, 4> leftPaddingCounts{};
-    std::array<uint8_t, 4> rightPaddingCounts{};
+    std::array<uint8_t, NDDMA_PADDING_LOOP_COUNT> leftPaddingCounts{};
+    std::array<uint8_t, NDDMA_PADDING_LOOP_COUNT> rightPaddingCounts{};
 };
 
 struct NdDmaLoopStrideParamField {

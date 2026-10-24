@@ -30,14 +30,15 @@
 
 namespace npucompute::cli {
 namespace {
+constexpr int SIGNAL_EXIT_CODE_BASE = 128;
 
-constexpr int kProgramNotExecutableExitCode = 126;
-constexpr int kProgramNotFoundExitCode = 127;
-constexpr std::array<int, 3> kForwardedSignals = {SIGINT, SIGTERM, SIGHUP};
+constexpr int PROGRAM_NOT_EXECUTABLE_EXIT_CODE = 126;
+constexpr int PROGRAM_NOT_FOUND_EXIT_CODE = 127;
+constexpr std::array<int, 3> FORWARDED_SIGNALS = {SIGINT, SIGTERM, SIGHUP};
 
-volatile sig_atomic_t g_app_process_group = 0;
-volatile sig_atomic_t g_pending_signal = 0;
-volatile sig_atomic_t g_defer_signal = 0;
+volatile sig_atomic_t g_appProcessGroup = 0;
+volatile sig_atomic_t g_pendingSignal = 0;
+volatile sig_atomic_t g_deferSignal = 0;
 
 enum class ChildErrorStage : uint32_t {
     SetProcessGroup = 1,
@@ -52,18 +53,18 @@ struct ChildError {
 struct SignalState {
     sigset_t forwarded_set{};
     sigset_t original_mask{};
-    std::array<struct sigaction, kForwardedSignals.size()> original_actions{};
+    std::array<struct sigaction, FORWARDED_SIGNALS.size()> original_actions{};
     std::size_t installed_actions = 0;
     bool signals_blocked = false;
 };
 
 void ForwardSignal(int signal_number)
 {
-    g_pending_signal = signal_number;
-    if (g_defer_signal != 0) {
+    g_pendingSignal = signal_number;
+    if (g_deferSignal != 0) {
         return;
     }
-    const sig_atomic_t process_group = g_app_process_group;
+    const sig_atomic_t process_group = g_appProcessGroup;
     if (process_group > 0) {
         kill(-static_cast<pid_t>(process_group), signal_number);
     }
@@ -88,9 +89,9 @@ void RestoreSignalState(SignalState* state)
     }
 
     sigprocmask(SIG_BLOCK, &state->forwarded_set, nullptr);
-    g_app_process_group = 0;
+    g_appProcessGroup = 0;
     for (std::size_t i = 0; i < state->installed_actions; ++i) {
-        sigaction(kForwardedSignals[i], &state->original_actions[i], nullptr);
+        sigaction(FORWARDED_SIGNALS[i], &state->original_actions[i], nullptr);
     }
     sigprocmask(SIG_SETMASK, &state->original_mask, nullptr);
     state->signals_blocked = false;
@@ -100,7 +101,7 @@ void RestoreSignalState(SignalState* state)
 bool PrepareSignalState(SignalState* state, std::string* error)
 {
     sigemptyset(&state->forwarded_set);
-    for (int signal_number : kForwardedSignals) {
+    for (int signal_number : FORWARDED_SIGNALS) {
         sigaddset(&state->forwarded_set, signal_number);
     }
     if (sigprocmask(SIG_BLOCK, &state->forwarded_set, &state->original_mask) != 0) {
@@ -113,8 +114,8 @@ bool PrepareSignalState(SignalState* state, std::string* error)
     action.sa_handler = ForwardSignal;
     sigemptyset(&action.sa_mask);
     action.sa_flags = 0;
-    for (std::size_t i = 0; i < kForwardedSignals.size(); ++i) {
-        if (sigaction(kForwardedSignals[i], &action, &state->original_actions[i]) != 0) {
+    for (std::size_t i = 0; i < FORWARDED_SIGNALS.size(); ++i) {
+        if (sigaction(FORWARDED_SIGNALS[i], &action, &state->original_actions[i]) != 0) {
             const int saved_errno = errno;
             state->installed_actions = i;
             RestoreSignalState(state);
@@ -128,9 +129,9 @@ bool PrepareSignalState(SignalState* state, std::string* error)
 
 void RestoreChildSignals(const SignalState& state)
 {
-    g_app_process_group = 0;
+    g_appProcessGroup = 0;
     for (std::size_t i = 0; i < state.installed_actions; ++i) {
-        sigaction(kForwardedSignals[i], &state.original_actions[i], nullptr);
+        sigaction(FORWARDED_SIGNALS[i], &state.original_actions[i], nullptr);
     }
     sigprocmask(SIG_SETMASK, &state.original_mask, nullptr);
 }
@@ -221,7 +222,7 @@ int ExitCodeFromStatus(int status, std::string* error)
             "APP terminated by signal " + std::string(description == nullptr ? "unknown" : description) + " (" +
                 std::to_string(signal_number) + ")",
             error);
-        return 128 + signal_number;
+        return SIGNAL_EXIT_CODE_BASE + signal_number;
     }
     SetError("waitpid returned an unsupported APP status", error);
     return kInternalErrorExitCode;
@@ -249,7 +250,7 @@ ProcessHandle::~ProcessHandle()
     }
     if (impl_->signals.installed_actions != 0 || impl_->signals.signals_blocked) {
         RestoreSignalState(&impl_->signals);
-        g_defer_signal = 0;
+        g_deferSignal = 0;
     }
 }
 pid_t ProcessHandle::Pid() const { return impl_->pid; }
@@ -259,14 +260,14 @@ void ProcessHandle::Signal(int number) const noexcept
         kill(-impl_->pid, number);
     }
 }
-int ProcessHandle::PendingSignal() const noexcept { return g_pending_signal; }
+int ProcessHandle::PendingSignal() const noexcept { return g_pendingSignal; }
 
 std::string ProcessHandle::ExitDescription() const
 {
     if (!impl_->reaped) {
         return "unknown";
     }
-    return impl_->termSignal ? "signal:" + std::to_string(impl_->termSignal) : std::to_string(impl_->exitCode);
+    return impl_->termSignal != 0 ? "signal:" + std::to_string(impl_->termSignal) : std::to_string(impl_->exitCode);
 }
 
 bool ProcessHandle::Start(
@@ -306,8 +307,8 @@ bool ProcessHandle::Start(
     }
 
     SignalState& signal_state = impl_->signals;
-    g_pending_signal = 0;
-    g_defer_signal = 1;
+    g_pendingSignal = 0;
+    g_deferSignal = 1;
     if (!PrepareSignalState(&signal_state, error)) {
         close(error_pipe[0]);
         close(error_pipe[1]);
@@ -335,7 +336,7 @@ bool ProcessHandle::Start(
         execvpe(request.program.c_str(), argument_pointers.data(), environment_pointers.data());
         const int saved_errno = errno;
         WriteChildError(error_pipe[1], ChildErrorStage::Exec, saved_errno);
-        _exit(saved_errno == ENOENT ? kProgramNotFoundExitCode : kProgramNotExecutableExitCode);
+        _exit(saved_errno == ENOENT ? PROGRAM_NOT_FOUND_EXIT_CODE : PROGRAM_NOT_EXECUTABLE_EXIT_CODE);
     }
 
     close(error_pipe[1]);
@@ -344,7 +345,7 @@ bool ProcessHandle::Start(
     if (setpgid(child_pid, child_pid) != 0 && errno != EACCES && errno != ESRCH) {
         management_error = ErrnoMessage("setpgid", errno);
     }
-    g_app_process_group = static_cast<sig_atomic_t>(child_pid);
+    g_appProcessGroup = static_cast<sig_atomic_t>(child_pid);
     const int unblock_error = UnblockParentSignals(&signal_state);
     if (unblock_error != 0 && management_error.empty()) {
         management_error = ErrnoMessage("sigprocmask", unblock_error);
@@ -353,7 +354,7 @@ bool ProcessHandle::Start(
     ChildError child_error{};
     bool has_child_error = false;
     for (;;) {
-        if (g_pending_signal != 0 || std::chrono::steady_clock::now() >= deadline) {
+        if (g_pendingSignal != 0 || std::chrono::steady_clock::now() >= deadline) {
             close(error_pipe[0]);
             SetError("exec startup cancelled or timed out", error);
             return false;
@@ -363,7 +364,7 @@ bool ProcessHandle::Start(
         if (ready < 0 && errno == EINTR) {
             continue;
         }
-        if (ready < 0 || (descriptor.revents & (POLLERR | POLLNVAL))) {
+        if (ready < 0 || (static_cast<unsigned int>(descriptor.revents) & (POLLERR | POLLNVAL)) != 0) {
             close(error_pipe[0]);
             SetError("exec startup pipe failed", error);
             return false;
@@ -395,7 +396,7 @@ bool ProcessHandle::Start(
                 missing_execute_bit ? "not an executable file" : std::strerror(child_error.error_number);
             SetError("failed to start program '" + request.program + "': " + detail, error);
             impl_->exitCode =
-                child_error.error_number == ENOENT ? kProgramNotFoundExitCode : kProgramNotExecutableExitCode;
+                child_error.error_number == ENOENT ? PROGRAM_NOT_FOUND_EXIT_CODE : PROGRAM_NOT_EXECUTABLE_EXIT_CODE;
         }
         impl_->exitError = error == nullptr ? "exec failed" : *error;
     }
@@ -418,7 +419,7 @@ bool ProcessHandle::Poll(int* exitCode, std::string* error)
             impl_->exitCode = ExitCodeFromStatus(status, &impl_->exitError);
         }
         impl_->reaped = true;
-        g_app_process_group = 0;
+        g_appProcessGroup = 0;
     }
     *exitCode = impl_->exitCode;
     SetError(impl_->exitError, error);
@@ -438,7 +439,7 @@ int ProcessHandle::Wait(std::string* error)
             impl_->exitCode = ExitCodeFromStatus(status, &impl_->exitError);
         }
         impl_->reaped = true;
-        g_app_process_group = 0;
+        g_appProcessGroup = 0;
     }
     SetError(impl_->exitError, error);
     return impl_->exitCode;
@@ -450,9 +451,9 @@ int LaunchProcessAndWait(const ProcessLaunchRequest& request, std::string* error
     if (!child.Start(request, error)) {
         return kInternalErrorExitCode;
     }
-    g_defer_signal = 0;
-    if (g_pending_signal != 0) {
-        child.Signal(g_pending_signal);
+    g_deferSignal = 0;
+    if (g_pendingSignal != 0) {
+        child.Signal(g_pendingSignal);
     }
     return child.Wait(error);
 }

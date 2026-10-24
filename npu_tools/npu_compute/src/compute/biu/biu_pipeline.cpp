@@ -27,19 +27,20 @@
 
 namespace npucompute {
 namespace {
+constexpr double MICROSECONDS_PER_SECOND = 1000000.0;
 
-constexpr uint32_t kEndWord = 0xefffffffU;
-constexpr uint32_t kPaddingWord = 0xddddddddU;
-constexpr uint32_t kCtrlShift = 28U;
-constexpr uint32_t kEventsShift = 16U;
-constexpr uint32_t kCtrlMask = 0xfU;
-constexpr uint32_t kEventsMask = 0xfffU;
-constexpr uint32_t kTimeMask = 0xffffU;
-constexpr std::size_t kStampWordCount = 4;
-constexpr std::size_t kPipeCount = 7;
-constexpr uint64_t kMaxReplayBytes = 64U * 1024U * 1024U;
-constexpr std::array<uint16_t, 8> kEndMarkSequence = {0xd88, 0xd99, 0xdaa, 0xdbb, 0xdcc, 0xddd, 0xdee, 0xdff};
-constexpr std::array<const char*, 12> kRegionColors = {
+constexpr uint32_t END_WORD = 0xefffffffU;
+constexpr uint32_t PADDING_WORD = 0xddddddddU;
+constexpr uint32_t CTRL_SHIFT = 28U;
+constexpr uint32_t EVENTS_SHIFT = 16U;
+constexpr uint32_t CTRL_MASK = 0xfU;
+constexpr uint32_t EVENTS_MASK = 0xfffU;
+constexpr uint32_t TIME_MASK = 0xffffU;
+constexpr std::size_t STAMP_WORD_COUNT = 4;
+constexpr std::size_t PIPE_COUNT = 7;
+constexpr uint64_t MAX_REPLAY_BYTES = 64U * 1024U * 1024U;
+constexpr std::array<uint16_t, 8> END_MARK_SEQUENCE = {0xd88, 0xd99, 0xdaa, 0xdbb, 0xdcc, 0xddd, 0xdee, 0xdff};
+constexpr std::array<const char*, 12> REGION_COLORS = {
     "grass_green",
     "green",
     "pink",
@@ -59,7 +60,7 @@ struct PipeDescriptor {
     const char* color;
 };
 
-constexpr std::array<PipeDescriptor, kPipeCount> kPipeDescriptors = {{
+constexpr std::array<PipeDescriptor, PIPE_COUNT> PIPE_DESCRIPTORS = {{
     {"SCALAR", "startup"},
     {"VECTOR", "rail_idle"},
     {"CUBE", "rail_response"},
@@ -86,15 +87,15 @@ struct ParsedChannelEvents {
 };
 
 struct StampAssembler {
-    std::array<uint32_t, kStampWordCount> words{};
+    std::array<uint32_t, STAMP_WORD_COUNT> words{};
     std::size_t size = 0;
 
     void Reset() { size = 0; }
 };
 
-uint8_t Ctrl(uint32_t word) { return static_cast<uint8_t>((word >> kCtrlShift) & kCtrlMask); }
-uint16_t Events(uint32_t word) { return static_cast<uint16_t>((word >> kEventsShift) & kEventsMask); }
-uint16_t TimeData(uint32_t word) { return static_cast<uint16_t>(word & kTimeMask); }
+uint8_t Ctrl(uint32_t word) { return static_cast<uint8_t>((word >> CTRL_SHIFT) & CTRL_MASK); }
+uint16_t Events(uint32_t word) { return static_cast<uint16_t>((word >> EVENTS_SHIFT) & EVENTS_MASK); }
+uint16_t TimeData(uint32_t word) { return static_cast<uint16_t>(word & TIME_MASK); }
 
 uint64_t Timestamp(const StampAssembler& stamp)
 {
@@ -115,15 +116,15 @@ aclptiResult FindOrigin(const aclptiPipelineData& replay, uint64_t* origin, BiuP
     bool found = false;
     for (const auto& [channel, words] : replay.channels) {
         static_cast<void>(channel);
-        if (words.size() > kMaxReplayBytes / sizeof(uint32_t) ||
-            stats->payloadBytes > kMaxReplayBytes - words.size() * sizeof(uint32_t)) {
+        if (words.size() > MAX_REPLAY_BYTES / sizeof(uint32_t) ||
+            stats->payloadBytes > MAX_REPLAY_BYTES - words.size() * sizeof(uint32_t)) {
             return ACLPTI_ERROR_OUT_OF_MEMORY;
         }
         stats->payloadBytes += words.size() * sizeof(uint32_t);
         StampAssembler stamp;
         bool afterEnd = false;
         for (uint32_t word : words) {
-            if (word == kEndWord) {
+            if (word == END_WORD) {
                 if (stamp.size != 0) {
                     ++stats->invalidRecordCount;
                     return ACLPTI_ERROR_TRACE_INCOMPLETE;
@@ -131,7 +132,7 @@ aclptiResult FindOrigin(const aclptiPipelineData& replay, uint64_t* origin, BiuP
                 afterEnd = true;
                 continue;
             }
-            if (afterEnd && word == kPaddingWord) {
+            if (afterEnd && word == PADDING_WORD) {
                 stats->paddingBytes += sizeof(uint32_t);
                 continue;
             }
@@ -139,7 +140,7 @@ aclptiResult FindOrigin(const aclptiPipelineData& replay, uint64_t* origin, BiuP
             const uint8_t ctrl = Ctrl(word);
             if (ctrl == 14U) {
                 stamp.words[stamp.size++] = word;
-                if (stamp.size == kStampWordCount) {
+                if (stamp.size == STAMP_WORD_COUNT) {
                     const uint64_t timestamp = Timestamp(stamp);
                     if (!found || timestamp < *origin) {
                         *origin = timestamp;
@@ -177,8 +178,8 @@ double ChannelFrequency(const BiuClockConfig& clocks, aclptiBiuCoreKind kind)
 
 double CurrentTimeUs(uint64_t anchor, uint64_t origin, uint64_t cycles, double syscntFrequency, double coreFrequency)
 {
-    return static_cast<double>(anchor - origin) * 1000000.0 / syscntFrequency +
-           static_cast<double>(cycles) * 1000000.0 / coreFrequency;
+    return static_cast<double>(anchor - origin) * MICROSECONDS_PER_SECOND / syscntFrequency +
+           static_cast<double>(cycles) * MICROSECONDS_PER_SECOND / coreFrequency;
 }
 
 aclptiResult ParseChannel(
@@ -189,8 +190,8 @@ aclptiResult ParseChannel(
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
     StampAssembler stamp;
-    std::array<PipeState, kPipeCount> states{};
-    std::array<double, kPipeCount> starts{};
+    std::array<PipeState, PIPE_COUNT> states{};
+    std::array<double, PIPE_COUNT> starts{};
     bool hasAnchor = false;
     bool afterEnd = false;
     uint64_t anchor = 0;
@@ -230,7 +231,7 @@ aclptiResult ParseChannel(
         if (start == regionStarts.end()) {
             return;
         }
-        const char* regionColor = kRegionColors[baseRegionId % kRegionColors.size()];
+        const char* regionColor = REGION_COLORS[baseRegionId % REGION_COLORS.size()];
         appendEvent(BiuTraceEvent{
             channel, pipe, blockId, "Region" + std::to_string(baseRegionId), regionColor, start->second.startUs,
             now - start->second.startUs, true});
@@ -238,12 +239,12 @@ aclptiResult ParseChannel(
     };
 
     const auto updateEndMarks = [&](uint16_t regionId) {
-        const auto marker = std::find(kEndMarkSequence.begin(), kEndMarkSequence.end(), regionId);
-        if (marker == kEndMarkSequence.end()) {
+        const auto marker = std::find(END_MARK_SEQUENCE.begin(), END_MARK_SEQUENCE.end(), regionId);
+        if (marker == END_MARK_SEQUENCE.end()) {
             endMark.reset();
             return;
         }
-        const std::size_t markerIndex = static_cast<std::size_t>(std::distance(kEndMarkSequence.begin(), marker));
+        const std::size_t markerIndex = static_cast<std::size_t>(std::distance(END_MARK_SEQUENCE.begin(), marker));
         if (markerIndex == 0U) {
             endMark = EndMarkState{events.size(), 1};
             return;
@@ -251,7 +252,7 @@ aclptiResult ParseChannel(
         if (!endMark) {
             return;
         }
-        if (endMark->nextExpectedIndex == kEndMarkSequence.size()) {
+        if (endMark->nextExpectedIndex == END_MARK_SEQUENCE.size()) {
             return;
         }
         if (endMark->nextExpectedIndex != markerIndex) {
@@ -289,7 +290,7 @@ aclptiResult ParseChannel(
     };
 
     for (uint32_t word : words) {
-        if (word == kEndWord) {
+        if (word == END_WORD) {
             if (stamp.size != 0) {
                 ++stats->invalidRecordCount;
                 return ACLPTI_ERROR_TRACE_INCOMPLETE;
@@ -298,14 +299,14 @@ aclptiResult ParseChannel(
             afterEnd = true;
             continue;
         }
-        if (afterEnd && word == kPaddingWord) {
+        if (afterEnd && word == PADDING_WORD) {
             continue;
         }
         afterEnd = false;
         const uint8_t ctrl = Ctrl(word);
         if (ctrl == 14U) {
             stamp.words[stamp.size++] = word;
-            if (stamp.size == kStampWordCount) {
+            if (stamp.size == STAMP_WORD_COUNT) {
                 for (PipeState state : states) {
                     if (state == PipeState::Busy) {
                         ++stats->incompleteIntervalCount;
@@ -377,8 +378,8 @@ aclptiResult ParseChannel(
                     BiuTraceEvent event{channel,
                                         static_cast<BiuPipe>(index),
                                         blockId,
-                                        kPipeDescriptors[index].name,
-                                        kPipeDescriptors[index].color,
+                                        PIPE_DESCRIPTORS[index].name,
+                                        PIPE_DESCRIPTORS[index].color,
                                         starts[index],
                                         now - starts[index],
                                         false};
@@ -587,20 +588,21 @@ aclptiResult PipeTraceWriter::Begin(const boost::filesystem::path& outputPath, s
 aclptiResult PipeTraceWriter::Append(const BiuTraceEvent& event)
 {
     const std::size_t pipe = static_cast<std::size_t>(event.pipe);
-    if (state_ != State::Writing || pipe >= kPipeDescriptors.size() || event.channel.groupId > 5U ||
+    if (state_ != State::Writing || pipe >= PIPE_DESCRIPTORS.size() || event.channel.groupId > 5U ||
         event.name.empty() || !std::isfinite(event.startUs) || !std::isfinite(event.durationUs) ||
         event.startUs < 0.0 || event.durationUs < 0.0) {
         return ACLPTI_ERROR_INVALID_STATE;
     }
-    const PipeDescriptor& descriptor = kPipeDescriptors[pipe];
+    const PipeDescriptor& descriptor = PIPE_DESCRIPTORS[pipe];
     std::ostringstream pid;
     pid << "group" << static_cast<unsigned int>(event.channel.groupId) << "." << CoreSuffix(event.channel.coreKind);
     const std::string eventName = event.isDfx ? event.name : descriptor.name;
     *output_ << (firstEvent_ ? "" : ",") << "{\"cname\":\""
              << EscapeJson(event.color.empty() ? descriptor.color : event.color)
-             << "\",\"dur\":" << std::setprecision(17) << event.durationUs << ",\"name\":\"" << EscapeJson(eventName)
-             << "\",\"ph\":\"X\",\"pid\":\"" << pid.str() << "\",\"tid\":\"" << descriptor.name
-             << "\",\"ts\":" << std::setprecision(17) << event.startUs << "}";
+             << "\",\"dur\":" << std::setprecision(std::numeric_limits<double>::max_digits10) << event.durationUs
+             << ",\"name\":\"" << EscapeJson(eventName) << "\",\"ph\":\"X\",\"pid\":\"" << pid.str() << "\",\"tid\":\""
+             << descriptor.name << "\",\"ts\":" << std::setprecision(std::numeric_limits<double>::max_digits10)
+             << event.startUs << "}";
     if (!output_->good()) {
         state_ = State::Failed;
         return ACLPTI_ERROR_TRACE_WRITE;

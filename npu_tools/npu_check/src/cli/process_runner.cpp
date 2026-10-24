@@ -354,11 +354,11 @@ std::string HexRandom()
     if (!RandomBytes(bytes.data(), bytes.size())) {
         return {};
     }
-    constexpr char kHexDigits[] = "0123456789abcdef";
+    constexpr char HEX_DIGITS[] = "0123456789abcdef";
     std::string text(bytes.size() * HEX_DIGITS_PER_BYTE, '0');
     for (size_t index = 0; index < bytes.size(); ++index) {
-        text[index * HEX_DIGITS_PER_BYTE] = kHexDigits[bytes[index] >> 4u];
-        text[index * HEX_DIGITS_PER_BYTE + 1] = kHexDigits[bytes[index] & 0x0fu];
+        text[index * HEX_DIGITS_PER_BYTE] = HEX_DIGITS[bytes[index] >> 4u];
+        text[index * HEX_DIGITS_PER_BYTE + 1] = HEX_DIGITS[bytes[index] & 0x0fu];
     }
     return text;
 }
@@ -613,13 +613,13 @@ int RunApplication(const Options& options, const std::string& libraryPath)
         const std::string parentText = std::to_string(getppid());
         const std::string timeoutText = std::to_string(options.handshakeTimeoutMs);
         (void)setenv("ACL_API_INJECTION", libraryPath.c_str(), 1);
-        (void)setenv(npucheck::ipc::kUdsNameEnv, udsName.c_str(), 1);
-        (void)setenv(npucheck::ipc::kSessionIdEnv, sessionText.c_str(), 1);
-        (void)setenv(npucheck::ipc::kCliPidEnv, parentText.c_str(), 1);
-        (void)setenv(npucheck::ipc::kHandshakeTimeoutEnv, timeoutText.c_str(), 1);
+        (void)setenv(npucheck::ipc::UDS_NAME_ENV, udsName.c_str(), 1);
+        (void)setenv(npucheck::ipc::SESSION_ID_ENV, sessionText.c_str(), 1);
+        (void)setenv(npucheck::ipc::CLI_PID_ENV, parentText.c_str(), 1);
+        (void)setenv(npucheck::ipc::HANDSHAKE_TIMEOUT_ENV, timeoutText.c_str(), 1);
         // 工作目录经环境变量下发：Configure 改用注册表编码后只承载工具与子选项，
         // 路径这类与协议无关的部署信息不再占线路。
-        (void)setenv(npucheck::ipc::kWorkDirEnv, workDir.c_str(), 1);
+        (void)setenv(npucheck::ipc::WORK_DIR_ENV, workDir.c_str(), 1);
         auto arguments = options.application;
         auto argv = BuildArgv(arguments);
         execvp(argv[0], argv.data());
@@ -668,10 +668,10 @@ int RunApplication(const Options& options, const std::string& libraryPath)
             do {
                 pollResult = poll(&descriptor, 1, CONSOLE_POLL_INTERVAL_MS);
             } while (pollResult < 0 && errno == EINTR);
-            if (pollResult < 0 || (descriptor.revents & (POLLERR | POLLNVAL)) != 0) {
+            if (pollResult < 0 || (static_cast<unsigned int>(descriptor.revents) & (POLLERR | POLLNVAL)) != 0) {
                 break;
             }
-            if ((descriptor.revents & POLLIN) != 0) {
+            if ((static_cast<unsigned int>(descriptor.revents) & POLLIN) != 0) {
                 const ssize_t bytes = read(fd.Get(), buffer.data(), buffer.size());
                 if (bytes < 0 && errno == EINTR) {
                     continue;
@@ -680,7 +680,7 @@ int RunApplication(const Options& options, const std::string& libraryPath)
                     break;
                 }
                 output.Console(buffer.data(), static_cast<size_t>(bytes));
-            } else if ((descriptor.revents & POLLHUP) != 0) {
+            } else if ((static_cast<unsigned int>(descriptor.revents) & POLLHUP) != 0) {
                 break;
             }
             if (!childExited) {
@@ -712,7 +712,7 @@ int RunApplication(const Options& options, const std::string& libraryPath)
                 std::string receiveError;
                 // 采集阶段不设超时：应用可能跑数小时，任何固定值都是错的。终止由
                 // 对端关闭连接（CLOSED）或子进程退出驱动，见下面的分支。
-                const npucheck::ipc::IoStatus status = client.Receive(frame, npucheck::ipc::kNoDeadline, receiveError);
+                const npucheck::ipc::IoStatus status = client.Receive(frame, npucheck::ipc::NO_DEADLINE, receiveError);
                 if (status == npucheck::ipc::IoStatus::CLOSED) {
                     break;
                 }
@@ -735,20 +735,20 @@ int RunApplication(const Options& options, const std::string& libraryPath)
                         break;
                     }
                     // 上限与注入库侧共用同一个常量：对端异常时不能让 CLI 一直吃内存。
-                    if (result.size() + message.size() > npucheck::ipc::kMaxResultBytes) {
+                    if (result.size() + message.size() > npucheck::ipc::MAX_RESULT_BYTES) {
                         protocolComplete = false;
                         output.Detail("result exceeds the maximum report size");
                         break;
                     }
                     result.append(message);
                     ++resultFrames;
-                    if ((frame.flags & npucheck::ipc::kFlagMore) != 0) {
+                    if ((frame.flags & npucheck::ipc::FLAG_MORE) != 0) {
                         continue;
                     }
                     // MORE=0 的末帧到达即报告完整；结论位只在这一帧上有效，前面的分片
                     // 不带任何结论，所以这里必须读末帧的 flags 而不是任意一帧的。
-                    resultHasErrors = (frame.flags & npucheck::ipc::kFlagHasErrors) != 0;
-                    resultTruncated = (frame.flags & npucheck::ipc::kFlagTruncated) != 0;
+                    resultHasErrors = (frame.flags & npucheck::ipc::FLAG_HAS_ERRORS) != 0;
+                    resultTruncated = (frame.flags & npucheck::ipc::FLAG_TRUNCATED) != 0;
                     resultComplete = true;
                     break;
                 }

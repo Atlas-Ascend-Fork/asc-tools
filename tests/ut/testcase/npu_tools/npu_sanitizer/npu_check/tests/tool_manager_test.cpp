@@ -51,10 +51,10 @@ Session RunSession(
         return result;
     const auto name = "@npu-check-manager-" + std::to_string(getpid());
     constexpr uint64_t sessionId = 93091;
-    setenv(npucheck::ipc::kUdsNameEnv, name.c_str(), 1);
-    setenv(npucheck::ipc::kSessionIdEnv, "93091", 1);
-    setenv(npucheck::ipc::kCliPidEnv, std::to_string(getpid()).c_str(), 1);
-    setenv(npucheck::ipc::kHandshakeTimeoutEnv, "5000", 1);
+    setenv(npucheck::ipc::UDS_NAME_ENV, name.c_str(), 1);
+    setenv(npucheck::ipc::SESSION_ID_ENV, "93091", 1);
+    setenv(npucheck::ipc::CLI_PID_ENV, std::to_string(getpid()).c_str(), 1);
+    setenv(npucheck::ipc::HANDSHAKE_TIMEOUT_ENV, "5000", 1);
     npucheck::ipc::ConfigureRequest config;
     config.tools = options.tools;
     std::thread client([&] {
@@ -73,7 +73,7 @@ Session RunSession(
             }
             result.text.append(frame.payload.begin(), frame.payload.end());
             result.flags = frame.flags;
-            if ((frame.flags & npucheck::ipc::kFlagMore) == 0)
+            if ((frame.flags & npucheck::ipc::FLAG_MORE) == 0)
                 return;
         }
     });
@@ -149,10 +149,10 @@ Session RunSession(
         manager.Finalize();
     }
     client.join();
-    unsetenv(npucheck::ipc::kUdsNameEnv);
-    unsetenv(npucheck::ipc::kSessionIdEnv);
-    unsetenv(npucheck::ipc::kCliPidEnv);
-    unsetenv(npucheck::ipc::kHandshakeTimeoutEnv);
+    unsetenv(npucheck::ipc::UDS_NAME_ENV);
+    unsetenv(npucheck::ipc::SESSION_ID_ENV);
+    unsetenv(npucheck::ipc::CLI_PID_ENV);
+    unsetenv(npucheck::ipc::HANDSHAKE_TIMEOUT_ENV);
     return result;
 }
 } // namespace
@@ -197,7 +197,7 @@ TEST(ToolManagerTest, CombinedToolsReportBothAndSubscribeSharedCallbackOnce)
     EXPECT_NE(result.text.find("Line information unavailable."), std::string::npos);
     EXPECT_EQ(result.text.find("api_status_"), std::string::npos);
     EXPECT_EQ(result.text.find("[CALL-STACK] pc="), std::string::npos);
-    EXPECT_NE(result.flags & npucheck::ipc::kFlagHasErrors, 0U);
+    EXPECT_NE(result.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }
 
 TEST(ToolManagerTest, RacecheckConfigurationReachesGraphAndRejectsMalformedObservation)
@@ -223,7 +223,7 @@ TEST(ToolManagerTest, RacecheckGraphPublishesMemstateEvidenceThroughCliSession)
     EXPECT_NE(session.text.find("RAW"), std::string::npos);
     EXPECT_NE(session.text.find("analysis_complete=true"), std::string::npos);
     EXPECT_NE(session.text.find("raw=1"), std::string::npos);
-    EXPECT_NE(session.flags & npucheck::ipc::kFlagHasErrors, 0U);
+    EXPECT_NE(session.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }
 
 TEST(ToolManagerTest, RacecheckDoesNotSuppressOtherToolsReports)
@@ -236,7 +236,7 @@ TEST(ToolManagerTest, RacecheckDoesNotSuppressOtherToolsReports)
     EXPECT_NE(session.text.find("MEMCHECK SUMMARY: 1 errors"), std::string::npos);
     EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
     EXPECT_NE(session.text.find("analysis_complete=false"), std::string::npos);
-    EXPECT_NE(session.flags & npucheck::ipc::kFlagHasErrors, 0U);
+    EXPECT_NE(session.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }
 
 TEST(ToolManagerTest, ThreeToolsReportIndependentlyAndShareCallbacks)
@@ -262,7 +262,7 @@ TEST(ToolManagerTest, ThreeToolsReportIndependentlyAndShareCallbacks)
     EXPECT_NE(result.text.find("tool=synccheck"), std::string::npos);
     EXPECT_NE(result.text.find("tool=initcheck"), std::string::npos);
     EXPECT_NE(result.text.find("Register mte2_source"), std::string::npos);
-    EXPECT_NE(result.flags & npucheck::ipc::kFlagHasErrors, 0U);
+    EXPECT_NE(result.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }
 
 TEST(ToolManagerTest, ErrorFlagAggregatesEitherTool)
@@ -272,7 +272,7 @@ TEST(ToolManagerTest, ErrorFlagAggregatesEitherTool)
             {"npu-check", "--tool", "memcheck", "--tool", "synccheck", "/bin/true"}, errors.first, errors.second);
         ASSERT_EQ(result.initialized, 0);
         ASSERT_TRUE(result.error.empty()) << result.error;
-        EXPECT_EQ((result.flags & npucheck::ipc::kFlagHasErrors) != 0, errors.first || errors.second);
+        EXPECT_EQ((result.flags & npucheck::ipc::FLAG_HAS_ERRORS) != 0, errors.first || errors.second);
         EXPECT_NE(result.text.find("status=complete"), std::string::npos);
     }
 }
@@ -290,7 +290,7 @@ TEST(ToolManagerTest, SingleCheckerAndFailedSyncRetainIndependentState)
     EXPECT_NE(incomplete.text.find("status=incomplete"), std::string::npos);
     EXPECT_NE(incomplete.text.find("pending_device_operations=0"), std::string::npos);
     EXPECT_NE(incomplete.text.find("MEMCHECK SUMMARY: 1 errors"), std::string::npos);
-    EXPECT_NE(incomplete.flags & npucheck::ipc::kFlagHasErrors, 0U);
+    EXPECT_NE(incomplete.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }
 
 TEST(ToolManagerTest, NullCallbackIsCountedOnceAndDoesNotReachCheckers)
@@ -301,5 +301,5 @@ TEST(ToolManagerTest, NullCallbackIsCountedOnceAndDoesNotReachCheckers)
     EXPECT_NE(session.text.find("malformed_callbacks=1"), std::string::npos);
     EXPECT_NE(session.text.find("status=incomplete"), std::string::npos);
     EXPECT_NE(session.text.find("pending_device_operations=0"), std::string::npos);
-    EXPECT_EQ(session.flags & npucheck::ipc::kFlagHasErrors, 0U);
+    EXPECT_EQ(session.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }

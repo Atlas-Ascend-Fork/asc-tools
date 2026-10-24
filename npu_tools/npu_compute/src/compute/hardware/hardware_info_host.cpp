@@ -27,10 +27,11 @@
 
 namespace npucompute {
 namespace {
+constexpr std::uint32_t DECIMAL_RADIX = 10;
 
-constexpr uint64_t kBytesPerMb = 1024ULL * 1024ULL;
-constexpr uint64_t kBytesPerGb = kBytesPerMb * 1024ULL;
-constexpr uint32_t kMaximumCpuId = 1024U * 1024U;
+constexpr uint64_t BYTES_PER_MB = 1024ULL * 1024ULL;
+constexpr uint64_t BYTES_PER_GB = BYTES_PER_MB * 1024ULL;
+constexpr uint32_t MAXIMUM_CPU_ID = 1024U * 1024U;
 
 void Diagnose(DiagnosticSink* diagnostics, const std::string& message)
 {
@@ -71,10 +72,10 @@ bool ParseInteger(std::string_view text, Integer* value)
             return false;
         }
         const uint64_t digit = static_cast<uint64_t>(character - '0');
-        if (parsedValue > (maximum - digit) / 10) {
+        if (parsedValue > (maximum - digit) / DECIMAL_RADIX) {
             return false;
         }
-        parsedValue = parsedValue * 10 + digit;
+        parsedValue = parsedValue * DECIMAL_RADIX + digit;
     }
     if (negative && parsedValue != 0) {
         return false;
@@ -126,7 +127,7 @@ bool ParseOnlineCpuList(std::string_view text, std::vector<uint32_t>* cpuIds)
                 return false;
             }
         }
-        if (last > kMaximumCpuId) {
+        if (last > MAXIMUM_CPU_ID) {
             return false;
         }
         for (uint32_t cpuId = first; cpuId <= last; ++cpuId) {
@@ -207,7 +208,7 @@ void CollectMemoryTotal(HostInfo* result, DiagnosticSink* diagnostics)
         return;
     }
     const uint64_t bytes = totalRam * memoryUnit;
-    result->memoryTotalSizeMb = static_cast<double>(bytes) / static_cast<double>(kBytesPerMb);
+    result->memoryTotalSizeMb = static_cast<double>(bytes) / static_cast<double>(BYTES_PER_MB);
 }
 
 void CollectDiskTotal(const boost::filesystem::path& outputDirectory, HostInfo* result, DiagnosticSink* diagnostics)
@@ -225,7 +226,7 @@ void CollectDiskTotal(const boost::filesystem::path& outputDirectory, HostInfo* 
         return;
     }
     const uint64_t bytes = blocks * fragmentSize;
-    result->diskTotalSizeGb = static_cast<double>(bytes) / static_cast<double>(kBytesPerGb);
+    result->diskTotalSizeGb = static_cast<double>(bytes) / static_cast<double>(BYTES_PER_GB);
 }
 
 } // namespace

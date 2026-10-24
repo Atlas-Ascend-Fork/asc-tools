@@ -9,6 +9,7 @@
  */
 #include "report/pipe_trace_finalizer.h"
 
+#include <limits>
 #include <boost/filesystem.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -261,9 +262,11 @@ bool WriteFinalTrace(
                       ".replay" + std::to_string(fragment.replayId) + "." + pid;
             }
             output << (first ? "" : ",") << "{\"cname\":\"" << EscapeJson(event.color)
-                   << "\",\"dur\":" << std::setprecision(17) << event.duration << ",\"name\":\""
-                   << EscapeJson(event.name) << "\",\"ph\":\"X\",\"pid\":\"" << EscapeJson(pid) << "\",\"tid\":\""
-                   << EscapeJson(event.tid) << "\",\"ts\":" << std::setprecision(17) << event.timestamp << "}";
+                   << "\",\"dur\":" << std::setprecision(std::numeric_limits<double>::max_digits10) << event.duration
+                   << ",\"name\":\"" << EscapeJson(event.name) << "\",\"ph\":\"X\",\"pid\":\"" << EscapeJson(pid)
+                   << "\",\"tid\":\"" << EscapeJson(event.tid)
+                   << "\",\"ts\":" << std::setprecision(std::numeric_limits<double>::max_digits10) << event.timestamp
+                   << "}";
             first = false;
         }
     }

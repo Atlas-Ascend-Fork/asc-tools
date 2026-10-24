@@ -29,8 +29,8 @@ UdsClient::~UdsClient() { Close(); }
 namespace {
 
 // connect 重试节奏：首次 20 ms，指数退避至上限 100 ms。
-constexpr int kInitialBackoffMs = 20;
-constexpr int kMaxBackoffMs = 100;
+constexpr int INITIAL_BACKOFF_MS = 20;
+constexpr int MAX_BACKOFF_MS = 100;
 
 // connect 失败后是否值得重试。抽象命名空间下这三个 errno 分别对应目标进程启动过程中的
 // 不同阶段，都属于"还没准备好"而不是"失败"：
@@ -56,7 +56,7 @@ bool UdsClient::ConnectWithRetry(
     }
 
     const npucheck::ipc::DeadlineMs start = npucheck::ipc::MonotonicNowMs();
-    int backoffMs = kInitialBackoffMs;
+    int backoffMs = INITIAL_BACKOFF_MS;
     int lastError = ECONNREFUSED;
     uint64_t attempt = 1;
     while (true) {
@@ -106,7 +106,7 @@ bool UdsClient::ConnectWithRetry(
         }
         const auto napMs = static_cast<int>(std::min<int64_t>(remain, backoffMs));
         std::this_thread::sleep_for(std::chrono::milliseconds(napMs));
-        backoffMs = std::min(backoffMs * 2, kMaxBackoffMs);
+        backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
         ++attempt;
     }
 }
@@ -202,7 +202,7 @@ bool UdsClient::ConnectAndConfigure(
     }
     ASCTOOL_DEBUG(
         "[UDS] phase=configure tool_count=%zu option_count=%zu length=%zu payload_size=%zu", configure.tools.size(),
-        optionCount, npucheck::ipc::kWireHeaderSize + encodedConfig.size(), encodedConfig.size());
+        optionCount, npucheck::ipc::WIRE_HEADER_SIZE + encodedConfig.size(), encodedConfig.size());
     if (!Send(npucheck::ipc::MessageType::CONFIGURE, encodedConfig, deadline, error)) {
         return false;
     }
@@ -235,7 +235,7 @@ bool UdsClient::ConnectAndConfigure(
     ASCTOOL_DEBUG(
         "[UDS] phase=wait_ready elapsed_ms=%lld result=ready",
         static_cast<long long>(npucheck::ipc::MonotonicNowMs() - start));
-    // 握手到此结束，deadline 使命完成。之后进入采集阶段，等待由调用方按 kNoDeadline 驱动。
+    // 握手到此结束，deadline 使命完成。之后进入采集阶段，等待由调用方按 NO_DEADLINE 驱动。
     return true;
 }
 

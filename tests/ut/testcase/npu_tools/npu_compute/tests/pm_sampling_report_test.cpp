@@ -195,7 +195,7 @@ void RoundTrip(const std::string& mode = "success")
     CHECK(cli::PackDirectoryToRep(received.path, &encoded, &error));
     cli::DecodedRep decoded;
     CHECK(cli::DecodeRep(encoded, &decoded, &error));
-    CHECK(decoded.version == cli::kNpuRepVersion);
+    CHECK(decoded.version == cli::NPU_REP_VERSION);
     bool sqlite = false, txt = false, json = false;
     for (const auto& entry : decoded.entries) {
         sqlite |= entry.file_name == names[0] && entry.file_type == cli::NpuRepFileType::Sqlite;
@@ -339,7 +339,7 @@ void SharedDatabaseRoundTrip()
     CHECK(cli::PackDirectoryToRep(source.path, &encoded, &error, &issues) && issues.empty());
     cli::DecodedRep decoded;
     CHECK(cli::DecodeRep(encoded, &decoded, &error));
-    CHECK(decoded.version == cli::kNpuRepVersion && decoded.entries.size() == 4);
+    CHECK(decoded.version == cli::NPU_REP_VERSION && decoded.entries.size() == 4);
     Write(report.path / "shared.npu-rep", std::string(encoded.begin(), encoded.end()));
     std::vector<cli::ImportedProfileEntry> imported;
     CHECK(cli::ReadImportedProfileResults(report.path / "shared.npu-rep", &imported, &error));
@@ -380,7 +380,7 @@ void VersionsAndNested()
     CHECK(txt[8] == 0);
     cli::DecodedRep decoded;
     CHECK(cli::DecodeRep(txt, &decoded, &error));
-    CHECK(decoded.version == cli::kNpuRepVersion && decoded.entries[0].file_type == cli::NpuRepFileType::Txt);
+    CHECK(decoded.version == cli::NPU_REP_VERSION && decoded.entries[0].file_type == cli::NpuRepFileType::Txt);
     Directory report, output;
     Write(report.path / "old.npu-rep", std::string(txt.begin(), txt.end()));
     std::vector<cli::ImportedProfileEntry> imported;
@@ -396,7 +396,7 @@ void VersionsAndNested()
     for (const auto* data : {&txt, &middle, &outer}) {
         const std::uint32_t version = (*data)[8] | std::uint32_t((*data)[9]) << 8 | std::uint32_t((*data)[10]) << 16 |
                                       std::uint32_t((*data)[11]) << 24;
-        CHECK(version == cli::kNpuRepVersion);
+        CHECK(version == cli::NPU_REP_VERSION);
     }
     auto future = txt;
     future[8] = 2;
@@ -405,9 +405,9 @@ void VersionsAndNested()
     Directory nested, recovered;
     Fixture(nested.path / "collection-p1-0001" / "nested");
     CHECK(cli::PackDirectoryToRep(nested.path, &outer, &error));
-    CHECK(cli::DecodeRep(outer, &decoded, &error) && decoded.version == cli::kNpuRepVersion);
+    CHECK(cli::DecodeRep(outer, &decoded, &error) && decoded.version == cli::NPU_REP_VERSION);
     const auto child = decoded.entries[0].payload;
-    CHECK(cli::DecodeRep(child, &decoded, &error) && decoded.version == cli::kNpuRepVersion);
+    CHECK(cli::DecodeRep(child, &decoded, &error) && decoded.version == cli::NPU_REP_VERSION);
     Write(report.path / "nested.npu-rep", std::string(outer.begin(), outer.end()));
     CHECK(cli::ReadImportedProfileResults(report.path / "nested.npu-rep", &imported, &error));
     CHECK(cli::UnpackImportedProfileResults(imported, recovered.path, &error));

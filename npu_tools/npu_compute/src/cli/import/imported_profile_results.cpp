@@ -98,7 +98,7 @@ bool ValidateImportedEntries(
     const std::vector<ImportedProfileEntry>& entries, const std::string& logical_path, std::string* error,
     std::size_t depth = 1U)
 {
-    if (depth > kNpuRepMaxDepth) {
+    if (depth > NPU_REP_MAX_DEPTH) {
         return Fail("maximum nested report depth exceeded: " + logical_path, error);
     }
     std::unordered_set<std::string> output_names;
@@ -351,7 +351,7 @@ bool DecodeImportedEntries(
     const std::vector<uint8_t>& encoded, const std::string& logical_path, std::vector<ImportedProfileEntry>* results,
     std::string* error, std::size_t depth = 1U)
 {
-    if (depth > kNpuRepMaxDepth) {
+    if (depth > NPU_REP_MAX_DEPTH) {
         return InvalidReport(logical_path, "maximum nested report depth exceeded", error);
     }
     DecodedRep decoded;

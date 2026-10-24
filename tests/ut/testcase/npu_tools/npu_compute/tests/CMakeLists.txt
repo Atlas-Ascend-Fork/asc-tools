@@ -63,7 +63,7 @@ target_compile_definitions(acl_pti_unit PRIVATE NPU_COMPUTE_ENABLE_TEST_CONTROLS
 target_include_directories(acl_pti_unit PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
 target_link_libraries(acl_pti_unit
   PUBLIC npu_compute_test_headers
-  PRIVATE acl_tool_injection_test_unit Threads::Threads Boost::filesystem ${CMAKE_DL_LIBS}
+  PRIVATE c_sec_static acl_tool_injection_test_unit Threads::Threads Boost::filesystem ${CMAKE_DL_LIBS}
 )
 set_target_properties(acl_pti_unit PROPERTIES
   CXX_VISIBILITY_PRESET hidden
@@ -123,7 +123,7 @@ target_compile_definitions(acl_pti_test PRIVATE
 target_include_directories(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
 target_link_libraries(acl_pti_test
   PUBLIC npu_compute_test_headers
-  PRIVATE acl_tool_injection_test acl_prof_api_stub Threads::Threads
+  PRIVATE c_sec_static acl_tool_injection_test acl_prof_api_stub Threads::Threads
 )
 set_target_properties(acl_pti_test PROPERTIES
   OUTPUT_NAME acl_pti_test
@@ -164,7 +164,7 @@ target_include_directories(npu_compute_test PRIVATE
 )
 target_link_libraries(npu_compute_test
   PUBLIC npu_compute_test_headers
-  PRIVATE acl_pti_test ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc npu_compute_sqlite_runtime
+  PRIVATE c_sec_static acl_pti_test ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc npu_compute_sqlite_runtime
 )
 set(NPU_COMPUTE_TEST_VERSION_SCRIPT
   "${NPU_COMPUTE_SOURCE_DIR}/src/compute/libnpu_compute.map")
@@ -214,7 +214,7 @@ target_include_directories(npu_compute_launcher_core_test PUBLIC
   "${NPU_COMPUTE_SOURCE_DIR}/src/cli")
 target_link_libraries(npu_compute_launcher_core_test
   PUBLIC npu_compute_test_headers Boost::filesystem)
-target_link_libraries(npu_compute_launcher_core_test PRIVATE npu_compute_ipc Threads::Threads npu_compute_sqlite_runtime)
+target_link_libraries(npu_compute_launcher_core_test PRIVATE c_sec_static npu_compute_ipc Threads::Threads npu_compute_sqlite_runtime)
 
 add_executable(npu_compute_cli_test_bin
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/main.cpp
@@ -468,7 +468,7 @@ target_include_directories(acl_pti_data_module_test BEFORE PRIVATE
   ${NPU_TOOLS_TEST_ROOT}/injection/tests/stubs/prof_api/include
 )
 target_link_libraries(acl_pti_data_module_test
-  PRIVATE npu_compute_test_headers Threads::Threads
+  PRIVATE c_sec_static npu_compute_test_headers Threads::Threads
 )
 add_test(NAME npu_compute.acl_pti_data_module
   COMMAND acl_pti_data_module_test
@@ -534,7 +534,7 @@ target_include_directories(npu_compute_runtime_callback_test PRIVATE
   ${NPU_COMPUTE_SOURCE_DIR}/src
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute
 )
-target_link_libraries(npu_compute_runtime_callback_test PRIVATE
+target_link_libraries(npu_compute_runtime_callback_test PRIVATE c_sec_static
   acl_pti_callback_stub
   acl_runtime_stub
   npu_compute_test_headers
@@ -562,7 +562,7 @@ if(ENABLE_TEST)
     ${NPU_COMPUTE_SOURCE_DIR}/src
     ${NPU_COMPUTE_SOURCE_DIR}/src/compute
   )
-  target_link_libraries(npu_compute_hardware_collection_stub_library PRIVATE
+  target_link_libraries(npu_compute_hardware_collection_stub_library PRIVATE c_sec_static
     acl_pti_callback_stub
     acl_runtime_stub
     npu_compute_hardware_api_stub

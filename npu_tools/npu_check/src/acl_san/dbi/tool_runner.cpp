@@ -23,6 +23,7 @@ extern char** environ;
 
 namespace aclsan {
 namespace {
+constexpr int SIGNAL_EXIT_CODE_BASE = 128;
 
 std::string ReadPipe(int fd)
 {
@@ -44,15 +45,16 @@ std::string ReadPipe(int fd)
 
 bool IsInjectionEnvironment(const char* value)
 {
-    return std::strncmp(value, "LD_PRELOAD=", 11) == 0 || std::strncmp(value, "ACL_API_INJECTION=", 18) == 0;
+    return std::strncmp(value, "LD_PRELOAD=", sizeof("LD_PRELOAD=") - 1) == 0 ||
+           std::strncmp(value, "ACL_API_INJECTION=", sizeof("ACL_API_INJECTION=") - 1) == 0;
 }
 
 } // namespace
 
-ToolResult RunTool(const std::vector<std::string>& arguments)
+ToolResult RunTool(const std::vector<std::string>& commandArguments)
 {
     ToolResult result{};
-    if (arguments.empty() || arguments.front().empty()) {
+    if (commandArguments.empty() || commandArguments.front().empty()) {
         result.standardError = "tool command is empty";
         return result;
     }
@@ -73,9 +75,9 @@ ToolResult RunTool(const std::vector<std::string>& arguments)
     }
 
     std::vector<char*> argv;
-    argv.reserve(arguments.size() + 1);
-    for (const auto& argument : arguments) {
-        argv.push_back(const_cast<char*>(argument.c_str()));
+    argv.reserve(commandArguments.size() + 1);
+    for (const auto& commandArgument : commandArguments) {
+        argv.push_back(const_cast<char*>(commandArgument.c_str()));
     }
     argv.push_back(nullptr);
     std::vector<char*> environment;
@@ -137,12 +139,12 @@ ToolResult RunTool(const std::vector<std::string>& arguments)
             result.standardError.push_back('\n');
         }
         result.standardError += std::string("waitpid failed: ") + std::strerror(errno);
-        return result;
-    }
-    if (WIFEXITED(status)) {
-        result.exitCode = WEXITSTATUS(status);
-    } else if (WIFSIGNALED(status)) {
-        result.exitCode = 128 + WTERMSIG(status);
+    } else {
+        if (WIFEXITED(status)) {
+            result.exitCode = WEXITSTATUS(status);
+        } else if (WIFSIGNALED(status)) {
+            result.exitCode = SIGNAL_EXIT_CODE_BASE + WTERMSIG(status);
+        }
     }
     return result;
 }

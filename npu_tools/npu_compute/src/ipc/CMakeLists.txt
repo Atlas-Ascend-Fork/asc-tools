@@ -9,6 +9,7 @@
 # ----------------------------------------------------------------------------------------------------------
 add_library(npu_compute_ipc STATIC wire_protocol.cpp uds_transport.cpp)
 target_include_directories(npu_compute_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_link_libraries(npu_compute_ipc PRIVATE c_sec_static)
 target_compile_features(npu_compute_ipc PUBLIC cxx_std_17)
 target_compile_definitions(npu_compute_ipc PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
 set_target_properties(npu_compute_ipc PROPERTIES

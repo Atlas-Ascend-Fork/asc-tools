@@ -12,6 +12,7 @@
 #include "common/debug_log.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cerrno>
 #include <climits>
 #include <cstdint>
@@ -45,7 +46,7 @@ namespace fs = boost::filesystem;
 // resource, written to the probe cache directory and compiled by Bisheng on first instrumentation.
 // Keep this text in sync with the probe contract: bar.all, a fixed NOP/DFX_REGION sequence and the
 // three implicit Bisheng probe ABI parameters (which the probe does not dereference).
-constexpr char kKernelEndProbeSource[] =
+constexpr char KERNEL_END_PROBE_SOURCE[] =
     R"PROBE(extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_compute_before_kernel_end(
     __gm__ unsigned char*, unsigned long long, unsigned int)
 {
@@ -64,29 +65,30 @@ constexpr char kKernelEndProbeSource[] =
 }
 )PROBE";
 
-// Keep this name in sync with the symbol in kKernelEndProbeSource.
-constexpr char kKernelEndProbeSymbol[] = "__npu_compute_before_kernel_end";
+// Keep this name in sync with the symbol in KERNEL_END_PROBE_SOURCE.
+constexpr char KERNEL_END_PROBE_SYMBOL[] = "__npu_compute_before_kernel_end";
 
 // Semantic fields for npu_compute's fixed probe record; its instruction ID is not shared with npu_check.
-constexpr std::uint16_t kControlRecordVersion = 0;
-constexpr std::uint16_t kKernelEndInstructionId = 397; // before kernel end
-constexpr std::uint16_t kKernelEndProbeFunctionIndex = 0;
-constexpr std::uint16_t kKernelEndProbeParameterCount = 0;
-constexpr std::uint16_t kControlRecordReservedValue = 0;
-constexpr std::size_t kKernelEndProbeSymbolSize = sizeof(kKernelEndProbeSymbol) - 1;
-constexpr std::size_t kFunctionNameListPaddingSize = sizeof(std::uint32_t);
-constexpr char kFunctionNameListPadding[kFunctionNameListPaddingSize] = {};
+constexpr std::uint16_t CONTROL_RECORD_VERSION = 0;
+constexpr std::uint16_t KERNEL_END_INSTRUCTION_ID = 397; // before kernel end
+constexpr std::uint16_t KERNEL_END_PROBE_FUNCTION_INDEX = 0;
+constexpr std::uint16_t KERNEL_END_PROBE_PARAMETER_COUNT = 0;
+constexpr std::uint16_t CONTROL_RECORD_RESERVED_VALUE = 0;
+constexpr std::size_t KERNEL_END_PROBE_SYMBOL_SIZE = sizeof(KERNEL_END_PROBE_SYMBOL) - 1;
+constexpr std::size_t FUNCTION_NAME_LIST_PADDING_SIZE = sizeof(std::uint32_t);
+constexpr char FUNCTION_NAME_LIST_PADDING[FUNCTION_NAME_LIST_PADDING_SIZE] = {};
 
-constexpr std::size_t kControlRecordHeaderSize = sizeof(std::uint32_t) + 4 * sizeof(std::uint16_t);
-constexpr std::size_t kProbeBindingSize = 3 * sizeof(std::uint16_t);
-constexpr std::uint32_t kKernelEndFunctionNameListSize =
-    static_cast<std::uint32_t>(sizeof(std::uint32_t) + kKernelEndProbeSymbolSize);
-constexpr std::uint32_t kKernelEndControlSize = static_cast<std::uint32_t>(
-    kControlRecordHeaderSize + kProbeBindingSize + kKernelEndFunctionNameListSize + kFunctionNameListPaddingSize);
+constexpr std::size_t CONTROL_RECORD_HEADER_SIZE = sizeof(std::uint32_t) + 4 * sizeof(std::uint16_t);
+constexpr std::size_t PROBE_BINDING_SIZE = 3 * sizeof(std::uint16_t);
+constexpr std::uint32_t KERNEL_END_FUNCTION_NAME_LIST_SIZE =
+    static_cast<std::uint32_t>(sizeof(std::uint32_t) + KERNEL_END_PROBE_SYMBOL_SIZE);
+constexpr std::uint32_t KERNEL_END_CONTROL_SIZE = static_cast<std::uint32_t>(
+    CONTROL_RECORD_HEADER_SIZE + PROBE_BINDING_SIZE + KERNEL_END_FUNCTION_NAME_LIST_SIZE +
+    FUNCTION_NAME_LIST_PADDING_SIZE);
 
-constexpr const char* kProbeSourceName = "probe.cpp";
-constexpr const char* kProbeObjectName = "kernel_end.o";
-constexpr const char* kControlRecordName = "ctrl.bin";
+constexpr const char* PROBE_SOURCE_NAME = "probe.cpp";
+constexpr const char* PROBE_OBJECT_NAME = "kernel_end.o";
+constexpr const char* CONTROL_RECORD_NAME = "ctrl.bin";
 
 struct KernelEndTools {
     fs::path linker;   // ld.lld
@@ -94,12 +96,23 @@ struct KernelEndTools {
     fs::path compiler; // bisheng
 };
 
-constexpr std::uint16_t kParamSummary = 16;
-constexpr std::uint16_t kParamInfo = 17;
-constexpr std::size_t kSummarySize = 12;
-constexpr std::size_t kParamInfoSize = 36;
-constexpr std::uint32_t kPointerSize = 8;
-constexpr char kKernelMetadataPrefix[] = ".ascend.meta.";
+constexpr std::uint16_t PARAM_SUMMARY = 16;
+constexpr std::uint16_t PARAM_INFO = 17;
+constexpr std::size_t SUMMARY_SIZE = 12;
+constexpr std::size_t PARAM_INFO_SIZE = 36;
+constexpr std::uint32_t POINTER_SIZE = 8;
+constexpr size_t BITS_PER_BYTE = std::numeric_limits<uint8_t>::digits;
+constexpr size_t TLV_LENGTH_OFFSET = sizeof(uint16_t);
+constexpr size_t TLV_HEADER_BYTES = sizeof(uint16_t) * 2;
+constexpr size_t PARAM_ORDINAL_OFFSET = sizeof(uint32_t);
+constexpr size_t PARAM_OFFSET_OFFSET = PARAM_ORDINAL_OFFSET + sizeof(uint32_t);
+constexpr size_t PARAM_SIZE_OFFSET = PARAM_OFFSET_OFFSET + sizeof(uint32_t);
+constexpr size_t PARAM_ALIGNMENT_OFFSET = PARAM_SIZE_OFFSET + sizeof(uint32_t);
+constexpr size_t PARAM_TYPE_OFFSET = PARAM_ALIGNMENT_OFFSET + sizeof(uint16_t);
+constexpr size_t SUMMARY_ARGUMENT_BYTES_OFFSET = sizeof(uint32_t);
+constexpr uint16_t POINTER_PARAMETER_TYPE = 2;
+
+constexpr char KERNEL_METADATA_PREFIX[] = ".ascend.meta.";
 
 void Require(bool condition, const char* message)
 {
@@ -120,7 +133,7 @@ std::uint64_t ReadValue(const std::string& data, std::uint64_t offset, std::size
     std::uint64_t value = 0;
     const auto start = static_cast<std::size_t>(offset);
     for (std::size_t index = 0; index < size; ++index) {
-        value |= static_cast<std::uint64_t>(static_cast<unsigned char>(data[start + index])) << (index * 8);
+        value |= static_cast<std::uint64_t>(static_cast<unsigned char>(data[start + index])) << (index * BITS_PER_BYTE);
     }
     return value;
 }
@@ -131,7 +144,7 @@ void WriteValue(std::string& data, std::uint64_t offset, std::uint64_t value, st
     Require(InRange(data.size(), offset, size), "invalid metadata write range");
     const auto start = static_cast<std::size_t>(offset);
     for (std::size_t index = 0; index < size; ++index) {
-        data[start + index] = static_cast<char>((value >> (index * 8)) & 0xffU);
+        data[start + index] = static_cast<char>((value >> (index * BITS_PER_BYTE)) & 0xffU);
     }
 }
 
@@ -155,23 +168,28 @@ ParsedElf ReadElfSections(const std::string& data)
     Require(
         data.compare(0, SELFMAG, ELFMAG) == 0 && ReadValue(data, EI_CLASS, 1) == ELFCLASS64 &&
             ReadValue(data, EI_DATA, 1) == ELFDATA2LSB && ReadValue(data, EI_VERSION, 1) == EV_CURRENT &&
-            ReadValue(data, 20, 4) == EV_CURRENT && ReadValue(data, 52, 2) == sizeof(Elf64_Ehdr),
+            ReadValue(data, offsetof(Elf64_Ehdr, e_version), sizeof(Elf64_Ehdr::e_version)) == EV_CURRENT &&
+            ReadValue(data, offsetof(Elf64_Ehdr, e_ehsize), sizeof(Elf64_Ehdr::e_ehsize)) == sizeof(Elf64_Ehdr),
         "expected ELF64 little-endian version 1");
 
-    const std::uint64_t sectionTable = ReadValue(data, 40, 8);
-    const std::uint64_t sectionCount = ReadValue(data, 60, 2);
-    const std::uint64_t sectionNamesIndex = ReadValue(data, 62, 2);
+    const std::uint64_t sectionTable = ReadValue(data, offsetof(Elf64_Ehdr, e_shoff), sizeof(Elf64_Ehdr::e_shoff));
+    const std::uint64_t sectionCount = ReadValue(data, offsetof(Elf64_Ehdr, e_shnum), sizeof(Elf64_Ehdr::e_shnum));
+    const std::uint64_t sectionNamesIndex =
+        ReadValue(data, offsetof(Elf64_Ehdr, e_shstrndx), sizeof(Elf64_Ehdr::e_shstrndx));
     Require(
-        ReadValue(data, 58, 2) == sizeof(Elf64_Shdr) && sectionCount > 0 && sectionNamesIndex > 0 &&
-            sectionNamesIndex < sectionCount && sectionTable >= sizeof(Elf64_Ehdr) &&
-            InRange(data.size(), sectionTable, sectionCount * sizeof(Elf64_Shdr)),
+        ReadValue(data, offsetof(Elf64_Ehdr, e_shentsize), sizeof(Elf64_Ehdr::e_shentsize)) == sizeof(Elf64_Shdr) &&
+            sectionCount > 0 && sectionNamesIndex > 0 && sectionNamesIndex < sectionCount &&
+            sectionTable >= sizeof(Elf64_Ehdr) && InRange(data.size(), sectionTable, sectionCount * sizeof(Elf64_Shdr)),
         "invalid or unsupported ELF section table");
 
     const std::uint64_t sectionNamesHeader = sectionTable + sectionNamesIndex * sizeof(Elf64_Shdr);
-    const std::uint64_t sectionNamesOffset = ReadValue(data, sectionNamesHeader + 24, 8);
-    const std::uint64_t sectionNamesSize = ReadValue(data, sectionNamesHeader + 32, 8);
+    const std::uint64_t sectionNamesOffset =
+        ReadValue(data, sectionNamesHeader + offsetof(Elf64_Shdr, sh_offset), sizeof(Elf64_Shdr::sh_offset));
+    const std::uint64_t sectionNamesSize =
+        ReadValue(data, sectionNamesHeader + offsetof(Elf64_Shdr, sh_size), sizeof(Elf64_Shdr::sh_size));
     Require(
-        ReadValue(data, sectionNamesHeader + 4, 4) == SHT_STRTAB &&
+        ReadValue(data, sectionNamesHeader + offsetof(Elf64_Shdr, sh_type), sizeof(Elf64_Shdr::sh_type)) ==
+                SHT_STRTAB &&
             InRange(data.size(), sectionNamesOffset, sectionNamesSize),
         "invalid ELF section names");
 
@@ -179,13 +197,18 @@ ParsedElf ReadElfSections(const std::string& data)
     const std::uint64_t sectionNamesEnd = sectionNamesOffset + sectionNamesSize;
     for (std::uint64_t index = 0; index < sectionCount; ++index) {
         const std::uint64_t headerOffset = sectionTable + index * sizeof(Elf64_Shdr);
-        const std::uint64_t nameOffset = ReadValue(data, headerOffset, 4);
-        const std::uint32_t type = static_cast<std::uint32_t>(ReadValue(data, headerOffset + 4, 4));
-        const auto flags = ReadValue(data, headerOffset + 8, 8);
+        const std::uint64_t nameOffset =
+            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_name), sizeof(Elf64_Shdr::sh_name));
+        const std::uint32_t type = static_cast<std::uint32_t>(
+            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_type), sizeof(Elf64_Shdr::sh_type)));
+        const auto flags = ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_flags), sizeof(Elf64_Shdr::sh_flags));
         ElfSection section{
-            static_cast<std::size_t>(headerOffset), type,
-            ReadValue(data, headerOffset + 24, 8),  ReadValue(data, headerOffset + 32, 8),
-            ReadValue(data, headerOffset + 48, 8),  {},
+            static_cast<std::size_t>(headerOffset),
+            type,
+            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_offset), sizeof(Elf64_Shdr::sh_offset)),
+            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_size), sizeof(Elf64_Shdr::sh_size)),
+            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_addralign), sizeof(Elf64_Shdr::sh_addralign)),
+            {},
         };
         Require(
             type == SHT_NOBITS || InRange(data.size(), section.offset, section.size),
@@ -198,7 +221,7 @@ ParsedElf ReadElfSections(const std::string& data)
             "unterminated ELF section name");
 
         section.name = data.substr(static_cast<std::size_t>(nameStart), nameEnd - static_cast<std::size_t>(nameStart));
-        if (section.name.compare(0, sizeof(kKernelMetadataPrefix) - 1, kKernelMetadataPrefix) == 0) {
+        if (section.name.compare(0, sizeof(KERNEL_METADATA_PREFIX) - 1, KERNEL_METADATA_PREFIX) == 0) {
             Require(
                 type == SHT_NOTE && (flags & SHF_ALLOC) == 0, "kernel metadata must be a non-allocated NOTE section");
             Require(
@@ -235,16 +258,17 @@ Metadata ReadMetadata(const std::string& data, const ElfSection& section)
     std::size_t infoCount = 0;
     std::uint32_t parameterCount = 0;
     for (std::size_t offset = 0; offset < bytes.size();) {
-        const auto tag = static_cast<std::uint16_t>(ReadValue(bytes, offset, 2));
-        const std::size_t length = static_cast<std::size_t>(ReadValue(bytes, offset + 2, 2));
-        offset += 4;
+        const auto tag = static_cast<std::uint16_t>(ReadValue(bytes, offset, sizeof(uint16_t)));
+        const std::size_t length =
+            static_cast<std::size_t>(ReadValue(bytes, offset + TLV_LENGTH_OFFSET, sizeof(uint16_t)));
+        offset += TLV_HEADER_BYTES;
         Require(InRange(bytes.size(), offset, length), "truncated parameter TLV");
-        if (tag == kParamSummary) {
-            Require(length == kSummarySize, "unsupported ParamSummary layout");
+        if (tag == PARAM_SUMMARY) {
+            Require(length == SUMMARY_SIZE, "unsupported ParamSummary layout");
             ++summaryCount;
-            parameterCount = static_cast<std::uint32_t>(ReadValue(bytes, offset, 4));
-        } else if (tag == kParamInfo) {
-            Require(length == kParamInfoSize, "unsupported ParamInfo layout");
+            parameterCount = static_cast<std::uint32_t>(ReadValue(bytes, offset, sizeof(uint32_t)));
+        } else if (tag == PARAM_INFO) {
+            Require(length == PARAM_INFO_SIZE, "unsupported ParamInfo layout");
             ++infoCount;
         }
         values.push_back({tag, bytes.substr(offset, length)});
@@ -258,10 +282,10 @@ Metadata ReadMetadata(const std::string& data, const ElfSection& section)
     std::vector<std::string> parameters(parameterCount);
     std::vector<bool> seen(parameterCount, false);
     for (const auto& item : values) {
-        if (item.tag != kParamInfo) {
+        if (item.tag != PARAM_INFO) {
             continue;
         }
-        const std::uint64_t ordinal = ReadValue(item.value, 4, 4);
+        const std::uint64_t ordinal = ReadValue(item.value, PARAM_ORDINAL_OFFSET, sizeof(uint32_t));
         Require(ordinal < parameterCount, "parameter ordinal is out of range");
         Require(!seen[ordinal], "duplicate parameter ordinal");
         seen[ordinal] = true;
@@ -293,13 +317,14 @@ void GetMaximumKernelArgumentArea(const KernelMetadata& kernels, std::uint32_t& 
         std::uint32_t summaryArea = 0;
         std::uint64_t parameterEnd = 0;
         for (const auto& item : metadata.values) {
-            if (item.tag == kParamSummary) {
-                summaryArea = static_cast<std::uint32_t>(ReadValue(item.value, 4, 4));
+            if (item.tag == PARAM_SUMMARY) {
+                summaryArea =
+                    static_cast<std::uint32_t>(ReadValue(item.value, SUMMARY_ARGUMENT_BYTES_OFFSET, sizeof(uint32_t)));
             }
         }
         for (const auto& parameter : metadata.parameters) {
-            const std::uint64_t parameterOffset = ReadValue(parameter, 8, 4);
-            const std::uint64_t parameterSize = ReadValue(parameter, 12, 4);
+            const std::uint64_t parameterOffset = ReadValue(parameter, PARAM_OFFSET_OFFSET, sizeof(uint32_t));
+            const std::uint64_t parameterSize = ReadValue(parameter, PARAM_SIZE_OFFSET, sizeof(uint32_t));
             parameterEnd = std::max(parameterEnd, parameterOffset + parameterSize);
         }
         const std::uint64_t area = std::max<std::uint64_t>(summaryArea, parameterEnd);
@@ -313,9 +338,9 @@ void AppendTlv(std::string& output, std::uint16_t tag, const std::string& value)
 {
     Require(value.size() <= std::numeric_limits<std::uint16_t>::max(), "parameter TLV is too large");
     const std::size_t header = output.size();
-    output.resize(header + 4);
-    WriteValue(output, header, tag, 2);
-    WriteValue(output, header + 2, value.size(), 2);
+    output.resize(header + TLV_HEADER_BYTES);
+    WriteValue(output, header, tag, sizeof(uint16_t));
+    WriteValue(output, header + TLV_LENGTH_OFFSET, value.size(), sizeof(uint16_t));
     output += value;
 }
 
@@ -325,7 +350,7 @@ std::string NormalizeMetadata(const Metadata& original, const Metadata& patched,
         // Legacy HostArgs kernels have no ArgsArray ABI. Preserve non-parameter TLVs only.
         std::string output;
         for (const auto& item : patched.values) {
-            if (item.tag != kParamSummary && item.tag != kParamInfo) {
+            if (item.tag != PARAM_SUMMARY && item.tag != PARAM_INFO) {
                 AppendTlv(output, item.tag, item.value);
             }
         }
@@ -334,14 +359,16 @@ std::string NormalizeMetadata(const Metadata& original, const Metadata& patched,
     Require(patched.hasParameterLayout, "instrumented parameter summary is missing");
     Require(original.parameters.size() < std::numeric_limits<std::uint32_t>::max(), "too many kernel parameters");
     for (const auto& item : original.values) {
-        if (item.tag == kParamSummary) {
-            Require(ReadValue(item.value, 4, 4) <= traceArgumentOffset, "original argument area exceeds trace offset");
+        if (item.tag == PARAM_SUMMARY) {
+            Require(
+                ReadValue(item.value, SUMMARY_ARGUMENT_BYTES_OFFSET, sizeof(uint32_t)) <= traceArgumentOffset,
+                "original argument area exceeds trace offset");
         }
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     for (const auto& parameter : original.parameters) {
-        const std::uint64_t offset = ReadValue(parameter, 8, 4);
-        const std::uint64_t size = ReadValue(parameter, 12, 4);
+        const std::uint64_t offset = ReadValue(parameter, PARAM_OFFSET_OFFSET, sizeof(uint32_t));
+        const std::uint64_t size = ReadValue(parameter, PARAM_SIZE_OFFSET, sizeof(uint32_t));
         Require(
             size > 0 && offset <= traceArgumentOffset && size <= traceArgumentOffset - offset,
             "original parameter overlaps trace pointer");
@@ -352,34 +379,34 @@ std::string NormalizeMetadata(const Metadata& original, const Metadata& patched,
         Require(ranges[index - 1].second <= ranges[index].first, "original parameters overlap");
     }
 
-    std::string pointer(kParamInfoSize, '\0');
-    WriteValue(pointer, 4, original.parameters.size(), 4);
-    WriteValue(pointer, 8, traceArgumentOffset, 4);
-    WriteValue(pointer, 12, kPointerSize, 4);
-    WriteValue(pointer, 16, kPointerSize, 2);
-    WriteValue(pointer, 18, 2, 2);
+    std::string pointer(PARAM_INFO_SIZE, '\0');
+    WriteValue(pointer, PARAM_ORDINAL_OFFSET, original.parameters.size(), sizeof(uint32_t));
+    WriteValue(pointer, PARAM_OFFSET_OFFSET, traceArgumentOffset, sizeof(uint32_t));
+    WriteValue(pointer, PARAM_SIZE_OFFSET, POINTER_SIZE, sizeof(uint32_t));
+    WriteValue(pointer, PARAM_ALIGNMENT_OFFSET, POINTER_SIZE, sizeof(uint16_t));
+    WriteValue(pointer, PARAM_TYPE_OFFSET, POINTER_PARAMETER_TYPE, sizeof(uint16_t));
 
     std::string output;
     for (const auto& item : patched.values) {
-        if (item.tag == kParamInfo) {
+        if (item.tag == PARAM_INFO) {
             continue;
         }
-        if (item.tag != kParamSummary) {
+        if (item.tag != PARAM_SUMMARY) {
             AppendTlv(output, item.tag, item.value);
             continue;
         }
-        const std::uint64_t count = ReadValue(item.value, 0, 4);
+        const std::uint64_t count = ReadValue(item.value, 0, sizeof(uint32_t));
         Require(
             count == original.parameters.size() || count == original.parameters.size() + 1,
             "unexpected instrumented parameter count");
         std::string summary = item.value;
-        WriteValue(summary, 0, original.parameters.size() + 1, 4);
-        WriteValue(summary, 4, traceArgumentOffset + kPointerSize, 4);
-        AppendTlv(output, kParamSummary, summary);
+        WriteValue(summary, 0, original.parameters.size() + 1, sizeof(uint32_t));
+        WriteValue(summary, SUMMARY_ARGUMENT_BYTES_OFFSET, traceArgumentOffset + POINTER_SIZE, sizeof(uint32_t));
+        AppendTlv(output, PARAM_SUMMARY, summary);
         for (const auto& parameter : original.parameters) {
-            AppendTlv(output, kParamInfo, parameter);
+            AppendTlv(output, PARAM_INFO, parameter);
         }
-        AppendTlv(output, kParamInfo, pointer);
+        AppendTlv(output, PARAM_INFO, pointer);
     }
     return output;
 }
@@ -421,8 +448,8 @@ bool ResolveTraceArgumentOffset(
             return false;
         }
         maximumArgumentSize = std::max(maximumArgumentSize, metadataArgumentArea);
-        constexpr std::uint32_t kMinimumTraceArgumentOffset = sizeof(std::uint64_t);
-        maximumArgumentSize = std::max(maximumArgumentSize, kMinimumTraceArgumentOffset);
+        constexpr std::uint32_t MINIMUM_TRACE_ARGUMENT_OFFSET = sizeof(std::uint64_t);
+        maximumArgumentSize = std::max(maximumArgumentSize, MINIMUM_TRACE_ARGUMENT_OFFSET);
         Require(
             maximumArgumentSize <= std::numeric_limits<std::uint32_t>::max() - 7U,
             "kernel argument area cannot be aligned");
@@ -451,23 +478,24 @@ bool WriteLittleEndian(std::ostream& output, UInt value)
 
 bool WriteKernelEndControl(const fs::path& directory)
 {
-    std::ofstream file((directory / kControlRecordName).string(), std::ios::binary);
+    std::ofstream file((directory / CONTROL_RECORD_NAME).string(), std::ios::binary);
     if (!file) {
         return false;
     }
 
-    if (!WriteLittleEndian(file, kKernelEndControlSize) || !WriteLittleEndian(file, kControlRecordVersion) ||
-        !WriteLittleEndian(file, static_cast<std::uint16_t>(kProbeBindingSize)) ||
-        !WriteLittleEndian(file, kControlRecordReservedValue) ||
-        !WriteLittleEndian(file, kControlRecordReservedValue) || !WriteLittleEndian(file, kKernelEndInstructionId) ||
-        !WriteLittleEndian(file, kKernelEndProbeFunctionIndex) ||
-        !WriteLittleEndian(file, kKernelEndProbeParameterCount) ||
-        !WriteLittleEndian(file, kKernelEndFunctionNameListSize)) {
+    if (!WriteLittleEndian(file, KERNEL_END_CONTROL_SIZE) || !WriteLittleEndian(file, CONTROL_RECORD_VERSION) ||
+        !WriteLittleEndian(file, static_cast<std::uint16_t>(PROBE_BINDING_SIZE)) ||
+        !WriteLittleEndian(file, CONTROL_RECORD_RESERVED_VALUE) ||
+        !WriteLittleEndian(file, CONTROL_RECORD_RESERVED_VALUE) ||
+        !WriteLittleEndian(file, KERNEL_END_INSTRUCTION_ID) ||
+        !WriteLittleEndian(file, KERNEL_END_PROBE_FUNCTION_INDEX) ||
+        !WriteLittleEndian(file, KERNEL_END_PROBE_PARAMETER_COUNT) ||
+        !WriteLittleEndian(file, KERNEL_END_FUNCTION_NAME_LIST_SIZE)) {
         return false;
     }
 
-    file.write(kKernelEndProbeSymbol, static_cast<std::streamsize>(kKernelEndProbeSymbolSize));
-    file.write(kFunctionNameListPadding, sizeof(kFunctionNameListPadding));
+    file.write(KERNEL_END_PROBE_SYMBOL, static_cast<std::streamsize>(KERNEL_END_PROBE_SYMBOL_SIZE));
+    file.write(FUNCTION_NAME_LIST_PADDING, sizeof(FUNCTION_NAME_LIST_PADDING));
     file.close();
     return static_cast<bool>(file);
 }
@@ -480,7 +508,7 @@ bool WriteProbeFiles(const fs::path& directory)
         file.close();
         return static_cast<bool>(file);
     };
-    return write(kProbeSourceName, kKernelEndProbeSource, sizeof(kKernelEndProbeSource) - 1) &&
+    return write(PROBE_SOURCE_NAME, KERNEL_END_PROBE_SOURCE, sizeof(KERNEL_END_PROBE_SOURCE) - 1) &&
            WriteKernelEndControl(directory);
 }
 
@@ -522,7 +550,7 @@ bool CompileProbe(const fs::path& directory, const fs::path& compiler)
 {
     return Run(
         {compiler.string(), "-x", "cce", "--cce-aicore-only", "--npu-arch=dav-3510", "-O2", "-g", "-c",
-         (directory / kProbeSourceName).string(), "-o", (directory / kProbeObjectName).string()});
+         (directory / PROBE_SOURCE_NAME).string(), "-o", (directory / PROBE_OBJECT_NAME).string()});
 }
 
 bool FindTool(const fs::path& directory, const char* name, fs::path& tool)
@@ -592,8 +620,8 @@ bool PatchKernelParamMetadata(
 {
     try {
         Require(
-            traceArgumentOffset >= kPointerSize && traceArgumentOffset % kPointerSize == 0 &&
-                traceArgumentOffset <= std::numeric_limits<std::uint32_t>::max() - kPointerSize,
+            traceArgumentOffset >= POINTER_SIZE && traceArgumentOffset % POINTER_SIZE == 0 &&
+                traceArgumentOffset <= std::numeric_limits<std::uint32_t>::max() - POINTER_SIZE,
             "invalid trace pointer offset");
         const ParsedElf destinations = ReadElfSections(patched);
         Require(!sources.empty(), "no kernel parameter metadata found");
@@ -622,8 +650,12 @@ bool PatchKernelParamMetadata(
             result.append(padding, '\0');
             const std::size_t offset = result.size();
             result += metadata;
-            WriteValue(result, destinationSection.header + 24, offset, 8);
-            WriteValue(result, destinationSection.header + 32, metadata.size(), 8);
+            WriteValue(
+                result, destinationSection.header + offsetof(Elf64_Shdr, sh_offset), offset,
+                sizeof(Elf64_Shdr::sh_offset));
+            WriteValue(
+                result, destinationSection.header + offsetof(Elf64_Shdr, sh_size), metadata.size(),
+                sizeof(Elf64_Shdr::sh_size));
         }
         patched.swap(result);
         diagnostic.clear();
@@ -681,10 +713,10 @@ bool InstrumentKernelEnd(
     }
     if (!Run(
             {tools.linker.string(), "-m", "aicorelinux", "-Ttext=0", "-execute-probe",
-             (assets / kProbeObjectName).string(), input.string(), "-static", "-q", "-o", linked.string()}) ||
+             (assets / PROBE_OBJECT_NAME).string(), input.string(), "-static", "-q", "-o", linked.string()}) ||
         !Run(
             {tools.tuner.string(), "--action=instru-probe", "--tune-argsize=" + std::to_string(traceArgumentOffset),
-             "--instru-memprobe", linked.string(), "--dbi-config=" + (assets / kControlRecordName).string(),
+             "--instru-memprobe", linked.string(), "--dbi-config=" + (assets / CONTROL_RECORD_NAME).string(),
              "-o=" + patched.string(), "--append-hbmout-paraminfo"})) {
         return false;
     }

@@ -43,10 +43,10 @@ extern "C" void NpuComputeTestConfigure(const char*, const char*);
 
 namespace {
 
-constexpr char kSections[] = "PipeUtilization,Memory";
-constexpr char kHardwareInfoFile[] = "HardwareInfo.jsonl";
-constexpr char kDeviceCountFile[] = "device_count.calls";
-constexpr std::array<aclptiCallbackId, 9> kHardwareInfoTriggerCbids = {
+constexpr char SECTIONS[] = "PipeUtilization,Memory";
+constexpr char HARDWARE_INFO_FILE[] = "HardwareInfo.jsonl";
+constexpr char DEVICE_COUNT_FILE[] = "device_count.calls";
+constexpr std::array<aclptiCallbackId, 9> HARDWARE_INFO_TRIGGER_CBIDS = {
     ACLPTI_RUNTIME_CBID_aclrtLaunchKernel,
     ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithHostArgs,
     ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithHostArgs,
@@ -108,7 +108,7 @@ boost::filesystem::path g_testOutput;
 bool SetScenarioEnvironment(const boost::filesystem::path& output)
 {
     g_testOutput = output;
-    NpuComputeTestConfigure(output.c_str(), kSections);
+    NpuComputeTestConfigure(output.c_str(), SECTIONS);
     return true;
 }
 
@@ -140,7 +140,7 @@ bool CheckSubscribeAndEnableContract()
     CHECK(subscriber != nullptr);
 
     const std::vector<AclPtiEnableCall> enableCalls = npucompute::test::CapturedAclPtiEnableCalls();
-    CHECK(enableCalls.size() == kHardwareInfoTriggerCbids.size());
+    CHECK(enableCalls.size() == HARDWARE_INFO_TRIGGER_CBIDS.size());
     std::size_t previousSequence = npucompute::test::AclPtiSubscribeSequence();
     CHECK(previousSequence > 0);
     for (std::size_t index = 0; index < enableCalls.size(); ++index) {
@@ -149,7 +149,7 @@ bool CheckSubscribeAndEnableContract()
         CHECK(call.enable);
         CHECK(call.subscriber == subscriber);
         CHECK(call.domain == ACLPTI_CB_DOMAIN_RUNTIME_API);
-        CHECK(call.cbid == kHardwareInfoTriggerCbids[index]);
+        CHECK(call.cbid == HARDWARE_INFO_TRIGGER_CBIDS[index]);
         CHECK(call.result == ACLPTI_SUCCESS);
         previousSequence = call.sequence;
     }
@@ -169,12 +169,12 @@ bool CheckDisableContract()
     using npucompute::test::AclPtiEnableCall;
 
     const std::vector<AclPtiEnableCall> calls = npucompute::test::CapturedAclPtiEnableCalls();
-    CHECK(calls.size() == kHardwareInfoTriggerCbids.size() * 2);
-    for (std::size_t index = 0; index < kHardwareInfoTriggerCbids.size(); ++index) {
-        const AclPtiEnableCall& call = calls[kHardwareInfoTriggerCbids.size() + index];
+    CHECK(calls.size() == HARDWARE_INFO_TRIGGER_CBIDS.size() * 2);
+    for (std::size_t index = 0; index < HARDWARE_INFO_TRIGGER_CBIDS.size(); ++index) {
+        const AclPtiEnableCall& call = calls[HARDWARE_INFO_TRIGGER_CBIDS.size() + index];
         CHECK(!call.enable);
         CHECK(call.domain == ACLPTI_CB_DOMAIN_RUNTIME_API);
-        CHECK(call.cbid == kHardwareInfoTriggerCbids[kHardwareInfoTriggerCbids.size() - index - 1]);
+        CHECK(call.cbid == HARDWARE_INFO_TRIGGER_CBIDS[HARDWARE_INFO_TRIGGER_CBIDS.size() - index - 1]);
         CHECK(call.result == ACLPTI_SUCCESS);
     }
     return true;
@@ -336,40 +336,40 @@ bool RunSuccessChild(const std::string& scenario, const boost::filesystem::path&
         CHECK(npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, ACLPTI_API_EXIT, ACL_SUCCESS,
             nullptr));
-        CHECK(boost::filesystem::is_regular_file(output / kHardwareInfoFile));
-        CHECK(CountLines(output / kHardwareInfoFile) == 5);
+        CHECK(boost::filesystem::is_regular_file(output / HARDWARE_INFO_FILE));
+        CHECK(CountLines(output / HARDWARE_INFO_FILE) == 5);
         return true;
     }
     if (scenario == "success-host-args") {
         CHECK(npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithHostArgs, ACLPTI_API_EXIT,
             ACL_SUCCESS, nullptr));
-        CHECK(boost::filesystem::is_regular_file(output / kHardwareInfoFile));
-        CHECK(CountLines(output / kHardwareInfoFile) == 5);
+        CHECK(boost::filesystem::is_regular_file(output / HARDWARE_INFO_FILE));
+        CHECK(CountLines(output / HARDWARE_INFO_FILE) == 5);
         return true;
     }
     if (scenario == "success-simt-host-args") {
         CHECK(npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithHostArgs, ACLPTI_API_EXIT,
             ACL_SUCCESS, nullptr));
-        CHECK(boost::filesystem::is_regular_file(output / kHardwareInfoFile));
-        CHECK(CountLines(output / kHardwareInfoFile) == 5);
+        CHECK(boost::filesystem::is_regular_file(output / HARDWARE_INFO_FILE));
+        CHECK(CountLines(output / HARDWARE_INFO_FILE) == 5);
         return true;
     }
     if (scenario == "success-args-array") {
         CHECK(npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithArgsArray, ACLPTI_API_EXIT,
             ACL_SUCCESS, nullptr));
-        CHECK(boost::filesystem::is_regular_file(output / kHardwareInfoFile));
-        CHECK(CountLines(output / kHardwareInfoFile) == 5);
+        CHECK(boost::filesystem::is_regular_file(output / HARDWARE_INFO_FILE));
+        CHECK(CountLines(output / HARDWARE_INFO_FILE) == 5);
         return true;
     }
     if (scenario == "success-repeated") {
         CHECK(npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, ACLPTI_API_EXIT, ACL_SUCCESS,
             nullptr));
-        CHECK(boost::filesystem::is_regular_file(output / kHardwareInfoFile));
-        CHECK(CountLines(output / kHardwareInfoFile) == 5);
+        CHECK(boost::filesystem::is_regular_file(output / HARDWARE_INFO_FILE));
+        CHECK(CountLines(output / HARDWARE_INFO_FILE) == 5);
         CHECK(npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithHostArgs, ACLPTI_API_EXIT,
             ACL_SUCCESS, nullptr));
@@ -401,7 +401,7 @@ bool RunNormalStopChild(const boost::filesystem::path& output)
     CHECK(CheckSubscribeAndEnableContract());
     npucompute::NpuComputeRuntime::Instance().Stop();
     CHECK(CheckDisableContract());
-    for (aclptiCallbackId cbid : kHardwareInfoTriggerCbids) {
+    for (aclptiCallbackId cbid : HARDWARE_INFO_TRIGGER_CBIDS) {
         CHECK(!npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, cbid, ACLPTI_API_EXIT, ACL_SUCCESS, nullptr));
     }
@@ -445,7 +445,7 @@ bool RunStopDuringCollectionChild(const boost::filesystem::path& output)
     if (deviceCountStarted) {
         const auto deadline = std::chrono::steady_clock::now() + 10s;
         while (std::chrono::steady_clock::now() < deadline) {
-            if (npucompute::test::CapturedAclPtiEnableCalls().size() == kHardwareInfoTriggerCbids.size() * 2) {
+            if (npucompute::test::CapturedAclPtiEnableCalls().size() == HARDWARE_INFO_TRIGGER_CBIDS.size() * 2) {
                 callbacksDisabled = true;
                 break;
             }
@@ -484,8 +484,8 @@ bool RunStopDuringCollectionChild(const boost::filesystem::path& output)
     CHECK(drainReturnedBeforeRelease);
     CHECK(drainStatus.load() == 0);
     CHECK(CheckDisableContract());
-    CHECK(boost::filesystem::is_regular_file(output / kHardwareInfoFile));
-    CHECK(CountLines(output / kHardwareInfoFile) == 5);
+    CHECK(boost::filesystem::is_regular_file(output / HARDWARE_INFO_FILE));
+    CHECK(CountLines(output / HARDWARE_INFO_FILE) == 5);
     return true;
 }
 
@@ -569,21 +569,21 @@ bool RunEnableFailureChild(const boost::filesystem::path& output, aclptiCallback
     CHECK(npucompute::test::AclPtiRangeConfigCount() == 0);
 
     const auto failurePosition =
-        std::find(kHardwareInfoTriggerCbids.begin(), kHardwareInfoTriggerCbids.end(), failedCbid);
-    CHECK(failurePosition != kHardwareInfoTriggerCbids.end());
+        std::find(HARDWARE_INFO_TRIGGER_CBIDS.begin(), HARDWARE_INFO_TRIGGER_CBIDS.end(), failedCbid);
+    CHECK(failurePosition != HARDWARE_INFO_TRIGGER_CBIDS.end());
     const std::size_t successfulEnableCount =
-        static_cast<std::size_t>(std::distance(kHardwareInfoTriggerCbids.begin(), failurePosition));
+        static_cast<std::size_t>(std::distance(HARDWARE_INFO_TRIGGER_CBIDS.begin(), failurePosition));
     const std::vector<npucompute::test::AclPtiEnableCall> calls = npucompute::test::CapturedAclPtiEnableCalls();
     CHECK(calls.size() == successfulEnableCount * 2 + 1);
 
     for (std::size_t index = 0; index <= successfulEnableCount; ++index) {
         CHECK(calls[index].enable);
         CHECK(calls[index].domain == ACLPTI_CB_DOMAIN_RUNTIME_API);
-        CHECK(calls[index].cbid == kHardwareInfoTriggerCbids[index]);
+        CHECK(calls[index].cbid == HARDWARE_INFO_TRIGGER_CBIDS[index]);
         CHECK(calls[index].result == (index == successfulEnableCount ? ACLPTI_ERROR_NOT_SUPPORTED : ACLPTI_SUCCESS));
     }
     for (std::size_t index = 0; index < successfulEnableCount; ++index) {
-        const aclptiCallbackId enabledCbid = kHardwareInfoTriggerCbids[index];
+        const aclptiCallbackId enabledCbid = HARDWARE_INFO_TRIGGER_CBIDS[index];
         std::size_t disableCount = 0;
         for (std::size_t callIndex = successfulEnableCount + 1; callIndex < calls.size(); ++callIndex) {
             if (!calls[callIndex].enable && calls[callIndex].cbid == enabledCbid &&
@@ -607,7 +607,7 @@ bool RunConfigFailureChild(const boost::filesystem::path& output)
     CHECK(npucompute::test::AclPtiSubscribeCount() == 1);
     CHECK(npucompute::test::AclPtiRangeConfigCount() == 1);
     CHECK(CheckDisableContract());
-    for (aclptiCallbackId cbid : kHardwareInfoTriggerCbids) {
+    for (aclptiCallbackId cbid : HARDWARE_INFO_TRIGGER_CBIDS) {
         CHECK(!npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, cbid, ACLPTI_API_EXIT, ACL_SUCCESS, nullptr));
     }
@@ -710,9 +710,9 @@ TEST_P(NpuComputeRuntimeSuccessAndNormalExit, VerifiesCallbackAndArtifacts)
     TempDirectory temporary;
     ASSERT_TRUE(!temporary.Path().empty());
     ASSERT_TRUE(LaunchChild(executable, scenario.c_str(), temporary.Path()));
-    ASSERT_TRUE(boost::filesystem::is_regular_file(temporary.Path() / kHardwareInfoFile));
-    ASSERT_TRUE(CountLines(temporary.Path() / kHardwareInfoFile) == 5);
-    ASSERT_TRUE(boost::filesystem::file_size(temporary.Path() / kDeviceCountFile) == 1);
+    ASSERT_TRUE(boost::filesystem::is_regular_file(temporary.Path() / HARDWARE_INFO_FILE));
+    ASSERT_TRUE(CountLines(temporary.Path() / HARDWARE_INFO_FILE) == 5);
+    ASSERT_TRUE(boost::filesystem::file_size(temporary.Path() / DEVICE_COUNT_FILE) == 1);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -738,8 +738,8 @@ TEST_P(NpuComputeRuntimeIgnoredEvents, VerifiesCallbackAndArtifacts)
     TempDirectory temporary;
     ASSERT_TRUE(!temporary.Path().empty());
     ASSERT_TRUE(LaunchChild(executable, scenario.c_str(), temporary.Path()));
-    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
-    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kDeviceCountFile));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / HARDWARE_INFO_FILE));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / DEVICE_COUNT_FILE));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -766,7 +766,7 @@ TEST_P(NpuComputeRuntimeInitializationFailures, VerifiesCallbackAndArtifacts)
     TempDirectory temporary;
     ASSERT_TRUE(!temporary.Path().empty());
     ASSERT_TRUE(LaunchChild(executable, scenario.c_str(), temporary.Path()));
-    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / HARDWARE_INFO_FILE));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -793,8 +793,8 @@ TEST(NpuComputeRuntimeCallback, NormalStop)
     ASSERT_TRUE(LaunchChild(executable, "pipeline-clock", pipeline.Path()));
     TempDirectory failure;
     ASSERT_TRUE(LaunchChild(executable, "pipeline-clock-failure", failure.Path()));
-    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kHardwareInfoFile));
-    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / kDeviceCountFile));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / HARDWARE_INFO_FILE));
+    ASSERT_TRUE(!boost::filesystem::exists(temporary.Path() / DEVICE_COUNT_FILE));
 }
 
 TEST(NpuComputeRuntimeCallback, StopDuringCollectionDoesNotHoldRuntimeMutex)
@@ -857,7 +857,7 @@ extern "C" aclError aclrtGetDeviceCount(uint32_t* count)
             g_deviceCountCondition.wait(lock, [] { return g_releaseDeviceCount; });
         }
     }
-    const boost::filesystem::path countPath = boost::filesystem::path(output) / kDeviceCountFile;
+    const boost::filesystem::path countPath = boost::filesystem::path(output) / DEVICE_COUNT_FILE;
     const int descriptor = ::open(countPath.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     if (descriptor < 0) {
         return ACL_ERROR_FAILURE;

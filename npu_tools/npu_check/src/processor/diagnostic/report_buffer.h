@@ -22,7 +22,7 @@ namespace npucheck::diagnostic {
 // 本次会话的报告聚合器。
 //
 // 诊断在 callback 线程上产生，退出路径上由 Finalize 一次性取走并发出，因此追加必须是
-// 线程安全的。总长受 npucheck::ipc::kMaxResultBytes 约束：触及上限后停止追加并置 truncated，
+// 线程安全的。总长受 npucheck::ipc::MAX_RESULT_BYTES 约束：触及上限后停止追加并置 truncated，
 // 而不是丢弃整份报告 —— 已经查出来的问题仍然要交付给用户，只是标明它不完整。
 class ReportBuffer {
 public:
@@ -37,7 +37,7 @@ public:
     // 取走全部文本并清空缓冲。只在退出路径上由单线程调用。
     std::string Take() noexcept;
 
-    // 报告因触及总长上限被截断。对应线路上的 kFlagTruncated。
+    // 报告因触及总长上限被截断。对应线路上的 FLAG_TRUNCATED。
     bool Truncated() const noexcept;
 
     // 聚合过程中发生过内存分配失败，缓冲区内容已不可信。此时必须改发 Error，

@@ -42,27 +42,30 @@ std::optional<AclsanDeviceRegisterId> RegisterId(const DecodedInstruction& decod
             } else if constexpr (std::is_same_v<Field, NdDmaPadCountParamField>) {
                 return ACLSAN_DEVICE_REGISTER_NDDMA_PAD_COUNT;
             } else if constexpr (std::is_same_v<Field, NdDmaLoopStrideParamField>) {
-                if (value.loopIndex >= 5) {
+                if (value.loopIndex >= NDDMA_LOOP_COUNT) {
                     return std::nullopt;
                 }
-                return static_cast<AclsanDeviceRegisterId>(ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE + value.loopIndex);
+                return static_cast<AclsanDeviceRegisterId>(
+                    static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE) + value.loopIndex);
             } else if constexpr (std::is_same_v<Field, Mte2NzParamField>) {
                 return ACLSAN_DEVICE_REGISTER_MTE2_NZ;
             } else if constexpr (std::is_same_v<Field, Loop3ParamField>) {
                 return ACLSAN_DEVICE_REGISTER_LOOP3;
             } else if constexpr (std::is_same_v<Field, DmaLoopSizeParamField>) {
                 const auto direction = static_cast<uint32_t>(value.direction);
-                if (direction >= 3) {
-                    return std::nullopt;
-                }
-                return static_cast<AclsanDeviceRegisterId>(ACLSAN_DEVICE_REGISTER_DMA_LOOP_SIZE_UBUF_TO_GM + direction);
-            } else if constexpr (std::is_same_v<Field, DmaLoopStrideParamField>) {
-                const auto direction = static_cast<uint32_t>(value.direction);
-                if (direction >= 3 || value.loopIndex >= 2) {
+                if (direction >= DMA_DIRECTION_COUNT) {
                     return std::nullopt;
                 }
                 return static_cast<AclsanDeviceRegisterId>(
-                    ACLSAN_DEVICE_REGISTER_DMA_LOOP1_STRIDE_UBUF_TO_GM + direction * 2 + value.loopIndex);
+                    static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_DMA_LOOP_SIZE_UBUF_TO_GM) + direction);
+            } else if constexpr (std::is_same_v<Field, DmaLoopStrideParamField>) {
+                const auto direction = static_cast<uint32_t>(value.direction);
+                if (direction >= DMA_DIRECTION_COUNT || value.loopIndex >= DMA_STRIDE_LOOP_COUNT) {
+                    return std::nullopt;
+                }
+                return static_cast<AclsanDeviceRegisterId>(
+                    static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_DMA_LOOP1_STRIDE_UBUF_TO_GM) +
+                    direction * DMA_STRIDE_LOOP_COUNT + value.loopIndex);
             } else if constexpr (std::is_same_v<Field, SetPaddingParamField>) {
                 return ACLSAN_DEVICE_REGISTER_SET_PADDING;
             }
@@ -80,8 +83,8 @@ RegisterDependencyMask DmaDependencies(
     }
     const auto directionIndex = static_cast<size_t>(direction);
     RegisterDependencyMask result{
-        RegisterBit(
-            static_cast<AclsanDeviceRegisterId>(ACLSAN_DEVICE_REGISTER_DMA_LOOP_SIZE_UBUF_TO_GM + directionIndex)),
+        RegisterBit(static_cast<AclsanDeviceRegisterId>(
+            static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_DMA_LOOP_SIZE_UBUF_TO_GM) + directionIndex)),
         0};
     if (!state.dmaLoopSizes[directionIndex].has_value()) {
         return result;
@@ -89,11 +92,13 @@ RegisterDependencyMask DmaDependencies(
     const auto& size = *state.dmaLoopSizes[directionIndex];
     if (size.loop1Size > 1) {
         result.mask0 |= RegisterBit(static_cast<AclsanDeviceRegisterId>(
-            ACLSAN_DEVICE_REGISTER_DMA_LOOP1_STRIDE_UBUF_TO_GM + directionIndex * 2));
+            static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_DMA_LOOP1_STRIDE_UBUF_TO_GM) +
+            directionIndex * DMA_STRIDE_LOOP_COUNT));
     }
     if (size.loop2Size > 1) {
         result.mask0 |= RegisterBit(static_cast<AclsanDeviceRegisterId>(
-            ACLSAN_DEVICE_REGISTER_DMA_LOOP2_STRIDE_UBUF_TO_GM + directionIndex * 2));
+            static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_DMA_LOOP2_STRIDE_UBUF_TO_GM) +
+            directionIndex * DMA_STRIDE_LOOP_COUNT));
     }
     return result;
 }
@@ -117,7 +122,7 @@ RegisterDependencyMask ResolveRegisterDependencies(
                            RegisterDependencyMask{RegisterBit(ACLSAN_DEVICE_REGISTER_MTE2_NZ), 0} :
                            RegisterDependencyMask{};
             } else if constexpr (std::is_same_v<Field, NdDmaOutToUbufParamField>) {
-                const std::array<uint64_t, 5> counts{
+                const std::array<uint64_t, NDDMA_LOOP_COUNT> counts{
                     value.loop0Size, value.loop1Size, value.loop2Size, value.loop3Size, value.loop4Size};
                 for (uint64_t count : counts) {
                     if (count == 0) {
@@ -132,8 +137,8 @@ RegisterDependencyMask ResolveRegisterDependencies(
                                                   state.ndDmaPadCount->rightPaddingCounts[index - 1] :
                                               0;
                     if (counts[index] + padding > 1) {
-                        result.mask0 |= RegisterBit(
-                            static_cast<AclsanDeviceRegisterId>(ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE + index));
+                        result.mask0 |= RegisterBit(static_cast<AclsanDeviceRegisterId>(
+                            static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE) + index));
                     }
                 }
                 return result;

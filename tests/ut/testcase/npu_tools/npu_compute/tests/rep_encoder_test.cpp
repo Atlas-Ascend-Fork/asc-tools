@@ -35,9 +35,9 @@ int Check(bool condition, const char* expression, int line)
     } while (false)
 
 using npucompute::cli::EncodeRep;
-using npucompute::cli::kNpuRepHeadSize;
-using npucompute::cli::kNpuRepOrigin;
-using npucompute::cli::kNpuRepVersion;
+using npucompute::cli::NPU_REP_HEAD_SIZE;
+using npucompute::cli::NPU_REP_ORIGIN;
+using npucompute::cli::NPU_REP_VERSION;
 using npucompute::cli::NpuRepFileType;
 using npucompute::cli::RepEntry;
 using npucompute::cli::test::DecodedRep;
@@ -49,14 +49,14 @@ int TestEmptyRep()
     std::string error;
     CHECK(EncodeRep({}, &encoded, &error));
     CHECK(error.empty());
-    CHECK(encoded.size() == kNpuRepHeadSize);
+    CHECK(encoded.size() == NPU_REP_HEAD_SIZE);
 
     DecodedRep decoded;
     CHECK(DecodeRep(encoded, &decoded, &error));
-    CHECK(decoded.version == kNpuRepVersion);
-    CHECK(decoded.origin == kNpuRepOrigin);
+    CHECK(decoded.version == NPU_REP_VERSION);
+    CHECK(decoded.origin == NPU_REP_ORIGIN);
     CHECK(decoded.file_info_count == 0);
-    CHECK(decoded.rep_length == kNpuRepHeadSize);
+    CHECK(decoded.rep_length == NPU_REP_HEAD_SIZE);
     CHECK(decoded.entries.empty());
     return 0;
 }

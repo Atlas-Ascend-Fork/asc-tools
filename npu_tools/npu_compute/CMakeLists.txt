@@ -28,6 +28,7 @@ set(CMAKE_SKIP_RPATH FALSE)
 set(NPUCOMPUTE_CANN_ROOT "" CACHE PATH
   "CANN architecture package root used by NPU Compute"
 )
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/securec.cmake")
 # 与 cpudebug/injection 的 CANN 依赖机制保持一致：
 # 框架流程（外部开源顶层构建、内部联编）下依赖统一由 find_cann_package
 # （dependencies.cmake 已注册 acl_rt/msprof）解析为框架目标；

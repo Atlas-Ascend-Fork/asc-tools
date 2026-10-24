@@ -238,28 +238,28 @@ void RunResultClient(const std::string& udsName, uint64_t sessionId, ResultClien
             break;
         }
         result.frames.push_back(frame);
-        if (frame.type == MessageType::RESULT && (frame.flags & kFlagMore) == 0) {
+        if (frame.type == MessageType::RESULT && (frame.flags & FLAG_MORE) == 0) {
             break;
         }
     }
     (void)close(fd);
 }
 
-// Result 必须按 kMaxPayloadSize 切片，除末帧外都置 MORE，结论位只出现在末帧上。
+// Result 必须按 MAX_PAYLOAD_SIZE 切片，除末帧外都置 MORE，结论位只出现在末帧上。
 TEST(UdsServerTest, FragmentsResultAcrossFramesAndFlagsOnlyTheLastOne)
 {
-    constexpr uint64_t kSessionId = 90212;
+    constexpr uint64_t SESSION_ID = 90212;
     const std::string udsName = "@npu_check_uds_result_test_" + std::to_string(static_cast<uint64_t>(getpid()));
-    ScopedEnvironmentVariable udsNameEnvironment(kUdsNameEnv, udsName);
-    ScopedEnvironmentVariable sessionEnvironment(kSessionIdEnv, std::to_string(kSessionId));
-    ScopedEnvironmentVariable pidEnvironment(kCliPidEnv, std::to_string(static_cast<uint64_t>(getpid())));
-    ScopedEnvironmentVariable timeoutEnvironment(kHandshakeTimeoutEnv, "5000");
+    ScopedEnvironmentVariable udsNameEnvironment(UDS_NAME_ENV, udsName);
+    ScopedEnvironmentVariable sessionEnvironment(SESSION_ID_ENV, std::to_string(SESSION_ID));
+    ScopedEnvironmentVariable pidEnvironment(CLI_PID_ENV, std::to_string(static_cast<uint64_t>(getpid())));
+    ScopedEnvironmentVariable timeoutEnvironment(HANDSHAKE_TIMEOUT_ENV, "5000");
 
     // 刻意跨过两个整分片，验证边界处既不丢字节也不多发空帧。
-    const std::string report(kMaxPayloadSize * 2 + 17, 'r');
+    const std::string report(MAX_PAYLOAD_SIZE * 2 + 17, 'r');
 
     ResultClientResult clientResult{};
-    std::thread client(RunResultClient, udsName, kSessionId, std::ref(clientResult));
+    std::thread client(RunResultClient, udsName, SESSION_ID, std::ref(clientResult));
 
     npucheck::ipc::UdsServer server;
     ConfigureRequest config{};
@@ -286,9 +286,9 @@ TEST(UdsServerTest, FragmentsResultAcrossFramesAndFlagsOnlyTheLastOne)
         // Ready 占用了序号 2，Result 从 3 开始严格递增。
         EXPECT_EQ(frame.sequence, index + 3);
         const bool isLast = index + 1 == clientResult.frames.size();
-        EXPECT_EQ((frame.flags & kFlagMore) != 0, !isLast);
-        EXPECT_EQ((frame.flags & kFlagHasErrors) != 0, isLast);
-        EXPECT_FALSE((frame.flags & kFlagTruncated) != 0);
+        EXPECT_EQ((frame.flags & FLAG_MORE) != 0, !isLast);
+        EXPECT_EQ((frame.flags & FLAG_HAS_ERRORS) != 0, isLast);
+        EXPECT_FALSE((frame.flags & FLAG_TRUNCATED) != 0);
         received.append(frame.payload.begin(), frame.payload.end());
     }
     EXPECT_EQ(received, report);
@@ -297,15 +297,15 @@ TEST(UdsServerTest, FragmentsResultAcrossFramesAndFlagsOnlyTheLastOne)
 // 没有任何诊断时也必须发出一个空的末帧：接收端据此区分"检查完成、无问题"与"报告丢失"。
 TEST(UdsServerTest, SendsOneEmptyFrameForAnEmptyResult)
 {
-    constexpr uint64_t kSessionId = 90213;
+    constexpr uint64_t SESSION_ID = 90213;
     const std::string udsName = "@npu_check_uds_empty_result_test_" + std::to_string(static_cast<uint64_t>(getpid()));
-    ScopedEnvironmentVariable udsNameEnvironment(kUdsNameEnv, udsName);
-    ScopedEnvironmentVariable sessionEnvironment(kSessionIdEnv, std::to_string(kSessionId));
-    ScopedEnvironmentVariable pidEnvironment(kCliPidEnv, std::to_string(static_cast<uint64_t>(getpid())));
-    ScopedEnvironmentVariable timeoutEnvironment(kHandshakeTimeoutEnv, "5000");
+    ScopedEnvironmentVariable udsNameEnvironment(UDS_NAME_ENV, udsName);
+    ScopedEnvironmentVariable sessionEnvironment(SESSION_ID_ENV, std::to_string(SESSION_ID));
+    ScopedEnvironmentVariable pidEnvironment(CLI_PID_ENV, std::to_string(static_cast<uint64_t>(getpid())));
+    ScopedEnvironmentVariable timeoutEnvironment(HANDSHAKE_TIMEOUT_ENV, "5000");
 
     ResultClientResult clientResult{};
-    std::thread client(RunResultClient, udsName, kSessionId, std::ref(clientResult));
+    std::thread client(RunResultClient, udsName, SESSION_ID, std::ref(clientResult));
 
     npucheck::ipc::UdsServer server;
     ConfigureRequest config{};
@@ -330,16 +330,16 @@ TEST(UdsServerTest, SendsOneEmptyFrameForAnEmptyResult)
 
 TEST(UdsServerTest, SendsFlowErrorSynchronouslyAfterReady)
 {
-    constexpr uint64_t kSessionId = 90210;
+    constexpr uint64_t SESSION_ID = 90210;
     // '@' 前缀表示抽象命名空间；带上 pid 避免并发跑用例时撞车。
     const std::string udsName = "@npu_check_uds_test_" + std::to_string(static_cast<uint64_t>(getpid()));
-    ScopedEnvironmentVariable udsNameEnvironment(kUdsNameEnv, udsName);
-    ScopedEnvironmentVariable sessionEnvironment(kSessionIdEnv, std::to_string(kSessionId));
-    ScopedEnvironmentVariable pidEnvironment(kCliPidEnv, std::to_string(static_cast<uint64_t>(getpid())));
-    ScopedEnvironmentVariable timeoutEnvironment(kHandshakeTimeoutEnv, "2000");
+    ScopedEnvironmentVariable udsNameEnvironment(UDS_NAME_ENV, udsName);
+    ScopedEnvironmentVariable sessionEnvironment(SESSION_ID_ENV, std::to_string(SESSION_ID));
+    ScopedEnvironmentVariable pidEnvironment(CLI_PID_ENV, std::to_string(static_cast<uint64_t>(getpid())));
+    ScopedEnvironmentVariable timeoutEnvironment(HANDSHAKE_TIMEOUT_ENV, "2000");
 
     ClientResult clientResult{};
-    std::thread client(RunClient, udsName, kSessionId, std::ref(clientResult), false);
+    std::thread client(RunClient, udsName, SESSION_ID, std::ref(clientResult), false);
 
     npucheck::ipc::UdsServer server;
     ConfigureRequest config{};
@@ -347,7 +347,7 @@ TEST(UdsServerTest, SendsFlowErrorSynchronouslyAfterReady)
     const bool handshakeSucceeded = server.StartAndHandshake(config, serverError);
     const bool readySucceeded = handshakeSucceeded && server.SendReady(serverError);
     if (readySucceeded) {
-        server.SendError(ErrorDomain::INTERNAL, error_code::kReportUnavailable, "callback processing failed");
+        server.SendError(ErrorDomain::INTERNAL, error_code::REPORT_UNAVAILABLE, "callback processing failed");
     }
     client.join();
     server.Shutdown();
@@ -367,7 +367,7 @@ TEST(UdsServerTest, SendsFlowErrorSynchronouslyAfterReady)
     ErrorPayload flowError{};
     ASSERT_TRUE(DecodeError(clientResult.flowError.payload, flowError, clientResult.error));
     EXPECT_EQ(flowError.domain, ErrorDomain::INTERNAL);
-    EXPECT_EQ(flowError.code, error_code::kReportUnavailable);
+    EXPECT_EQ(flowError.code, error_code::REPORT_UNAVAILABLE);
     EXPECT_EQ(flowError.message, "callback processing failed");
 }
 
@@ -378,15 +378,15 @@ TEST(UdsServerTest, SendsFlowErrorSynchronouslyAfterReady)
 // CONFIGURE 之间插一帧 DIAGNOSTIC_STREAM，正是当年会踩中的场景。
 TEST(UdsServerTest, SkipsMustIgnoreFramesWithoutBreakingSequence)
 {
-    constexpr uint64_t kSessionId = 90211;
+    constexpr uint64_t SESSION_ID = 90211;
     const std::string udsName = "@npu_check_uds_skip_test_" + std::to_string(static_cast<uint64_t>(getpid()));
-    ScopedEnvironmentVariable udsNameEnvironment(kUdsNameEnv, udsName);
-    ScopedEnvironmentVariable sessionEnvironment(kSessionIdEnv, std::to_string(kSessionId));
-    ScopedEnvironmentVariable pidEnvironment(kCliPidEnv, std::to_string(static_cast<uint64_t>(getpid())));
-    ScopedEnvironmentVariable timeoutEnvironment(kHandshakeTimeoutEnv, "2000");
+    ScopedEnvironmentVariable udsNameEnvironment(UDS_NAME_ENV, udsName);
+    ScopedEnvironmentVariable sessionEnvironment(SESSION_ID_ENV, std::to_string(SESSION_ID));
+    ScopedEnvironmentVariable pidEnvironment(CLI_PID_ENV, std::to_string(static_cast<uint64_t>(getpid())));
+    ScopedEnvironmentVariable timeoutEnvironment(HANDSHAKE_TIMEOUT_ENV, "2000");
 
     ClientResult clientResult{};
-    std::thread client(RunClient, udsName, kSessionId, std::ref(clientResult), true);
+    std::thread client(RunClient, udsName, SESSION_ID, std::ref(clientResult), true);
 
     npucheck::ipc::UdsServer server;
     ConfigureRequest config{};
@@ -394,7 +394,7 @@ TEST(UdsServerTest, SkipsMustIgnoreFramesWithoutBreakingSequence)
     const bool handshakeSucceeded = server.StartAndHandshake(config, serverError);
     const bool readySucceeded = handshakeSucceeded && server.SendReady(serverError);
     if (readySucceeded) {
-        server.SendError(ErrorDomain::INTERNAL, error_code::kReportUnavailable, "callback processing failed");
+        server.SendError(ErrorDomain::INTERNAL, error_code::REPORT_UNAVAILABLE, "callback processing failed");
     }
     client.join();
     server.Shutdown();

@@ -16,33 +16,33 @@
 
 namespace npucompute::cli {
 
-inline constexpr std::array<uint8_t, 8> kNpuRepMagic = {'n', 'p', 'u', '-', 'r', 'e', 'p', '\0'};
-inline constexpr uint32_t kNpuRepVersion = 0x00010000U;
-inline constexpr uint16_t kNpuRepOrigin = 1U;
+inline constexpr std::array<uint8_t, 8> NPU_REP_MAGIC = {'n', 'p', 'u', '-', 'r', 'e', 'p', '\0'};
+inline constexpr uint32_t NPU_REP_VERSION = 0x00010000U;
+inline constexpr uint16_t NPU_REP_ORIGIN = 1U;
 // Bytes emitted by the current encoder. Readers may accept header extensions.
-inline constexpr std::size_t kNpuRepHeadSize = 36U;
+inline constexpr std::size_t NPU_REP_HEAD_SIZE = 36U;
 // End of the last field understood by the current version.
-inline constexpr std::size_t kNpuRepHeaderFieldsEnd = 28U + sizeof(uint64_t);
-inline constexpr std::size_t kNpuRepFileInfoSize = 160U;
-inline constexpr std::size_t kNpuRepFileNameSize = 128U;
+inline constexpr std::size_t NPU_REP_HEADER_FIELDS_END = 28U + sizeof(uint64_t);
+inline constexpr std::size_t NPU_REP_FILE_INFO_SIZE = 160U;
+inline constexpr std::size_t NPU_REP_FILE_NAME_SIZE = 128U;
 // Includes the outermost report (or the collection root directory when packing).
-inline constexpr std::size_t kNpuRepMaxDepth = 64U;
+inline constexpr std::size_t NPU_REP_MAX_DEPTH = 64U;
 
 // Little-endian wire offsets; independent of native structure padding.
-inline constexpr std::size_t kNpuRepHeaderVersionOffset = 8;
-inline constexpr std::size_t kNpuRepHeaderOriginOffset = 12;
-inline constexpr std::size_t kNpuRepHeaderHeaderLengthOffset = 14;
-inline constexpr std::size_t kNpuRepHeaderFileCountOffset = 16;
-inline constexpr std::size_t kNpuRepHeaderFileInfoLengthOffset = 20;
-inline constexpr std::size_t kNpuRepHeaderReservedOffset = 24;
-inline constexpr std::size_t kNpuRepHeaderLengthOffset = 28;
-inline constexpr std::size_t kNpuRepEntryNameOffset = 8;
-inline constexpr std::size_t kNpuRepEntryTypeOffset = 136;
-inline constexpr std::size_t kNpuRepEntryReserved16Offset = 138;
-inline constexpr std::size_t kNpuRepEntryReserved32Offset = 140;
-inline constexpr std::size_t kNpuRepEntryLengthOffset = 144;
-inline constexpr std::size_t kNpuRepEntryPayloadOffset = 152;
-inline constexpr unsigned kNpuRepByteBits = 8;
+inline constexpr std::size_t NPU_REP_HEADER_VERSION_OFFSET = 8;
+inline constexpr std::size_t NPU_REP_HEADER_ORIGIN_OFFSET = 12;
+inline constexpr std::size_t NPU_REP_HEADER_HEADER_LENGTH_OFFSET = 14;
+inline constexpr std::size_t NPU_REP_HEADER_FILE_COUNT_OFFSET = 16;
+inline constexpr std::size_t NPU_REP_HEADER_FILE_INFO_LENGTH_OFFSET = 20;
+inline constexpr std::size_t NPU_REP_HEADER_RESERVED_OFFSET = 24;
+inline constexpr std::size_t NPU_REP_HEADER_LENGTH_OFFSET = 28;
+inline constexpr std::size_t NPU_REP_ENTRY_NAME_OFFSET = 8;
+inline constexpr std::size_t NPU_REP_ENTRY_TYPE_OFFSET = 136;
+inline constexpr std::size_t NPU_REP_ENTRY_RESERVED16_OFFSET = 138;
+inline constexpr std::size_t NPU_REP_ENTRY_RESERVED32_OFFSET = 140;
+inline constexpr std::size_t NPU_REP_ENTRY_LENGTH_OFFSET = 144;
+inline constexpr std::size_t NPU_REP_ENTRY_PAYLOAD_OFFSET = 152;
+inline constexpr unsigned NPU_REP_BYTE_BITS = 8;
 
 enum class NpuRepFileType : uint16_t {
     NpuRep = 1,

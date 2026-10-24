@@ -92,7 +92,7 @@ target_compile_definitions(npu_check_cube_memory_tests PRIVATE _GLIBCXX_USE_CXX1
 target_include_directories(npu_check_cube_memory_tests PRIVATE
   "${NPU_CHECK_SOURCE_DIR}" "${NPU_CHECK_DBI_INCLUDE_DIR}" "${NPU_CHECK_DBI_ROOT}/../../include")
 target_link_libraries(npu_check_cube_memory_tests PRIVATE
-  npu_check_core npu_sanitizer_plog Threads::Threads GTest::gtest)
+  npu_check_core npu_sanitizer_plog Threads::Threads GTest::gtest c_sec_static)
 add_test(NAME npu_check_cube_memory_tests COMMAND npu_check_cube_memory_tests)
 
 add_executable(npu_check_tool_manager_test

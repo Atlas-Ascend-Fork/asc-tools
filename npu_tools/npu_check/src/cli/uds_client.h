@@ -35,7 +35,7 @@ public:
     bool ConnectAndConfigure(
         const std::string& udsName, uint64_t sessionId, uint32_t childPid, npucheck::ipc::DeadlineMs deadline,
         const npucheck::ipc::ConfigureRequest& configure, std::string& error);
-    // 采集阶段读取后续帧。deadline 传 npucheck::ipc::kNoDeadline 表示不设超时 —— 应用可能跑数小时。
+    // 采集阶段读取后续帧。deadline 传 npucheck::ipc::NO_DEADLINE 表示不设超时 —— 应用可能跑数小时。
     npucheck::ipc::IoStatus Receive(
         npucheck::ipc::Frame& frame, npucheck::ipc::DeadlineMs deadline, std::string& error);
     void Close();
@@ -52,7 +52,7 @@ private:
         std::string& error);
 
     int fd_ = -1;
-    uint16_t negotiatedMinor_ = npucheck::ipc::kProtocolMinor;
+    uint16_t negotiatedMinor_ = npucheck::ipc::PROTOCOL_MINOR;
     uint64_t sessionId_ = 0;
     uint64_t sendSequence_ = 1;
     uint64_t receiveSequence_ = 1;

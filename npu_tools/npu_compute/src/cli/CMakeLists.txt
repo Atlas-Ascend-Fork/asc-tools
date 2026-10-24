@@ -32,6 +32,7 @@ add_library(npu_compute_launcher_core STATIC
   report/report_name.cpp
 )
 target_include_directories(npu_compute_launcher_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(npu_compute_launcher_core PRIVATE c_sec_static)
 target_link_libraries(npu_compute_launcher_core PUBLIC
   npu_compute_headers
   npu_compute_ipc

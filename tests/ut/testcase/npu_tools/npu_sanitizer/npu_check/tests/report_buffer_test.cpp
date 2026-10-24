@@ -50,32 +50,32 @@ TEST(ReportBufferTest, TruncatesAtTheSizeLimitAndKeepsWhatFits)
     size_t written = 0;
     while (buffer.Append(block)) {
         written += block.size();
-        ASSERT_LE(written, npucheck::ipc::kMaxResultBytes);
+        ASSERT_LE(written, npucheck::ipc::MAX_RESULT_BYTES);
     }
 
     EXPECT_TRUE(buffer.Truncated());
     EXPECT_FALSE(buffer.Failed());
     // 恰好停在上限上：既没有越界，也没有因为最后一段放不下就整段丢弃。
-    EXPECT_EQ(buffer.Size(), npucheck::ipc::kMaxResultBytes);
+    EXPECT_EQ(buffer.Size(), npucheck::ipc::MAX_RESULT_BYTES);
 
     // 已经截断之后继续追加只会被拒绝，不改变已有内容。
     EXPECT_FALSE(buffer.Append("tail"));
-    EXPECT_EQ(buffer.Size(), npucheck::ipc::kMaxResultBytes);
+    EXPECT_EQ(buffer.Size(), npucheck::ipc::MAX_RESULT_BYTES);
 }
 
 // 诊断在多个 callback 线程上产生，追加必须是线程安全的。
 TEST(ReportBufferTest, ConcurrentAppendsKeepEveryByte)
 {
-    constexpr size_t kThreads = 8;
-    constexpr size_t kPerThread = 200;
+    constexpr size_t THREADS = 8;
+    constexpr size_t PER_THREAD = 200;
     const std::string unit = "0123456789";
 
     ReportBuffer buffer;
     std::vector<std::thread> workers;
-    workers.reserve(kThreads);
-    for (size_t index = 0; index < kThreads; ++index) {
+    workers.reserve(THREADS);
+    for (size_t index = 0; index < THREADS; ++index) {
         workers.emplace_back([&buffer, &unit] {
-            for (size_t count = 0; count < kPerThread; ++count) {
+            for (size_t count = 0; count < PER_THREAD; ++count) {
                 (void)buffer.Append(unit);
             }
         });
@@ -85,7 +85,7 @@ TEST(ReportBufferTest, ConcurrentAppendsKeepEveryByte)
     }
 
     // 并发下不保证顺序，但一个字节都不能丢。
-    EXPECT_EQ(buffer.Size(), kThreads * kPerThread * unit.size());
+    EXPECT_EQ(buffer.Size(), THREADS * PER_THREAD * unit.size());
     EXPECT_FALSE(buffer.Truncated());
     EXPECT_FALSE(buffer.Failed());
 }

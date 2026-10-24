@@ -66,6 +66,7 @@ target_include_directories(npu_check_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
   PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../acl_san
 )
+target_link_libraries(npu_check_core PRIVATE c_sec_static)
 target_link_libraries(npu_check_core
   PUBLIC npu_check_common
   PRIVATE acl_san acl_tool_injection npu_sanitizer_plog Threads::Threads Boost::filesystem

@@ -10,6 +10,7 @@
 
 #include "device_symbolizer.h"
 
+#include <sys/stat.h>
 #include <cerrno>
 #include <cctype>
 #include <cstdint>
@@ -66,7 +67,7 @@ bool RunCommand(const std::vector<std::string>& command, const std::string& logP
     if (spawnStatus == 0) {
         failureContext = "posix_spawn_file_actions_addopen";
         spawnStatus = posix_spawn_file_actions_addopen(
-            &actions, STDOUT_FILENO, logPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+            &actions, STDOUT_FILENO, logPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, (S_IRUSR | S_IWUSR));
     }
     if (spawnStatus == 0) {
         failureContext = "posix_spawn_file_actions_adddup2";

@@ -13,6 +13,8 @@
 #include "data_types.h"
 
 namespace aclpti::data {
+inline constexpr std::size_t TASK_LOG_BYTES = 32;
+inline constexpr std::size_t PMU_RECORD_BYTES = 128;
 
 // Caller must provide at least four readable bytes; alignment is unrestricted.
 uint32_t ReadLittleEndianWord(const uint8_t* bytes);

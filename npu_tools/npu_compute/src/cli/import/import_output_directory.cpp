@@ -28,11 +28,11 @@
 namespace npucompute::cli {
 namespace {
 
-constexpr char kNpuRepSuffix[] = ".npu-rep";
-constexpr char kNestedNpuRepSuffix[] = ".npu.rep";
-constexpr char kRepSuffix[] = ".rep";
-constexpr std::size_t kMaximumNameAttempts = 128U;
-constexpr std::size_t kMkdtempRandomLength = 6U;
+constexpr char NPU_REP_SUFFIX[] = ".npu-rep";
+constexpr char NESTED_NPU_REP_SUFFIX[] = ".npu.rep";
+constexpr char REP_SUFFIX[] = ".rep";
+constexpr std::size_t MAXIMUM_NAME_ATTEMPTS = 128U;
+constexpr std::size_t MKDTEMP_RANDOM_LENGTH = 6U;
 
 bool Fail(const std::string& message, std::string* error)
 {
@@ -72,7 +72,7 @@ boost::filesystem::path ResolvePath(
 
 bool RemoveSuffix(std::string* name)
 {
-    const char* const suffixes[] = {kNpuRepSuffix, kNestedNpuRepSuffix, kRepSuffix};
+    const char* const suffixes[] = {NPU_REP_SUFFIX, NESTED_NPU_REP_SUFFIX, REP_SUFFIX};
     for (const char* suffix : suffixes) {
         const std::size_t suffixLength = std::strlen(suffix);
         if (name->size() >= suffixLength && name->compare(name->size() - suffixLength, suffixLength, suffix) == 0) {
@@ -143,7 +143,7 @@ bool CreateTemporaryDirectory(
 
     const std::string namePrefix =
         "npu-compute-import-" + std::to_string(milliseconds.count()) + "-" + std::to_string(::getpid()) + "-";
-    for (std::size_t attempt = 0; attempt < kMaximumNameAttempts; ++attempt) {
+    for (std::size_t attempt = 0; attempt < MAXIMUM_NAME_ATTEMPTS; ++attempt) {
         std::string pathTemplate = (outputRoot / ("." + namePrefix + "tmp-XXXXXX")).string();
         pathTemplate.push_back('\0');
         char* created = ::mkdtemp(pathTemplate.data());
@@ -153,7 +153,7 @@ bool CreateTemporaryDirectory(
 
         const boost::filesystem::path createdPath = created;
         const std::string temporaryName = createdPath.filename().string();
-        const std::string randomSuffix = temporaryName.substr(temporaryName.size() - kMkdtempRandomLength);
+        const std::string randomSuffix = temporaryName.substr(temporaryName.size() - MKDTEMP_RANDOM_LENGTH);
         const boost::filesystem::path candidateFinalPath = outputRoot / (namePrefix + randomSuffix);
         boost::filesystem::file_status finalStatus;
         if (!ReadStatus(candidateFinalPath, &finalStatus, error)) {
@@ -181,29 +181,29 @@ bool CreateTemporaryDirectory(
 int RenameNoReplace(const char* source, const char* target)
 {
 #if defined(SYS_renameat2)
-    constexpr long kRenameAt2 = SYS_renameat2;
+    constexpr long RENAME_AT2 = SYS_renameat2;
 #elif defined(__NR_renameat2)
-    constexpr long kRenameAt2 = __NR_renameat2;
+    constexpr long RENAME_AT2 = __NR_renameat2;
 #elif defined(__linux__) && defined(__LP64__) && !defined(__ILP32__) && defined(__x86_64__)
     // Linux x86_64 LP64 syscall ABI; do not use this number for x32.
-    constexpr long kRenameAt2 = 316;
+    constexpr long RENAME_AT2 = 316;
 #elif defined(__linux__) && defined(__LP64__) && !defined(__ILP32__) && defined(__aarch64__)
     // Linux AArch64 LP64 uses the asm-generic syscall ABI.
-    constexpr long kRenameAt2 = 276;
+    constexpr long RENAME_AT2 = 276;
 #else
-    constexpr long kRenameAt2 = -1;
+    constexpr long RENAME_AT2 = -1;
 #endif
 #if defined(RENAME_NOREPLACE)
-    constexpr unsigned int kNoReplace = RENAME_NOREPLACE;
+    constexpr unsigned int NO_REPLACE = RENAME_NOREPLACE;
 #else
-    constexpr unsigned int kNoReplace = 1U;
+    constexpr unsigned int NO_REPLACE = 1U;
 #endif
-    if (kRenameAt2 < 0) {
+    if (RENAME_AT2 < 0) {
         errno = ENOSYS;
         return -1;
     }
     // Preserve the kernel error; a non-atomic fallback could overwrite the target.
-    return static_cast<int>(::syscall(kRenameAt2, AT_FDCWD, source, AT_FDCWD, target, kNoReplace));
+    return static_cast<int>(::syscall(RENAME_AT2, AT_FDCWD, source, AT_FDCWD, target, NO_REPLACE));
 }
 
 bool SyncDirectory(const boost::filesystem::path& directory, std::string* error)

@@ -49,9 +49,9 @@ UdsServer::~UdsServer() { Shutdown(); }
 
 bool UdsServer::LoadEnvironment(std::string& error)
 {
-    const char* udsName = std::getenv(npucheck::ipc::kUdsNameEnv);
-    const char* session = std::getenv(npucheck::ipc::kSessionIdEnv);
-    const char* cliPid = std::getenv(npucheck::ipc::kCliPidEnv);
+    const char* udsName = std::getenv(npucheck::ipc::UDS_NAME_ENV);
+    const char* session = std::getenv(npucheck::ipc::SESSION_ID_ENV);
+    const char* cliPid = std::getenv(npucheck::ipc::CLI_PID_ENV);
     if (udsName == nullptr || udsName[0] == '\0') {
         error = "missing UDS address environment";
         return false;
@@ -66,7 +66,7 @@ bool UdsServer::LoadEnvironment(std::string& error)
     sessionId_ = *parsedSession;
     expectedCliPid_ = static_cast<uint32_t>(*parsedPid);
 
-    const char* timeout = std::getenv(npucheck::ipc::kHandshakeTimeoutEnv);
+    const char* timeout = std::getenv(npucheck::ipc::HANDSHAKE_TIMEOUT_ENV);
     if (timeout != nullptr) {
         const auto parsedTimeout = ParseUnsigned(timeout, MAX_HANDSHAKE_TIMEOUT_MS);
         if (!parsedTimeout || *parsedTimeout < MIN_HANDSHAKE_TIMEOUT_MS) {
@@ -101,7 +101,7 @@ bool UdsServer::CreateListener(std::string& error)
     // backlog 不能是 1。抽象地址没有文件系统权限位，同一 network namespace 内任何进程
     // 都能发起 connect；backlog 为 1 时，一个抢先建立的连接就会让真正的 CLI 一直拿到
     // EAGAIN 直到超时。取 8 留出余量，配合下面的循环 accept 一起用。
-    if (listen(listenFd_, kListenBacklog) != 0) {
+    if (listen(listenFd_, LISTEN_BACKLOG) != 0) {
         error = ErrnoMessage("listen");
         return false;
     }
@@ -304,7 +304,7 @@ bool UdsServer::Publish(npucheck::ipc::MessageType type, const std::string& mess
     }
     {
         std::lock_guard<std::mutex> lock(queueMutex_);
-        if (clientFd_ < 0 || closing_ || !transportComplete_ || queue_.size() >= kMaxQueuedMessages) {
+        if (clientFd_ < 0 || closing_ || !transportComplete_ || queue_.size() >= MAX_QUEUED_MESSAGES) {
             ++droppedMessages_;
             return false;
         }
@@ -331,7 +331,7 @@ void UdsServer::PublisherLoop()
         // 结果发送用独立上限，不复用握手 deadline，也不能不设上限：CLI 已死或长时间不读时
         // sendmsg 会一直 EAGAIN，无限等待会把目标应用卡在退出路径上。
         if (!SendSynchronous(
-                message.type, message.payload, 0, npucheck::ipc::DeadlineAfterMs(kResultSendTimeoutMs), error)) {
+                message.type, message.payload, 0, npucheck::ipc::DeadlineAfterMs(RESULT_SEND_TIMEOUT_MS), error)) {
             std::lock_guard<std::mutex> lock(queueMutex_);
             droppedMessages_ += queue_.size();
             queue_.clear();
@@ -364,7 +364,7 @@ void UdsServer::SendError(npucheck::ipc::ErrorDomain domain, uint16_t code, cons
         std::string ignored;
         (void)SendSynchronous(
             npucheck::ipc::MessageType::ERROR, npucheck::ipc::EncodeError({domain, code, message}), 0,
-            npucheck::ipc::DeadlineAfterMs(kResultSendTimeoutMs), ignored);
+            npucheck::ipc::DeadlineAfterMs(RESULT_SEND_TIMEOUT_MS), ignored);
     } catch (...) {
         return;
     }
@@ -381,27 +381,27 @@ bool UdsServer::SendResult(const std::string& report, bool hasErrors, bool trunc
         error = "no client connection for the result";
         return false;
     }
-    if (report.size() > npucheck::ipc::kMaxResultBytes) {
+    if (report.size() > npucheck::ipc::MAX_RESULT_BYTES) {
         error = "result exceeds the maximum report size";
         return false;
     }
     // 整个分片序列共用一个绝对 deadline。分片数取决于报告长度，若每片各给一份完整超时，
     // 最坏会把上限放大到分片数倍，把目标应用长时间钉在退出路径上、NPU 资源不释放。
-    const npucheck::ipc::DeadlineMs deadline = npucheck::ipc::DeadlineAfterMs(kResultSendTimeoutMs);
+    const npucheck::ipc::DeadlineMs deadline = npucheck::ipc::DeadlineAfterMs(RESULT_SEND_TIMEOUT_MS);
     size_t offset = 0;
     while (true) {
-        const size_t chunk = std::min(npucheck::ipc::kMaxPayloadSize, report.size() - offset);
+        const size_t chunk = std::min(npucheck::ipc::MAX_PAYLOAD_SIZE, report.size() - offset);
         const bool isLast = offset + chunk >= report.size();
         uint16_t flags = 0;
         if (!isLast) {
-            flags |= npucheck::ipc::kFlagMore;
+            flags |= npucheck::ipc::FLAG_MORE;
         } else {
             // 结论位只在末帧上有效：接收端在收到 MORE=0 之前不该对本次检查下任何结论。
             if (hasErrors) {
-                flags |= npucheck::ipc::kFlagHasErrors;
+                flags |= npucheck::ipc::FLAG_HAS_ERRORS;
             }
             if (truncated) {
-                flags |= npucheck::ipc::kFlagTruncated;
+                flags |= npucheck::ipc::FLAG_TRUNCATED;
             }
         }
         const auto begin = report.begin() + static_cast<std::ptrdiff_t>(offset);

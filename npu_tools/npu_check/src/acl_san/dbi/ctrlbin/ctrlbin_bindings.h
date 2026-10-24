@@ -16,6 +16,7 @@
 #include <string>
 #endif
 
+// Numeric values are TRI instruction IDs; keep every value synchronized with the TRI ID definition.
 enum class InstrType {
     BEFORE_BB = 0,
     COPY_GM_TO_UBUF,

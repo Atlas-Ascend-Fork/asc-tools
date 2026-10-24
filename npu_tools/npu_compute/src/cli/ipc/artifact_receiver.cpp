@@ -23,6 +23,8 @@
 #include <unistd.h>
 namespace npucompute::cli {
 namespace {
+constexpr std::size_t MAX_ARTIFACT_COUNT = 64;
+
 void Require(bool condition, const char* message)
 {
     if (!condition) {
@@ -36,7 +38,7 @@ void FileError(const char* operation)
 }
 int OpenOrCreateDirectoryAt(int parent, const std::string& name)
 {
-    if (mkdirat(parent, name.c_str(), 0700) != 0 && errno != EEXIST) {
+    if (mkdirat(parent, name.c_str(), (S_IRWXU)) != 0 && errno != EEXIST) {
         FileError("create artifact directory");
     }
     const int descriptor = openat(parent, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -132,7 +134,7 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
             for (const auto& entry : manifest_) {
                 Require(entry.id != begin.id && entry.name != begin.name, "ARTIFACT: duplicate artifact");
             }
-            Require(manifest_.size() < 64, "ARTIFACT: too many artifacts");
+            Require(manifest_.size() < MAX_ARTIFACT_COUNT, "ARTIFACT: too many artifacts");
             active_ = std::move(begin);
             const auto separator = active_.name.find_last_of('/');
             active_name_ = separator == std::string::npos ? active_.name : active_.name.substr(separator + 1);
@@ -164,7 +166,8 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
             }
             temporary_ = "." + active_name_ + "." + std::to_string(active_.id) + ".tmp";
             file_ = openat(
-                active_directory_, temporary_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+                active_directory_, temporary_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                (S_IRUSR | S_IWUSR));
             if (file_ < 0) {
                 temporary_.clear();
                 FileError("create artifact");

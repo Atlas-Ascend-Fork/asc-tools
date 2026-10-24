@@ -34,8 +34,8 @@
 namespace npucompute::cli {
 namespace {
 
-constexpr std::size_t kMaximumTemporaryAttempts = 128U;
-std::atomic<uint64_t> g_temporary_sequence{0U};
+constexpr std::size_t MAXIMUM_TEMPORARY_ATTEMPTS = 128U;
+std::atomic<uint64_t> g_temporarySequence{0U};
 
 bool Fail(const std::string& message, std::string* error)
 {
@@ -67,22 +67,22 @@ uint64_t ReadLe64(const uint8_t* data)
     return value;
 }
 
-bool HasMagic(const uint8_t* data) { return std::equal(kNpuRepMagic.begin(), kNpuRepMagic.end(), data); }
+bool HasMagic(const uint8_t* data) { return std::equal(NPU_REP_MAGIC.begin(), NPU_REP_MAGIC.end(), data); }
 
 bool ValidateRepBytes(const std::vector<uint8_t>& encoded, std::string* error)
 {
-    if (encoded.size() < kNpuRepMagic.size() || !HasMagic(encoded.data())) {
+    if (encoded.size() < NPU_REP_MAGIC.size() || !HasMagic(encoded.data())) {
         return Fail("invalid rep header", error);
     }
-    if (encoded.size() < kNpuRepHeaderFieldsEnd) {
+    if (encoded.size() < NPU_REP_HEADER_FIELDS_END) {
         return Fail("truncated rep header fields", error);
     }
     const uint16_t head_length = ReadLe16(encoded.data() + 14U);
     const uint32_t file_count = ReadLe32(encoded.data() + 16U);
     const uint32_t file_info_length = ReadLe32(encoded.data() + 20U);
     const uint64_t rep_length = ReadLe64(encoded.data() + 28U);
-    if (head_length < kNpuRepHeaderFieldsEnd || head_length > encoded.size() ||
-        file_info_length != kNpuRepFileInfoSize || rep_length != encoded.size()) {
+    if (head_length < NPU_REP_HEADER_FIELDS_END || head_length > encoded.size() ||
+        file_info_length != NPU_REP_FILE_INFO_SIZE || rep_length != encoded.size()) {
         return Fail("invalid rep header lengths", error);
     }
 
@@ -100,7 +100,7 @@ bool ValidateRepBytes(const std::vector<uint8_t>& encoded, std::string* error)
             return Fail("invalid rep file info magic", error);
         }
         const char* name = reinterpret_cast<const char*>(info + 8U);
-        const char* name_end = static_cast<const char*>(std::memchr(name, '\0', kNpuRepFileNameSize));
+        const char* name_end = static_cast<const char*>(std::memchr(name, '\0', NPU_REP_FILE_NAME_SIZE));
         if (name_end == nullptr || name_end == name) {
             return Fail("invalid rep file info name", error);
         }
@@ -130,29 +130,29 @@ int SystemClose(int descriptor, void*) { return ::close(descriptor); }
 int SystemRename(const char* source, const char* target, void*)
 {
 #if defined(SYS_renameat2)
-    constexpr long kRenameAt2 = SYS_renameat2;
+    constexpr long RENAME_AT2 = SYS_renameat2;
 #elif defined(__NR_renameat2)
-    constexpr long kRenameAt2 = __NR_renameat2;
+    constexpr long RENAME_AT2 = __NR_renameat2;
 #elif defined(__linux__) && defined(__LP64__) && !defined(__ILP32__) && defined(__x86_64__)
     // Linux x86_64 LP64 syscall ABI; do not use this number for x32.
-    constexpr long kRenameAt2 = 316;
+    constexpr long RENAME_AT2 = 316;
 #elif defined(__linux__) && defined(__LP64__) && !defined(__ILP32__) && defined(__aarch64__)
     // Linux AArch64 LP64 uses the asm-generic syscall ABI.
-    constexpr long kRenameAt2 = 276;
+    constexpr long RENAME_AT2 = 276;
 #else
-    constexpr long kRenameAt2 = -1;
+    constexpr long RENAME_AT2 = -1;
 #endif
 #if defined(RENAME_NOREPLACE)
-    constexpr unsigned int kNoReplace = RENAME_NOREPLACE;
+    constexpr unsigned int NO_REPLACE = RENAME_NOREPLACE;
 #else
-    constexpr unsigned int kNoReplace = 1U;
+    constexpr unsigned int NO_REPLACE = 1U;
 #endif
-    if (kRenameAt2 < 0) {
+    if (RENAME_AT2 < 0) {
         errno = ENOSYS;
         return -1;
     }
     // Preserve the kernel error; a non-atomic fallback could overwrite the target.
-    return static_cast<int>(::syscall(kRenameAt2, AT_FDCWD, source, AT_FDCWD, target, kNoReplace));
+    return static_cast<int>(::syscall(RENAME_AT2, AT_FDCWD, source, AT_FDCWD, target, NO_REPLACE));
 }
 
 class FileDescriptor {
@@ -273,8 +273,8 @@ bool CreateTemporaryFile(
     const boost::filesystem::path& directory, const std::string& target_name, boost::filesystem::path* temporary_path,
     int* descriptor, std::string* error)
 {
-    for (std::size_t attempt = 0; attempt < kMaximumTemporaryAttempts; ++attempt) {
-        const uint64_t sequence = g_temporary_sequence.fetch_add(1U, std::memory_order_relaxed);
+    for (std::size_t attempt = 0; attempt < MAXIMUM_TEMPORARY_ATTEMPTS; ++attempt) {
+        const uint64_t sequence = g_temporarySequence.fetch_add(1U, std::memory_order_relaxed);
         *temporary_path =
             directory / ("." + target_name + ".tmp." + std::to_string(::getpid()) + "." + std::to_string(sequence));
         const int value =

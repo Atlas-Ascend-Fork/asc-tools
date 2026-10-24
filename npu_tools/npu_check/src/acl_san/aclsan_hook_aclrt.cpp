@@ -185,7 +185,7 @@ bool IsDeferredLoad(const aclrtBinaryLoadOptions* options)
         return false;
     }
     for (size_t i = 0; i < options->numOpt; ++i) {
-        if (options->options[i].type == ACL_RT_BINARY_LOAD_OPT_LAZY_LOAD && options->options[i].value.isLazyLoad) {
+        if (options->options[i].type == ACL_RT_BINARY_LOAD_OPT_LAZY_LOAD && options->options[i].value.isLazyLoad != 0) {
             return true;
         }
         if (options->options[i].type == ACL_RT_BINARY_LOAD_OPT_MAGIC &&
@@ -244,7 +244,7 @@ aclError RecordSymbolFunction(aclrtFuncHandle function)
     if (status != ACL_SUCCESS) {
         return status;
     }
-    if (!binary || !name[0] || name[sizeof(name) - 1]) {
+    if (!binary || name[0] == '\0' || name[sizeof(name) - 1] != '\0') {
         return ACL_ERROR_INVALID_PARAM;
     }
     RecordDeferredFunction(binary, function, false, 0, name);
@@ -766,7 +766,8 @@ aclError PrepareDeferredLaunch(
             const auto soc =
                 GetOriginalRuntimeFunction<aclrtGetSocNameFunc>(ACL_RT_API_aclrtGetSocName, "aclrtGetSocName");
             Dl_info library{};
-            const char* runtime = dladdr(reinterpret_cast<const void*>(soc), &library) ? library.dli_fname : nullptr;
+            const char* runtime =
+                dladdr(reinterpret_cast<const void*>(soc), &library) != 0 ? library.dli_fname : nullptr;
             const BinaryLoadGuard guard;
             const auto result = aclsan::InstrumentRuntimeBinaryForEntry(
                 launch.source->image.data(), launch.source->image.size(), plan, soc(), runtime,
@@ -1196,7 +1197,7 @@ constexpr RuntimeHookBinding MakeRuntimeHookBinding(const char* hookName) noexce
 }
 
 // aclrtApiId + acl_tool_inject提供的注册aclrt的函数 + 我们实现的hook函数
-const std::array<RuntimeHookBinding, 17> g_runtimeHookBindings = {{
+const std::array<RuntimeHookBinding, 17> RUNTIME_HOOK_BINDINGS = {{
     MakeRuntimeHookBinding<ACL_RT_API_aclrtMemset, acltoolRegisterAclrtMemsetCallbacks, aclrtMemsetHook>("aclrtMemset"),
     MakeRuntimeHookBinding<ACL_RT_API_aclrtMemcpy, acltoolRegisterAclrtMemcpyCallbacks, aclrtMemcpyHook>("aclrtMemcpy"),
     MakeRuntimeHookBinding<
@@ -1255,7 +1256,7 @@ AclsanStatus ResolveActiveDeviceCallStack(uint64_t pc, device_runtime::CallStack
 // 针对所有hook相关的aclrt函数，不在requiredHooks中的统一清除hook，反之注册hook
 void ApplyRuntimeHooks(const std::set<aclrtApiId>& requiredHooks) noexcept
 {
-    for (const RuntimeHookBinding& binding : g_runtimeHookBindings) {
+    for (const RuntimeHookBinding& binding : RUNTIME_HOOK_BINDINGS) {
         const bool enable = aclsan::IsHookRequired(requiredHooks, binding.apiId);
         if (binding.configure(enable) != 0) {
             AbortHookFailure(

@@ -252,10 +252,20 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
 {
     if ((instructionId >= static_cast<uint32_t>(InstructionId::StB64Imm) &&
          instructionId <= static_cast<uint32_t>(InstructionId::LdpB8)) ||
-        (instructionId >= 137 && instructionId <= 148) || (instructionId >= 153 && instructionId <= 157) ||
-        instructionId == 422 || instructionId == 386 || instructionId == 387 || instructionId == 390 ||
-        instructionId == 391 || instructionId == 151 || instructionId == 152 || instructionId == 158 ||
-        (instructionId >= 400 && instructionId <= 415)) {
+        (instructionId >= static_cast<uint32_t>(InstructionId::LoadCbufToCbTransposeB8) &&
+         instructionId <= static_cast<uint32_t>(InstructionId::LoadCbufToCbB32)) ||
+        (instructionId >= static_cast<uint32_t>(InstructionId::Img2ColCbufToCaB16) &&
+         instructionId <= static_cast<uint32_t>(InstructionId::Img2ColCbufToCbB32)) ||
+        instructionId == static_cast<uint32_t>(InstructionId::Img2ColCbufToCaB32) ||
+        instructionId == static_cast<uint32_t>(InstructionId::SetFmatrix) ||
+        instructionId == static_cast<uint32_t>(InstructionId::SetFmatrixB) ||
+        instructionId == static_cast<uint32_t>(InstructionId::SetL3dRpt) ||
+        instructionId == static_cast<uint32_t>(InstructionId::SetL3dRptB) ||
+        instructionId == static_cast<uint32_t>(InstructionId::LoadCbufToCaMx) ||
+        instructionId == static_cast<uint32_t>(InstructionId::LoadCbufToCbMx) ||
+        instructionId == static_cast<uint32_t>(InstructionId::CopyCbufToUbuf) ||
+        (instructionId >= static_cast<uint32_t>(InstructionId::MadS8) &&
+         instructionId <= static_cast<uint32_t>(InstructionId::MadMxE5m2E5m2))) {
         return true;
     }
     switch (static_cast<InstructionId>(instructionId)) {

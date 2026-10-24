@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "dbi/binary_instrumenter.h"
+#include "securec.h"
 #include "dbi/kernel_param_metadata.h"
 #include "device_instr/soc_version.h"
 
@@ -43,7 +44,7 @@ bool EnsurePrivateRuntimeDirectory(const boost::filesystem::path& path, std::str
         diagnostic = "DBI runtime directory is not a private owned directory: " + path.string();
         return false;
     }
-    if (chmod(path.c_str(), 0700) != 0) {
+    if (chmod(path.c_str(), S_IRWXU) != 0) {
         diagnostic = "cannot restrict DBI runtime directory: " + path.string();
         return false;
     }
@@ -91,7 +92,10 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
     }
     const auto* bytes = static_cast<const uint8_t*>(data);
     Elf64_Ehdr header{};
-    std::memcpy(&header, bytes, sizeof(header));
+    if (memcpy_s(&header, sizeof(header), bytes, sizeof(header)) != EOK) {
+        diagnostic = "cannot read device ELF header";
+        return false;
+    }
     if (std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0 || header.e_ident[EI_CLASS] != ELFCLASS64 ||
         header.e_ident[EI_DATA] != ELFDATA2LSB || header.e_shentsize != sizeof(Elf64_Shdr) || header.e_shnum == 0 ||
         header.e_shstrndx >= header.e_shnum) {
@@ -105,10 +109,13 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
     }
     const auto ReadSection = [&](size_t index, Elf64_Shdr& section) {
         const size_t offset = static_cast<size_t>(header.e_shoff) + index * sizeof(Elf64_Shdr);
-        std::memcpy(&section, bytes + offset, sizeof(section));
+        return memcpy_s(&section, sizeof(section), bytes + offset, sizeof(section)) == EOK;
     };
     Elf64_Shdr sectionNames{};
-    ReadSection(header.e_shstrndx, sectionNames);
+    if (!ReadSection(header.e_shstrndx, sectionNames)) {
+        diagnostic = "cannot read device ELF section-name header";
+        return false;
+    }
     if (!IsFileRangeValid(sectionNames.sh_offset, sectionNames.sh_size, length)) {
         diagnostic = "Device ELF section-name table is out of bounds";
         return false;
@@ -118,7 +125,10 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
     bool hasKernelArgumentSize = false;
     for (size_t index = 0; index < header.e_shnum; ++index) {
         Elf64_Shdr section{};
-        ReadSection(index, section);
+        if (!ReadSection(index, section)) {
+            diagnostic = "cannot read device ELF section header";
+            return false;
+        }
         if (section.sh_name >= sectionNames.sh_size) {
             continue;
         }
@@ -134,7 +144,12 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
         }
         for (size_t offset = 0; offset < section.sh_size; offset += sizeof(uint32_t)) {
             uint32_t argumentSize = 0;
-            std::memcpy(&argumentSize, bytes + section.sh_offset + offset, sizeof(argumentSize));
+            if (memcpy_s(
+                    &argumentSize, sizeof(argumentSize), bytes + section.sh_offset + offset, sizeof(argumentSize)) !=
+                EOK) {
+                diagnostic = "cannot read kernel argument size";
+                return false;
+            }
             maximumArgumentSize = std::max(maximumArgumentSize, argumentSize);
         }
         hasKernelArgumentSize = true;
@@ -153,8 +168,8 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
     }
 
     maximumArgumentSize = std::max(maximumArgumentSize, metadataArgumentArea);
-    constexpr uint32_t kMinimumTraceArgumentOffset = sizeof(uint64_t);
-    maximumArgumentSize = std::max(maximumArgumentSize, kMinimumTraceArgumentOffset);
+    constexpr uint32_t MINIMUM_TRACE_ARGUMENT_OFFSET = sizeof(uint64_t);
+    maximumArgumentSize = std::max(maximumArgumentSize, MINIMUM_TRACE_ARGUMENT_OFFSET);
     if (maximumArgumentSize > std::numeric_limits<uint32_t>::max() - 7U) {
         diagnostic = "kernel argument area cannot be aligned";
         return false;

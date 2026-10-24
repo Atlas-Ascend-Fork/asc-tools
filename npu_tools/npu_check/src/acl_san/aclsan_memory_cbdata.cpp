@@ -30,10 +30,10 @@
 namespace aclsan {
 namespace {
 
-constexpr uint32_t kBlockTypeAic = 0;
-constexpr uint32_t kBlockTypeAiv = 1;
-constexpr std::size_t kMemoryNdMaxRank = 5;
-constexpr std::size_t kMaxExpandedMemoryAccessesPerInstruction = 4096;
+constexpr uint32_t BLOCK_TYPE_AIC = 0;
+constexpr uint32_t BLOCK_TYPE_AIV = 1;
+constexpr std::size_t MEMORY_ND_MAX_RANK = 5;
+constexpr std::size_t MAX_EXPANDED_MEMORY_ACCESSES_PER_INSTRUCTION = 4096;
 
 struct RangeDescriptor {
     uint64_t bytes;
@@ -48,8 +48,8 @@ struct StridedDescriptor {
 struct NdAffineDescriptor {
     uint32_t rank;
     uint64_t bytes;
-    std::array<uint64_t, kMemoryNdMaxRank> counts;
-    std::array<uint64_t, kMemoryNdMaxRank> strideBytes;
+    std::array<uint64_t, MEMORY_ND_MAX_RANK> counts;
+    std::array<uint64_t, MEMORY_ND_MAX_RANK> strideBytes;
 };
 
 using MemoryLayoutDescriptor = std::variant<RangeDescriptor, StridedDescriptor, NdAffineDescriptor>;
@@ -77,7 +77,7 @@ public:
         if (!IsSupportedReadDataBits(dataBits)) {
             return std::nullopt;
         }
-        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_MTE2, kBlockTypeAiv};
+        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_MTE2, BLOCK_TYPE_AIV};
     }
 
     static std::optional<MemoryInstructionProfile> Create(const CopyGmToCbufAlignV2ParamField& field) noexcept
@@ -86,7 +86,7 @@ public:
         if (!IsSupportedReadDataBits(dataBits)) {
             return std::nullopt;
         }
-        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_MTE2, kBlockTypeAic};
+        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_MTE2, BLOCK_TYPE_AIC};
     }
 
     template <NdNzConversionMode ConversionMode>
@@ -97,7 +97,7 @@ public:
         if (!IsSupportedReadDataBits(dataBits)) {
             return std::nullopt;
         }
-        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_MTE2, kBlockTypeAic};
+        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_MTE2, BLOCK_TYPE_AIC};
     }
 
     static std::optional<MemoryInstructionProfile> Create(const CopyGmToCbufV2ParamField& field) noexcept
@@ -105,7 +105,7 @@ public:
         if (static_cast<InstructionId>(field.instrId) != InstructionId::CopyGmToCbufV2) {
             return std::nullopt;
         }
-        return MemoryInstructionProfile{0, ACLSAN_DEVICE_SOURCE_MTE2, kBlockTypeAic};
+        return MemoryInstructionProfile{0, ACLSAN_DEVICE_SOURCE_MTE2, BLOCK_TYPE_AIC};
     }
 
     static std::optional<MemoryInstructionProfile> Create(const CopyUbufToGmAlignV2ParamField& field) noexcept
@@ -113,7 +113,7 @@ public:
         if (static_cast<InstructionId>(field.instrId) != InstructionId::CopyUbufToGmAlignV2) {
             return std::nullopt;
         }
-        return MemoryInstructionProfile{0, ACLSAN_DEVICE_SOURCE_MTE3, kBlockTypeAiv};
+        return MemoryInstructionProfile{0, ACLSAN_DEVICE_SOURCE_MTE3, BLOCK_TYPE_AIV};
     }
 
     static std::optional<MemoryInstructionProfile> Create(const FixL0cToOutParamField& field) noexcept
@@ -123,7 +123,7 @@ public:
         if (dataBits == 0) {
             return std::nullopt;
         }
-        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_FIXPIPE, kBlockTypeAic};
+        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_FIXPIPE, BLOCK_TYPE_AIC};
     }
 
     static std::optional<MemoryInstructionProfile> Create(const LoadGmToCbuf2DV2ParamField& field) noexcept
@@ -131,7 +131,7 @@ public:
         if (static_cast<InstructionId>(field.instrId) != InstructionId::LoadGmToCbuf2DV2) {
             return std::nullopt;
         }
-        return MemoryInstructionProfile{0, ACLSAN_DEVICE_SOURCE_MTE2, kBlockTypeAic};
+        return MemoryInstructionProfile{0, ACLSAN_DEVICE_SOURCE_MTE2, BLOCK_TYPE_AIC};
     }
 
     static std::optional<MemoryInstructionProfile> Create(const NdDmaOutToUbufParamField& field) noexcept
@@ -140,7 +140,7 @@ public:
         if (!IsSupportedReadDataBits(dataBits)) {
             return std::nullopt;
         }
-        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_MTE2, kBlockTypeAiv};
+        return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_MTE2, BLOCK_TYPE_AIV};
     }
 
 private:
@@ -401,7 +401,7 @@ public:
                 }
             }
         }
-        if (descriptors_.size() >= kMaxExpandedMemoryAccessesPerInstruction) {
+        if (descriptors_.size() >= MAX_EXPANDED_MEMORY_ACCESSES_PER_INSTRUCTION) {
             Fail(MemoryCbdataStatus::RESOURCE_EXHAUSTED);
             return false;
         }
@@ -463,7 +463,7 @@ private:
                     return true;
                 } else {
                     if (layout.bytes > std::numeric_limits<uint32_t>::max() || layout.rank == 0 ||
-                        layout.rank > kMemoryNdMaxRank) {
+                        layout.rank > MEMORY_ND_MAX_RANK) {
                         return false;
                     }
                     for (std::size_t index = 0; index < layout.rank; ++index) {
@@ -611,8 +611,8 @@ public:
         if (!isStore && !isLoad) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        constexpr uint32_t kWidthsPerFamily = 4;
-        const uint32_t dataBits = 64U >> ((field.instrId - firstStore) % kWidthsPerFamily);
+        constexpr uint32_t WIDTHS_PER_FAMILY = 4;
+        const uint32_t dataBits = 64U >> ((field.instrId - firstStore) % WIDTHS_PER_FAMILY);
         if (field.dataBits != dataBits) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
@@ -742,8 +742,8 @@ public:
 
     MemoryCbdataResult operator()(const CopyGmToCbufV2ParamField& field) const noexcept
     {
-        constexpr uint64_t kC0Bytes = 32;
-        constexpr std::array<uint64_t, 5> kInsertedPaddingSourceBytes{1, 2, 4, 8, 16};
+        constexpr uint64_t C0_BYTES = 32;
+        constexpr std::array<uint64_t, 5> INSERTED_PADDING_SOURCE_BYTES{1, 2, 4, 8, 16};
         const auto profile = MemoryInstructionProfileFactory::Create(field);
         if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
@@ -756,13 +756,13 @@ public:
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const bool insertsPadding = field.padFunctionMode >= 1 && field.padFunctionMode <= 5;
-        if (field.burstLen > std::numeric_limits<uint64_t>::max() / kC0Bytes ||
-            (!insertsPadding && field.srcStride > std::numeric_limits<uint64_t>::max() / kC0Bytes)) {
+        if (field.burstLen > std::numeric_limits<uint64_t>::max() / C0_BYTES ||
+            (!insertsPadding && field.srcStride > std::numeric_limits<uint64_t>::max() / C0_BYTES)) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
-        const uint64_t burstBytes = insertsPadding ? kInsertedPaddingSourceBytes[field.padFunctionMode - 1] :
-                                                     static_cast<uint64_t>(field.burstLen) * kC0Bytes;
-        const uint64_t burstStride = insertsPadding ? burstBytes : field.srcStride * kC0Bytes;
+        const uint64_t burstBytes = insertsPadding ? INSERTED_PADDING_SOURCE_BYTES[field.padFunctionMode - 1] :
+                                                     static_cast<uint64_t>(field.burstLen) * C0_BYTES;
+        const uint64_t burstStride = insertsPadding ? burstBytes : field.srcStride * C0_BYTES;
         if (burstBytes > std::numeric_limits<uint32_t>::max() ||
             burstStride > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
@@ -1123,7 +1123,7 @@ private:
             }
             const uint64_t innerCount = field.nz2ndEnable ? field.mSize : field.nSize;
             const unsigned __int128 segmentCount = static_cast<unsigned __int128>(innerCount) * loop3.loopCount;
-            if (segmentCount > kMaxExpandedMemoryAccessesPerInstruction) {
+            if (segmentCount > MAX_EXPANDED_MEMORY_ACCESSES_PER_INSTRUCTION) {
                 return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
             }
             const uint64_t segmentElements = field.nz2ndEnable ? field.nSize : field.mSize;
@@ -1260,7 +1260,7 @@ public:
             }
             aFractals /= 16;
         }
-        MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, kBlockTypeAic});
+        MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, BLOCK_TYPE_AIC});
         if (!Add(
                 builder, f.src0Addr, ACLSAN_DEVICE_MEMORY_SPACE_L0A, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1,
                 aFractals * 512, 0, bits) ||
@@ -1305,7 +1305,7 @@ public:
         if (f.srcAddr > UINT64_MAX - offset) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
-        MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, kBlockTypeAic});
+        MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, BLOCK_TYPE_AIC});
         if (!Add(
                 builder, f.srcAddr + offset, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.kStep,
                 uint64_t(f.mStep) * 512, uint64_t(f.srcStride) * 512, bits) ||
@@ -1391,10 +1391,10 @@ public:
             uint64_t(f.kStartPoint) + f.kExtension > fw * fh * c0) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
-        if (uint64_t(f.mExtension) * (f.kExtension / c0) >= kMaxExpandedMemoryAccessesPerInstruction) {
+        if (uint64_t(f.mExtension) * (f.kExtension / c0) >= MAX_EXPANDED_MEMORY_ACCESSES_PER_INSTRUCTION) {
             return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
         }
-        MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, kBlockTypeAic});
+        MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, BLOCK_TYPE_AIC});
         for (uint64_t m = f.mStartPoint; m < uint64_t(f.mStartPoint) + f.mExtension; ++m) {
             for (uint64_t k = f.kStartPoint / c0; k < (uint64_t(f.kStartPoint) + f.kExtension) / c0; ++k) {
                 const int64_t y = int64_t((m / outputW) * f.strideHeight + (k / fw) * f.dilationFilterHeight) - top;
@@ -1572,7 +1572,7 @@ public:
 
     static MemoryCbdataResult Merge(MemoryCbdataResult first, MemoryCbdataResult second) noexcept
     {
-        if (first.data.size() + second.data.size() > kMaxExpandedMemoryAccessesPerInstruction) {
+        if (first.data.size() + second.data.size() > MAX_EXPANDED_MEMORY_ACCESSES_PER_INSTRUCTION) {
             return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
         }
         try {
@@ -1623,7 +1623,7 @@ private:
                             context.pipeline == ACLSAN_DEVICE_PIPE_MTE3    ? ACLSAN_DEVICE_SOURCE_MTE3 :
                             context.pipeline == ACLSAN_DEVICE_PIPE_MTE2    ? ACLSAN_DEVICE_SOURCE_MTE2 :
                                                                              ACLSAN_DEVICE_SOURCE_CUBE;
-        MemoryCbdataBuilder builder(context, {d.dataBits, source, kBlockTypeAic});
+        MemoryCbdataBuilder builder(context, {d.dataBits, source, BLOCK_TYPE_AIC});
         if (!builder.Add(std::move(d))) {
             return std::move(builder).Build();
         }
@@ -1715,7 +1715,7 @@ private:
         if (state_.loop3->loopCount == 0) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        MemoryCbdataBuilder builder(context_, {32, ACLSAN_DEVICE_SOURCE_FIXPIPE, kBlockTypeAic});
+        MemoryCbdataBuilder builder(context_, {32, ACLSAN_DEVICE_SOURCE_FIXPIPE, BLOCK_TYPE_AIC});
         for (uint64_t matrix = 0; matrix < state_.loop3->loopCount; ++matrix) {
             const uint64_t offset = matrix * state_.loop3->srcStride * rowBytes;
             if (f.srcAddr > UINT64_MAX - offset) {
@@ -1845,7 +1845,7 @@ public:
         if (f.burstNum == 0 || f.burstLen == 0) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        const MemoryInstructionProfile profile{0, ACLSAN_DEVICE_SOURCE_VECTOR, kBlockTypeAiv};
+        const MemoryInstructionProfile profile{0, ACLSAN_DEVICE_SOURCE_VECTOR, BLOCK_TYPE_AIV};
         auto read = Build(
             MemoryAccessDescriptorFactory::Linear(
                 f.srcAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, f.burstNum, uint64_t(f.burstLen) * 32,
@@ -1955,7 +1955,7 @@ private:
         descriptor.memorySpace = space;
         const auto source =
             context.pipeline == ACLSAN_DEVICE_PIPE_MTE3 ? ACLSAN_DEVICE_SOURCE_MTE3 : ACLSAN_DEVICE_SOURCE_CUBE;
-        MemoryCbdataBuilder builder(context, {bits, source, kBlockTypeAiv});
+        MemoryCbdataBuilder builder(context, {bits, source, BLOCK_TYPE_AIV});
         if (!builder.Add(std::move(descriptor))) {
             return std::move(builder).Build();
         }

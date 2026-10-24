@@ -18,42 +18,42 @@
 
 namespace npucheck::ipc {
 
-constexpr uint32_t kProtocolMagic = 0x4e53414eu;
-constexpr uint16_t kProtocolMajor = 1;
-constexpr uint16_t kProtocolMinor = 0;
+constexpr uint32_t PROTOCOL_MAGIC = 0x4e53414eu;
+constexpr uint16_t PROTOCOL_MAJOR = 1;
+constexpr uint16_t PROTOCOL_MINOR = 0;
 // 帧头固定 36 字节，布局见下方 EncodeFrame。字段顺序、宽度与偏移属于 wire ABI，
 // 增删字段或改变偏移都是 major 变更。
-constexpr size_t kWireHeaderSize = 36;
-constexpr size_t kMaxPayloadSize = 64 * 1024;
-constexpr size_t kMaxFrameSize = kWireHeaderSize + kMaxPayloadSize; // 65572
+constexpr size_t WIRE_HEADER_SIZE = 36;
+constexpr size_t MAX_PAYLOAD_SIZE = 64 * 1024;
+constexpr size_t MAX_FRAME_SIZE = WIRE_HEADER_SIZE + MAX_PAYLOAD_SIZE; // 65572
 // 单次会话的报告总长上限。两侧共用同一个常量：发送侧据此决定何时停止追加并置
-// kFlagTruncated，接收侧据此拒绝超量的分片序列，避免对端异常时把 CLI 的内存吃光。
-constexpr size_t kMaxResultBytes = 64u * 1024u * 1024u;
+// FLAG_TRUNCATED，接收侧据此拒绝超量的分片序列，避免对端异常时把 CLI 的内存吃光。
+constexpr size_t MAX_RESULT_BYTES = 64u * 1024u * 1024u;
 
 // 帧头 flags 的位定义。
 //
 // bit 0-2 是 must-understand 的语义位，bit 3-7 保留且必须为 0（接收端发现非零即协议
 // 错误），bit 8-15 保留给未来 minor 新增的 must-ignore 标志（接收端必须忽略无法识别
 // 的置位）。按位区分这两类，使得 minor 版本可以在不破坏旧实现的前提下新增标志。
-constexpr uint16_t kFlagMore = 1u << 0;      // 仅 Result 有效：同一报告还有续帧
-constexpr uint16_t kFlagHasErrors = 1u << 1; // 仅 Result 末帧有效：本次检查发现了问题
-constexpr uint16_t kFlagTruncated = 1u << 2; // 仅 Result 末帧有效：报告因触及总长上限被截断
-constexpr uint16_t kFlagsReservedMustUnderstand = 0x00f8u; // bit 3-7
-constexpr uint16_t kFlagsReservedMustIgnore = 0xff00u;     // bit 8-15
+constexpr uint16_t FLAG_MORE = 1u << 0;       // 仅 Result 有效：同一报告还有续帧
+constexpr uint16_t FLAG_HAS_ERRORS = 1u << 1; // 仅 Result 末帧有效：本次检查发现了问题
+constexpr uint16_t FLAG_TRUNCATED = 1u << 2;  // 仅 Result 末帧有效：报告因触及总长上限被截断
+constexpr uint16_t FLAGS_RESERVED_MUST_UNDERSTAND = 0x00f8u; // bit 3-7
+constexpr uint16_t FLAGS_RESERVED_MUST_IGNORE = 0xff00u;     // bit 8-15
 
 // UDS 地址走 Linux 抽象命名空间，不在文件系统里创建 socket 文件，因此这里是"名字"
 // 而不是"路径"。取值形如 @npu_check-<32 位十六进制随机数>：前导 '@' 只是便于人读，
 // 也与 ss -x、/proc/net/unix 的显示一致，两端填充 sockaddr_un 时必须把它换成 '\0'。
 // 具体填充与 addrLen 计算见 uds_transport.h 的 BuildAbstractAddress。
-constexpr const char* kUdsNameEnv = "NPU_CHECK_UDS_NAME";
-constexpr const char* kSessionIdEnv = "NPU_CHECK_SESSION_ID";
-constexpr const char* kCliPidEnv = "NPU_CHECK_CLI_PID";
-constexpr const char* kHandshakeTimeoutEnv = "NPU_CHECK_HANDSHAKE_TIMEOUT_MS";
+constexpr const char* UDS_NAME_ENV = "NPU_CHECK_UDS_NAME";
+constexpr const char* SESSION_ID_ENV = "NPU_CHECK_SESSION_ID";
+constexpr const char* CLI_PID_ENV = "NPU_CHECK_CLI_PID";
+constexpr const char* HANDSHAKE_TIMEOUT_ENV = "NPU_CHECK_HANDSHAKE_TIMEOUT_MS";
 constexpr int MIN_HANDSHAKE_TIMEOUT_MS = 100;
 constexpr int MAX_HANDSHAKE_TIMEOUT_MS = 120000;
 // 工作目录：probe 缓存落在这里。改用注册表编码之后，
 // Configure 只承载工具与子选项，不再承载路径，因此这类字段改由环境变量传递。
-constexpr const char* kWorkDirEnv = "NPU_CHECK_WORK_DIR";
+constexpr const char* WORK_DIR_ENV = "NPU_CHECK_WORK_DIR";
 
 // 消息类型。
 //
@@ -66,7 +66,7 @@ enum class MessageType : uint16_t {
     CONFIGURE = 0x0003,
     READY = 0x0004,
     // 本次检查的权威报告，也是唯一的报告出口。报告可能远大于单帧上限，因此以分片序列
-    // 发送：除末帧外都置 kFlagMore，结论位只在末帧上有效。
+    // 发送：除末帧外都置 FLAG_MORE，结论位只在末帧上有效。
     RESULT = 0x0005,
     ERROR = 0x00ff,
 
@@ -80,8 +80,8 @@ constexpr bool IsMustIgnoreType(uint16_t type) { return (type & 0x8000u) != 0; }
 struct Frame {
     MessageType type = MessageType::ERROR;
     uint16_t flags = 0;
-    // 对端在帧头声明的 minor。仅接收方向有意义；发送时一律写本实现的 kProtocolMinor。
-    uint16_t minor = kProtocolMinor;
+    // 对端在帧头声明的 minor。仅接收方向有意义；发送时一律写本实现的 PROTOCOL_MINOR。
+    uint16_t minor = PROTOCOL_MINOR;
     uint64_t sessionId = 0;
     uint64_t sequence = 0;
     std::vector<uint8_t> payload;
@@ -93,7 +93,7 @@ struct Frame {
 // 收到比自己高的 minor 绝不能判为错误。一旦拒绝，新版本就永远无法与旧版本互通，minor
 // 这个字段也就失去了存在意义 —— 它的全部用途就是让两端在不同版本下仍能谈拢一个共同
 // 子集。高位 minor 新增的消息和标志位另有 must-ignore 规则兜底。
-constexpr uint16_t NegotiateMinor(uint16_t peerMinor) { return std::min(peerMinor, kProtocolMinor); }
+constexpr uint16_t NegotiateMinor(uint16_t peerMinor) { return std::min(peerMinor, PROTOCOL_MINOR); }
 
 // Hello payload 固定 8 字节。这两个字段的唯一用途是与 SO_PEERCRED 的结果交叉比对；
 // 会话归属由帧头的 session_id 承担，payload 不再携带任何会话秘密。
@@ -122,20 +122,20 @@ enum class ErrorDomain : uint16_t {
 // 具体原因由 message 承载。
 namespace error_code {
 // ErrorDomain::INJECTION
-constexpr uint16_t kEnvironmentInvalid = 1;
-constexpr uint16_t kListenFailed = 2;
+constexpr uint16_t ENVIRONMENT_INVALID = 1;
+constexpr uint16_t LISTEN_FAILED = 2;
 // Code 3 is reserved (removed file-logger initialization failure).
 // ErrorDomain::CONFIGURATION
-constexpr uint16_t kToolInitializationFailed = 1;
-constexpr uint16_t kConfigureMalformed = 2;
+constexpr uint16_t TOOL_INITIALIZATION_FAILED = 1;
+constexpr uint16_t CONFIGURE_MALFORMED = 2;
 // ErrorDomain::PROTOCOL
-constexpr uint16_t kFrameRejected = 1;
+constexpr uint16_t FRAME_REJECTED = 1;
 // ErrorDomain::INTERNAL
-constexpr uint16_t kReportUnavailable = 1;
+constexpr uint16_t REPORT_UNAVAILABLE = 1;
 } // namespace error_code
 
-constexpr size_t kErrorHeaderSize = 8;
-constexpr size_t kMaxErrorMessageSize = 1024;
+constexpr size_t ERROR_HEADER_SIZE = 8;
+constexpr size_t MAX_ERROR_MESSAGE_SIZE = 1024;
 
 struct ErrorPayload {
     ErrorDomain domain = ErrorDomain::INTERNAL;

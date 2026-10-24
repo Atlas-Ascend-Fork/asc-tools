@@ -26,9 +26,9 @@
 
 namespace {
 
-constexpr int32_t kDeviceId = 0;
-constexpr char kHardwareInfoFile[] = "HardwareInfo.jsonl";
-constexpr char kSections[] = "PipeUtilization";
+constexpr int32_t DEVICE_ID = 0;
+constexpr char HARDWARE_INFO_FILE[] = "HardwareInfo.jsonl";
+constexpr char SECTIONS[] = "PipeUtilization";
 
 class AclRuntimeGuard {
 public:
@@ -47,7 +47,7 @@ public:
     {
         bool success = true;
         if (deviceSet_) {
-            const aclError result = aclrtResetDevice(kDeviceId);
+            const aclError result = aclrtResetDevice(DEVICE_ID);
             if (result != ACL_SUCCESS) {
                 std::fprintf(
                     stderr, "[real_hardware_callback_app] aclrtResetDevice failed: %d\n", static_cast<int>(result));
@@ -131,7 +131,7 @@ bool ParseCallbackId(const char* argument, aclptiCallbackId* cbid)
 
 bool HardwareInfoIsComplete(const boost::filesystem::path& outputDirectory)
 {
-    const boost::filesystem::path output = outputDirectory / kHardwareInfoFile;
+    const boost::filesystem::path output = outputDirectory / HARDWARE_INFO_FILE;
     boost::system::error_code error;
     if (!boost::filesystem::is_regular_file(output, error) || error || boost::filesystem::is_symlink(output, error) ||
         error) {
@@ -206,7 +206,7 @@ int main(int argc, char** argv)
     if (configure == nullptr) {
         return 7;
     }
-    configure(outputDirectory.c_str(), kSections);
+    configure(outputDirectory.c_str(), SECTIONS);
     const int initializeResult = initialize();
     if (initializeResult != ACLPTI_SUCCESS) {
         std::fprintf(stderr, "[real_hardware_callback_app] acltoolInitialize failed: %d\n", initializeResult);
@@ -216,7 +216,7 @@ int main(int argc, char** argv)
     // down ACL. The success path performs explicit cleanup after publication.
     aclRuntime.DisableAutomaticCleanup();
 
-    result = aclrtSetDevice(kDeviceId);
+    result = aclrtSetDevice(DEVICE_ID);
     if (result != ACL_SUCCESS) {
         std::fprintf(stderr, "[real_hardware_callback_app] aclrtSetDevice failed: %d\n", static_cast<int>(result));
         return 9;

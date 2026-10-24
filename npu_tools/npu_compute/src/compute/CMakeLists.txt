@@ -42,6 +42,7 @@ if(TARGET npu_compute_integration_headers)
 else()
   set(NPU_COMPUTE_LIBRARY_HEADERS npu_compute_headers)
 endif()
+target_link_libraries(npu_compute PRIVATE c_sec_static)
 target_link_libraries(npu_compute
   PUBLIC ${NPU_COMPUTE_LIBRARY_HEADERS}
   PRIVATE ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc npu_compute_sqlite_runtime

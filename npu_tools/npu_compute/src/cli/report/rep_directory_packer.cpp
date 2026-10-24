@@ -137,7 +137,7 @@ bool CollectDirectoryItems(
             issues.push_back("unsupported collection directory item: " + path.string());
             continue;
         }
-        if (item.stored_name.size() >= kNpuRepFileNameSize || item.stored_name.find('\\') != std::string::npos ||
+        if (item.stored_name.size() >= NPU_REP_FILE_NAME_SIZE || item.stored_name.find('\\') != std::string::npos ||
             name == "collection-status.json") {
             issues.push_back("invalid or reserved collection name: " + path.string());
             continue;
@@ -171,7 +171,7 @@ bool PackDirectoryInternal(
     const boost::filesystem::path& directory, std::vector<uint8_t>* encoded, std::string* error,
     std::vector<std::string>& issues, std::size_t& fileCount, bool root, bool includeStatus, std::size_t depth = 1U)
 {
-    if (depth > kNpuRepMaxDepth) {
+    if (depth > NPU_REP_MAX_DEPTH) {
         return Fail("maximum nested report depth exceeded: " + directory.string(), error);
     }
     std::vector<DirectoryItem> items;

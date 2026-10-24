@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "runtime_api_handlers.h"
+#include "securec.h"
 
 #include "acl_pti/callback/dispatcher.h"
 #include "acl_pti/profiling/replay_runtime.h"
@@ -233,15 +234,20 @@ aclError BuildInstrumentedReplayHostArgs(
     }
     const std::size_t expandedSize = prefixSize + paddingBytes + hiddenSize;
     prepared.hostArguments.assign(expandedSize, 0);
-    if (insertionOffset != 0) {
-        std::copy_n(
-            static_cast<const std::uint8_t*>(originalArgs), std::min(argsSize, insertionOffset),
-            prepared.hostArguments.begin());
+    if (insertionOffset != 0 && argsSize != 0) {
+        if (memcpy_s(
+                prepared.hostArguments.data(), prepared.hostArguments.size(), originalArgs,
+                std::min(argsSize, insertionOffset)) != EOK) {
+            return ACL_ERROR_INVALID_PARAM;
+        }
     }
     if (argsSize > insertionOffset) {
-        std::copy_n(
-            static_cast<const std::uint8_t*>(originalArgs) + insertionOffset, argsSize - insertionOffset,
-            prepared.hostArguments.begin() + hiddenOffset + hiddenSize);
+        if (memcpy_s(
+                prepared.hostArguments.data() + hiddenOffset + hiddenSize,
+                prepared.hostArguments.size() - hiddenOffset - hiddenSize,
+                static_cast<const std::uint8_t*>(originalArgs) + insertionOffset, argsSize - insertionOffset) != EOK) {
+            return ACL_ERROR_INVALID_PARAM;
+        }
     }
     if (placeholderCount != 0) {
         prepared.placeholders.assign(originalPlaceholders, originalPlaceholders + placeholderCount);
@@ -260,9 +266,11 @@ aclError BuildInstrumentedReplayHostArgs(
             }
         }
     }
-    std::copy_n(
-        reinterpret_cast<const std::byte*>(&prepared.hiddenArgument), hiddenSize,
-        reinterpret_cast<std::byte*>(prepared.hostArguments.data() + hiddenOffset));
+    if (memcpy_s(
+            prepared.hostArguments.data() + hiddenOffset, prepared.hostArguments.size() - hiddenOffset,
+            &prepared.hiddenArgument, hiddenSize) != EOK) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
     return ACL_SUCCESS;
 }
 

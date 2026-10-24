@@ -40,7 +40,7 @@ public:
     void SendInitializationError(npucheck::ipc::ErrorDomain domain, uint16_t code, const std::string& message);
     // Ready 之后的失败。与 Result 互斥，发出后不再发任何 Result 分片。
     void SendError(npucheck::ipc::ErrorDomain domain, uint16_t code, const std::string& message) noexcept;
-    // 把整份报告作为一个 Result 分片序列发出。除末帧外都置 npucheck::ipc::kFlagMore，hasErrors 与
+    // 把整份报告作为一个 Result 分片序列发出。除末帧外都置 npucheck::ipc::FLAG_MORE，hasErrors 与
     // truncated 只体现在末帧上。内部会先停掉 publisher 线程，保证分片之间不被插入
     // 实时诊断帧。
     bool SendResult(const std::string& report, bool hasErrors, bool truncated, std::string& error);
@@ -82,12 +82,12 @@ private:
     // 抽象命名空间地址名（含前导 '@'），不是文件路径。
     std::string udsName_;
     uint64_t sessionId_ = 0;
-    uint16_t negotiatedMinor_ = npucheck::ipc::kProtocolMinor;
+    uint16_t negotiatedMinor_ = npucheck::ipc::PROTOCOL_MINOR;
     uint32_t expectedCliPid_ = 0;
     int handshakeTimeoutMs_ = 10000;
     // 握手阶段的绝对截止时刻，在 AcceptClient 中一次算出，覆盖 accept、Hello 往返、
     // Configure 接收到 Ready 发出的全过程。Ready 之后的发送不再受它约束。
-    npucheck::ipc::DeadlineMs handshakeDeadline_ = npucheck::ipc::kNoDeadline;
+    npucheck::ipc::DeadlineMs handshakeDeadline_ = npucheck::ipc::NO_DEADLINE;
     uint64_t sendSequence_ = 1;
     // 期望从 CLI 方向收到的下一个 sequence。两个方向各自维护计数器，互不影响。
     uint64_t receiveSequence_ = 1;
@@ -102,14 +102,14 @@ private:
     bool closing_ = false;
     bool transportComplete_ = true;
     uint64_t droppedMessages_ = 0;
-    static constexpr size_t kMaxQueuedMessages = 1024;
+    static constexpr size_t MAX_QUEUED_MESSAGES = 1024;
     // listen 的 backlog。抽象地址没有权限位，任何进程都能发起 connect，取 1 会让一个
     // 抢先连接就堵死真正的 CLI，因此留出余量并配合循环 accept 丢弃不合格连接。
-    static constexpr int kListenBacklog = 8;
+    static constexpr int LISTEN_BACKLOG = 8;
     // Ready 之后发送结果的超时上限。CLI 侧的等待不设超时，但发送侧不能照搬：若 CLI 已死
     // 或长时间不读，sendmsg 会在发送缓冲填满后持续 EAGAIN，无限等待 POLLOUT 会把目标
     // 应用卡在退出路径上、NPU 资源不释放。超时即放弃发送，让应用正常退出。
-    static constexpr int kResultSendTimeoutMs = 30000;
+    static constexpr int RESULT_SEND_TIMEOUT_MS = 30000;
 };
 
 } // namespace npucheck::ipc

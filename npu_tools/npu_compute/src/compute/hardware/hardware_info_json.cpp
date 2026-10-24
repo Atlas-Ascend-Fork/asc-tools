@@ -19,6 +19,9 @@
 
 namespace npucompute {
 namespace {
+constexpr int CAPACITY_DECIMAL_PLACES = 2;
+constexpr std::uint32_t DECIMAL_RADIX = 10;
+constexpr std::size_t JSON_ESCAPE_BYTES = 2; // Backslash plus escaped character.
 
 void SetError(const std::string& message, std::string* error)
 {
@@ -29,7 +32,7 @@ void SetError(const std::string& message, std::string* error)
 
 bool ValidateCapacity(double value, std::string_view field, std::string* error)
 {
-    if (std::isfinite(value) && value >= 0) {
+    if (std::isfinite(value) && value >= 0.0) {
         return true;
     }
     SetError(std::string(field) + " must be a finite non-negative value", error);
@@ -38,13 +41,13 @@ bool ValidateCapacity(double value, std::string_view field, std::string* error)
 
 std::string FormatCapacity(double value)
 {
-    if (value == 0) {
+    if (value == 0.0) {
         return "0";
     }
 
     std::ostringstream stream;
     stream.imbue(std::locale::classic());
-    stream << std::fixed << std::setprecision(2) << value;
+    stream << std::fixed << std::setprecision(CAPACITY_DECIMAL_PLACES) << value;
     std::string result = stream.str();
     while (!result.empty() && result.back() == '0') {
         result.pop_back();
@@ -57,7 +60,7 @@ std::string FormatCapacity(double value)
 
 std::string EscapeJson(std::string_view value)
 {
-    static constexpr char kHex[] = "0123456789abcdef";
+    static constexpr char HEX[] = "0123456789abcdef";
     std::string escaped;
     escaped.reserve(value.size());
     for (const unsigned char character : value) {
@@ -86,8 +89,8 @@ std::string EscapeJson(std::string_view value)
             default:
                 if (character < 0x20) {
                     escaped += "\\u00";
-                    escaped.push_back(kHex[(character >> 4) & 0x0f]);
-                    escaped.push_back(kHex[character & 0x0f]);
+                    escaped.push_back(HEX[(character >> 4) & 0x0f]);
+                    escaped.push_back(HEX[character & 0x0f]);
                 } else {
                     escaped.push_back(static_cast<char>(character));
                 }
@@ -116,10 +119,10 @@ bool ParsePositiveUintField(std::string_view line, std::string_view field, std::
     const std::uint32_t maximum = std::numeric_limits<std::uint32_t>::max();
     while (end < line.size() && line[end] >= '0' && line[end] <= '9') {
         const std::uint32_t digit = static_cast<std::uint32_t>(line[end] - '0');
-        if (parsed > (maximum - digit) / 10) {
+        if (parsed > (maximum - digit) / DECIMAL_RADIX) {
             return false;
         }
-        parsed = parsed * 10 + digit;
+        parsed = parsed * DECIMAL_RADIX + digit;
         ++end;
     }
     if (end == begin || parsed == 0) {
@@ -143,7 +146,7 @@ bool ParseNonEmptyStringField(std::string_view line, std::string_view field, std
     std::size_t end = begin;
     while (end < line.size()) {
         if (line[end] == '\\') {
-            end += 2;
+            end += JSON_ESCAPE_BYTES;
             continue;
         }
         if (line[end] == '\"') {

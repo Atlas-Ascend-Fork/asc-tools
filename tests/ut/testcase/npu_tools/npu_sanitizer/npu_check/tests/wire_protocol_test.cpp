@@ -236,7 +236,7 @@ TEST(WireProtocolTest, PreservesBigEndianWireRepresentation)
 {
     Frame frame{};
     frame.type = MessageType::RESULT;
-    frame.flags = kFlagHasErrors;
+    frame.flags = FLAG_HAS_ERRORS;
     frame.sessionId = 0x0123456789abcdefULL;
     frame.sequence = 0xfedcba9876543210ULL;
     frame.payload = {0x80, 0xff};
@@ -283,7 +283,7 @@ TEST(WireProtocolTest, RejectsMalformedFramesAndText)
     Frame decoded{};
     std::string error;
 
-    EXPECT_FALSE(DecodeFrame(bytes.data(), kWireHeaderSize - 1, decoded, error));
+    EXPECT_FALSE(DecodeFrame(bytes.data(), WIRE_HEADER_SIZE - 1, decoded, error));
     auto corrupt = bytes;
     corrupt[0] = 0;
     EXPECT_FALSE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error));
@@ -305,10 +305,10 @@ TEST(WireProtocolTest, RejectsMalformedFramesAndText)
 }
 
 // 帧头偏移常量，与 EncodeFrame 的布局一一对应。
-constexpr size_t kOffsetType = 8;
-constexpr size_t kOffsetFlags = 10;
-constexpr size_t kOffsetLength = 12;
-constexpr size_t kOffsetPayloadSize = 16;
+constexpr size_t OFFSET_TYPE = 8;
+constexpr size_t OFFSET_FLAGS = 10;
+constexpr size_t OFFSET_LENGTH = 12;
+constexpr size_t OFFSET_PAYLOAD_SIZE = 16;
 
 void PutU16At(std::vector<uint8_t>& bytes, size_t offset, uint16_t value)
 {
@@ -335,18 +335,18 @@ std::vector<uint8_t> SampleFrame()
 
 TEST(WireProtocolTest, HeaderIs36BytesAndCarriesLength)
 {
-    EXPECT_EQ(kWireHeaderSize, 36U);
+    EXPECT_EQ(WIRE_HEADER_SIZE, 36U);
     const auto bytes = SampleFrame();
     Frame decoded{};
     std::string error;
     ASSERT_TRUE(DecodeFrame(bytes.data(), bytes.size(), decoded, error)) << error;
     // length 必须等于整帧长度，也就是 36 + payload_size。
-    const size_t payloadSize = bytes.size() - kWireHeaderSize;
+    const size_t payloadSize = bytes.size() - WIRE_HEADER_SIZE;
     uint32_t length = 0;
     for (size_t index = 0; index < 4; ++index) {
-        length = (length << 8) | bytes[kOffsetLength + index];
+        length = (length << 8) | bytes[OFFSET_LENGTH + index];
     }
-    EXPECT_EQ(length, kWireHeaderSize + payloadSize);
+    EXPECT_EQ(length, WIRE_HEADER_SIZE + payloadSize);
 }
 
 TEST(WireProtocolTest, RejectsInconsistentLength)
@@ -356,14 +356,14 @@ TEST(WireProtocolTest, RejectsInconsistentLength)
 
     // length 与 payload_size 对不上。
     auto corrupt = SampleFrame();
-    PutU32At(corrupt, kOffsetLength, static_cast<uint32_t>(corrupt.size() + 1));
+    PutU32At(corrupt, OFFSET_LENGTH, static_cast<uint32_t>(corrupt.size() + 1));
     EXPECT_FALSE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error));
 
     // length 与实际收到的数据报长度对不上（两者都改，绕过上一条校验）。
     corrupt = SampleFrame();
     const uint32_t shorter = static_cast<uint32_t>(corrupt.size() - 1);
-    PutU32At(corrupt, kOffsetLength, shorter);
-    PutU32At(corrupt, kOffsetPayloadSize, static_cast<uint32_t>(shorter - kWireHeaderSize));
+    PutU32At(corrupt, OFFSET_LENGTH, shorter);
+    PutU32At(corrupt, OFFSET_PAYLOAD_SIZE, static_cast<uint32_t>(shorter - WIRE_HEADER_SIZE));
     EXPECT_FALSE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error));
 }
 
@@ -374,17 +374,17 @@ TEST(WireProtocolTest, RejectsReservedMustUnderstandFlags)
 
     // bit 3-7 任一置位即协议错误。
     auto corrupt = SampleFrame();
-    PutU16At(corrupt, kOffsetFlags, static_cast<uint16_t>(0x0008u));
+    PutU16At(corrupt, OFFSET_FLAGS, static_cast<uint16_t>(0x0008u));
     EXPECT_FALSE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error));
     corrupt = SampleFrame();
-    PutU16At(corrupt, kOffsetFlags, static_cast<uint16_t>(0x0080u));
+    PutU16At(corrupt, OFFSET_FLAGS, static_cast<uint16_t>(0x0080u));
     EXPECT_FALSE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error));
 
     // bit 8-15 是 must-ignore 的保留位，必须被忽略而不是报错。
     corrupt = SampleFrame();
-    PutU16At(corrupt, kOffsetFlags, static_cast<uint16_t>(kFlagHasErrors | 0x0100u));
+    PutU16At(corrupt, OFFSET_FLAGS, static_cast<uint16_t>(FLAG_HAS_ERRORS | 0x0100u));
     ASSERT_TRUE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error)) << error;
-    EXPECT_NE(decoded.flags & kFlagHasErrors, 0);
+    EXPECT_NE(decoded.flags & FLAG_HAS_ERRORS, 0);
 }
 
 // 收到比自己高的 minor 不是错误：同一 major 下帧头格式稳定，拒绝会让新版本永远
@@ -405,7 +405,7 @@ TEST(WireProtocolTest, AcceptsHigherPeerMinorAndNegotiatesDown)
     std::string error;
     ASSERT_TRUE(DecodeFrame(bytes.data(), bytes.size(), decoded, error)) << error;
     EXPECT_EQ(decoded.minor, 9U);
-    EXPECT_EQ(NegotiateMinor(decoded.minor), kProtocolMinor);
+    EXPECT_EQ(NegotiateMinor(decoded.minor), PROTOCOL_MINOR);
     // 对端更低时取对端的值。
     EXPECT_EQ(NegotiateMinor(0U), 0U);
 }
@@ -414,17 +414,17 @@ TEST(WireProtocolTest, RoundTripsErrorPayload)
 {
     ErrorPayload payload{};
     payload.domain = ErrorDomain::CONFIGURATION;
-    payload.code = error_code::kConfigureMalformed;
+    payload.code = error_code::CONFIGURE_MALFORMED;
     payload.message = "unsorted tool_id";
 
     const auto bytes = EncodeError(payload);
-    ASSERT_EQ(bytes.size(), kErrorHeaderSize + payload.message.size());
+    ASSERT_EQ(bytes.size(), ERROR_HEADER_SIZE + payload.message.size());
 
     ErrorPayload decoded{};
     std::string error;
     ASSERT_TRUE(DecodeError(bytes, decoded, error)) << error;
     EXPECT_EQ(decoded.domain, ErrorDomain::CONFIGURATION);
-    EXPECT_EQ(decoded.code, error_code::kConfigureMalformed);
+    EXPECT_EQ(decoded.code, error_code::CONFIGURE_MALFORMED);
     EXPECT_EQ(decoded.message, "unsorted tool_id");
 }
 
@@ -436,7 +436,7 @@ TEST(WireProtocolTest, RejectsMalformedErrorPayload)
     // 短于 8 字节的固定头。
     EXPECT_FALSE(DecodeError(std::vector<uint8_t>(4, 0), decoded, error));
 
-    auto valid = EncodeError({ErrorDomain::PROTOCOL, error_code::kFrameRejected, "bad sequence"});
+    auto valid = EncodeError({ErrorDomain::PROTOCOL, error_code::FRAME_REJECTED, "bad sequence"});
     // reserved 非零。
     auto reservedSet = valid;
     reservedSet[7] = 1;
@@ -458,13 +458,13 @@ TEST(WireProtocolTest, TruncatesOverlongErrorMessage)
 {
     ErrorPayload payload{};
     payload.domain = ErrorDomain::INTERNAL;
-    payload.message.assign(kMaxErrorMessageSize + 100, 'x');
+    payload.message.assign(MAX_ERROR_MESSAGE_SIZE + 100, 'x');
 
     const auto bytes = EncodeError(payload);
     ErrorPayload decoded{};
     std::string error;
     ASSERT_TRUE(DecodeError(bytes, decoded, error)) << error;
-    EXPECT_EQ(decoded.message.size(), kMaxErrorMessageSize);
+    EXPECT_EQ(decoded.message.size(), MAX_ERROR_MESSAGE_SIZE);
 }
 
 TEST(WireProtocolTest, AppliesMustIgnoreRuleToUnknownTypes)
@@ -474,12 +474,12 @@ TEST(WireProtocolTest, AppliesMustIgnoreRuleToUnknownTypes)
 
     // 最高位为 0 的未知类型 → 协议错误。
     auto corrupt = SampleFrame();
-    PutU16At(corrupt, kOffsetType, static_cast<uint16_t>(0x0055u));
+    PutU16At(corrupt, OFFSET_TYPE, static_cast<uint16_t>(0x0055u));
     EXPECT_FALSE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error));
 
     // 最高位为 1 的未知类型 → 正常解出，交由上层跳过。
     corrupt = SampleFrame();
-    PutU16At(corrupt, kOffsetType, static_cast<uint16_t>(0x80abu));
+    PutU16At(corrupt, OFFSET_TYPE, static_cast<uint16_t>(0x80abu));
     ASSERT_TRUE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error)) << error;
     EXPECT_TRUE(IsMustIgnoreType(static_cast<uint16_t>(decoded.type)));
 

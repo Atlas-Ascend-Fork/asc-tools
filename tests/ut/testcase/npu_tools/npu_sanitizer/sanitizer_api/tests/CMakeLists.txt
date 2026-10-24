@@ -51,7 +51,8 @@ if(ENABLE_TEST)
     PUBLIC ${SANITIZER_API_SOURCE_DIR}/../../include
     PRIVATE ${SANITIZER_API_SOURCE_DIR}
   )
-  target_link_libraries(acl_san_test PRIVATE
+  target_link_libraries(acl_san_test PRIVATE c_sec_static)
+target_link_libraries(acl_san_test PRIVATE
     acl_tool_injection_test
     npu_check_dbi_engine
     npu_sanitizer_plog

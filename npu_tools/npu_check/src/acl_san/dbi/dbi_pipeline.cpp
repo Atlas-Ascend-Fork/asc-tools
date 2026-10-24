@@ -36,8 +36,12 @@
 
 namespace aclsan {
 namespace {
+constexpr int HASH_HEX_DIGITS = sizeof(uint64_t) * 2;
+constexpr int TOOLCHAIN_PARENT_SEARCH_LIMIT = 3;
+constexpr int CANN_PARENT_SEARCH_LIMIT = 5;
+constexpr std::size_t OBJDUMP_SYMBOL_NAME_COLUMN = 5;
 
-constexpr const char* kToolNames[] = {"bisheng", "bisheng-tune", "ld.lld", "llvm-objdump"};
+constexpr const char* TOOL_NAMES[] = {"bisheng", "bisheng-tune", "ld.lld", "llvm-objdump"};
 std::atomic<uint64_t> g_cacheBuildId{0};
 
 class CacheLock {
@@ -58,7 +62,7 @@ public:
 
     bool Acquire(const boost::filesystem::path& path, std::string& diagnostic)
     {
-        descriptor_ = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+        descriptor_ = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, (S_IRUSR | S_IWUSR));
         if (descriptor_ < 0) {
             diagnostic = "cannot open cache lock " + path.string() + ": " + std::strerror(errno);
             return false;
@@ -126,13 +130,13 @@ std::string FindInDirectory(const boost::filesystem::path& directory, const char
 
 uint64_t HashText(uint64_t hash, const std::string& text)
 {
-    constexpr uint64_t kPrime = 1099511628211ULL;
+    constexpr uint64_t PRIME = 1099511628211ULL;
     for (const unsigned char value : text) {
         hash ^= value;
-        hash *= kPrime;
+        hash *= PRIME;
     }
     hash ^= 0xffU;
-    return hash * kPrime;
+    return hash * PRIME;
 }
 
 bool IsNonEmptyFile(const boost::filesystem::path& path)
@@ -149,7 +153,7 @@ bool IsExecutableFile(const std::string& path)
     }
     struct stat metadata {};
     if (stat(path.c_str(), &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
-        (metadata.st_uid != 0 && metadata.st_uid != geteuid()) || (metadata.st_mode & 0022) != 0) {
+        (metadata.st_uid != 0 && metadata.st_uid != geteuid()) || (metadata.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
         return false;
     }
     return access(path.c_str(), X_OK) == 0;
@@ -176,7 +180,7 @@ std::string FileIdentity(const boost::filesystem::path& path)
 boost::filesystem::path ToolchainRoot(const std::string& bisheng)
 {
     boost::filesystem::path root = boost::filesystem::path(bisheng).parent_path();
-    for (int depth = 0; depth < 3 && !root.empty(); ++depth) {
+    for (int depth = 0; depth < TOOLCHAIN_PARENT_SEARCH_LIMIT && !root.empty(); ++depth) {
         root = root.parent_path();
     }
     return root;
@@ -247,7 +251,7 @@ std::string TextIdentity(const std::vector<std::string>& values)
         hash = HashText(hash, value);
     }
     std::ostringstream output;
-    output << std::hex << std::setfill('0') << std::setw(16) << hash;
+    output << std::hex << std::setfill('0') << std::setw(HASH_HEX_DIGITS) << hash;
     return output.str();
 }
 
@@ -269,7 +273,7 @@ bool EnsurePrivateDirectory(const boost::filesystem::path& path, std::string& di
         diagnostic = "private directory is not owned by the current user: " + path.string();
         return false;
     }
-    if (chmod(path.c_str(), 0700) != 0) {
+    if (chmod(path.c_str(), (S_IRWXU)) != 0) {
         diagnostic = "cannot restrict private directory " + path.string() + ": " + std::strerror(errno);
         return false;
     }
@@ -278,7 +282,8 @@ bool EnsurePrivateDirectory(const boost::filesystem::path& path, std::string& di
 
 bool WriteExclusiveFile(const boost::filesystem::path& path, const std::string& content)
 {
-    const int descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    const int descriptor =
+        open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, (S_IRUSR | S_IWUSR));
     if (descriptor < 0) {
         return false;
     }
@@ -331,13 +336,13 @@ std::string FileDigest(const boost::filesystem::path& path)
         return {};
     }
     uint64_t hash = 1469598103934665603ULL;
-    constexpr uint64_t kPrime = 1099511628211ULL;
+    constexpr uint64_t PRIME = 1099511628211ULL;
     for (const unsigned char value : content) {
         hash ^= value;
-        hash *= kPrime;
+        hash *= PRIME;
     }
     std::ostringstream output;
-    output << std::hex << std::setfill('0') << std::setw(16) << hash;
+    output << std::hex << std::setfill('0') << std::setw(HASH_HEX_DIGITS) << hash;
     return output.str();
 }
 
@@ -457,7 +462,7 @@ std::vector<std::string> ParseTextSymbols(const std::string& text, const std::st
         std::vector<std::string> items{
             std::istream_iterator<std::string>(fields), std::istream_iterator<std::string>()};
         const bool textSection = items.size() > 3 && (items[3] == ".text" || items[3].compare(0, 6, ".text.") == 0);
-        if (items.size() > 5 && items[1] == property && items[2] == "F" && textSection) {
+        if (items.size() > OBJDUMP_SYMBOL_NAME_COLUMN && items[1] == property && items[2] == "F" && textSection) {
             symbols.push_back(items[5]);
         }
     }
@@ -500,7 +505,7 @@ bool HasTextSymbol(const std::string& text, const std::string& property, const s
         const std::vector<std::string> items{
             std::istream_iterator<std::string>(fields), std::istream_iterator<std::string>()};
         const bool textSection = items.size() > 3 && (items[3] == ".text" || items[3].compare(0, 6, ".text.") == 0);
-        if (items.size() > 5 && items[1] == property && items[2] == "F" && textSection &&
+        if (items.size() > OBJDUMP_SYMBOL_NAME_COLUMN && items[1] == property && items[2] == "F" && textSection &&
             (items[5] == symbol || items[5].find(mangledPrefix) != std::string::npos)) {
             return true;
         }
@@ -750,8 +755,8 @@ ToolchainPaths ResolveToolchain(const std::string& cannRoot)
     }
     const auto directory = boost::filesystem::path(cannRoot) / "tools/bisheng_compiler/bin";
     return {
-        FindInDirectory(directory, kToolNames[0]), FindInDirectory(directory, kToolNames[1]),
-        FindInDirectory(directory, kToolNames[2]), FindInDirectory(directory, kToolNames[3])};
+        FindInDirectory(directory, TOOL_NAMES[0]), FindInDirectory(directory, TOOL_NAMES[1]),
+        FindInDirectory(directory, TOOL_NAMES[2]), FindInDirectory(directory, TOOL_NAMES[3])};
 }
 
 std::string CannRootFromRuntimeLibrary(const std::string& runtimeLibrary)
@@ -765,10 +770,10 @@ std::string CannRootFromRuntimeLibrary(const std::string& runtimeLibrary)
         return {};
     }
     auto candidate = library.parent_path();
-    for (int depth = 0; depth < 5 && !candidate.empty(); ++depth) {
+    for (int depth = 0; depth < CANN_PARENT_SEARCH_LIMIT && !candidate.empty(); ++depth) {
         const auto tools = candidate / "tools/bisheng_compiler/bin";
         bool complete = true;
-        for (const char* name : kToolNames) {
+        for (const char* name : TOOL_NAMES) {
             if (!boost::filesystem::is_regular_file(tools / name, error)) {
                 complete = false;
                 break;
@@ -798,7 +803,7 @@ std::string MakeCacheKey(
     }
     hash = HashText(hash, objectIdentity);
     std::ostringstream output;
-    output << std::hex << std::setfill('0') << std::setw(16) << hash;
+    output << std::hex << std::setfill('0') << std::setw(HASH_HEX_DIGITS) << hash;
     return output.str();
 }
 

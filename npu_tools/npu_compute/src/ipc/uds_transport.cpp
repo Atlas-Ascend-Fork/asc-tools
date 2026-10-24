@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "ipc.h"
+#include "securec.h"
 
 #include <algorithm>
 #include <array>
@@ -77,23 +78,23 @@ void Wait(int fd, short events, Deadline deadline, const std::function<bool()>& 
             continue;
         }
         CheckCancellation(cancelled);
-        if (descriptor.revents & POLLNVAL) {
+        if ((static_cast<unsigned int>(descriptor.revents) & POLLNVAL) != 0) {
             throw Exception({4, "UDS poll error", "transport", "poll"});
         }
-        if (descriptor.revents & POLLERR) {
+        if ((static_cast<unsigned int>(descriptor.revents) & POLLERR) != 0) {
             int error = 0;
             socklen_t size = sizeof(error);
             if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) < 0) {
                 SystemError("UDS poll status");
             }
-            errno = error ? error : EIO;
+            errno = error != 0 ? error : EIO;
             SystemError("UDS poll");
         }
         // Read buffered messages even when peer has closed the socket.
-        if (descriptor.revents & events) {
+        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(events)) != 0) {
             return;
         }
-        Check(!(descriptor.revents & POLLHUP), "UDS peer disconnected");
+        Check((static_cast<unsigned int>(descriptor.revents) & POLLHUP) == 0, "UDS peer disconnected");
     }
 }
 sockaddr_un Address(const std::string& name)
@@ -104,7 +105,9 @@ sockaddr_un Address(const std::string& name)
             name.find('\0') == std::string::npos,
         "invalid abstract UDS name");
     result.sun_family = AF_UNIX;
-    std::copy(name.begin() + 1, name.end(), std::begin(result.sun_path) + 1);
+    Check(
+        memcpy_s(result.sun_path + 1, sizeof(result.sun_path) - 1, name.data() + 1, name.size() - 1) == EOK,
+        "cannot copy abstract UDS name");
     return result;
 }
 socklen_t AddressLength(const std::string& name)

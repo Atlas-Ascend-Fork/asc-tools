@@ -9,6 +9,7 @@
  */
 
 #include "acl_san/aclsan_api.h"
+#include "securec.h"
 #include "device_runtime/device_symbolizer.h"
 #include "aclsan_active_probe_plan.h"
 #include "aclsan_dispatch.h"
@@ -42,7 +43,10 @@ template <size_t BufferBytes>
 bool CopyText(const std::string& text, char (&buffer)[BufferBytes])
 {
     const size_t copyBytes = std::min(text.size(), BufferBytes - 1);
-    std::memcpy(buffer, text.data(), copyBytes);
+    if (memcpy_s(buffer, BufferBytes, text.data(), copyBytes) != EOK) {
+        buffer[0] = '\0';
+        return false;
+    }
     buffer[copyBytes] = '\0';
     return copyBytes == text.size();
 }
@@ -75,7 +79,7 @@ struct CallbackKey {
 };
 
 // 记录每组 domain + callback id 需要开启 Hook 的 Runtime API。
-const std::map<CallbackKey, std::vector<aclrtApiId>> g_callbackRoutes = {
+const std::map<CallbackKey, std::vector<aclrtApiId>> CALLBACK_ROUTES = {
     {{ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END}, {ACL_RT_API_aclrtMemset, ACL_RT_API_aclrtMemcpy}},
     {{ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC},
      {ACL_RT_API_aclrtMalloc, ACL_RT_API_aclrtMallocAlign32, ACL_RT_API_aclrtMallocWithCfg}},
@@ -190,8 +194,8 @@ std::set<aclrtApiId> AclsanSubscriber::ComputeRequiredHooks(const std::set<Callb
 {
     std::set<aclrtApiId> requiredHooks;
     for (const CallbackKey& key : enabledCallbacks) {
-        const auto route = g_callbackRoutes.find(key);
-        if (route == g_callbackRoutes.end()) {
+        const auto route = CALLBACK_ROUTES.find(key);
+        if (route == CALLBACK_ROUTES.end()) {
             ASCTOOL_ERROR(
                 "ComputeRequiredHooks: callback route not found for domain=%u id=%u", static_cast<uint32_t>(key.domain),
                 static_cast<uint32_t>(key.id));
@@ -337,7 +341,7 @@ AclsanStatus AclsanSubscriber::EnableDomain(
     try {
         std::unique_lock<std::shared_mutex> planLock(aclsan::ActiveProbePlanMutex());
         std::set<CallbackKey> candidateCallbacks = enabledCallbacks_;
-        for (const auto& route : g_callbackRoutes) {
+        for (const auto& route : CALLBACK_ROUTES) {
             if (route.first.domain != domain) {
                 continue;
             }
@@ -467,7 +471,7 @@ extern "C" AclsanStatus aclsanGetDeviceCallStack(uint64_t pc, AclsanDeviceCallSt
         complete = CopyText(source.fileName, destination.fileName) && complete;
     }
     if (!complete) {
-        result->flags |= ACLSAN_CALL_STACK_FLAG_TRUNCATED;
+        result->flags |= static_cast<uint32_t>(ACLSAN_CALL_STACK_FLAG_TRUNCATED);
         return ACLSAN_STATUS_ERROR_MAX_LIMIT_REACHED;
     }
     return ACLSAN_STATUS_SUCCESS;

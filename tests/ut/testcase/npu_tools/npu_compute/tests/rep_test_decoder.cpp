@@ -40,7 +40,7 @@ uint32_t ReadLe32(const uint8_t* data) { return ReadLittleEndian<uint32_t>(data)
 
 uint64_t ReadLe64(const uint8_t* data) { return ReadLittleEndian<uint64_t>(data); }
 
-bool HasMagic(const uint8_t* data) { return std::equal(kNpuRepMagic.begin(), kNpuRepMagic.end(), data); }
+bool HasMagic(const uint8_t* data) { return std::equal(NPU_REP_MAGIC.begin(), NPU_REP_MAGIC.end(), data); }
 
 } // namespace
 
@@ -51,7 +51,7 @@ bool DecodeRep(const std::vector<uint8_t>& encoded, DecodedRep* decoded, std::st
         return false;
     }
     *decoded = {};
-    if (encoded.size() < kNpuRepHeadSize || !HasMagic(encoded.data())) {
+    if (encoded.size() < NPU_REP_HEAD_SIZE || !HasMagic(encoded.data())) {
         SetError(error, "invalid rep header");
         return false;
     }
@@ -62,7 +62,7 @@ bool DecodeRep(const std::vector<uint8_t>& encoded, DecodedRep* decoded, std::st
     decoded->file_info_count = ReadLe32(encoded.data() + 16);
     decoded->file_info_length = ReadLe32(encoded.data() + 20);
     decoded->rep_length = ReadLe64(encoded.data() + 28);
-    if (decoded->head_length != kNpuRepHeadSize || decoded->file_info_length != kNpuRepFileInfoSize ||
+    if (decoded->head_length != NPU_REP_HEAD_SIZE || decoded->file_info_length != NPU_REP_FILE_INFO_SIZE ||
         decoded->rep_length != encoded.size()) {
         SetError(error, "invalid rep header lengths");
         return false;
@@ -85,7 +85,7 @@ bool DecodeRep(const std::vector<uint8_t>& encoded, DecodedRep* decoded, std::st
             return false;
         }
         const auto* name_begin = reinterpret_cast<const char*>(info + 8);
-        const auto* name_end = static_cast<const char*>(std::memchr(name_begin, '\0', kNpuRepFileNameSize));
+        const auto* name_end = static_cast<const char*>(std::memchr(name_begin, '\0', NPU_REP_FILE_NAME_SIZE));
         if (name_end == nullptr || name_end == name_begin) {
             SetError(error, "invalid file info name");
             return false;

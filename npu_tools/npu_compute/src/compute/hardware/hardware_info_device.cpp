@@ -19,10 +19,11 @@
 
 namespace npucompute {
 namespace {
+constexpr std::uint32_t DECIMAL_RADIX = 10;
 
-constexpr std::int32_t kDeviceId = 0;
-constexpr std::uint32_t kAiCoreFrequencyFallbackMhz = 1650;
-constexpr double kBytesPerMb = 1024.0 * 1024.0;
+constexpr std::int32_t DEVICE_ID = 0;
+constexpr std::uint32_t AI_CORE_FREQUENCY_FALLBACK_MHZ = 1650;
+constexpr double BYTES_PER_MB = 1024.0 * 1024.0;
 
 void Diagnose(DiagnosticSink* diagnostics, const std::string& message)
 {
@@ -56,10 +57,10 @@ bool ParseUnsigned(std::string_view text, Integer* value)
             return false;
         }
         const Integer digit = static_cast<Integer>(character - '0');
-        if (parsedValue > (maximum - digit) / 10) {
+        if (parsedValue > (maximum - digit) / DECIMAL_RADIX) {
             return false;
         }
-        parsedValue = parsedValue * 10 + digit;
+        parsedValue = parsedValue * DECIMAL_RADIX + digit;
     }
     *value = parsedValue;
     return true;
@@ -70,7 +71,7 @@ bool ReadCountAttribute(
     DiagnosticSink* diagnostics)
 {
     std::int64_t value = 0;
-    if (!api.GetDeviceAttribute(kDeviceId, attribute, &value)) {
+    if (!api.GetDeviceAttribute(DEVICE_ID, attribute, &value)) {
         Diagnose(diagnostics, "GetDeviceAttribute failed for Device 0: " + std::string(fieldName));
         return false;
     }
@@ -92,7 +93,7 @@ void CollectChipInfo(HardwareDeviceApi& api, DeviceInfo* device, DiagnosticSink*
     }
 
     std::string chipVersion;
-    if (!api.GetChipVersion(kDeviceId, &chipVersion)) {
+    if (!api.GetChipVersion(DEVICE_ID, &chipVersion)) {
         Diagnose(diagnostics, "GetChipVersion failed for Device 0");
     } else if (!device->chipInfo.empty() && !chipVersion.empty()) {
         device->chipInfo += " " + chipVersion;
@@ -102,7 +103,7 @@ void CollectChipInfo(HardwareDeviceApi& api, DeviceInfo* device, DiagnosticSink*
 void CollectArchitecture(HardwareDeviceApi& api, DeviceInfo* device, DiagnosticSink* diagnostics)
 {
     std::int64_t value = 0;
-    if (!api.GetDeviceAttribute(kDeviceId, ACL_DEV_ATTR_NPU_ARCH, &value)) {
+    if (!api.GetDeviceAttribute(DEVICE_ID, ACL_DEV_ATTR_NPU_ARCH, &value)) {
         Diagnose(diagnostics, "GetDeviceAttribute failed for Device 0: NPU architecture");
         return;
     }
@@ -115,11 +116,11 @@ void CollectArchitecture(HardwareDeviceApi& api, DeviceInfo* device, DiagnosticS
 
 void CollectCpuInfo(HardwareDeviceApi& api, CpuInfo* cpu, DiagnosticSink* diagnostics)
 {
-    if (!api.GetControlCpuCount(kDeviceId, &cpu->controlCpuCount)) {
+    if (!api.GetControlCpuCount(DEVICE_ID, &cpu->controlCpuCount)) {
         Diagnose(diagnostics, "GetControlCpuCount failed for Device 0");
     }
     ReadCountAttribute(api, ACL_DEV_ATTR_AICPU_CORE_NUM, "AI CPU core count", &cpu->aiCpuCount, diagnostics);
-    if (!api.GetAiCpuFrequency(kDeviceId, &cpu->aiCpuFrequencyMhz)) {
+    if (!api.GetAiCpuFrequency(DEVICE_ID, &cpu->aiCpuFrequencyMhz)) {
         Diagnose(diagnostics, "GetAiCpuFrequency failed for Device 0");
     }
 }
@@ -141,20 +142,20 @@ void CollectMemoryInfo(HardwareDeviceApi& api, MemoryInfo* memory, DiagnosticSin
     } else if (!ParseUnsigned(totalBytesText, &totalBytes)) {
         Diagnose(diagnostics, "invalid HBM total size");
     } else {
-        memory->hbmTotalMb = static_cast<double>(totalBytes) / kBytesPerMb;
+        memory->hbmTotalMb = static_cast<double>(totalBytes) / BYTES_PER_MB;
     }
 
     uint64_t freeBytes = 0;
     uint64_t allocatableBytes = 0;
-    if (!api.GetHbmUsage(kDeviceId, &freeBytes, &allocatableBytes)) {
+    if (!api.GetHbmUsage(DEVICE_ID, &freeBytes, &allocatableBytes)) {
         Diagnose(diagnostics, "GetHbmUsage failed for Device 0");
     } else if (freeBytes > allocatableBytes) {
         Diagnose(diagnostics, "invalid HBM usage returned for Device 0");
     } else {
-        memory->hbmUsedMb = static_cast<double>(allocatableBytes - freeBytes) / kBytesPerMb;
+        memory->hbmUsedMb = static_cast<double>(allocatableBytes - freeBytes) / BYTES_PER_MB;
     }
 
-    if (!api.GetHbmFrequency(kDeviceId, &memory->hbmFrequencyMhz)) {
+    if (!api.GetHbmFrequency(DEVICE_ID, &memory->hbmFrequencyMhz)) {
         Diagnose(diagnostics, "GetHbmFrequency failed for Device 0");
     }
 }
@@ -225,13 +226,13 @@ bool CollectAiCoreFrequencies(
         return false;
     }
 
-    *aiCubeFrequencyMhz = kAiCoreFrequencyFallbackMhz;
-    *aiVectorFrequencyMhz = kAiCoreFrequencyFallbackMhz;
-    if (api.GetAiCoreFrequencies(kDeviceId, aiCubeFrequencyMhz, aiVectorFrequencyMhz)) {
+    *aiCubeFrequencyMhz = AI_CORE_FREQUENCY_FALLBACK_MHZ;
+    *aiVectorFrequencyMhz = AI_CORE_FREQUENCY_FALLBACK_MHZ;
+    if (api.GetAiCoreFrequencies(DEVICE_ID, aiCubeFrequencyMhz, aiVectorFrequencyMhz)) {
         return true;
     }
-    *aiCubeFrequencyMhz = kAiCoreFrequencyFallbackMhz;
-    *aiVectorFrequencyMhz = kAiCoreFrequencyFallbackMhz;
+    *aiCubeFrequencyMhz = AI_CORE_FREQUENCY_FALLBACK_MHZ;
+    *aiVectorFrequencyMhz = AI_CORE_FREQUENCY_FALLBACK_MHZ;
     Diagnose(diagnostics, "GetAiCoreFrequencies failed for Device 0; use 1650 MHz fallback");
     return false;
 }
@@ -255,7 +256,7 @@ SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, Diagnosti
     }
     aic = 0;
     aiv = 0;
-    api.GetCurrentAiCoreFrequencies(kDeviceId, &aic, &aiv);
+    api.GetCurrentAiCoreFrequencies(DEVICE_ID, &aic, &aiv);
     if (aic > 0) {
         summary.currentAicFrequencyMhz = aic;
     }
@@ -264,7 +265,7 @@ SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, Diagnosti
     }
     aic = 0;
     aiv = 0;
-    api.GetRatedAiCoreFrequencies(kDeviceId, &aic, &aiv);
+    api.GetRatedAiCoreFrequencies(DEVICE_ID, &aic, &aiv);
     if (aic > 0) {
         summary.ratedAicFrequencyMhz = aic;
     }

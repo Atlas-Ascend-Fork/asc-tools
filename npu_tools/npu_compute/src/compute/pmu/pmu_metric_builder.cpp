@@ -9,6 +9,8 @@
  */
 #include "pmu/pmu_metric_builder.h"
 
+#include "acl_pti/data/pmu_events.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -25,11 +27,35 @@
 namespace npucompute {
 namespace {
 
+namespace pmu = aclpti::data::pmu;
+
 using Metric = std::optional<double>;
 
-constexpr double kBytesPerGb = 1024.0 * 1024.0 * 1024.0;
-constexpr double kBytesPerKb = 1024.0;
-constexpr double kA5TaskSchedulerFrequencyKHz = 1000000.0;
+constexpr double BYTES_PER_GB = 1024.0 * 1024.0 * 1024.0;
+
+constexpr int METRIC_DECIMAL_PLACES = 6;
+constexpr double PERCENT_SCALE = 100.0;
+// SIMT VF IPC normalizes the summed EXU/DVG/DCU instruction issue counts by four.
+constexpr double SIMT_VF_IPC_INSTRUCTION_SCALE = 0.25;
+constexpr double MICROSECONDS_PER_SECOND = 1000000.0;
+// Byte scale used by the GM and L0C transfer counters below.
+constexpr double MEMORY_EVENT_UNIT_BYTES = 128.0;
+constexpr double L1_READ_BYTES_PER_EVENT = 256.0;
+constexpr double UB_TRANSFER_BYTES_PER_EVENT = 256.0;
+
+struct BandwidthLimits {
+    double gmToL1;
+    double l0cToL1;
+    double l0cToGm;
+    double gmToUb;
+    double ubToGm;
+};
+// Per-channel peak bandwidth in GB/s for the existing SoC selection.
+constexpr BandwidthLimits SOC_959_BANDWIDTH_GBPS{177.57, 412.15, 142.05, 177.96, 143.74};
+constexpr BandwidthLimits DEFAULT_BANDWIDTH_GBPS{162.77, 377.80, 130.21, 163.13, 131.76};
+
+constexpr double BYTES_PER_KB = 1024.0;
+constexpr double A5_TASK_SCHEDULER_FREQUENCY_KHZ = 1000000.0;
 
 struct TypeMetrics {
     bool present = false;
@@ -90,7 +116,7 @@ std::string Number(double value)
         return "NA";
     }
     std::ostringstream output;
-    output << std::fixed << std::setprecision(6) << value;
+    output << std::fixed << std::setprecision(METRIC_DECIMAL_PLACES) << value;
     return output.str();
 }
 
@@ -310,7 +336,8 @@ Metric TaskLogDurationUs(const aclptiProfilingDataResult& result)
         if (pair.invalid || !pair.start.has_value() || !pair.end.has_value() || *pair.end <= *pair.start) {
             continue;
         }
-        const double durationUs = static_cast<double>(*pair.end - *pair.start) * 1000.0 / kA5TaskSchedulerFrequencyKHz;
+        const double durationUs =
+            static_cast<double>(*pair.end - *pair.start) * 1000.0 / A5_TASK_SCHEDULER_FREQUENCY_KHZ;
         if (std::isfinite(durationUs) && durationUs > 0.0) {
             durations.push_back(durationUs);
         }
@@ -356,7 +383,7 @@ std::optional<double> Bandwidth(double bytes, double durationUs)
     if (durationUs <= 0.0) {
         return std::nullopt;
     }
-    return bytes * 1000000.0 / kBytesPerGb / durationUs;
+    return bytes * MICROSECONDS_PER_SECOND / BYTES_PER_GB / durationUs;
 }
 
 std::optional<double> EventBandwidth(
@@ -424,7 +451,7 @@ std::optional<double> UsageRate(const std::optional<double>& bandwidth, double m
     if (!bandwidth.has_value() || maxBandwidth <= 0.0) {
         return std::nullopt;
     }
-    return 100.0 * std::min(*bandwidth, maxBandwidth) / maxBandwidth;
+    return PERCENT_SCALE * std::min(*bandwidth, maxBandwidth) / maxBandwidth;
 }
 
 double AicFrequencyMhz(const ReportConfig& config)
@@ -440,20 +467,21 @@ double AivFrequencyMhz(const ReportConfig& config)
 double MaxBandwidth(std::string_view soc, std::string_view kind)
 {
     const bool is959 = soc.find("959") != std::string_view::npos || soc.find("95A") != std::string_view::npos;
+    const BandwidthLimits& limits = is959 ? SOC_959_BANDWIDTH_GBPS : DEFAULT_BANDWIDTH_GBPS;
     if (kind == "GM_TO_L1") {
-        return is959 ? 177.57 : 162.77;
+        return limits.gmToL1;
     }
     if (kind == "L0C_TO_L1") {
-        return is959 ? 412.15 : 377.80;
+        return limits.l0cToL1;
     }
     if (kind == "L0C_TO_GM") {
-        return is959 ? 142.05 : 130.21;
+        return limits.l0cToGm;
     }
     if (kind == "GM_TO_UB") {
-        return is959 ? 177.96 : 163.13;
+        return limits.gmToUb;
     }
     if (kind == "UB_TO_GM") {
-        return is959 ? 143.74 : 131.76;
+        return limits.ubToGm;
     }
     return 0.0;
 }
@@ -534,7 +562,7 @@ CsvRow L2Row(const RowMetrics& row, const ReportConfig& config)
             fields, std::string(prefix) + "read_hit_rate(%)",
             !readHit.has_value() || !readTotal.has_value() ? std::nullopt :
             *readTotal == 0.0                              ? Metric(0.0) :
-                                                             Metric(100.0 * *readHit / *readTotal),
+                                                             Metric(PERCENT_SCALE * *readHit / *readTotal),
             EventReason(*metrics, {0x424U, 0x425U, 0x426U, 0x427U, 0x428U, 0x429U}));
         const std::vector<std::string> writeNames = {"write_close_hit", "write_close_miss", "write_close_victim",
                                                      "write_far_hit",   "write_far_miss",   "write_far_victim"};
@@ -548,7 +576,7 @@ CsvRow L2Row(const RowMetrics& row, const ReportConfig& config)
             fields, std::string(prefix) + "write_hit_rate(%)",
             !writeHit.has_value() || !writeTotal.has_value() ? std::nullopt :
             *writeTotal == 0.0                               ? Metric(0.0) :
-                                                               Metric(100.0 * *writeHit / *writeTotal),
+                                                               Metric(PERCENT_SCALE * *writeHit / *writeTotal),
             EventReason(*metrics, {0x42aU, 0x42bU, 0x42cU, 0x42dU, 0x42eU, 0x42fU}));
     }
     return BuildRow(L2Header(), fields);
@@ -609,20 +637,23 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
         row.aiv.present ? MissingReason::DbiUnavailable : MissingReason::CoreTypeNotApplicable);
     SetMetric(
         fields, "aiv_gm_to_ub_bw(GB/s)",
-        xgu.has_value() && duration.has_value() ? Bandwidth(*xgu * 128.0, *duration) : std::nullopt, xguReason);
+        xgu.has_value() && duration.has_value() ? Bandwidth(*xgu * MEMORY_EVENT_UNIT_BYTES, *duration) : std::nullopt,
+        xguReason);
     SetMetric(
-        fields, "aic_l1_read_bw(GB/s)", EventBandwidth(row.aic, 0x707U, 256.0, aicFrequencyMhz, operationDurationUs),
+        fields, "aic_l1_read_bw(GB/s)",
+        EventBandwidth(row.aic, 0x707U, L1_READ_BYTES_PER_EVENT, aicFrequencyMhz, operationDurationUs),
         EventBandwidthReason(row.aic, {0x707U}, aicFrequencyMhz, operationDurationUs));
     SetMetric(
-        fields, "aic_l1_write_bw(GB/s)", EventBandwidth(row.aic, 0x709U, 128.0, aicFrequencyMhz, operationDurationUs),
+        fields, "aic_l1_write_bw(GB/s)",
+        EventBandwidth(row.aic, 0x709U, MEMORY_EVENT_UNIT_BYTES, aicFrequencyMhz, operationDurationUs),
         EventBandwidthReason(row.aic, {0x709U}, aicFrequencyMhz, operationDurationUs));
     SetMetric(
         fields, "aic_main_mem_read_bw(GB/s)",
-        EventBandwidth(row.aic, 0x422U, 128.0, aicFrequencyMhz, operationDurationUs),
+        EventBandwidth(row.aic, 0x422U, MEMORY_EVENT_UNIT_BYTES, aicFrequencyMhz, operationDurationUs),
         EventBandwidthReason(row.aic, {0x422U}, aicFrequencyMhz, operationDurationUs));
     SetMetric(
         fields, "aic_main_mem_write_bw(GB/s)",
-        EventBandwidth(row.aic, 0x423U, 128.0, aicFrequencyMhz, operationDurationUs),
+        EventBandwidth(row.aic, 0x423U, MEMORY_EVENT_UNIT_BYTES, aicFrequencyMhz, operationDurationUs),
         EventBandwidthReason(row.aic, {0x423U}, aicFrequencyMhz, operationDurationUs));
     SetEvent(fields, "aic_mte1_instructions", row.aic, 0x700U);
     SetMetric(fields, "aic_mte1_ratio", ValueRatio(row.aic, 0x702U), RatioReason(row.aic, {0x702U}));
@@ -632,11 +663,11 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     SetMetric(fields, "aic_mte3_ratio", ValueRatio(row.aic, 0x203U), RatioReason(row.aic, {0x203U}));
     SetMetric(
         fields, "aiv_main_mem_read_bw(GB/s)",
-        EventBandwidth(row.aiv, 0x422U, 128.0, aivFrequencyMhz, operationDurationUs),
+        EventBandwidth(row.aiv, 0x422U, MEMORY_EVENT_UNIT_BYTES, aivFrequencyMhz, operationDurationUs),
         EventBandwidthReason(row.aiv, {0x422U}, aivFrequencyMhz, operationDurationUs));
     SetMetric(
         fields, "aiv_main_mem_write_bw(GB/s)",
-        EventBandwidth(row.aiv, 0x423U, 128.0, aivFrequencyMhz, operationDurationUs),
+        EventBandwidth(row.aiv, 0x423U, MEMORY_EVENT_UNIT_BYTES, aivFrequencyMhz, operationDurationUs),
         EventBandwidthReason(row.aiv, {0x423U}, aivFrequencyMhz, operationDurationUs));
     SetEvent(fields, "aiv_mte2_instructions", row.aiv, 0x200U);
     SetMetric(fields, "aiv_mte2_ratio", ValueRatio(row.aiv, 0x202U), RatioReason(row.aiv, {0x202U}));
@@ -644,22 +675,23 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     SetMetric(fields, "aiv_mte3_ratio", ValueRatio(row.aiv, 0x203U), RatioReason(row.aiv, {0x203U}));
     const TypeMetrics& current = row.key.coreType == ACLPTI_CORE_TYPE_AIC ? row.aic : row.aiv;
     SetMetric(
-        fields, "read_main_memory_datas(KB)", Scale(current.Value(0x422U), 128.0 / kBytesPerKb),
+        fields, "read_main_memory_datas(KB)", Scale(current.Value(0x422U), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
         EventReason(current, {0x422U}));
     SetMetric(
-        fields, "write_main_memory_datas(KB)", Scale(current.Value(0x423U), 128.0 / kBytesPerKb),
+        fields, "write_main_memory_datas(KB)", Scale(current.Value(0x423U), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
         EventReason(current, {0x423U}));
     SetMetric(
-        fields, "GM_to_L1_datas(KB)", Scale(row.aic.Value(0x422U), 128.0 / kBytesPerKb),
+        fields, "GM_to_L1_datas(KB)", Scale(row.aic.Value(0x422U), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
         EventReason(row.aic, {0x422U}));
     SetMetric(
-        fields, "L0C_to_L1_datas(KB)", Scale(row.aic.Value(0x70eU), 128.0 / kBytesPerKb),
+        fields, "L0C_to_L1_datas(KB)", Scale(row.aic.Value(0x70eU), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
         EventReason(row.aic, {0x70eU}));
     SetMetric(
-        fields, "L0C_to_GM_datas(KB)", Scale(row.aic.Value(0x423U), 128.0 / kBytesPerKb),
+        fields, "L0C_to_GM_datas(KB)", Scale(row.aic.Value(0x423U), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
         EventReason(row.aic, {0x423U}));
     SetMetric(
-        fields, "GM_to_UB_datas(KB)", Scale(xgu, 128.0 / kBytesPerKb), EventReason(row.aiv, {0x422U, 0x57fU, 0x580U}));
+        fields, "GM_to_UB_datas(KB)", Scale(xgu, MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
+        EventReason(row.aiv, {0x422U, 0x57fU, 0x580U}));
     SetMetric(
         fields, "UB_to_GM_datas(KB)", std::nullopt,
         row.aiv.present ? MissingReason::DbiUnavailable : MissingReason::CoreTypeNotApplicable);
@@ -669,20 +701,25 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     const double gmToUbMax = MaxBandwidth(config.socName, "GM_TO_UB");
     SetMetric(
         fields, "GM_to_L1_bw_usage_rate(%)",
-        UsageRate(EventBandwidth(row.aic, 0x422U, 128.0, aicFrequencyMhz, operationDurationUs), gmToL1Max),
+        UsageRate(
+            EventBandwidth(row.aic, 0x422U, MEMORY_EVENT_UNIT_BYTES, aicFrequencyMhz, operationDurationUs), gmToL1Max),
         UsageRateReason(EventBandwidthReason(row.aic, {0x422U}, aicFrequencyMhz, operationDurationUs), gmToL1Max));
     SetMetric(
         fields, "L0C_to_L1_bw_usage_rate(%)",
-        UsageRate(EventBandwidth(row.aic, 0x70eU, 128.0, aicFrequencyMhz, operationDurationUs), l0cToL1Max),
+        UsageRate(
+            EventBandwidth(row.aic, 0x70eU, MEMORY_EVENT_UNIT_BYTES, aicFrequencyMhz, operationDurationUs), l0cToL1Max),
         UsageRateReason(EventBandwidthReason(row.aic, {0x70eU}, aicFrequencyMhz, operationDurationUs), l0cToL1Max));
     SetMetric(
         fields, "L0C_to_GM_bw_usage_rate(%)",
-        UsageRate(EventBandwidth(row.aic, 0x423U, 128.0, aicFrequencyMhz, operationDurationUs), l0cToGmMax),
+        UsageRate(
+            EventBandwidth(row.aic, 0x423U, MEMORY_EVENT_UNIT_BYTES, aicFrequencyMhz, operationDurationUs), l0cToGmMax),
         UsageRateReason(EventBandwidthReason(row.aic, {0x423U}, aicFrequencyMhz, operationDurationUs), l0cToGmMax));
     SetMetric(
         fields, "GM_to_UB_bw_usage_rate(%)",
         UsageRate(
-            xgu.has_value() && duration.has_value() ? Bandwidth(*xgu * 128.0, *duration) : std::nullopt, gmToUbMax),
+            xgu.has_value() && duration.has_value() ? Bandwidth(*xgu * MEMORY_EVENT_UNIT_BYTES, *duration) :
+                                                      std::nullopt,
+            gmToUbMax),
         UsageRateReason(xguReason, gmToUbMax));
     SetMetric(
         fields, "UB_to_GM_bw_usage_rate(%)", std::nullopt,
@@ -745,11 +782,11 @@ CsvRow MemoryUBRow(const RowMetrics& row, const ReportConfig& config, Metric ope
     const double aivFrequencyMhz = AivFrequencyMhz(config);
     SetMetric(
         fields, "aiv_ub_read_bw_vector(GB/s)",
-        EventBandwidth(row.aiv, 0x571U, 256.0, aivFrequencyMhz, operationDurationUs),
+        EventBandwidth(row.aiv, 0x571U, UB_TRANSFER_BYTES_PER_EVENT, aivFrequencyMhz, operationDurationUs),
         EventBandwidthReason(row.aiv, {0x571U}, aivFrequencyMhz, operationDurationUs));
     SetMetric(
         fields, "aiv_ub_write_bw_vector(GB/s)",
-        EventBandwidth(row.aiv, 0x572U, 256.0, aivFrequencyMhz, operationDurationUs),
+        EventBandwidth(row.aiv, 0x572U, UB_TRANSFER_BYTES_PER_EVENT, aivFrequencyMhz, operationDurationUs),
         EventBandwidthReason(row.aiv, {0x572U}, aivFrequencyMhz, operationDurationUs));
     const auto xgu = NonNegativeDifference(row.aiv, 0x422U, {0x57fU, 0x580U});
     const auto duration = operationDurationUs.has_value() ? operationDurationUs : Time(row.aiv, aivFrequencyMhz);
@@ -758,7 +795,7 @@ CsvRow MemoryUBRow(const RowMetrics& row, const ReportConfig& config, Metric ope
         row.aiv.present ? MissingReason::DbiUnavailable : MissingReason::CoreTypeNotApplicable);
     SetMetric(
         fields, "aiv_ub_write_bw_gm(GB/s)",
-        xgu.has_value() && duration.has_value() ? Bandwidth(*xgu * 128.0, *duration) : std::nullopt,
+        xgu.has_value() && duration.has_value() ? Bandwidth(*xgu * MEMORY_EVENT_UNIT_BYTES, *duration) : std::nullopt,
         EventBandwidthReason(row.aiv, {0x422U, 0x57fU, 0x580U}, aivFrequencyMhz, operationDurationUs));
     return BuildRow(MemoryUBHeader(), fields);
 }
@@ -808,7 +845,6 @@ CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
     CsvFields fields = CommonFields(row, config);
     const double aicFrequencyMhz = AicFrequencyMhz(config);
     const double aivFrequencyMhz = AivFrequencyMhz(config);
-    constexpr uint32_t kA5CubeEvent = 810U;
     const auto setPipePair = [&](const char* timeName, const char* ratioName, const TypeMetrics& metrics,
                                  uint32_t eventId, double frequencyMhz) {
         SetMetric(
@@ -816,14 +852,14 @@ CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
             EventBandwidthReason(metrics, {eventId}, frequencyMhz));
         SetMetric(fields, ratioName, ValueRatio(metrics, eventId), RatioReason(metrics, {eventId}));
     };
-    setPipePair("aic_cube_time(us)", "aic_cube_ratio", row.aic, kA5CubeEvent, aicFrequencyMhz);
+    setPipePair("aic_cube_time(us)", "aic_cube_ratio", row.aic, pmu::CUBE_ACTIVE_CYCLES_EVENT, aicFrequencyMhz);
     setPipePair("aic_scalar_time(us)", "aic_scalar_ratio", row.aic, 0x1U, aicFrequencyMhz);
     setPipePair("aic_mte1_time(us)", "aic_mte1_ratio", row.aic, 0x702U, aicFrequencyMhz);
     setPipePair("aic_mte2_time(us)", "aic_mte2_ratio", row.aic, 0x202U, aicFrequencyMhz);
     setPipePair("aic_mte3_time(us)", "aic_mte3_ratio", row.aic, 0x203U, aicFrequencyMhz);
     setPipePair("aic_fixpipe_time(us)", "aic_fixpipe_ratio", row.aic, 0x714U, aicFrequencyMhz);
     SetMetric(fields, "aic_icache_miss_rate", IcacheMissRate(row.aic), EventReason(row.aic, {0x35U, 0x34U}));
-    setPipePair("aiv_vec_time(us)", "aiv_vec_ratio", row.aiv, 0x501U, aivFrequencyMhz);
+    setPipePair("aiv_vec_time(us)", "aiv_vec_ratio", row.aiv, pmu::VECTOR_ACTIVE_CYCLES_EVENT, aivFrequencyMhz);
     setPipePair("aiv_scalar_time(us)", "aiv_scalar_ratio", row.aiv, 0x1U, aivFrequencyMhz);
     setPipePair("aiv_mte2_time(us)", "aiv_mte2_ratio", row.aiv, 0x202U, aivFrequencyMhz);
     setPipePair("aiv_mte3_time(us)", "aiv_mte3_ratio", row.aiv, 0x203U, aivFrequencyMhz);
@@ -838,26 +874,28 @@ CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
     const auto xfp = SumEvents(row.aic, {0x70cU, 0x70eU, 0x717U, 0x423U});
     SetMetric(
         fields, "aic_mte3_active_bw(GB/s)",
-        ActiveBandwidthMetric(Scale(xul, 256.0), row.aic.Value(0x203U), aicFrequencyMhz),
+        ActiveBandwidthMetric(Scale(xul, UB_TRANSFER_BYTES_PER_EVENT), row.aic.Value(0x203U), aicFrequencyMhz),
         EventBandwidthReason(row.aic, {0x709U, 0x70eU, 0x422U, 0x203U}, aicFrequencyMhz));
     SetMetric(
         fields, "aiv_mte3_active_bw(GB/s)", std::nullopt,
         row.aiv.present ? MissingReason::DbiUnavailable : MissingReason::CoreTypeNotApplicable);
     SetMetric(
         fields, "aic_fixpipe_active_bw(GB/s)",
-        ActiveBandwidthMetric(Scale(xfp, 128.0), row.aic.Value(0x714U), aicFrequencyMhz),
+        ActiveBandwidthMetric(Scale(xfp, MEMORY_EVENT_UNIT_BYTES), row.aic.Value(0x714U), aicFrequencyMhz),
         EventBandwidthReason(row.aic, {0x70cU, 0x70eU, 0x717U, 0x423U, 0x714U}, aicFrequencyMhz));
     SetMetric(
         fields, "aiv_mte2_active_bw(GB/s)",
-        ActiveBandwidthMetric(Scale(xgu, 128.0), row.aiv.Value(0x202U), aivFrequencyMhz),
+        ActiveBandwidthMetric(Scale(xgu, MEMORY_EVENT_UNIT_BYTES), row.aiv.Value(0x202U), aivFrequencyMhz),
         EventBandwidthReason(row.aiv, {0x422U, 0x57fU, 0x580U, 0x202U}, aivFrequencyMhz));
     SetMetric(
         fields, "aic_mte1_active_bw(GB/s)",
-        ActiveBandwidthMetric(Scale(row.aic.Value(0x707U), 256.0), row.aic.Value(0x702U), aicFrequencyMhz),
+        ActiveBandwidthMetric(
+            Scale(row.aic.Value(0x707U), L1_READ_BYTES_PER_EVENT), row.aic.Value(0x702U), aicFrequencyMhz),
         EventBandwidthReason(row.aic, {0x707U, 0x702U}, aicFrequencyMhz));
     SetMetric(
         fields, "aic_mte2_active_bw(GB/s)",
-        ActiveBandwidthMetric(Scale(row.aic.Value(0x422U), 128.0), row.aic.Value(0x202U), aicFrequencyMhz),
+        ActiveBandwidthMetric(
+            Scale(row.aic.Value(0x422U), MEMORY_EVENT_UNIT_BYTES), row.aic.Value(0x202U), aicFrequencyMhz),
         EventBandwidthReason(row.aic, {0x422U, 0x202U}, aicFrequencyMhz));
     return BuildRow(PipeHeader(), fields);
 }
@@ -932,40 +970,51 @@ CsvCell ComputeVfIpc(const TypeMetrics& aiv, uint32_t cycleEvent, Metric count)
 
 CsvCell ComputeSimdVfTime(const TypeMetrics& aiv, double frequencyMhz)
 {
-    return ComputeVfTime(aiv, 1282, frequencyMhz);
+    return ComputeVfTime(aiv, pmu::SIMD_VF_ISSUE_CYCLES_EVENT, frequencyMhz);
 }
 
-CsvCell ComputeSimdVfIpc(const TypeMetrics& aiv) { return ComputeVfIpc(aiv, 1282, aiv.Value(1320)); }
+CsvCell ComputeSimdVfIpc(const TypeMetrics& aiv)
+{
+    return ComputeVfIpc(aiv, pmu::SIMD_VF_ISSUE_CYCLES_EVENT, aiv.Value(pmu::SIMD_INSTRUCTION_ISSUE_EVENT));
+}
 
 CsvCell ComputeSimtVfTime(const TypeMetrics& aiv, double frequencyMhz)
 {
-    return ComputeVfTime(aiv, 1284, frequencyMhz);
+    return ComputeVfTime(aiv, pmu::SIMT_VF_ISSUE_CYCLES_EVENT, frequencyMhz);
 }
 
 CsvCell ComputeSimtVfIpc(const TypeMetrics& aiv)
 {
-    return ComputeVfIpc(aiv, 1284, Scale(SumEvents(aiv, {1466, 1467, 1468}), 0.25));
+    return ComputeVfIpc(
+        aiv, pmu::SIMT_VF_ISSUE_CYCLES_EVENT,
+        Scale(
+            SumEvents(
+                aiv, {pmu::SIMT_EXU_INSTRUCTION_ISSUE_EVENT, pmu::SIMT_DVG_INSTRUCTION_ISSUE_EVENT,
+                      pmu::SIMT_DCU_INSTRUCTION_ISSUE_EVENT}),
+            SIMT_VF_IPC_INSTRUCTION_SCALE));
 }
 
 CsvRow ArithmeticRow(const RowMetrics& row, const ReportConfig& config)
 {
     CsvFields fields = CommonFields(row, config);
     for (const auto& [name, event] : std::initializer_list<std::pair<const char*, uint32_t>>{
-             {"aic_cube_ratio", 810}, {"aic_cube_fp_ratio", 808}, {"aic_cube_int_ratio", 809}}) {
+             {"aic_cube_ratio", pmu::CUBE_ACTIVE_CYCLES_EVENT},
+             {"aic_cube_fp_ratio", pmu::CUBE_FP_ACTIVE_CYCLES_EVENT},
+             {"aic_cube_int_ratio", pmu::CUBE_INT_ACTIVE_CYCLES_EVENT}}) {
         SetMetric(fields, name, ValueRatio(row.aic, event), RatioReason(row.aic, {event}));
     }
-    SetEvent(fields, "aic_cube_total_instr_number", row.aic, 768);
-    SetEvent(fields, "aic_cube_fp_instr_number", row.aic, 789);
-    SetEvent(fields, "aic_cube_int_instr_number", row.aic, 790);
-    const Metric aivRatio = ValueRatio(row.aiv, 1281);
-    const Metric simdVfRatio = ValueRatio(row.aiv, 1282);
-    const Metric aivSfuRatio = ValueRatio(row.aiv, 1283);
-    const Metric simtVfRatio = ValueRatio(row.aiv, 1284);
+    SetEvent(fields, "aic_cube_total_instr_number", row.aic, pmu::CUBE_TOTAL_INSTRUCTION_EVENT);
+    SetEvent(fields, "aic_cube_fp_instr_number", row.aic, pmu::CUBE_FP_INSTRUCTION_EVENT);
+    SetEvent(fields, "aic_cube_int_instr_number", row.aic, pmu::CUBE_INT_INSTRUCTION_EVENT);
+    const Metric aivRatio = ValueRatio(row.aiv, pmu::VECTOR_ACTIVE_CYCLES_EVENT);
+    const Metric simdVfRatio = ValueRatio(row.aiv, pmu::SIMD_VF_ISSUE_CYCLES_EVENT);
+    const Metric aivSfuRatio = ValueRatio(row.aiv, pmu::VECTOR_SFU_ACTIVE_CYCLES_EVENT);
+    const Metric simtVfRatio = ValueRatio(row.aiv, pmu::SIMT_VF_ISSUE_CYCLES_EVENT);
     for (const auto& [name, event, metric] : std::initializer_list<std::tuple<const char*, uint32_t, Metric>>{
-             {"aiv_vec_ratio", 1281, aivRatio},
-             {"aiv_simd_vf_ratio", 1282, simdVfRatio},
-             {"aiv_vec_sfu_ratio", 1283, aivSfuRatio},
-             {"aiv_simt_vf_ratio", 1284, simtVfRatio}}) {
+             {"aiv_vec_ratio", pmu::VECTOR_ACTIVE_CYCLES_EVENT, aivRatio},
+             {"aiv_simd_vf_ratio", pmu::SIMD_VF_ISSUE_CYCLES_EVENT, simdVfRatio},
+             {"aiv_vec_sfu_ratio", pmu::VECTOR_SFU_ACTIVE_CYCLES_EVENT, aivSfuRatio},
+             {"aiv_simt_vf_ratio", pmu::SIMT_VF_ISSUE_CYCLES_EVENT, simtVfRatio}}) {
         SetMetric(fields, name, metric, RatioReason(row.aiv, {event}));
     }
     const double frequencyMhz = AivFrequencyMhz(config);

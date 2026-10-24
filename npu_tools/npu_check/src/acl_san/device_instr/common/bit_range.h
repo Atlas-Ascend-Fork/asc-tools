@@ -25,14 +25,15 @@ struct BitRange {
 
 inline uint64_t ExtractBitRange(uint64_t value, BitRange range) noexcept
 {
-    if (range.begin > range.end || range.end >= 64) {
+    if (range.begin > range.end || range.end >= std::numeric_limits<uint64_t>::digits) {
         ASCTOOL_ERROR(
             "ExtractBitRange failed: invalid range begin=%u end=%u, expected 0 <= begin <= end < 64",
             static_cast<unsigned int>(range.begin), static_cast<unsigned int>(range.end));
         return 0;
     }
     const uint8_t width = range.end - range.begin + 1;
-    const uint64_t mask = width == 64 ? std::numeric_limits<uint64_t>::max() : (UINT64_C(1) << width) - UINT64_C(1);
+    const uint64_t mask = width == std::numeric_limits<uint64_t>::digits ? std::numeric_limits<uint64_t>::max() :
+                                                                           (UINT64_C(1) << width) - UINT64_C(1);
     return (value >> range.begin) & mask;
 }
 

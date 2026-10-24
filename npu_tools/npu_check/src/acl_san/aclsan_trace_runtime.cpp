@@ -9,6 +9,7 @@
  */
 
 #include "aclsan_trace_runtime.h"
+#include "securec.h"
 
 #include "device_instr/decoder_registry.h"
 #include "device_instr/arch/dav_3510/register_state_manager.h"
@@ -24,6 +25,7 @@
 #include "injection/injection_hook.h"
 #include "dbi/trace_buffer_abi.h"
 
+#include <stdexcept>
 #include <algorithm>
 #include <climits>
 #include <cstring>
@@ -187,13 +189,20 @@ aclError ExpandArguments(
     }
     const size_t expandedSize = std::max(argsSize, insertionOffset) + paddingBytes + sizeof(void*);
     prepared.arguments.assign(expandedSize, 0);
-    if (insertionOffset != 0) {
-        std::memcpy(prepared.arguments.data(), hostArgs, std::min(argsSize, insertionOffset));
+    if (insertionOffset != 0 && argsSize != 0) {
+        if (memcpy_s(
+                prepared.arguments.data(), prepared.arguments.size(), hostArgs, std::min(argsSize, insertionOffset)) !=
+            EOK) {
+            return ACL_ERROR_INVALID_PARAM;
+        }
     }
     if (argsSize > insertionOffset) {
-        std::memcpy(
-            prepared.arguments.data() + traceArgumentOffset + sizeof(void*),
-            static_cast<const uint8_t*>(hostArgs) + insertionOffset, argsSize - insertionOffset);
+        if (memcpy_s(
+                prepared.arguments.data() + traceArgumentOffset + sizeof(void*),
+                prepared.arguments.size() - traceArgumentOffset - sizeof(void*),
+                static_cast<const uint8_t*>(hostArgs) + insertionOffset, argsSize - insertionOffset) != EOK) {
+            return ACL_ERROR_INVALID_PARAM;
+        }
     }
 
     if (placeholderCount != 0) {
@@ -214,9 +223,12 @@ aclError ExpandArguments(
 void StoreHiddenPointer(PreparedTraceLaunch& prepared, TraceArgumentMode argumentMode)
 {
     if (argumentMode == TraceArgumentMode::HOST_ARGS) {
-        std::memcpy(
-            prepared.arguments.data() + prepared.traceArgumentOffset, &prepared.deviceBuffer,
-            sizeof(prepared.deviceBuffer));
+        if (memcpy_s(
+                prepared.arguments.data() + prepared.traceArgumentOffset,
+                prepared.arguments.size() - prepared.traceArgumentOffset, &prepared.deviceBuffer,
+                sizeof(prepared.deviceBuffer)) != EOK) {
+            throw std::runtime_error("cannot store trace buffer pointer");
+        }
     }
 }
 
@@ -615,9 +627,12 @@ aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept
                     return fail(ACL_ERROR_INVALID_PARAM);
                 }
                 if (earlier.dataOffset == placeholder.dataOffset) {
-                    std::memcpy(
-                        prepared.arguments.data() + placeholder.addrOffset,
-                        prepared.arguments.data() + earlier.addrOffset, sizeof(void*));
+                    if (memcpy_s(
+                            prepared.arguments.data() + placeholder.addrOffset,
+                            prepared.arguments.size() - placeholder.addrOffset,
+                            prepared.arguments.data() + earlier.addrOffset, sizeof(void*)) != EOK) {
+                        return fail(ACL_ERROR_INVALID_PARAM);
+                    }
                     alias = true;
                 }
             }
@@ -640,7 +655,10 @@ aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept
                 "allocationBytes=%zu",
                 static_cast<unsigned long long>(prepared.launchId), index, placeholder.addrOffset,
                 placeholder.dataOffset, bytes, payload.size());
-            std::memcpy(payload.data(), prepared.arguments.data() + placeholder.dataOffset, bytes);
+            if (memcpy_s(payload.data(), payload.size(), prepared.arguments.data() + placeholder.dataOffset, bytes) !=
+                EOK) {
+                return fail(ACL_ERROR_INVALID_PARAM);
+            }
             void* address = nullptr;
             aclError status = allocate(&address, payload.size(), ACL_MEM_MALLOC_HUGE_FIRST);
             if (status != ACL_SUCCESS) {
@@ -651,7 +669,11 @@ aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept
             if (status != ACL_SUCCESS) {
                 return fail(status);
             }
-            std::memcpy(prepared.arguments.data() + placeholder.addrOffset, &address, sizeof(address));
+            if (memcpy_s(
+                    prepared.arguments.data() + placeholder.addrOffset,
+                    prepared.arguments.size() - placeholder.addrOffset, &address, sizeof(address)) != EOK) {
+                return fail(ACL_ERROR_INVALID_PARAM);
+            }
         }
         prepared.arguments.resize(prepared.traceArgumentOffset + sizeof(void*));
         prepared.placeholders.clear();

@@ -9,6 +9,7 @@
  */
 
 #include "aclsan_trace_buffer.h"
+#include "securec.h"
 
 #include "dbi/trace_buffer_abi.h"
 
@@ -34,13 +35,22 @@ bool InitializeTraceBuffer(
     header.segmentBytes = static_cast<uint64_t>(bytes);
     header.blockCount = blockCount;
     header.physicalCoreCount = physicalCoreCount;
-    std::memcpy(buffer.data(), &header, sizeof(header));
+    if (memcpy_s(buffer.data(), buffer.size(), &header, sizeof(header)) != EOK) {
+        buffer.clear();
+        error = "cannot initialize trace segment header";
+        return false;
+    }
 
     const aclsan::AclsanTraceSliceHeader emptySlice{};
     for (uint32_t sliceIndex = 0; sliceIndex < physicalCoreCount; ++sliceIndex) {
         const size_t sliceOffset =
             sizeof(header) + static_cast<size_t>(sliceIndex) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE;
-        std::memcpy(buffer.data() + sliceOffset, &emptySlice, sizeof(emptySlice));
+        if (memcpy_s(buffer.data() + sliceOffset, buffer.size() - sliceOffset, &emptySlice, sizeof(emptySlice)) !=
+            EOK) {
+            buffer.clear();
+            error = "cannot initialize trace slice header";
+            return false;
+        }
     }
     error.clear();
     return true;
@@ -59,7 +69,11 @@ TraceBufferParseResult ParseTraceBuffer(
     }
 
     aclsan::AclsanTraceBufferHeader header{};
-    std::memcpy(&header, buffer, sizeof(header));
+    if (memcpy_s(&header, sizeof(header), buffer, sizeof(header)) != EOK) {
+        result.records.clear();
+        result.error = "cannot copy trace record or header";
+        return result;
+    }
     if (header.magic != aclsan::ASCSAN_TRACE_BUFFER_MAGIC || header.launchId != expectedLaunchId ||
         header.segmentBytes != requiredBytes || header.blockCount != expectedBlockCount ||
         header.physicalCoreCount != expectedPhysicalCoreCount) {
@@ -72,7 +86,11 @@ TraceBufferParseResult ParseTraceBuffer(
         const size_t sliceOffset =
             sizeof(header) + static_cast<size_t>(sliceIndex) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE;
         aclsan::AclsanTraceSliceHeader slice{};
-        std::memcpy(&slice, buffer + sliceOffset, sizeof(slice));
+        if (memcpy_s(&slice, sizeof(slice), buffer + sliceOffset, sizeof(slice)) != EOK) {
+            result.records.clear();
+            result.error = "cannot copy trace record or header";
+            return result;
+        }
         if (slice.recordCount > aclsan::ASCSAN_TRACE_RECORDS_PER_CORE) {
             result.error = "trace slice record count exceeds its launch-owned capacity";
             return result;
@@ -95,7 +113,11 @@ TraceBufferParseResult ParseTraceBuffer(
         const size_t sliceOffset =
             sizeof(header) + static_cast<size_t>(sliceIndex) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE;
         aclsan::AclsanTraceSliceHeader slice{};
-        std::memcpy(&slice, buffer + sliceOffset, sizeof(slice));
+        if (memcpy_s(&slice, sizeof(slice), buffer + sliceOffset, sizeof(slice)) != EOK) {
+            result.records.clear();
+            result.error = "cannot copy trace record or header";
+            return result;
+        }
         if (slice.recordCount == 0) {
             continue;
         }
@@ -108,12 +130,20 @@ TraceBufferParseResult ParseTraceBuffer(
             const size_t recordOffset =
                 sliceOffset + sizeof(slice) + static_cast<size_t>(index) * sizeof(aclsan::AclsanRawTraceRecord);
             aclsan::AclsanRawTraceRecord wire{};
-            std::memcpy(&wire, buffer + recordOffset, sizeof(wire));
+            if (memcpy_s(&wire, sizeof(wire), buffer + recordOffset, sizeof(wire)) != EOK) {
+                result.records.clear();
+                result.error = "cannot copy trace record or header";
+                return result;
+            }
 
             ParsedTraceRecord parsed{};
             parsed.record.pc = wire.pc;
             parsed.record.instrId = wire.instrId;
-            std::memcpy(parsed.record.args, wire.args, sizeof(wire.args));
+            if (memcpy_s(parsed.record.args, sizeof(parsed.record.args), wire.args, sizeof(wire.args)) != EOK) {
+                result.records.clear();
+                result.error = "cannot copy trace record or header";
+                return result;
+            }
             parsed.record.siteId = wire.siteId;
             parsed.record.category = wire.category;
             parsed.record.pipeline = wire.pipeline;

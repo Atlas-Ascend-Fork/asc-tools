@@ -35,10 +35,13 @@ using npucheck::NpuCheckReportPattern;
 using npucheck::ReportSeverity;
 using npucheck::ReportTool;
 
-constexpr uint32_t kAllocationStateLive = 1;
-constexpr uint32_t kAllocationStateFreed = 2;
-constexpr uint32_t kMaxAffineRank = 5;
-constexpr uint64_t kMaxLayoutSegments = 1u << 20u;
+constexpr uint32_t ALLOCATION_STATE_LIVE = 1;
+constexpr uint32_t ALLOCATION_STATE_FREED = 2;
+constexpr uint32_t MAX_AFFINE_RANK = 5;
+constexpr uint64_t MAX_LAYOUT_SEGMENTS = 1u << 20u;
+constexpr uint64_t DAV3510_L1_BYTES = 512 * 1024;
+constexpr uint64_t DAV3510_L0AB_BYTES = 64 * 1024;
+constexpr uint64_t DAV3510_L0C_BYTES = 256 * 1024;
 
 // Cube decoding currently supports only dav3510 (Ascend 950). Capacities match
 // CANN platform_config and mssanitizer CHIP_INFO_MAP, not sample tensor sizes.
@@ -46,12 +49,12 @@ uint64_t CubeCapacity(uint32_t space)
 {
     switch (space) {
         case ACLSAN_DEVICE_MEMORY_SPACE_L1:
-            return 512 * 1024;
+            return DAV3510_L1_BYTES;
         case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
         case ACLSAN_DEVICE_MEMORY_SPACE_L0B:
-            return 64 * 1024;
+            return DAV3510_L0AB_BYTES;
         case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
-            return 256 * 1024;
+            return DAV3510_L0C_BYTES;
         default:
             return 0;
     }
@@ -77,8 +80,8 @@ struct AffineLayout {
     uint64_t base = 0;
     uint32_t rank = 0;
     uint64_t elementBytes = 0;
-    std::array<uint64_t, kMaxAffineRank> dimensions{};
-    std::array<int64_t, kMaxAffineRank> strides{};
+    std::array<uint64_t, MAX_AFFINE_RANK> dimensions{};
+    std::array<int64_t, MAX_AFFINE_RANK> strides{};
 };
 
 struct AffineAxis {
@@ -128,11 +131,11 @@ std::optional<uint64_t> AddressWithOffset(uint64_t base, __int128 offset)
 template <typename Visitor>
 bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
 {
-    if (layout.rank == 0 || layout.rank > kMaxAffineRank || layout.elementBytes == 0) {
+    if (layout.rank == 0 || layout.rank > MAX_AFFINE_RANK || layout.elementBytes == 0) {
         return false;
     }
 
-    std::array<AffineAxis, kMaxAffineRank> axes{};
+    std::array<AffineAxis, MAX_AFFINE_RANK> axes{};
     uint32_t axisCount = 0;
     for (uint32_t dimension = 0; dimension < layout.rank; ++dimension) {
         const uint64_t count = layout.dimensions[dimension];
@@ -184,7 +187,7 @@ bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
     __int128 maximumOffset = contiguousBegin;
     for (uint32_t axisIndex = sparseBegin; axisIndex < axisCount; ++axisIndex) {
         const AffineAxis& axis = axes[axisIndex];
-        if (axis.count > kMaxLayoutSegments / segmentCount) {
+        if (axis.count > MAX_LAYOUT_SEGMENTS / segmentCount) {
             return false;
         }
         segmentCount *= axis.count;
@@ -240,7 +243,7 @@ NpuCheckReportAllocation ToReportAllocation(const std::optional<Allocation>& all
     result.freeSerialNo = allocation->freeSequence;
     result.memorySpace = NpuCheckReportMemorySpace::GM;
     result.deviceId = allocation->deviceId;
-    result.state = allocation->freeSequence == 0 ? kAllocationStateLive : kAllocationStateFreed;
+    result.state = allocation->freeSequence == 0 ? ALLOCATION_STATE_LIVE : ALLOCATION_STATE_FREED;
     return result;
 }
 
@@ -263,8 +266,8 @@ NpuCheckReportExecContext ToExecContext(const AclsanDeviceMemoryAccessData& data
 
 int64_t ClampDistance(uint64_t distance)
 {
-    constexpr uint64_t kMaximum = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
-    return static_cast<int64_t>(distance > kMaximum ? kMaximum : distance);
+    constexpr uint64_t MAXIMUM = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+    return static_cast<int64_t>(distance > MAXIMUM ? MAXIMUM : distance);
 }
 
 void SetDistance(
@@ -330,7 +333,8 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     const AclsanDeviceMemoryAccessData& data, NpuCheckReportAccessMode accessMode, uint64_t address, uint64_t bytes,
     uint64_t groupId)
 {
-    const bool preload = (data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0 && bytes == 0;
+    const bool preload =
+        (data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0 && bytes == 0;
     const uint64_t capacity = CubeCapacity(data.memorySpace);
     RangeResult range{};
     if (capacity != 0) {
@@ -380,7 +384,7 @@ void Memcheck::QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data)
 {
     // 原子配置未知但范围已还原的 WRITE 仍按普通写检查边界。
     // ATOMIC_CONFIG_UNKNOWN 不影响 Memcheck；ESTIMATED 表示访问范围也不精确。
-    if ((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0) {
+    if ((data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0) {
         ++stats_.inexactDeviceOperations;
         return;
     }
@@ -469,7 +473,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
             affine.base = data.address;
             affine.rank = layout.rank;
             affine.elementBytes = layout.elementBytes;
-            for (uint32_t dimension = 0; dimension < kMaxAffineRank; ++dimension) {
+            for (uint32_t dimension = 0; dimension < MAX_AFFINE_RANK; ++dimension) {
                 affine.dimensions[dimension] = layout.dims[dimension];
                 affine.strides[dimension] = layout.strides[dimension];
             }

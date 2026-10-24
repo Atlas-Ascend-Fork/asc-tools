@@ -10,6 +10,7 @@
 #include "range_profiler.h"
 #include <memory>
 #include "binary_registry.h"
+#include "acl_pti/data/pmu_events.h"
 
 #include "common/debug_log.h"
 #include "profiling/prof_api.h"
@@ -31,9 +32,18 @@ struct SectionDefinition {
     std::size_t eventCount;
 };
 
-constexpr uint32_t kArithmeticUtilization[] = {768,  789,  790,  808,  809,  810,  1281,
-                                               1282, 1283, 1284, 1320, 1466, 1467, 1468};
-constexpr uint32_t kPipeUtilization[] = {0, 1, 10, 36, 52, 53, 514, 515, 810, 1281, 1794, 1812, 1813};
+constexpr uint32_t ARITHMETIC_UTILIZATION[] = {
+    data::pmu::CUBE_TOTAL_INSTRUCTION_EVENT,     data::pmu::CUBE_FP_INSTRUCTION_EVENT,
+    data::pmu::CUBE_INT_INSTRUCTION_EVENT,       data::pmu::CUBE_FP_ACTIVE_CYCLES_EVENT,
+    data::pmu::CUBE_INT_ACTIVE_CYCLES_EVENT,     data::pmu::CUBE_ACTIVE_CYCLES_EVENT,
+    data::pmu::VECTOR_ACTIVE_CYCLES_EVENT,       data::pmu::SIMD_VF_ISSUE_CYCLES_EVENT,
+    data::pmu::VECTOR_SFU_ACTIVE_CYCLES_EVENT,   data::pmu::SIMT_VF_ISSUE_CYCLES_EVENT,
+    data::pmu::SIMD_INSTRUCTION_ISSUE_EVENT,     data::pmu::SIMT_EXU_INSTRUCTION_ISSUE_EVENT,
+    data::pmu::SIMT_DVG_INSTRUCTION_ISSUE_EVENT, data::pmu::SIMT_DCU_INSTRUCTION_ISSUE_EVENT,
+};
+constexpr uint32_t kPipeUtilization[] = {
+    0,    1,    10,  36, 52, 53, 514, 515, data::pmu::CUBE_ACTIVE_CYCLES_EVENT, data::pmu::VECTOR_ACTIVE_CYCLES_EVENT,
+    1794, 1812, 1813};
 constexpr uint32_t kResourceConflictRatio[] = {11, 12, 13, 14, 15, 1344, 1366, 1376, 1377, 1378, 1379};
 constexpr uint32_t kMemory[] = {512,  513,  514,  515,  516,  518,  1058, 1059, 1391, 1395, 1396, 1397,
                                 1398, 1400, 1404, 1407, 1408, 1792, 1794, 1799, 1801, 1804, 1806, 1815};
@@ -44,7 +54,7 @@ constexpr uint32_t kL2Cache[] = {1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067,
 constexpr uint32_t kMsprofCollectionType = 8;
 
 constexpr SectionDefinition kSectionCatalog[] = {
-    {"ArithmeticUtilization", kArithmeticUtilization, std::size(kArithmeticUtilization)},
+    {"ArithmeticUtilization", ARITHMETIC_UTILIZATION, std::size(ARITHMETIC_UTILIZATION)},
     {"PipeUtilization", kPipeUtilization, std::size(kPipeUtilization)},
     {"ResourceConflictRatio", kResourceConflictRatio, std::size(kResourceConflictRatio)},
     {"Memory", kMemory, std::size(kMemory)},

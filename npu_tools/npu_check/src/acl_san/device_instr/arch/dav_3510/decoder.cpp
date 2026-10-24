@@ -212,7 +212,7 @@ DecodedInstruction DecodeNdDmaPadCount(const aclsan::AclsanRawTraceRecord& recor
 
 DecodedInstruction DecodeNdDmaLoopStride(const aclsan::AclsanRawTraceRecord& record) noexcept
 {
-    const uint32_t first = static_cast<uint32_t>(InstructionId::NdDmaLoop0Stride);
+    const uint32_t first = RawId(InstructionId::NdDmaLoop0Stride);
     const auto loopIndex = record.instrId - first;
     const uint64_t stride = (record.args[0] >> 20U) & ((1ULL << 40U) - 1U);
     return DecodedInstruction{
@@ -239,20 +239,20 @@ DecodedInstruction DecodeLoop3Param(const aclsan::AclsanRawTraceRecord& record) 
 
 DecodedInstruction DecodeDmaLoopSize(const aclsan::AclsanRawTraceRecord& record, DmaLoopDirection direction) noexcept
 {
-    constexpr uint64_t kLoop1SizeMask = (1ULL << 21U) - 1U;
-    constexpr uint64_t kLoop2SizeMask = (1ULL << 42U) - 1U;
+    constexpr uint64_t LOOP1_SIZE_MASK = (1ULL << 21U) - 1U;
+    constexpr uint64_t LOOP2_SIZE_MASK = (1ULL << 42U) - 1U;
     const DmaLoopSizeParamField params{
-        direction, static_cast<uint32_t>(record.args[0] & kLoop1SizeMask), (record.args[0] >> 21U) & kLoop2SizeMask};
+        direction, static_cast<uint32_t>(record.args[0] & LOOP1_SIZE_MASK), (record.args[0] >> 21U) & LOOP2_SIZE_MASK};
     return DecodedInstruction{DeviceInstructionKind::DmaLoopSize, params};
 }
 
 DecodedInstruction DecodeDmaLoopStride(
     const aclsan::AclsanRawTraceRecord& record, DmaLoopDirection direction, uint32_t loopIndex) noexcept
 {
-    constexpr uint64_t kGmStrideMask = (1ULL << 40U) - 1U;
-    constexpr uint64_t kLocalStrideMask = (1ULL << 21U) - 1U;
-    const uint64_t lowStride = record.args[0] & kGmStrideMask;
-    const uint64_t highStride = (record.args[0] >> 40U) & kLocalStrideMask;
+    constexpr uint64_t GM_STRIDE_MASK = (1ULL << 40U) - 1U;
+    constexpr uint64_t LOCAL_STRIDE_MASK = (1ULL << 21U) - 1U;
+    const uint64_t lowStride = record.args[0] & GM_STRIDE_MASK;
+    const uint64_t highStride = (record.args[0] >> 40U) & LOCAL_STRIDE_MASK;
     const bool sourceIsGm = direction != DmaLoopDirection::UBUF_TO_GM;
     const DmaLoopStrideParamField params{
         direction, loopIndex, sourceIsGm ? lowStride : highStride, sourceIsGm ? highStride : lowStride};
@@ -374,7 +374,7 @@ DecodedInstruction DecodeScalarDev(
 
 DecodedInstruction DecodeScalarPreload(const aclsan::AclsanRawTraceRecord& record) noexcept
 {
-    const int64_t offset = record.instrId == static_cast<uint32_t>(InstructionId::DcPreloadI) ?
+    const int64_t offset = record.instrId == RawId(InstructionId::DcPreloadI) ?
                                static_cast<int64_t>(static_cast<int16_t>(record.args[1])) :
                                static_cast<int64_t>(record.args[1]);
     return DecodedInstruction{
@@ -391,8 +391,8 @@ DecodedInstruction DecodeScalarAtomic(const aclsan::AclsanRawTraceRecord& record
 
 DecodedInstruction DecodeScalarGm(const aclsan::AclsanRawTraceRecord& record) noexcept
 {
-    constexpr uint32_t kWidthsPerFamily = 4;
-    const uint32_t dataBits = DATA_BITS_B64 >> ((record.instrId - RawId(InstructionId::StB64Imm)) % kWidthsPerFamily);
+    constexpr uint32_t WIDTHS_PER_FAMILY = 4;
+    const uint32_t dataBits = DATA_BITS_B64 >> ((record.instrId - RawId(InstructionId::StB64Imm)) % WIDTHS_PER_FAMILY);
     const ScalarGmParamField params{
         record.instrId, dataBits,       record.args[0], static_cast<int64_t>(record.args[1]),
         record.args[2], record.args[3], record.args[4]};
@@ -448,7 +448,7 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
     if (record.instrId >= RawId(InstructionId::StB64Imm) && record.instrId <= RawId(InstructionId::LdpB8)) {
         return DecodeScalarGm(record);
     }
-    if (record.instrId == 386 || record.instrId == 387) {
+    if (record.instrId == RawId(InstructionId::SetFmatrix) || record.instrId == RawId(InstructionId::SetFmatrixB)) {
         const uint64_t config = record.args[0];
         FmatrixParamField fields{};
         fields.instrId = record.instrId;
@@ -460,7 +460,7 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         fields.paddingBottom = static_cast<uint8_t>(config >> 56);
         return DecodedInstruction{DeviceInstructionKind::Img2ColRegister, fields};
     }
-    if (record.instrId == 390 || record.instrId == 391) {
+    if (record.instrId == RawId(InstructionId::SetL3dRpt) || record.instrId == RawId(InstructionId::SetL3dRptB)) {
         const uint64_t config = record.args[0];
         L3dRptParamField fields{};
         fields.instrId = record.instrId;
@@ -471,7 +471,8 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         fields.dstOffset = static_cast<uint8_t>(config >> 48);
         return DecodedInstruction{DeviceInstructionKind::Img2ColRegister, fields};
     }
-    if (record.instrId >= 141 && record.instrId <= 148) {
+    if (record.instrId >= RawId(InstructionId::LoadCbufToCaB4) &&
+        record.instrId <= RawId(InstructionId::LoadCbufToCbB32)) {
         LoadCbufToL0ParamField f{};
         f.instrId = record.instrId;
         f.dstAddr = record.args[0];
@@ -485,7 +486,8 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         f.transpose = record.args[4] != 0;
         return DecodedInstruction{DeviceInstructionKind::LoadL1ToL0, f};
     }
-    if (record.instrId >= 137 && record.instrId <= 140) {
+    if (record.instrId >= RawId(InstructionId::LoadCbufToCbTransposeB8) &&
+        record.instrId <= RawId(InstructionId::LoadCbufToCbTransposeB4)) {
         LoadCbufToCbTransposeParamField f{};
         f.instrId = record.instrId;
         f.dstAddr = record.args[0];
@@ -499,7 +501,9 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         f.decrement = (record.args[2] >> 63) != 0;
         return DecodedInstruction{DeviceInstructionKind::LoadL1Transpose, f};
     }
-    if ((record.instrId >= 153 && record.instrId <= 157) || record.instrId == 422) {
+    if ((record.instrId >= RawId(InstructionId::Img2ColCbufToCaB16) &&
+         record.instrId <= RawId(InstructionId::Img2ColCbufToCbB32)) ||
+        record.instrId == 422) {
         Img2ColParamField f{};
         f.instrId = record.instrId;
         f.dstAddr = record.args[0];
@@ -521,7 +525,7 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         f.channelSize = static_cast<uint16_t>(record.args[3] >> 48);
         return DecodedInstruction{DeviceInstructionKind::Img2Col, f};
     }
-    if (record.instrId >= 400 && record.instrId <= 415) {
+    if (record.instrId >= RawId(InstructionId::MadS8) && record.instrId <= RawId(InstructionId::MadMxE5m2E5m2)) {
         const uint64_t config = record.args[3];
         return DecodedInstruction{
             DeviceInstructionKind::Mmad,
@@ -531,7 +535,8 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
                 static_cast<uint16_t>((config >> 24) & 0xfff), static_cast<uint8_t>((config >> 55) & 0x3),
                 bool((config >> 61) & 1), bool((config >> 62) & 1), bool((config >> 63) & 1)}};
     }
-    if (record.instrId == 151 || record.instrId == 152) {
+    if (record.instrId == RawId(InstructionId::LoadCbufToCaMx) ||
+        record.instrId == RawId(InstructionId::LoadCbufToCbMx)) {
         const uint64_t config = record.args[2];
         return DecodedInstruction{
             DeviceInstructionKind::LoadL1Mx,
@@ -540,7 +545,7 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
                 static_cast<uint8_t>(config >> 32), static_cast<uint8_t>(config >> 40),
                 static_cast<uint16_t>(record.args[3])}};
     }
-    if (record.instrId == 158) {
+    if (record.instrId == RawId(InstructionId::CopyCbufToUbuf)) {
         return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToUbuf);
     }
     switch (record.instrId) {

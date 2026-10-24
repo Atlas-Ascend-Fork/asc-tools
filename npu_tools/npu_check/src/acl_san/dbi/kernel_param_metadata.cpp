@@ -11,6 +11,7 @@
 #include "dbi/kernel_param_metadata.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <elf.h>
 #include <limits>
 #include <map>
@@ -25,6 +26,16 @@ constexpr uint16_t PARAM_INFO = 17;
 constexpr size_t SUMMARY_SIZE = 12;
 constexpr size_t PARAM_INFO_SIZE = 36;
 constexpr uint32_t POINTER_SIZE = 8;
+constexpr size_t BITS_PER_BYTE = std::numeric_limits<uint8_t>::digits;
+constexpr size_t TLV_LENGTH_OFFSET = sizeof(uint16_t);
+constexpr size_t TLV_HEADER_BYTES = sizeof(uint16_t) * 2;
+constexpr size_t PARAM_ORDINAL_OFFSET = sizeof(uint32_t);
+constexpr size_t PARAM_OFFSET_OFFSET = PARAM_ORDINAL_OFFSET + sizeof(uint32_t);
+constexpr size_t PARAM_SIZE_OFFSET = PARAM_OFFSET_OFFSET + sizeof(uint32_t);
+constexpr size_t PARAM_ALIGNMENT_OFFSET = PARAM_SIZE_OFFSET + sizeof(uint32_t);
+constexpr size_t PARAM_TYPE_OFFSET = PARAM_ALIGNMENT_OFFSET + sizeof(uint16_t);
+constexpr size_t SUMMARY_ARGUMENT_BYTES_OFFSET = sizeof(uint32_t);
+constexpr uint16_t POINTER_PARAMETER_TYPE = 2;
 
 // TODO: 后续统一整理成一个公共函数
 void Require(bool condition, const char* message)
@@ -41,7 +52,7 @@ uint64_t Read(const std::string& data, size_t offset, size_t size)
     Require(InRange(data.size(), offset, size), "truncated ELF or parameter metadata");
     uint64_t result = 0;
     for (size_t i = 0; i < size; ++i) {
-        result |= static_cast<uint64_t>(static_cast<unsigned char>(data[offset + i])) << (i * 8);
+        result |= static_cast<uint64_t>(static_cast<unsigned char>(data[offset + i])) << (i * BITS_PER_BYTE);
     }
     return result;
 }
@@ -50,7 +61,7 @@ void Write(std::string& data, size_t offset, uint64_t value, size_t size)
 {
     Require(InRange(data.size(), offset, size), "invalid metadata write range");
     for (size_t i = 0; i < size; ++i) {
-        data[offset + i] = static_cast<char>((value >> (i * 8)) & 0xffU);
+        data[offset + i] = static_cast<char>((value >> (i * BITS_PER_BYTE)) & 0xffU);
     }
 }
 
@@ -67,30 +78,36 @@ std::map<std::string, Section> ReadSections(const std::string& data, bool readOn
     Require(
         data.size() >= sizeof(Elf64_Ehdr) && data.compare(0, SELFMAG, ELFMAG) == 0 &&
             Read(data, EI_CLASS, 1) == ELFCLASS64 && Read(data, EI_DATA, 1) == ELFDATA2LSB &&
-            Read(data, EI_VERSION, 1) == EV_CURRENT && Read(data, 20, 4) == EV_CURRENT &&
-            Read(data, 52, 2) == sizeof(Elf64_Ehdr),
+            Read(data, EI_VERSION, 1) == EV_CURRENT &&
+            Read(data, offsetof(Elf64_Ehdr, e_version), sizeof(Elf64_Ehdr::e_version)) == EV_CURRENT &&
+            Read(data, offsetof(Elf64_Ehdr, e_ehsize), sizeof(Elf64_Ehdr::e_ehsize)) == sizeof(Elf64_Ehdr),
         "expected ELF64 little-endian version 1");
-    const uint64_t table = Read(data, 40, 8);
-    const uint64_t count = Read(data, 60, 2);
-    const uint64_t namesIndex = Read(data, 62, 2);
+    const uint64_t table = Read(data, offsetof(Elf64_Ehdr, e_shoff), sizeof(Elf64_Ehdr::e_shoff));
+    const uint64_t count = Read(data, offsetof(Elf64_Ehdr, e_shnum), sizeof(Elf64_Ehdr::e_shnum));
+    const uint64_t namesIndex = Read(data, offsetof(Elf64_Ehdr, e_shstrndx), sizeof(Elf64_Ehdr::e_shstrndx));
     Require(
-        Read(data, 58, 2) == sizeof(Elf64_Shdr) && count > 0 && namesIndex > 0 && namesIndex < count &&
-            table >= sizeof(Elf64_Ehdr) && InRange(data.size(), table, count * sizeof(Elf64_Shdr)),
+        Read(data, offsetof(Elf64_Ehdr, e_shentsize), sizeof(Elf64_Ehdr::e_shentsize)) == sizeof(Elf64_Shdr) &&
+            count > 0 && namesIndex > 0 && namesIndex < count && table >= sizeof(Elf64_Ehdr) &&
+            InRange(data.size(), table, count * sizeof(Elf64_Shdr)),
         "invalid or unsupported ELF section table");
     const size_t namesHeader = table + namesIndex * sizeof(Elf64_Shdr);
-    const uint64_t namesOffset = Read(data, namesHeader + 24, 8);
-    const uint64_t namesSize = Read(data, namesHeader + 32, 8);
+    const uint64_t namesOffset =
+        Read(data, namesHeader + offsetof(Elf64_Shdr, sh_offset), sizeof(Elf64_Shdr::sh_offset));
+    const uint64_t namesSize = Read(data, namesHeader + offsetof(Elf64_Shdr, sh_size), sizeof(Elf64_Shdr::sh_size));
     Require(
-        Read(data, namesHeader + 4, 4) == SHT_STRTAB && InRange(data.size(), namesOffset, namesSize),
+        Read(data, namesHeader + offsetof(Elf64_Shdr, sh_type), sizeof(Elf64_Shdr::sh_type)) == SHT_STRTAB &&
+            InRange(data.size(), namesOffset, namesSize),
         "invalid ELF section names");
     std::map<std::string, Section> sections;
     for (size_t i = 1; i < count; ++i) {
         const size_t header = table + i * sizeof(Elf64_Shdr);
-        const uint64_t nameOffset = Read(data, header, 4);
-        const uint64_t type = Read(data, header + 4, 4);
+        const uint64_t nameOffset = Read(data, header + offsetof(Elf64_Shdr, sh_name), sizeof(Elf64_Shdr::sh_name));
+        const uint64_t type = Read(data, header + offsetof(Elf64_Shdr, sh_type), sizeof(Elf64_Shdr::sh_type));
         Section section{
-            header, Read(data, header + 24, 8), Read(data, header + 32, 8), Read(data, header + 48, 8),
-            Read(data, header + 8, 8)};
+            header, Read(data, header + offsetof(Elf64_Shdr, sh_offset), sizeof(Elf64_Shdr::sh_offset)),
+            Read(data, header + offsetof(Elf64_Shdr, sh_size), sizeof(Elf64_Shdr::sh_size)),
+            Read(data, header + offsetof(Elf64_Shdr, sh_addralign), sizeof(Elf64_Shdr::sh_addralign)),
+            Read(data, header + offsetof(Elf64_Shdr, sh_flags), sizeof(Elf64_Shdr::sh_flags))};
         Require(
             type == SHT_NOBITS || InRange(data.size(), section.offset, section.size),
             "ELF section exceeds file bounds");
@@ -110,7 +127,7 @@ std::map<std::string, Section> ReadSections(const std::string& data, bool readOn
             }
             continue;
         }
-        if (name.compare(0, 13, ".ascend.meta.") != 0) {
+        if (name.compare(0, sizeof(".ascend.meta.") - 1, ".ascend.meta.") != 0) {
             continue;
         }
         Require(
@@ -144,14 +161,14 @@ Metadata ReadMetadata(const std::string& data, const Section& section)
     size_t infoCount = 0;
     uint32_t count = 0;
     for (size_t offset = 0; offset < bytes.size();) {
-        const auto tag = static_cast<uint16_t>(Read(bytes, offset, 2));
-        const size_t length = Read(bytes, offset + 2, 2);
-        offset += 4;
+        const auto tag = static_cast<uint16_t>(Read(bytes, offset, sizeof(uint16_t)));
+        const size_t length = Read(bytes, offset + TLV_LENGTH_OFFSET, sizeof(uint16_t));
+        offset += TLV_HEADER_BYTES;
         Require(InRange(bytes.size(), offset, length), "truncated parameter TLV");
         if (tag == PARAM_SUMMARY) {
             Require(length == SUMMARY_SIZE, "unsupported ParamSummary layout");
             ++summaryCount;
-            count = Read(bytes, offset, 4);
+            count = Read(bytes, offset, sizeof(uint32_t));
         } else if (tag == PARAM_INFO) {
             Require(length == PARAM_INFO_SIZE, "unsupported ParamInfo layout");
             ++infoCount;
@@ -170,7 +187,7 @@ Metadata ReadMetadata(const std::string& data, const Section& section)
         if (item.tag != PARAM_INFO) {
             continue;
         }
-        const uint64_t ordinal = Read(item.value, 4, 4);
+        const uint64_t ordinal = Read(item.value, PARAM_ORDINAL_OFFSET, sizeof(uint32_t));
         Require(ordinal < count, "parameter ordinal is out of range");
         Require(!seen[ordinal], "duplicate parameter ordinal");
         seen[ordinal] = true;
@@ -182,9 +199,9 @@ Metadata ReadMetadata(const std::string& data, const Section& section)
 void AppendTlv(std::string& output, uint16_t tag, const std::string& value)
 {
     const size_t header = output.size();
-    output.resize(header + 4);
-    Write(output, header, tag, 2);
-    Write(output, header + 2, value.size(), 2);
+    output.resize(header + TLV_HEADER_BYTES);
+    Write(output, header, tag, sizeof(uint16_t));
+    Write(output, header + TLV_LENGTH_OFFSET, value.size(), sizeof(uint16_t));
     output += value;
 }
 
@@ -204,13 +221,15 @@ std::string NormalizeMetadata(const Metadata& original, const Metadata& patched,
     Require(patched.hasParameterLayout, "instrumented parameter summary is missing");
     for (const auto& item : original.values) {
         if (item.tag == PARAM_SUMMARY) {
-            Require(Read(item.value, 4, 4) <= traceOffset, "original argument area exceeds trace offset");
+            Require(
+                Read(item.value, SUMMARY_ARGUMENT_BYTES_OFFSET, sizeof(uint32_t)) <= traceOffset,
+                "original argument area exceeds trace offset");
         }
     }
     std::vector<std::pair<uint64_t, uint64_t>> ranges;
     for (const auto& parameter : original.parameters) {
-        const uint64_t offset = Read(parameter, 8, 4);
-        const uint64_t size = Read(parameter, 12, 4);
+        const uint64_t offset = Read(parameter, PARAM_OFFSET_OFFSET, sizeof(uint32_t));
+        const uint64_t size = Read(parameter, PARAM_SIZE_OFFSET, sizeof(uint32_t));
         Require(
             size > 0 && offset <= traceOffset && size <= traceOffset - offset,
             "original parameter overlaps trace pointer");
@@ -222,11 +241,11 @@ std::string NormalizeMetadata(const Metadata& original, const Metadata& patched,
     }
     // 与 dav-3510 bisheng-tune 的 synthetic pointer ParamInfo 一致：8 字节、8 字节对齐、类型 2。
     std::string pointer(PARAM_INFO_SIZE, '\0');
-    Write(pointer, 4, original.parameters.size(), 4);
-    Write(pointer, 8, traceOffset, 4);
-    Write(pointer, 12, POINTER_SIZE, 4);
-    Write(pointer, 16, POINTER_SIZE, 2);
-    Write(pointer, 18, 2, 2);
+    Write(pointer, PARAM_ORDINAL_OFFSET, original.parameters.size(), sizeof(uint32_t));
+    Write(pointer, PARAM_OFFSET_OFFSET, traceOffset, sizeof(uint32_t));
+    Write(pointer, PARAM_SIZE_OFFSET, POINTER_SIZE, sizeof(uint32_t));
+    Write(pointer, PARAM_ALIGNMENT_OFFSET, POINTER_SIZE, sizeof(uint16_t));
+    Write(pointer, PARAM_TYPE_OFFSET, POINTER_PARAMETER_TYPE, sizeof(uint16_t));
     std::string output;
     for (const auto& item : patched.values) {
         if (item.tag == PARAM_INFO) {
@@ -236,13 +255,13 @@ std::string NormalizeMetadata(const Metadata& original, const Metadata& patched,
             AppendTlv(output, item.tag, item.value);
             continue;
         }
-        const uint64_t count = Read(item.value, 0, 4);
+        const uint64_t count = Read(item.value, 0, sizeof(uint32_t));
         Require(
             count == original.parameters.size() || count == original.parameters.size() + 1,
             "unexpected instrumented parameter count");
         std::string summary = item.value;
-        Write(summary, 0, original.parameters.size() + 1, 4);
-        Write(summary, 4, traceOffset + POINTER_SIZE, 4);
+        Write(summary, 0, original.parameters.size() + 1, sizeof(uint32_t));
+        Write(summary, SUMMARY_ARGUMENT_BYTES_OFFSET, traceOffset + POINTER_SIZE, sizeof(uint32_t));
         AppendTlv(output, PARAM_SUMMARY, summary);
         for (const auto& parameter : original.parameters) {
             AppendTlv(output, PARAM_INFO, parameter);
@@ -268,12 +287,13 @@ bool GetMaximumKernelArgumentArea(
             uint64_t parameterEnd = 0;
             for (const auto& item : metadata.values) {
                 if (item.tag == PARAM_SUMMARY) {
-                    summaryArea = static_cast<uint32_t>(Read(item.value, 4, 4));
+                    summaryArea =
+                        static_cast<uint32_t>(Read(item.value, SUMMARY_ARGUMENT_BYTES_OFFSET, sizeof(uint32_t)));
                 }
             }
             for (const auto& parameter : metadata.parameters) {
-                const uint64_t parameterOffset = Read(parameter, 8, 4);
-                const uint64_t parameterSize = Read(parameter, 12, 4);
+                const uint64_t parameterOffset = Read(parameter, PARAM_OFFSET_OFFSET, sizeof(uint32_t));
+                const uint64_t parameterSize = Read(parameter, PARAM_SIZE_OFFSET, sizeof(uint32_t));
                 parameterEnd = std::max(parameterEnd, parameterOffset + parameterSize);
             }
             const uint64_t area = std::max<uint64_t>(summaryArea, parameterEnd);
@@ -334,8 +354,8 @@ bool ModifyKernelParamMetadata(
             result.append(padding, '\0');
             const size_t offset = result.size();
             result += metadata;
-            Write(result, section.header + 24, offset, 8);
-            Write(result, section.header + 32, metadata.size(), 8);
+            Write(result, section.header + offsetof(Elf64_Shdr, sh_offset), offset, sizeof(Elf64_Shdr::sh_offset));
+            Write(result, section.header + offsetof(Elf64_Shdr, sh_size), metadata.size(), sizeof(Elf64_Shdr::sh_size));
         }
         Require(selected != 0, "selected entry has no matching kernel metadata");
         patched.swap(result);
@@ -353,7 +373,8 @@ bool GetReadOnlyBinarySections(const std::string& elf, std::vector<BinarySection
         std::vector<BinarySectionRange> result;
         for (const auto& entry : ReadSections(elf, true)) {
             const auto& section = entry.second;
-            const uint64_t address = Read(elf, section.header + 16, 8);
+            const uint64_t address =
+                Read(elf, section.header + offsetof(Elf64_Shdr, sh_addr), sizeof(Elf64_Shdr::sh_addr));
             Require(section.size <= UINT64_MAX - address, "read-only section address overflow");
             result.push_back({address, section.size});
         }

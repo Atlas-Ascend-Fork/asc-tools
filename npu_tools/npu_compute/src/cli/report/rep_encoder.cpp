@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/rep_encoder.h"
+#include "securec.h"
 
 #include <algorithm>
 #include <cstring>
@@ -29,20 +30,20 @@ bool Fail(const std::string& message, std::string* error)
 void WriteLe16(uint16_t value, uint8_t* output)
 {
     output[0] = static_cast<uint8_t>(value);
-    output[1] = static_cast<uint8_t>(value >> kNpuRepByteBits);
+    output[1] = static_cast<uint8_t>(value >> NPU_REP_BYTE_BITS);
 }
 
 void WriteLe32(uint32_t value, uint8_t* output)
 {
     for (std::size_t index = 0; index < sizeof(value); ++index) {
-        output[index] = static_cast<uint8_t>(value >> (index * kNpuRepByteBits));
+        output[index] = static_cast<uint8_t>(value >> (index * NPU_REP_BYTE_BITS));
     }
 }
 
 void WriteLe64(uint64_t value, uint8_t* output)
 {
     for (std::size_t index = 0; index < sizeof(value); ++index) {
-        output[index] = static_cast<uint8_t>(value >> (index * kNpuRepByteBits));
+        output[index] = static_cast<uint8_t>(value >> (index * NPU_REP_BYTE_BITS));
     }
 }
 
@@ -65,7 +66,7 @@ bool ValidateFileName(const std::string& name, std::string* error)
     if (name.empty()) {
         return Fail("rep entry file name is empty", error);
     }
-    if (name.size() >= kNpuRepFileNameSize) {
+    if (name.size() >= NPU_REP_FILE_NAME_SIZE) {
         return Fail("rep entry file name exceeds 127 bytes", error);
     }
     if (name.find('\0') != std::string::npos) {
@@ -105,12 +106,12 @@ bool EncodeRep(const std::vector<RepEntry>& entries, std::vector<uint8_t>* encod
 
         std::unordered_set<std::string> names;
         names.reserve(entries.size());
-        uint64_t total_length = kNpuRepHeadSize;
+        uint64_t total_length = NPU_REP_HEAD_SIZE;
         const uint64_t entry_count = entries.size();
-        if (entry_count > (std::numeric_limits<uint64_t>::max() - total_length) / kNpuRepFileInfoSize) {
+        if (entry_count > (std::numeric_limits<uint64_t>::max() - total_length) / NPU_REP_FILE_INFO_SIZE) {
             return Fail("rep file info table length overflows", error);
         }
-        total_length += entry_count * kNpuRepFileInfoSize;
+        total_length += entry_count * NPU_REP_FILE_INFO_SIZE;
 
         for (const RepEntry& entry : entries) {
             if (!ValidateFileName(entry.file_name, error)) {
@@ -132,26 +133,31 @@ bool EncodeRep(const std::vector<RepEntry>& entries, std::vector<uint8_t>* encod
 
         encoded->assign(static_cast<std::size_t>(total_length), 0);
         uint8_t* output = encoded->data();
-        std::copy(kNpuRepMagic.begin(), kNpuRepMagic.end(), output);
-        WriteLe32(kNpuRepVersion, output + kNpuRepHeaderVersionOffset);
-        WriteLe16(kNpuRepOrigin, output + kNpuRepHeaderOriginOffset);
-        WriteLe16(static_cast<uint16_t>(kNpuRepHeadSize), output + kNpuRepHeaderHeaderLengthOffset);
-        WriteLe32(static_cast<uint32_t>(entries.size()), output + kNpuRepHeaderFileCountOffset);
-        WriteLe32(static_cast<uint32_t>(kNpuRepFileInfoSize), output + kNpuRepHeaderFileInfoLengthOffset);
-        WriteLe32(0, output + kNpuRepHeaderReservedOffset);
-        WriteLe64(total_length, output + kNpuRepHeaderLengthOffset);
+        std::copy(NPU_REP_MAGIC.begin(), NPU_REP_MAGIC.end(), output);
+        WriteLe32(NPU_REP_VERSION, output + NPU_REP_HEADER_VERSION_OFFSET);
+        WriteLe16(NPU_REP_ORIGIN, output + NPU_REP_HEADER_ORIGIN_OFFSET);
+        WriteLe16(static_cast<uint16_t>(NPU_REP_HEAD_SIZE), output + NPU_REP_HEADER_HEADER_LENGTH_OFFSET);
+        WriteLe32(static_cast<uint32_t>(entries.size()), output + NPU_REP_HEADER_FILE_COUNT_OFFSET);
+        WriteLe32(static_cast<uint32_t>(NPU_REP_FILE_INFO_SIZE), output + NPU_REP_HEADER_FILE_INFO_LENGTH_OFFSET);
+        WriteLe32(0, output + NPU_REP_HEADER_RESERVED_OFFSET);
+        WriteLe64(total_length, output + NPU_REP_HEADER_LENGTH_OFFSET);
 
-        std::size_t payload_offset = kNpuRepHeadSize + entries.size() * kNpuRepFileInfoSize;
+        std::size_t payload_offset = NPU_REP_HEAD_SIZE + entries.size() * NPU_REP_FILE_INFO_SIZE;
         for (std::size_t index = 0; index < entries.size(); ++index) {
             const RepEntry& entry = entries[index];
-            uint8_t* info = output + kNpuRepHeadSize + index * kNpuRepFileInfoSize;
-            std::copy(kNpuRepMagic.begin(), kNpuRepMagic.end(), info);
-            std::copy(entry.file_name.begin(), entry.file_name.end(), info + kNpuRepEntryNameOffset);
-            WriteLe16(static_cast<uint16_t>(entry.file_type), info + kNpuRepEntryTypeOffset);
-            WriteLe16(0, info + kNpuRepEntryReserved16Offset);
-            WriteLe32(0, info + kNpuRepEntryReserved32Offset);
-            WriteLe64(static_cast<uint64_t>(entry.payload.size()), info + kNpuRepEntryLengthOffset);
-            WriteLe64(static_cast<uint64_t>(payload_offset), info + kNpuRepEntryPayloadOffset);
+            uint8_t* info = output + NPU_REP_HEAD_SIZE + index * NPU_REP_FILE_INFO_SIZE;
+            std::copy(NPU_REP_MAGIC.begin(), NPU_REP_MAGIC.end(), info);
+            if (memcpy_s(
+                    info + NPU_REP_ENTRY_NAME_OFFSET, NPU_REP_FILE_NAME_SIZE, entry.file_name.data(),
+                    entry.file_name.size()) != EOK) {
+                encoded->clear();
+                return Fail("copy rep entry file name failed", error);
+            }
+            WriteLe16(static_cast<uint16_t>(entry.file_type), info + NPU_REP_ENTRY_TYPE_OFFSET);
+            WriteLe16(0, info + NPU_REP_ENTRY_RESERVED16_OFFSET);
+            WriteLe32(0, info + NPU_REP_ENTRY_RESERVED32_OFFSET);
+            WriteLe64(static_cast<uint64_t>(entry.payload.size()), info + NPU_REP_ENTRY_LENGTH_OFFSET);
+            WriteLe64(static_cast<uint64_t>(payload_offset), info + NPU_REP_ENTRY_PAYLOAD_OFFSET);
             std::copy(entry.payload.begin(), entry.payload.end(), output + payload_offset);
             payload_offset += entry.payload.size();
         }

@@ -33,16 +33,17 @@ struct Dav3510CoreKey {
 
 struct Dav3510CoreRegisterState {
     std::optional<CtrlRegisterParamField> ctrl;
-    std::array<std::optional<FmatrixParamField>, 2> fmatrix{}; // normal / _B register banks
-    std::array<std::optional<L3dRptParamField>, 2> l3dRpt{};
+    std::array<std::optional<FmatrixParamField>, MATRIX_REGISTER_BANK_COUNT> fmatrix{}; // normal / _B register banks
+    std::array<std::optional<L3dRptParamField>, MATRIX_REGISTER_BANK_COUNT> l3dRpt{};
     std::optional<VectorMaskParamField> vectorMask;
     std::optional<Mte2SourceParamField> mte2Source;
     std::optional<NdDmaPadCountParamField> ndDmaPadCount;
-    std::array<std::optional<NdDmaLoopStrideParamField>, 5> ndDmaLoopStrides{};
+    std::array<std::optional<NdDmaLoopStrideParamField>, NDDMA_LOOP_COUNT> ndDmaLoopStrides{};
     std::optional<Mte2NzParamField> mte2Nz;
     std::optional<Loop3ParamField> loop3;
-    std::array<std::optional<DmaLoopSizeParamField>, 3> dmaLoopSizes{};
-    std::array<std::array<std::optional<DmaLoopStrideParamField>, 2>, 3> dmaLoopStrides{};
+    std::array<std::optional<DmaLoopSizeParamField>, DMA_DIRECTION_COUNT> dmaLoopSizes{};
+    std::array<std::array<std::optional<DmaLoopStrideParamField>, DMA_STRIDE_LOOP_COUNT>, DMA_DIRECTION_COUNT>
+        dmaLoopStrides{};
     std::optional<SetPaddingParamField> setPadding;
 };
 

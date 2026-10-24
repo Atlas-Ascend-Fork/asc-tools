@@ -19,8 +19,13 @@
 
 namespace npucompute::ipc {
 namespace {
-constexpr std::size_t kMaximumSectionCount = 9;
-constexpr std::size_t kMaximumPmSamplingPathComponents = 2;
+constexpr size_t DEFAULT_STRING_BYTES = 128;
+constexpr size_t MAX_SECTION_COUNT = 9;
+constexpr size_t MAX_ARTIFACT_COUNT = 64;
+constexpr size_t MAX_ERROR_MESSAGE_BYTES = 4096;
+constexpr unsigned int BITS_PER_BYTE = std::numeric_limits<uint8_t>::digits;
+constexpr std::size_t MAX_PM_SAMPLING_PATH_COMPONENTS = 2;
+
 void Check(bool condition, const char* reason)
 {
     if (!condition) {
@@ -32,13 +37,13 @@ public:
     void Integer(uint64_t n, size_t bytes)
     {
         for (size_t i = 0; i < bytes; ++i) {
-            data.push_back(static_cast<uint8_t>(n >> (i * 8)));
+            data.push_back(static_cast<uint8_t>(n >> (i * BITS_PER_BYTE)));
         }
     }
-    void String(const std::string& value, size_t limit = 128)
+    void String(const std::string& value, size_t limit = DEFAULT_STRING_BYTES)
     {
         Check(value.size() <= limit && value.find('\0') == std::string::npos, "invalid IPC string");
-        Integer(value.size(), 4);
+        Integer(value.size(), sizeof(uint32_t));
         data.insert(data.end(), value.begin(), value.end());
     }
     Bytes data;
@@ -51,13 +56,13 @@ public:
         Check(bytes <= data_.size() - position_, "truncated IPC payload");
         uint64_t result = 0;
         for (size_t i = 0; i < bytes; ++i) {
-            result |= static_cast<uint64_t>(data_[position_++]) << (i * 8);
+            result |= static_cast<uint64_t>(data_[position_++]) << (i * BITS_PER_BYTE);
         }
         return result;
     }
-    std::string String(size_t limit = 128)
+    std::string String(size_t limit = DEFAULT_STRING_BYTES)
     {
-        const auto count = Integer(4);
+        const auto count = Integer(sizeof(uint32_t));
         Check(count <= limit && count <= data_.size() - position_, "invalid IPC string length");
         std::string result(data_.begin() + position_, data_.begin() + position_ + count);
         position_ += count;
@@ -66,7 +71,7 @@ public:
     }
     Bytes Blob(size_t limit)
     {
-        const auto count = Integer(4);
+        const auto count = Integer(sizeof(uint32_t));
         Check(count <= limit && count <= data_.size() - position_, "invalid IPC blob length");
         Bytes result(data_.begin() + position_, data_.begin() + position_ + count);
         position_ += count;
@@ -80,16 +85,16 @@ private:
 };
 void WriteSections(Writer& writer, const std::vector<std::string>& sections)
 {
-    Check(!sections.empty() && sections.size() <= kMaximumSectionCount, "invalid section count");
-    writer.Integer(sections.size(), 4);
+    Check(!sections.empty() && sections.size() <= MAX_SECTION_COUNT, "invalid section count");
+    writer.Integer(sections.size(), sizeof(uint32_t));
     for (const auto& section : sections) {
         writer.String(section);
     }
 }
 std::vector<std::string> ReadSections(Reader& reader)
 {
-    const auto count = reader.Integer(4);
-    Check(count > 0 && count <= kMaximumSectionCount, "invalid section count");
+    const auto count = reader.Integer(sizeof(uint32_t));
+    Check(count > 0 && count <= MAX_SECTION_COUNT, "invalid section count");
     std::vector<std::string> result;
     for (uint64_t i = 0; i < count; ++i) {
         result.push_back(reader.String());
@@ -102,7 +107,7 @@ void WriteConfig(Writer& writer, const Config& value)
     WriteSections(writer, value.sections);
     writer.String(value.replayMode);
     writer.String(value.pmuLevel);
-    writer.Integer(value.featureFlags, 8);
+    writer.Integer(value.featureFlags, sizeof(uint64_t));
 }
 Config ReadConfig(Reader& reader)
 {
@@ -110,7 +115,7 @@ Config ReadConfig(Reader& reader)
     result.sections = ReadSections(reader);
     result.replayMode = reader.String();
     result.pmuLevel = reader.String();
-    result.featureFlags = reader.Integer(8);
+    result.featureFlags = reader.Integer(sizeof(uint64_t));
     ValidateConfig(result);
     return result;
 }
@@ -119,7 +124,7 @@ void ValidateResult(const Result& result)
     Config config;
     config.sections = result.sections;
     ValidateConfig(config);
-    Check(result.manifest.size() <= 64, "invalid artifact count");
+    Check(result.manifest.size() <= MAX_ARTIFACT_COUNT, "invalid artifact count");
     std::set<std::string> names;
     std::set<uint64_t> ids;
     for (const auto& item : result.manifest) {
@@ -165,7 +170,7 @@ std::vector<std::string> ArtifactPathComponents(const std::string& name)
 
 void ValidateConfig(const Config& config)
 {
-    Check(!config.sections.empty() && config.sections.size() <= kMaximumSectionCount, "invalid section count");
+    Check(!config.sections.empty() && config.sections.size() <= MAX_SECTION_COUNT, "invalid section count");
     std::set<std::string> seen;
     for (const auto& section : config.sections) {
         Check(
@@ -193,7 +198,7 @@ DataKind KindForName(const std::string& name)
         return DataKind::PipelineTrace;
     }
     if (base == "summary.db" || base == "objdump.txt" || base == "symbolizer.json") {
-        Check(components.size() <= kMaximumPmSamplingPathComponents, "invalid PmSampling artifact path");
+        Check(components.size() <= MAX_PM_SAMPLING_PATH_COMPONENTS, "invalid PmSampling artifact path");
         return DataKind::PmSampling;
     }
     if (base == "summary.jsonl" || base == "PipeUtilization.csv") {
@@ -253,8 +258,8 @@ Config DecodeConfig(const Bytes& value)
 Bytes EncodeHello(const Hello& value)
 {
     Writer writer;
-    writer.Integer(value.pid, 4);
-    writer.Integer(value.uid, 4);
+    writer.Integer(value.pid, sizeof(uint32_t));
+    writer.Integer(value.uid, sizeof(uint32_t));
     WriteConfig(writer, value.config);
     return writer.data;
 }
@@ -262,8 +267,8 @@ Hello DecodeHello(const Bytes& value)
 {
     Reader reader(value);
     Hello result;
-    result.pid = reader.Integer(4);
-    result.uid = reader.Integer(4);
+    result.pid = reader.Integer(sizeof(uint32_t));
+    result.uid = reader.Integer(sizeof(uint32_t));
     result.config = ReadConfig(reader);
     reader.End();
     return result;
@@ -271,18 +276,18 @@ Hello DecodeHello(const Bytes& value)
 Bytes EncodeReady(const Ready& value)
 {
     Writer writer;
-    writer.Integer(value.pid, 4);
-    writer.Integer(value.uid, 4);
-    writer.Integer(value.status, 4);
+    writer.Integer(value.pid, sizeof(uint32_t));
+    writer.Integer(value.uid, sizeof(uint32_t));
+    writer.Integer(value.status, sizeof(uint32_t));
     return writer.data;
 }
 Ready DecodeReady(const Bytes& value)
 {
     Reader reader(value);
     Ready result;
-    result.pid = reader.Integer(4);
-    result.uid = reader.Integer(4);
-    result.status = reader.Integer(4);
+    result.pid = reader.Integer(sizeof(uint32_t));
+    result.uid = reader.Integer(sizeof(uint32_t));
+    result.status = reader.Integer(sizeof(uint32_t));
     reader.End();
     return result;
 }
@@ -291,9 +296,9 @@ Bytes EncodeArtifactBegin(const ArtifactBegin& value)
     Check(KindForName(value.name) == value.kind, "artifact kind does not match name");
     Check(value.artifactType == ArtifactTypeForName(value.name), "artifact type does not match kind");
     Writer writer;
-    writer.Integer(value.id, 8);
-    writer.Integer(static_cast<uint16_t>(value.kind), 2);
-    writer.Integer(static_cast<uint16_t>(value.artifactType), 2);
+    writer.Integer(value.id, sizeof(uint64_t));
+    writer.Integer(static_cast<uint16_t>(value.kind), sizeof(uint16_t));
+    writer.Integer(static_cast<uint16_t>(value.artifactType), sizeof(uint16_t));
     writer.String(value.name);
     return writer.data;
 }
@@ -301,9 +306,9 @@ ArtifactBegin DecodeArtifactBegin(const Bytes& value)
 {
     Reader reader(value);
     ArtifactBegin result;
-    result.id = reader.Integer(8);
-    result.kind = static_cast<DataKind>(reader.Integer(2));
-    result.artifactType = static_cast<ArtifactType>(reader.Integer(2));
+    result.id = reader.Integer(sizeof(uint64_t));
+    result.kind = static_cast<DataKind>(reader.Integer(sizeof(uint16_t)));
+    result.artifactType = static_cast<ArtifactType>(reader.Integer(sizeof(uint16_t)));
     result.name = reader.String();
     reader.End();
     Check(KindForName(result.name) == result.kind, "artifact kind does not match name");
@@ -316,9 +321,9 @@ Bytes EncodeArtifactChunk(const ArtifactChunk& value)
         value.data.size() <= kChunkBytes && value.data.size() <= std::numeric_limits<uint64_t>::max() - value.offset,
         "invalid artifact chunk size");
     Writer writer;
-    writer.Integer(value.id, 8);
-    writer.Integer(value.offset, 8);
-    writer.Integer(value.data.size(), 4);
+    writer.Integer(value.id, sizeof(uint64_t));
+    writer.Integer(value.offset, sizeof(uint64_t));
+    writer.Integer(value.data.size(), sizeof(uint32_t));
     writer.data.insert(writer.data.end(), value.data.begin(), value.data.end());
     return writer.data;
 }
@@ -326,8 +331,8 @@ ArtifactChunk DecodeArtifactChunk(const Bytes& value)
 {
     Reader reader(value);
     ArtifactChunk result;
-    result.id = reader.Integer(8);
-    result.offset = reader.Integer(8);
+    result.id = reader.Integer(sizeof(uint64_t));
+    result.offset = reader.Integer(sizeof(uint64_t));
     result.data = reader.Blob(kChunkBytes);
     reader.End();
     Check(result.data.size() <= std::numeric_limits<uint64_t>::max() - result.offset, "artifact byte offset overflow");
@@ -336,18 +341,18 @@ ArtifactChunk DecodeArtifactChunk(const Bytes& value)
 Bytes EncodeArtifactEnd(const ArtifactEnd& value)
 {
     Writer writer;
-    writer.Integer(value.id, 8);
-    writer.Integer(value.bytes, 8);
-    writer.Integer(value.records, 8);
+    writer.Integer(value.id, sizeof(uint64_t));
+    writer.Integer(value.bytes, sizeof(uint64_t));
+    writer.Integer(value.records, sizeof(uint64_t));
     return writer.data;
 }
 ArtifactEnd DecodeArtifactEnd(const Bytes& value)
 {
     Reader reader(value);
     ArtifactEnd result;
-    result.id = reader.Integer(8);
-    result.bytes = reader.Integer(8);
-    result.records = reader.Integer(8);
+    result.id = reader.Integer(sizeof(uint64_t));
+    result.bytes = reader.Integer(sizeof(uint64_t));
+    result.records = reader.Integer(sizeof(uint64_t));
     reader.End();
     return result;
 }
@@ -355,20 +360,20 @@ Bytes EncodeResult(const Result& value)
 {
     ValidateResult(value);
     Writer writer;
-    writer.Integer(value.status, 4);
-    writer.Integer(value.code, 4);
-    writer.Integer(value.complete ? 1 : 0, 1);
-    writer.Integer(value.degraded ? 1 : 0, 1);
-    writer.Integer(value.replayCount, 8);
-    writer.Integer(value.rowCount, 8);
-    writer.Integer(value.droppedCount, 8);
-    writer.Integer(value.errorCount, 8);
+    writer.Integer(value.status, sizeof(uint32_t));
+    writer.Integer(value.code, sizeof(uint32_t));
+    writer.Integer(value.complete ? 1 : 0, sizeof(uint8_t));
+    writer.Integer(value.degraded ? 1 : 0, sizeof(uint8_t));
+    writer.Integer(value.replayCount, sizeof(uint64_t));
+    writer.Integer(value.rowCount, sizeof(uint64_t));
+    writer.Integer(value.droppedCount, sizeof(uint64_t));
+    writer.Integer(value.errorCount, sizeof(uint64_t));
     WriteSections(writer, value.sections);
-    writer.Integer(value.manifest.size(), 4);
+    writer.Integer(value.manifest.size(), sizeof(uint32_t));
     for (const auto& item : value.manifest) {
-        writer.Integer(item.id, 8);
+        writer.Integer(item.id, sizeof(uint64_t));
         writer.String(item.name);
-        writer.Integer(item.bytes, 8);
+        writer.Integer(item.bytes, sizeof(uint64_t));
     }
     return writer.data;
 }
@@ -376,25 +381,25 @@ Result DecodeResult(const Bytes& value)
 {
     Reader reader(value);
     Result result;
-    result.status = reader.Integer(4);
-    result.code = reader.Integer(4);
-    const auto complete = reader.Integer(1);
-    const auto degraded = reader.Integer(1);
+    result.status = reader.Integer(sizeof(uint32_t));
+    result.code = reader.Integer(sizeof(uint32_t));
+    const auto complete = reader.Integer(sizeof(uint8_t));
+    const auto degraded = reader.Integer(sizeof(uint8_t));
     Check(complete <= 1 && degraded <= 1, "invalid result flags");
-    result.complete = complete;
-    result.degraded = degraded;
-    result.replayCount = reader.Integer(8);
-    result.rowCount = reader.Integer(8);
-    result.droppedCount = reader.Integer(8);
-    result.errorCount = reader.Integer(8);
+    result.complete = complete != 0;
+    result.degraded = degraded != 0;
+    result.replayCount = reader.Integer(sizeof(uint64_t));
+    result.rowCount = reader.Integer(sizeof(uint64_t));
+    result.droppedCount = reader.Integer(sizeof(uint64_t));
+    result.errorCount = reader.Integer(sizeof(uint64_t));
     result.sections = ReadSections(reader);
-    const auto count = reader.Integer(4);
-    Check(count <= 64, "invalid manifest length");
+    const auto count = reader.Integer(sizeof(uint32_t));
+    Check(count <= MAX_ARTIFACT_COUNT, "invalid manifest length");
     for (uint64_t i = 0; i < count; ++i) {
         ManifestEntry item;
-        item.id = reader.Integer(8);
+        item.id = reader.Integer(sizeof(uint64_t));
         item.name = reader.String();
-        item.bytes = reader.Integer(8);
+        item.bytes = reader.Integer(sizeof(uint64_t));
         result.manifest.push_back(item);
     }
     reader.End();
@@ -404,8 +409,8 @@ Result DecodeResult(const Bytes& value)
 Bytes EncodeError(const Error& value)
 {
     Writer writer;
-    writer.Integer(value.code, 4);
-    writer.String(value.message, 4096);
+    writer.Integer(value.code, sizeof(uint32_t));
+    writer.String(value.message, MAX_ERROR_MESSAGE_BYTES);
     writer.String(value.domain);
     writer.String(value.phase);
     return writer.data;
@@ -414,8 +419,8 @@ Error DecodeError(const Bytes& value)
 {
     Reader reader(value);
     Error result;
-    result.code = reader.Integer(4);
-    result.message = reader.String(4096);
+    result.code = reader.Integer(sizeof(uint32_t));
+    result.message = reader.String(MAX_ERROR_MESSAGE_BYTES);
     result.domain = reader.String();
     result.phase = reader.String();
     reader.End();

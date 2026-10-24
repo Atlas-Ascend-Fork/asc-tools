@@ -114,6 +114,69 @@ struct FixL0cToOutLayout {
     static constexpr BitRange NZ2DN_ENABLE{62, 62};
 };
 
+// Packed register and cube-operation fields consumed by the dav-3510 decoder.
+struct FmatrixLayout {
+    static constexpr BitRange HEIGHT{16, 31};
+    static constexpr BitRange PADDING_LEFT{32, 39};
+    static constexpr BitRange PADDING_RIGHT{40, 47};
+    static constexpr BitRange PADDING_TOP{48, 55};
+    static constexpr BitRange PADDING_BOTTOM{56, 63};
+};
+
+struct L3dRptLayout {
+    static constexpr BitRange REPEAT_TIMES{16, 23};
+    static constexpr BitRange REPEAT_ALONG_K{24, 24};
+    static constexpr BitRange DST_STRIDE{32, 39};
+    static constexpr BitRange DST_OFFSET{48, 55};
+};
+
+struct LoadL1ToL0Layout {
+    static constexpr BitRange K_START_POSITION{16, 31};
+    static constexpr BitRange M_STEP{32, 39};
+    static constexpr BitRange K_STEP{40, 47};
+    static constexpr BitRange DST_STRIDE{16, 31};
+};
+
+struct LoadL1TransposeLayout {
+    static constexpr BitRange REPEAT{16, 23};
+    static constexpr BitRange SRC_STRIDE{24, 39};
+    static constexpr BitRange DST_GAP{44, 59};
+    static constexpr BitRange SRC_FRAC_GAP{16, 31};
+    static constexpr BitRange DECREMENT{63, 63};
+};
+
+struct Img2ColLayout {
+    static constexpr BitRange M_EXTENSION{16, 31};
+    static constexpr BitRange K_START_POINT{32, 47};
+    static constexpr BitRange M_START_POINT{48, 63};
+    static constexpr BitRange STRIDE_WIDTH{0, 5};
+    static constexpr BitRange STRIDE_HEIGHT{6, 11};
+    static constexpr BitRange FILTER_WIDTH{12, 19};
+    static constexpr BitRange FILTER_HEIGHT{20, 27};
+    static constexpr BitRange DILATION_FILTER_WIDTH{28, 35};
+    static constexpr BitRange DILATION_FILTER_HEIGHT{36, 43};
+    static constexpr BitRange FILTER_SIZE_WIDTH{44, 44};
+    static constexpr BitRange FILTER_SIZE_HEIGHT{45, 45};
+    static constexpr BitRange TRANSPOSE{46, 46};
+    static constexpr BitRange FMATRIX_CONTROL{47, 47};
+    static constexpr BitRange CHANNEL_SIZE{48, 63};
+};
+
+struct MmadLayout {
+    static constexpr BitRange M_SIZE{0, 11};
+    static constexpr BitRange K_SIZE{12, 23};
+    static constexpr BitRange N_SIZE{24, 35};
+    static constexpr BitRange DISABLE_GEMV{61, 61};
+    static constexpr BitRange CMATRIX_SOURCE{62, 62};
+    static constexpr BitRange CMATRIX_INIT_VAL{63, 63};
+};
+
+struct LoadL1MxLayout {
+    static constexpr BitRange Y_START{16, 31};
+    static constexpr BitRange X_STEP{32, 39};
+    static constexpr BitRange Y_STEP{40, 47};
+};
+
 } // namespace aclsan::dav3510
 
 #endif // NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_INSTR_ARCH_DAV_3510_DMA_LAYOUT_H

@@ -56,7 +56,7 @@ int ToolManager::Initialize()
         server_.Shutdown();
         return 1;
     }
-    const char* workDir = std::getenv(npucheck::ipc::kWorkDirEnv);
+    const char* workDir = std::getenv(npucheck::ipc::WORK_DIR_ENV);
     workDir_ = workDir != nullptr ? workDir : "";
     ASCTOOL_INFO(
         "UDS handshake completed session=%llu negotiated_minor=%u",
@@ -74,7 +74,7 @@ int ToolManager::Initialize()
     if (!ConfigureSanitizer(error)) {
         ASCTOOL_ERROR("sanitizer initialization failed: %s", error.c_str());
         server_.SendInitializationError(
-            npucheck::ipc::ErrorDomain::CONFIGURATION, npucheck::ipc::error_code::kToolInitializationFailed, error);
+            npucheck::ipc::ErrorDomain::CONFIGURATION, npucheck::ipc::error_code::TOOL_INITIALIZATION_FAILED, error);
         RollbackSanitizer();
         server_.Shutdown();
         return 1;
@@ -247,7 +247,7 @@ void ToolManager::Finalize()
     if (!reportBundleAvailable || report_.Failed()) {
         // 报告本身没能拼出来，此时宁可什么都不给，也不能把残缺的正文当成结论发出去。
         server_.SendError(
-            npucheck::ipc::ErrorDomain::INTERNAL, npucheck::ipc::error_code::kReportUnavailable,
+            npucheck::ipc::ErrorDomain::INTERNAL, npucheck::ipc::error_code::REPORT_UNAVAILABLE,
             "npu_check cannot produce the session report");
     } else {
         const std::string reportText = report_.Take();

@@ -41,8 +41,8 @@ int Check(bool condition, const char* expression, int line)
             return 1;                                   \
     } while (false)
 
-using npucompute::cli::kNpuRepFileInfoSize;
-using npucompute::cli::kNpuRepHeadSize;
+using npucompute::cli::NPU_REP_FILE_INFO_SIZE;
+using npucompute::cli::NPU_REP_HEAD_SIZE;
 using npucompute::cli::NpuRepFileType;
 using npucompute::cli::PackDirectoryToRep;
 using npucompute::cli::test::DecodedRep;
@@ -152,19 +152,19 @@ int TestRecursivePacking()
     CHECK(device_rep.entries[1].file_type == NpuRepFileType::NpuRep);
     CHECK(device_rep.entries[2].file_name == "empty.npu.rep");
     CHECK(device_rep.entries[2].file_type == NpuRepFileType::NpuRep);
-    CHECK(device_rep.entries[0].file_offset == kNpuRepHeadSize + 3U * kNpuRepFileInfoSize);
+    CHECK(device_rep.entries[0].file_offset == NPU_REP_HEAD_SIZE + 3U * NPU_REP_FILE_INFO_SIZE);
 
     DecodedRep details_rep;
     CHECK(DecodeRep(device_rep.entries[1].payload, &details_rep, &error));
     CHECK(details_rep.entries.size() == 1U);
     CHECK(details_rep.entries[0].file_name == "L2Cache.csv");
     CHECK(details_rep.entries[0].payload == Bytes(l2));
-    CHECK(details_rep.entries[0].file_offset == kNpuRepHeadSize + kNpuRepFileInfoSize);
+    CHECK(details_rep.entries[0].file_offset == NPU_REP_HEAD_SIZE + NPU_REP_FILE_INFO_SIZE);
 
     DecodedRep empty_rep;
     CHECK(DecodeRep(device_rep.entries[2].payload, &empty_rep, &error));
     CHECK(empty_rep.entries.empty());
-    CHECK(device_rep.entries[2].payload.size() == kNpuRepHeadSize);
+    CHECK(device_rep.entries[2].payload.size() == NPU_REP_HEAD_SIZE);
     return 0;
 }
 

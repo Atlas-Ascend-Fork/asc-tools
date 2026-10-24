@@ -25,8 +25,8 @@
 namespace npucompute::cli {
 namespace {
 
-constexpr char kReportSuffix[] = ".npu-rep";
-constexpr std::size_t kMaximumNameAttempts = 128U;
+constexpr char REPORT_SUFFIX[] = ".npu-rep";
+constexpr std::size_t MAXIMUM_NAME_ATTEMPTS = 128U;
 
 bool Fail(const std::string& message, std::string* error)
 {
@@ -126,8 +126,8 @@ bool SystemRandomBytes(std::array<uint8_t, 4>* value, void*, std::string* error)
 bool HasReportSuffix(const boost::filesystem::path& path)
 {
     const std::string value = path.filename().string();
-    return value.size() >= sizeof(kReportSuffix) - 1U &&
-           value.compare(value.size() - (sizeof(kReportSuffix) - 1U), sizeof(kReportSuffix) - 1U, kReportSuffix) == 0;
+    return value.size() >= sizeof(REPORT_SUFFIX) - 1U &&
+           value.compare(value.size() - (sizeof(REPORT_SUFFIX) - 1U), sizeof(REPORT_SUFFIX) - 1U, REPORT_SUFFIX) == 0;
 }
 
 boost::filesystem::path ResolvePath(
@@ -155,11 +155,11 @@ bool ReadStatus(const boost::filesystem::path& path, boost::filesystem::file_sta
 
 std::string FormatRandomId(const std::array<uint8_t, 4>& bytes)
 {
-    static constexpr char kHex[] = "0123456789abcdef";
+    static constexpr char HEX[] = "0123456789abcdef";
     std::string result(8U, '0');
     for (std::size_t index = 0; index < bytes.size(); ++index) {
-        result[index * 2U] = kHex[bytes[index] >> 4U];
-        result[index * 2U + 1U] = kHex[bytes[index] & 0x0fU];
+        result[index * 2U] = HEX[bytes[index] >> 4U];
+        result[index * 2U + 1U] = HEX[bytes[index] & 0x0fU];
     }
     return result;
 }
@@ -180,13 +180,13 @@ bool GenerateTargetInDirectory(
     if (!sources.epoch_milliseconds(&epoch_milliseconds, sources.context, error)) {
         return false;
     }
-    for (std::size_t attempt = 0; attempt < kMaximumNameAttempts; ++attempt) {
+    for (std::size_t attempt = 0; attempt < MAXIMUM_NAME_ATTEMPTS; ++attempt) {
         std::array<uint8_t, 4> random_bytes{};
         if (!sources.random_bytes(&random_bytes, sources.context, error)) {
             return false;
         }
         const boost::filesystem::path candidate = directory / ("report_" + std::to_string(epoch_milliseconds) + "_" +
-                                                               FormatRandomId(random_bytes) + kReportSuffix);
+                                                               FormatRandomId(random_bytes) + REPORT_SUFFIX);
         boost::filesystem::file_status candidate_status;
         if (!ReadStatus(candidate, &candidate_status, error)) {
             return false;

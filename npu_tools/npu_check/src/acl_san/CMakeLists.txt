@@ -57,21 +57,21 @@ set(content "// Generated file. Do not edit.\n")
 string(APPEND content "#include \"dbi/embedded_probe_resources.h\"\n\n")
 string(APPEND content "#include <cstddef>\n\n")
 string(APPEND content "namespace aclsan {\nnamespace {\n")
-string(APPEND content "const unsigned char kTraceRecord[] = {${trace_record_bytes}};\n")
-string(APPEND content "const unsigned char kTraceBufferAbi[] = {${trace_buffer_abi_bytes}};\n")
-string(APPEND content "constexpr std::size_t kTraceRecordSize = ${trace_record_size}U;\n")
-string(APPEND content "constexpr std::size_t kTraceBufferAbiSize = ${trace_buffer_abi_size}U;\n")
-string(APPEND content "constexpr std::string_view kResourceIdentity = \"${resource_identity}\";\n")
+string(APPEND content "const unsigned char TRACE_RECORD[] = {${trace_record_bytes}};\n")
+string(APPEND content "const unsigned char TRACE_BUFFER_ABI[] = {${trace_buffer_abi_bytes}};\n")
+string(APPEND content "constexpr std::size_t TRACE_RECORD_SIZE = ${trace_record_size}U;\n")
+string(APPEND content "constexpr std::size_t TRACE_BUFFER_ABI_SIZE = ${trace_buffer_abi_size}U;\n")
+string(APPEND content "constexpr std::string_view RESOURCE_IDENTITY = \"${resource_identity}\";\n")
 string(APPEND content
-  "constexpr std::string_view kCtrlBinImplementationIdentity = \"${ctrlbin_implementation_identity}\";\n")
+  "constexpr std::string_view CTRL_BIN_IMPLEMENTATION_IDENTITY = \"${ctrlbin_implementation_identity}\";\n")
 string(APPEND content "} // namespace\n\n")
 string(APPEND content "std::string_view EmbeddedTraceRecordHeader()\n{\n")
-string(APPEND content "    return {reinterpret_cast<const char*>(kTraceRecord), kTraceRecordSize};\n}\n\n")
+string(APPEND content "    return {reinterpret_cast<const char*>(TRACE_RECORD), TRACE_RECORD_SIZE};\n}\n\n")
 string(APPEND content "std::string_view EmbeddedTraceBufferAbiHeader()\n{\n")
-string(APPEND content "    return {reinterpret_cast<const char*>(kTraceBufferAbi), kTraceBufferAbiSize};\n}\n\n")
-string(APPEND content "std::string_view EmbeddedProbeResourceIdentity() { return kResourceIdentity; }\n\n")
+string(APPEND content "    return {reinterpret_cast<const char*>(TRACE_BUFFER_ABI), TRACE_BUFFER_ABI_SIZE};\n}\n\n")
+string(APPEND content "std::string_view EmbeddedProbeResourceIdentity() { return RESOURCE_IDENTITY; }\n\n")
 string(APPEND content
-  "std::string_view EmbeddedCtrlBinImplementationIdentity() { return kCtrlBinImplementationIdentity; }\n\n")
+  "std::string_view EmbeddedCtrlBinImplementationIdentity() { return CTRL_BIN_IMPLEMENTATION_IDENTITY; }\n\n")
 string(APPEND content "} // namespace aclsan\n")
 
 file(WRITE "${OUTPUT}" "${content}")
@@ -172,6 +172,7 @@ add_library(npu_check_dbi_engine STATIC
 target_compile_features(npu_check_dbi_engine PUBLIC cxx_std_17)
 target_include_directories(npu_check_dbi_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(npu_check_dbi_engine PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(npu_check_dbi_engine PRIVATE c_sec_static)
 target_link_libraries(npu_check_dbi_engine
   PUBLIC npu_check_dbi_ctrlbin
   PRIVATE npu_check_dbi_probe_runtime npu_sanitizer_plog ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem
@@ -213,6 +214,7 @@ target_include_directories(acl_san
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+target_link_libraries(acl_san PRIVATE c_sec_static)
 target_link_libraries(acl_san
   PRIVATE
     acl_tool_injection

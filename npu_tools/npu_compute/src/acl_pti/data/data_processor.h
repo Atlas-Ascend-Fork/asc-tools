@@ -13,6 +13,7 @@
 #include "bounded_queue.h"
 #include "data_types.h"
 #include "profiling/prof_api.h"
+#include "raw_data_decoder.h"
 #include <array>
 #include <map>
 #include <condition_variable>
@@ -46,7 +47,7 @@ private:
         // Use a constructor instead of default member initializers for this nested alternative.
         RawRecord() : bytes{}, size(0), recordIndex(0), events{} {}
 
-        std::array<std::byte, 128> bytes;
+        std::array<std::byte, PMU_RECORD_BYTES> bytes;
         size_t size;
         uint64_t recordIndex;
         PmuSlots events;

@@ -66,7 +66,7 @@ private:
     void LogCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata);
     std::string BuildToolNames() const;
     std::string BuildAndLogSummaryMessage() const;
-    // 本次检查是否检出问题，对应 Result 末帧的 kFlagHasErrors。
+    // 本次检查是否检出问题，对应 Result 末帧的 FLAG_HAS_ERRORS。
     bool HasDetectedErrors() const;
 
     mutable std::mutex lifecycleMutex_;

@@ -28,7 +28,7 @@ std::string ErrnoMessage(const char* operation) { return std::string(operation) 
 
 // 单个数据报必须能整体放进收发缓冲。SOCK_SEQPACKET 不做分片：超出缓冲上限时
 // sendmsg 直接返回 EMSGSIZE，重试永远不会成功。
-constexpr int kRequiredSocketBuffer = static_cast<int>(kMaxFrameSize);
+constexpr int REQUIRED_SOCKET_BUFFER = static_cast<int>(MAX_FRAME_SIZE);
 
 // 校验并尽量抬高收发缓冲。
 //
@@ -37,7 +37,7 @@ constexpr int kRequiredSocketBuffer = static_cast<int>(kMaxFrameSize);
 // 两倍（含记账开销），所以只校验下界，不做相等比较。
 bool EnsureSocketBuffer(int fd, int optionName, const char* optionText, const char* sysctlName, std::string& error)
 {
-    int requested = kRequiredSocketBuffer;
+    int requested = REQUIRED_SOCKET_BUFFER;
     (void)setsockopt(fd, SOL_SOCKET, optionName, &requested, sizeof(requested));
 
     int actual = 0;
@@ -46,9 +46,9 @@ bool EnsureSocketBuffer(int fd, int optionName, const char* optionText, const ch
         error = ErrnoMessage("getsockopt");
         return false;
     }
-    if (actual < kRequiredSocketBuffer) {
+    if (actual < REQUIRED_SOCKET_BUFFER) {
         error = std::string(optionText) + " is " + std::to_string(actual) + " bytes but a single frame needs " +
-                std::to_string(kRequiredSocketBuffer) + " bytes; raise " + sysctlName;
+                std::to_string(REQUIRED_SOCKET_BUFFER) + " bytes; raise " + sysctlName;
         return false;
     }
     return true;
@@ -111,14 +111,14 @@ bool BuildAbstractAddress(const std::string& name, sockaddr_un& address, socklen
 IoStatus WaitFor(int fd, short events, DeadlineMs deadline, std::string& error)
 {
     while (true) {
-        int sliceMs = -1; // kNoDeadline 时无限等待
-        if (deadline != kNoDeadline) {
+        int sliceMs = -1; // NO_DEADLINE 时无限等待
+        if (deadline != NO_DEADLINE) {
             const int64_t remain = deadline - MonotonicNowMs();
             if (remain <= 0) {
                 error = "deadline exceeded";
                 return IoStatus::TIMEOUT;
             }
-            sliceMs = static_cast<int>(std::min<int64_t>(remain, kPollSliceMs));
+            sliceMs = static_cast<int>(std::min<int64_t>(remain, POLL_SLICE_MS));
         }
 
         pollfd descriptor{};
@@ -138,16 +138,16 @@ IoStatus WaitFor(int fd, short events, DeadlineMs deadline, std::string& error)
         if (rc == 0) {
             continue; // 时间片到期，回顶部重判绝对 deadline
         }
-        if ((descriptor.revents & (POLLERR | POLLNVAL)) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) & (POLLERR | POLLNVAL)) != 0) {
             error = "socket error reported by poll";
             return IoStatus::SYSTEM_ERROR;
         }
         // 就绪位必须先于 POLLHUP 判断：对端"发完最后一帧再 close"会让两个位同时置起，
         // 先判 POLLHUP 就会把那一帧连同它携带的诊断信息一起丢掉。
-        if ((descriptor.revents & events) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(events)) != 0) {
             return IoStatus::OK;
         }
-        if ((descriptor.revents & POLLHUP) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) & POLLHUP) != 0) {
             return IoStatus::CLOSED;
         }
     }
@@ -195,7 +195,7 @@ IoStatus SendFrame(int fd, const Frame& frame, DeadlineMs deadline, std::string&
 
 IoStatus ReceiveFrame(int fd, Frame& frame, DeadlineMs deadline, std::string& error)
 {
-    std::array<uint8_t, kMaxFrameSize> buffer{};
+    std::array<uint8_t, MAX_FRAME_SIZE> buffer{};
     while (true) {
         const IoStatus waited = WaitFor(fd, POLLIN, deadline, error);
         if (waited != IoStatus::OK) {

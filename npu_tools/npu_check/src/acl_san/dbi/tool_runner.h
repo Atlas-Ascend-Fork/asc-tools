@@ -22,7 +22,7 @@ struct ToolResult {
     std::string standardError;
 };
 
-ToolResult RunTool(const std::vector<std::string>& arguments);
+ToolResult RunTool(const std::vector<std::string>& commandArguments);
 
 } // namespace aclsan
 

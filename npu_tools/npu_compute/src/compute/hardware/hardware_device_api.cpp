@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "hardware/hardware_device_api.h"
+#include "securec.h"
 
 #include <acl/acl.h>
 #include <acl/acl_platform.h>
@@ -31,11 +32,11 @@
 namespace npucompute {
 namespace {
 
-constexpr char kAclLibrary[] = "libascendcl.so";
-constexpr char kPlatformLibrary[] = "libplatform.so";
-constexpr char kHalLibrary[] = "libascend_hal.so";
-constexpr char kDsmiLibrary[] = "libdrvdsmi_host.so";
-constexpr std::size_t kPlatformValueSize = 4096;
+constexpr char ACL_LIBRARY[] = "libascendcl.so";
+constexpr char PLATFORM_LIBRARY[] = "libplatform.so";
+constexpr char HAL_LIBRARY[] = "libascend_hal.so";
+constexpr char DSMI_LIBRARY[] = "libdrvdsmi_host.so";
+constexpr std::size_t PLATFORM_VALUE_SIZE = 4096;
 
 class PosixDynamicSymbolResolver final : public DynamicSymbolResolver {
 public:
@@ -61,8 +62,11 @@ Function ToFunction(void* symbol)
 {
     static_assert(std::is_pointer_v<Function>);
     static_assert(sizeof(Function) == sizeof(symbol));
-    // POSIX dlsym returns function addresses through void*.
-    return reinterpret_cast<Function>(symbol);
+    Function function = nullptr;
+    if (memcpy_s(&function, sizeof(function), &symbol, sizeof(symbol)) != EOK) {
+        return nullptr;
+    }
+    return function;
 }
 
 template <typename Character, std::size_t Size>
@@ -72,7 +76,7 @@ std::string BoundedString(const Character (&value)[Size])
     while (length < Size && value[length] != 0) {
         ++length;
     }
-    return std::string(reinterpret_cast<const char*>(value), length);
+    return std::string(value, value + length);
 }
 
 } // namespace
@@ -145,7 +149,7 @@ bool DynamicHardwareDeviceApi::GetDeviceCount(std::int32_t* value)
         return false;
     }
     using Function = aclError (*)(uint32_t*);
-    const Function function = ToFunction<Function>(impl_->Resolve("aclrtGetDeviceCount", kAclLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("aclrtGetDeviceCount", ACL_LIBRARY));
     if (function == nullptr) {
         return false;
     }
@@ -164,7 +168,7 @@ bool DynamicHardwareDeviceApi::GetSocName(std::string* value)
         return false;
     }
     using Function = const char* (*)();
-    const Function function = ToFunction<Function>(impl_->Resolve("aclrtGetSocName", kAclLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("aclrtGetSocName", ACL_LIBRARY));
     if (function == nullptr) {
         return false;
     }
@@ -182,7 +186,7 @@ bool DynamicHardwareDeviceApi::GetDeviceAttribute(std::int32_t deviceId, std::in
         return false;
     }
     using Function = aclError (*)(uint32_t, aclrtDevAttr, std::int64_t*);
-    const Function function = ToFunction<Function>(impl_->Resolve("aclrtGetDeviceInfo", kAclLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("aclrtGetDeviceInfo", ACL_LIBRARY));
     return function != nullptr &&
            function(static_cast<uint32_t>(deviceId), static_cast<aclrtDevAttr>(attribute), value) == ACL_SUCCESS;
 }
@@ -193,12 +197,12 @@ bool DynamicHardwareDeviceApi::GetPlatformValue(std::int32_t type, std::string* 
         return false;
     }
     using Function = aclError (*)(aclplatformDevInfo, char*, uint32_t);
-    const Function function = ToFunction<Function>(impl_->Resolve("aclplatformGetDeviceInfo", kPlatformLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("aclplatformGetDeviceInfo", PLATFORM_LIBRARY));
     if (function == nullptr) {
         return false;
     }
 
-    std::array<char, kPlatformValueSize> buffer{};
+    std::array<char, PLATFORM_VALUE_SIZE> buffer{};
     if (function(static_cast<aclplatformDevInfo>(type), buffer.data(), static_cast<uint32_t>(buffer.size())) !=
         ACL_SUCCESS) {
         return false;
@@ -217,7 +221,7 @@ bool DynamicHardwareDeviceApi::GetControlCpuCount(std::int32_t deviceId, uint32_
         return false;
     }
     using Function = drvError_t (*)(uint32_t, std::int32_t, std::int32_t, std::int64_t*);
-    const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", kHalLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", HAL_LIBRARY));
     if (function == nullptr) {
         return false;
     }
@@ -237,7 +241,7 @@ bool DynamicHardwareDeviceApi::GetAiCpuFrequency(std::int32_t deviceId, uint32_t
         return false;
     }
     using Function = int (*)(int, struct dsmi_aicpu_info_stru*);
-    const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_aicpu_info", kDsmiLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_aicpu_info", DSMI_LIBRARY));
     if (function == nullptr) {
         return false;
     }
@@ -282,7 +286,7 @@ bool DynamicHardwareDeviceApi::ReadAiCoreFrequencies(
     }
 
     using Function = drvError_t (*)(uint32_t, std::int32_t, std::int32_t, std::int64_t*);
-    const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", kHalLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", HAL_LIBRARY));
     if (function == nullptr) {
         return false;
     }
@@ -324,7 +328,7 @@ bool DynamicHardwareDeviceApi::GetSyscntFrequencyHz(std::int32_t deviceId, doubl
         return false;
     }
     using Function = drvError_t (*)(uint32_t, std::int32_t, std::int32_t, std::int64_t*);
-    const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", kHalLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", HAL_LIBRARY));
     std::int64_t frequencyKhz = 0;
     if (function == nullptr ||
         function(static_cast<uint32_t>(deviceId), MODULE_TYPE_SYSTEM, INFO_TYPE_DEV_OSC_FREQUE, &frequencyKhz) !=
@@ -342,7 +346,7 @@ bool DynamicHardwareDeviceApi::GetChipVersion(std::int32_t deviceId, std::string
         return false;
     }
     using Function = int (*)(int, struct dsmi_chip_info_stru*);
-    const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_chip_info", kDsmiLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_chip_info", DSMI_LIBRARY));
     if (function == nullptr) {
         return false;
     }
@@ -362,9 +366,9 @@ bool DynamicHardwareDeviceApi::GetHbmUsage(std::int32_t deviceId, uint64_t* free
     }
     using SetDeviceFunction = aclError (*)(std::int32_t);
     using GetMemInfoFunction = aclError (*)(aclrtMemAttr, std::size_t*, std::size_t*);
-    const SetDeviceFunction setDevice = ToFunction<SetDeviceFunction>(impl_->Resolve("aclrtSetDevice", kAclLibrary));
+    const SetDeviceFunction setDevice = ToFunction<SetDeviceFunction>(impl_->Resolve("aclrtSetDevice", ACL_LIBRARY));
     const GetMemInfoFunction getMemInfo =
-        ToFunction<GetMemInfoFunction>(impl_->Resolve("aclrtGetMemInfo", kAclLibrary));
+        ToFunction<GetMemInfoFunction>(impl_->Resolve("aclrtGetMemInfo", ACL_LIBRARY));
     if (setDevice == nullptr || getMemInfo == nullptr || setDevice(deviceId) != ACL_SUCCESS) {
         return false;
     }
@@ -385,7 +389,7 @@ bool DynamicHardwareDeviceApi::GetHbmFrequency(std::int32_t deviceId, uint32_t* 
         return false;
     }
     using Function = int (*)(int, int, unsigned int*);
-    const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_device_frequency", kDsmiLibrary));
+    const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_device_frequency", DSMI_LIBRARY));
     return function != nullptr && function(deviceId, DSMI_DEVICE_TYPE_HBM, value) == 0;
 }
 

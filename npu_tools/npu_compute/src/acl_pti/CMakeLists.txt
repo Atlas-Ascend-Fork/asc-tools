@@ -33,6 +33,7 @@ add_library(acl_pti SHARED
 target_include_directories(acl_pti PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
+target_link_libraries(acl_pti PRIVATE c_sec_static)
 target_link_libraries(acl_pti
   PUBLIC npu_compute_backend_headers
   PRIVATE

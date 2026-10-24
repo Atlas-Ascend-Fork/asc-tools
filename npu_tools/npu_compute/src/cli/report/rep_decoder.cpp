@@ -32,7 +32,7 @@ Integer ReadLittleEndian(const uint8_t* data)
 {
     Integer value = 0;
     for (std::size_t index = 0; index < sizeof(Integer); ++index) {
-        value |= static_cast<Integer>(data[index]) << (index * kNpuRepByteBits);
+        value |= static_cast<Integer>(data[index]) << (index * NPU_REP_BYTE_BITS);
     }
     return value;
 }
@@ -44,12 +44,12 @@ uint64_t ReadLe64(const uint8_t* data)
 {
     uint64_t value = 0;
     for (std::size_t index = 0; index < sizeof(value); ++index) {
-        value |= static_cast<uint64_t>(data[index]) << (index * kNpuRepByteBits);
+        value |= static_cast<uint64_t>(data[index]) << (index * NPU_REP_BYTE_BITS);
     }
     return value;
 }
 
-bool HasMagic(const uint8_t* data) { return std::equal(kNpuRepMagic.begin(), kNpuRepMagic.end(), data); }
+bool HasMagic(const uint8_t* data) { return std::equal(NPU_REP_MAGIC.begin(), NPU_REP_MAGIC.end(), data); }
 
 bool IsKnownFileType(NpuRepFileType type)
 {
@@ -68,7 +68,7 @@ bool IsKnownFileType(NpuRepFileType type)
 bool ReadFileName(const uint8_t* data, std::string* name, std::string* error)
 {
     const char* begin = reinterpret_cast<const char*>(data);
-    const char* end = static_cast<const char*>(std::memchr(begin, '\0', kNpuRepFileNameSize));
+    const char* end = static_cast<const char*>(std::memchr(begin, '\0', NPU_REP_FILE_NAME_SIZE));
     if (end == nullptr) {
         return Fail("rep file info name is not null terminated", error);
     }
@@ -104,37 +104,37 @@ bool DecodeRep(const std::vector<uint8_t>& encoded, DecodedRep* decoded, std::st
     *decoded = {};
 
     try {
-        if (encoded.size() < kNpuRepMagic.size() || !HasMagic(encoded.data())) {
+        if (encoded.size() < NPU_REP_MAGIC.size() || !HasMagic(encoded.data())) {
             classify(RepDecodeError::InvalidFormat);
             return Fail("invalid rep header magic", error);
         }
         const uint8_t* head = encoded.data();
-        if (encoded.size() < kNpuRepHeaderVersionOffset + sizeof(uint32_t)) {
+        if (encoded.size() < NPU_REP_HEADER_VERSION_OFFSET + sizeof(uint32_t)) {
             return Fail("truncated rep version", error);
         }
-        const uint32_t version = ReadLe32(head + kNpuRepHeaderVersionOffset);
-        if (version != kNpuRepVersion) {
+        const uint32_t version = ReadLe32(head + NPU_REP_HEADER_VERSION_OFFSET);
+        if (version != NPU_REP_VERSION) {
             classify(RepDecodeError::UnsupportedVersion);
             return Fail("unsupported rep version", error);
         }
         // Bound all known fields before reading; this is not an exact header-size requirement.
-        if (encoded.size() < kNpuRepHeaderFieldsEnd) {
+        if (encoded.size() < NPU_REP_HEADER_FIELDS_END) {
             return Fail("truncated rep header fields", error);
         }
-        const uint16_t origin = ReadLe16(head + kNpuRepHeaderOriginOffset);
-        const uint16_t head_length = ReadLe16(head + kNpuRepHeaderHeaderLengthOffset);
-        const uint32_t file_count = ReadLe32(head + kNpuRepHeaderFileCountOffset);
-        const uint32_t file_info_length = ReadLe32(head + kNpuRepHeaderFileInfoLengthOffset);
-        const uint32_t reserved = ReadLe32(head + kNpuRepHeaderReservedOffset);
-        const uint64_t rep_length = ReadLe64(head + kNpuRepHeaderLengthOffset);
+        const uint16_t origin = ReadLe16(head + NPU_REP_HEADER_ORIGIN_OFFSET);
+        const uint16_t head_length = ReadLe16(head + NPU_REP_HEADER_HEADER_LENGTH_OFFSET);
+        const uint32_t file_count = ReadLe32(head + NPU_REP_HEADER_FILE_COUNT_OFFSET);
+        const uint32_t file_info_length = ReadLe32(head + NPU_REP_HEADER_FILE_INFO_LENGTH_OFFSET);
+        const uint32_t reserved = ReadLe32(head + NPU_REP_HEADER_RESERVED_OFFSET);
+        const uint64_t rep_length = ReadLe64(head + NPU_REP_HEADER_LENGTH_OFFSET);
 
-        if (origin != kNpuRepOrigin) {
+        if (origin != NPU_REP_ORIGIN) {
             return Fail("unsupported rep origin", error);
         }
-        if (head_length < kNpuRepHeaderFieldsEnd || head_length > encoded.size()) {
+        if (head_length < NPU_REP_HEADER_FIELDS_END || head_length > encoded.size()) {
             return Fail("invalid rep header length", error);
         }
-        if (file_info_length != kNpuRepFileInfoSize) {
+        if (file_info_length != NPU_REP_FILE_INFO_SIZE) {
             return Fail("invalid rep file info length", error);
         }
         if (reserved != 0U) {
@@ -167,7 +167,7 @@ bool DecodeRep(const std::vector<uint8_t>& encoded, DecodedRep* decoded, std::st
             }
 
             DecodedRepEntry entry;
-            if (!ReadFileName(info + kNpuRepEntryNameOffset, &entry.file_name, error)) {
+            if (!ReadFileName(info + NPU_REP_ENTRY_NAME_OFFSET, &entry.file_name, error)) {
                 *decoded = {};
                 return false;
             }
@@ -176,19 +176,19 @@ bool DecodeRep(const std::vector<uint8_t>& encoded, DecodedRep* decoded, std::st
                 return Fail("rep contains duplicate file names: " + entry.file_name, error);
             }
 
-            entry.file_type = static_cast<NpuRepFileType>(ReadLe16(info + kNpuRepEntryTypeOffset));
+            entry.file_type = static_cast<NpuRepFileType>(ReadLe16(info + NPU_REP_ENTRY_TYPE_OFFSET));
             if (!IsKnownFileType(entry.file_type)) {
                 *decoded = {};
                 return Fail("rep entry has an unknown file type", error);
             }
-            if (ReadLe16(info + kNpuRepEntryReserved16Offset) != 0U ||
-                ReadLe32(info + kNpuRepEntryReserved32Offset) != 0U) {
+            if (ReadLe16(info + NPU_REP_ENTRY_RESERVED16_OFFSET) != 0U ||
+                ReadLe32(info + NPU_REP_ENTRY_RESERVED32_OFFSET) != 0U) {
                 *decoded = {};
                 return Fail("rep file info reserved field is not zero", error);
             }
 
-            const uint64_t file_length = ReadLe64(info + kNpuRepEntryLengthOffset);
-            const uint64_t file_offset = ReadLe64(info + kNpuRepEntryPayloadOffset);
+            const uint64_t file_length = ReadLe64(info + NPU_REP_ENTRY_LENGTH_OFFSET);
+            const uint64_t file_offset = ReadLe64(info + NPU_REP_ENTRY_PAYLOAD_OFFSET);
             if (file_offset != expected_payload_offset || file_offset > encoded.size() ||
                 file_length > encoded.size() - file_offset) {
                 *decoded = {};

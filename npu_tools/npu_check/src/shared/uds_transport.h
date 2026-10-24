@@ -40,11 +40,11 @@ using DeadlineMs = int64_t;
 
 // "不设超时"用一个值表达，而不是在每个调用点写特殊分支。
 // 采集阶段等待结果时使用：应用可能跑数小时，任何固定超时都是错的。
-constexpr DeadlineMs kNoDeadline = std::numeric_limits<DeadlineMs>::max();
+constexpr DeadlineMs NO_DEADLINE = std::numeric_limits<DeadlineMs>::max();
 
 // 单次 poll 的等待上限。切片使剩余时长不会超出 poll 的 int 参数范围，同时让等待循环
 // 保持可响应；时间片到期后回到循环顶部，重新按绝对 deadline 判断。
-constexpr int kPollSliceMs = 1000;
+constexpr int POLL_SLICE_MS = 1000;
 
 // 必须是 CLOCK_MONOTONIC。CLOCK_REALTIME 会被 NTP 校时或手工改钟拨动，一次向前跳变
 // 就能让 deadline - now 变成负数，把健康的握手判成超时。
@@ -59,7 +59,7 @@ inline DeadlineMs DeadlineAfterMs(int timeoutMs) { return MonotonicNowMs() + tim
 int CreateSeqpacketSocket(std::string& error);
 
 // 按抽象命名空间约定填充 sockaddr_un，并算出 bind/connect 必须使用的 addrLen。
-// name 取自环境变量，以 '@' 开头，见 wire_protocol.h 中 kUdsNameEnv 的说明。
+// name 取自环境变量，以 '@' 开头，见 wire_protocol.h 中 UDS_NAME_ENV 的说明。
 bool BuildAbstractAddress(const std::string& name, sockaddr_un& address, socklen_t& addrLen, std::string& error);
 
 // 全项目唯一的等待原语。events 传 POLLIN 或 POLLOUT。
