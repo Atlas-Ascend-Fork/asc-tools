@@ -507,8 +507,8 @@ aclError AclrtMallocHandler(void** devPtr, std::size_t size, aclrtMemMallocPolic
             if (result != ACL_SUCCESS) {
                 return result;
             }
-            const aclptiResult mirrorStatus =
-                profiling::GetReplayRuntime().MirrorMalloc(params.devPtr, params.size, params.policy);
+            const aclptiResult mirrorStatus = profiling::GetReplayRuntime().MirrorMalloc(
+                params.devPtr, params.size, params.policy, ACL_RT_API_aclrtMalloc);
             return MapProfilingResult(mirrorStatus);
         });
 }
@@ -523,8 +523,8 @@ aclError AclrtMallocAlign32Handler(void** devPtr, std::size_t size, aclrtMemMall
             if (result != ACL_SUCCESS) {
                 return result;
             }
-            const aclptiResult mirrorStatus =
-                profiling::GetReplayRuntime().MirrorMalloc(params.devPtr, params.size, params.policy);
+            const aclptiResult mirrorStatus = profiling::GetReplayRuntime().MirrorMalloc(
+                params.devPtr, params.size, params.policy, ACL_RT_API_aclrtMallocAlign32);
             return MapProfilingResult(mirrorStatus);
         });
 }
@@ -539,8 +539,8 @@ aclError AclrtMallocWithCfgHandler(void** devPtr, std::size_t size, aclrtMemMall
             if (result != ACL_SUCCESS) {
                 return result;
             }
-            const aclptiResult mirrorStatus =
-                profiling::GetReplayRuntime().MirrorMalloc(params.devPtr, params.size, params.policy);
+            const aclptiResult mirrorStatus = profiling::GetReplayRuntime().MirrorMalloc(
+                params.devPtr, params.size, params.policy, ACL_RT_API_aclrtMallocWithCfg, params.cfg);
             return MapProfilingResult(mirrorStatus);
         });
 }

@@ -30,6 +30,9 @@ int ComputeService::Initialize() noexcept
     try {
         config_ = server.Accept().config;
         runtime_config_ = {config_.sections, config_.pmuLevel == "block" ? PmuDataLevel::Block : PmuDataLevel::Task};
+        runtime_config_.cacheControl = config_.cacheControlMode == ipc::kCacheControlModeAll ?
+                                           ACLPTI_CACHE_CONTROL_ALL :
+                                           ACLPTI_CACHE_CONTROL_NONE;
         // Initialization cannot produce artifacts before the first launch; start worker after READY.
         // A deferred sink bridges this brief initialization interval.
         class DeferredSink final : public ArtifactSink {

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cstdio>
 #include <new>
 #include <string_view>
 #include <unordered_set>
@@ -25,6 +26,31 @@
 
 namespace aclpti::profiling {
 namespace {
+
+void TryFlushL2Cache(std::int32_t device, std::size_t round)
+{
+    using FlushFunction = aclError (*)(void*);
+    struct FlushApi {
+        aclError status;
+        FlushFunction function;
+    };
+    static const FlushApi api = [] {
+        aclrtApiFunc original = nullptr;
+        const auto status = aclrtApiInjectionGetFunc("aclrtDeviceL2CacheFlush", &original, nullptr);
+        return FlushApi{status, reinterpret_cast<FlushFunction>(original)};
+    }();
+    if (api.status != ACL_SUCCESS || api.function == nullptr) {
+        return;
+    }
+    const aclError status = api.function(nullptr);
+    if (status != ACL_SUCCESS) {
+        std::fprintf(
+            stderr,
+            "[WARNING] cache-control=all device=%d round=%zu api=aclrtDeviceL2CacheFlush "
+            "status=%d L2 flush failed; continue profiling; cache state is not guaranteed\n",
+            device, round, status);
+    }
+}
 
 struct SectionDefinition {
     std::string_view name;
@@ -486,6 +512,9 @@ aclptiResult RangeProfiler::ReplayKernel(
                     "aclpti", "error operation=replay_restore_result status=%d round=%zu", static_cast<int>(status),
                     round);
                 return status;
+            }
+            if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
+                TryFlushL2Cache(deviceId, round);
             }
             status = StartProfilingRound(rounds[round], round, deviceId, &config);
             if (status != ACLPTI_SUCCESS) {

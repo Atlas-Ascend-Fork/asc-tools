@@ -54,7 +54,8 @@ public:
     aclptiResult StopProfiling();
 
     /// Allocates replay shadow memory for a successful device allocation.
-    aclptiResult MirrorMalloc(void** devPtr, std::size_t size, aclrtMemMallocPolicy policy);
+    aclptiResult MirrorMalloc(
+        void** devPtr, std::size_t size, aclrtMemMallocPolicy policy, aclrtApiId api, aclrtMallocConfig* cfg = nullptr);
 
     /// Releases replay shadow memory associated with a device allocation.
     aclptiResult MirrorFree(void* devPtr);

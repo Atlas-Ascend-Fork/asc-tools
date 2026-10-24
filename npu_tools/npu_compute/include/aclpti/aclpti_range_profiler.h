@@ -22,6 +22,11 @@ extern "C" {
 #define ACLPTI_MAX_NUM_SECTIONS ((size_t)64)
 #define ACLPTI_MAX_SECTION_NAME_LENGTH ((size_t)64)
 
+typedef enum aclptiCacheControl {
+    ACLPTI_CACHE_CONTROL_NONE = 0,
+    ACLPTI_CACHE_CONTROL_ALL = 1,
+} aclptiCacheControl;
+
 typedef enum aclptiBlockResultMode {
     ACLPTI_BLOCK_RESULT_DISABLED = 0,
     ACLPTI_BLOCK_RESULT_ALL = 1,
@@ -34,6 +39,7 @@ typedef struct aclptiRangeProfilerSetConfigParams {
     aclptiBlockResultMode blockResult; // Applies to PMU/PC sampling; ignored for pipeline.
     bool collectPipeline;              // Enable before aclrtBinaryLoadFromData; requires the runtime Bisheng toolchain.
     bool collectPcSampling;
+    aclptiCacheControl cacheControl; // Configure before the first replay; zero means NONE.
 } aclptiRangeProfilerSetConfigParams;
 
 ACLPTI_EXPORT aclptiResult aclptiRangeProfilerSetConfig(aclptiRangeProfilerSetConfigParams* pParams);

@@ -313,6 +313,10 @@ target_link_libraries(acl_pti_replay_test
 set_target_properties(acl_pti_replay_test PROPERTIES ENABLE_EXPORTS YES)
 set_target_properties(acl_pti_replay_test PROPERTIES ENABLE_EXPORTS YES)
 add_test(NAME npu_compute.replay COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/Default)
+foreach(mode IN ITEMS flush_failure partial_flush_failure missing_flush none start_failure)
+  add_test(NAME npu_compute.cache_control_${mode}
+    COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/${mode})
+endforeach()
 add_test(NAME npu_compute.replay_symbol COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/symbol)
 add_test(NAME npu_compute.replay_debug COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/debug)
 add_test(NAME npu_compute.replay_shrink_block COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/shrink)
@@ -342,7 +346,18 @@ target_link_libraries(acl_pti_shadow_memory_test
   PRIVATE acl_pti_unit ${NPU_COMPUTE_ACLPTI_UNIT_BACKENDS}
 )
 set_target_properties(acl_pti_shadow_memory_test PROPERTIES ENABLE_EXPORTS YES)
-add_test(NAME npu_compute.shadow_memory COMMAND acl_pti_shadow_memory_test)
+add_test(NAME npu_compute.shadow_memory
+  COMMAND acl_pti_shadow_memory_test --gtest_filter=Modes/NpuComputeShadowMemory.MirrorsMemoryAndRestoresInputsAcrossReplay/0)
+add_test(NAME npu_compute.shadow_memory_none
+  COMMAND acl_pti_shadow_memory_test --gtest_filter=Modes/NpuComputeShadowMemory.MirrorsMemoryAndRestoresInputsAcrossReplay/1)
+
+add_executable(acl_pti_cache_memory_test cache_memory_test.cpp)
+target_link_libraries(acl_pti_cache_memory_test PRIVATE
+  acl_pti_unit acl_tool_injection_test_unit acl_runtime_stub_unit acl_prof_api_stub_unit)
+set_target_properties(acl_pti_cache_memory_test PROPERTIES ENABLE_EXPORTS YES)
+foreach(mode IN ITEMS all none shadow_failure business_failure)
+  add_test(NAME npu_compute.cache_memory_${mode} COMMAND acl_pti_cache_memory_test ${mode})
+endforeach()
 
 add_executable(acl_pti_launch_without_config_test launch_without_config_test.cpp)
 target_link_libraries(acl_pti_launch_without_config_test
@@ -638,6 +653,7 @@ foreach(target IN ITEMS
     acl_pti_simt_replay_test
     acl_pti_args_array_replay_test
     acl_pti_shadow_memory_test
+    acl_pti_cache_memory_test
     acl_pti_launch_without_config_test
     acl_pti_initialize_failure_test
     acl_pti_runtime_failure_short_circuit_test

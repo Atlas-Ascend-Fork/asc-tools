@@ -10,12 +10,14 @@
 #ifndef NPU_COMPUTE_RUNTIME_CONFIG_H
 #define NPU_COMPUTE_RUNTIME_CONFIG_H
 #include "compute_types.h"
+#include "aclpti/aclpti_range_profiler.h"
 #include <string>
 #include <vector>
 namespace npucompute {
 struct RuntimeConfig {
     std::vector<std::string> sections;
     PmuDataLevel pmuLevel = PmuDataLevel::Block;
+    aclptiCacheControl cacheControl = ACLPTI_CACHE_CONTROL_NONE;
 };
 } // namespace npucompute
 #endif

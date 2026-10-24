@@ -36,6 +36,8 @@ ipc::Config LoadCollectionConfig(const CliConfig& config)
     ipc::Config result;
     result.sections = config.sections;
     result.replayMode = ReplayModeName(config.replay_mode);
+    result.cacheControlMode =
+        config.cache_control == CacheControl::All ? ipc::kCacheControlModeAll : ipc::kCacheControlModeNone;
     if (const char* level = std::getenv("NPU_COMPUTE_PMU_LEVEL"); level != nullptr && *level != '\0') {
         result.pmuLevel = level;
     }

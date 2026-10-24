@@ -122,7 +122,8 @@ int main()
         void* deviceAddress = &deviceOutput;
         if (mapFailure) {
             CHECK(
-                memory.MirrorMalloc(&deviceAddress, sizeof(deviceOutput), ACL_MEM_MALLOC_NORMAL_ONLY) ==
+                memory.MirrorMalloc(
+                    &deviceAddress, sizeof(deviceOutput), ACL_MEM_MALLOC_NORMAL_ONLY, ACL_RT_API_aclrtMalloc) ==
                 ACLPTI_SUCCESS);
         }
         CHECK(unsetenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") == 0);

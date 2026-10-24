@@ -76,6 +76,7 @@ npu-compute --import <report-file> [--export <directory>]
 | `--set arg`              | 采集       | `basic`、`full` | 是     | 选择预定义指标组集合，区分大小写。在采集选择上，等价于分别指定其包含的多个`--section`。 |
 | `--replay-mode arg`      | 采集       | `kernel`        | 否     | Kernel重放模式，当前仅支持`kernel`，默认值为`kernel`。                                  |
 | `--no-pack`              | 采集       | 无              | 否     | 直接保留原始结果目录，不生成`.npu-rep`。                                                |
+| `--cache-control arg`    | 采集       | `all`, `none`   | 否     | 控制每轮 Kernel 重放前的 L2 缓存处理。`all`：尝试清理 L2 缓存；`none`：不主动清理，为默认值。 |
 | `-i arg`、`--import arg` | 解包       | 报告文件路径    | 否     | 导入并解包`npu-compute`生成的`.npu-rep`报告。                                           |
 | `-o arg`、`--export arg` | 采集、解包 | 报告路径或目录  | 否     | 采集时指定报告文件路径或已有目录，解包时指定保存解包结果的已有目录。具体行为见下文。    |
 
@@ -150,6 +151,12 @@ npu-compute --section PipeUtilization ./application --input input.bin
 
 ```bash
 npu-compute --section PipeUtilization bash ./run.sh
+```
+
+使用`--cache-control all`，在每轮 Kernel 重放前主动清理 L2 缓存：
+
+```bash
+npu-compute --cache-control all --section L2Cache ./application
 ```
 
 ### 报告输出

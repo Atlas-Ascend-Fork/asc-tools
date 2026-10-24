@@ -88,8 +88,9 @@ bool ValidateListSectionsMode(const CliConfig& config, std::vector<std::string>*
     if (!config.list_sections) {
         return false;
     }
-    if (config.no_pack || config.replay_mode_specified || config.import_path.has_value() ||
-        config.export_path.has_value() || !config.sections.empty() || !config.program.empty()) {
+    if (config.no_pack || config.replay_mode_specified || config.cache_control_specified ||
+        config.import_path.has_value() || config.export_path.has_value() || !config.sections.empty() ||
+        !config.program.empty()) {
         AddError("use --list-sections as a standalone command.", errors);
     }
     return true;
@@ -100,8 +101,8 @@ bool ValidateImportMode(const CliConfig& config, std::vector<std::string>* error
     if (!config.import_path.has_value()) {
         return false;
     }
-    if (config.list_sets || config.list_sections || config.replay_mode_specified || !config.sections.empty() ||
-        !config.program.empty()) {
+    if (config.list_sets || config.list_sections || config.replay_mode_specified || config.cache_control_specified ||
+        !config.sections.empty() || !config.program.empty()) {
         AddError("Use --import alone or with --export as the only additional option.", errors);
     }
     return true;
@@ -134,8 +135,8 @@ void ValidateCombinations(const CliConfig& config, std::vector<std::string>* err
         return;
     }
     if (config.list_sets) {
-        if (config.no_pack || config.list_sections || config.replay_mode_specified || config.import_path ||
-            config.export_path || !config.sections.empty() || !config.program.empty()) {
+        if (config.no_pack || config.list_sections || config.replay_mode_specified || config.cache_control_specified ||
+            config.import_path || config.export_path || !config.sections.empty() || !config.program.empty()) {
             AddError("use --list-sets as a standalone command.", errors);
         }
         return;
@@ -246,6 +247,26 @@ OptionRegistry RegisterOptions()
     replay.help = "Kernel replay mode.\n"
                   "Value: kernel. Default: kernel.";
     builder.Add(std::move(replay));
+
+    OptionSpec cache;
+    cache.long_name = "--cache-control";
+    cache.arity = OptionArity::RequiredValue;
+    cache.repeat = RepeatPolicy::Once;
+    cache.missing_message = "--cache-control requires a mode. Supported values: all, none.";
+    cache.on_seen = [](CliConfig& config) { config.cache_control_specified = true; };
+    cache.apply = [missing = cache.missing_message](
+                      const std::string& value, CliConfig& config, std::vector<std::string>& errors) {
+        if (value == "all" || value == "none") {
+            config.cache_control = value == "all" ? CacheControl::All : CacheControl::None;
+        } else {
+            errors.push_back(
+                value.empty() ? missing :
+                                "unsupported cache control mode '" + value + "'. Supported values: all, none.");
+        }
+    };
+    cache.help = "L2 cache control before each kernel replay.\n"
+                 "Values: all (flush), none (retain). Default: none.";
+    builder.Add(std::move(cache));
 
     auto add_path = [&builder](
                         const char* name, char alias, const char* missing, const char* empty,

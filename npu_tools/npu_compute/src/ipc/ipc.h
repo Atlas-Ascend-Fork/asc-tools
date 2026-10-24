@@ -34,6 +34,8 @@ inline constexpr std::chrono::milliseconds kHandshakeTimeout{10000};
 inline constexpr std::chrono::milliseconds kIoTimeout{30000};
 inline constexpr std::chrono::milliseconds kDrainTimeout{30000};
 inline constexpr std::chrono::milliseconds kResultAckTimeout{30000};
+inline constexpr uint32_t kCacheControlModeAll = 0;
+inline constexpr uint32_t kCacheControlModeNone = 1;
 enum class Type : uint16_t {
     Connect = 1,
     Interrupt = 2,
@@ -58,6 +60,7 @@ struct Config {
     std::string replayMode = "kernel";
     std::string pmuLevel = "block";
     uint64_t featureFlags = 0;
+    uint32_t cacheControlMode = kCacheControlModeNone;
 };
 struct Hello {
     uint32_t pid = 0;

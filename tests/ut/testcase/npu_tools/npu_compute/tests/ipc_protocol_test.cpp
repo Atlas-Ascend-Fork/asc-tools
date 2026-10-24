@@ -58,6 +58,7 @@ TEST(NpuComputeIpcProtocol, Codecs)
     auto bytes = EncodeConfig(config);
     const auto decoded = DecodeConfig(bytes);
     Check(decoded.sections == config.sections && decoded.pmuLevel == "block");
+    Check(decoded.cacheControlMode == npucompute::ipc::kCacheControlModeNone);
     Check(static_cast<uint16_t>(Type::Hardware) == 0x0103);
     Check(static_cast<uint16_t>(Type::DataEnd) == 0x0104);
     Check(TypeForKind(KindForName("PipeUtilization.csv")) == Type::Pmu);
@@ -78,8 +79,19 @@ TEST(NpuComputeIpcProtocol, Codecs)
     Reject([&] { EncodeConfig(config); });
     config.pmuLevel = "task";
     Check(DecodeConfig(EncodeConfig(config)).pmuLevel == "task");
-    config.featureFlags = 1;
-    Reject([&] { EncodeConfig(config); });
+    for (uint32_t mode : {npucompute::ipc::kCacheControlModeAll, npucompute::ipc::kCacheControlModeNone}) {
+        config.cacheControlMode = mode;
+        Check(DecodeConfig(EncodeConfig(config)).cacheControlMode == mode);
+        const auto hello = DecodeHello(EncodeHello({1, 2, config}));
+        Check(hello.config.cacheControlMode == mode);
+    }
+    for (uint32_t mode : {uint32_t{2}, uint32_t{3}}) {
+        config.cacheControlMode = mode;
+        Reject([&] { EncodeConfig(config); });
+        auto invalid = EncodeConfig(Config{config.sections, "kernel", "block", 0, 0});
+        invalid[invalid.size() - 4] = static_cast<uint8_t>(mode);
+        Reject([&] { DecodeConfig(invalid); });
+    }
     Reject([&] { EncodeArtifactBegin({1, DataKind::PmuCsv, "../Memory.csv"}); });
     Check(
         DecodeArtifactBegin(EncodeArtifactBegin({1, DataKind::PmuCsv, "PipeUtilization.csv"})).kind ==

@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "config/config.h"
+#include "launch/collection_session.h"
 #include "launch/launcher.h"
 
 #include <cstdio>
@@ -674,6 +675,65 @@ TEST(NpuComputeCli, HelpDefinesEachOptionOnce)
     ASSERT_TRUE(Parse({"npu-compute", "./app"}, &config, &errors));
     EXPECT_EQ(config.sets, std::vector<std::string>{"basic"});
     EXPECT_FALSE(config.sections.empty());
+}
+
+TEST(NpuComputeCli, CacheControlModesAndApplicationBoundary)
+{
+    CliConfig config;
+    std::vector<std::string> errors;
+    ASSERT_TRUE(Parse({"npu-compute", "./app"}, &config, &errors));
+    EXPECT_EQ(config.cache_control, npucompute::cli::CacheControl::None);
+    EXPECT_FALSE(config.cache_control_specified);
+    EXPECT_EQ(npucompute::cli::LoadCollectionConfig(config).cacheControlMode, npucompute::ipc::kCacheControlModeNone);
+    for (const std::string mode : {"all", "none"}) {
+        for (const auto& option :
+             std::vector<std::vector<std::string>>{{"--cache-control", mode}, {"--cache-control=" + mode}}) {
+            auto args = option;
+            args.insert(args.begin(), "npu-compute");
+            args.insert(args.end(), {"./app", "--cache-control=app-owned"});
+            ASSERT_TRUE(Parse(args, &config, &errors));
+            EXPECT_TRUE(config.cache_control_specified);
+            const bool all = mode == "all";
+            EXPECT_EQ(
+                config.cache_control, all ? npucompute::cli::CacheControl::All : npucompute::cli::CacheControl::None);
+            EXPECT_EQ(
+                npucompute::cli::LoadCollectionConfig(config).cacheControlMode,
+                all ? npucompute::ipc::kCacheControlModeAll : npucompute::ipc::kCacheControlModeNone);
+            EXPECT_EQ(config.program_arguments, std::vector<std::string>{"--cache-control=app-owned"});
+        }
+    }
+    ASSERT_TRUE(Parse({"npu-compute", "./app", "--cache-control=none"}, &config, &errors));
+    EXPECT_FALSE(config.cache_control_specified);
+    EXPECT_EQ(config.cache_control, npucompute::cli::CacheControl::None);
+}
+
+TEST(NpuComputeCli, CacheControlRejectsInvalidValuesAndCombinations)
+{
+    CliConfig config;
+    std::vector<std::string> errors;
+    for (const auto& args : std::vector<std::vector<std::string>>{
+             {"--cache-control"},
+             {"--cache-control="},
+             {"--cache-control", ""},
+             {"--cache-control", "ALL", "./app"},
+             {"--cache-control=invalid", "./app"},
+             {"--cache-control=all", "--cache-control=none", "./app"},
+             {"--cache-control", "--help", "--cache-control=all"},
+             {"--cache-control=all", "--import", "x.npu-rep"},
+             {"--cache-control=none", "--list-sections"},
+             {"--cache-control=all", "--list-sets"}}) {
+        auto command = args;
+        command.insert(command.begin(), "npu-compute");
+        EXPECT_FALSE(Parse(command, &config, &errors));
+        EXPECT_FALSE(errors.empty());
+    }
+    for (const auto& args :
+         std::vector<std::vector<std::string>>{{"--import", "x.npu-rep"}, {"--list-sections"}, {"--list-sets"}}) {
+        auto command = args;
+        command.insert(command.begin(), "npu-compute");
+        EXPECT_TRUE(Parse(command, &config, &errors));
+        EXPECT_FALSE(config.cache_control_specified);
+    }
 }
 
 TEST(NpuComputeCli, ImportCombinationsUseConsistentGuidance)

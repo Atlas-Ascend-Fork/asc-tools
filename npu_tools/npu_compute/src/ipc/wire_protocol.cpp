@@ -108,6 +108,7 @@ void WriteConfig(Writer& writer, const Config& value)
     writer.String(value.replayMode);
     writer.String(value.pmuLevel);
     writer.Integer(value.featureFlags, sizeof(uint64_t));
+    writer.Integer(value.cacheControlMode, sizeof(uint32_t));
 }
 Config ReadConfig(Reader& reader)
 {
@@ -116,6 +117,7 @@ Config ReadConfig(Reader& reader)
     result.replayMode = reader.String();
     result.pmuLevel = reader.String();
     result.featureFlags = reader.Integer(sizeof(uint64_t));
+    result.cacheControlMode = static_cast<uint32_t>(reader.Integer(sizeof(uint32_t)));
     ValidateConfig(result);
     return result;
 }
@@ -182,7 +184,10 @@ void ValidateConfig(const Config& config)
     }
     Check(config.replayMode == "kernel", "unsupported replay mode");
     Check(config.pmuLevel == "block" || config.pmuLevel == "task", "unsupported PMU level");
-    Check(config.featureFlags == 0, "unsupported config flags");
+    Check(config.featureFlags == 0, "unsupported feature flags");
+    Check(
+        config.cacheControlMode == kCacheControlModeAll || config.cacheControlMode == kCacheControlModeNone,
+        "unsupported cache control mode");
 }
 DataKind KindForName(const std::string& name)
 {

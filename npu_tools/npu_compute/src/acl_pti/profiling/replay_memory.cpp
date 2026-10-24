@@ -15,7 +15,8 @@
 
 namespace aclpti::profiling {
 
-aclptiResult ReplayMemory::MirrorMalloc(void** devPtr, std::size_t size, aclrtMemMallocPolicy policy)
+aclptiResult ReplayMemory::MirrorMalloc(
+    void** devPtr, std::size_t size, aclrtMemMallocPolicy policy, aclrtApiId api, aclrtMallocConfig* cfg)
 {
     if (devPtr == nullptr || *devPtr == nullptr || size == 0) {
         npucompute::detail::DebugLog(
@@ -23,7 +24,7 @@ aclptiResult ReplayMemory::MirrorMalloc(void** devPtr, std::size_t size, aclrtMe
             ACLPTI_ERROR_INVALID_PARAMETER);
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
-    const auto mallocFunction = reinterpret_cast<aclrtMallocFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMalloc));
+    const auto mallocFunction = acltoolGetOriginalRuntimeApi(api);
     const auto freeFunction = reinterpret_cast<aclrtFreeFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtFree));
     if (mallocFunction == nullptr || freeFunction == nullptr) {
         npucompute::detail::DebugLog(
@@ -34,9 +35,12 @@ aclptiResult ReplayMemory::MirrorMalloc(void** devPtr, std::size_t size, aclrtMe
     }
 
     void* shadow = nullptr;
-    const aclError result = mallocFunction(&shadow, size, policy);
+    const aclError result = api == ACL_RT_API_aclrtMallocWithCfg ?
+                                reinterpret_cast<aclrtMallocWithCfgFunc>(mallocFunction)(&shadow, size, policy, cfg) :
+                                reinterpret_cast<aclrtMallocFunc>(mallocFunction)(&shadow, size, policy);
     if (result != ACL_SUCCESS) {
-        npucompute::detail::DebugLog("aclpti", "error operation=shadow_malloc status=%d api=aclrtMalloc", result);
+        npucompute::detail::DebugLog(
+            "aclpti", "error operation=shadow_malloc status=%d api=%u", result, static_cast<unsigned>(api));
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     if (shadow == nullptr) {

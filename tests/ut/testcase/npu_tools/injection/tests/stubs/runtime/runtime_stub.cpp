@@ -24,7 +24,7 @@
 
 namespace {
 
-constexpr std::size_t kRuntimeApiCount = 31;
+constexpr std::size_t kRuntimeApiCount = 32;
 constexpr std::size_t kSocNameCapacity = 64;
 constexpr char kDefaultSocName[] = "Ascend950PR_9599";
 
@@ -95,6 +95,8 @@ aclError RealAclrtMalloc(void** devPtr, std::size_t size, aclrtMemMallocPolicy)
     *devPtr = std::malloc(size);
     return *devPtr == nullptr ? ACL_ERROR_BAD_ALLOC : ACL_SUCCESS;
 }
+
+aclError RealAclrtDeviceL2CacheFlush(void*) { return ACL_SUCCESS; }
 
 aclError RealAclrtMallocWithCfg(void** ptr, size_t size, aclrtMemMallocPolicy policy, aclrtMallocConfig*)
 {
@@ -307,6 +309,8 @@ std::array<RuntimeEntry, kRuntimeApiCount> g_runtimeEntries = {{
     {"aclrtMallocWithCfg", ToGenericFunction(&RealAclrtMallocWithCfg), ToGenericFunction(&RealAclrtMallocWithCfg)},
     {"aclrtBinaryLoadFromFile", ToGenericFunction(&RealAclrtBinaryLoadFromFile),
      ToGenericFunction(&RealAclrtBinaryLoadFromFile)},
+    {"aclrtDeviceL2CacheFlush", ToGenericFunction(&RealAclrtDeviceL2CacheFlush),
+     ToGenericFunction(&RealAclrtDeviceL2CacheFlush)},
     {"aclrtGetFunctionName", ToGenericFunction(&RealAclrtGetFunctionName),
      ToGenericFunction(&RealAclrtGetFunctionName)},
 }};

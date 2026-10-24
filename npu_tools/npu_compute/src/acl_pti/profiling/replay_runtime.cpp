@@ -33,7 +33,16 @@ aclptiResult ReplayRuntime::Initialize()
 
 aclptiResult ReplayRuntime::SetConfig(const aclptiRangeProfilerSetConfigParams* params)
 {
-    return rangeProfiler_.SetConfig(params);
+    if (params == nullptr ||
+        (params->cacheControl != ACLPTI_CACHE_CONTROL_ALL && params->cacheControl != ACLPTI_CACHE_CONTROL_NONE)) {
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    const aclptiResult status = rangeProfiler_.SetConfig(params);
+    if (status != ACLPTI_SUCCESS) {
+        return status;
+    }
+    rangeProfiler_.SetCacheControl(params->cacheControl);
+    return ACLPTI_SUCCESS;
 }
 
 aclptiResult ReplayRuntime::RegisterBinary(
@@ -89,12 +98,13 @@ aclptiResult ReplayRuntime::CompleteBinaryUnload(BinaryRegistry::UnloadContext& 
     return HandleProfilingResult(binaryRegistry_.CompleteBinaryUnload(context));
 }
 
-aclptiResult ReplayRuntime::MirrorMalloc(void** devPtr, std::size_t size, aclrtMemMallocPolicy policy)
+aclptiResult ReplayRuntime::MirrorMalloc(
+    void** devPtr, std::size_t size, aclrtMemMallocPolicy policy, aclrtApiId api, aclrtMallocConfig* cfg)
 {
     if (!ProfilingAvailable()) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
-    return HandleProfilingResult(replayMemory_.MirrorMalloc(devPtr, size, policy));
+    return HandleProfilingResult(replayMemory_.MirrorMalloc(devPtr, size, policy, api, cfg));
 }
 
 aclptiResult ReplayRuntime::MirrorFree(void* devPtr) { return HandleProfilingResult(replayMemory_.MirrorFree(devPtr)); }

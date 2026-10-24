@@ -28,6 +28,8 @@
 
 namespace {
 
+constexpr aclptiCacheControl kInvalidCacheControl = static_cast<aclptiCacheControl>(2);
+
 template <typename Function>
 bool CaptureStderr(Function function, std::string* output)
 {
@@ -77,6 +79,25 @@ struct ObservedConfig {
     std::uint32_t blockMode;
     std::array<std::uint32_t, COMPUTE_AICORE_METRICS_NUM> pmuEvents;
 };
+
+std::size_t g_flush_calls = 0;
+bool g_flush_failure = false;
+bool g_partial_flush_failure = false;
+bool g_none = false;
+bool g_start_failure = false;
+bool g_missing_flush = false;
+std::size_t g_restore_calls = 0;
+int RealFlush(void* reserved)
+{
+    if (reserved != nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    ++g_flush_calls;
+    if (g_restore_calls != g_flush_calls) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    return g_flush_failure || (g_partial_flush_failure && g_flush_calls % 2 == 1) ? ACL_ERROR_RT_FAILURE : ACL_SUCCESS;
+}
 
 std::size_t g_malloc_calls = 0;
 std::size_t g_free_calls = 0;
@@ -148,8 +169,12 @@ int RealFree(void* pointer)
     return 0;
 }
 
-int RealMemcpy(void* destination, std::size_t destination_size, const void* source, std::size_t count, aclrtMemcpyKind)
+int RealMemcpy(
+    void* destination, std::size_t destination_size, const void* source, std::size_t count, aclrtMemcpyKind kind)
 {
+    if (kind == ACL_MEMCPY_DEVICE_TO_DEVICE) {
+        ++g_restore_calls;
+    }
     ++g_memcpy_calls;
     if (destination == nullptr || source == nullptr || count > destination_size) {
         return -1;
@@ -265,6 +290,12 @@ int RealResetDevice(std::int32_t deviceId)
 int ProfilerStart(uint32_t, const void* config, uint32_t length)
 {
     ++g_start_calls;
+    if (g_start_failure) {
+        return -1;
+    }
+    if (!g_none && !g_missing_flush && g_flush_calls != g_start_calls) {
+        return -1;
+    }
     if (config == nullptr || length != sizeof(MsprofConfig)) {
         return -1;
     }
@@ -391,6 +422,11 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     const bool useDebugLog = mode == "debug";
     const bool useHostArgs = mode == "host";
     const bool useSymbol = mode == "symbol";
+    g_flush_failure = mode == "flush_failure";
+    g_partial_flush_failure = mode == "partial_flush_failure";
+    g_start_failure = mode == "start_failure";
+    g_none = mode == "none";
+    g_missing_flush = mode == "missing_flush";
     if (useDebugLog) {
         ASSERT_TRUE(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
     } else {
@@ -398,6 +434,10 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     }
     const aclptiBlockResultMode blockResult = useShrinkBlock ? ACLPTI_BLOCK_RESULT_SHRINK : ACLPTI_BLOCK_RESULT_ALL;
     const std::uint32_t expectedBlockMode = useShrinkBlock ? PROF_COMPUTE_BLOCK_SHRINK : PROF_COMPUTE_ALL_BLOCK;
+    ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtDeviceL2CacheFlush", &RealFlush) == 0);
+    if (g_missing_flush) {
+        ASSERT_TRUE(RuntimeStubClearOrigin("aclrtDeviceL2CacheFlush") == 0);
+    }
     ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == 0);
     ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMallocAlign32", &RealMalloc) == 0);
     ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtFree", &RealFree) == 0);
@@ -455,6 +495,12 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(aclptiActivityDisable(subscriber, ACLPTI_ACTIVITY_KIND_FULL, nullptr) == ACLPTI_SUCCESS);
     const char* sections[] = {"PipeUtilization", "ResourceConflictRatio"};
     aclptiRangeProfilerSetConfigParams config{sections, std::size(sections), blockResult, true, true};
+    auto invalidCacheConfig = config;
+    invalidCacheConfig.cacheControl = kInvalidCacheControl;
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&invalidCacheConfig) == ACLPTI_ERROR_INVALID_PARAMETER);
+    if (!g_none) {
+        config.cacheControl = ACLPTI_CACHE_CONTROL_ALL;
+    }
     ASSERT_TRUE(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
     aclptiRangeProfilerSetConfigParams invalidConfig{nullptr, 0, ACLPTI_BLOCK_RESULT_ALL, false, false};
     ASSERT_TRUE(aclptiRangeProfilerSetConfig(&invalidConfig) == ACLPTI_ERROR_INVALID_PARAMETER);
@@ -485,6 +531,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(aclrtMemcpy(alignedAllocation, 1, &alignedValue, 1, ACL_MEMCPY_HOST_TO_DEVICE) == 0);
     ASSERT_TRUE(aclrtFree(alignedAllocation) == 0);
 
+    ASSERT_TRUE(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
     void* allocation = nullptr;
     ASSERT_TRUE(aclrtMalloc(&allocation, 1, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
     uint8_t initial_value = 5;
@@ -505,9 +552,30 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
                                               aclrtLaunchKernel(function, 1, &args, sizeof(args), nullptr);
         },
         &profilingLog));
+    ASSERT_TRUE(profilingLog.find("[INFO] cache-control") == std::string::npos);
+    if (g_start_failure) {
+        ASSERT_TRUE(firstLaunchStatus != ACL_SUCCESS);
+        ASSERT_TRUE(g_flush_calls == 1 && g_start_calls == 1 && g_launch_calls == 1 && g_stop_calls == 0);
+        ASSERT_TRUE(profilingLog.find("cache-control") == std::string::npos);
+        ASSERT_TRUE(aclrtFree(allocation) == ACL_SUCCESS);
+        return;
+    }
     ASSERT_TRUE(firstLaunchStatus == ACL_SUCCESS);
     ASSERT_TRUE(g_parameter_query_calls == 0);
     ASSERT_TRUE(g_instrumented_launch_calls == 2);
+    ASSERT_TRUE(g_flush_calls == (g_none || g_missing_flush ? 0U : 5U));
+    if (g_none) {
+        ASSERT_TRUE(profilingLog.find("cache-control") == std::string::npos);
+    } else if (g_missing_flush) {
+        ASSERT_TRUE(profilingLog.find("cache-control") == std::string::npos);
+    } else {
+        ASSERT_TRUE(
+            (profilingLog.find("[WARNING] cache-control=all") != std::string::npos) ==
+            (g_flush_failure || g_partial_flush_failure));
+        if (g_flush_failure || g_partial_flush_failure) {
+            ASSERT_TRUE(profilingLog.find("L2 flush failed; continue profiling") != std::string::npos);
+        }
+    }
     ASSERT_TRUE(g_start_calls == 5);
     ASSERT_TRUE(g_stop_calls == 5);
     ASSERT_TRUE(g_start_data_type == 8);
@@ -621,5 +689,8 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    Modes, NpuComputeReplay, testing::Values("Default", "symbol", "debug", "shrink", "host"),
+    Modes, NpuComputeReplay,
+    testing::Values(
+        "Default", "symbol", "debug", "shrink", "host", "flush_failure", "partial_flush_failure", "missing_flush",
+        "none", "start_failure"),
     [](const testing::TestParamInfo<std::string>& info) { return info.param; });

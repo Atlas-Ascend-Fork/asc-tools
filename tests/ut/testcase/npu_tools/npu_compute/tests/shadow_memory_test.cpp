@@ -102,7 +102,9 @@ std::int32_t MsprofRegisterDataCallback(uint32_t type, void* function)
     return RegisterRawData(type, reinterpret_cast<MsprofRawDataCallback>(function));
 }
 
-TEST(NpuComputeShadowMemory, MirrorsMemoryAndRestoresInputsAcrossReplay)
+class NpuComputeShadowMemory : public testing::TestWithParam<bool> {};
+
+TEST_P(NpuComputeShadowMemory, MirrorsMemoryAndRestoresInputsAcrossReplay)
 {
     NPU_COMPUTE_ISOLATE_TEST();
     ASSERT_TRUE(RuntimeStubSetOriginFunction("aclrtMalloc", &RealMalloc) == 0);
@@ -116,6 +118,7 @@ TEST(NpuComputeShadowMemory, MirrorsMemoryAndRestoresInputsAcrossReplay)
     ASSERT_TRUE(aclrtSetDevice(0) == ACL_SUCCESS);
     const char* sections[] = {"PipeUtilization", "ResourceConflictRatio"};
     aclptiRangeProfilerSetConfigParams config{sections, 2};
+    config.cacheControl = GetParam() ? ACLPTI_CACHE_CONTROL_NONE : ACLPTI_CACHE_CONTROL_ALL;
     ASSERT_TRUE(aclptiRangeProfilerSetConfig(&config) == ACLPTI_SUCCESS);
 
     void* source = nullptr;
@@ -141,3 +144,5 @@ TEST(NpuComputeShadowMemory, MirrorsMemoryAndRestoresInputsAcrossReplay)
     ASSERT_TRUE(aclrtFree(source) == 0);
     ASSERT_TRUE(aclrtFree(destination) == 0);
 }
+
+INSTANTIATE_TEST_SUITE_P(Modes, NpuComputeShadowMemory, testing::Bool());

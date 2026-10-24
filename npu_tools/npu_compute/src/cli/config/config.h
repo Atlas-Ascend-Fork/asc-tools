@@ -21,6 +21,11 @@ enum class ReplayMode {
     Kernel,
 };
 
+enum class CacheControl {
+    All,
+    None,
+};
+
 struct CliConfig {
     bool show_help = false;
     bool no_pack = false;
@@ -31,6 +36,8 @@ struct CliConfig {
     std::vector<std::string> sections;
     ReplayMode replay_mode = ReplayMode::Kernel;
     bool replay_mode_specified = false;
+    CacheControl cache_control = CacheControl::None;
+    bool cache_control_specified = false;
     std::optional<std::string> import_path;
     std::optional<std::string> export_path;
     std::string program;

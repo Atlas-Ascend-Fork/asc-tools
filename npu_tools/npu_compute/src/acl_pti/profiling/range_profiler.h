@@ -41,6 +41,8 @@ public:
     /// Validates and stores the requested PMU and instruction collection configuration.
     aclptiResult SetConfig(const aclptiRangeProfilerSetConfigParams* params);
 
+    void SetCacheControl(aclptiCacheControl mode) { cacheControl_ = mode; }
+
     bool CollectPipeline() const { return collectPipeline_; }
     bool CollectPcSampling() const { return collectPcSampling_; }
 
@@ -82,6 +84,7 @@ private:
         std::size_t round, aclError launchStatus, aclError synchronizeStatus, std::int32_t stopStatus,
         const data::ReplayResult& replayResult, aclptiResult releaseStatus) const;
 
+    aclptiCacheControl cacheControl_ = ACLPTI_CACHE_CONTROL_NONE;
     std::vector<uint32_t> pmuEvents_;
     aclptiBlockResultMode blockResult_ = ACLPTI_BLOCK_RESULT_DISABLED;
     bool collectPipeline_ = false;

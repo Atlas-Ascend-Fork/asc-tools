@@ -290,6 +290,10 @@ extern "C" aclptiResult aclptiEnableCallback(
 
 extern "C" aclptiResult aclptiRangeProfilerSetConfig(aclptiRangeProfilerSetConfigParams* params)
 {
+    if (params != nullptr && params->cacheControl != ACLPTI_CACHE_CONTROL_ALL &&
+        params->cacheControl != ACLPTI_CACHE_CONTROL_NONE) {
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
     std::lock_guard<std::mutex> lock(g_mutex);
     ++g_rangeConfigCount;
     g_rangeConfigSequence = ++g_callSequence;

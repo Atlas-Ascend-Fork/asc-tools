@@ -307,9 +307,11 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
         }
     }
 
-    result = aclptiRangeProfilerSetConfig(section_config_.Params());
+    auto* rangeConfig = section_config_.Params();
+    rangeConfig->cacheControl = config.cacheControl;
+    result = aclptiRangeProfilerSetConfig(rangeConfig);
     if (result != ACLPTI_SUCCESS) {
-        std::fprintf(stderr, "[libnpu-compute] aclptiRangeProfilerSetConfig failed: %d\n", result);
+        std::fprintf(stderr, "[libnpu-compute] configure range profiler failed: %d\n", result);
         DisableHardwareCallbacks();
         pmu_consumer_->ShutdownAndDrain();
         pmu_consumer_.reset();
