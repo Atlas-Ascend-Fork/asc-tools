@@ -215,6 +215,39 @@ enum class InstructionId : uint32_t {
     HWaitFlagI = 474,
 };
 
+constexpr bool AccessesL0Operands(uint32_t id) noexcept
+{
+    switch (static_cast<InstructionId>(id)) {
+        // Conventional MMAD operands.
+        case InstructionId::MadS8:
+        case InstructionId::MadF16F32:
+        case InstructionId::MadBf16F32:
+        case InstructionId::MadF32F32:
+        case InstructionId::MadE4m3E4m3:
+        case InstructionId::MadE4m3E5m2:
+        case InstructionId::MadE5m2E4m3:
+        case InstructionId::MadE5m2E5m2:
+        // MXFP4 operands.
+        case InstructionId::MadMxE1m2E1m2:
+        case InstructionId::MadMxE1m2E2m1:
+        case InstructionId::MadMxE2m1E1m2:
+        case InstructionId::MadMxE2m1E2m1:
+        // MXFP8 operands, including all E4M3/E5M2 combinations.
+        case InstructionId::MadMxE4m3E4m3:
+        case InstructionId::MadMxE4m3E5m2:
+        case InstructionId::MadMxE5m2E4m3:
+        case InstructionId::MadMxE5m2E5m2:
+            return true;
+        default:
+            break;
+    }
+    return (id >= static_cast<uint32_t>(InstructionId::LoadCbufToCbTransposeB8) &&
+            id <= static_cast<uint32_t>(InstructionId::LoadCbufToCbB32)) ||
+           (id >= static_cast<uint32_t>(InstructionId::LoadCbufToCaMx) &&
+            id <= static_cast<uint32_t>(InstructionId::Img2ColCbufToCbB32)) ||
+           id == static_cast<uint32_t>(InstructionId::Img2ColCbufToCaB32);
+}
+
 constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
 {
     if ((instructionId >= static_cast<uint32_t>(InstructionId::StB64Imm) &&

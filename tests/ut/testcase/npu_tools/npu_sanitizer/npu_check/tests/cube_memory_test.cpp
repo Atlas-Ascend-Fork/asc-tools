@@ -11,6 +11,7 @@
 #include "device_instr/arch/dav_3510/decoder.h"
 #include "device_instr/common/instruction_id.h"
 #include "checker/memcheck.h"
+#include "checker/initcheck.h"
 #include "aclsan_device_data.h"
 #include "aclsan_active_probe_plan.h"
 #include "device_instr/arch/dav_3510/register_state_manager.h"
@@ -18,6 +19,100 @@
 
 namespace {
 using namespace aclsan;
+
+TEST(CubeMemoryInitcheck, DecodedFp16LoadsAndMmadCheckBothOperandSpaces)
+{
+    for (bool testB : {false, true}) {
+        for (uint32_t initializedFractals : {0U, 1U, 2U}) {
+            SCOPED_TRACE(testB);
+            SCOPED_TRACE(initializedFractals);
+            npucheck::Initcheck checker;
+            npucheck::CheckerReportList reports;
+            AclsanLaunchData launch{};
+            launch.launchId = 17;
+            ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+            uint64_t instruction = 0;
+            const auto emit = [&](uint32_t id, std::array<uint64_t, 4> args, uint32_t pipe) {
+                ParsedTraceRecord parsed{};
+                parsed.record.instrId = id;
+                parsed.record.pc = 0x1234;
+                parsed.record.pipeline = pipe;
+                std::copy(args.begin(), args.end(), parsed.record.args);
+                parsed.launchId = 17;
+                parsed.instrExecId = ++instruction;
+                parsed.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
+                ASSERT_TRUE(decoded);
+                const auto callback = TranslateDecodedTraceToCallbackData(parsed, *decoded);
+                ASSERT_TRUE(callback);
+                if (const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*callback)) {
+                    for (const auto& access : *accesses)
+                        ASSERT_TRUE(checker.OnCallback(
+                            ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+                } else {
+                    const auto& flag = std::get<AclsanDeviceSyncData>(*callback);
+                    ASSERT_TRUE(checker.OnCallback(
+                        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &flag, reports));
+                }
+            };
+            for (uint32_t loadId : {142U, 145U}) {
+                const uint32_t count = ((loadId == 145U) == testB) ? initializedFractals : 2U;
+                if (count)
+                    emit(
+                        loadId, {0, 0, (1ULL << 32) | (uint64_t(count) << 40), 1 | (1ULL << 16)},
+                        ACLSAN_DEVICE_PIPE_MTE1);
+            }
+            emit(440, {ACLSAN_DEVICE_PIPE_MTE1, ACLSAN_DEVICE_PIPE_MATRIX, 3, 0}, ACLSAN_DEVICE_PIPE_SCALAR);
+            emit(442, {ACLSAN_DEVICE_PIPE_MTE1, ACLSAN_DEVICE_PIPE_MATRIX, 3, 0}, ACLSAN_DEVICE_PIPE_SCALAR);
+            emit(401, {0, 0, 0, 16 | (32ULL << 12) | (16ULL << 24) | (1ULL << 63)}, ACLSAN_DEVICE_PIPE_MATRIX);
+            AclsanSynchronizeData sync{};
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+            EXPECT_TRUE(checker.AnalysisComplete());
+            // L1 source diagnostics remain the existing checker's responsibility.
+            npucheck::CheckerReportList l0Reports;
+            for (const auto& record : reports) {
+                const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(record);
+                if (report.access.memorySpace == npucheck::NpuCheckReportMemorySpace::L0_A ||
+                    report.access.memorySpace == npucheck::NpuCheckReportMemorySpace::L0_B)
+                    l0Reports.push_back(record);
+            }
+            if (initializedFractals == 2) {
+                EXPECT_TRUE(l0Reports.empty());
+                continue;
+            }
+            ASSERT_EQ(l0Reports.size(), 1U);
+            const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(l0Reports.front());
+            EXPECT_EQ(
+                report.access.memorySpace,
+                testB ? npucheck::NpuCheckReportMemorySpace::L0_B : npucheck::NpuCheckReportMemorySpace::L0_A);
+            EXPECT_EQ(report.firstUninitAddress, initializedFractals * 512U);
+            EXPECT_EQ(report.initializedBytes, initializedFractals * 512U);
+            EXPECT_EQ(report.uninitBytes, (2U - initializedFractals) * 512U);
+            EXPECT_EQ(report.access.accessBytes, 1024U);
+            EXPECT_EQ(report.common.exec.pc, 0x1234U);
+        }
+    }
+}
+
+TEST(CubeMemoryInitcheck, MxLoadsWithoutDecodedDestinationsPreserveIncompleteCoverage)
+{
+    for (uint32_t id : {151U, 152U}) {
+        ParsedTraceRecord parsed{};
+        parsed.record.instrId = id;
+        parsed.record.args[2] = (1ULL << 32) | (1ULL << 40);
+        parsed.record.args[3] = 1;
+        const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
+        ASSERT_TRUE(decoded);
+        const auto callback = TranslateDecodedTraceToCallbackData(parsed, *decoded);
+        ASSERT_TRUE(callback);
+        const auto& accesses = std::get<DeviceMemoryAccessDataList>(*callback);
+        ASSERT_GE(accesses.size(), 2U);
+        EXPECT_EQ(accesses.front().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
+        EXPECT_EQ(accesses.back().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN);
+        EXPECT_NE(accesses.back().header.flags & ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED, 0U);
+    }
+}
 
 MemoryRegisterState SingleGmToL1Iteration()
 {
@@ -626,7 +721,7 @@ TEST(CubeMemory, Img2ColDilationAndTransposePreserveSourceSetButChangeDestinatio
     EXPECT_EQ(transposed.data.back().layout.range.bytes, 1024u);
 }
 
-TEST(CubeMemory, L0LoadFailuresDoNotProduceSyntheticCallbacks)
+TEST(CubeMemory, L0LoadFailuresPreserveIncompleteCoverage)
 {
     ParsedTraceRecord parsed{};
     parsed.record.instrId = 153;
@@ -636,7 +731,12 @@ TEST(CubeMemory, L0LoadFailuresDoNotProduceSyntheticCallbacks)
     const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
     ASSERT_TRUE(decoded);
     const auto callback = TranslateDecodedTraceToCallbackData(parsed, *decoded);
-    EXPECT_FALSE(callback);
+    ASSERT_TRUE(callback);
+    const auto& accesses = std::get<DeviceMemoryAccessDataList>(*callback);
+    ASSERT_EQ(accesses.size(), 1U);
+    EXPECT_EQ(accesses[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN);
+    EXPECT_NE(accesses[0].header.flags & ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED, 0U);
+    EXPECT_EQ(accesses[0].accessCount, 1U);
     auto overflow = ConvertRaw(144, {0, UINT64_MAX, 1 | (1ULL << 32) | (1ULL << 40), 1 | (1ULL << 16)});
     EXPECT_EQ(overflow.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
     EXPECT_TRUE(overflow.data.empty());

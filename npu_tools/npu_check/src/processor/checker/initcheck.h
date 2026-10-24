@@ -14,6 +14,7 @@
 #include "acl_san/aclsan_api.h"
 #include "checker/allocation_registry.h"
 #include "checker/checker.h"
+#include "checker/initcheck_memory.h"
 #include "diagnostic/report_message.h"
 
 #include <array>
@@ -195,6 +196,7 @@ public:
     const std::vector<CallbackSpec>& GetSubscribedID() const override;
     bool OnCallback(
         AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports) override;
+    void Finalize(CheckerReportList& reports) override;
     std::string Summary() const override;
     bool HasErrors() const override;
     bool AnalysisComplete() const override;
@@ -222,6 +224,7 @@ private:
     std::map<CoreKey, uint64_t> initializedRegisters_;
     std::set<UsageKey> reportedUsages_;
     std::map<InstructionKey, uint64_t> reportGroups_;
+    InitcheckMemory memory_;
     InitcheckStats stats_{};
     uint64_t nextReportId_ = 1;
     uint64_t nextGroupId_ = 1;

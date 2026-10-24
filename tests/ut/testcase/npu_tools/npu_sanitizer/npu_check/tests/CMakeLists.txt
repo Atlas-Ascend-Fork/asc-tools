@@ -36,6 +36,7 @@ add_executable(npu_check_unit_tests
   init_state_table_test.cpp
   racecheck_report_test.cpp
   initcheck_test.cpp
+  initcheck_memory_test.cpp
   racecheck_test.cpp
   happens_before_graph_test.cpp
   memory_access_state_test.cpp

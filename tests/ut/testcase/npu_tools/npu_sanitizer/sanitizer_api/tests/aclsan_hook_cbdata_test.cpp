@@ -570,6 +570,24 @@ void TestUndefinedInstructionIdsSkipDecoder()
     aclsan::DispatchTraceRecords({unknown, outOfRange}, decoder);
 
     assert(g_decoderCallCount == 0);
+    EXPECT_EQ(g_deviceMemoryCallbackCount, 0U);
+}
+
+void ExpectL0CoverageMarker(const aclsan::ParsedTraceRecord& record)
+{
+    ASSERT_EQ(g_deviceMemoryCallbackCount, 1U);
+    const auto& marker = g_deviceMemoryCallbacks[0];
+    EXPECT_EQ(marker.instructionId, record.record.instrId);
+    EXPECT_EQ(marker.header.launchId, record.launchId);
+    EXPECT_EQ(marker.header.pc, record.record.pc);
+    EXPECT_EQ(marker.header.blockId, record.blockId);
+    EXPECT_EQ(marker.header.instrExecId, record.instrExecId);
+    EXPECT_EQ(marker.header.flags, ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED);
+    EXPECT_EQ(marker.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN);
+    EXPECT_EQ(marker.accessMode, 0U);
+    EXPECT_EQ(marker.layoutKind, 0U);
+    EXPECT_EQ(marker.accessIndex, 0U);
+    EXPECT_EQ(marker.accessCount, 1U);
 }
 
 void TestDefinedInstructionIdUsesDecoder()
@@ -593,20 +611,36 @@ void TestDefinedInstructionIdUsesDecoder()
         aclsan::ParsedTraceRecord record{};
         record.record.instrId = static_cast<uint32_t>(id);
         aclsan::DispatchTraceRecords({record}, decoder);
+        EXPECT_EQ(g_deviceMemoryCallbackCount, 0U);
     }
 
     assert(g_decoderCallCount == newlyDefinedIds.size());
-    const std::array<uint32_t, 40> cubeIds{137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 151, 152,
-                                           153, 154, 155, 156, 157, 422, 386, 387, 390, 391, 400, 401, 402, 403,
-                                           404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415};
-    for (const auto id : cubeIds) {
+    const std::array<uint32_t, 4> fixpipeIds{386, 387, 390, 391};
+    for (const auto id : fixpipeIds) {
+        SCOPED_TRACE(id);
         ResetCapture();
         aclsan::ParsedTraceRecord record{};
         record.record.instrId = id;
         aclsan::DispatchTraceRecords({record}, decoder);
+        EXPECT_EQ(g_deviceMemoryCallbackCount, 0U);
     }
-    assert(g_decoderCallCount == newlyDefinedIds.size() + cubeIds.size());
-    assert(g_deviceMemoryCallbackCount == 0);
+    const std::array<uint32_t, 36> l0OperandIds{137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
+                                                151, 152, 153, 154, 155, 156, 157, 422, 400, 401, 402, 403,
+                                                404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415};
+    for (const auto id : l0OperandIds) {
+        SCOPED_TRACE(id);
+        ResetCapture();
+        aclsan::ParsedTraceRecord record{};
+        record.record.instrId = id;
+        record.record.pc = 0x1234;
+        record.launchId = 33;
+        record.blockId = 2;
+        record.instrExecId = 11;
+        aclsan::DispatchTraceRecords({record}, decoder);
+        // Failed L0 decoding must expose a coverage gap without inventing an access.
+        ExpectL0CoverageMarker(record);
+    }
+    assert(g_decoderCallCount == newlyDefinedIds.size() + fixpipeIds.size() + l0OperandIds.size());
 }
 
 void TestCubeLoadAndUnsupportedModeReachMemoryCallback()
@@ -640,7 +674,7 @@ void TestCubeLoadAndUnsupportedModeReachMemoryCallback()
     ResetCapture();
     load.record.args[4] = 1; // B32 transpose requires an even K step.
     aclsan::DispatchTraceRecords({load}, *decoder);
-    assert(g_deviceMemoryCallbackCount == 0);
+    ExpectL0CoverageMarker(load);
 }
 
 void TestNdDmaPadCountStatePreservesExactGmFootprint()

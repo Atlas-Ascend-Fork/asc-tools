@@ -9,6 +9,7 @@
  */
 
 #include "checker/initcheck.h"
+#include "checker/initcheck_report.h"
 #include "checker/memory_access_layout.h"
 #include "checker/racecheck.h"
 #include "device_instr/common/instruction_id.h"
@@ -403,75 +404,66 @@ bool ExpandRanges(const AclsanDeviceMemoryAccessData& data, std::vector<Range>& 
     return true;
 }
 
+const char* PipelineName(uint32_t pipeline);
+
+NpuCheckReportMemorySpace ReportMemorySpace(uint32_t space)
+{
+    switch (space) {
+        case ACLSAN_DEVICE_MEMORY_SPACE_L1:
+            return NpuCheckReportMemorySpace::L1;
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
+            return NpuCheckReportMemorySpace::L0_A;
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0B:
+            return NpuCheckReportMemorySpace::L0_B;
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
+            return NpuCheckReportMemorySpace::L0_C;
+        default:
+            return NpuCheckReportMemorySpace::GM;
+    }
+}
+
 NpuCheckInitcheckReport MakeMemoryReport(const AclsanDeviceMemoryAccessData& data, const Allocation& allocation)
 {
-    NpuCheckInitcheckReport report;
-    report.common.tool = ReportTool::INITCHECK;
-    report.common.severity = ReportSeverity::ERROR;
-    report.common.flags = kNpuCheckReportCommonHasExecContext;
+    auto report = BuildInitcheckMemoryReportBase(data, allocation.bytes, allocation.deviceId);
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     report.common.timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
-    auto& exec = report.common.exec;
-    exec.deviceId = data.header.deviceId;
-    exec.launchId = data.header.launchId;
-    exec.instrExecId = data.header.instrExecId;
-    exec.serialNo = data.header.serialNo;
-    exec.pc = data.header.pc;
-    exec.phyCoreId = data.header.phyCoreId;
-    exec.blockId = data.header.blockId;
-    exec.blockType = data.header.blockType;
-    exec.pipeId = data.header.pipeline;
-    exec.siteId = data.header.siteId;
-    switch (exec.pipeId) {
-        case ACLSAN_DEVICE_PIPE_SCALAR:
-            exec.pipeName = "SCALAR";
-            break;
-        case ACLSAN_DEVICE_PIPE_VECTOR:
-            exec.pipeName = "VECTOR";
-            break;
-        case ACLSAN_DEVICE_PIPE_MATRIX:
-            exec.pipeName = "MATRIX";
-            break;
-        case ACLSAN_DEVICE_PIPE_MTE1:
-            exec.pipeName = "MTE1";
-            break;
-        case ACLSAN_DEVICE_PIPE_MTE2:
-            exec.pipeName = "MTE2";
-            break;
-        case ACLSAN_DEVICE_PIPE_MTE3:
-            exec.pipeName = "MTE3";
-            break;
-        case ACLSAN_DEVICE_PIPE_FIXPIPE:
-            exec.pipeName = "FIXPIPE";
-            break;
-        default:
-            exec.pipeName = "UNKNOWN";
-            break;
-    }
-    switch (data.memorySpace) {
-        case ACLSAN_DEVICE_MEMORY_SPACE_L1:
-            report.access.memorySpace = NpuCheckReportMemorySpace::L1;
-            break;
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
-            report.access.memorySpace = NpuCheckReportMemorySpace::L0_C;
-            break;
-        default:
-            report.access.memorySpace = NpuCheckReportMemorySpace::GM;
-            break;
-    }
-    report.access.accessMode = NpuCheckReportAccessMode::READ;
-    report.access.address = data.address;
-    report.access.requiredAlign = data.alignSize;
+    report.allocation.state = 1;
     report.allocation.allocId = allocation.resourceId;
     report.allocation.base = allocation.base;
-    report.allocation.bytes = allocation.bytes;
     report.allocation.allocSerialNo = allocation.allocSequence;
-    report.allocation.deviceId = allocation.deviceId;
-    report.allocation.memorySpace = report.access.memorySpace;
-    report.allocation.state = 1;
     return report;
 }
 } // namespace
+
+NpuCheckInitcheckReport BuildInitcheckMemoryReportBase(
+    const AclsanDeviceMemoryAccessData& data, uint64_t allocationBytes, uint32_t allocationDeviceId)
+{
+    NpuCheckInitcheckReport report{};
+    report.common.tool = ReportTool::INITCHECK;
+    report.common.severity = ReportSeverity::ERROR;
+    report.common.flags = kNpuCheckReportCommonHasExecContext;
+    auto& exec = report.common.exec;
+    const auto& h = data.header;
+    exec.launchId = h.launchId;
+    exec.instrExecId = h.instrExecId;
+    exec.serialNo = h.serialNo;
+    exec.pc = h.pc;
+    exec.deviceId = h.deviceId;
+    exec.phyCoreId = h.phyCoreId;
+    exec.blockId = h.blockId;
+    exec.blockType = h.blockType;
+    exec.pipeId = h.pipeline;
+    exec.pipeName = PipelineName(h.pipeline);
+    exec.siteId = h.siteId;
+    report.access.memorySpace = ReportMemorySpace(data.memorySpace);
+    report.access.accessMode = NpuCheckReportAccessMode::READ;
+    report.access.address = data.address;
+    report.access.requiredAlign = data.alignSize;
+    report.allocation.bytes = allocationBytes;
+    report.allocation.deviceId = allocationDeviceId;
+    report.allocation.memorySpace = report.access.memorySpace;
+    return report;
+}
 
 AllocationUpdateStatus MemoryInitcheck::RegisterAllocation(
     InitStateKey scope, uint64_t id, uint64_t address, uint64_t bytes)
@@ -828,6 +820,17 @@ void Initcheck::ReplayLaunch(
     // dependency, neither completion order proves which kernel initialized GM.
     const bool usesGm = std::any_of(
         memory.begin(), memory.end(), [](const auto& a) { return a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM; });
+    const bool hasMasterTracked = std::any_of(memory.begin(), memory.end(), [](const auto& a) {
+        return a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0A && a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0B &&
+               (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ||
+                InitStateTableIndex::LocalCapacity(a.memorySpace) != 0);
+    });
+    const bool hasL0 = std::any_of(memory.begin(), memory.end(), [](const auto& a) {
+        return a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0A || a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0B ||
+               aclsan::AccessesL0Operands(a.instructionId);
+    });
+    if (hasL0 && !hasMasterTracked && reasons.empty())
+        return;
     const auto currentLaunch = launchStreams_.find(launchId);
     if (usesGm)
         for (const auto& other : launchStreams_) {
@@ -922,6 +925,8 @@ void Initcheck::ReplayLaunch(
         }
         for (const auto& storage : byStorage) {
             const auto space = std::get<0>(storage.first);
+            if (space == ACLSAN_DEVICE_MEMORY_SPACE_L0A || space == ACLSAN_DEVICE_MEMORY_SPACE_L0B)
+                continue;
             if (space != ACLSAN_DEVICE_MEMORY_SPACE_GM && !InitStateTableIndex::LocalCapacity(space))
                 continue;
             std::vector<Interval> preceding;
@@ -1233,6 +1238,7 @@ bool Initcheck::OnRegisterState(const AclsanDeviceRegisterStateData& data)
     if (data.header.version != ACLSAN_API_VERSION || data.header.size < sizeof(data) ||
         data.regId >= ACLSAN_DEVICE_REGISTER_COUNT || data.regId >= 64) {
         ++stats_.malformedEvents;
+        memory_.Invalidate();
         return false;
     }
     const CoreKey key{data.header.deviceId, data.header.launchId, data.header.blockType, data.header.blockId};
@@ -1266,6 +1272,7 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     if (data.header.version != ACLSAN_API_VERSION || data.header.size < kMemoryAccessDependencySize ||
         data.regDependencyMask1 != 0 || (data.regDependencyMask0 & ~kSupportedRegisterMask) != 0) {
         ++stats_.malformedEvents;
+        memory_.Invalidate();
         return false;
     }
     ++stats_.deviceOperations;
@@ -1303,6 +1310,16 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
         // operands can be checked atomically (reads before writes).
         pendingMemoryAccesses_.push_back(data);
     }
+    auto memory = data;
+    if (missing != 0)
+        memory.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
+    // L0 replay needs every fragment of an L0 instruction, but unrelated master
+    // events must not make the independent L0 analysis incomplete.
+    const bool l0Instruction = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0A ||
+                               data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0B ||
+                               aclsan::AccessesL0Operands(data.instructionId);
+    if (l0Instruction)
+        memory_.Access(memory);
     if (missing == 0) {
         return true;
     }
@@ -1341,9 +1358,29 @@ void Initcheck::OnSynchronization(const AclsanSynchronizeData& data, CheckerRepo
     const size_t reportsBefore = reports.size();
     FlushMemoryAccesses(data.stream, reports);
     pendingLaunchStreams_.erase(data.stream);
-    ASCTOOL_INFO("initcheck synchronization completed memory_reports=%zu", reports.size() - reportsBefore);
-    // Other streams may still have live register state. FlushMemoryAccesses
-    // removes only state belonging to the launches closed by this stream.
+    // L0A/L0B coverage is replayed independently from the GM baseline. Both
+    // checkers consume the same launch stream and contribute to one summary.
+    const auto memoryBegin = reports.size();
+    memory_.Collect(data.stream, reports);
+    std::map<InstructionKey, uint64_t> memoryGroups;
+    for (size_t i = memoryBegin; i < reports.size(); ++i) {
+        auto& report = std::get<NpuCheckInitcheckReport>(reports[i]);
+        report.common.reportId = nextReportId_++;
+        report.common.timestampNs = TimestampNs();
+        const auto& e = report.common.exec;
+        const InstructionKey key{e.deviceId, e.launchId, e.blockType, e.blockId, e.instrExecId};
+        const auto [group, inserted] = memoryGroups.try_emplace(key, nextGroupId_);
+        if (inserted)
+            ++nextGroupId_;
+        report.common.groupId = group->second;
+        report.common.exec.pipeName = PipelineName(e.pipeId);
+        ++stats_.errors;
+    }
+    ASCTOOL_INFO(
+        "initcheck synchronization completed memory_reports=%zu l0_memory_reports=%zu", reports.size() - reportsBefore,
+        reports.size() - memoryBegin);
+    // Other streams may still have live state. The two flushers remove only
+    // state belonging to launches closed by this stream.
 }
 
 bool Initcheck::OnCallback(
@@ -1351,7 +1388,16 @@ bool Initcheck::OnCallback(
 {
     if ((domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && cbid == ACLSAN_CBID_DEVICE_SYNC) ||
         (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && cbid == ACLSAN_CBID_DEVICE_PIPE_BARRIER)) {
-        return OnDeviceSync(cbid, data);
+        if (!OnDeviceSync(cbid, data)) {
+            memory_.Invalidate();
+            return false;
+        }
+        if (cbid == ACLSAN_CBID_DEVICE_SYNC) {
+            memory_.Sync(*static_cast<const AclsanDeviceSyncData*>(data));
+        } else {
+            memory_.Barrier(*static_cast<const AclsanDeviceBarrierData*>(data));
+        }
+        return true;
     }
     if (domain == ACLSAN_CB_DOMAIN_MEMORY && cbid == ACLSAN_CBID_MEMORY_WRITE_END) {
         return OnHostWrite(*static_cast<const AclsanMemoryWriteData*>(data));
@@ -1379,6 +1425,7 @@ bool Initcheck::OnCallback(
             pendingLaunchStreams_.insert(event->stream);
             launchStreams_[event->launchId] = event->stream;
         }
+        memory_.Launch(*event);
         return true;
     }
     if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
@@ -1389,13 +1436,16 @@ bool Initcheck::OnCallback(
 
 InitcheckStats Initcheck::Stats() const { return stats_; }
 
+void Initcheck::Finalize([[maybe_unused]] CheckerReportList& reports) { memory_.Finalize(); }
+
 bool Initcheck::HasErrors() const { return stats_.errors != 0; }
 
 bool Initcheck::AnalysisComplete() const
 {
     return pendingLaunchStreams_.empty() && pendingMemoryAccesses_.empty() && pendingSyncEvents_.empty() &&
            replayReasons_.empty() && replayFailures_.empty() && stats_.malformedEvents == 0 &&
-           stats_.failedLaunches == 0 && stats_.failedSynchronizations == 0 && stats_.failedHostWrites == 0;
+           stats_.failedLaunches == 0 && stats_.failedSynchronizations == 0 && stats_.failedHostWrites == 0 &&
+           memory_.Complete();
 }
 
 std::string Initcheck::Summary() const
@@ -1410,6 +1460,10 @@ std::string Initcheck::Summary() const
            << " failed_host_writes=" << stats_.failedHostWrites
            << " pending_launch_streams=" << pendingLaunchStreams_.size();
     output << " sync_events=" << syncEvents_ << " pending_sync_events=" << pendingSyncEvents_.size();
+    if (memory_.Operations() != 0 || memory_.IncompleteOperations() != 0) {
+        output << " l0_memory_operations=" << memory_.Operations()
+               << " incomplete_memory_operations=" << memory_.IncompleteOperations();
+    }
     for (const auto& failure : replayFailures_)
         output << " " << failure.first << "=" << failure.second;
     return output.str();

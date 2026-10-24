@@ -195,11 +195,28 @@ private:
             access.regDependencyMask0 = dependencies.mask0;
             access.regDependencyMask1 = dependencies.mask1;
         }
-        if (result.status == MemoryCbdataStatus::SUCCESS) {
+        // MX loads currently decode only their L1 source. Keep the missing L0
+        // destination visible as incomplete coverage until its layout is decoded.
+        if (result.status == MemoryCbdataStatus::SUCCESS && !std::is_same_v<ParamField, aclsan::LoadL1MxParamField>) {
             return DeviceCallbackData{std::move(result.data)};
         }
         if (result.status == MemoryCbdataStatus::NO_ACCESS) {
             return DeviceCallbackData{DeviceMemoryAccessDataList{}};
+        }
+        if (AccessesL0Operands(parsed.record.instrId)) {
+            // Preserve proven operands and an explicit gap instead of letting an
+            // unsupported L0 write disappear from initialization analysis.
+            AclsanDeviceMemoryAccessData marker{};
+            marker.header = MakeDeviceEventHeader(parsed, pipeline, 0, sizeof(marker));
+            marker.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED;
+            marker.instructionId = parsed.record.instrId;
+            marker.regDependencyMask0 = dependencies.mask0;
+            marker.regDependencyMask1 = dependencies.mask1;
+            marker.accessIndex = static_cast<uint32_t>(result.data.size());
+            result.data.push_back(marker);
+            for (auto& access : result.data)
+                access.accessCount = static_cast<uint32_t>(result.data.size());
+            return DeviceCallbackData{std::move(result.data)};
         }
         if (result.status == MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE) {
             ASCTOOL_DEBUG(
@@ -366,6 +383,20 @@ std::optional<DeviceCallbackData> TranslateDecodedTraceToCallbackData(
     // 判断是否找到对应的paramfield  raw data -> param field
     if (std::holds_alternative<std::monostate>(decoded.params)) {
         ASCTOOL_DEBUG("[param] rawData -> paramField translation failed instrId=%u", parsed.record.instrId);
+        if (AccessesL0Operands(parsed.record.instrId)) {
+            AclsanDeviceMemoryAccessData marker{};
+            marker.header = {
+                ACLSAN_API_VERSION,     sizeof(marker),
+                parsed.launchId,        parsed.record.pc,
+                parsed.record.siteId,   ACLSAN_DEVICE_SOURCE_UNKNOWN,
+                parsed.instrExecId,     0,
+                parsed.deviceId,        parsed.phyCoreId,
+                parsed.blockId,         parsed.blockType,
+                parsed.record.pipeline, ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED};
+            marker.instructionId = parsed.record.instrId;
+            marker.accessCount = 1;
+            return DeviceCallbackData{DeviceMemoryAccessDataList{marker}};
+        }
         return std::nullopt;
     }
     LogParamField(decoded.params);

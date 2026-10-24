@@ -377,6 +377,18 @@ void DispatchTraceRecords(
             ASCTOOL_ERROR(
                 "acl_san trace: unsupported raw trace instrId=%u pc=0x%llx block=%u", parsed.record.instrId,
                 static_cast<unsigned long long>(parsed.record.pc), parsed.blockId);
+            // The translator emits a coverage marker for an undecoded L0 operand
+            // instruction, keeping this gap visible to initialization checking.
+            const std::optional<DeviceCallbackData> fallback =
+                TranslateDecodedTraceToCallbackData(parsed, DecodedInstruction{});
+            if (fallback.has_value()) {
+                const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*fallback);
+                if (accesses != nullptr) {
+                    for (const auto& access : *accesses) {
+                        AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(access);
+                    }
+                }
+            }
             continue;
         }
 

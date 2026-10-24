@@ -49,6 +49,7 @@ add_library(npu_check_core STATIC
   checker/racecheck.cpp
   checker/racecheck/dependency_graph.cpp
   checker/initcheck.cpp
+  checker/initcheck_memory.cpp
   checker/racecheck/sync_analysis.cpp
   checker/racecheck/types.cpp
   checker/racecheck/happens_before_graph.cpp

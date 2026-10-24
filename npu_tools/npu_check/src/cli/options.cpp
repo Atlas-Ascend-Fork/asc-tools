@@ -390,7 +390,7 @@ std::string Usage()
            "      Set the tool to use. Can be specified multiple times to run several tools.\n"
            "        memcheck  : The memory access error and leak detection tool.\n"
            "        synccheck : The thread synchronization hazard detection tool.\n"
-           "        initcheck : The persistent register initialization check tool.\n"
+           "        initcheck : The persistent register and GM/L1/L0A/L0B/L0C initialization check tool.\n"
            "        racecheck : The memory access race detection tool.\n"
            "  --log-file <filepath>\n"
            "      Save the check report to the file instead of printing output to stdout.\n"
