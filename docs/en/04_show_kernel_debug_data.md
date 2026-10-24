@@ -78,7 +78,7 @@ For a tool usage demonstration, refer to the [show_kernel_debug_data example](..
         - printf: Export output data from AscendC::printf/PRINTF debugging.
         - tensor: Export output data from AscendC::DumpTensor debugging.
         - assert: Export output data from ascend_assert debugging.
-        - timestamp: Export timestamp information obtained via AscendC::PrintTimestamp.
+        - timestamp: Export timestamp information obtained via AscendC::PrintTimeStamp.
     - dump_path: When enabling the operator Kernel debugging information Dump function, dump_path must be configured. Both absolute and relative paths are supported.
 
     In addition to the above method, you can also configure the Dump storage path through the environment variables ASCEND_DUMP_PATH and ASCEND_WORK_PATH. The priority of Dump file storage paths is as follows: ASCEND_DUMP_PATH > ASCEND_WORK_PATH > dump_path in the configuration file.

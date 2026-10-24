@@ -76,7 +76,7 @@ kernel侧算子调试信息（AscendC::DumpTensor, AscendC::printf等）可通�
         - printf: 导出AscendC::printf/PRINTF调测的输出数据。
         - tensor: 导出AscendC::DumpTensor调测的输出数据。
         - assert: 导出ascend_assert调测的输出数据。
-        - timestamp: 导出AscendC::PrintTimestamp获取的时间戳信息。
+        - timestamp: 导出AscendC::PrintTimeStamp获取的时间戳信息。
     - dump_path：启用算子Kernel调测信息Dump功能时，dump_path必须配置，支持配置绝对路径或相对路径。
 
     除上述方式之外，还可以通过环境变量ASCEND_DUMP_PATH和ASCEND_WORK_PATH配置Dump存储路径。Dump文件存储路径的优先级如下：ASCEND_DUMP_PATH > ASCEND_WORK_PATH > 配置文件中的dump_path。
