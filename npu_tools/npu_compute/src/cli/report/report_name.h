@@ -33,6 +33,10 @@ struct ReportNameSources {
     void* context = nullptr;
 };
 
+bool GenerateReportBaseName(std::string* name, std::string* error);
+
+bool GenerateReportBaseNameWithSources(const ReportNameSources& sources, std::string* name, std::string* error);
+
 bool ResolveReportTarget(const std::optional<std::string>& export_path, ReportTarget* target, std::string* error);
 
 bool ResolveReportTargetWithSources(

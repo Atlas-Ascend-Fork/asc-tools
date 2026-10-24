@@ -164,6 +164,11 @@ std::string FormatRandomId(const std::array<uint8_t, 4>& bytes)
     return result;
 }
 
+std::string FormatReportBaseName(uint64_t epoch_milliseconds, const std::array<uint8_t, 4>& random_bytes)
+{
+    return "report_" + std::to_string(epoch_milliseconds) + "_" + FormatRandomId(random_bytes);
+}
+
 bool GenerateTargetInDirectory(
     const boost::filesystem::path& directory, const ReportNameSources& sources, ReportTarget* target,
     std::string* error)
@@ -230,6 +235,33 @@ bool ResolveExplicitTarget(const boost::filesystem::path& path, ReportTarget* ta
 }
 
 } // namespace
+
+bool GenerateReportBaseNameWithSources(const ReportNameSources& sources, std::string* name, std::string* error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (name == nullptr || sources.epoch_milliseconds == nullptr || sources.random_bytes == nullptr) {
+        return Fail("report name output or sources are incomplete", error);
+    }
+    name->clear();
+    uint64_t epoch_milliseconds = 0;
+    std::array<uint8_t, 4> random_bytes{};
+    if (!sources.epoch_milliseconds(&epoch_milliseconds, sources.context, error) ||
+        !sources.random_bytes(&random_bytes, sources.context, error)) {
+        return false;
+    }
+    *name = FormatReportBaseName(epoch_milliseconds, random_bytes);
+    return true;
+}
+
+bool GenerateReportBaseName(std::string* name, std::string* error)
+{
+    ReportNameSources sources;
+    sources.epoch_milliseconds = &SystemEpochMilliseconds;
+    sources.random_bytes = &SystemRandomBytes;
+    return GenerateReportBaseNameWithSources(sources, name, error);
+}
 
 bool ResolveReportTarget(const std::optional<std::string>& export_path, ReportTarget* target, std::string* error)
 {

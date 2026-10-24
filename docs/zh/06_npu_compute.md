@@ -10,17 +10,17 @@
 
 当前支持以下Section：
 
-| Section | 说明 | 所属Set |
-| :--- | :--- | :--- |
-| <a name="section-arithmeticutilization"></a> `ArithmeticUtilization` | Cube FP/INT指令数与Cube、Vector活跃周期占比 | `basic`、`full` |
-| <a name="section-l2cache"></a> `L2Cache` | L2 Cache访问数据 | `basic`、`full` |
-| <a name="section-memory"></a> `Memory` | 主存和片上存储访问数据 | `basic`、`full` |
-| <a name="section-memoryl0"></a> `MemoryL0` | L0存储访问数据 | `basic`、`full` |
-| <a name="section-memoryub"></a> `MemoryUB` | Unified Buffer访问数据 | `basic`、`full` |
-| <a name="section-pipeline"></a> `Pipeline` | 流水时间线数据，输出为`PipeTrace.json` | `basic`、`full` |
-| <a name="section-pipeutilization"></a> `PipeUtilization` | 计算与流水线利用率数据 | `basic`、`full` |
-| <a name="section-pmsampling"></a> `PmSampling` | 指令地址及各采样状态累计计数、反汇编和函数/内联信息 | `full` |
-| <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | 流水等待率与Vector资源冲突率 | `full` |
+| Section                                                              | 说明                                                | 所属Set         |
+| :------------------------------------------------------------------- | :-------------------------------------------------- | :-------------- |
+| <a name="section-arithmeticutilization"></a> `ArithmeticUtilization` | Cube FP/INT指令数与Cube、Vector活跃周期占比         | `basic`、`full` |
+| <a name="section-l2cache"></a> `L2Cache`                             | L2 Cache访问数据                                    | `basic`、`full` |
+| <a name="section-memory"></a> `Memory`                               | 主存和片上存储访问数据                              | `basic`、`full` |
+| <a name="section-memoryl0"></a> `MemoryL0`                           | L0存储访问数据                                      | `basic`、`full` |
+| <a name="section-memoryub"></a> `MemoryUB`                           | Unified Buffer访问数据                              | `basic`、`full` |
+| <a name="section-pipeline"></a> `Pipeline`                           | 流水时间线数据，输出为`PipeTrace.json`              | `basic`、`full` |
+| <a name="section-pipeutilization"></a> `PipeUtilization`             | 计算与流水线利用率数据                              | `basic`、`full` |
+| <a name="section-pmsampling"></a> `PmSampling`                       | 指令地址及各采样状态累计计数、反汇编和函数/内联信息 | `full`          |
+| <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | 流水等待率与Vector资源冲突率                        | `full`          |
 
 当前提供`basic`和`full`两个预定义Set：`basic`包含除`ResourceConflictRatio`和`PmSampling`外的7个Section，`full`包含全部9个Section。
 
@@ -30,11 +30,11 @@
 
 请参考[快速入门](00_quick_start.md)完成环境准备。使用前，请安装与目标NPU和驱动匹配的CANN软件包，并执行以下命令设置环境变量：
 
-  ```
-  source ${INSTALL_DIR}/set_env.sh
-  ```
+```
+source ${INSTALL_DIR}/set_env.sh
+```
 
-  > `${INSTALL_DIR}`请替换为CANN软件安装后的文件存储路径。以root用户安装为例，安装后文件默认存储路径为：`/usr/local/Ascend/cann`。
+> `${INSTALL_DIR}`请替换为CANN软件安装后的文件存储路径。以root用户安装为例，安装后文件默认存储路径为：`/usr/local/Ascend/cann`。
 
 ## 命令格式与选项
 
@@ -54,29 +54,30 @@ npu-compute [options] [--] <program> [program-arguments]
 npu-compute --import <report-file> [--export <directory>]
 ```
 
-| 占位符 | 说明 |
-| :--- | :--- |
-| `options` | 工具选项，必须位于目标程序之前，见[选项](#选项)。 |
-| `<program>` | 目标程序，可以使用绝对路径、相对路径或命令名指定；使用命令名时，该程序必须能够通过`PATH`环境变量找到。 |
-| `[program-arguments]` | 原样传递给目标程序的参数。 |
-| `[--]` | 可选分隔符，放在目标程序前，用于分隔工具选项和目标程序及其参数。目标程序名称以`-`开头时必须添加。 |
-| `<report-file>` | 已有`.npu-rep`报告文件的路径。 |
-| `<directory>` | 保存解包结果的已有目录。 |
+| 占位符                | 说明                                                                                                   |
+| :-------------------- | :----------------------------------------------------------------------------------------------------- |
+| `options`             | 工具选项，必须位于目标程序之前，见[选项](#选项)。                                                      |
+| `<program>`           | 目标程序，可以使用绝对路径、相对路径或命令名指定；使用命令名时，该程序必须能够通过`PATH`环境变量找到。 |
+| `[program-arguments]` | 原样传递给目标程序的参数。                                                                             |
+| `[--]`                | 可选分隔符，放在目标程序前，用于分隔工具选项和目标程序及其参数。目标程序名称以`-`开头时必须添加。      |
+| `<report-file>`       | 已有`.npu-rep`报告文件的路径。                                                                         |
+| `<directory>`         | 保存解包结果的已有目录。                                                                               |
 
 目标程序后的所有内容均作为程序参数传递。
 
 ### 选项
 
-| 选项 | 适用模式 | 输入 | 可重复 | 说明 |
-| :--- | :--- | :--- | :--- | :--- |
-| `-h`、`--help` | 全部 | 无 | 是 | 显示帮助信息。 |
-| `--list-sections` | 查询 | 无 | 否 | 列出支持的指标组名称。 |
-| `--list-sets` | 查询 | 无 | 否 | 列出`basic`、`full`及其包含的Section。 |
-| `--section arg` | 采集 | Section名称 | 是 | 按名称选择要采集的指标组，区分大小写。 |
-| `--set arg` | 采集 | `basic`、`full` | 是 | 选择预定义指标组集合，区分大小写。在采集选择上，等价于分别指定其包含的多个`--section`。 |
-| `--replay-mode arg` | 采集 | `kernel` | 否 | Kernel重放模式，当前仅支持`kernel`，默认值为`kernel`。 |
-| `-i arg`、`--import arg` | 解包 | 报告文件路径 | 否 | 导入并解包`npu-compute`生成的`.npu-rep`报告。 |
-| `-o arg`、`--export arg` | 采集、解包 | 报告路径或目录 | 否 | 采集时指定报告文件路径或已有目录，解包时指定保存解包结果的已有目录。具体行为见下文。 |
+| 选项                     | 适用模式   | 输入            | 可重复 | 说明                                                                                    |
+| :----------------------- | :--------- | :-------------- | :----- | :-------------------------------------------------------------------------------------- |
+| `-h`、`--help`           | 全部       | 无              | 是     | 显示帮助信息。                                                                          |
+| `--list-sections`        | 查询       | 无              | 否     | 列出支持的指标组名称。                                                                  |
+| `--list-sets`            | 查询       | 无              | 否     | 列出`basic`、`full`及其包含的Section。                                                  |
+| `--section arg`          | 采集       | Section名称     | 是     | 按名称选择要采集的指标组，区分大小写。                                                  |
+| `--set arg`              | 采集       | `basic`、`full` | 是     | 选择预定义指标组集合，区分大小写。在采集选择上，等价于分别指定其包含的多个`--section`。 |
+| `--replay-mode arg`      | 采集       | `kernel`        | 否     | Kernel重放模式，当前仅支持`kernel`，默认值为`kernel`。                                  |
+| `--no-pack`              | 采集       | 无              | 否     | 直接保留原始结果目录，不生成`.npu-rep`。                                                |
+| `-i arg`、`--import arg` | 解包       | 报告文件路径    | 否     | 导入并解包`npu-compute`生成的`.npu-rep`报告。                                           |
+| `-o arg`、`--export arg` | 采集、解包 | 报告路径或目录  | 否     | 采集时指定报告文件路径或已有目录，解包时指定保存解包结果的已有目录。具体行为见下文。    |
 
 组合规则：
 
@@ -89,6 +90,7 @@ npu-compute --import <report-file> [--export <directory>]
 `--export`在两种使用方式下的行为不同：
 
 - 采集：指定以`.npu-rep`结尾的报告文件路径或已有目录。报告文件的父目录必须已存在，且不会覆盖已有文件。不使用该选项时，报告保存在当前目录。
+- 配合`--no-pack`采集：仅接受已有父目录，在其中创建唯一结果子目录，不生成`.npu-rep`文件；省略`--export`时使用当前目录。
 - 解包：指定保存解包结果的已有目录，工具会在其中创建唯一的结果子目录，不会覆盖已有结果目录。不使用该选项时，解包结果保存在当前目录下新建的结果子目录中。
 
 使用以下命令查看帮助和当前支持的指标组、集合：
@@ -179,6 +181,25 @@ mkdir -p ./reports
 npu-compute --section Memory --export ./reports ./application
 ```
 
+直接保留原始结果目录：
+
+使用`--no-pack`在指定父目录内创建唯一的结果子目录，保存本次CSV、JSON、JSONL等采集结果，不生成`.npu-rep`：
+
+```bash
+mkdir -p ./results
+npu-compute --section Memory --no-pack --export ./results ./application
+```
+
+`--no-pack`不带值，工具选项仍应放在目标程序之前。`--no-pack`与`--export`的先后顺序不限，两者都必须放在目标程序之前。`--export`必须指向已有目录，不能指定报告文件名，也不会自动创建父目录；省略时使用当前目录。
+
+成功后输出：
+
+```text
+npu-compute: directory= <parent-directory>/report_<timestamp-ms>_<8-lowercase-hex-random-id>
+```
+
+注意：强制结束进程可能留下不完整目录。当采集任务中存在部分文件采集失败时，仅删除无效文件，保留其他有效文件。
+
 ## 查看报告
 
 `.npu-rep`报告可直接使用可视化工具查看（参见[可视化工具使用说明](https://gitcode.com/opdevtools/plugin_release/blob/dev/docs/user_guide.md)），也可解包后查看其中的采集文件。
@@ -187,15 +208,15 @@ npu-compute --section Memory --export ./reports ./application
 
 报告可包含以下文件：
 
-| 文件 | 生成条件 | 内容 |
-| :--- | :--- | :--- |
-| `HardwareInfo.jsonl` | 每次采集时生成 | 主机和NPU硬件信息。 |
-| `summary.jsonl` | 执行Kernel时生成 | 性能汇总及算子概览。 |
-| `PipeTrace.json` | 选择`Pipeline`时生成 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
-| `summary.db` | 存在有效CSV或PmSampling采样数据时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库) |
-| `objdump.txt` | 选择`PmSampling`时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
-| `symbolizer.json` | 选择`PmSampling`时生成 | 采样地址对应的函数和内联调用信息。 |
-| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`和`PmSampling`除外） | 该Section的指标数据。 |
+| 文件                 | 生成条件                                             | 内容                                                               |
+| :------------------- | :--------------------------------------------------- | :----------------------------------------------------------------- |
+| `HardwareInfo.jsonl` | 每次采集时生成                                       | 主机和NPU硬件信息。                                                |
+| `summary.jsonl`      | 执行Kernel时生成                                     | 性能汇总及算子概览。                                               |
+| `PipeTrace.json`     | 选择`Pipeline`时生成                                 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
+| `summary.db`         | 存在有效CSV或PmSampling采样数据时                    | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)            |
+| `objdump.txt`        | 选择`PmSampling`时生成                               | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。  |
+| `symbolizer.json`    | 选择`PmSampling`时生成                               | 采样地址对应的函数和内联调用信息。                                 |
+| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`和`PmSampling`除外） | 该Section的指标数据。                                              |
 
 `Pipeline` Section基于采样机制生成流水图，与用户启用的核数无直接关系；即使启用全部核，流水图最多展示6个采样Group的数据。
 
@@ -207,17 +228,17 @@ CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常�
 
 采集生成的CSV自动写入同一结果目录的`summary.db`，原CSV继续保留。数据库包含以下表，实际生成的表取决于采集结果：
 
-| 数据表 | 生成条件 | 内容 |
-| :--- | :--- | :--- |
-| `ArithmeticUtilization` | 对应CSV入库成功 | [ArithmeticUtilization](#section-arithmeticutilization) |
-| `L2Cache` | 对应CSV入库成功 | [L2Cache](#section-l2cache) |
-| `Memory` | 对应CSV入库成功 | [Memory](#section-memory) |
-| `MemoryL0` | 对应CSV入库成功 | [MemoryL0](#section-memoryl0) |
-| `MemoryUB` | 对应CSV入库成功 | [MemoryUB](#section-memoryub) |
-| `PcSampling` | PmSampling采样数据写入成功 | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数) |
-| `PipeUtilization` | 对应CSV入库成功 | [PipeUtilization](#section-pipeutilization) |
-| `ResourceConflictRatio` | 对应CSV入库成功 | [ResourceConflictRatio](#section-resourceconflictratio) |
-| `FieldUnitMap` | 至少一个含数据记录的CSV成功入库 | `field_name`保存字段名，`unit`保存单位；无单位时为NULL。 |
+| 数据表                  | 生成条件                        | 内容                                                                                                                                      |
+| :---------------------- | :------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ArithmeticUtilization` | 对应CSV入库成功                 | [ArithmeticUtilization](#section-arithmeticutilization)                                                                                   |
+| `L2Cache`               | 对应CSV入库成功                 | [L2Cache](#section-l2cache)                                                                                                               |
+| `Memory`                | 对应CSV入库成功                 | [Memory](#section-memory)                                                                                                                 |
+| `MemoryL0`              | 对应CSV入库成功                 | [MemoryL0](#section-memoryl0)                                                                                                             |
+| `MemoryUB`              | 对应CSV入库成功                 | [MemoryUB](#section-memoryub)                                                                                                             |
+| `PcSampling`            | PmSampling采样数据写入成功      | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数) |
+| `PipeUtilization`       | 对应CSV入库成功                 | [PipeUtilization](#section-pipeutilization)                                                                                               |
+| `ResourceConflictRatio` | 对应CSV入库成功                 | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                   |
+| `FieldUnitMap`          | 至少一个含数据记录的CSV成功入库 | `field_name`保存字段名，`unit`保存单位；无单位时为NULL。                                                                                  |
 
 数据库生成依赖环境中的SQLite动态库。生成失败时，终端提示原因，其他成功结果仍可生成报告。
 

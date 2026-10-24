@@ -91,6 +91,7 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/rep_report_writer_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/report_name_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/staging_directory_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/disk_output_directory_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/debug_log_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/hardware_info_json_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/hardware_info_host_test.cpp"
@@ -132,6 +133,9 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/launch/process_launcher.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/launch/staging_directory.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/pm_sampling_file_validator.cpp"
+
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/launch/disk_output_directory.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/collection_directory_validator.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/collection_file_validator.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/csv_reader.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/csv_sqlite_writer.cpp"

@@ -200,14 +200,15 @@ int main(int argc, char** argv)
                     publish("collection-p1-0001/summary.jsonl", kSummary);
                 }
                 publish(
-                    section + ".csv", mode == "invalid-csv"                            ? "header\n" :
-                                      mode == "csv-field-count" && section == "Memory" ? "block_id,read_bytes\n0\n" :
-                                      mode == "csv-unit-conflict" && section == "Memory" ?
-                                                                                         "block_id,latency(us)\n0,2\n" :
-                                      mode == "csv-unit-conflict"  ? "block_id,latency(ms)\n0,1\n" :
-                                      section == "PipeUtilization" ? kPipeCsv :
-                                      section == "L2Cache"         ? kL2CacheCsv :
-                                                                     kMemoryCsv);
+                    section + ".csv",
+                    mode == "invalid-csv" ? "header\n" :
+                    (mode == "csv-field-count" || mode == "pm-sampling-csv-field-count") && section == "Memory" ?
+                                            "block_id,read_bytes\n0\n" :
+                    mode == "csv-unit-conflict" && section == "Memory" ? "block_id,latency(us)\n0,2\n" :
+                    mode == "csv-unit-conflict"                        ? "block_id,latency(ms)\n0,1\n" :
+                    section == "PipeUtilization"                       ? kPipeCsv :
+                    section == "L2Cache"                               ? kL2CacheCsv :
+                                                                         kMemoryCsv);
             }
             if (mode.rfind("pm-sampling", 0) != 0 || summarySelected)
                 publish("summary.jsonl", kSummary);

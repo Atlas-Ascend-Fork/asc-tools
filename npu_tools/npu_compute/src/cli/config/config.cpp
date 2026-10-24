@@ -88,8 +88,8 @@ bool ValidateListSectionsMode(const CliConfig& config, std::vector<std::string>*
     if (!config.list_sections) {
         return false;
     }
-    if (config.replay_mode_specified || config.import_path.has_value() || config.export_path.has_value() ||
-        !config.sections.empty() || !config.program.empty()) {
+    if (config.no_pack || config.replay_mode_specified || config.import_path.has_value() ||
+        config.export_path.has_value() || !config.sections.empty() || !config.program.empty()) {
         AddError("use --list-sections as a standalone command.", errors);
     }
     return true;
@@ -126,12 +126,16 @@ void ValidateCombinations(const CliConfig& config, std::vector<std::string>* err
     if (SkipCombinationValidation(config, *errors)) {
         return;
     }
+    if (config.no_pack && config.import_path) {
+        AddError("--no-pack cannot be combined with --import.", errors);
+        return;
+    }
     if (ValidateImportMode(config, errors)) {
         return;
     }
     if (config.list_sets) {
-        if (config.list_sections || config.replay_mode_specified || config.import_path || config.export_path ||
-            !config.sections.empty() || !config.program.empty()) {
+        if (config.no_pack || config.list_sections || config.replay_mode_specified || config.import_path ||
+            config.export_path || !config.sections.empty() || !config.program.empty()) {
             AddError("use --list-sets as a standalone command.", errors);
         }
         return;
@@ -163,7 +167,6 @@ OptionRegistry RegisterOptions()
     help.protect_from_value = true;
     help.help = "Show help information.";
     builder.Add(std::move(help));
-
     OptionSpec section;
     section.long_name = "--section";
     section.arity = OptionArity::RequiredValue;
@@ -220,6 +223,13 @@ OptionRegistry RegisterOptions()
     list_sets.help = "List supported section sets and their sections.";
     builder.Add(std::move(list_sets));
 
+    auto no_pack = FlagOption("--no-pack", '\0', &CliConfig::no_pack, RepeatPolicy::Once);
+    no_pack.help = "Keep original collection files in a unique directory\n"
+                   "instead of generating .npu-rep. Cannot use --import.\n"
+                   "--export must be an existing parent directory.\n"
+                   "Default parent: current directory.";
+    builder.Add(std::move(no_pack));
+
     OptionSpec replay;
     replay.long_name = "--replay-mode";
     replay.arity = OptionArity::RequiredValue;
@@ -268,6 +278,7 @@ OptionRegistry RegisterOptions()
         "Specify the output file or directory.\n"
         "Collection: a new .npu-rep file or an existing\n"
         "  directory. The parent directory must exist.\n"
+        "With --no-pack: an existing parent directory only.\n"
         "Import: an existing directory for unpacking.\n"
         "Default location: current directory.\n"
         "Existing files are not overwritten.");

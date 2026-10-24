@@ -69,14 +69,17 @@ int main(int argc, char** argv)
     std::string report_path;
     std::string error;
     int result = npucompute::cli::LaunchTarget(config, &report_path, &error);
-    if (!report_path.empty()) {
-        std::fprintf(stderr, "npu-compute: report= %s\n", report_path.c_str());
-    }
     if (result != 0) {
+        if (!report_path.empty()) {
+            std::fprintf(stderr, "npu-compute: %s= %s\n", config.no_pack ? "directory" : "report", report_path.c_str());
+        }
         if (!error.empty()) {
             std::fprintf(stderr, "[ERROR] npu-compute: %s\n", error.c_str());
         }
         return result;
+    }
+    if (!report_path.empty()) {
+        std::fprintf(stderr, "npu-compute: %s= %s\n", config.no_pack ? "directory" : "report", report_path.c_str());
     }
     return 0;
 }

@@ -18,8 +18,11 @@
 #include "report/rep_report_writer.h"
 #include "report/report_name.h"
 #include "launch/staging_directory.h"
+#include "launch/disk_output_directory.h"
+#include "report/collection_directory_validator.h"
 
 #include <cerrno>
+#include <cstdio>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -189,7 +192,9 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
 
     std::string stage_error;
     ReportTarget target;
-    if (!ResolveReportTarget(config.export_path, &target, &stage_error)) {
+    boost::filesystem::path disk_parent;
+    if (config.no_pack ? !ResolveDiskParentDirectory(config.export_path, &disk_parent, &stage_error) :
+                         !ResolveReportTarget(config.export_path, &target, &stage_error)) {
         Fail(stage_error, error);
         return kReportErrorExitCode;
     }
@@ -202,14 +207,27 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     }
 
     StagingDirectory collection_data;
-    if (!StagingDirectory::Create(current_directory, &collection_data, error)) {
+    DiskOutputDirectory disk_data;
+    if (config.no_pack) {
+        if (!DiskOutputDirectory::Create(disk_parent, &disk_data, error)) {
+            return kReportErrorExitCode;
+        }
+    } else if (!StagingDirectory::Create(current_directory, &collection_data, error)) {
         return kInternalErrorExitCode;
     }
+    const std::string& collection_path = config.no_pack ? disk_data.Path() : collection_data.Path();
     const auto finishCollection = [&](int result) {
         std::string cleanup_error;
-        if (!collection_data.Remove(&cleanup_error)) {
-            SetStageError("finalize collection data directory failed", cleanup_error, error);
-            result = kInternalErrorExitCode;
+        const bool removed = config.no_pack ? disk_data.Remove(&cleanup_error) : collection_data.Remove(&cleanup_error);
+        if (!removed) {
+            if (config.no_pack && error != nullptr && !error->empty()) {
+                *error += "; cleanup failed: " + cleanup_error;
+            } else {
+                SetStageError("finalize collection data directory failed", cleanup_error, error);
+            }
+            if (!config.no_pack || result == 0) {
+                result = kInternalErrorExitCode;
+            }
         }
         return result;
     };
@@ -217,13 +235,13 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     ProcessLaunchRequest request;
     request.program = config.program;
     request.arguments = config.program_arguments;
-    if (!BuildChildEnvironment(collection_data.Path(), &request.environment, error)) {
+    if (!BuildChildEnvironment(collection_path, &request.environment, error)) {
         return finishCollection(kInternalErrorExitCode);
     }
     CollectionSession session;
-    const int appResult = session.Run(std::move(request), collectionConfig, collection_data.Path(), error);
+    const int appResult = session.Run(std::move(request), collectionConfig, collection_path, error);
     bool nested_collection_detected = false;
-    if (!ConsumeNestedCollectionMarker(collection_data.Path(), &nested_collection_detected, error)) {
+    if (!ConsumeNestedCollectionMarker(collection_path, &nested_collection_detected, error)) {
         return finishCollection(kInternalErrorExitCode);
     }
     if (nested_collection_detected) {
@@ -235,21 +253,41 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     if (appResult != 0) {
         return finishCollection(appResult);
     }
+
     auto issues = session.Outcome().issues;
-    boost::system::error_code hardwareError;
-    const auto hardwareStatus = boost::filesystem::symlink_status(
-        boost::filesystem::path(collection_data.Path()) / "HardwareInfo.jsonl", hardwareError);
-    if (hardwareError || !boost::filesystem::is_regular_file(hardwareStatus)) {
+    boost::system::error_code hardware_error;
+    const auto hardware_status = boost::filesystem::symlink_status(
+        boost::filesystem::path(collection_path) / "HardwareInfo.jsonl", hardware_error);
+    const bool hardware_info_valid = !hardware_error && boost::filesystem::is_regular_file(hardware_status);
+    if (!hardware_info_valid) {
         issues.push_back("HardwareInfo.jsonl: hardware information missing or not a regular file");
     }
-    if (!FinalizePipeTrace(collection_data.Path(), config.collect_pipeline, &stage_error, &issues)) {
+    if (!FinalizePipeTrace(collection_path, config.collect_pipeline, &stage_error, &issues)) {
         issues.push_back("finalize PipeTrace failed: " + stage_error);
     }
-    const auto databaseResults = FinalizeSummarySqlite(collection_data.Path());
+    const auto databaseResults = FinalizeSummarySqlite(collection_path);
     issues.insert(issues.end(), databaseResults.issues.begin(), databaseResults.issues.end());
 
+    if (config.no_pack) {
+        if (!ValidateCollectionDirectory(collection_path, &stage_error, &issues)) {
+            SetStageError("validate collection results failed", stage_error, error);
+            return finishCollection(kCollectionErrorExitCode);
+        }
+        for (const auto& issue : issues) {
+            std::fprintf(stderr, "[WARNING] npu-compute: %s\n", issue.c_str());
+        }
+        if (report_path != nullptr) {
+            *report_path = collection_path;
+        }
+        disk_data.Retain();
+        if (!issues.empty()) {
+            Fail("collection incomplete; valid raw results were retained", error);
+        }
+        return issues.empty() ? 0 : kCollectionErrorExitCode;
+    }
+
     std::vector<uint8_t> encoded;
-    if (!PackDirectoryToRep(collection_data.Path(), &encoded, &stage_error, &issues)) {
+    if (!PackDirectoryToRep(collection_path, &encoded, &stage_error, &issues)) {
         SetStageError("pack collection results failed", stage_error, error);
         return finishCollection(kReportErrorExitCode);
     }

@@ -355,4 +355,32 @@ TEST(NpuComputeLauncher, PublishingFailureRemovesCollectionDataDirectory)
     ASSERT_TRUE(error.find("/proc/") != std::string::npos);
 }
 
+TEST(NpuComputeLauncher, NoPackPreservesDirectoryAndCleansFailures)
+{
+    TestDirectory workDirectory;
+    TestDirectory outputDirectory;
+    const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
+    ASSERT_TRUE(currentDirectory.IsActive());
+    CliConfig config = FixtureConfig(outputDirectory.Path());
+    config.no_pack = true;
+    std::string output;
+    std::string error;
+    ASSERT_TRUE(LaunchTarget(config, &output, &error) == 0);
+    ASSERT_TRUE(error.empty());
+    ASSERT_TRUE(boost::filesystem::is_directory(output));
+    ASSERT_TRUE(boost::filesystem::path(output).parent_path() == outputDirectory.Path());
+    ASSERT_TRUE(boost::filesystem::exists(boost::filesystem::path(output) / "PipeUtilization.csv"));
+    ASSERT_TRUE(!boost::filesystem::exists(boost::filesystem::path(output) / ".hardware_info.lock"));
+    ASSERT_TRUE(boost::filesystem::is_empty(workDirectory.Path()));
+    boost::filesystem::remove_all(output);
+    config.program_arguments = {"--exit-code", "23"};
+    ASSERT_TRUE(LaunchTarget(config, &output, &error) == 23);
+    ASSERT_TRUE(output.empty());
+    ASSERT_TRUE(boost::filesystem::is_empty(outputDirectory.Path()));
+    config = ShellConfig("touch app-ran", outputDirectory.Path() / "custom.npu-rep");
+    config.no_pack = true;
+    ASSERT_TRUE(LaunchTarget(config, &output, &error) == 4);
+    ASSERT_TRUE(!boost::filesystem::exists(workDirectory.Path() / "app-ran"));
+}
+
 } // namespace

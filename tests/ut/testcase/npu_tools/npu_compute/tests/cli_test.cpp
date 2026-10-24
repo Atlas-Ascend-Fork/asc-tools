@@ -731,3 +731,43 @@ TEST(NpuComputeCli, FlagValuesReportSpecificErrors)
     EXPECT_TRUE(Parse({"npu-compute", "app", "--help=x"}, &config, &errors));
     EXPECT_EQ(config.program_arguments, std::vector<std::string>{"--help=x"});
 }
+
+TEST(NpuComputeCli, NoPackAcceptsCollectionAndPreservesAppArgumentBoundary)
+{
+    CliConfig config;
+    std::vector<std::string> errors;
+    ASSERT_TRUE(Parse({"npu-compute", "--no-pack", "--export", "reports", "./app", "--no-pack"}, &config, &errors));
+    EXPECT_EQ(config.export_path, "reports");
+    EXPECT_EQ(config.program_arguments, std::vector<std::string>{"--no-pack"});
+    EXPECT_EQ(config.sets, std::vector<std::string>{"basic"});
+    EXPECT_TRUE(Parse({"npu-compute", "--no-pack", "--help"}, &config, &errors));
+    EXPECT_TRUE(Parse({"npu-compute", "--export", "reports", "--no-pack", "./app"}, &config, &errors));
+    EXPECT_EQ(config.export_path, "reports");
+}
+
+TEST(NpuComputeCli, NoPackRejectsIncompatibleModesAndValues)
+{
+    CliConfig config;
+    std::vector<std::string> errors;
+    EXPECT_FALSE(Parse({"npu-compute", "--no-pack", "--import", "old.npu-rep"}, &config, &errors));
+    EXPECT_NE(errors.front().find("cannot be combined with --import"), std::string::npos);
+    for (const char* option : {"--list-sections", "--list-sets"}) {
+        EXPECT_FALSE(Parse({"npu-compute", "--no-pack", option}, &config, &errors));
+        EXPECT_NE(errors.front().find("standalone"), std::string::npos);
+    }
+    EXPECT_FALSE(Parse({"npu-compute", "--no-pack", "--no-pack", "app"}, &config, &errors));
+    EXPECT_NE(errors.front().find("only be specified once"), std::string::npos);
+    EXPECT_FALSE(Parse({"npu-compute", "--no-pack=value", "app"}, &config, &errors));
+    EXPECT_NE(errors.front().find("does not take a value"), std::string::npos);
+}
+
+TEST(NpuComputeCli, NoPackRejectsLegacyDiskOptionAndPreservesAppArguments)
+{
+    CliConfig config;
+    std::vector<std::string> errors;
+    EXPECT_FALSE(Parse({"npu-compute", "--disk", "app"}, &config, &errors));
+    ASSERT_FALSE(errors.empty());
+    EXPECT_NE(errors.front().find("unknown option"), std::string::npos);
+    EXPECT_TRUE(Parse({"npu-compute", "app", "--disk", "--no-pack"}, &config, &errors));
+    EXPECT_EQ(config.program_arguments, (std::vector<std::string>{"--disk", "--no-pack"}));
+}

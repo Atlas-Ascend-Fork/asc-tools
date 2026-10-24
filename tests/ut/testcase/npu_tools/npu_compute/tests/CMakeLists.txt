@@ -209,6 +209,8 @@ add_library(npu_compute_launcher_core_test STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/rep_report_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/report_name.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/launch/staging_directory.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/launch/disk_output_directory.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/collection_directory_validator.cpp
 )
 target_include_directories(npu_compute_launcher_core_test PUBLIC
   "${NPU_COMPUTE_SOURCE_DIR}/src/cli")
@@ -786,6 +788,15 @@ if(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS)
 endif()
 
 add_test(
+  NAME npu_compute.no_pack_integration
+  COMMAND ${CMAKE_COMMAND} -E env
+    "NPU_COMPUTE_TEST_CLI=$<TARGET_FILE:npu_compute_cli_test_bin>"
+    "NPU_COMPUTE_REP_FIXTURE_APP=$<TARGET_FILE:npu_compute_rep_fixture_app>"
+    ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+    ${NPU_COMPUTE_PY_TEST_DIR}/test_disk_integration.py
+)
+
+add_test(
   NAME npu_compute.hardware_info_integration
   COMMAND ${CMAKE_COMMAND} -E env
     "NPU_COMPUTE_TEST_BIN_DIR=$<TARGET_FILE_DIR:npu_compute_cli_test_bin>"
@@ -946,6 +957,7 @@ set_tests_properties(npu_compute.sqlite_runtime_loader PROPERTIES TIMEOUT 120)
 
 # Keep upstream Python-driven integration entries available for focused runs.
 set(npu_compute_python_wrappers
+  npu_compute.no_pack_integration
   npu_compute.rep_packaging_integration
   npu_compute.hardware_info_integration
   npu_compute.subscribe_lifecycle

@@ -20,6 +20,9 @@ add_library(npu_compute_launcher_core STATIC
   launch/process_launcher.cpp
   launch/staging_directory.cpp
   report/pm_sampling_file_validator.cpp
+
+  launch/disk_output_directory.cpp
+  report/collection_directory_validator.cpp
   report/collection_file_validator.cpp
   report/csv_reader.cpp
   report/csv_sqlite_writer.cpp

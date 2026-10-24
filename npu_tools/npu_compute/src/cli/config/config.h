@@ -23,6 +23,7 @@ enum class ReplayMode {
 
 struct CliConfig {
     bool show_help = false;
+    bool no_pack = false;
     bool list_sections = false;
     bool list_sets = false;
     std::vector<std::string> sets;
