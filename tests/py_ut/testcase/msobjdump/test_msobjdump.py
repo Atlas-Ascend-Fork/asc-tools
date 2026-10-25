@@ -187,6 +187,41 @@ class TestMsObjdump(unittest.TestCase):
         finally:
             shutil.rmtree(objdump.tmp_dir)
 
+    def test_collect_sass_images_preserves_archive_member_whitespace(self):
+        with tempfile.TemporaryDirectory(dir=FILE_PATH) as temp_dir:
+            for index, member_name in enumerate((" leading.o", "device.o ")):
+                with self.subTest(member_name=member_name):
+                    archive_file = os.path.join(temp_dir, f"libkernels_{index}.a")
+                    member_path = os.path.join(temp_dir, member_name)
+                    with open(member_path, "wb") as file_obj:
+                        file_obj.write(member_name.encode("utf-8"))
+                    subprocess.run(
+                        ["ar", "rcs", archive_file, member_name],
+                        cwd=temp_dir,
+                        check=True,
+                    )
+
+                    objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+                    objdump.tmp_dir = tempfile.mkdtemp(dir=temp_dir)
+                    try:
+                        with patch.object(
+                            objdump,
+                            "_classify_sass_file",
+                            side_effect=["archive", "device"],
+                        ):
+                            images, diagnostics = objdump._collect_sass_images(
+                                archive_file
+                            )
+
+                        self.assertEqual(diagnostics, [])
+                        self.assertEqual(len(images), 1)
+                        with open(images[0].path, "rb") as file_obj:
+                            self.assertEqual(
+                                file_obj.read(), member_name.encode("utf-8")
+                            )
+                    finally:
+                        shutil.rmtree(objdump.tmp_dir)
+
     def test_disassemble_sass_rejects_placeholder_output(self):
         objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
         image = msobjdump_main.SassImage("device.o", "device.o")
@@ -219,8 +254,7 @@ class TestMsObjdump(unittest.TestCase):
         result = subprocess.CompletedProcess(
             [],
             0,
-            "       0:                00000000\tEND\n"
-            "       4:                00000000 <unknown>\n",
+            "       0:                00000000\tEND\n       4:                00000000 <unknown>\n",
             "",
         )
         with patch.object(utils, "disassemble_with_llvm_objdump", return_value=result):

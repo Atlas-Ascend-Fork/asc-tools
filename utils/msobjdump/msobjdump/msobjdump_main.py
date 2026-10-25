@@ -200,10 +200,7 @@ class ObjDump:
     def _unpack_buff_content_by_type(
         content: bytes, start_idx: int, read_len: int, type_str: str
     ) -> int:
-        error_message = (
-            "[ERROR]: Failed to parse Ascend kernel content: "
-            "buffer access is out of bounds."
-        )
+        error_message = "[ERROR]: Failed to parse Ascend kernel content: buffer access is out of bounds."
         end_idx = start_idx + read_len
         if start_idx < 0 or read_len < 0 or end_idx > len(content):
             raise RuntimeError(error_message)
@@ -510,9 +507,7 @@ class ObjDump:
             return images, [SassDiagnostic(source, error)]
 
         members = [
-            line.strip()
-            for line in self._completed_process_text(result).splitlines()
-            if line.strip()
+            line for line in self._completed_process_text(result).splitlines() if line
         ]
         if len(members) != len(set(members)):
             return images, [
