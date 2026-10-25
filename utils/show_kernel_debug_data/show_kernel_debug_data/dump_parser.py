@@ -472,7 +472,7 @@ class PrintStruct:
         args_start, args_end = self._read_fmt(tlv.value)  # fmt
         self._read_args(tlv.value, args_start, args_end)  # args
 
-        self.fmt = self.fmt.replace("%p", "0x%x")  # python not support %p
+        self.fmt = self._format_for_python()
         self.content = self.fmt % tuple(self.args)
 
     def _read_fmt(self, buffer):
@@ -482,13 +482,22 @@ class PrintStruct:
     def _all_fmt_placehold(self):
         import re
 
-        pattern = r"%[a-zA-Z]{1,2}"
+        pattern = r"%%|%[a-zA-Z]{1,2}"
         matches = re.findall(pattern, self.fmt)
         fmt_placehold_list = []
         for x in matches:
+            if x == "%%":
+                continue
             if not (len(x) == 3 and "%l" not in x.lower()):
                 fmt_placehold_list.append(x)
         return fmt_placehold_list
+
+    def _format_for_python(self):
+        import re
+
+        return re.sub(
+            r"%%|%p", lambda match: "%%" if match.group() == "%%" else "0x%x", self.fmt
+        )
 
     def _read_args(self, buffer, args_start, args_end):
         args_plds = self._all_fmt_placehold()
@@ -595,7 +604,7 @@ class FifoPrintStruct(PrintStruct):
         args_start, args_end = self._read_fmt(fifo_buffer)  # fmt
         self._read_args(fifo_buffer, args_start, args_end)  # args
 
-        self.fmt = self.fmt.replace("%p", "0x%x")  # python not support %p
+        self.fmt = self._format_for_python()
         self.content = self.fmt % tuple(self.args)
 
 
@@ -623,7 +632,7 @@ class FifoSimtPrintStruct(PrintStruct):
         args_start, args_end = self._read_fmt(simt_buffer)  # fmt
         self._read_args(simt_buffer, args_start, args_end)  # args
 
-        self.fmt = self.fmt.replace("%p", "0x%x")  # python not support %p
+        self.fmt = self._format_for_python()
         self.content = self.fmt % tuple(self.args)
 
 

@@ -1315,6 +1315,24 @@ class TestAscendump(unittest.TestCase):
         ps.parse_from(tlv)
         self.assertIn("deadbeef", ps.content.lower())
 
+    def test_escaped_percent_before_placeholder_text(self):
+        ps = PrintStruct()
+        args_bytes = struct.pack("Q", 42)
+        tlv = self._merged_PrintStructFormats__create_print_tlv_with_args(
+            "literal=%%d value=%u", args_bytes
+        )
+        ps.parse_from(tlv)
+        self.assertEqual(ps.content, "literal=%d value=42")
+
+    def test_escaped_percent_before_pointer_placeholder_text(self):
+        ps = PrintStruct()
+        args_bytes = struct.pack("P", 0x1234)
+        tlv = self._merged_PrintStructFormats__create_print_tlv_with_args(
+            "literal=%%p value=%p", args_bytes
+        )
+        ps.parse_from(tlv)
+        self.assertEqual(ps.content, "literal=%p value=0x1234")
+
     def test_format_f(self):
         ps = PrintStruct()
         float_val = 3.14
