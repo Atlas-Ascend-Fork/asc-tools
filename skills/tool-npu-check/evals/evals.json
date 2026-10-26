@@ -53,7 +53,7 @@
       "id": 4,
       "title": "verified-runtime-configuration",
       "prompt": "npu-check 当前已验证的运行配置和能力边界是什么？",
-      "expected_output": "当前已验证配置包括 Ascend 950（芯片架构 dav-3510）、匹配且包含 npu-check 的 CANN 包，以及通过 `<<<>>>` NPU 核函数调用语法直接调用一个算子、一次运行只下发一次，即单算子单次调用的单进程单线程可执行程序。PyTorch 场景暂不支持；memcheck 仅检查受支持数据搬运指令对设备全局内存（GM）的访问，不支持标量直接访问（scalar）；synccheck 仅支持同一执行核内的同步操作配对检查。工具不检查数值精度、性能、CPU 侧（Host）逻辑和构建配置。超出已验证配置时，对应能力应标记为不支持或覆盖范围未知，结果不能作为有效检查结论。",
+      "expected_output": "当前已验证配置包括 Ascend 950（芯片架构 dav-3510）、匹配且包含 npu-check 的 CANN 包，以及通过 `<<<>>>` NPU 核函数调用语法或 aclnn 的单算子单次调用，使用单进程单线程可执行程序。PyTorch 场景暂不支持。memcheck 检查受支持指令的 GM 分配范围及 L1、L0A、L0B、L0C 容量边界，当前包含部分标量直接访问（scalar），不代表支持所有指令。synccheck 检查核内配对及受支持的跨核同步模式；initcheck 检查持久化寄存器依赖和 GM/L1/L0A/L0B/L0C 初始化状态；racecheck 检查同一次下发内的访问竞争。工具不检查数值精度、性能、CPU 侧（Host）逻辑和构建配置。超出已验证配置时，对应能力应标记为不支持或覆盖范围未知，结果不能作为有效检查结论。",
       "expectations": [
         {"type": "contains", "pattern": "已验证", "description": "将配置表达为工具已验证能力边界"},
         {"type": "contains", "pattern": "Ascend 950", "description": "说明支持的产品系列"},
@@ -62,10 +62,18 @@
         {"type": "contains", "pattern": "<<<>>>", "description": "保留实际使用的算子调用语法"},
         {"type": "contains", "pattern": "NPU 核函数调用语法", "description": "解释 <<<>>> 的含义"},
         {"type": "contains", "pattern": "单算子单次调用", "description": "说明已验证的调用配置"},
+        {"type": "contains", "pattern": "aclnn", "description": "说明当前支持的另一种单算子调用形态"},
         {"type": "contains", "pattern": "单进程", "description": "限制应用进程和线程模型"},
         {"type": "contains", "pattern": "PyTorch", "description": "明确当前不支持 PyTorch 场景"},
         {"type": "contains", "pattern": "标量直接访问", "description": "用中文解释 scalar 访问"},
-        {"type": "contains", "pattern": "同一执行核内", "description": "说明 synccheck 仅支持同一执行核内的同步检查"},
+        {"type": "contains", "pattern": "L1", "description": "不遗漏受支持的片上容量检查"},
+        {"type": "contains", "pattern": "L0A", "description": "列出 L0A 检查范围"},
+        {"type": "contains", "pattern": "L0B", "description": "列出 L0B 检查范围"},
+        {"type": "contains", "pattern": "L0C", "description": "列出 L0C 检查范围"},
+        {"type": "contains", "pattern": "容量", "description": "区分片上容量和 GM 分配范围"},
+        {"type": "contains", "pattern": "跨核", "description": "不沿用仅核内同步的旧限制"},
+        {"type": "contains", "pattern": "initcheck", "description": "说明当前初始化检查能力"},
+        {"type": "contains", "pattern": "racecheck", "description": "说明当前竞争检查能力"},
         {"type": "contains", "pattern": "不检查", "description": "直接说明工具的非检查范围"},
         {"type": "contains", "pattern": "CPU 侧", "description": "用中文解释 Host 逻辑"},
         {"type": "contains", "pattern": "不支持", "description": "说明超出已验证配置的能力边界"},
@@ -85,6 +93,82 @@
         {"type": "contains", "pattern": "不写入该文件", "description": "应用输出不入文件"},
         {"type": "contains", "pattern": "分别保留", "description": "保留两份原始输出"},
         {"type": "contains", "pattern": "同一次执行", "description": "关联运行上下文"},
+        {"type": "skill_activated", "pattern": "tool-npu-check", "description": "确认激活设备检查 Skill"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "on-chip-capacity-report-interpretation",
+      "prompt": "Ascend 950 的完整 memcheck 原始报告显示 `Invalid L0A read of size 32 bytes`，地址 `0xfff0`，并注明 `L0A capacity 65536 bytes, valid offsets [0, 65536)`，附有源码位置和执行核信息。这是不是不在工具范围内？32 字节是实际越界量吗？需要查 aclrtMalloc 吗？",
+      "expected_output": "先结合原始捕获日志与运行上下文判断诊断可信度。这属于 memcheck 已支持的 L0A 片上容量越界诊断。地址是 L0A 偏移 65520，32 字节是访问总长度，结束偏移为 65552，超过 65536 字节容量 16 字节。此处按空间容量检查，不需要查 aclrtMalloc 分配记录，也不能按 GM 地址解释；结论限于本次受支持指令和执行路径。",
+      "expectations": [
+        {"type": "contains", "pattern": "可信度", "description": "片上报告仍需判断证据可信度"},
+        {"type": "contains", "pattern": "L0A", "description": "识别片上访问空间"},
+        {"type": "contains", "pattern": "容量", "description": "按空间容量解读而非 GM 动态分配"},
+        {"type": "contains", "pattern": "总长度", "description": "区分访问长度和越界量"},
+        {"type": "contains", "pattern": "16", "description": "正确计算实际超出容量的字节数"},
+        {"type": "contains", "pattern": "不需要", "description": "不要求为片上空间查找 GM 分配"},
+        {"type": "skill_activated", "pattern": "tool-npu-check", "description": "确认激活设备检查 Skill"}
+      ]
+    },
+    {
+      "id": 7,
+      "title": "on-chip-capacity-is-not-logical-buffer-bounds",
+      "prompt": "在 dav-3510 上，我在 L1 容量内部划分了两个 buffer。访问越过第一个 buffer 但没有超过 L1 容量，memcheck 是否一定会报错？L0A、L0B、L0C 的判定一样吗？能否外推到 UB 和其他芯片？",
+      "expected_output": "不一定。当前 memcheck 的片上判定基准是空间容量，不追踪用户划分的每个逻辑 buffer。dav-3510 的 L1 为 512 KiB，L0A 和 L0B 各 64 KiB，L0C 为 256 KiB；每个访问区间须完整落入对应空间的 [0, capacity) 范围。GM 则按有效分配范围检查。这里不承诺 UB 的 memcheck 边界检查，也不能外推到所有片上指令、模式或其他芯片。",
+      "expectations": [
+        {"type": "contains", "pattern": "不一定", "description": "不把空间容量检查扩大为每个 buffer 的越界检查"},
+        {"type": "contains", "pattern": "512", "description": "正确说明 L1 容量"},
+        {"type": "contains", "pattern": "64", "description": "正确说明 L0A/L0B 容量"},
+        {"type": "contains", "pattern": "256", "description": "正确说明 L0C 容量"},
+        {"type": "contains", "pattern": "逻辑", "description": "区分空间容量和逻辑 buffer 边界"},
+        {"type": "contains", "pattern": "UB", "description": "明确未列出空间的覆盖边界"},
+        {"type": "contains", "pattern": "其他芯片", "description": "保留架构范围限制"},
+        {"type": "skill_activated", "pattern": "tool-npu-check", "description": "确认激活设备检查 Skill"}
+      ]
+    },
+    {
+      "id": 8,
+      "title": "current-scalar-and-cross-core-support",
+      "prompt": "旧说明说 memcheck 不支持 scalar 直接访问、synccheck 只检查核内同步。现在仍然可以这样概括吗？是否因此支持任意 scalar 指令、跨核同步模式和拓扑？",
+      "expected_output": "不能沿用这两个绝对限制。当前版本的 memcheck 已支持部分 scalar GM 读写和原子访问，synccheck 已支持部分跨核同步模式。但这些支持仍受指令、模式、拓扑和 Ascend 950（dav-3510）平台范围限制，不能外推到任意访问。核对当前版本官方资料和实际输出；未明确支持的对象保留覆盖未知，不因没有诊断宣布通过。",
+      "expectations": [
+        {"type": "contains", "pattern": "部分", "description": "明确支持是有边界的"},
+        {"type": "contains", "pattern": "scalar", "description": "纠正 scalar 全部不支持的旧限制"},
+        {"type": "contains", "pattern": "跨核", "description": "纠正仅核内的旧限制"},
+        {"type": "contains", "pattern": "拓扑", "description": "不外推到所有跨核拓扑"},
+        {"type": "contains", "pattern": "dav-3510", "description": "保留架构限制"},
+        {"type": "skill_activated", "pattern": "tool-npu-check", "description": "确认激活设备检查 Skill"}
+      ]
+    },
+    {
+      "id": 9,
+      "title": "four-tools-and-distinct-checking-scopes",
+      "prompt": "请给出当前 npu-check 同时启用全部检查的命令，应用为 ./my_app。initcheck 和 racecheck 能替代 memcheck 吗？racecheck 能证明不同 launch 之间没有竞争吗？",
+      "expected_output": "命令为 `npu-check --tool memcheck --tool synccheck --tool initcheck --tool racecheck -- ./my_app`。四种检查可组合，重复同一工具不重复检查；未指定 --tool 时默认 memcheck。initcheck 检查持久化寄存器依赖和 GM/L1/L0A/L0B/L0C 初始化状态，racecheck 检查同一次 launch 内缺少必要同步的访问竞争；两者均不能替代 memcheck 的 GM 分配范围和片上容量检查，也不能替代精度验证。racecheck 不检查不同 launch 之间的竞争。",
+      "expectations": [
+        {"type": "contains", "pattern": "--tool memcheck", "description": "启用内存范围检查"},
+        {"type": "contains", "pattern": "--tool synccheck", "description": "启用同步检查"},
+        {"type": "contains", "pattern": "--tool initcheck", "description": "启用初始化检查"},
+        {"type": "contains", "pattern": "--tool racecheck", "description": "启用竞争检查"},
+        {"type": "contains", "pattern": "./my_app", "description": "保留用户应用命令"},
+        {"type": "contains", "pattern": "不能替代", "description": "不同检查回答不同问题"},
+        {"type": "contains", "pattern": "不同 launch", "description": "明确竞争检查的下发边界"},
+        {"type": "skill_activated", "pattern": "tool-npu-check", "description": "确认激活设备检查 Skill"}
+      ]
+    },
+    {
+      "id": 10,
+      "title": "gm-allocation-api-boundaries",
+      "prompt": "当前 memcheck 是否只记录 aclrtMalloc 的分配？aclrtMalloc、aclrtMallocAlign32、aclrtMallocWithCfg 分别请求 33 字节时，检查边界是否都按 64 字节计算？",
+      "expected_output": "当前还支持 aclrtMallocAlign32 和 aclrtMallocWithCfg 的成功分配记录。aclrtMalloc 和 aclrtMallocAlign32 的请求大小向上按 32 字节对齐，33 字节对应 64 字节检查边界；aclrtMallocWithCfg 按请求字节数记录，此例仍是 33 字节。释放按 aclrtFree 的成功结果更新。不能将这个 GM 分配规则套用到 L1/L0 的空间容量检查。",
+      "expectations": [
+        {"type": "contains", "pattern": "aclrtMallocAlign32", "description": "覆盖另一种按 32 字节对齐的分配接口"},
+        {"type": "contains", "pattern": "aclrtMallocWithCfg", "description": "覆盖按请求大小记录的配置分配接口"},
+        {"type": "contains", "pattern": "64", "description": "正确计算向上对齐的检查大小"},
+        {"type": "contains", "pattern": "33", "description": "保留配置分配接口的请求大小"},
+        {"type": "contains", "pattern": "请求字节数", "description": "不对所有 GM 分配统一套用对齐规则"},
+        {"type": "contains", "pattern": "容量", "description": "区分 GM 分配和片上容量检查"},
         {"type": "skill_activated", "pattern": "tool-npu-check", "description": "确认激活设备检查 Skill"}
       ]
     }

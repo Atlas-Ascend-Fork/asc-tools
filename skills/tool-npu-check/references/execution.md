@@ -56,11 +56,19 @@ printf 'npu-check log: %s\n' "${raw_log}"
 npu-check --tool synccheck
 ```
 
-变更同时影响内存访问和同步时，检查类型参数应使用：
+用户选择同时检查内存访问和同步时，检查类型参数使用：
 
 ```bash
 npu-check --tool memcheck --tool synccheck
 ```
+
+检查初始化或内存访问竞争时，分别使用 `--tool initcheck` 或 `--tool racecheck`；需要四种检查时使用：
+
+```bash
+npu-check --tool memcheck --tool synccheck --tool initcheck --tool racecheck
+```
+
+只启用用户选择的检查类型，重复指定同一工具不会重复检查。
 
 所有变体都必须保留相同的应用命令、终端重定向和退出状态捕获。不要改写、摘录后覆盖或手工拼接原始日志；如果
 需要摘录诊断，保留原始文件并在回答中注明摘录位置。

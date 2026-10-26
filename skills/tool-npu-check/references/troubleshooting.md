@@ -37,7 +37,7 @@ npu-check --help
 
 当前公开命令行只包含 `--tool`、`--log-file`、`-h/--help` 和 `--`：
 
-- `--tool` 只接受 `memcheck` 或 `synccheck`，可重复指定；未指定时默认使用 `memcheck`；
+- `--tool` 接受 `memcheck`、`synccheck`、`initcheck` 或 `racecheck`，可多次指定；重复同一工具不重复检查，未指定时默认使用 `memcheck`；
 - `--log-file` 的父目录必须已经存在，目标必须是文件路径，同名文件会被覆盖；
 - 当应用路径或参数以 `-` 开头时，必须使用 `--` 分隔；
 - 被检查对象必须是能够脱离 `npu-check` 独立启动的可执行应用。
