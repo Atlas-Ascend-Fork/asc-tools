@@ -16,7 +16,6 @@
 namespace npucompute {
 struct RuntimeConfig {
     std::vector<std::string> sections;
-    PmuDataLevel pmuLevel = PmuDataLevel::Block;
     aclptiCacheControl cacheControl = ACLPTI_CACHE_CONTROL_NONE;
 };
 } // namespace npucompute

@@ -152,8 +152,6 @@ std::string FormatMissingReasons(const std::map<std::string, std::size_t>& missi
 
 std::string ResolveOutputDirectory(const ReportConfig& config) { return config.outputDirectory; }
 
-const char* PmuDataLevelName(PmuDataLevel level) { return level == PmuDataLevel::Task ? "task" : "block"; }
-
 bool IsEmptySuccessfulResult(const aclptiProfilingDataResult& result)
 {
     return result.status == ACLPTI_SUCCESS && result.taskLogs.empty() && result.blockLogs.empty() &&
@@ -280,15 +278,12 @@ aclptiResult WritePmuCsv(
     ArtifactSink* sink, std::string_view artifactPrefix, bool* degraded)
 {
     const std::string outputDirectory = ResolveOutputDirectory(config);
-    const bool taskLevel = config.pmuDataLevel == PmuDataLevel::Task;
     const auto& pmuLogs = result.pmuLogs;
-    const size_t rowCount =
-        taskLevel ? static_cast<size_t>(result.taskPmuData.aic || result.taskPmuData.aiv) : pmuLogs.size();
-    const char* pmuLevel = PmuDataLevelName(config.pmuDataLevel);
+    const size_t rowCount = pmuLogs.size();
     ASCTOOL_DEBUG(
-        "[npu-compute] CSV write requested: output=%s sections=%zu pmuLevel=%s pmuRows=%zu status=%d "
+        "[npu-compute] CSV write requested: output=%s sections=%zu pmuRows=%zu status=%d "
         "failedRecords=%llu",
-        outputDirectory.c_str(), sections.size(), pmuLevel, rowCount, static_cast<int>(result.status),
+        outputDirectory.c_str(), sections.size(), rowCount, static_cast<int>(result.status),
         static_cast<unsigned long long>(result.errorStats.failedRecordCount));
     if (IsEmptySuccessfulResult(result)) {
         ASCTOOL_DEBUG("[npu-compute] CSV write skipped: empty successful result");
@@ -296,7 +291,7 @@ aclptiResult WritePmuCsv(
     }
     if (rowCount == 0) {
         ASCTOOL_DEBUG(
-            "[npu-compute] CSV write skipped: no PMU rows pmuLevel=%s status=%d failedRecords=%llu", pmuLevel,
+            "[npu-compute] CSV write skipped: no PMU rows status=%d failedRecords=%llu",
             static_cast<int>(result.status), static_cast<unsigned long long>(result.errorStats.failedRecordCount));
         return ACLPTI_SUCCESS;
     }
@@ -310,16 +305,13 @@ aclptiResult WritePmuCsv(
             config.frequencyMhz, config.aicFrequencyMhz, config.aivFrequencyMhz, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
-    bool hasAic = result.taskPmuData.aic.has_value();
-    bool hasAiv = result.taskPmuData.aiv.has_value();
-    if (!taskLevel) {
-        hasAic = false;
-        hasAiv = false;
-        for (const auto& [key, row] : pmuLogs) {
-            hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
-            hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
-        }
+    bool hasAic = false;
+    bool hasAiv = false;
+    for (const auto& [key, row] : pmuLogs) {
+        hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
+        hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
     }
+
     const bool isMixedKernel = hasAic && hasAiv;
     const Metric operationDurationUs = isMixedKernel ? PmuMetricBuilder::TaskDuration(result) : std::nullopt;
     const char* kernelType = isMixedKernel ? "mix" : (hasAic ? "aic" : "aiv");
@@ -351,8 +343,8 @@ aclptiResult WritePmuCsv(
         for (const auto& section : sections) {
             const boost::filesystem::path path = writeDirectory / (section + ".csv");
             ASCTOOL_DEBUG(
-                "[npu-compute] CSV section write start: section=%s path=%s pmuLevel=%s rows=%zu", section.c_str(),
-                path.c_str(), pmuLevel, rowCount);
+                "[npu-compute] CSV section write start: section=%s path=%s rows=%zu", section.c_str(), path.c_str(),
+                rowCount);
             std::ofstream file;
             std::unique_ptr<ArtifactStreamBuffer> sinkBuffer;
             if (sink != nullptr) {
@@ -372,20 +364,18 @@ aclptiResult WritePmuCsv(
                     static_cast<unsigned>(static_cast<uint32_t>(errorNumber)));
                 return ACLPTI_ERROR_CSV_WRITE;
             }
-            const std::vector<std::string> header = PmuMetricBuilder::Header(section, config.pmuDataLevel);
+            const std::vector<std::string> header = PmuMetricBuilder::Header(section);
             CsvSectionStats stats;
             WriteCsvLine(output, header);
             const auto writeRow = [&](const CsvRow& values) {
                 UpdateMissingStats(header, values, &stats);
                 WriteCsvLine(output, values);
             };
-            if (taskLevel) {
-                writeRow(PmuMetricBuilder::BuildTask(section, result.taskPmuData, config, operationDurationUs));
-            } else {
-                for (const auto& [key, row] : pmuLogs) {
-                    writeRow(PmuMetricBuilder::BuildBlock(section, key, row, config, operationDurationUs));
-                }
+
+            for (const auto& [key, row] : pmuLogs) {
+                writeRow(PmuMetricBuilder::BuildBlock(section, key, row, config, operationDurationUs));
             }
+
             output.flush();
             if (!output.good()) {
                 if (artifactStarted) {

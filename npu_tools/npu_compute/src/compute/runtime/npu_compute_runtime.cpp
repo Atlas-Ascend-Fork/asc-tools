@@ -189,7 +189,6 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
             error.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return kInitializeFailed;
     }
-    csv_config_.pmuDataLevel = config.pmuLevel;
     csv_frequency_override_ = false;
     csv_device_info_loaded_ = false;
     csv_config_.frequencyMhz = MSOPPROF_A5_FALLBACK_FREQUENCY_MHZ;
@@ -231,10 +230,6 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
             return kInitializeFailed;
         }
     }
-    ASCTOOL_DEBUG(
-        "[npu-compute] "
-        "PMU data level configured: %s",
-        csv_config_.pmuDataLevel == PmuDataLevel::Task ? "task" : "block");
 
     auto consumer = PmuDataConsumer::Create(
         [this](std::shared_ptr<const aclptiProfilingDataResult> result) { return ProcessPmuData(std::move(result)); });
@@ -484,9 +479,7 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
         metadata.hardware.currentAicFrequencyMhz = csvConfig.aicFrequencyMhz;
         metadata.hardware.currentAivFrequencyMhz = csvConfig.aivFrequencyMhz;
     }
-    row_count_ += csvConfig.pmuDataLevel == PmuDataLevel::Block ?
-                      result->pmuLogs.size() :
-                      static_cast<size_t>(result->taskPmuData.aic || result->taskPmuData.aiv);
+    row_count_ += result->pmuLogs.size();
     error_count_ += result->errorStats.failedRecordCount;
     if (result->status != ACLPTI_SUCCESS && result->errorStats.failedRecordCount == 0) {
         ++error_count_;

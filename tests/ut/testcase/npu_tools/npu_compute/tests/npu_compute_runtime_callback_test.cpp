@@ -248,6 +248,7 @@ bool RunCsvSocNameChild(const boost::filesystem::path& output)
     CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
     npucompute::NpuComputeRuntime::Instance().Stop();
     CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);
+    CHECK(npucompute::NpuComputeRuntime::Instance().RowCount() == result->pmuLogs.size());
     CHECK(CsvValue(output / "Memory.csv", "vector0", "GM_to_UB_bw_usage_rate(%)") == "5.358925");
     return true;
 }
@@ -269,6 +270,8 @@ bool RunSummaryHardwareChild(const std::string& scenario, const boost::filesyste
     CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
     npucompute::NpuComputeRuntime::Instance().Stop();
     CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);
+    CHECK(npucompute::NpuComputeRuntime::Instance().RowCount() == 0);
+    CHECK(!boost::filesystem::exists(output / "Memory.csv"));
     std::ifstream input((output / "summary.jsonl").string());
     std::string line;
     boost::property_tree::ptree summary;

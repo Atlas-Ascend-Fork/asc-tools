@@ -276,7 +276,7 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     CHECK(setenv("NPU_COMPUTE_FREQUENCY_MHZ", "1650", 1) == 0);
     CHECK(unsetenv("NPU_COMPUTE_SYSCNT_FREQUENCY_MHZ") == 0);
     npucompute::test::ResetAclPtiCallbackStub();
-    npucompute::RuntimeConfig config{{"PmSampling"}, npucompute::PmuDataLevel::Block};
+    npucompute::RuntimeConfig config{{"PmSampling"}};
     if (mode == "simd") {
         config.sections = {"Memory", "PmSampling"};
     }
@@ -318,8 +318,7 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     if (mode == "no-callback") {
         CHECK(!fs::exists(sink.output / "summary.jsonl"));
     } else {
-        CheckSummary(
-            sink.output / "summary.jsonl", mode != "combo" && mode != "combo-failure" && mode != "map-failure");
+        CheckSummary(sink.output / "summary.jsonl", config.sections == std::vector<std::string>{"PmSampling"});
     }
     const bool partial = mode == "mixed-results";
     if (success || partial) {

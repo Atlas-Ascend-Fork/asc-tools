@@ -132,7 +132,7 @@ static int RunSuiteMain()
         CHECK(ReadSummary(config.outputDirectory).back().get<std::string>("Op Name") == names.second);
     }
 
-    config.pmuDataLevel = npucompute::PmuDataLevel::Task;
+    // Repeated reports keep block CSV and task summary in a separate collection.
     CHECK(npucompute::WritePmuReport(result, sections, config, metadata) == ACLPTI_SUCCESS);
     bool foundCollection = false;
     for (const auto& entry : boost::filesystem::directory_iterator(config.outputDirectory)) {
@@ -151,6 +151,15 @@ static int RunSuiteMain()
     records = ReadSummary(config.outputDirectory);
     CHECK(records.size() == 3);
     CHECK(records[0].get<std::string>("aiv_total_cycles") == "NA");
+    CHECK(boost::filesystem::exists(boost::filesystem::path(config.outputDirectory) / "Memory.csv"));
+
+    // Task-only data still produces a summary, but must not produce a CSV.
+    config.outputDirectory = (boost::filesystem::path(directory) / "task-only").string();
+    auto taskOnlyResult = result;
+    taskOnlyResult.pmuLogs.clear();
+    CHECK(npucompute::WritePmuReport(taskOnlyResult, {"Memory"}, config) == ACLPTI_SUCCESS);
+    CHECK(
+        ReadSummary(config.outputDirectory)[0].get<double>("aiv_total_cycles") == result.taskPmuData.aiv->totalCycles);
     CHECK(!boost::filesystem::exists(boost::filesystem::path(config.outputDirectory) / "Memory.csv"));
 
     config.outputDirectory = (boost::filesystem::path(directory) / "task-counters").string();
@@ -205,9 +214,8 @@ static int RunSuiteMain()
     CHECK(records[0].get<double>("aic_total_cycles") == 0);
     CHECK(records.back().get<std::string>("aicore_parallel_balance") == "NA");
 
-    // Summary metrics must use task PMU rows even when CSV selects block rows.
+    // Summary metrics use task counters independently of the block CSV.
     config.outputDirectory = (boost::filesystem::path(directory) / "arithmetic-conflict").string();
-    config.pmuDataLevel = npucompute::PmuDataLevel::Block;
     aclptiProfilingDataResult arithmeticConflict;
     aclptiPmuDataRow arithmeticCube{};
     arithmeticCube.coreType = ACLPTI_CORE_TYPE_AIC;
@@ -279,7 +287,6 @@ static int RunSuiteMain()
         ipcConfig.outputDirectory = ipcDirectory.string();
         ipcConfig.frequencyMhz = 800;
         ipcConfig.aivFrequencyMhz = 800;
-        ipcConfig.pmuDataLevel = npucompute::PmuDataLevel::Block;
 
         aclptiProfilingDataResult ipcResult;
         ipcResult.taskPmuData.aiv = aclptiTaskPmuCoreData{
@@ -392,7 +399,7 @@ static int RunSuiteMain()
 
 TEST(NpuComputePmuReportWriter, Main) { ASSERT_EQ(RunSuiteMain(), 0) << "NpuComputePmuReportWriter reported failure"; }
 
-TEST(NpuComputePmuReportWriter, TaskCsvHasOneRowWithBothSidesAndNoBlockColumns)
+TEST(NpuComputePmuReportWriter, BlockCsvRetainsIdentityAndIgnoresTaskCounters)
 {
     class Sink final : public npucompute::ArtifactSink {
     public:
@@ -407,12 +414,17 @@ TEST(NpuComputePmuReportWriter, TaskCsvHasOneRowWithBothSidesAndNoBlockColumns)
     result.taskPmuData.aic = aclptiTaskPmuCoreData{1000, false, {}};
     result.taskPmuData.aiv = aclptiTaskPmuCoreData{2000, false, {}};
     npucompute::ReportConfig config;
-    config.pmuDataLevel = npucompute::PmuDataLevel::Task;
+    aclptiPmuDataRow block{};
+    block.blockId = 7;
+    block.subBlockId = 3;
+    block.coreType = ACLPTI_CORE_TYPE_AIV;
+    block.totalCycles = 3000;
+    result.pmuLogs.emplace(aclptiBlockKey{7, 3, ACLPTI_CORE_TYPE_AIV, 0}, block);
     ASSERT_EQ(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config, &sink), ACLPTI_SUCCESS);
     EXPECT_EQ(sink.rows, 1U);
     EXPECT_EQ(std::count(sink.text.begin(), sink.text.end(), '\n'), 2);
-    EXPECT_EQ(sink.text.find("block_id"), std::string::npos);
-    EXPECT_EQ(sink.text.find("sub_block_id"), std::string::npos);
+    EXPECT_NE(sink.text.find("block_id"), std::string::npos);
+    EXPECT_NE(sink.text.find("sub_block_id"), std::string::npos);
     EXPECT_NE(sink.text.find("aic_total_cycles"), std::string::npos);
     EXPECT_NE(sink.text.find("aiv_total_cycles"), std::string::npos);
     std::istringstream input(sink.text);
@@ -432,6 +444,15 @@ TEST(NpuComputePmuReportWriter, TaskCsvHasOneRowWithBothSidesAndNoBlockColumns)
     ASSERT_EQ(header.size(), values.size());
     const auto aic = std::find(header.begin(), header.end(), "aic_total_cycles") - header.begin();
     const auto aiv = std::find(header.begin(), header.end(), "aiv_total_cycles") - header.begin();
-    EXPECT_EQ(values.at(aic), "1000");
-    EXPECT_EQ(values.at(aiv), "2000");
+    EXPECT_EQ(values.at(0), "7");
+    EXPECT_EQ(values.at(1), "vector3");
+    EXPECT_EQ(values.at(aic), "NA");
+    EXPECT_EQ(values.at(aiv), "3000");
+
+    result.pmuLogs.clear();
+    sink.text.clear();
+    sink.rows = 0;
+    ASSERT_EQ(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config, &sink), ACLPTI_SUCCESS);
+    EXPECT_EQ(sink.rows, 0U);
+    EXPECT_TRUE(sink.text.empty());
 }

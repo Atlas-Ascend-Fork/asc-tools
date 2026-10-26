@@ -415,6 +415,7 @@ void EmptySimdDatabase()
     result.complete = true;
     Send(receiver, result, "HardwareInfo.jsonl", hardware);
     Send(receiver, result, names[0], Read(source.path / names[0]));
+    Send(receiver, result, "summary.jsonl", summary);
     std::vector<std::string> issues;
     CHECK(receiver.Validate(result, config, &issues));
     CHECK(issues.empty());

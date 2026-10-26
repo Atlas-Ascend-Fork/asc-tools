@@ -241,8 +241,6 @@ def test_cli_real_aclpti_callback_chain(tmp_path, sections):
         value for value in (str(BIN_DIR), existing_library_path) if value
     )
     environment["NPU_COMPUTE_DEBUG"] = "1"
-    # The profiling stub emits task-level PMU records, without block task logs.
-    environment["NPU_COMPUTE_PMU_LEVEL"] = "task"
     environment.pop("INJECTION_TEST_CALLBACK_EVENTS", None)
 
     command = [str(CLI)]
@@ -306,8 +304,10 @@ def test_cli_real_aclpti_callback_chain(tmp_path, sections):
         assert rows, path
         assert all(None not in row and None not in row.values() for row in rows)
         assert len(rows) == 1
-        assert "block_id" not in reader.fieldnames
-        assert "sub_block_id" not in reader.fieldnames
+        assert reader.fieldnames[:2] == ["block_id", "sub_block_id"]
+        # The profiling stub emits AIC block 1, displayed as sub-block cube0.
+        assert rows[0]["block_id"] == "1"
+        assert rows[0]["sub_block_id"] == "cube0"
 
     reports = list(work_directory.glob("*.npu-rep"))
     assert len(reports) == 1, result.stderr

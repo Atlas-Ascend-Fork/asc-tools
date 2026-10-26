@@ -101,14 +101,12 @@ bool BuildChildEnvironment(
     for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
         environment->emplace_back(*entry);
     }
-    for (const char* name : {"NPU_COMPUTE_REPLAY_MODE", "NPU_COMPUTE_PMU_LEVEL"}) {
-        const std::string prefix = std::string(name) + "=";
-        environment->erase(
-            std::remove_if(
-                environment->begin(), environment->end(),
-                [&](const auto& entry) { return entry.compare(0, prefix.size(), prefix) == 0; }),
-            environment->end());
-    }
+    const std::string replayModePrefix = "NPU_COMPUTE_REPLAY_MODE=";
+    environment->erase(
+        std::remove_if(
+            environment->begin(), environment->end(),
+            [&](const auto& entry) { return entry.compare(0, replayModePrefix.size(), replayModePrefix) == 0; }),
+        environment->end());
     SetEnvironmentValue("ACL_API_INJECTION", injection_path, environment);
     SetEnvironmentValue(
         kNestedMarkerEnvironment, collection_data_directory + "/" + kNestedCollectionMarker, environment);

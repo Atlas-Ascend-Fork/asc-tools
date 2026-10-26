@@ -121,7 +121,6 @@ void WriteConfig(Writer& writer, const Config& value)
     ValidateConfig(value);
     WriteSections(writer, value.sections);
     writer.String(value.replayMode);
-    writer.String(value.pmuLevel);
     writer.Integer(value.featureFlags, UINT64_BYTES);
     writer.Integer(value.cacheControlMode, UINT32_BYTES);
 }
@@ -130,7 +129,6 @@ Config ReadConfig(Reader& reader)
     Config result;
     result.sections = ReadSections(reader);
     result.replayMode = reader.String();
-    result.pmuLevel = reader.String();
     result.featureFlags = reader.Integer(UINT64_BYTES);
     result.cacheControlMode = static_cast<uint32_t>(reader.Integer(UINT32_BYTES));
     ValidateConfig(result);
@@ -200,7 +198,6 @@ void ValidateConfig(const Config& config)
         Check(seen.insert(section).second, "duplicate section");
     }
     Check(config.replayMode == "kernel", "unsupported replay mode");
-    Check(config.pmuLevel == "block" || config.pmuLevel == "task", "unsupported PMU level");
     Check(config.featureFlags == NO_FEATURE_FLAGS, "unsupported feature flags");
     Check(
         config.cacheControlMode == kCacheControlModeAll || config.cacheControlMode == kCacheControlModeNone,

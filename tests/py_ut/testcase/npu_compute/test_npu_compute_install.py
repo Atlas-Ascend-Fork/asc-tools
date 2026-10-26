@@ -160,7 +160,9 @@ def test_installed_layout_runs_the_minimal_stub_chain(install_root, tmp_path):
         search_paths.append(environment["LD_LIBRARY_PATH"])
     environment["LD_LIBRARY_PATH"] = ":".join(search_paths)
     environment.pop("NPU_COMPUTE_STUB_SUBSCRIBE_RESULT", None)
-    environment["NPU_COMPUTE_DEBUG"] = "1"
+    environment["ASCEND_GLOBAL_LOG_LEVEL"] = "1"
+    environment["ASCEND_SLOG_PRINT_TO_STDOUT"] = "1"
+    environment.pop("NPU_COMPUTE_DEBUG", None)
     hardware_stub = Path(os.environ["NPU_COMPUTE_HARDWARE_API_STUB"])
     assert hardware_stub.is_file()
     environment["LD_PRELOAD"] = ":".join(
@@ -184,5 +186,10 @@ def test_installed_layout_runs_the_minimal_stub_chain(install_root, tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert "[libnpu-compute] subscriber initialized" in result.stderr
+    initialization_message = "[libnpu-compute] subscriber initialized"
+    assert initialization_message in result.stdout, result.stdout + result.stderr
+    assert initialization_message not in result.stderr
+    reports = list(stub_install_root.glob("*.npu-rep"))
+    assert len(reports) == 1
+    assert reports[0].stat().st_size > 0
     assert "[demo] completed" in result.stderr

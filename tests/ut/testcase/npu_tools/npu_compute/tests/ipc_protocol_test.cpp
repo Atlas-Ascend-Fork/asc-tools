@@ -57,7 +57,7 @@ TEST(NpuComputeIpcProtocol, Codecs)
     };
     auto bytes = EncodeConfig(config);
     const auto decoded = DecodeConfig(bytes);
-    Check(decoded.sections == config.sections && decoded.pmuLevel == "block");
+    Check(decoded.sections == config.sections);
     Check(decoded.cacheControlMode == npucompute::ipc::kCacheControlModeNone);
     Check(static_cast<uint16_t>(Type::Hardware) == 0x0103);
     Check(static_cast<uint16_t>(Type::DataEnd) == 0x0104);
@@ -75,10 +75,6 @@ TEST(NpuComputeIpcProtocol, Codecs)
     config.sections.push_back("MemoryL0");
     Reject([&] { EncodeConfig(config); });
     config.sections.pop_back();
-    config.pmuLevel = "invalid";
-    Reject([&] { EncodeConfig(config); });
-    config.pmuLevel = "task";
-    Check(DecodeConfig(EncodeConfig(config)).pmuLevel == "task");
     for (uint32_t mode : {npucompute::ipc::kCacheControlModeAll, npucompute::ipc::kCacheControlModeNone}) {
         config.cacheControlMode = mode;
         Check(DecodeConfig(EncodeConfig(config)).cacheControlMode == mode);
@@ -88,7 +84,7 @@ TEST(NpuComputeIpcProtocol, Codecs)
     for (uint32_t mode : {uint32_t{2}, uint32_t{3}}) {
         config.cacheControlMode = mode;
         Reject([&] { EncodeConfig(config); });
-        auto invalid = EncodeConfig(Config{config.sections, "kernel", "block", 0, 0});
+        auto invalid = EncodeConfig(Config{config.sections, "kernel", 0, npucompute::ipc::kCacheControlModeAll});
         invalid[invalid.size() - 4] = static_cast<uint8_t>(mode);
         Reject([&] { DecodeConfig(invalid); });
     }

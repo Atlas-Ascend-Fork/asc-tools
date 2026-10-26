@@ -367,32 +367,28 @@ static int RunSuiteMain()
         CHECK(
             CsvValue(arithmetic, "cube0", "aic_cube_ratio") ==
             CsvValue(path / "PipeUtilization.csv", "cube0", "aic_cube_ratio"));
-        // Missing events must not become zero; task input uses its own counters.
-        vector.coreData.front().values.erase(1377);
-        vector.coreData.front().values[1282] = 0;
-        result.taskPmuData.aiv = aclptiTaskPmuCoreData{
-            vector.coreData.front().totalCycles, vector.coreData.front().overflow, vector.coreData.front().values};
-        config.outputDirectory = (path / "task").string();
-        config.pmuDataLevel = npucompute::PmuDataLevel::Task;
+        // Exercise missing events and zero cycles using block input without changing the valid fixture.
+        auto invalidMetricsResult = result;
+        auto& invalidMetricsAivRow = invalidMetricsResult.pmuLogs.at({0, 0, ACLPTI_CORE_TYPE_AIV, 0});
+        invalidMetricsAivRow.coreData.front().values.erase(1377);
+        invalidMetricsAivRow.coreData.front().values[1282] = 0;
+        config.outputDirectory = (path / "missing-event").string();
         config.frequencyMhz = 2000;
-        CHECK(npucompute::WritePmuCsv(result, sections, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(path / "task/ResourceConflictRatio.csv", "", "aiv_vec_sfu_cflt_ratio") == "NA");
-        CHECK(CsvValue(path / "task/ArithmeticUtilization.csv", "", "aiv_simd_vf_ratio") == "0.000000");
-        CHECK(CsvValue(path / "task/ArithmeticUtilization.csv", "", "aiv_time(us)") == "1.000000");
-        CHECK(CsvValue(path / "task/ArithmeticUtilization.csv", "", "aiv_vec_ratio") == "0.500000");
-        vector.coreData.front().values[1377] = 20;
-        vector.coreData.front().totalCycles = 0;
-        result.taskPmuData.aiv = aclptiTaskPmuCoreData{
-            vector.coreData.front().totalCycles, vector.coreData.front().overflow, vector.coreData.front().values};
-        config.outputDirectory = (path / "zero").string();
-        CHECK(npucompute::WritePmuCsv(result, sections, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(path / "zero/ResourceConflictRatio.csv", "", "aiv_vec_sfu_cflt_ratio") == "NA");
-        CHECK(CsvValue(path / "zero/ArithmeticUtilization.csv", "", "aiv_vec_ratio") == "NA");
+        CHECK(npucompute::WritePmuCsv(invalidMetricsResult, sections, config) == ACLPTI_SUCCESS);
+        CHECK(CsvValue(path / "missing-event/ResourceConflictRatio.csv", "vector0", "aiv_vec_sfu_cflt_ratio") == "NA");
+        CHECK(CsvValue(path / "missing-event/ArithmeticUtilization.csv", "vector0", "aiv_simd_vf_ratio") == "0.000000");
+        CHECK(CsvValue(path / "missing-event/ArithmeticUtilization.csv", "vector0", "aiv_time(us)") == "1.000000");
+        CHECK(CsvValue(path / "missing-event/ArithmeticUtilization.csv", "vector0", "aiv_vec_ratio") == "0.500000");
+        invalidMetricsAivRow.coreData.front().values[1377] = 20;
+        invalidMetricsAivRow.coreData.front().totalCycles = 0;
+        config.outputDirectory = (path / "zero-cycles").string();
+        CHECK(npucompute::WritePmuCsv(invalidMetricsResult, sections, config) == ACLPTI_SUCCESS);
+        CHECK(CsvValue(path / "zero-cycles/ResourceConflictRatio.csv", "vector0", "aiv_vec_sfu_cflt_ratio") == "NA");
+        CHECK(CsvValue(path / "zero-cycles/ArithmeticUtilization.csv", "vector0", "aiv_vec_ratio") == "NA");
         // A collection containing only a new section must also prevent overwrites.
         for (const std::string section : {"ArithmeticUtilization", "ResourceConflictRatio"}) {
             const auto repeated = path / section;
             config.outputDirectory = repeated.string();
-            config.pmuDataLevel = npucompute::PmuDataLevel::Block;
             CHECK(npucompute::WritePmuCsv(result, {section}, config) == ACLPTI_SUCCESS);
             const auto original = ReadFile(repeated / (section + ".csv"));
             config.frequencyMhz = 4000;
@@ -900,65 +896,51 @@ static int RunSuiteMain()
         boost::filesystem::remove_all(formulaDir);
     }
 
-    // Task PMU counters omit block identities; block output retains its schema and rendering.
+    // CSV always uses block counters, regardless of the presence or values of task counters.
     {
-        const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-        const auto defaultDir = boost::filesystem::temp_directory_path() / ("npu_compute_csv_default_level_" + suffix);
-        const auto blockDir = boost::filesystem::temp_directory_path() / ("npu_compute_csv_block_level_" + suffix);
-        const auto taskDir = boost::filesystem::temp_directory_path() / ("npu_compute_csv_task_level_" + suffix);
-        const auto emptyDir = boost::filesystem::temp_directory_path() / ("npu_compute_csv_empty_task_level_" + suffix);
+        const auto directory = boost::filesystem::temp_directory_path() /
+                               boost::filesystem::unique_path("npu_compute_csv_block_source_%%%%-%%%%");
         const std::vector<std::string> sections = {"L2Cache", "Memory", "MemoryL0", "MemoryUB", "PipeUtilization"};
-
-        aclptiProfilingDataResult levelResult;
+        aclptiProfilingDataResult mixedSourceResult;
         aclptiPmuDataRow blockRow{};
         blockRow.blockId = 7;
         blockRow.subBlockId = 3;
         blockRow.coreType = ACLPTI_CORE_TYPE_AIC;
         blockRow.coreId = 1;
         blockRow.coreData.push_back(Core(ACLPTI_CORE_TYPE_AIC, 1, 1000.0, {}));
-        levelResult.pmuLogs.emplace(aclptiBlockKey{7, 3, ACLPTI_CORE_TYPE_AIC, 1}, blockRow);
+        mixedSourceResult.pmuLogs.emplace(aclptiBlockKey{7, 3, ACLPTI_CORE_TYPE_AIC, 1}, blockRow);
+        mixedSourceResult.taskPmuData.aic = aclptiTaskPmuCoreData{2000, false, {}};
 
-        levelResult.taskPmuData.aic = aclptiTaskPmuCoreData{2000, false, {}};
+        npucompute::ReportConfig config;
+        config.outputDirectory = (directory / "mixed").string();
+        CHECK(npucompute::WritePmuCsv(mixedSourceResult, sections, config) == ACLPTI_SUCCESS);
+        CHECK(CsvValue(directory / "mixed/L2Cache.csv", "cube3", "block_id") == "7");
+        CHECK(CsvValue(directory / "mixed/L2Cache.csv", "cube3", "aic_total_cycles") == "1000");
 
-        npucompute::ReportConfig defaultConfig;
-        defaultConfig.outputDirectory = defaultDir.string();
-        defaultConfig.frequencyMhz = 1000.0;
-        CHECK(npucompute::WritePmuCsv(levelResult, sections, defaultConfig) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(defaultDir / "L2Cache.csv", "cube3", "aic_total_cycles") == "1000");
-        CHECK(CsvValue(defaultDir / "L2Cache.csv", "cube4", "aic_total_cycles").empty());
-
-        npucompute::ReportConfig blockConfig = defaultConfig;
-        blockConfig.outputDirectory = blockDir.string();
-        blockConfig.pmuDataLevel = npucompute::PmuDataLevel::Block;
-        CHECK(npucompute::WritePmuCsv(levelResult, sections, blockConfig) == ACLPTI_SUCCESS);
-
-        npucompute::ReportConfig taskConfig = defaultConfig;
-        taskConfig.outputDirectory = taskDir.string();
-        taskConfig.pmuDataLevel = npucompute::PmuDataLevel::Task;
-        CHECK(npucompute::WritePmuCsv(levelResult, sections, taskConfig) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(taskDir / "L2Cache.csv", "", "block_id").empty());
-        CHECK(CsvValue(taskDir / "L2Cache.csv", "", "aic_total_cycles") == "2000");
-        CHECK(CsvValue(taskDir / "L2Cache.csv", "", "sub_block_id").empty());
-
+        auto changedTaskResult = mixedSourceResult;
+        changedTaskResult.taskPmuData.aic->totalCycles = 9000;
+        config.outputDirectory = (directory / "changed-task").string();
+        CHECK(npucompute::WritePmuCsv(changedTaskResult, sections, config) == ACLPTI_SUCCESS);
+        auto blockOnlyResult = mixedSourceResult;
+        blockOnlyResult.taskPmuData = {};
+        config.outputDirectory = (directory / "block-only").string();
+        CHECK(npucompute::WritePmuCsv(blockOnlyResult, sections, config) == ACLPTI_SUCCESS);
         for (const auto& section : sections) {
-            auto blockHeader = CsvHeader(defaultDir / (section + ".csv"));
-            blockHeader.erase(blockHeader.begin(), blockHeader.begin() + 2);
-            CHECK(blockHeader == CsvHeader(taskDir / (section + ".csv")));
-            CHECK(ReadFile(defaultDir / (section + ".csv")) == ReadFile(blockDir / (section + ".csv")));
+            const auto filename = section + ".csv";
+            CHECK(CsvHeader(directory / "mixed" / filename) == ExpectedA5Header(section));
+            CHECK(ReadFile(directory / "mixed" / filename) == ReadFile(directory / "changed-task" / filename));
+            CHECK(ReadFile(directory / "mixed" / filename) == ReadFile(directory / "block-only" / filename));
         }
 
-        aclptiProfilingDataResult blockOnlyResult;
-        blockOnlyResult.pmuLogs = levelResult.pmuLogs;
-        taskConfig.outputDirectory = emptyDir.string();
-        CHECK(npucompute::WritePmuCsv(blockOnlyResult, sections, taskConfig) == ACLPTI_SUCCESS);
-        CHECK(!boost::filesystem::exists(emptyDir));
-
-        boost::filesystem::remove_all(defaultDir);
-        boost::filesystem::remove_all(blockDir);
-        boost::filesystem::remove_all(taskDir);
+        auto taskOnlyResult = mixedSourceResult;
+        taskOnlyResult.pmuLogs.clear();
+        config.outputDirectory = (directory / "task-only").string();
+        CHECK(npucompute::WritePmuCsv(taskOnlyResult, sections, config) == ACLPTI_SUCCESS);
+        CHECK(!boost::filesystem::exists(config.outputDirectory));
+        boost::filesystem::remove_all(directory);
     }
 
-    // SIMD/SIMT VF metrics retain fixed CSV columns and use the selected PMU data level.
+    // SIMD/SIMT VF metrics retain fixed CSV columns and always use block PMU data.
     {
         const auto directory =
             boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("vf-ipc-%%%%-%%%%");
@@ -1012,74 +994,70 @@ static int RunSuiteMain()
             CHECK(CsvValue(csv, "cube0", field) == "NA");
         }
 
-        // Switching to task counters changes the IPCs to 100/200 and (80+80+120)/100/4.
-        config.pmuDataLevel = npucompute::PmuDataLevel::Task;
+        // Removing task counters must not change CSV values or its block schema.
+        result.taskPmuData = {};
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-        auto taskHeader = header;
-        taskHeader.erase(taskHeader.begin(), taskHeader.begin() + 2);
-        CHECK(CsvHeader(csv) == taskHeader);
-        const auto taskCsv = ReadFile(csv);
-        CHECK(std::count(taskCsv.begin(), taskCsv.end(), '\n') == 2);
-        CHECK(CsvValue(csv, "", "aic_total_cycles") == "1000");
-        CHECK(CsvValue(csv, "", "aiv_total_cycles") == "1000");
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ipc") == "0.500000");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ipc") == "0.700000");
+        CHECK(CsvHeader(csv) == header);
+        const auto blockCsv = ReadFile(csv);
+        CHECK(std::count(blockCsv.begin(), blockCsv.end(), '\n') == 3);
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ipc") == "2.500000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ipc") == "0.600000");
 
         // Missing instruction counts yield NA; SIMT must not use a partial sum of its three events.
-        auto& core = *result.taskPmuData.aiv;
+        auto& core = result.pmuLogs.at({0, 0, ACLPTI_CORE_TYPE_AIV, 0}).coreData.front();
         const auto complete = core.values;
         for (const auto missing : {1320U, 1466U, 1467U, 1468U}) {
             core.values = complete;
             core.values.erase(missing);
             CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-            CHECK(CsvValue(csv, "", missing == 1320U ? "aiv_simd_vf_ipc" : "aiv_simt_vf_ipc") == "NA");
+            CHECK(CsvValue(csv, "vector0", missing == 1320U ? "aiv_simd_vf_ipc" : "aiv_simt_vf_ipc") == "NA");
         }
 
         // Missing event 1281 does not affect VF ratios.
         core.values = complete;
         core.values.erase(1281);
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ratio") == "0.200000");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ratio") == "0.100000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio") == "0.200000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ratio") == "0.100000");
 
         // Missing SIMD cycle event 1282 makes SIMD ratio, time and IPC unavailable.
         core.values = complete;
         core.values.erase(1282);
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ratio") == "NA");
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_time") == "NA");
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ipc") == "NA");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio") == "NA");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_time") == "NA");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ipc") == "NA");
 
         // Missing SIMT cycle event 1284 makes SIMT ratio, time and IPC unavailable.
         core.values = complete;
         core.values.erase(1284);
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ratio") == "NA");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_time") == "NA");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ipc") == "NA");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ratio") == "NA");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_time") == "NA");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ipc") == "NA");
 
         // Zero SIMD cycles produce zero ratio and time; IPC remains unavailable.
         core.values = complete;
         core.values[1282] = 0;
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ratio") == "0.000000");
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_time") == "0.000000");
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ipc") == "NA");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio") == "0.000000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_time") == "0.000000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ipc") == "NA");
 
         // Zero SIMT cycles produce zero ratio and time; IPC remains unavailable.
         core.values = complete;
         core.values[1284] = 0;
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ratio") == "0.000000");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_time") == "0.000000");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ipc") == "NA");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ratio") == "0.000000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_time") == "0.000000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ipc") == "NA");
 
         // Zero active cycles (1281) do not change ratios whose denominator is total cycles.
         core.values = complete;
         core.values[1281] = 0;
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ratio") == "0.200000");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ratio") == "0.100000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio") == "0.200000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ratio") == "0.100000");
 
         // Collected instruction counts of zero are valid and produce zero IPCs.
         core.values = complete;
@@ -1088,25 +1066,23 @@ static int RunSuiteMain()
         core.values[1467] = 0;
         core.values[1468] = 0;
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ipc") == "0.000000");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ipc") == "0.000000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ipc") == "0.000000");
+        CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ipc") == "0.000000");
 
         // An AIC-only collection keeps the same header and renders all AIV VF fields as NA.
-        result.taskPmuData.aiv.reset();
+        result.pmuLogs.erase({0, 0, ACLPTI_CORE_TYPE_AIV, 0});
         CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
         const auto aicHeader = CsvHeader(csv);
-        CHECK(aicHeader == taskHeader);
-        CHECK(CsvValue(csv, "", "aiv_simd_vf_ratio") == "NA");
-        CHECK(CsvValue(csv, "", "aiv_simt_vf_ratio") == "NA");
+        CHECK(aicHeader == header);
+        CHECK(CsvValue(csv, "cube0", "aiv_simd_vf_ratio") == "NA");
+        CHECK(CsvValue(csv, "cube0", "aiv_simt_vf_ratio") == "NA");
         for (const auto& field : vfFields) {
-            CHECK(CsvValue(csv, "", field) == "NA");
+            CHECK(CsvValue(csv, "cube0", field) == "NA");
         }
 
         // ArithmeticUtilization additions do not alter the PipeUtilization CSV schema.
         CHECK(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config) == ACLPTI_SUCCESS);
-        auto pipeTaskHeader = ExpectedA5Header("PipeUtilization");
-        pipeTaskHeader.erase(pipeTaskHeader.begin(), pipeTaskHeader.begin() + 2);
-        CHECK(CsvHeader(directory / "PipeUtilization.csv") == pipeTaskHeader);
+        CHECK(CsvHeader(directory / "PipeUtilization.csv") == ExpectedA5Header("PipeUtilization"));
 
         boost::filesystem::remove_all(directory);
     }

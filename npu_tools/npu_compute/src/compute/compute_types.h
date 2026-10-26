@@ -26,7 +26,6 @@ struct ReportConfig {
     double aicFrequencyMhz = 0.0;
     double aivFrequencyMhz = 0.0;
     std::string socName = "950X"; // Selects model-specific theoretical transfer bandwidths.
-    PmuDataLevel pmuDataLevel = PmuDataLevel::Block;
     bool fixedOutputDirectory = false;
 };
 

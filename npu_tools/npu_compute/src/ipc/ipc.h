@@ -57,7 +57,6 @@ enum class ArtifactType : uint16_t { Csv = 1, Jsonl = 2, Json = 3, Db = 4, Txt =
 struct Config {
     std::vector<std::string> sections;
     std::string replayMode = "kernel";
-    std::string pmuLevel = "block";
     uint64_t featureFlags = 0;
     uint32_t cacheControlMode = kCacheControlModeNone;
 };

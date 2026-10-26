@@ -14,7 +14,6 @@
 #include <atomic>
 #include <cerrno>
 #include <cmath>
-#include <cstdlib>
 #include <stdexcept>
 #include <thread>
 #include <signal.h>
@@ -43,9 +42,6 @@ ipc::Config LoadCollectionConfig(const CliConfig& config)
     result.replayMode = ReplayModeName(config.replay_mode);
     result.cacheControlMode =
         config.cache_control == CacheControl::All ? ipc::kCacheControlModeAll : ipc::kCacheControlModeNone;
-    if (const char* level = std::getenv("NPU_COMPUTE_PMU_LEVEL"); level != nullptr && *level != '\0') {
-        result.pmuLevel = level;
-    }
     ipc::ValidateConfig(result);
     return result;
 }
