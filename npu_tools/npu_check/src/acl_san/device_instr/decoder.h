@@ -11,6 +11,7 @@
 #ifndef NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_INSTR_DECODER_H
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_INSTR_DECODER_H
 
+#include "device_instr/common/device_instr_struct_vector.h"
 #include "device_instr/common/device_instr_struct_dma.h"
 #include "device_instr/common/device_instr_struct_scalar.h"
 #include "device_instr/common/device_instr_struct_register.h"
@@ -52,6 +53,7 @@ enum class DeviceInstructionKind : uint32_t {
     FixL0cToOut,         // InstructionId::FixL0cToOutF32/S32            -> FixL0cToOutParamField
     LocalMemoryTransfer, // InstructionId::CopyCbufToFbuf/FixL0cTo*/CopyUbufToCbuf -> LocalMemoryTransferParamField
     SetPadding,          // InstructionId::SetPadding                    -> SetPaddingParamField
+    MoveMask,            // MOVEMASK -> VectorMaskParamField; legacy MoveMask0/MoveMask1 -> VectorMaskWriteParamField
     SetCtrl,             // InstructionId::SetCtrl                       -> CtrlRegisterParamField
 
     ScalarGm, // InstructionId::St*/Sti*/Stp*/Ld*/Ldp* -> ScalarGmParamField
@@ -69,6 +71,8 @@ enum class DeviceInstructionKind : uint32_t {
     GetBuf,            // InstructionId::GetBuf/GetBufI/GetBufV/GetBufIV         -> SyncBufParamField
     RlsBuf,            // InstructionId::RlsBuf/RlsBufI/RlsBufV/RlsBufIV         -> SyncBufParamField
     PipeBarrier,
+    PushPb,
+    Vf,
     CrossCoreSet,
     CrossCoreWait,
     IntraBlockSet,
@@ -85,7 +89,8 @@ using DeviceInstructionParamField = std::variant<
     FftsSyncParamField, DeviceFlagParamField, SyncBufParamField, ScalarDevParamField, ScalarPreloadParamField,
     ScalarAtomicParamField, MmadParamField, LoadL1MxParamField, LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField,
     Img2ColParamField, FmatrixParamField, L3dRptParamField, ScalarGmParamField, PipeBarrierParamField,
-    CrossCoreParamField, CtrlRegisterParamField, CopyUbufToUbufParamField>;
+    CrossCoreParamField, CtrlRegisterParamField, CopyUbufToUbufParamField, VectorMaskParamField,
+    VectorMaskWriteParamField, PushPbParamField, VfParamField>;
 
 struct DecodedInstruction {
     DeviceInstructionKind kind = DeviceInstructionKind::InvalidInstruction;

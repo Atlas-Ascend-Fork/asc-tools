@@ -23,7 +23,9 @@ namespace {
 template <typename ParamField>
 constexpr bool HasParamFieldLogger() noexcept
 {
-    return std::is_same_v<ParamField, aclsan::CtrlRegisterParamField> ||
+    return std::is_same_v<ParamField, aclsan::VectorMaskWriteParamField> ||
+           std::is_same_v<ParamField, aclsan::VectorMaskParamField> ||
+           std::is_same_v<ParamField, aclsan::CtrlRegisterParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToUbufAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyUbufToGmAlignV2ParamField> ||
@@ -55,7 +57,8 @@ constexpr bool HasParamFieldLogger() noexcept
            std::is_same_v<ParamField, aclsan::SetPaddingParamField> ||
            std::is_same_v<ParamField, aclsan::FlagParamField> ||
            std::is_same_v<ParamField, aclsan::SyncBufParamField> ||
-           std::is_same_v<ParamField, aclsan::PipeBarrierParamField>;
+           std::is_same_v<ParamField, aclsan::PipeBarrierParamField> ||
+           std::is_same_v<ParamField, aclsan::PushPbParamField> || std::is_same_v<ParamField, aclsan::VfParamField>;
 }
 
 const char* BlockTypeName(uint32_t blockType) noexcept
@@ -72,6 +75,20 @@ const char* BlockTypeName(uint32_t blockType) noexcept
     }
 }
 
+void LogParamField(const aclsan::VectorMaskWriteParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=VectorMaskWriteParamField index=%u value=0x%llx", value.index,
+        static_cast<unsigned long long>(value.value));
+}
+
+void LogParamField(const aclsan::VectorMaskParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=VectorMaskParamField vectorMask0=0x%llx vectorMask1=0x%llx",
+        static_cast<unsigned long long>(value.vectorMask0), static_cast<unsigned long long>(value.vectorMask1));
+}
+
 void LogParamField(const aclsan::CtrlRegisterParamField& value) noexcept
 {
     ASCTOOL_DEBUG(
@@ -83,6 +100,21 @@ void LogParamField(const aclsan::CtrlRegisterParamField& value) noexcept
 void LogParamField(const aclsan::SetPaddingParamField& value) noexcept
 {
     ASCTOOL_DEBUG("[param] type=SetPaddingParamField value=0x%llx", static_cast<unsigned long long>(value.value));
+}
+
+void LogParamField(const aclsan::PushPbParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=PushPbParamField values=[0x%llx,0x%llx,0x%llx,0x%llx]",
+        static_cast<unsigned long long>(value.values[0]), static_cast<unsigned long long>(value.values[1]),
+        static_cast<unsigned long long>(value.values[2]), static_cast<unsigned long long>(value.values[3]));
+}
+
+void LogParamField(const aclsan::VfParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=VfParamField entryPc=0x%llx instructionCount=%llu",
+        static_cast<unsigned long long>(value.entryPc), static_cast<unsigned long long>(value.instructionCount));
 }
 
 void LogParamField(const aclsan::LoadCbufToL0ParamField& f) noexcept
@@ -435,6 +467,18 @@ void LogParamField(const aclsan::DeviceInstructionParamField& params) noexcept
             }
         },
         params);
+}
+
+void LogCallbackData(const AclsanDeviceRegisterStateData& state) noexcept
+{
+    const auto& h = state.header;
+    ASCTOOL_DEBUG(
+        "[cbdata] type=AclsanDeviceRegisterStateData deviceId=%u phyCoreId=%u blockId=%u blockType=%s "
+        "instrExecId=%llu launchId=%llu pc=0x%llx serialNo=%llu pipeline=%u regId=%u regIndex=%u value=0x%llx",
+        h.deviceId, h.phyCoreId, h.blockId, BlockTypeName(h.blockType), static_cast<unsigned long long>(h.instrExecId),
+        static_cast<unsigned long long>(h.launchId), static_cast<unsigned long long>(h.pc),
+        static_cast<unsigned long long>(h.serialNo), h.pipeline, state.regId, state.regIndex,
+        static_cast<unsigned long long>(state.value));
 }
 
 void LogCallbackData(const AclsanDeviceBarrierData& barrier) noexcept

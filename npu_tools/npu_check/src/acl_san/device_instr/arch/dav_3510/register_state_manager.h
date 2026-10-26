@@ -53,6 +53,7 @@ public:
 
     void Update(const Dav3510CoreKey& key, const CtrlRegisterParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const VectorMaskParamField& params) noexcept;
+    void Update(const Dav3510CoreKey& key, const VectorMaskWriteParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const FmatrixParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const L3dRptParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const Mte2SourceParamField& params) noexcept;

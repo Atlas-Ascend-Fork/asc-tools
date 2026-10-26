@@ -567,6 +567,12 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToUbuf);
     }
     switch (record.instrId) {
+        case RawId(InstructionId::PushPb):
+            return DecodedInstruction{
+                DeviceInstructionKind::PushPb,
+                PushPbParamField{{record.args[0], record.args[1], record.args[2], record.args[3]}}};
+        case RawId(InstructionId::Vf):
+            return DecodedInstruction{DeviceInstructionKind::Vf, VfParamField{record.args[0], record.args[1]}};
         case RawId(InstructionId::StAtomicB32):
             return DecodeScalarAtomic(record, DATA_BITS_B32);
         case RawId(InstructionId::StAtomicB16):
@@ -705,6 +711,19 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         case RawId(InstructionId::SetL12DB32):
             return DecodeSetL12D(record, DATA_BITS_B32);
 
+        case RawId(InstructionId::SetVectorMask):
+            return DecodedInstruction{
+                DeviceInstructionKind::MoveMask,
+                // set_vector_mask takes (maskHigh, maskLow), while the state is indexed as MASK[0], MASK[1].
+                VectorMaskParamField{record.args[1], record.args[0]}};
+        case RawId(InstructionId::MoveMask0):
+        case RawId(InstructionId::MoveMask1):
+            if (record.args[0] > 1) {
+                return std::nullopt;
+            }
+            return DecodedInstruction{
+                DeviceInstructionKind::MoveMask,
+                VectorMaskWriteParamField{static_cast<uint32_t>(record.args[0]), record.args[1]}};
         case RawId(InstructionId::SetCtrl):
             return DecodedInstruction{DeviceInstructionKind::SetCtrl, CtrlRegisterParamField{record.args[0]}};
         case RawId(InstructionId::SetPadding):

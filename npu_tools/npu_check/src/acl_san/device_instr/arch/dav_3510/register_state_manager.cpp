@@ -60,6 +60,21 @@ void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const Vector
         static_cast<unsigned long long>(params.vectorMask0), static_cast<unsigned long long>(params.vectorMask1));
 }
 
+void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const VectorMaskWriteParamField& params) noexcept
+{
+    if (params.index >= 2) {
+        return;
+    }
+    // AscendC starts with a full vector mask; subsequent writes replace only the selected half.
+    auto masks = states_[key].vectorMask.value_or(VectorMaskParamField{UINT64_MAX, UINT64_MAX});
+    if (params.index == 0) {
+        masks.vectorMask0 = params.value;
+    } else {
+        masks.vectorMask1 = params.value;
+    }
+    Update(key, masks);
+}
+
 void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const SetPaddingParamField& params) noexcept
 {
     states_[key].setPadding = params;

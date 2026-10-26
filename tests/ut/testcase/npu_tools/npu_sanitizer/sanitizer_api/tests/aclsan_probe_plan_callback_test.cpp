@@ -90,6 +90,9 @@ TEST(AclsanProbePlanCallback, Main)
     CHECK((memoryProbeMask & PROBE_GROUP_MATRIX) != 0);
     CHECK((memoryProbeMask & PROBE_GROUP_VECTOR) != 0);
     CHECK(
+        (aclsan::ProbeGroupMaskForCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE) &
+         PROBE_GROUP_VECTOR) != 0);
+    CHECK(
         (aclsan::PROBE_GROUP_ALL & (PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR)) ==
         (PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR));
 

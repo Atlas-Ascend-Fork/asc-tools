@@ -405,8 +405,18 @@ void DispatchTraceRecords(
         }
 
         const dav3510::Dav3510CoreKey key{parsed.blockType, parsed.blockId, parsed.phyCoreId, parsed.deviceId};
+        if (std::holds_alternative<PushPbParamField>(decoded->params) ||
+            std::holds_alternative<VfParamField>(decoded->params)) {
+            LogRawRecord(parsed);
+            LogParamField(decoded->params);
+            continue;
+        }
         bool stateInstruction = true;
         if (const auto* value = std::get_if<CtrlRegisterParamField>(&decoded->params)) {
+            registerState.Update(key, *value);
+        } else if (const auto* value = std::get_if<VectorMaskParamField>(&decoded->params)) {
+            registerState.Update(key, *value);
+        } else if (const auto* value = std::get_if<VectorMaskWriteParamField>(&decoded->params)) {
             registerState.Update(key, *value);
         } else if (const auto* value = std::get_if<FmatrixParamField>(&decoded->params)) {
             registerState.Update(key, *value);
@@ -434,7 +444,13 @@ void DispatchTraceRecords(
         if (stateInstruction) {
             LogRawRecord(parsed);
             LogParamField(decoded->params);
-            if (const auto stateData = MakeRegisterStateData(parsed, *decoded); stateData.has_value()) {
+            if (const auto* mask = std::get_if<VectorMaskParamField>(&decoded->params)) {
+                for (const auto& stateData : MakeRegisterStateDataForVecMask(parsed, *mask)) {
+                    LogCallbackData(stateData);
+                    AclsanCallbackDispatcher::DispatchDeviceState(stateData);
+                }
+            } else if (const auto stateData = MakeRegisterStateData(parsed, *decoded); stateData.has_value()) {
+                LogCallbackData(*stateData);
                 AclsanCallbackDispatcher::DispatchDeviceState(*stateData);
             }
             continue;

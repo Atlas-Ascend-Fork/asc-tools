@@ -204,3 +204,7 @@ endif()
 if(ENABLE_TEST OR NPU_CHECK_ENABLE_REAL_DBI_FLOW OR NPU_CHECK_ENABLE_REAL_DBI_TOOLCHAIN)
   add_subdirectory("${SANITIZER_API_TEST_DIR}/dbi" "${CMAKE_CURRENT_BINARY_DIR}/tests/dbi")
 endif()
+
+if(ENABLE_TEST)
+  add_subdirectory(vector_collection)
+endif()

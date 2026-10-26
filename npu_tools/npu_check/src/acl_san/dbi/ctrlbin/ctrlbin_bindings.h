@@ -109,7 +109,8 @@ enum class InstrType {
     LOOP3_PARA = 90,
     COPY_MATRIX_CC_TO_GM_F32_A5,
     COPY_MATRIX_CC_TO_GM_S32_A5,
-    // reserved 93-94
+    MOVEMASK = 93,
+    // reserved 94
     SIMT_LD_U8 = 95,
     SIMT_LD_S8,
     SIMT_LD_U16,
@@ -495,7 +496,8 @@ enum class InstrType {
     SIMT_END,
     MSTX_STUB_CALLI,
     MSTX_STUB_CALL,
-
+    VF = 481,
+    PUSH_PB = 482,
     MAX
 };
 

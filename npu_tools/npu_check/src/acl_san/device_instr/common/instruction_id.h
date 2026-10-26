@@ -169,6 +169,9 @@ enum class InstructionId : uint32_t {
     FixL0cToUbufS32 = 171, // LocalMemoryTransferParamField：L0C READ
 
     // REGISTER
+    SetVectorMask = 93,        // MOVEMASK (complete vector mask from set_vector_mask)
+    MoveMask0 = 165,           // MOVE_MASK_0 (low half of set_vector_mask)
+    MoveMask1 = 166,           // MOVE_MASK_1 (high half of set_vector_mask)
     SetCtrl = 159,             // SET_CTRL
     SetPadding = 392,          // SET_PADDING
     LoopSizeGmToCbuf = 394,    // 已完成：DmaLoopSizeParamField（状态）
@@ -213,6 +216,9 @@ enum class InstructionId : uint32_t {
     HSetFlagI = 472,
     HWaitFlag = 473,
     HWaitFlagI = 474,
+
+    Vf = 481,     // VfParamField
+    PushPb = 482, // PushPbParamField
 };
 
 constexpr bool AccessesL0Operands(uint32_t id) noexcept
@@ -270,6 +276,8 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
     }
     switch (static_cast<InstructionId>(instructionId)) {
         case InstructionId::PipeBarrier:
+        case InstructionId::PushPb:
+        case InstructionId::Vf:
         case InstructionId::StAtomicB32:
         case InstructionId::StAtomicB16:
         case InstructionId::StAtomicB8:
@@ -334,6 +342,9 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::FixL0cToCbufS32:
         case InstructionId::FixL0cToUbufF32:
         case InstructionId::FixL0cToUbufS32:
+        case InstructionId::MoveMask0:
+        case InstructionId::MoveMask1:
+        case InstructionId::SetVectorMask:
         case InstructionId::SetCtrl:
         case InstructionId::SetPadding:
         case InstructionId::LoopSizeGmToCbuf:

@@ -198,8 +198,8 @@ typedef enum AclsanDeviceRegisterId {
 
 typedef struct AclsanDeviceRegisterStateData {
     AclsanDeviceEventHeader header;
-    uint32_t regId; // AclsanDeviceRegisterId
-    uint32_t reserved;
+    uint32_t regId;    // AclsanDeviceRegisterId
+    uint32_t regIndex; // VECTOR_MASK: 0=MASK0, 1=MASK1; zero for other registers. Former reserved slot.
     uint64_t value;
 } AclsanDeviceRegisterStateData;
 

@@ -40,7 +40,10 @@ std::optional<AclsanDeviceRegisterId> RegisterId(const DecodedInstruction& decod
     return std::visit(
         [](const auto& value) noexcept -> std::optional<AclsanDeviceRegisterId> {
             using Field = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<Field, CtrlRegisterParamField>) {
+            if constexpr (
+                std::is_same_v<Field, VectorMaskParamField> || std::is_same_v<Field, VectorMaskWriteParamField>) {
+                return ACLSAN_DEVICE_REGISTER_VECTOR_MASK;
+            } else if constexpr (std::is_same_v<Field, CtrlRegisterParamField>) {
                 return ACLSAN_DEVICE_REGISTER_CTRL;
             } else if constexpr (std::is_same_v<Field, Mte2SourceParamField>) {
                 return ACLSAN_DEVICE_REGISTER_MTE2_SOURCE;
@@ -193,6 +196,23 @@ std::optional<AclsanDeviceRegisterStateData> MakeRegisterStateData(
     data.header = MakeHeader(parsed);
     data.regId = static_cast<uint32_t>(*regId);
     data.value = parsed.record.args[0];
+    if (const auto* mask = std::get_if<VectorMaskWriteParamField>(&decoded.params)) {
+        data.regIndex = mask->index;
+        data.value = mask->value;
+    }
+    return data;
+}
+
+std::array<AclsanDeviceRegisterStateData, 2> MakeRegisterStateDataForVecMask(
+    const ParsedTraceRecord& parsed, const VectorMaskParamField& mask) noexcept
+{
+    std::array<AclsanDeviceRegisterStateData, 2> data{};
+    for (uint32_t index = 0; index < data.size(); ++index) {
+        data[index].header = MakeHeader(parsed);
+        data[index].regId = ACLSAN_DEVICE_REGISTER_VECTOR_MASK;
+        data[index].regIndex = index;
+        data[index].value = index == 0 ? mask.vectorMask0 : mask.vectorMask1;
+    }
     return data;
 }
 

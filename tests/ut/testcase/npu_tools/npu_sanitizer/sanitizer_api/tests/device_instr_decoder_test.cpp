@@ -110,6 +110,24 @@ void TestDecodesDav3510CopyInstruction()
     assert(gmToUbufParams->burstDstStride == 0x20);
 }
 
+void TestDecodesMovemask93AsCompleteVectorMask()
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    assert(decoder != nullptr);
+    aclsan::AclsanRawTraceRecord record{};
+    record.instrId = 93;
+    record.args[0] = UINT64_C(0x1122334455667788);
+    record.args[1] = UINT64_C(0x99aabbccddeeff00);
+
+    const auto decoded = decoder->decode(record);
+    assert(decoded.has_value());
+    assert(decoded->kind == aclsan::DeviceInstructionKind::MoveMask);
+    const auto* params = std::get_if<aclsan::VectorMaskParamField>(&decoded->params);
+    assert(params != nullptr);
+    assert(params->vectorMask0 == UINT64_C(0x99aabbccddeeff00));
+    assert(params->vectorMask1 == UINT64_C(0x1122334455667788));
+}
+
 void TestDecodesInclusiveMovAlignV2Ranges()
 {
     const aclsan::DeviceInstructionDecoder* decoder =
@@ -770,6 +788,7 @@ void TestClassifiesCurrentDav3510InstructionSet()
         {399, aclsan::DeviceInstructionKind::Mte2NzParam},
         {91, aclsan::DeviceInstructionKind::FixL0cToOut},
         {92, aclsan::DeviceInstructionKind::FixL0cToOut},
+        {93, aclsan::DeviceInstructionKind::MoveMask},
         {167, aclsan::DeviceInstructionKind::LocalMemoryTransfer},
         {168, aclsan::DeviceInstructionKind::LocalMemoryTransfer},
         {169, aclsan::DeviceInstructionKind::LocalMemoryTransfer},
@@ -840,6 +859,7 @@ TEST(DeviceInstrDecoder, Main)
 {
     TestSocVersionMappingsSelectDav3510Decoder();
     TestDecodesDav3510CopyInstruction();
+    TestDecodesMovemask93AsCompleteVectorMask();
     TestDecodesInclusiveMovAlignV2Ranges();
     TestDecodesDav3510CopyUbufToGmAlignV2Instruction();
     TestDecodesDav3510CopyGmToCbufMultiInstructions();

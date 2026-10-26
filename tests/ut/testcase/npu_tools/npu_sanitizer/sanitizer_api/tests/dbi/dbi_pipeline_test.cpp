@@ -256,7 +256,7 @@ TEST(CtrlbinGeneratorTest, FiltersBindingsToSelectedProbeGroups)
 
     EXPECT_EQ(BindingSymbols({ProbeGroup::Matrix}).size(), 16U);
     const auto vectorSymbols = BindingSymbols({ProbeGroup::Vector});
-    EXPECT_EQ(vectorSymbols.size(), 10U);
+    EXPECT_EQ(vectorSymbols.size(), 15U);
     EXPECT_NE(
         std::find(vectorSymbols.begin(), vectorSymbols.end(), "__sanitizer_report_copy_ubuf_to_ubuf"),
         vectorSymbols.end());
