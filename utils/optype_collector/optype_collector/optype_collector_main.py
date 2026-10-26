@@ -126,7 +126,7 @@ def _read_platform_config_soc_names(
                     external_soc = value
                 elif lowered_key == "short_soc_version":
                     short_soc = value
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None, None
     return external_soc, short_soc
 

@@ -127,6 +127,37 @@ class TestOpTypeCollector(unittest.TestCase):
         self.assertNotIn("MatchedSoC", output)
         self.assertNotIn("Matched SoC dirs", output)
 
+    def test_unrelated_non_utf8_platform_config_does_not_abort_builtin_scan(self):
+        self._platform_config(
+            "x86_64-linux", "Ascend910B.ini", "Ascend910B", "Ascend910"
+        )
+        invalid = self.ascend_home / "x86_64-linux/data/platform_config/unrelated.ini"
+        invalid.write_bytes(b"[version]\n# invalid UTF-8: \xff\n")
+        self._write_json(self._builtin_config("ascend910"), {"PublicMappedOp": {}})
+        self._write_json(self._builtin_config("ascend910b"), {"InternalNameOp": {}})
+        env = os.environ.copy()
+        env.update(
+            ASCEND_HOME_PATH=str(self.ascend_home),
+            PYTHONPATH=OPTYPE_COLLECTOR_PATH,
+            PYTHONIOENCODING="utf-8",
+        )
+
+        for soc, expected in (
+            ("Ascend910B", "PublicMappedOp"),
+            ("ascend910b", "InternalNameOp"),
+        ):
+            with self.subTest(soc=soc):
+                result = subprocess.run(
+                    [sys.executable, "-m", "optype_collector", soc, "--builtin"],
+                    env=env,
+                    capture_output=True,
+                    encoding="utf-8",
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(expected, result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_platform_config_mapped_ascend950_keeps_legacy_910_95_compatibility(self):
         self._platform_config(
             "aarch64-linux", "Ascend950DT_95A2.ini", "Ascend950DT_95A2", "Ascend950"
