@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "artifact_publisher.h"
+#include "npu_compute_log.h"
 #include <algorithm>
 #include <cstdio>
 #include <cerrno>
@@ -118,7 +119,7 @@ void ArtifactPublisher::HandleControl(const ipc::Frame& frame)
     if (frame.type == ipc::Type::Interrupt) {
         interrupted_ = true;
         available_.notify_all();
-        ipc::DebugLog("interrupt", 0);
+        ASCTOOL_DEBUG("[npu-compute ipc] phase=interrupt");
         return;
     }
     if (frame.type != ipc::Type::Flush || flush_requested_) {
@@ -128,7 +129,7 @@ void ArtifactPublisher::HandleControl(const ipc::Frame& frame)
     // Publication drains continuously. Only ACLPTI's shutdown callback may end
     // the consumer; a flush request must never race an active kernel.
     available_.notify_all();
-    ipc::DebugLog("flush", 0);
+    ASCTOOL_DEBUG("[npu-compute ipc] phase=flush");
 }
 void ArtifactPublisher::Worker() noexcept
 {
@@ -194,10 +195,12 @@ void ArtifactPublisher::Worker() noexcept
         }
     } catch (const std::exception& error) {
         failed_ = true;
-        std::fprintf(stderr, "[npu-compute] UDS publisher failed: %s\n", error.what());
         try {
             const auto* failure = dynamic_cast<const ipc::Exception*>(&error);
             const ipc::Error detail = failure ? failure->Detail() : ipc::Error{1, error.what(), "ARTIFACT", "publish"};
+            ASCTOOL_ERROR(
+                "[UDS] %s/%s code=%u: %s", detail.domain.c_str(), detail.phase.c_str(), detail.code,
+                detail.message.c_str());
             channel_.Send(ipc::Type::Error, ipc::EncodeError(detail), ipc::After(std::chrono::milliseconds(100)));
         } catch (...) {
         }

@@ -7,9 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "binary_instrumenter.h"
 #include <sys/stat.h>
-#include "common/debug_log.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -540,7 +540,11 @@ bool Run(std::initializer_list<std::string> arguments, const fs::path& stdoutFil
         } while (waited < 0 && errno == EINTR);
     }
     if (error != 0 || waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        npucompute::detail::DebugLog("aclpti", "kernel-end tool failed: %s spawn=%d status=%d", argv[0], error, status);
+        ASCTOOL_ERROR(
+            "[aclpti] kernel-end tool failed: %s spawn=%d status=%d"
+            " code=%u",
+            argv[0], error, status,
+            static_cast<unsigned>(static_cast<uint32_t>(error != 0 ? error : (waited != child ? errno : status))));
         return false;
     }
     return true;
@@ -567,7 +571,10 @@ bool ResolveTools(KernelEndTools& tools)
 {
     const char* cann = std::getenv("ASCEND_HOME_PATH");
     if (cann == nullptr || cann[0] == '\0') {
-        npucompute::detail::DebugLog("aclpti", "kernel-end requires ASCEND_HOME_PATH");
+        ASCTOOL_ERROR(
+            "[aclpti] kernel-end requires ASCEND_HOME_PATH"
+            " code=%u",
+            static_cast<unsigned>(1));
         return false;
     }
     const fs::path directory = fs::path(cann) / "tools/bisheng_compiler/bin";
@@ -577,7 +584,10 @@ bool ResolveTools(KernelEndTools& tools)
     }
     if (!FindTool(directory, "ld.lld", tools.linker) || !FindTool(directory, "bisheng-tune", tools.tuner) ||
         (tools.compiler.empty() && !FindTool(directory, "bisheng", tools.compiler))) {
-        npucompute::detail::DebugLog("aclpti", "kernel-end toolchain is incomplete under %s", directory.c_str());
+        ASCTOOL_ERROR(
+            "[aclpti] kernel-end toolchain is incomplete under %s"
+            " code=%u",
+            directory.c_str(), static_cast<unsigned>(1));
         return false;
     }
     return true;
@@ -604,7 +614,10 @@ bool PrepareProbe(const KernelEndTools& tools, fs::path& assets)
         }
         TemporaryDirectory temporary{pattern};
         if (!WriteProbeFiles(temporary.path) || !CompileProbe(temporary.path, tools.compiler)) {
-            npucompute::detail::DebugLog("aclpti", "probe_compile failed for the kernel-end probe");
+            ASCTOOL_ERROR(
+                "[aclpti] probe_compile failed for the kernel-end probe"
+                " code=%u",
+                static_cast<unsigned>(1));
             return false;
         }
         // Publish only complete assets. Failed attempts are cleaned up and may be retried.
@@ -687,12 +700,18 @@ bool InstrumentKernelEnd(
     KernelMetadata metadata;
     std::string diagnostic;
     if (!ResolveTraceArgumentOffset(data, size, metadata, traceArgumentOffset, diagnostic)) {
-        npucompute::detail::DebugLog("aclpti", "kernel-end argument metadata is invalid: %s", diagnostic.c_str());
+        ASCTOOL_ERROR(
+            "[aclpti] kernel-end argument metadata is invalid: %s"
+            " code=%u",
+            diagnostic.c_str(), static_cast<unsigned>(1));
         return false;
     }
     fs::path assets;
     if (!PrepareProbe(tools, assets)) {
-        npucompute::detail::DebugLog("aclpti", "failed to generate kernel-end assets");
+        ASCTOOL_ERROR(
+            "[aclpti] failed to generate kernel-end assets"
+            " code=%u",
+            static_cast<unsigned>(1));
         return false;
     }
     char pattern[] = "/tmp/npu-compute-kernel-end-XXXXXX";
@@ -729,7 +748,10 @@ bool InstrumentKernelEnd(
         return false;
     }
     if (!PatchKernelParamMetadata(metadata, patchedImage, traceArgumentOffset, diagnostic)) {
-        npucompute::detail::DebugLog("aclpti", "kernel-end parameter metadata update failed: %s", diagnostic.c_str());
+        ASCTOOL_ERROR(
+            "[aclpti] kernel-end parameter metadata update failed: %s"
+            " code=%u",
+            diagnostic.c_str(), static_cast<unsigned>(1));
         return false;
     }
     std::vector<char> result(patchedImage.begin(), patchedImage.end());
@@ -757,13 +779,13 @@ bool InstrumentKernelEnd(
             };
             if (!BuildPmSamplingInstructionMap(
                     original, result, read(oldDisasm), read(newDisasm), *pmSamplingMap, diagnostic)) {
-                npucompute::detail::DebugLog("aclpti", "PmSampling instruction map failed: %s", diagnostic.c_str());
+                ASCTOOL_DEBUG("PmSampling instruction map failed: %s", diagnostic.c_str());
             }
         } catch (const std::exception& error) {
             pmSamplingMap->business.clear();
             pmSamplingMap->excluded.clear();
             pmSamplingMap->error = error.what();
-            npucompute::detail::DebugLog("aclpti", "PmSampling disassembly failed: %s", error.what());
+            ASCTOOL_DEBUG("PmSampling disassembly failed: %s", error.what());
         }
     }
     output.swap(result);

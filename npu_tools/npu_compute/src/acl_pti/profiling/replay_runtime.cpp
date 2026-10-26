@@ -7,9 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "replay_runtime.h"
-
-#include "common/debug_log.h"
 
 #include <new>
 
@@ -18,16 +17,19 @@ namespace aclpti::profiling {
 aclptiResult ReplayRuntime::Initialize()
 {
     if (initialized_) {
-        npucompute::detail::DebugLog("aclpti", "replay runtime already initialized");
+        ASCTOOL_DEBUG("[aclpti] replay runtime already initialized");
         return ACLPTI_SUCCESS;
     }
     const aclptiResult result = rangeProfiler_.Initialize();
     if (result != ACLPTI_SUCCESS) {
-        npucompute::detail::DebugLog("aclpti", "replay runtime initialization failed");
+        ASCTOOL_ERROR(
+            "[aclpti] replay runtime initialization failed"
+            " code=%u",
+            static_cast<unsigned>(static_cast<uint32_t>(result)));
         return result;
     }
     initialized_ = true;
-    npucompute::detail::DebugLog("aclpti", "replay runtime initialized");
+    ASCTOOL_DEBUG("[aclpti] replay runtime initialized");
     return ACLPTI_SUCCESS;
 }
 
@@ -142,8 +144,8 @@ aclptiResult ReplayRuntime::ReplayKernel(
         rangeProfiler_.ReplayKernel(replayMemory_, binaryRegistry_, originalFunction, launchFunction, stream);
     // One original launch owns all rounds above and exactly one complete result publication.
     const aclptiResult shutdownStatus = StopProfiling();
-    npucompute::detail::DebugLog(
-        "aclpti", "replay runtime result original=%p replay_status=%d shutdown_status=%d", originalFunction,
+    ASCTOOL_DEBUG(
+        "[aclpti] replay runtime result original=%p replay_status=%d shutdown_status=%d", originalFunction,
         static_cast<int>(status), static_cast<int>(shutdownStatus));
     if (status == ACLPTI_SUCCESS) {
         return shutdownStatus;
@@ -171,8 +173,10 @@ aclptiResult ReplayRuntime::StopProfiling()
     try {
         return rangeProfiler_.Shutdown();
     } catch (const std::bad_alloc&) {
-        npucompute::detail::DebugLog(
-            "aclpti", "error operation=profiling_shutdown status=%d", ACLPTI_ERROR_OUT_OF_MEMORY);
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=profiling_shutdown status=%d"
+            " code=%u",
+            ACLPTI_ERROR_OUT_OF_MEMORY, static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_OUT_OF_MEMORY)));
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     }
 }

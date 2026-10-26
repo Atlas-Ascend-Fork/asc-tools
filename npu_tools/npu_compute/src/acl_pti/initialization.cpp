@@ -7,11 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "initialization.h"
 
 #include "acl_pti/profiling/replay_runtime.h"
 #include "acl_pti/handler/runtime_api_handlers.h"
-#include "common/debug_log.h"
 #include "injection/injection_hook.h"
 
 #include <mutex>
@@ -25,29 +25,39 @@ aclptiResult InitializeDependencies()
 
     std::lock_guard<std::mutex> lock(initializationMutex);
     if (initialized) {
-        npucompute::detail::DebugLog("aclpti", "dependencies already initialized");
+        ASCTOOL_DEBUG("[aclpti] dependencies already initialized");
         return ACLPTI_SUCCESS;
     }
 
-    npucompute::detail::DebugLog("aclpti", "initialize dependencies");
+    ASCTOOL_DEBUG("[aclpti] initialize dependencies");
     const int hookResult = acltoolHookInit();
-    npucompute::detail::DebugLog("aclpti", "hook install result=%d", hookResult);
+    ASCTOOL_DEBUG("[aclpti] hook install result=%d", hookResult);
     if (hookResult != 0) {
+        ASCTOOL_ERROR(
+            "[aclpti] hook initialization failed: result=%d"
+            " code=%u",
+            hookResult, static_cast<unsigned>(static_cast<uint32_t>(hookResult)));
         return ACLPTI_ERROR_INITIALIZATION_FAILED;
     }
 
     const aclptiResult replayResult = profiling::GetReplayRuntime().Initialize();
     if (replayResult != ACLPTI_SUCCESS) {
-        npucompute::detail::DebugLog("aclpti", "replay runtime initialization failed");
+        ASCTOOL_ERROR(
+            "[aclpti] replay runtime initialization failed"
+            " code=%u",
+            static_cast<unsigned>(static_cast<uint32_t>(replayResult)));
         return replayResult;
     }
     if (!handler::RegisterRuntimeApiHandlers()) {
         (void)profiling::GetReplayRuntime().StopProfiling();
-        npucompute::detail::DebugLog("aclpti", "runtime handler registration failed");
+        ASCTOOL_ERROR(
+            "[aclpti] runtime handler registration failed"
+            " code=%u",
+            static_cast<unsigned>(1));
         return ACLPTI_ERROR_INITIALIZATION_FAILED;
     }
     initialized = true;
-    npucompute::detail::DebugLog("aclpti", "dependencies initialized");
+    ASCTOOL_DEBUG("[aclpti] dependencies initialized");
     return ACLPTI_SUCCESS;
 }
 

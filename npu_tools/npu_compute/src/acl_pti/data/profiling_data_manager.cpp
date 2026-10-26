@@ -9,7 +9,7 @@
  */
 #include "profiling_data_manager.h"
 
-#include "common/debug_log.h"
+#include "npu_compute_log.h"
 #include <cstdlib>
 #include <memory>
 #include <utility>
@@ -76,7 +76,7 @@ aclptiResult ProfilingDataManager::Initialize(aclptiProfilingDataCallback callba
         return shutdownStatus_;
     }
     state_ = ManagerState::Running;
-    npucompute::detail::DebugLog("aclpti-data", "initialize complete: worker=1");
+    ASCTOOL_DEBUG("[aclpti-data] initialize complete: worker=1");
     return ACLPTI_SUCCESS;
 }
 
@@ -155,7 +155,7 @@ aclptiResult ProfilingDataManager::ShutdownImpl(bool force)
         userData = shutdownUserData_;
     }
     // Consumer failures are reported through the registered drain callback, as before.
-    npucompute::detail::DebugLog("aclpti-data", "result callback status=%d", static_cast<int>(callbackStatus));
+    ASCTOOL_DEBUG("[aclpti-data] result callback status=%d", static_cast<int>(callbackStatus));
     aclptiResult status = ACLPTI_SUCCESS;
     if (shutdownCallback) {
         try {

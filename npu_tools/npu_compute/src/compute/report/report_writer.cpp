@@ -7,8 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "report/report_writer.h"
-#include "common/debug_log.h"
 #include "pmu/pmu_metric_builder.h"
 
 #include <boost/filesystem.hpp>
@@ -59,7 +59,10 @@ aclptiResult WritePmuReport(
         }
         return WriteSummaryJsonl(result, sections, outputConfig, metadata);
     } catch (const std::exception& error) {
-        detail::DebugLog("npu-compute", "report failed: %s", error.what());
+        ASCTOOL_ERROR(
+            "[npu-compute] report failed: %s"
+            " code=%u",
+            error.what(), static_cast<unsigned>(1));
         return ACLPTI_ERROR_INTERNAL;
     }
 }

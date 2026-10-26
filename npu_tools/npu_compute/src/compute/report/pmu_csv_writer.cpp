@@ -7,11 +7,10 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "report/report_writer.h"
 #include "artifact_sink.h"
 #include "pmu/pmu_metric_builder.h"
-
-#include "common/debug_log.h"
 
 #include <algorithm>
 #include <atomic>
@@ -206,12 +205,17 @@ boost::filesystem::path ResolveCsvWriteDirectory(const boost::filesystem::path& 
 aclptiResult EnsureCsvOutputDirectory(const boost::filesystem::path& outputDirectory)
 {
     if (outputDirectory.empty()) {
-        npucompute::detail::DebugLog("npu-compute", "CSV write rejected: output path is empty");
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV write rejected: output path is empty"
+            " code=%u",
+            static_cast<unsigned>(1));
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
     if (!outputDirectory.is_absolute()) {
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV write rejected: output path must be absolute path=%s", outputDirectory.c_str());
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV write rejected: output path must be absolute path=%s"
+            " code=%u",
+            outputDirectory.c_str(), static_cast<unsigned>(1));
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
 
@@ -222,38 +226,47 @@ aclptiResult EnsureCsvOutputDirectory(const boost::filesystem::path& outputDirec
         filesystemError.clear();
     }
     if (filesystemError) {
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV write rejected: inspect output path failed path=%s code=%d reason=%s",
-            outputDirectory.c_str(), filesystemError.value(), filesystemError.message().c_str());
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV write rejected: inspect output path failed path=%s code=%d reason=%s"
+            " code=%u",
+            outputDirectory.c_str(), filesystemError.value(), filesystemError.message().c_str(),
+            static_cast<unsigned>(static_cast<uint32_t>(filesystemError.value())));
         return ACLPTI_ERROR_CSV_WRITE;
     }
     const bool exists = boost::filesystem::exists(outputStatus);
     if (exists && !boost::filesystem::is_directory(outputDirectory, filesystemError)) {
         if (filesystemError) {
-            npucompute::detail::DebugLog(
-                "npu-compute", "CSV write rejected: inspect output path failed path=%s code=%d reason=%s",
-                outputDirectory.c_str(), filesystemError.value(), filesystemError.message().c_str());
+            ASCTOOL_ERROR(
+                "[npu-compute] CSV write rejected: inspect output path failed path=%s code=%d reason=%s"
+                " code=%u",
+                outputDirectory.c_str(), filesystemError.value(), filesystemError.message().c_str(),
+                static_cast<unsigned>(static_cast<uint32_t>(filesystemError.value())));
         } else {
-            npucompute::detail::DebugLog(
-                "npu-compute", "CSV write rejected: output path is not a directory path=%s reason=not a directory",
-                outputDirectory.c_str());
+            ASCTOOL_ERROR(
+                "[npu-compute] CSV write rejected: output path is not a directory path=%s reason=not a directory"
+                " code=%u",
+                outputDirectory.c_str(), static_cast<unsigned>(1));
         }
         return ACLPTI_ERROR_CSV_WRITE;
     }
     if (!exists) {
         boost::filesystem::create_directories(outputDirectory, filesystemError);
         if (filesystemError) {
-            npucompute::detail::DebugLog(
-                "npu-compute", "CSV write rejected: create output directory failed path=%s code=%d reason=%s",
-                outputDirectory.c_str(), filesystemError.value(), filesystemError.message().c_str());
+            ASCTOOL_ERROR(
+                "[npu-compute] CSV write rejected: create output directory failed path=%s code=%d reason=%s"
+                " code=%u",
+                outputDirectory.c_str(), filesystemError.value(), filesystemError.message().c_str(),
+                static_cast<unsigned>(static_cast<uint32_t>(filesystemError.value())));
             return ACLPTI_ERROR_CSV_WRITE;
         }
     }
     if (::access(outputDirectory.c_str(), W_OK | X_OK) != 0) {
         const int errorNumber = errno;
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV write rejected: output path is not writable path=%s errno=%d reason=%s",
-            outputDirectory.c_str(), errorNumber, std::strerror(errorNumber));
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV write rejected: output path is not writable path=%s errno=%d reason=%s"
+            " code=%u",
+            outputDirectory.c_str(), errorNumber, std::strerror(errorNumber),
+            static_cast<unsigned>(static_cast<uint32_t>(errorNumber)));
         return ACLPTI_ERROR_CSV_WRITE;
     }
     return ACLPTI_SUCCESS;
@@ -268,19 +281,18 @@ aclptiResult WritePmuCsv(
     const std::string outputDirectory = ResolveOutputDirectory(config);
     const auto& pmuLogs = config.pmuDataLevel == PmuDataLevel::Task ? result.taskPmuLogs : result.pmuLogs;
     const char* pmuLevel = PmuDataLevelName(config.pmuDataLevel);
-    npucompute::detail::DebugLog(
-        "npu-compute",
-        "CSV write requested: output=%s sections=%zu pmuLevel=%s pmuRows=%zu status=%d "
+    ASCTOOL_DEBUG(
+        "[npu-compute] CSV write requested: output=%s sections=%zu pmuLevel=%s pmuRows=%zu status=%d "
         "failedRecords=%llu",
         outputDirectory.c_str(), sections.size(), pmuLevel, pmuLogs.size(), static_cast<int>(result.status),
         static_cast<unsigned long long>(result.errorStats.failedRecordCount));
     if (IsEmptySuccessfulResult(result)) {
-        npucompute::detail::DebugLog("npu-compute", "CSV write skipped: empty successful result");
+        ASCTOOL_DEBUG("[npu-compute] CSV write skipped: empty successful result");
         return ACLPTI_SUCCESS;
     }
     if (pmuLogs.empty()) {
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV write skipped: no PMU rows pmuLevel=%s status=%d failedRecords=%llu", pmuLevel,
+        ASCTOOL_DEBUG(
+            "[npu-compute] CSV write skipped: no PMU rows pmuLevel=%s status=%d failedRecords=%llu", pmuLevel,
             static_cast<int>(result.status), static_cast<unsigned long long>(result.errorStats.failedRecordCount));
         return ACLPTI_SUCCESS;
     }
@@ -288,9 +300,10 @@ aclptiResult WritePmuCsv(
     const double aivFrequencyMhz = AivFrequencyMhz(config);
     if (aicFrequencyMhz <= 0.0 || !std::isfinite(aicFrequencyMhz) || aivFrequencyMhz <= 0.0 ||
         !std::isfinite(aivFrequencyMhz)) {
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV write rejected: invalid config frequency=%f aicFrequency=%f aivFrequency=%f",
-            config.frequencyMhz, config.aicFrequencyMhz, config.aivFrequencyMhz);
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV write rejected: invalid config frequency=%f aicFrequency=%f aivFrequency=%f"
+            " code=%u",
+            config.frequencyMhz, config.aicFrequencyMhz, config.aivFrequencyMhz, static_cast<unsigned>(1));
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
     bool hasAic = false;
@@ -302,8 +315,8 @@ aclptiResult WritePmuCsv(
     const bool isMixedKernel = hasAic && hasAiv;
     const Metric operationDurationUs = isMixedKernel ? PmuMetricBuilder::TaskDuration(result) : std::nullopt;
     const char* kernelType = isMixedKernel ? "mix" : (hasAic ? "aic" : "aiv");
-    npucompute::detail::DebugLog(
-        "npu-compute", "CSV operation duration: kernelType=%s valueUs=%f source=%s", kernelType,
+    ASCTOOL_DEBUG(
+        "[npu-compute] CSV operation duration: kernelType=%s valueUs=%f source=%s", kernelType,
         operationDurationUs.value_or(0.0), operationDurationUs.has_value() ? "task-log-median" : "pmu-cycles");
     bool artifactStarted = false;
     try {
@@ -315,21 +328,22 @@ aclptiResult WritePmuCsv(
         }
         for (const auto& section : sections) {
             if (PmuMetricBuilder::Header(section).empty()) {
-                npucompute::detail::DebugLog(
-                    "npu-compute", "CSV write rejected: unsupported section=%s", section.c_str());
+                ASCTOOL_ERROR(
+                    "[npu-compute] CSV write rejected: unsupported section=%s"
+                    " code=%u",
+                    section.c_str(), static_cast<unsigned>(1));
                 return ACLPTI_ERROR_NOT_SUPPORTED;
             }
         }
         const boost::filesystem::path writeDirectory =
             sink != nullptr || config.fixedOutputDirectory ? rootDirectory : ResolveCsvWriteDirectory(rootDirectory);
         if (writeDirectory != rootDirectory) {
-            npucompute::detail::DebugLog(
-                "npu-compute", "CSV write routed to collection directory: path=%s", writeDirectory.c_str());
+            ASCTOOL_DEBUG("[npu-compute] CSV write routed to collection directory: path=%s", writeDirectory.c_str());
         }
         for (const auto& section : sections) {
             const boost::filesystem::path path = writeDirectory / (section + ".csv");
-            npucompute::detail::DebugLog(
-                "npu-compute", "CSV section write start: section=%s path=%s pmuLevel=%s rows=%zu", section.c_str(),
+            ASCTOOL_DEBUG(
+                "[npu-compute] CSV section write start: section=%s path=%s pmuLevel=%s rows=%zu", section.c_str(),
                 path.c_str(), pmuLevel, pmuLogs.size());
             std::ofstream file;
             std::unique_ptr<ArtifactStreamBuffer> sinkBuffer;
@@ -343,9 +357,11 @@ aclptiResult WritePmuCsv(
             std::ostream output(sinkBuffer ? static_cast<std::streambuf*>(sinkBuffer.get()) : file.rdbuf());
             if (sink == nullptr && !file.is_open()) {
                 const int errorNumber = errno;
-                npucompute::detail::DebugLog(
-                    "npu-compute", "CSV section write failed: open path=%s errno=%d reason=%s", path.c_str(),
-                    errorNumber, std::strerror(errorNumber));
+                ASCTOOL_ERROR(
+                    "[npu-compute] CSV section write failed: open path=%s errno=%d reason=%s"
+                    " code=%u",
+                    path.c_str(), errorNumber, std::strerror(errorNumber),
+                    static_cast<unsigned>(static_cast<uint32_t>(errorNumber)));
                 return ACLPTI_ERROR_CSV_WRITE;
             }
             const std::vector<std::string> header = PmuMetricBuilder::Header(section);
@@ -363,9 +379,11 @@ aclptiResult WritePmuCsv(
                     artifactStarted = false;
                 }
                 const int errorNumber = errno;
-                npucompute::detail::DebugLog(
-                    "npu-compute", "CSV section write failed: flush path=%s errno=%d reason=%s", path.c_str(),
-                    errorNumber, std::strerror(errorNumber));
+                ASCTOOL_ERROR(
+                    "[npu-compute] CSV section write failed: flush path=%s errno=%d reason=%s"
+                    " code=%u",
+                    path.c_str(), errorNumber, std::strerror(errorNumber),
+                    static_cast<unsigned>(static_cast<uint32_t>(errorNumber)));
                 return ACLPTI_ERROR_CSV_WRITE;
             }
             if (sink != nullptr) {
@@ -378,14 +396,14 @@ aclptiResult WritePmuCsv(
             const std::string missingColumns = FormatMissingColumns(stats.missingColumns);
             const std::string missingReasons = FormatMissingReasons(stats.missingReasons);
             const std::string missingColumnReasons = FormatMissingReasons(stats.missingColumnReasons);
-            npucompute::detail::DebugLog(
-                "npu-compute",
-                "CSV section data availability: section=%s rows=%zu fields=%zu missingFields=%zu missingRows=%zu "
+            ASCTOOL_DEBUG(
+                "[npu-compute] CSV section data availability: section=%s rows=%zu fields=%zu missingFields=%zu "
+                "missingRows=%zu "
                 "mismatchedRows=%zu missingColumns=%s missingReasons=%s missingColumnReasons=%s",
                 section.c_str(), stats.rows, stats.totalFields, stats.missingFields, stats.missingRows,
                 stats.mismatchedRows, missingColumns.c_str(), missingReasons.c_str(), missingColumnReasons.c_str());
-            npucompute::detail::DebugLog(
-                "npu-compute", "CSV section write complete: section=%s path=%s", section.c_str(), path.c_str());
+            ASCTOOL_DEBUG(
+                "[npu-compute] CSV section write complete: section=%s path=%s", section.c_str(), path.c_str());
         }
     } catch (const boost::filesystem::filesystem_error& error) {
         if (artifactStarted) {
@@ -393,24 +411,32 @@ aclptiResult WritePmuCsv(
         }
         const boost::filesystem::path errorPath =
             error.path1().empty() ? boost::filesystem::path(outputDirectory) : error.path1();
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV write failed: filesystem error path=%s code=%d reason=%s detail=%s", errorPath.c_str(),
-            error.code().value(), error.code().message().c_str(), error.what());
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV write failed: filesystem error path=%s code=%d reason=%s detail=%s"
+            " code=%u",
+            errorPath.c_str(), error.code().value(), error.code().message().c_str(), error.what(),
+            static_cast<unsigned>(static_cast<uint32_t>(error.code().value())));
         return ACLPTI_ERROR_CSV_WRITE;
     } catch (const std::bad_alloc&) {
         if (artifactStarted) {
             sink->Abort();
         }
-        npucompute::detail::DebugLog("npu-compute", "CSV write failed: out of memory");
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV write failed: out of memory"
+            " code=%u",
+            static_cast<unsigned>(1));
         return ACLPTI_ERROR_INTERNAL;
     } catch (const std::exception& error) {
         if (artifactStarted) {
             sink->Abort();
         }
-        npucompute::detail::DebugLog("npu-compute", "artifact write failed: %s", error.what());
+        ASCTOOL_ERROR(
+            "[npu-compute] artifact write failed: %s"
+            " code=%u",
+            error.what(), static_cast<unsigned>(1));
         return ACLPTI_ERROR_CSV_WRITE;
     }
-    npucompute::detail::DebugLog("npu-compute", "CSV write complete");
+    ASCTOOL_DEBUG("[npu-compute] CSV write complete");
     return ACLPTI_SUCCESS;
 }
 

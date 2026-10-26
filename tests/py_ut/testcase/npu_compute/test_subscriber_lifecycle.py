@@ -17,6 +17,12 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def plog_stdout_environment(monkeypatch):
+    monkeypatch.setenv("ASCEND_SLOG_PRINT_TO_STDOUT", "1")
+    monkeypatch.setenv("ASCEND_GLOBAL_LOG_LEVEL", "0")
+
+
 BIN_DIR = Path(
     os.environ.get(
         "NPU_COMPUTE_TEST_BIN_DIR",
@@ -112,11 +118,18 @@ def execute_probe(sections, call_count=16):
             capture_output=True,
             check=False,
         )
+        result.stderr = result.stdout + result.stderr
     if result.stdout:
         assert result.returncode == 3, (
             result.stderr
         )  # Initialization alone produces no PMU data.
-        return result, json.loads(result.stdout)
+        return result, json.loads(
+            next(
+                line
+                for line in reversed(result.stdout.splitlines())
+                if line.lstrip().startswith("{")
+            )
+        )
     assert result.returncode == 2, result.stderr
     return result, None
 

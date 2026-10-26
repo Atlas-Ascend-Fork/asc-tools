@@ -8,6 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute/acl_pti_callback_stub.h"
+#include "npu_compute_log.h"
+#include "plog_test_library.h"
+#include <cstdarg>
 
 #include <acl/acl.h>
 
@@ -25,6 +28,21 @@
 #include <unistd.h>
 
 namespace {
+
+// Test-only backend: keep the child process independent of the device logger
+// while preserving diagnostic text for the parent's stderr assertions.
+int32_t CaptureLevel(int32_t module, int32_t level)
+{
+    return module == ASCTOOL_MODULE_ID && level >= DLOG_DEBUG ? 1 : 0;
+}
+
+void CaptureRecord(int32_t, int32_t, const char* format, ...)
+{
+    va_list arguments;
+    va_start(arguments, format);
+    std::vfprintf(stderr, format, arguments);
+    va_end(arguments);
+}
 
 constexpr int32_t kDeviceId = 0;
 constexpr char kHardwareInfoFile[] = "HardwareInfo.jsonl";
@@ -159,6 +177,7 @@ bool HardwareInfoIsComplete(const boost::filesystem::path& outputDirectory)
 
 int main(int argc, char** argv)
 {
+    plog_test::SetApi({CaptureLevel, CaptureRecord});
     if (argc != 4) {
         std::fprintf(
             stderr, "usage: %s <test-libnpu_compute_processor.so> <output-directory> <callback-id: 13|0|16|17>\n",

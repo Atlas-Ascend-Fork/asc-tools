@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "plog_capture.h"
 #include "isolated_gtest.h"
 
 #include "aclpti/aclpti.h"
@@ -53,37 +54,7 @@ constexpr aclError kFreeFailure = -42;
 constexpr aclError kSyncFailure = -43;
 constexpr aclError kMemcpyFailure = -44;
 
-template <typename Function>
-bool CaptureStderr(Function function, std::string* output)
-{
-    FILE* capture = std::tmpfile();
-    if (capture == nullptr) {
-        return false;
-    }
-    const int savedStderr = dup(STDERR_FILENO);
-    if (savedStderr < 0) {
-        std::fclose(capture);
-        return false;
-    }
-    bool success = std::fflush(stderr) == 0 && dup2(fileno(capture), STDERR_FILENO) >= 0;
-    if (success) {
-        function();
-        success = std::fflush(stderr) == 0;
-    }
-    success = dup2(savedStderr, STDERR_FILENO) >= 0 && success;
-    close(savedStderr);
-    if (success) {
-        std::rewind(capture);
-        char buffer[256];
-        std::size_t count = 0;
-        while ((count = std::fread(buffer, 1, sizeof(buffer), capture)) != 0) {
-            output->append(buffer, count);
-        }
-        success = std::ferror(capture) == 0;
-    }
-    success = std::fclose(capture) == 0 && success;
-    return success;
-}
+using npu_compute_test::CapturePlog;
 
 std::size_t gMallocCalls = 0;
 std::size_t gFreeCalls = 0;
@@ -190,7 +161,7 @@ TEST(NpuComputeHookFailure, ShadowMallocStopsProfiling)
     const std::size_t freeCallsBeforeMalloc = gFreeCalls;
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     std::string logText;
-    ASSERT_TRUE(CaptureStderr([&] { status = aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST); }, &logText));
+    ASSERT_TRUE(CapturePlog([&] { status = aclrtMalloc(&allocation, 16, ACL_MEM_MALLOC_HUGE_FIRST); }, &logText));
     ASSERT_TRUE(status == ACL_ERROR_PROFILING_FAILURE);
     ASSERT_TRUE(allocation != nullptr);
     ASSERT_TRUE(gMallocCalls == 2);
@@ -221,7 +192,7 @@ TEST(NpuComputeHookFailure, ReplaySynchronizeFailure)
     const std::size_t memcpyCallsBeforeLaunch = gMemcpyCalls;
     aclError launchStatus = ACL_ERROR_INTERNAL_ERROR;
     std::string logText;
-    ASSERT_TRUE(CaptureStderr([&] { launchStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
+    ASSERT_TRUE(CapturePlog([&] { launchStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
 
     ASSERT_TRUE(launchStatus == ACL_ERROR_INTERNAL_ERROR);
     ASSERT_TRUE(logText.find("[aclpti] error operation=replay_sync") != std::string::npos);
@@ -245,7 +216,7 @@ TEST(NpuComputeHookFailure, InitialSynchronizeFailure)
     gFailSyncCall = 1;
     aclError launchStatus = ACL_SUCCESS;
     std::string logText;
-    ASSERT_TRUE(CaptureStderr([&] { launchStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
+    ASSERT_TRUE(CapturePlog([&] { launchStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
 
     ASSERT_TRUE(launchStatus == ACL_ERROR_INTERNAL_ERROR);
     ASSERT_TRUE(logText.find("[aclpti] error operation=replay_initial_sync") != std::string::npos);
@@ -275,7 +246,7 @@ TEST(NpuComputeHookFailure, ProfilingFlowFailure)
     ASSERT_TRUE(aclptiRegisterDataModuleShutdownCallback(&FailingShutdownCallback, nullptr) == ACLPTI_SUCCESS);
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     std::string logText;
-    ASSERT_TRUE(CaptureStderr([&] { status = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
+    ASSERT_TRUE(CapturePlog([&] { status = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &logText));
     ASSERT_TRUE(status == ACL_ERROR_PROFILING_FAILURE);
     ASSERT_TRUE(logText.find("[aclpti] error operation=data_shutdown") != std::string::npos);
     ASSERT_TRUE(logText.find("status=8") != std::string::npos);
@@ -294,7 +265,7 @@ TEST(NpuComputeHookFailure, ShadowFreeRetry)
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     bool threwBadAlloc = false;
     std::string logText;
-    ASSERT_TRUE(CaptureStderr(
+    ASSERT_TRUE(CapturePlog(
         [&] {
             gFailNextHostAllocation = true;
             try {
@@ -430,7 +401,7 @@ TEST(NpuComputeHookFailure, ShadowMemcpyStopsProfiling)
     gFailMemcpyCall = gMemcpyCalls + 2;
     aclError status = ACL_ERROR_INTERNAL_ERROR;
     std::string logText;
-    ASSERT_TRUE(CaptureStderr(
+    ASSERT_TRUE(CapturePlog(
         [&] { status = aclrtMemcpy(allocation, 16, &value, sizeof(value), ACL_MEMCPY_HOST_TO_DEVICE); }, &logText));
     ASSERT_TRUE(status == ACL_ERROR_PROFILING_FAILURE);
     ASSERT_TRUE(logText.find("[aclpti] error operation=shadow_memcpy status=-44") != std::string::npos);

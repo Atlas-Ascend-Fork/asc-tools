@@ -7,14 +7,20 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "aclpti/aclpti_range_profiler.h"
 
 #include "acl_pti/profiling/replay_runtime.h"
-#include "common/debug_log.h"
 
 extern "C" ACLPTI_EXPORT aclptiResult aclptiRangeProfilerSetConfig(aclptiRangeProfilerSetConfigParams* pParams)
 {
     const aclptiResult result = aclpti::profiling::GetReplayRuntime().SetConfig(pParams);
-    npucompute::detail::DebugLog("aclpti", "range config result=%d", static_cast<int>(result));
+    ASCTOOL_DEBUG("[aclpti] range config result=%d", static_cast<int>(result));
+    if (result != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[aclpti] range config failed: result=%d"
+            " code=%u",
+            static_cast<int>(result), static_cast<unsigned>(static_cast<uint32_t>(result)));
+    }
     return result;
 }

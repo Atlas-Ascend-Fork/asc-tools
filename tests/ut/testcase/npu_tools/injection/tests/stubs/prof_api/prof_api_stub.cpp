@@ -9,7 +9,7 @@
  */
 #include "injection/prof_api_stub.h"
 
-#include "debug_log.h"
+#include "npu_compute_log.h"
 #include "profiling/prof_api.h"
 
 #include <dlfcn.h>
@@ -81,18 +81,18 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int ProfApiLoadApiInjectionFromEnv()
 {
     const char* injectionPath = std::getenv("ACL_API_INJECTION");
     if (injectionPath == nullptr || injectionPath[0] == '\0') {
-        injection::detail::DebugLog("prof_api_stub", "ProfApiLoadApiInjectionFromEnv path is not set");
+        ASCTOOL_DEBUG("[prof_api_stub] ProfApiLoadApiInjectionFromEnv path is not set");
         return 0;
     }
     if (g_injectionInitialized) {
-        injection::detail::DebugLog("prof_api_stub", "ProfApiLoadApiInjectionFromEnv already initialized");
+        ASCTOOL_DEBUG("[prof_api_stub] ProfApiLoadApiInjectionFromEnv already initialized");
         return 0;
     }
 
     void* handle = g_injectionHandle;
     bool openedNow = false;
     if (handle == nullptr) {
-        injection::detail::DebugLog("prof_api_stub", "ProfApiLoadApiInjectionFromEnv loading path=%s", injectionPath);
+        ASCTOOL_DEBUG("[prof_api_stub] ProfApiLoadApiInjectionFromEnv loading path=%s", injectionPath);
         handle = dlopen(injectionPath, RTLD_NOW | RTLD_GLOBAL);
         if (handle == nullptr) {
             std::fprintf(stderr, "[prof_api] dlopen(%s) failed: %s\n", injectionPath, dlerror());
@@ -100,7 +100,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int ProfApiLoadApiInjectionFromEnv()
         }
         openedNow = true;
     } else {
-        injection::detail::DebugLog("prof_api_stub", "ProfApiLoadApiInjectionFromEnv reusing loaded handle");
+        ASCTOOL_DEBUG("[prof_api_stub] ProfApiLoadApiInjectionFromEnv reusing loaded handle");
     }
 
     dlerror();
@@ -119,7 +119,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int ProfApiLoadApiInjectionFromEnv()
     }
 
     const int result = init();
-    injection::detail::DebugLog("prof_api_stub", "ProfApiLoadApiInjectionFromEnv init result=%d", result);
+    ASCTOOL_DEBUG("[prof_api_stub] ProfApiLoadApiInjectionFromEnv init result=%d", result);
     if (result == 0) {
         g_injectionInitialized = true;
     }
@@ -140,7 +140,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT void ProfApiReset()
 
 extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofRegisterDataCallback(uint32_t type, void* callback)
 {
-    injection::detail::DebugLog("prof_api_stub", "MsprofRegisterDataCallback type=%u callback=%p", type, callback);
+    ASCTOOL_DEBUG("[prof_api_stub] MsprofRegisterDataCallback type=%u callback=%p", type, callback);
     if (callback == nullptr) {
         return -1;
     }
@@ -151,8 +151,8 @@ extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofRegisterDataCallback(uin
 extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofStart(uint32_t dataType, const void* data, uint32_t length)
 {
     if (data == nullptr || length != sizeof(MsprofConfig)) {
-        injection::detail::DebugLog(
-            "prof_api_stub", "MsprofStart rejected type=%u data=%p length=%u", dataType, const_cast<void*>(data),
+        ASCTOOL_DEBUG(
+            "[prof_api_stub] MsprofStart rejected type=%u data=%p length=%u", dataType, const_cast<void*>(data),
             length);
         return -1;
     }
@@ -166,15 +166,15 @@ extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofStart(uint32_t dataType,
             g_collectBlock = true;
         }
     }
-    injection::detail::DebugLog(
-        "prof_api_stub", "MsprofStart type=%u profSwitch=0x%llx pmuCount=%zu rawDataType=%d", dataType,
+    ASCTOOL_DEBUG(
+        "[prof_api_stub] MsprofStart type=%u profSwitch=0x%llx pmuCount=%zu rawDataType=%d", dataType,
         static_cast<unsigned long long>(config->profSwitch), pmuCount, static_cast<int>(g_activeRawDataType));
     return 0;
 }
 
 extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofStop(uint32_t dataType, const void*, uint32_t length)
 {
-    injection::detail::DebugLog("prof_api_stub", "MsprofStop type=%u length=%u", dataType, length);
+    ASCTOOL_DEBUG("[prof_api_stub] MsprofStop type=%u length=%u", dataType, length);
 
     MsprofRawData rawData{};
     rawData.isLastChunk = true;

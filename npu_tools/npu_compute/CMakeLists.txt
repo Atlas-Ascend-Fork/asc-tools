@@ -93,6 +93,15 @@ function(npu_compute_set_product_output target)
   )
 endfunction()
 
+# SO logging is owned by npu-compute and depends directly on the CANN backend.
+add_library(npu_compute_plog_headers INTERFACE)
+target_include_directories(npu_compute_plog_headers INTERFACE
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/common>"
+)
+target_link_libraries(npu_compute_plog_headers INTERFACE unified_dlog_headers)
+add_library(npu_compute_plog INTERFACE)
+target_link_libraries(npu_compute_plog INTERFACE npu_compute_plog_headers unified_dlog)
+
 add_library(npu_compute_headers INTERFACE)
 target_compile_definitions(npu_compute_headers INTERFACE _GLIBCXX_USE_CXX11_ABI=0)
 target_include_directories(npu_compute_headers INTERFACE

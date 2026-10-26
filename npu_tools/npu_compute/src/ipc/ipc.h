@@ -119,7 +119,6 @@ public:
 private:
     Error error_;
 };
-void DebugLog(const char* phase, uint64_t session = 0) noexcept;
 struct Bootstrap {
     std::string name;
     uint64_t session = 0;

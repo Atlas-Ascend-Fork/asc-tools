@@ -7,17 +7,22 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "aclpti/aclpti_activity.h"
 
 #include "control.h"
-#include "common/debug_log.h"
 
 extern "C" ACLPTI_EXPORT aclptiResult
 aclptiActivityEnable(aclptiSubscribeHandle subscriber, aclptiActivityKind kind, aclptiActivityConfig* pActivityConfig)
 {
     const aclptiResult result = aclpti::activity::Enable(subscriber, kind, pActivityConfig);
-    npucompute::detail::DebugLog(
-        "aclpti", "activity enable kind=%d result=%d", static_cast<int>(kind), static_cast<int>(result));
+    ASCTOOL_DEBUG("[aclpti] activity enable kind=%d result=%d", static_cast<int>(kind), static_cast<int>(result));
+    if (result != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[aclpti] activity operation failed: result=%d"
+            " code=%u",
+            static_cast<int>(result), static_cast<unsigned>(static_cast<uint32_t>(result)));
+    }
     return result;
 }
 
@@ -25,7 +30,12 @@ extern "C" ACLPTI_EXPORT aclptiResult
 aclptiActivityDisable(aclptiSubscribeHandle subscriber, aclptiActivityKind kind, aclptiActivityConfig* pActivityConfig)
 {
     const aclptiResult result = aclpti::activity::Disable(subscriber, kind, pActivityConfig);
-    npucompute::detail::DebugLog(
-        "aclpti", "activity disable kind=%d result=%d", static_cast<int>(kind), static_cast<int>(result));
+    ASCTOOL_DEBUG("[aclpti] activity disable kind=%d result=%d", static_cast<int>(kind), static_cast<int>(result));
+    if (result != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[aclpti] activity operation failed: result=%d"
+            " code=%u",
+            static_cast<int>(result), static_cast<unsigned>(static_cast<uint32_t>(result)));
+    }
     return result;
 }

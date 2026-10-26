@@ -7,11 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "binary_registry.h"
 #include <elf.h>
 #include <memory>
 #include "binary_instrumenter.h"
-#include "common/debug_log.h"
 
 #include <algorithm>
 #include <fstream>
@@ -33,8 +33,7 @@ aclptiResult BinaryRegistry::ResolveBinaryFunction(
     std::lock_guard<std::mutex> lock(mutex_);
     const auto found = binaries_.find(binary);
     if (found == binaries_.end()) {
-        npucompute::detail::DebugLog(
-            "aclpti", "function mapping skipped: binary=%p function=%p is not registered", binary, function);
+        ASCTOOL_DEBUG("[aclpti] function mapping skipped: binary=%p function=%p is not registered", binary, function);
         return ACLPTI_SUCCESS;
     }
     const auto resolve = reinterpret_cast<Function>(acltoolGetOriginalRuntimeApi(id));
@@ -51,8 +50,7 @@ aclptiResult BinaryRegistry::ResolveBinaryFunction(
             const auto entry = map.find(key);
             if (entry == map.end()) {
                 if (!found->second.pmSamplingImage->instructions.error.empty()) {
-                    npucompute::detail::DebugLog(
-                        "aclpti", "companion function entry unavailable after PmSampling mapping failure");
+                    ASCTOOL_DEBUG("companion function entry unavailable after PmSampling mapping failure");
                     found->second.functions[function] = nullptr;
                     return ACLPTI_SUCCESS;
                 }
@@ -64,7 +62,10 @@ aclptiResult BinaryRegistry::ResolveBinaryFunction(
     const aclError status = resolve(found->second.companion, companionKey, &companion);
     if (status != ACL_SUCCESS || companion == nullptr) {
         found->second.functions.erase(function);
-        npucompute::detail::DebugLog("aclpti", "error operation=companion_function status=%d", status);
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=companion_function status=%d"
+            " code=%u",
+            status, static_cast<unsigned>(static_cast<uint32_t>(status)));
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     try {
@@ -95,8 +96,8 @@ aclptiResult BinaryRegistry::ResolveBinaryFunction(
             }
         }
         found->second.functions[function] = companion;
-        npucompute::detail::DebugLog(
-            "aclpti", "function mapping registered: binary=%p original=%p companion=%p", binary, function, companion);
+        ASCTOOL_DEBUG(
+            "[aclpti] function mapping registered: binary=%p original=%p companion=%p", binary, function, companion);
     } catch (const std::bad_alloc&) {
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     }
@@ -180,7 +181,9 @@ aclptiResult BinaryRegistry::RegisterInstrumentedBinary(
         const aclError status = load(
             registered.instrumentedImage->data(), registered.instrumentedImage->size(), options, &registered.companion);
         if (status != ACL_SUCCESS || registered.companion == nullptr) {
-            npucompute::detail::DebugLog("aclpti", "error operation=companion_load status=%d", status);
+            ASCTOOL_ERROR(
+                "[aclpti] error operation=companion_load status=%d code=%u", status,
+                static_cast<unsigned>(static_cast<uint32_t>(status)));
             binaries_.erase(inserted.first);
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
@@ -211,16 +214,20 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(aclrtFuncHandle function, bo
     aclrtBinHandle binary = nullptr;
     const aclError binaryStatus = aclrtFunctionGetBinary(function, &binary);
     if (binaryStatus != ACL_SUCCESS || binary == nullptr) {
-        npucompute::detail::DebugLog(
-            "aclpti", "error operation=symbol_function_binary status=%d function=%p", binaryStatus, function);
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=symbol_function_binary status=%d function=%p"
+            " code=%u",
+            binaryStatus, function, static_cast<unsigned>(static_cast<uint32_t>(binaryStatus)));
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     constexpr std::size_t kFunctionNameCapacity = 4096;
     char name[kFunctionNameCapacity]{};
     const aclError nameStatus = aclrtGetFunctionName(function, sizeof(name), name);
     if (nameStatus != ACL_SUCCESS || name[0] == '\0' || name[sizeof(name) - 1] != '\0') {
-        npucompute::detail::DebugLog(
-            "aclpti", "error operation=symbol_function_name status=%d function=%p", nameStatus, function);
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=symbol_function_name status=%d function=%p"
+            " code=%u",
+            nameStatus, function, static_cast<unsigned>(static_cast<uint32_t>(nameStatus)));
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     try {
@@ -246,9 +253,8 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(aclrtFuncHandle function, bo
                 std::vector<char> image(size);
                 if (copy(image.data(), image.size(), address, size, ACL_MEMCPY_DEVICE_TO_HOST) != ACL_SUCCESS ||
                     std::memcmp(image.data(), ELFMAG, SELFMAG) != 0) {
-                    npucompute::detail::DebugLog(
-                        "aclpti", "PmSampling preloaded binary has no recoverable ELF: binary=%p size=%zu", binary,
-                        size);
+                    ASCTOOL_DEBUG(
+                        "PmSampling preloaded binary has no recoverable ELF: binary=%p size=%zu", binary, size);
                     return ACLPTI_ERROR_PROFILING_FAILED;
                 }
                 const auto status = RegisterBinary(image.data(), image.size(), nullptr, binary, true);
@@ -269,17 +275,17 @@ aclrtFuncHandle BinaryRegistry::FindInstrumentedFunction(aclrtFuncHandle origina
     for (const auto& binary : binaries_) {
         const auto found = binary.second.functions.find(original);
         if (found != binary.second.functions.end()) {
-            npucompute::detail::DebugLog(
-                "aclpti", "instrumented function mapping selected: binary=%p original=%p companion=%p", binary.first,
+            ASCTOOL_DEBUG(
+                "[aclpti] instrumented function mapping selected: binary=%p original=%p companion=%p", binary.first,
                 original, found->second);
             return found->second;
         }
     }
-    npucompute::detail::DebugLog(
-        "aclpti",
-        "error operation=instrumented_function_lookup original=%p status=%d; "
+    ASCTOOL_ERROR(
+        "[aclpti] error operation=instrumented_function_lookup original=%p status=%d code=%u; "
         "enable Pipeline or PmSampling before binary load and obtain the function by name or entry",
-        original, ACLPTI_ERROR_PROFILING_FAILED);
+        original, ACLPTI_ERROR_PROFILING_FAILED,
+        static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_PROFILING_FAILED)));
     return nullptr;
 }
 
@@ -350,7 +356,10 @@ aclptiResult BinaryRegistry::PrepareBinaryUnload(aclrtBinHandle binary, UnloadCo
         reinterpret_cast<aclrtBinaryUnLoadFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtBinaryUnLoad));
     const aclError status = unload == nullptr ? ACL_ERROR_INTERNAL_ERROR : unload(found->second.companion);
     if (status != ACL_SUCCESS) {
-        npucompute::detail::DebugLog("aclpti", "error operation=companion_unload status=%d", status);
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=companion_unload status=%d"
+            " code=%u",
+            status, static_cast<unsigned>(static_cast<uint32_t>(status)));
         context.lock_.unlock();
         return ACLPTI_ERROR_PROFILING_FAILED;
     }

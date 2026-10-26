@@ -10,7 +10,7 @@
 #include "acl/acl_rt.h"
 #include "acl/acl.h"
 
-#include "debug_log.h"
+#include "npu_compute_log.h"
 #include "injection/prof_api_stub.h"
 #include "injection/runtime_stub_api.h"
 

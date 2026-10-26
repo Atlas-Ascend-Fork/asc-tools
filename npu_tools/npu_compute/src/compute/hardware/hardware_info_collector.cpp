@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "hardware/hardware_info_collector.h"
+#include "npu_compute_log.h"
 
 #include "hardware/hardware_device_api.h"
 #include "hardware/hardware_info_host.h"
@@ -29,9 +30,7 @@ namespace {
 
 void DefaultDiagnostic(std::string_view message)
 {
-    std::fputs("[libnpu-compute] HardwareInfo: ", stderr);
-    std::fwrite(message.data(), 1, message.size(), stderr);
-    std::fputc('\n', stderr);
+    ASCTOOL_WARNING("[HardwareInfo] %.*s", static_cast<int>(message.size()), message.data());
 }
 
 HardwareInfoDependencies MakeDefaultDependencies()
@@ -152,8 +151,13 @@ private:
 
     void Report(std::string_view message) noexcept
     {
+        ASCTOOL_ERROR(
+            "[HardwareInfo] %.*s"
+            " code=%u",
+            static_cast<int>(message.size()), message.data(), static_cast<unsigned>(1));
         try {
-            if (dependencies_.diagnostics) {
+            const auto* defaultSink = dependencies_.diagnostics.target<void (*)(std::string_view)>();
+            if (dependencies_.diagnostics && (defaultSink == nullptr || *defaultSink != DefaultDiagnostic)) {
                 dependencies_.diagnostics(message);
             }
         } catch (...) {

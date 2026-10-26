@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "plog_capture.h"
 #include "isolated_gtest.h"
 
 #include "aclpti/aclpti.h"
@@ -30,41 +31,7 @@ namespace {
 
 constexpr aclptiCacheControl kInvalidCacheControl = static_cast<aclptiCacheControl>(2);
 
-template <typename Function>
-bool CaptureStderr(Function function, std::string* output)
-{
-    FILE* capture = std::tmpfile();
-    if (capture == nullptr) {
-        return false;
-    }
-
-    const int savedStderr = dup(STDERR_FILENO);
-    if (savedStderr < 0) {
-        std::fclose(capture);
-        return false;
-    }
-
-    bool success = std::fflush(stderr) == 0 && dup2(fileno(capture), STDERR_FILENO) >= 0;
-    if (success) {
-        function();
-        success = std::fflush(stderr) == 0;
-    }
-    success = dup2(savedStderr, STDERR_FILENO) >= 0 && success;
-    close(savedStderr);
-
-    if (success) {
-        std::rewind(capture);
-        char buffer[256];
-        std::size_t count = 0;
-        while ((count = std::fread(buffer, 1, sizeof(buffer), capture)) != 0) {
-            output->append(buffer, count);
-        }
-        success = std::ferror(capture) == 0;
-    }
-
-    success = std::fclose(capture) == 0 && success;
-    return success;
-}
+using npu_compute_test::CapturePlog;
 
 struct KernelArgs {
     uint8_t* value;
@@ -544,14 +511,14 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(g_set_device_calls == 1);
     std::string profilingLog;
     aclError firstLaunchStatus = ACL_ERROR_RT_FAILURE;
-    ASSERT_TRUE(CaptureStderr(
+    ASSERT_TRUE(CapturePlog(
         [&] {
             auto function = useShrinkBlock ? entryFunction : namedFunction;
             firstLaunchStatus = useHostArgs ? aclrtLaunchKernelWithHostArgs(
                                                   function, 1, nullptr, nullptr, &args, sizeof(args), nullptr, 0) :
                                               aclrtLaunchKernel(function, 1, &args, sizeof(args), nullptr);
         },
-        &profilingLog));
+        &profilingLog, useDebugLog ? DLOG_DEBUG : DLOG_WARN));
     ASSERT_TRUE(profilingLog.find("[INFO] cache-control") == std::string::npos);
     if (g_start_failure) {
         ASSERT_TRUE(firstLaunchStatus != ACL_SUCCESS);

@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute_uds_server.h"
+#include "npu_compute_log.h"
 #include <cerrno>
 #include <cstdlib>
 #include <limits>
@@ -58,6 +59,7 @@ ipc::Hello UdsServer::Accept()
     if (hello.pid != pid || hello.uid != getuid()) {
         throw ipc::Exception({1, "CONNECT identity mismatch", "AUTHENTICATION", "handshake"});
     }
+    ASCTOOL_DEBUG("[npu-compute ipc] phase=accepted");
     return hello;
 }
 void UdsServer::Ready()
@@ -69,6 +71,8 @@ void UdsServer::Ready()
 void UdsServer::Fail(const std::string& message) noexcept { Fail(ipc::Error{1, message, "INJECTION", "initialize"}); }
 void UdsServer::Fail(const ipc::Error& error) noexcept
 {
+    ASCTOOL_ERROR(
+        "[UDS] %s/%s code=%u: %s", error.domain.c_str(), error.phase.c_str(), error.code, error.message.c_str());
     try {
         channel_.Send(ipc::Type::Error, ipc::EncodeError(error), ipc::After(std::chrono::milliseconds(100)));
     } catch (...) {

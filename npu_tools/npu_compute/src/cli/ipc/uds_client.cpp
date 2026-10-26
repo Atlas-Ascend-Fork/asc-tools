@@ -10,11 +10,23 @@
 #include "npu_compute_uds_client.h"
 #include "artifact_receiver.h"
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 namespace npucompute::cli {
+namespace {
+// The SO owns detailed PLOG records. CLI validates the failure notification
+// and surfaces only a public notice, without a PLOG dependency.
+[[noreturn]] void ReportRemoteFailure(const ipc::Bytes& payload)
+{
+    (void)ipc::DecodeError(payload);
+    throw std::runtime_error("tool execution failed; check the plog for details");
+}
+} // namespace
 void UdsClient::Run(
     const ipc::Bootstrap& bootstrap, pid_t childPid, const ipc::Config& config, const std::string& directory,
     const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled)
@@ -31,6 +43,10 @@ void UdsClient::Run(
         }
         throw;
     }
+    const char* debug = std::getenv("NPU_COMPUTE_DEBUG");
+    if (debug != nullptr && std::strcmp(debug, "1") == 0) {
+        std::fprintf(stderr, "[npu-compute ipc pid=%ld] phase=connect\n", static_cast<long>(getpid()));
+    }
     const pid_t targetPid = channel.PeerPid();
     const auto handshakeDeadline = ipc::After(std::chrono::milliseconds(bootstrap.timeoutMs));
     try {
@@ -40,7 +56,7 @@ void UdsClient::Run(
             handshakeDeadline, stopHandshake);
         auto frame = channel.Receive(handshakeDeadline, stopHandshake);
         if (frame.type == ipc::Type::Error) {
-            throw ipc::Exception(ipc::DecodeError(frame.payload));
+            ReportRemoteFailure(frame.payload);
         }
         if (frame.type != ipc::Type::ConnectAck) {
             throw std::runtime_error("PROTOCOL: READY required");
@@ -109,8 +125,7 @@ void UdsClient::Run(
                 complete_ = complete;
                 return;
             } else if (frame.type == ipc::Type::Error) {
-                const auto error = ipc::DecodeError(frame.payload);
-                throw ipc::Exception(error);
+                ReportRemoteFailure(frame.payload);
             } else {
                 throw std::runtime_error("PROTOCOL: unexpected message after READY");
             }

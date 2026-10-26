@@ -7,11 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "data_processor.h"
 #include "securec.h"
 #include <array>
 #include "data_types.h"
-#include "common/debug_log.h"
 #include "raw_data_decoder.h"
 #include <cstdio>
 #include <cstring>
@@ -33,12 +33,11 @@ constexpr unsigned HEX_DIGIT_MASK = (1U << HEX_DIGIT_BITS) - 1;
 
 void LogRawData(uint64_t replayId, const MsprofRawData& raw, bool biu, uint64_t acceptedBytes)
 {
-    if (!npucompute::detail::DebugEnabled()) {
+    if (!ASCTOOL_DEBUG_ENABLED()) {
         return;
     }
-    npucompute::detail::DebugLog(
-        "aclpti-data",
-        "[DEBUG-rawdata] replay=%llu type=%d device=%d module=%d offset=%zu last=%d "
+    ASCTOOL_DEBUG(
+        "[aclpti-data] [DEBUG-rawdata] replay=%llu type=%d device=%d module=%d offset=%zu last=%d "
         "validBytes=%zu validWords=%zu acceptedBytes=%llu",
         static_cast<unsigned long long>(replayId), static_cast<int>(raw.type), raw.deviceId, raw.chunkModule,
         raw.offset, raw.isLastChunk ? 1 : 0, raw.chunkSize, raw.chunkSize / sizeof(uint32_t),
@@ -47,8 +46,8 @@ void LogRawData(uint64_t replayId, const MsprofRawData& raw, bool biu, uint64_t 
     // Print every BIU word, including timestamp headers, to diagnose framing without filtering.
     if (biu) {
         for (size_t offset = 0; offset < raw.chunkSize; offset += sizeof(uint32_t)) {
-            npucompute::detail::DebugLog(
-                "aclpti-data", "[DEBUG-rawdata] BIU replay=%llu offset=%zu word=0x%08x",
+            ASCTOOL_DEBUG(
+                "[aclpti-data] [DEBUG-rawdata] BIU replay=%llu offset=%zu word=0x%08x",
                 static_cast<unsigned long long>(replayId), raw.offset + offset, ReadLittleEndianWord(bytes + offset));
         }
         return;
@@ -61,8 +60,8 @@ void LogRawData(uint64_t replayId, const MsprofRawData& raw, bool biu, uint64_t 
             hex[position++] = HEX_ALPHABET[bytes[index] & HEX_DIGIT_MASK];
             hex[position++] = ' ';
         }
-        npucompute::detail::DebugLog(
-            "aclpti-data", "[DEBUG-rawdata] payload replay=%llu offset=%zu bytes=%s",
+        ASCTOOL_DEBUG(
+            "[aclpti-data] [DEBUG-rawdata] payload replay=%llu offset=%zu bytes=%s",
             static_cast<unsigned long long>(replayId), offset, hex.data());
     }
 }
@@ -166,15 +165,16 @@ aclptiResult DataProcessor::ReceiveRawData(const MsprofRawData* raw)
         if (primary) {
             ++replay.stats.rejectedChunkCount;
         }
-        npucompute::detail::DebugLog(
-            "aclpti-data",
-            "raw callback invalid chunk: replay=%llu kind=%d status=%d primary=%d type=%d device=%d "
-            "module=%d offset=%zu chunk_size=%zu last=%d expected_record_size=%zu expected_device=%d",
+        ASCTOOL_ERROR(
+            "[aclpti-data] raw callback invalid chunk: replay=%llu kind=%d status=%d primary=%d type=%d device=%d "
+            "module=%d offset=%zu chunk_size=%zu last=%d expected_record_size=%zu expected_device=%d"
+            " code=%u",
             static_cast<unsigned long long>(replay.info.replayId), static_cast<int>(replay.info.kind),
             static_cast<int>(status), primary ? 1 : 0, raw == nullptr ? -1 : static_cast<int>(raw->type),
             raw == nullptr ? -1 : raw->deviceId, raw == nullptr ? -1 : raw->chunkModule,
             raw == nullptr ? 0 : raw->offset, raw == nullptr ? 0 : raw->chunkSize,
-            raw != nullptr && raw->isLastChunk ? 1 : 0, recordSize, replay.deviceId);
+            raw != nullptr && raw->isLastChunk ? 1 : 0, recordSize, replay.deviceId,
+            static_cast<unsigned>(static_cast<uint32_t>(status)));
         return status;
     };
     if (raw == nullptr) {

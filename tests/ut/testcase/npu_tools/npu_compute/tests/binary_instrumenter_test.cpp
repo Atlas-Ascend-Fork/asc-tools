@@ -9,6 +9,7 @@
  */
 #include "acl_pti/profiling/binary_instrumenter.h"
 #include "isolated_gtest.h"
+#include "plog_capture.h"
 
 #include <boost/filesystem.hpp>
 #include <fstream>
@@ -300,6 +301,8 @@ void CheckToolCallsAndCleanup(const boost::filesystem::path& root, bool toolsUse
 void RunIsolatedScenario(bool toolsUsed, const std::function<void()>& assertions)
 {
     if (npucompute::test::IsIsolatedTestChild()) {
+        std::string plog;
+        npu_compute_test::CaptureScope capture(&plog, DLOG_DEBUG);
         assertions();
         return;
     }

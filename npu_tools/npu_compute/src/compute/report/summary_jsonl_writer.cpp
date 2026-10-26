@@ -7,11 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "report/report_writer.h"
 #include "artifact_sink.h"
 #include "pmu/pmu_metric_builder.h"
 #include "report/summary_metrics.h"
-#include "common/debug_log.h"
 
 #include <boost/filesystem.hpp>
 #include <algorithm>
@@ -230,8 +230,10 @@ aclptiResult WriteSummaryJsonl(
             sink->Commit(selectedSections.size() + 1U);
             artifactStarted = false;
         } else if (!Publish(config.outputDirectory, content)) {
-            detail::DebugLog(
-                "npu-compute", "summary publication failed: %s errno=%d", config.outputDirectory.c_str(), errno);
+            ASCTOOL_ERROR(
+                "[npu-compute] summary publication failed: %s errno=%d"
+                " code=%u",
+                config.outputDirectory.c_str(), errno, static_cast<unsigned>(static_cast<uint32_t>(errno)));
             return ACLPTI_ERROR_INTERNAL;
         }
         return ACLPTI_SUCCESS;
@@ -239,7 +241,10 @@ aclptiResult WriteSummaryJsonl(
         if (artifactStarted) {
             sink->Abort();
         }
-        detail::DebugLog("npu-compute", "summary failed: %s", error.what());
+        ASCTOOL_ERROR(
+            "[npu-compute] summary failed: %s"
+            " code=%u",
+            error.what(), static_cast<unsigned>(1));
         return ACLPTI_ERROR_INTERNAL;
     }
 }

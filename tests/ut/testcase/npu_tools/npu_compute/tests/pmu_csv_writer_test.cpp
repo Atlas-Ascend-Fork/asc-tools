@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "plog_capture.h"
 #include <gtest/gtest.h>
 
 #include "report/report_writer.h"
@@ -274,41 +275,7 @@ std::vector<boost::filesystem::path> NestedCsvFiles(const boost::filesystem::pat
     return paths;
 }
 
-template <typename Function>
-bool CaptureStderr(Function function, std::string* output)
-{
-    FILE* capture = std::tmpfile();
-    if (capture == nullptr) {
-        return false;
-    }
-
-    const int savedStderr = dup(STDERR_FILENO);
-    if (savedStderr < 0) {
-        std::fclose(capture);
-        return false;
-    }
-
-    bool success = std::fflush(stderr) == 0 && dup2(fileno(capture), STDERR_FILENO) >= 0;
-    if (success) {
-        function();
-        success = std::fflush(stderr) == 0;
-    }
-    success = dup2(savedStderr, STDERR_FILENO) >= 0 && success;
-    close(savedStderr);
-
-    if (success) {
-        std::rewind(capture);
-        char buffer[256];
-        std::size_t count = 0;
-        while ((count = std::fread(buffer, 1, sizeof(buffer), capture)) != 0) {
-            output->append(buffer, count);
-        }
-        success = std::ferror(capture) == 0;
-    }
-
-    success = std::fclose(capture) == 0 && success;
-    return success;
-}
+using npu_compute_test::CapturePlog;
 
 } // namespace
 
@@ -558,7 +525,7 @@ static int RunSuiteMain()
     CHECK(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
     std::string sparseLog;
     aclptiResult sparseWriteStatus = ACLPTI_ERROR_INTERNAL;
-    CHECK(CaptureStderr(
+    CHECK(CapturePlog(
         [&] { sparseWriteStatus = npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config); }, &sparseLog));
     CHECK(sparseWriteStatus == ACLPTI_SUCCESS);
     CHECK(sparseLog.find("CSV section data availability: section=L2Cache rows=1") != std::string::npos);
@@ -587,7 +554,7 @@ static int RunSuiteMain()
     config.outputDirectory = blockedDirectory.string();
     std::string filesystemLog;
     aclptiResult filesystemStatus = ACLPTI_SUCCESS;
-    CHECK(CaptureStderr(
+    CHECK(CapturePlog(
         [&] { filesystemStatus = npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config); }, &filesystemLog));
     CHECK(filesystemStatus == ACLPTI_ERROR_CSV_WRITE);
     CHECK(filesystemLog.find("CSV write rejected: output path is not a directory") != std::string::npos);
@@ -598,7 +565,7 @@ static int RunSuiteMain()
     config.outputDirectory = "relative_csv_output";
     std::string relativeLog;
     aclptiResult relativeStatus = ACLPTI_SUCCESS;
-    CHECK(CaptureStderr(
+    CHECK(CapturePlog(
         [&] { relativeStatus = npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config); }, &relativeLog));
     CHECK(relativeStatus == ACLPTI_ERROR_INVALID_PARAMETER);
     CHECK(relativeLog.find("CSV write rejected: output path must be absolute") != std::string::npos);
@@ -636,7 +603,7 @@ static int RunSuiteMain()
     CHECK(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
     std::string emptyOutputLog;
     aclptiResult emptyOutputStatus = ACLPTI_SUCCESS;
-    CHECK(CaptureStderr(
+    CHECK(CapturePlog(
         [&] { emptyOutputStatus = npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config); }, &emptyOutputLog));
     CHECK(emptyOutputStatus == ACLPTI_ERROR_INVALID_PARAMETER);
     CHECK(emptyOutputLog.find("CSV write rejected: output path is empty") != std::string::npos);

@@ -24,6 +24,8 @@ def collection_work_directory(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def hardware_stub_environment(monkeypatch):
+    monkeypatch.setenv("ASCEND_SLOG_PRINT_TO_STDOUT", "1")
+    monkeypatch.setenv("ASCEND_GLOBAL_LOG_LEVEL", "0")
     stub = os.environ.get("NPU_COMPUTE_HARDWARE_API_STUB")
     assert stub and Path(stub).is_file(), "hardware API stub must be built"
     monkeypatch.setenv("LD_PRELOAD", str(Path(stub).resolve()))
@@ -90,6 +92,7 @@ def run_collection(
         capture_output=True,
         check=False,
     )
+    result.stderr = result.stdout + result.stderr
     return result, time.monotonic() - started
 
 

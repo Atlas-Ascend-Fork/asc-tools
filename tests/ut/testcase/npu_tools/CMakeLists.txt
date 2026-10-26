@@ -64,6 +64,12 @@ target_include_directories(npu_compute_test_headers INTERFACE
   "${NPU_TOOLS_TEST_ROOT}/injection/tests/stubs/prof_api/include"
   "${NPUCOMPUTE_ACL_INCLUDE_DIR}"
 )
+# A device-free dlog boundary for host tests; product SOs still use unified_dlog.
+add_library(npu_compute_plog_test_backend SHARED npu_compute/tests/plog_backend_stub.cpp)
+target_link_libraries(npu_compute_plog_test_backend PRIVATE npu_compute_plog_headers)
+injection_set_test_output(npu_compute_plog_test_backend)
+target_link_libraries(injection_test_headers INTERFACE
+  npu_compute_plog_headers npu_compute_plog_test_backend)
 target_link_libraries(npu_compute_test_headers INTERFACE injection_test_headers)
 
 add_subdirectory(injection/tests/stubs/prof_api)

@@ -7,10 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
+#include "data_types.h"
+
 #include "data_processor.h"
 
-#include "data_types.h"
-#include "common/debug_log.h"
 #include "raw_data_decoder.h"
 #include <cstdlib>
 #include <stdexcept>
@@ -19,25 +20,25 @@ namespace aclpti::data {
 namespace {
 void LogDecodedRecord(uint64_t replayId, uint64_t index, const DecodeResult& decoded)
 {
-    if (!npucompute::detail::DebugEnabled()) {
+    if (!ASCTOOL_DEBUG_ENABLED()) {
         return;
     }
-    npucompute::detail::DebugLog(
-        "aclpti-data", "decode replay=%llu record=%llu status=%d", static_cast<unsigned long long>(replayId),
+    ASCTOOL_DEBUG(
+        "[aclpti-data] decode replay=%llu record=%llu status=%d", static_cast<unsigned long long>(replayId),
         static_cast<unsigned long long>(index), static_cast<int>(decoded.Status()));
     if (!decoded.Ok()) {
         return;
     }
     if (const auto* log = std::get_if<TaskLog32>(&decoded.Value().payload)) {
-        npucompute::detail::DebugLog(
-            "aclpti-data",
-            "task-log function=%u task=%u stream=%u counter=%llu block=%u subBlock=%u coreType=%d core=%u",
+        ASCTOOL_DEBUG(
+            "[aclpti-data] task-log function=%u task=%u stream=%u counter=%llu block=%u subBlock=%u coreType=%d "
+            "core=%u",
             log->funcType, log->taskId, log->rtStreamId, static_cast<unsigned long long>(log->systemCounter),
             log->blockId, log->subBlockId, static_cast<int>(log->coreType), log->coreTypeId);
     } else {
         const auto& pmu = std::get<PmuRecord128>(decoded.Value().payload);
-        npucompute::detail::DebugLog(
-            "aclpti-data", "pmu function=%u task=%u stream=%u cycles=%llu block=%u subBlock=%u coreType=%d core=%u",
+        ASCTOOL_DEBUG(
+            "[aclpti-data] pmu function=%u task=%u stream=%u cycles=%llu block=%u subBlock=%u coreType=%d core=%u",
             pmu.funcType, pmu.taskId, pmu.rtStreamId, static_cast<unsigned long long>(pmu.totalCycles), pmu.blockId,
             pmu.subBlockId, static_cast<int>(pmu.coreType), pmu.coreId);
     }
@@ -148,9 +149,8 @@ aclptiResult DataProcessor::FinishActive(aclptiResult status)
     }
     Wait();
     if (active_->info.kind == ReplayKind::Pipeline) {
-        npucompute::detail::DebugLog(
-            "aclpti-data",
-            "pipeline replay finalized: replay=%llu kind=%d device=%d status=%d received_bytes=%llu "
+        ASCTOOL_DEBUG(
+            "[aclpti-data] pipeline replay finalized: replay=%llu kind=%d device=%d status=%d received_bytes=%llu "
             "accepted_bytes=%llu "
             "rejected_chunks=%llu failed_records=%llu copied_records=%llu copied_bytes=%llu queued_items=%llu",
             static_cast<unsigned long long>(active_->info.replayId), static_cast<int>(active_->info.kind),

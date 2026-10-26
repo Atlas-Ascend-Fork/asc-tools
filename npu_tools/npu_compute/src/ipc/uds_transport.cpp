@@ -284,13 +284,6 @@ void Random(void* data, size_t size)
 } // namespace
 
 Deadline After(std::chrono::milliseconds timeout) { return std::chrono::steady_clock::now() + timeout; }
-void DebugLog(const char* phase, uint64_t) noexcept
-{
-    const char* enabled = std::getenv("NPU_COMPUTE_DEBUG");
-    if (enabled && *enabled && std::strcmp(enabled, "0") != 0) {
-        std::fprintf(stderr, "[npu-compute ipc pid=%ld] phase=%s\n", static_cast<long>(getpid()), phase);
-    }
-}
 Bootstrap MakeBootstrap()
 {
     Bootstrap result;
@@ -348,7 +341,6 @@ Channel Channel::Connect(
     Check(session != 0, "zero UDS session");
     const auto address = Address(name);
     int retryDelay = 20;
-    DebugLog("connect");
     for (;;) {
         CheckCancellation(cancelled);
         Remaining(deadline);
@@ -513,7 +505,6 @@ Channel Listener::Accept(uint64_t session, pid_t peerPid, uid_t peerUid, Deadlin
         }
         close(fd_);
         fd_ = -1;
-        DebugLog("accepted");
         return result;
     }
 }

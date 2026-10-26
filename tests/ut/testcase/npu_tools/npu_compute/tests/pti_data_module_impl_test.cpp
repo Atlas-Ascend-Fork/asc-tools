@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "plog_capture.h"
 #include <gtest/gtest.h>
 
 #include "acl_pti/data/profiling_data_manager.h"
@@ -125,41 +126,7 @@ private:
     std::vector<std::shared_ptr<const aclptiProfilingDataResult>> results_;
 };
 
-template <typename Function>
-bool CaptureStderr(Function function, std::string* output)
-{
-    FILE* capture = std::tmpfile();
-    if (capture == nullptr) {
-        return false;
-    }
-
-    const int savedStderr = dup(STDERR_FILENO);
-    if (savedStderr < 0) {
-        std::fclose(capture);
-        return false;
-    }
-
-    bool success = std::fflush(stderr) == 0 && dup2(fileno(capture), STDERR_FILENO) >= 0;
-    if (success) {
-        function();
-        success = std::fflush(stderr) == 0;
-    }
-    success = dup2(savedStderr, STDERR_FILENO) >= 0 && success;
-    close(savedStderr);
-
-    if (success) {
-        std::rewind(capture);
-        char buffer[256];
-        std::size_t count = 0;
-        while ((count = std::fread(buffer, 1, sizeof(buffer), capture)) != 0) {
-            output->append(buffer, count);
-        }
-        success = std::ferror(capture) == 0;
-    }
-
-    success = std::fclose(capture) == 0 && success;
-    return success;
-}
+using npu_compute_test::CapturePlog;
 
 struct GuardedRawData {
     void* mapping = MAP_FAILED;
@@ -836,7 +803,7 @@ TEST(NpuComputePtiDataModule, InvalidChunkDiagnostics)
 
     std::string output;
     std::int32_t status = 0;
-    ASSERT_TRUE(CaptureStderr([&] { status = callback(guarded.raw); }, &output));
+    ASSERT_TRUE(CapturePlog([&] { status = callback(guarded.raw); }, &output));
     ASSERT_TRUE(status == static_cast<std::int32_t>(ACLPTI_ERROR_INVALID_RAW_DATA));
     ASSERT_TRUE(output.find("[DEBUG-rawdata]") == std::string::npos);
     ASSERT_TRUE(output.find("raw callback invalid chunk") != std::string::npos);

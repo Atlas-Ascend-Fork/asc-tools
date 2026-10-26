@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "plog_capture.h"
 #include "isolated_gtest.h"
 
 #include "aclpti/aclpti.h"
@@ -25,37 +26,7 @@ namespace {
 
 constexpr int kOriginalFailure = -31;
 
-template <typename Function>
-bool CaptureStderr(Function function, std::string* output)
-{
-    FILE* capture = std::tmpfile();
-    if (capture == nullptr) {
-        return false;
-    }
-    const int savedStderr = dup(STDERR_FILENO);
-    if (savedStderr < 0) {
-        std::fclose(capture);
-        return false;
-    }
-    bool success = std::fflush(stderr) == 0 && dup2(fileno(capture), STDERR_FILENO) >= 0;
-    if (success) {
-        function();
-        success = std::fflush(stderr) == 0;
-    }
-    success = dup2(savedStderr, STDERR_FILENO) >= 0 && success;
-    close(savedStderr);
-    if (success) {
-        std::rewind(capture);
-        char buffer[256];
-        std::size_t count = 0;
-        while ((count = std::fread(buffer, 1, sizeof(buffer), capture)) != 0) {
-            output->append(buffer, count);
-        }
-        success = std::ferror(capture) == 0;
-    }
-    success = std::fclose(capture) == 0 && success;
-    return success;
-}
+using npu_compute_test::CapturePlog;
 
 bool gFailNextMalloc = false;
 bool gFailNextFree = false;
@@ -326,7 +297,7 @@ TEST_P(NpuComputeRuntimeFailure, PreservesFailureAndStopsProfiling)
             ASSERT_TRUE(RuntimeStubClearOrigin("aclrtSynchronizeStream") == ACL_SUCCESS);
             ASSERT_TRUE(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
             std::string log;
-            ASSERT_TRUE(CaptureStderr([&] { status = aclrtSynchronizeStream(nullptr); }, &log));
+            ASSERT_TRUE(CapturePlog([&] { status = aclrtSynchronizeStream(nullptr); }, &log));
             ASSERT_TRUE(log.find("operation=original_lookup") != std::string::npos);
             ASSERT_TRUE(log.find("operation=runtime_call") == std::string::npos);
             ASSERT_TRUE(unsetenv("NPU_COMPUTE_DEBUG") == 0);
@@ -360,7 +331,7 @@ TEST_P(NpuComputeRuntimeFailure, PreservesFailureAndStopsProfiling)
     aclError profilingStatus = ACL_ERROR_INTERNAL_ERROR;
     std::string profilingLog;
     ASSERT_TRUE(
-        CaptureStderr([&] { profilingStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &profilingLog));
+        CapturePlog([&] { profilingStatus = aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr); }, &profilingLog));
     ASSERT_TRUE(profilingStatus == ACL_ERROR_INTERNAL_ERROR);
     ASSERT_TRUE(*gKernelValue == initialValue);
     ASSERT_TRUE(gLaunchCalls == launchesBeforeStartFailure + 1);
@@ -371,6 +342,7 @@ TEST_P(NpuComputeRuntimeFailure, PreservesFailureAndStopsProfiling)
     ASSERT_TRUE(profilingLog.find("api=aclrtLaunchKernel") != std::string::npos);
     ASSERT_TRUE(profilingLog.find("operation=original_call") == std::string::npos);
     ASSERT_TRUE(profilingLog.find("status=-31") != std::string::npos);
+    ASSERT_TRUE(profilingLog.find("code=") != std::string::npos);
     ASSERT_TRUE(profilingLog.find("replay=0") != std::string::npos);
     ASSERT_TRUE(profilingLog.find("round=0") != std::string::npos);
     ASSERT_TRUE(profilingLog.find("domain=") == std::string::npos);

@@ -10,7 +10,9 @@
 #include <gtest/gtest.h>
 
 #include "cli/ipc/artifact_receiver.h"
+#include "cli/ipc/npu_compute_uds_client.h"
 #include "compute/ipc/artifact_publisher.h"
+#include "plog_capture.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -384,3 +386,100 @@ TEST(NpuComputeUdsArtifact, FlushPublishesResult) { TestPublisherControl(Type::F
 TEST(NpuComputeUdsArtifact, InterruptAbortsPublication) { TestPublisherControl(Type::Interrupt, false); }
 TEST(NpuComputeUdsArtifact, ErrorAbortsPublication) { TestPublisherControl(Type::Error, false); }
 TEST(NpuComputeUdsArtifact, UnexpectedFinalReplyFails) { TestPublisherControl(Type::ConnectAck, false, true); }
+
+namespace {
+void CheckRemoteFailure(bool afterReady)
+{
+    TempDirectory temporary;
+    const auto bootstrap = MakeBootstrap();
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+        alarm(10);
+        try {
+            Listener listener(bootstrap.name);
+            auto channel = listener.Accept(bootstrap.session, getppid(), getuid(), bootstrap.handshakeDeadline);
+            (void)DecodeHello(channel.Receive(bootstrap.handshakeDeadline).payload);
+            if (afterReady) {
+                channel.Send(
+                    Type::ConnectAck,
+                    EncodeReady({static_cast<uint32_t>(getpid()), static_cast<uint32_t>(getuid()), 0}),
+                    bootstrap.handshakeDeadline);
+            }
+            channel.Send(
+                Type::Error, EncodeError({507035, "literal 100% SO failure", "runtime", "launch"}),
+                bootstrap.handshakeDeadline);
+            (void)channel.Receive(bootstrap.handshakeDeadline);
+            _exit(0);
+        } catch (...) {
+            _exit(12);
+        }
+    }
+    Config config;
+    config.sections = {"Memory"};
+    const std::atomic<bool> childExited{false};
+    const std::atomic<bool> cancelled{false};
+    npucompute::cli::UdsClient client;
+    std::string plog;
+    std::string notice;
+    testing::internal::CaptureStderr();
+    npu_compute_test::CapturePlog(
+        [&] {
+            try {
+                client.Run(bootstrap, child, config, temporary.Path(), childExited, cancelled);
+                ADD_FAILURE() << "fatal SO error must fail collection";
+            } catch (const std::runtime_error& error) {
+                notice = error.what();
+            }
+        },
+        &plog, DLOG_ERROR);
+    const auto terminal = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(notice, "tool execution failed; check the plog for details");
+    EXPECT_EQ(terminal.find("literal 100% SO failure"), std::string::npos);
+    EXPECT_EQ(terminal.find("507035"), std::string::npos);
+    EXPECT_TRUE(plog.empty()) << "CLI must not write PLOG";
+    int status = 0;
+    ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0);
+}
+} // namespace
+
+TEST(NpuComputeUdsArtifact, InitializationErrorOnlyReturnsPublicNotice) { CheckRemoteFailure(false); }
+TEST(NpuComputeUdsArtifact, CollectionErrorOnlyReturnsPublicNotice) { CheckRemoteFailure(true); }
+
+TEST(NpuComputeUdsArtifact, OrdinarySoErrorDoesNotTerminatePublication)
+{
+    const auto bootstrap = MakeBootstrap();
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+        alarm(10);
+        try {
+            Listener listener(bootstrap.name);
+            ArtifactPublisher publisher(
+                listener.Accept(bootstrap.session, getppid(), getuid(), bootstrap.handshakeDeadline),
+                bootstrap.handshakeDeadline);
+            std::string plog;
+            npu_compute_test::CapturePlog(
+                [&] { ASCTOOL_ERROR("optional diagnostic failed; collection can continue"); }, &plog, DLOG_ERROR);
+            if (plog.find("optional diagnostic failed") == std::string::npos) {
+                _exit(13);
+            }
+            Result result;
+            result.sections = {"Memory"};
+            _exit(publisher.Finish(result) ? 0 : 11);
+        } catch (...) {
+            _exit(12);
+        }
+    }
+    auto client = Channel::Connect(bootstrap.name, bootstrap.session, child, getuid(), bootstrap.handshakeDeadline);
+    EXPECT_EQ(client.Receive(bootstrap.handshakeDeadline).type, Type::ConnectAck);
+    const auto frame = client.Receive(bootstrap.handshakeDeadline);
+    EXPECT_EQ(frame.type, Type::Result);
+    client.Send(Type::ResultAck, {}, bootstrap.handshakeDeadline);
+    int status = 0;
+    ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0);
+}

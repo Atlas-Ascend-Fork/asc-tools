@@ -7,11 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "runtime/npu_compute_runtime.h"
 #include <vector>
 
 #include "artifact_sink.h"
-#include "common/debug_log.h"
 #include "hardware/hardware_device_api.h"
 #include "report/report_writer.h"
 #include "pm_sampling/pm_sampling_decoder.h"
@@ -60,12 +60,6 @@ bool IsHardwareInfoTriggerCallback(aclptiCallbackId cbid)
 {
     return std::find(kHardwareInfoTriggerCallbackIds.begin(), kHardwareInfoTriggerCallbackIds.end(), cbid) !=
            kHardwareInfoTriggerCallbackIds.end();
-}
-
-bool DebugEnabled()
-{
-    const char* value = std::getenv("NPU_COMPUTE_DEBUG");
-    return value != nullptr && value[0] == '1' && value[1] == '\0';
 }
 
 bool CreatePrivatePipelineRoot(boost::filesystem::path* root, std::string* error)
@@ -126,8 +120,10 @@ void LoadCsvDeviceInfo(ReportConfig* config, bool loadFrequencies)
 
     DynamicHardwareDeviceApi api;
     DiagnosticSink diagnostics = [](std::string_view message) {
-        npucompute::detail::DebugLog(
-            "npu-compute", "CSV hardware config diagnostic: %.*s", static_cast<int>(message.size()), message.data());
+        ASCTOOL_WARNING(
+            "[npu-compute] "
+            "CSV hardware config diagnostic: %.*s",
+            static_cast<int>(message.size()), message.data());
     };
 
     std::string detectedSoc;
@@ -145,8 +141,8 @@ void LoadCsvDeviceInfo(ReportConfig* config, bool loadFrequencies)
             config->aivFrequencyMhz = static_cast<double>(aiVectorFrequencyMhz);
         }
     }
-    npucompute::detail::DebugLog(
-        "npu-compute",
+    ASCTOOL_DEBUG(
+        "[npu-compute] "
         "CSV hardware config: source=DeviceApi socName=%s fallbackFrequency=%f aicFrequency=%f "
         "aivFrequency=%f",
         config->socName.c_str(), config->frequencyMhz, config->aicFrequencyMhz, config->aivFrequencyMhz);
@@ -185,7 +181,10 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
     std::lock_guard<std::mutex> lock(mutex_);
     std::string error;
     if (!section_config_.Load(config.sections, &error)) {
-        std::fprintf(stderr, "[libnpu-compute] invalid sections: %s\n", error.c_str());
+        ASCTOOL_ERROR(
+            "[npu-compute] [libnpu-compute] invalid sections: %s"
+            " code=%u",
+            error.c_str(), static_cast<unsigned>(1));
         return kInitializeFailed;
     }
     csv_config_.pmuDataLevel = config.pmuLevel;
@@ -198,7 +197,10 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
         frequency != nullptr && frequency[0] != '\0') {
         double parsed = 0.0;
         if (!ParsePositiveDouble(frequency, &parsed)) {
-            std::fprintf(stderr, "[libnpu-compute] invalid NPU_COMPUTE_FREQUENCY_MHZ: %s\n", frequency);
+            ASCTOOL_ERROR(
+                "[npu-compute] [libnpu-compute] invalid NPU_COMPUTE_FREQUENCY_MHZ: %s"
+                " code=%u",
+                frequency, static_cast<unsigned>(1));
             return kInitializeFailed;
         }
         csv_config_.frequencyMhz = parsed;
@@ -210,24 +212,43 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
     pipeline_enabled_ = section_config_.PipelineEnabled();
     if (pipeline_enabled_) {
         if (!CreatePrivatePipelineRoot(&pipeline_temporary_root_, &error)) {
-            std::fprintf(stderr, "[libnpu-compute] initialize PipeTrace staging failed: %s\n", error.c_str());
+            ASCTOOL_ERROR(
+                "[npu-compute] [libnpu-compute] initialize PipeTrace staging failed: %s"
+                " code=%u",
+                error.c_str(), static_cast<unsigned>(1));
             return kInitializeFailed;
         }
         if (CreatePipeTraceProcessStaging(pipeline_temporary_root_, &pipeline_process_directory_, &error) !=
                 ACLPTI_SUCCESS ||
             WritePipeTraceManifest(pipeline_process_directory_, "collecting", ACLPTI_SUCCESS, pipeline_fragments_) !=
                 ACLPTI_SUCCESS) {
-            std::fprintf(stderr, "[libnpu-compute] initialize PipeTrace staging failed: %s\n", error.c_str());
+            ASCTOOL_ERROR(
+                "[npu-compute] [libnpu-compute] initialize PipeTrace staging failed: %s"
+                " code=%u",
+                error.c_str(), static_cast<unsigned>(1));
             return kInitializeFailed;
         }
     }
-    npucompute::detail::DebugLog(
-        "npu-compute", "PMU data level configured: %s",
+    ASCTOOL_DEBUG(
+        "[npu-compute] "
+        "PMU data level configured: %s",
         csv_config_.pmuDataLevel == PmuDataLevel::Task ? "task" : "block");
 
     auto consumer = PmuDataConsumer::Create(
         [this](std::shared_ptr<const aclptiProfilingDataResult> result) { return ProcessPmuData(std::move(result)); });
-    if (consumer == nullptr || consumer->Start() != ACLPTI_SUCCESS) {
+    if (consumer == nullptr) {
+        ASCTOOL_ERROR(
+            "[npu-compute] PMU consumer creation failed"
+            " code=%u",
+            static_cast<unsigned>(ACLPTI_ERROR_INTERNAL));
+        return kInitializeFailed;
+    }
+    const auto startStatus = consumer->Start();
+    if (startStatus != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[npu-compute] PMU consumer start failed: status=%d"
+            " code=%u",
+            startStatus, static_cast<unsigned>(startStatus));
         return kInitializeFailed;
     }
     std::weak_ptr<PmuDataConsumer> weakConsumer = consumer;
@@ -237,11 +258,19 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
             return activeConsumer == nullptr ? ACLPTI_ERROR_INVALID_STATE : activeConsumer->Submit(std::move(result));
         });
     if (registerStatus != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[npu-compute] profiling callback registration failed: status=%d"
+            " code=%u",
+            registerStatus, static_cast<unsigned>(registerStatus));
         consumer->ShutdownAndDrain();
         return kInitializeFailed;
     }
     const aclptiResult shutdownRegisterStatus = aclptiRegisterDataModuleShutdownCallback(&OnDataModuleShutdown, this);
     if (shutdownRegisterStatus != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[npu-compute] shutdown callback registration failed: status=%d"
+            " code=%u",
+            shutdownRegisterStatus, static_cast<unsigned>(shutdownRegisterStatus));
         consumer->ShutdownAndDrain();
         return kInitializeFailed;
     }
@@ -267,7 +296,10 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
         },
         &error);
     if (!hardwareInitialized) {
-        std::fprintf(stderr, "[libnpu-compute] initialize HardwareInfo collector failed: %s\n", error.c_str());
+        ASCTOOL_ERROR(
+            "[npu-compute] [libnpu-compute] initialize HardwareInfo collector failed: %s"
+            " code=%u",
+            error.c_str(), static_cast<unsigned>(1));
         pmu_consumer_->ShutdownAndDrain();
         pmu_consumer_.reset();
         return kInitializeFailed;
@@ -275,26 +307,35 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
 
     aclptiResult result = aclptiSubscribe(&subscriber_, &NpuComputeRuntime::HardwareInfoTriggerCallback, this, nullptr);
     if (result != ACLPTI_SUCCESS) {
-        std::fprintf(stderr, "[libnpu-compute] aclptiSubscribe failed: %d\n", result);
+        ASCTOOL_ERROR(
+            "[npu-compute] [libnpu-compute] aclptiSubscribe failed: %d"
+            " code=%u",
+            result, static_cast<unsigned>(static_cast<uint32_t>(result)));
         pmu_consumer_->ShutdownAndDrain();
         pmu_consumer_.reset();
         hardware_info_collector_.Stop();
         return result;
     }
     if (subscriber_ == nullptr) {
-        std::fprintf(stderr, "[libnpu-compute] aclptiSubscribe returned a null handle\n");
+        ASCTOOL_ERROR(
+            "[npu-compute] [libnpu-compute] aclptiSubscribe returned a null handle"
+            " code=%u",
+            static_cast<unsigned>(1));
         pmu_consumer_->ShutdownAndDrain();
         pmu_consumer_.reset();
         hardware_info_collector_.Stop();
         return kInitializeFailed;
     }
-    std::fprintf(stderr, "[libnpu-compute] subscriber initialized\n");
+    ASCTOOL_INFO("[libnpu-compute] subscriber initialized");
 
     enabled_hardware_callback_count_ = 0;
     for (aclptiCallbackId cbid : kHardwareInfoTriggerCallbackIds) {
         result = aclptiEnableCallback(true, subscriber_, ACLPTI_CB_DOMAIN_RUNTIME_API, cbid);
         if (result != ACLPTI_SUCCESS) {
-            std::fprintf(stderr, "[libnpu-compute] aclptiEnableCallback failed for cbid=%u: %d\n", cbid, result);
+            ASCTOOL_ERROR(
+                "[npu-compute] [libnpu-compute] aclptiEnableCallback failed for cbid=%u: %d"
+                " code=%u",
+                cbid, result, static_cast<unsigned>(static_cast<uint32_t>(result)));
             DisableHardwareCallbacks();
             pmu_consumer_->ShutdownAndDrain();
             pmu_consumer_.reset();
@@ -302,8 +343,8 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
             return result;
         }
         ++enabled_hardware_callback_count_;
-        if (DebugEnabled()) {
-            std::fprintf(stderr, "[libnpu-compute] enabled ACL PTI callback cbid=%u\n", cbid);
+        if (ASCTOOL_DEBUG_ENABLED()) {
+            ASCTOOL_DEBUG("[libnpu-compute] enabled ACL PTI callback cbid=%u", cbid);
         }
     }
 
@@ -311,14 +352,17 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
     rangeConfig->cacheControl = config.cacheControl;
     result = aclptiRangeProfilerSetConfig(rangeConfig);
     if (result != ACLPTI_SUCCESS) {
-        std::fprintf(stderr, "[libnpu-compute] configure range profiler failed: %d\n", result);
+        ASCTOOL_ERROR(
+            "[npu-compute] [libnpu-compute] aclptiRangeProfilerSetConfig failed: %d"
+            " code=%u",
+            result, static_cast<unsigned>(static_cast<uint32_t>(result)));
         DisableHardwareCallbacks();
         pmu_consumer_->ShutdownAndDrain();
         pmu_consumer_.reset();
         hardware_info_collector_.Stop();
         return result;
     }
-    std::fprintf(stderr, "[libnpu-compute] configured sections=%s\n", section_config_.JoinedSections().c_str());
+    ASCTOOL_INFO("[libnpu-compute] configured sections=%s", section_config_.JoinedSections().c_str());
     return ACLPTI_SUCCESS;
 }
 
@@ -337,9 +381,12 @@ void NpuComputeRuntime::DisableHardwareCallbacks() noexcept
         const aclptiCallbackId cbid = kHardwareInfoTriggerCallbackIds[enabled_hardware_callback_count_ - 1];
         const aclptiResult result = aclptiEnableCallback(false, subscriber_, ACLPTI_CB_DOMAIN_RUNTIME_API, cbid);
         if (result != ACLPTI_SUCCESS) {
-            std::fprintf(stderr, "[libnpu-compute] disable ACL PTI callback failed for cbid=%u: %d\n", cbid, result);
-        } else if (DebugEnabled()) {
-            std::fprintf(stderr, "[libnpu-compute] disabled ACL PTI callback cbid=%u\n", cbid);
+            ASCTOOL_ERROR(
+                "[npu-compute] [libnpu-compute] disable ACL PTI callback failed for cbid=%u: %d"
+                " code=%u",
+                cbid, result, static_cast<unsigned>(static_cast<uint32_t>(result)));
+        } else if (ASCTOOL_DEBUG_ENABLED()) {
+            ASCTOOL_DEBUG("[libnpu-compute] disabled ACL PTI callback cbid=%u", cbid);
         }
         --enabled_hardware_callback_count_;
     }
@@ -391,6 +438,10 @@ int NpuComputeRuntime::ShutdownAfterPtiDrain()
         if (error_count_ == 0)
             ++error_count_;
         status = ACLPTI_ERROR_TRACE_INCOMPLETE;
+    }
+    if (status != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[npu-compute] collection finalization failed: status=%d code=%u", status, static_cast<unsigned>(status));
     }
     const int result = status == ACLPTI_SUCCESS ? 0 : kInitializeFailed;
     return on_drained_ ? on_drained_(result) : result;
@@ -468,9 +519,8 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
         bool pipelineReplaySeen = false;
         for (const auto& [replayId, replay] : result->pipelineData) {
             pipelineReplaySeen = true;
-            npucompute::detail::DebugLog(
-                "npu-compute",
-                "BIU replay input: replay=%llu device=%d status=%d receivedBytes=%llu acceptedBytes=%llu "
+            ASCTOOL_DEBUG(
+                "[npu-compute] BIU replay input: replay=%llu device=%d status=%d receivedBytes=%llu acceptedBytes=%llu "
                 "rejectedChunks=%llu failedRecords=%llu channels=%zu",
                 static_cast<unsigned long long>(replayId), replay.deviceId, static_cast<int>(replay.status),
                 static_cast<unsigned long long>(replay.stats.receivedBytes),
@@ -487,16 +537,17 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
             if (parseStatus == ACLPTI_SUCCESS) {
                 const bool frequencyAvailable =
                     deviceApi.GetSyscntFrequencyHz(replay.deviceId, &biu_clock_config_.syscntFrequencyHz);
-                npucompute::detail::DebugLog(
-                    "npu-compute", "BIU oscillator frequency query: replay=%llu device=%d success=%d frequencyHz=%.3f",
+                ASCTOOL_DEBUG(
+                    "[npu-compute] "
+                    "BIU oscillator frequency query: replay=%llu device=%d success=%d frequencyHz=%.3f",
                     static_cast<unsigned long long>(replayId), replay.deviceId, frequencyAvailable ? 1 : 0,
                     biu_clock_config_.syscntFrequencyHz);
                 if (!frequencyAvailable) {
-                    std::fprintf(
-                        stderr,
-                        "[libnpu-compute] failed to query positive device oscillator frequency "
-                        "(halGetDeviceInfo INFO_TYPE_DEV_OSC_FREQUE) for device %d\n",
-                        replay.deviceId);
+                    ASCTOOL_ERROR(
+                        "[npu-compute] [libnpu-compute] failed to query positive device oscillator frequency "
+                        "(halGetDeviceInfo INFO_TYPE_DEV_OSC_FREQUE) for device %d"
+                        " code=%u",
+                        replay.deviceId, static_cast<unsigned>(1));
                     parseStatus = ACLPTI_ERROR_INVALID_PARAMETER;
                 }
             }
@@ -507,9 +558,8 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
                     [&writer](const BiuTraceEvent& event) { return writer.Append(event); }, &stats);
             }
             if (stats.incompleteIntervalCount != 0) {
-                std::fprintf(
-                    stderr,
-                    "[libnpu-compute] WARNING: BIU device=%d replay=%llu: skipped %llu incomplete intervals "
+                ASCTOOL_WARNING(
+                    "[libnpu-compute] BIU device=%d replay=%llu: skipped %llu incomplete intervals "
                     "(missing start or end); retained %llu pipe intervals and %llu DFX trace events. "
                     "Pipeline trace may be partial.\n",
                     replay.deviceId, static_cast<unsigned long long>(replayId),
@@ -529,10 +579,15 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
                     writer.EventCount(),
                 });
             } else {
+                ASCTOOL_ERROR(
+                    "[npu-compute] Pipeline processing failed: device=%d replay=%llu status=%d"
+                    " code=%u",
+                    replay.deviceId, static_cast<unsigned long long>(replayId), parseStatus,
+                    static_cast<unsigned>(parseStatus));
                 writer.Abort();
             }
-            npucompute::detail::DebugLog(
-                "npu-compute",
+            ASCTOOL_DEBUG(
+                "[npu-compute] "
                 "BIU replay processed: device=%d replay=%llu status=%d payloadBytes=%llu paddingBytes=%llu "
                 "intervals=%llu invalid=%llu incomplete=%llu",
                 replay.deviceId, static_cast<unsigned long long>(replayId), static_cast<int>(parseStatus),
@@ -684,9 +739,8 @@ aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResul
             row_count_ += sampling.rows.size();
         if (complete)
             ++pm_sampling_completed_;
-        detail::DebugLog(
-            "npu-compute", "PmSampling completed: rows=%llu unresolvedPCs=%llu",
-            static_cast<unsigned long long>(sampling.rows.size()),
+        ASCTOOL_DEBUG(
+            "PmSampling completed: rows=%llu unresolvedPCs=%llu", static_cast<unsigned long long>(sampling.rows.size()),
             static_cast<unsigned long long>(artifacts.unresolvedPcCount));
         return complete ? ACLPTI_SUCCESS : ACLPTI_ERROR_TRACE_INCOMPLETE;
     } catch (const std::exception& error) {
@@ -754,7 +808,10 @@ aclptiResult NpuComputeRuntime::PublishPipelineArtifacts()
         }
         return result;
     } catch (const std::exception& error) {
-        detail::DebugLog("npu-compute", "Pipeline artifact publication failed: %s", error.what());
+        ASCTOOL_ERROR(
+            "[npu-compute] Pipeline artifact publication failed: %s"
+            " code=%u",
+            error.what(), static_cast<unsigned>(1));
         return ACLPTI_ERROR_TRACE_WRITE;
     }
 }
@@ -763,7 +820,10 @@ void NpuComputeRuntime::HardwareInfoTriggerCallback(
     void* userData, aclptiCallbackDomain domain, aclptiCallbackId cbid, const aclptiCallbackData* callbackData) noexcept
 {
     if (userData == nullptr) {
-        std::fprintf(stderr, "[libnpu-compute] HardwareInfo trigger callback received null userData\n");
+        ASCTOOL_ERROR(
+            "[npu-compute] [libnpu-compute] HardwareInfo trigger callback received null userData"
+            " code=%u",
+            static_cast<unsigned>(1));
         return;
     }
     if (domain != ACLPTI_CB_DOMAIN_RUNTIME_API || callbackData == nullptr || callbackData->domain != domain ||
@@ -773,7 +833,10 @@ void NpuComputeRuntime::HardwareInfoTriggerCallback(
     try {
         static_cast<NpuComputeRuntime*>(userData)->kernel_metadata_collector_.OnCallback(cbid, *callbackData);
     } catch (...) {
-        std::fprintf(stderr, "[libnpu-compute] Kernel metadata collection failed\n");
+        ASCTOOL_ERROR(
+            "[npu-compute] [libnpu-compute] Kernel metadata collection failed"
+            " code=%u",
+            static_cast<unsigned>(1));
     }
     const bool isLaunch = cbid != ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunction &&
                           cbid != ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunctionByEntry &&
@@ -781,9 +844,9 @@ void NpuComputeRuntime::HardwareInfoTriggerCallback(
                           cbid != ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol;
     const bool accepted =
         isLaunch && callbackData->callbackSite == ACLPTI_API_EXIT && callbackData->retval == ACL_SUCCESS;
-    if (DebugEnabled()) {
-        std::fprintf(
-            stderr, "[libnpu-compute] runtime callback domain=%d cbid=%u site=%d retval=%d accepted=%d\n",
+    if (ASCTOOL_DEBUG_ENABLED()) {
+        ASCTOOL_DEBUG(
+            "[libnpu-compute] runtime callback domain=%d cbid=%u site=%d retval=%d accepted=%d",
             static_cast<int>(domain), cbid, static_cast<int>(callbackData->callbackSite),
             static_cast<int>(callbackData->retval), accepted ? 1 : 0);
     }
@@ -793,7 +856,10 @@ void NpuComputeRuntime::HardwareInfoTriggerCallback(
     try {
         static_cast<NpuComputeRuntime*>(userData)->hardware_info_collector_.CollectOnKernelLaunch();
     } catch (...) {
-        std::fprintf(stderr, "[libnpu-compute] HardwareInfo trigger callback failed\n");
+        ASCTOOL_ERROR(
+            "[npu-compute] [libnpu-compute] HardwareInfo trigger callback failed"
+            " code=%u",
+            static_cast<unsigned>(1));
     }
 }
 

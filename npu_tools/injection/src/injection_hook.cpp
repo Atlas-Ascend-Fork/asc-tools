@@ -10,7 +10,7 @@
 
 #include "injection/injection_hook.h"
 
-#include "debug_log.h"
+#include "injection_log.h"
 #include "profiling/prof_api.h"
 
 #include <mutex>
@@ -108,9 +108,10 @@ int32_t RegisterCallback(aclrtApiId id, void* callback)
 {
     const char* name = FindRuntimeApiName(id);
     if (!IsValidApiId(id)) {
-        injection::detail::DebugLog(
-            "tool_injection", "register callback failed: name=%s id=%d", name == nullptr ? "unknown" : name,
-            static_cast<int>(id));
+        ASCTOOL_ERROR(
+            "[tool_injection] register callback failed: name=%s id=%d"
+            " code=%u",
+            name == nullptr ? "unknown" : name, static_cast<int>(id), static_cast<unsigned>(1));
         return ACL_ERROR_INVALID_PARAM;
     }
     const size_t index = static_cast<size_t>(id);
@@ -118,8 +119,8 @@ int32_t RegisterCallback(aclrtApiId id, void* callback)
     const bool replaced = g_aclApiTable.callback[index] != nullptr;
     g_aclApiTable.callback[index] = callback;
     pthread_rwlock_unlock(&g_aclApiTable.lock);
-    injection::detail::DebugLog(
-        "tool_injection", "%s callback: name=%s id=%d callback=%p",
+    ASCTOOL_DEBUG(
+        "[tool_injection] %s callback: name=%s id=%d callback=%p",
         callback == nullptr ? "clear" : (replaced ? "replace" : "register"), name == nullptr ? "unknown" : name,
         static_cast<int>(id), callback);
     return ACL_SUCCESS;
@@ -143,30 +144,30 @@ Function GetDispatchTarget(aclrtApiId id)
         pthread_rwlock_unlock(&g_aclApiTable.lock);
     }
     const Function target = AddressToFunction<Function>(targetAddress);
-    injection::detail::DebugLog(
-        "tool_injection", "dispatch runtime api: name=%s id=%d source=%s target=%p", name == nullptr ? "unknown" : name,
+    ASCTOOL_DEBUG(
+        "[tool_injection] dispatch runtime api: name=%s id=%d source=%s target=%p", name == nullptr ? "unknown" : name,
         static_cast<int>(id), source, FunctionToAddress(target));
     return target;
 }
 
 void LogMissingCallback(const char* name, aclrtApiId id)
 {
-    injection::detail::DebugLog(
-        "tool_injection", "hook call failed: callback and origin are unavailable name=%s id=%d",
-        name == nullptr ? "unknown" : name, static_cast<int>(id));
+    ASCTOOL_ERROR(
+        "[tool_injection] hook call failed: callback and origin are unavailable name=%s id=%d"
+        " code=%u",
+        name == nullptr ? "unknown" : name, static_cast<int>(id), static_cast<unsigned>(1));
 }
 
 void LogHookResult(const char* name, aclrtApiId id, aclError result)
 {
-    injection::detail::DebugLog(
-        "tool_injection", "hook return: name=%s id=%d result=%d", name == nullptr ? "unknown" : name,
+    ASCTOOL_DEBUG(
+        "[tool_injection] hook return: name=%s id=%d result=%d", name == nullptr ? "unknown" : name,
         static_cast<int>(id), static_cast<int>(result));
 }
 
 void LogHookPointerResult(const char* name, aclrtApiId id, const void* result)
 {
-    injection::detail::DebugLog(
-        "tool_injection", "hook return: name=%s id=%d result=%p", name, static_cast<int>(id), result);
+    ASCTOOL_DEBUG("[tool_injection] hook return: name=%s id=%d result=%p", name, static_cast<int>(id), result);
 }
 
 } // namespace
@@ -620,22 +621,31 @@ aclApiTable g_aclApiTable = {
 extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolUploaderInit(MsprofRawDataCallback uploader)
 {
     if (uploader == nullptr) {
-        injection::detail::DebugLog("tool_injection", "uploader registration failed: null uploader");
+        ASCTOOL_ERROR(
+            "[tool_injection] uploader registration failed: null uploader"
+            " code=%u",
+            static_cast<unsigned>(1));
         return ACL_ERROR_INVALID_PARAM;
     }
     const int32_t result = MsprofRegisterDataCallback(kMsprofDataCallbackType, FunctionToAddress(uploader));
-    injection::detail::DebugLog(
-        "tool_injection", "uploader registration: type=%u uploader=%p result=%d", kMsprofDataCallbackType,
+    ASCTOOL_DEBUG(
+        "[tool_injection] uploader registration: type=%u uploader=%p result=%d", kMsprofDataCallbackType,
         FunctionToAddress(uploader), result);
+    if (result != 0) {
+        ASCTOOL_ERROR(
+            "[tool_injection] uploader registration failed: result=%d"
+            " code=%u",
+            result, static_cast<unsigned>(static_cast<uint32_t>(result)));
+    }
     return result;
 }
 
 extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
 {
     std::lock_guard<std::mutex> initLock(g_initMutex);
-    injection::detail::DebugLog("tool_injection", "hook initialization started");
+    ASCTOOL_DEBUG("[tool_injection] hook initialization started");
     if (g_hookInstalled) {
-        injection::detail::DebugLog("tool_injection", "hook initialization skipped: already installed");
+        ASCTOOL_DEBUG("[tool_injection] hook initialization skipped: already installed");
         return ACL_SUCCESS;
     }
 
@@ -654,9 +664,11 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
         const aclrtApiFunc hook = AddressToFunction<aclrtApiFunc>(g_aclApiTable.hook[index]);
         if (name == nullptr || hook == nullptr) {
             rollback();
-            injection::detail::DebugLog(
-                "tool_injection", "hook initialization failed: invalid entry id=%d name=%s hook=%p",
-                static_cast<int>(id), name == nullptr ? "unknown" : name, FunctionToAddress(hook));
+            ASCTOOL_ERROR(
+                "[tool_injection] hook initialization failed: invalid entry id=%d name=%s hook=%p"
+                " code=%u",
+                static_cast<int>(id), name == nullptr ? "unknown" : name, FunctionToAddress(hook),
+                static_cast<unsigned>(1));
             return ACL_ERROR_INTERNAL_ERROR;
         }
         aclrtApiFunc origin = nullptr;
@@ -666,46 +678,51 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
             (ret != ACL_SUCCESS || origin == nullptr || current == nullptr)) {
             continue;
         }
-        injection::detail::DebugLog(
-            "tool_injection", "get runtime entry: name=%s id=%d result=%d origin=%p current=%p", name,
+        ASCTOOL_DEBUG(
+            "[tool_injection] get runtime entry: name=%s id=%d result=%d origin=%p current=%p", name,
             static_cast<int>(id), static_cast<int>(ret), FunctionToAddress(origin), FunctionToAddress(current));
         if (ret != ACL_SUCCESS) {
             rollback();
-            injection::detail::DebugLog(
-                "tool_injection", "hook initialization failed: get runtime entry name=%s result=%d", name,
-                static_cast<int>(ret));
+            ASCTOOL_ERROR(
+                "[tool_injection] hook initialization failed: get runtime entry name=%s result=%d"
+                " code=%u",
+                name, static_cast<int>(ret), static_cast<unsigned>(static_cast<uint32_t>(ret)));
             return ret;
         }
         if (origin == nullptr || current == nullptr) {
             rollback();
-            injection::detail::DebugLog(
-                "tool_injection", "hook initialization failed: empty runtime entry name=%s", name);
+            ASCTOOL_ERROR(
+                "[tool_injection] hook initialization failed: empty runtime entry name=%s"
+                " code=%u",
+                name, static_cast<unsigned>(1));
             return ACL_ERROR_UNINITIALIZE;
         }
         if (!SaveOriginalRuntimeEntry(id, FunctionToAddress(origin))) {
             rollback();
-            injection::detail::DebugLog(
-                "tool_injection", "hook initialization failed: save origin entry name=%s", name);
+            ASCTOOL_ERROR(
+                "[tool_injection] hook initialization failed: save origin entry name=%s"
+                " code=%u",
+                name, static_cast<unsigned>(1));
             return ACL_ERROR_INTERNAL_ERROR;
         }
 
         ret = aclrtApiInjectionSetFunc(name, hook);
-        injection::detail::DebugLog(
-            "tool_injection", "set runtime hook: name=%s id=%d hook=%p result=%d", name, static_cast<int>(id),
+        ASCTOOL_DEBUG(
+            "[tool_injection] set runtime hook: name=%s id=%d hook=%p result=%d", name, static_cast<int>(id),
             FunctionToAddress(hook), static_cast<int>(ret));
         if (ret != ACL_SUCCESS) {
             rollback();
-            injection::detail::DebugLog(
-                "tool_injection", "hook initialization failed: set runtime hook name=%s result=%d", name,
-                static_cast<int>(ret));
+            ASCTOOL_ERROR(
+                "[tool_injection] hook initialization failed: set runtime hook name=%s result=%d"
+                " code=%u",
+                name, static_cast<int>(ret), static_cast<unsigned>(static_cast<uint32_t>(ret)));
             return ret;
         }
         previous[index] = current;
     }
 
     g_hookInstalled = true;
-    injection::detail::DebugLog(
-        "tool_injection", "hook initialization completed: installed=%d", static_cast<int>(ACL_RT_API_MAX));
+    ASCTOOL_DEBUG("[tool_injection] hook initialization completed: installed=%d", static_cast<int>(ACL_RT_API_MAX));
     return ACL_SUCCESS;
 }
 
@@ -717,22 +734,26 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolClearCallback(aclrtApiId id)
 extern "C" ACL_TOOL_INJECTION_EXPORT void* acltoolGetOriginalRuntimeApi(aclrtApiId id)
 {
     if (!IsValidApiId(id)) {
-        injection::detail::DebugLog(
-            "tool_injection", "get original runtime api failed: invalid id=%d", static_cast<int>(id));
+        ASCTOOL_ERROR(
+            "[tool_injection] get original runtime api failed: invalid id=%d"
+            " code=%u",
+            static_cast<int>(id), static_cast<unsigned>(1));
         return nullptr;
     }
 
     const char* name = FindRuntimeApiName(id);
     if (name == nullptr) {
-        injection::detail::DebugLog(
-            "tool_injection", "get original runtime api failed: unknown id=%d", static_cast<int>(id));
+        ASCTOOL_ERROR(
+            "[tool_injection] get original runtime api failed: unknown id=%d"
+            " code=%u",
+            static_cast<int>(id), static_cast<unsigned>(1));
         return nullptr;
     }
 
     aclrtApiFunc origin = nullptr;
     const aclError result = aclrtApiInjectionGetFunc(name, &origin, nullptr);
-    injection::detail::DebugLog(
-        "tool_injection", "get original runtime api: name=%s id=%d result=%d origin=%p", name, static_cast<int>(id),
+    ASCTOOL_DEBUG(
+        "[tool_injection] get original runtime api: name=%s id=%d result=%d origin=%p", name, static_cast<int>(id),
         static_cast<int>(result), FunctionToAddress(origin));
     if (result != ACL_SUCCESS) {
         return nullptr;

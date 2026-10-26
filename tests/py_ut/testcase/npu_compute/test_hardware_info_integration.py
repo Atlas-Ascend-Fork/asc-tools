@@ -16,6 +16,12 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def plog_stdout_environment(monkeypatch):
+    monkeypatch.setenv("ASCEND_SLOG_PRINT_TO_STDOUT", "1")
+    monkeypatch.setenv("ASCEND_GLOBAL_LOG_LEVEL", "0")
+
+
 BIN_DIR = Path(os.environ["NPU_COMPUTE_TEST_BIN_DIR"])
 CALLBACK_STUB = Path(os.environ["NPU_COMPUTE_CALLBACK_STUB"])
 HARDWARE_API_STUB = Path(os.environ["NPU_COMPUTE_HARDWARE_API_STUB"])
@@ -252,6 +258,8 @@ def test_cli_real_aclpti_callback_chain(tmp_path, sections):
         timeout=60,
         check=False,
     )
+
+    result.stderr = result.stdout + result.stderr
 
     assert result.returncode == 0, result.stderr
     assert "[aclpti] subscribe result=0" in result.stderr

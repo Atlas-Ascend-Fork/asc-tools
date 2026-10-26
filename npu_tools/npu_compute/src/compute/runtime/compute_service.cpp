@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "runtime/compute_service.h"
+#include "npu_compute_log.h"
 #include "runtime/npu_compute_runtime.h"
 #include <algorithm>
 #include <cstdio>
@@ -78,8 +79,9 @@ int ComputeService::Initialize() noexcept
         } else {
             server.Fail(error.what());
         }
-        std::fprintf(stderr, "[npu-compute] UDS initialization failed: %s\n", error.what());
+        ASCTOOL_ERROR("[npu-compute] UDS initialization failed: %s", error.what());
     } catch (...) {
+        ASCTOOL_ERROR("[npu-compute] unexpected initialization failure");
         server.Fail("unexpected initialization failure");
     }
     finalized_ = true;

@@ -45,7 +45,7 @@ endif()
 target_link_libraries(npu_compute PRIVATE c_sec_static)
 target_link_libraries(npu_compute
   PUBLIC ${NPU_COMPUTE_LIBRARY_HEADERS}
-  PRIVATE ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc npu_compute_sqlite_runtime
+  PRIVATE npu_compute_plog ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc npu_compute_sqlite_runtime
 )
 if(TARGET acl_pti)
   target_link_libraries(npu_compute PRIVATE acl_pti)

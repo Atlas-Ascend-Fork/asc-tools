@@ -7,11 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "npu_compute_log.h"
 #include "aclpti/aclpti_callback.h"
 
 #include "acl_pti/initialization.h"
 #include "dispatcher.h"
-#include "common/debug_log.h"
 
 extern "C" ACLPTI_EXPORT aclptiResult aclptiSubscribe(
     aclptiSubscribeHandle* subscriber, aclptiCallbackFunc callback, void* userData, aclptiSubscribeParams* pParams)
@@ -28,8 +28,13 @@ extern "C" ACLPTI_EXPORT aclptiResult aclptiSubscribe(
         dispatcher.Configure(callback, userData);
         *subscriber = dispatcher.SubscriberHandle();
     }
-    npucompute::detail::DebugLog(
-        "aclpti", "subscribe result=%d handle=%p", static_cast<int>(result), static_cast<void*>(*subscriber));
+    ASCTOOL_DEBUG("[aclpti] subscribe result=%d handle=%p", static_cast<int>(result), static_cast<void*>(*subscriber));
+    if (result != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[aclpti] callback operation failed: result=%d"
+            " code=%u",
+            static_cast<int>(result), static_cast<unsigned>(static_cast<uint32_t>(result)));
+    }
     return result;
 }
 
@@ -38,17 +43,29 @@ aclptiEnableCallback(bool enable, aclptiSubscribeHandle subscriber, aclptiCallba
 {
     auto& dispatcher = aclpti::callback::GetDispatcher();
     const aclptiResult result = dispatcher.Enable(enable, subscriber, domain, cbid);
-    npucompute::detail::DebugLog(
-        "aclpti", "callback enable=%d domain=%d cbid=%u result=%d", static_cast<int>(enable), static_cast<int>(domain),
+    ASCTOOL_DEBUG(
+        "[aclpti] callback enable=%d domain=%d cbid=%u result=%d", static_cast<int>(enable), static_cast<int>(domain),
         static_cast<unsigned int>(cbid), static_cast<int>(result));
+    if (result != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[aclpti] callback operation failed: result=%d"
+            " code=%u",
+            static_cast<int>(result), static_cast<unsigned>(static_cast<uint32_t>(result)));
+    }
     return result;
 }
 
 extern "C" ACLPTI_EXPORT aclptiResult aclptiSupportedDomains(std::size_t* domainCount, aclptiCallbackDomain* domains)
 {
     const aclptiResult supportedResult = aclpti::callback::GetDispatcher().SupportedDomains(domainCount, domains);
-    npucompute::detail::DebugLog(
-        "aclpti", "supported domains result=%d count=%zu", static_cast<int>(supportedResult),
+    ASCTOOL_DEBUG(
+        "[aclpti] supported domains result=%d count=%zu", static_cast<int>(supportedResult),
         domainCount == nullptr ? 0U : *domainCount);
+    if (supportedResult != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[aclpti] supported domains failed: result=%d"
+            " code=%u",
+            static_cast<int>(supportedResult), static_cast<unsigned>(static_cast<uint32_t>(supportedResult)));
+    }
     return supportedResult;
 }
