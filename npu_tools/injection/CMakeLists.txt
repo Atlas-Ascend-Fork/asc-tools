@@ -144,13 +144,11 @@ find_package(Threads REQUIRED)
 add_library(acl_tool_injection SHARED src/injection_hook.cpp)
 target_compile_definitions(acl_tool_injection PRIVATE ACL_TOOL_INJECTION_BUILD=1)
 target_include_directories(acl_tool_injection PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-add_library(injection_plog_headers INTERFACE)
-target_include_directories(injection_plog_headers INTERFACE
+add_library(injection_plog INTERFACE)
+target_include_directories(injection_plog INTERFACE
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
 )
-target_link_libraries(injection_plog_headers INTERFACE unified_dlog_headers)
-add_library(injection_plog INTERFACE)
-target_link_libraries(injection_plog INTERFACE injection_plog_headers unified_dlog)
+target_link_libraries(injection_plog INTERFACE unified_dlog)
 
 target_link_libraries(acl_tool_injection PUBLIC injection_headers PRIVATE
   injection_plog Threads::Threads injection_runtime_backend injection_prof_api_backend)

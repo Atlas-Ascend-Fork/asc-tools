@@ -89,7 +89,7 @@ add_executable(npu_compute_binary_instrumenter_test binary_instrumenter_test.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/pm_sampling_instruction_map.cpp)
 target_compile_definitions(npu_compute_binary_instrumenter_test PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_include_directories(npu_compute_binary_instrumenter_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
-target_link_libraries(npu_compute_binary_instrumenter_test PRIVATE npu_compute_plog_headers plog_test_library Boost::filesystem Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(npu_compute_binary_instrumenter_test PRIVATE npu_compute_plog_test_headers plog_test_library Boost::filesystem Threads::Threads ${CMAKE_DL_LIBS})
 add_executable(npu_compute_binary_instrumenter_tool_stub binary_instrumenter_tool_stub.cpp)
 target_link_libraries(npu_compute_binary_instrumenter_tool_stub PRIVATE Boost::filesystem npu_compute_test_headers)
 target_compile_definitions(npu_compute_binary_instrumenter_test PRIVATE
@@ -273,7 +273,7 @@ add_executable(npu_compute_rep_fixture_app
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/uds_server.cpp
 )
 target_include_directories(npu_compute_rep_fixture_app PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src/compute ${INJECTION_SOURCE_DIR}/include)
-target_link_libraries(npu_compute_rep_fixture_app PRIVATE npu_compute_ipc npu_compute_plog_headers plog_test_library Threads::Threads npu_compute_sqlite_runtime)
+target_link_libraries(npu_compute_rep_fixture_app PRIVATE npu_compute_ipc npu_compute_plog_test_headers plog_test_library Threads::Threads npu_compute_sqlite_runtime)
 add_dependencies(npu_compute_rep_fixture_app npu_compute_cli_test_bin npu_compute_test)
 npu_compute_set_test_output(npu_compute_rep_fixture_app)
 target_compile_definitions(npu_compute_launcher_test PRIVATE
