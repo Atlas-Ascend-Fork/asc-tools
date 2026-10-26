@@ -25,8 +25,9 @@ void Check(bool value)
 npucompute::cli::CliConfig Parse(std::vector<std::string> args)
 {
     std::vector<char*> argv;
-    for (auto& arg : args)
+    for (auto& arg : args) {
         argv.push_back(arg.data());
+    }
     npucompute::cli::CliConfig config;
     std::vector<std::string> errors;
     Check(npucompute::cli::ParseCli(argv.size(), argv.data(), &config, &errors));
@@ -73,8 +74,9 @@ int main()
         Check(params->collectPcSampling);
         const bool memory = sections.front() == "Memory";
         Check(params->numSections == (memory ? 1 : 0));
-        if (memory)
+        if (memory) {
             Check(std::string(params->sections[0]) == "Memory");
+        }
         Check(runtime.JoinedSections().find("PmSampling") != std::string::npos);
         Check(params->collectPipeline == (std::find(sections.begin(), sections.end(), "Pipeline") != sections.end()));
     }

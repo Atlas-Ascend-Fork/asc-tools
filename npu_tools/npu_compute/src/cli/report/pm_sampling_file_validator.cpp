@@ -34,13 +34,15 @@ constexpr int kDecimalBase = 10;
 constexpr int kAddressColumn = sqlite::kFirstResultColumn;
 void Require(bool condition, const char* message)
 {
-    if (!condition)
+    if (!condition) {
         throw std::runtime_error(message);
+    }
 }
 bool ParsePc(const std::string& text, std::uint64_t& pc)
 {
-    if (text.size() <= kHexPrefix.size() || text.compare(0, kHexPrefix.size(), kHexPrefix) != 0)
+    if (text.size() <= kHexPrefix.size() || text.compare(0, kHexPrefix.size(), kHexPrefix) != 0) {
         return false;
+    }
     pc = 0;
     for (std::size_t index = kHexPrefix.size(); index < text.size(); ++index) {
         const auto c = text[index];
@@ -49,14 +51,18 @@ bool ParsePc(const std::string& text, std::uint64_t& pc)
                            c >= 'A' && c <= 'F' ? c - 'A' + kDecimalBase :
                                                   -1;
         if (digit < 0 ||
-            pc > (std::numeric_limits<std::uint64_t>::max() - static_cast<std::uint64_t>(digit)) / kHexBase)
+            pc > (std::numeric_limits<std::uint64_t>::max() - static_cast<std::uint64_t>(digit)) / kHexBase) {
             return false;
+        }
         pc = pc * kHexBase + static_cast<std::uint64_t>(digit);
     }
     return true;
 }
-std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path)
+std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path, bool* hasTable)
 {
+    if (hasTable != nullptr) {
+        *hasTable = false;
+    }
     std::ifstream input(path.string(), std::ios::binary);
     std::array<char, sizeof(sqlite::kDatabaseHeader)> magic{};
     input.read(magic.data(), magic.size());
@@ -79,8 +85,12 @@ std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path)
     Require(inspected == SQLITE_OK, "cannot inspect result database");
     const auto tableStatus = sqlite::GetApi().step(table.get());
     Require(tableStatus == SQLITE_ROW || tableStatus == SQLITE_DONE, "cannot read database tables");
-    if (tableStatus == SQLITE_DONE)
+    if (tableStatus == SQLITE_DONE) {
         return {};
+    }
+    if (hasTable != nullptr) {
+        *hasTable = true;
+    }
     sqlite3_stmt* statement = nullptr;
     const auto prepared = sqlite::GetApi().prepareV2(
         db.get(), "SELECT address FROM PcSampling", sqlite::kNullTerminatedSql, &statement, nullptr);
@@ -98,7 +108,7 @@ std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path)
             value >= 0 && pcs.insert(static_cast<std::uint64_t>(value)).second,
             "invalid or duplicate PmSampling Address");
     }
-    Require(status == SQLITE_DONE && !pcs.empty(), "unreadable or empty PmSampling addresses");
+    Require(status == SQLITE_DONE, "unreadable PmSampling addresses");
     return pcs;
 }
 void ValidateDisassembly(const boost::filesystem::path& path)
@@ -109,8 +119,9 @@ void ValidateDisassembly(const boost::filesystem::path& path)
     const std::regex instruction("^[ \\t]*[0-9a-fA-F]+:[ \\t]+[0-9a-fA-F]{2}");
     std::string line;
     while (std::getline(input, line)) {
-        if (std::regex_search(line, instruction))
+        if (std::regex_search(line, instruction)) {
             return;
+        }
     }
     throw std::runtime_error("PmSampling disassembly contains no instruction");
 }
@@ -133,8 +144,9 @@ void ValidateStack(const boost::filesystem::path& path)
         std::uint64_t pc = 0;
         Require(
             ParsePc(text, pc) && addresses.insert(pc).second, "unknown or duplicate Address in PmSampling PC stack");
-        for (const auto& symbol : symbols->as_array())
+        for (const auto& symbol : symbols->as_array()) {
             Require(symbol.is_object(), "invalid PmSampling inline frame");
+        }
     }
     Require(!addresses.empty(), "PmSampling PC stack contains no addresses");
 }
@@ -142,17 +154,19 @@ void ValidateStack(const boost::filesystem::path& path)
 
 bool ValidatePmSamplingFile(const boost::filesystem::path& path, std::string* error)
 {
-    if (error)
+    if (error) {
         error->clear();
+    }
     const auto name = path.filename().string();
-    if (name != "summary.db" && name != "objdump.txt" && name != "symbolizer.json")
+    if (name != "summary.db" && name != "objdump.txt" && name != "symbolizer.json") {
         return true;
+    }
     try {
         Require(
             boost::filesystem::is_regular_file(boost::filesystem::symlink_status(path)), "not a regular result file");
         Require(boost::filesystem::file_size(path) > 0, "empty result file");
         if (name == "summary.db") {
-            DatabasePcs(path);
+            DatabasePcs(path, nullptr);
         } else if (name == "objdump.txt") {
             ValidateDisassembly(path);
         } else {
@@ -160,9 +174,36 @@ bool ValidatePmSamplingFile(const boost::filesystem::path& path, std::string* er
         }
         return true;
     } catch (const std::exception& failure) {
-        if (error)
+        if (error) {
             *error = "PmSampling file validation failed: " + path.string() + ": " + failure.what() +
                      "; excluded this file; other valid results are retained";
+        }
+        return false;
+    }
+}
+
+bool IsEmptyPmSamplingDatabase(const boost::filesystem::path& path, bool* empty, std::string* error)
+{
+    if (empty != nullptr) {
+        *empty = false;
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+    try {
+        Require(
+            boost::filesystem::is_regular_file(boost::filesystem::symlink_status(path)), "not a regular result file");
+        Require(boost::filesystem::file_size(path) > 0, "empty result file");
+        bool hasTable = false;
+        const auto pcs = DatabasePcs(path, &hasTable);
+        if (empty != nullptr) {
+            *empty = hasTable && pcs.empty();
+        }
+        return true;
+    } catch (const std::exception& failure) {
+        if (error != nullptr) {
+            *error = "PmSampling database inspection failed: " + path.string() + ": " + failure.what();
+        }
         return false;
     }
 }

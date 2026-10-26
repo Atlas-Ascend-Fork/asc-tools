@@ -28,15 +28,17 @@ struct Database {
     ~Database()
     {
         if (handle) {
-            if (transaction)
+            if (transaction) {
                 sqlite::GetApi().exec(handle, "ROLLBACK");
+            }
             sqlite::GetApi().closeV2(handle);
         }
     }
     void Check(int status)
     {
-        if (status != SQLITE_OK)
+        if (status != SQLITE_OK) {
             throw std::runtime_error(sqlite::GetApi().errmsg(handle));
+        }
     }
     void Exec(const char* sql) { Check(sqlite::GetApi().exec(handle, sql)); }
 };
@@ -52,8 +54,9 @@ Statement Prepare(Database& db, const std::string& sql)
 }
 void Require(bool condition, const char* message)
 {
-    if (!condition)
+    if (!condition) {
         throw std::runtime_error(message);
+    }
 }
 std::string Text(sqlite3_stmt* statement, int column)
 {
@@ -115,10 +118,11 @@ bool WritePmSamplingSqlite(const std::string& path, const PmSamplingResult& resu
             for (const auto& row : result.rows) {
                 db.Check(sqlite::GetApi().bindInt64(
                     statement.get(), kAddressParameter, static_cast<sqlite3_int64>(row.first)));
-                for (std::size_t state = 0; state < row.second.size(); ++state)
+                for (std::size_t state = 0; state < row.second.size(); ++state) {
                     db.Check(sqlite::GetApi().bindInt64(
                         statement.get(), static_cast<int>(state) + kFirstStateParameter,
                         static_cast<sqlite3_int64>(row.second[state])));
+                }
                 Require(sqlite::GetApi().step(statement.get()) == SQLITE_DONE, sqlite::GetApi().errmsg(db.handle));
                 db.Check(sqlite::GetApi().reset(statement.get()));
                 db.Check(sqlite::GetApi().clearBindings(statement.get()));

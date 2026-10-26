@@ -54,10 +54,12 @@ std::vector<uint8_t> Record(uint64_t pc, const PmSamplingStateCounts& states = {
 {
     const auto encoded = ((0x100000 + pc) & kPmSamplingPcMask) / kPmSamplingAddressScale;
     std::vector<uint8_t> bytes(kPmSamplingRecordBytes);
-    for (unsigned i = 0; i < kPmSamplingEncodedPcBytes; ++i)
+    for (unsigned i = 0; i < kPmSamplingEncodedPcBytes; ++i) {
         bytes[i] = (encoded >> (kPmSamplingByteBits * i)) & 0xff;
-    for (unsigned i = 0; i < states.size(); ++i)
+    }
+    for (unsigned i = 0; i < states.size(); ++i) {
         bytes[kPmSamplingStateOffset + i] = states[i];
+    }
     bytes[kPmSamplingActiveOffset] = active;
     return bytes;
 }
@@ -105,23 +107,30 @@ int Failures()
 {
     for (int scenario = 0; scenario < 8; ++scenario) {
         auto context = Context();
-        if (scenario == 6)
+        if (scenario == 6) {
             context->aicRuntimeEntry = context->aivRuntimeEntry;
+        }
         PmSamplingDecoder decoder(7, context);
         CHECK(decoder.Consume(Chunk(Record(0x100))));
         auto bad = Chunk(Record(0x108));
-        if (scenario == 0)
+        if (scenario == 0) {
             bad.offset = 1;
-        if (scenario == 1)
+        }
+        if (scenario == 1) {
             bad.replayId = 8;
-        if (scenario == 2)
+        }
+        if (scenario == 2) {
             bad.deviceId = 1;
-        if (scenario == 3)
+        }
+        if (scenario == 3) {
             bad.bytes.resize(15);
-        if (scenario == 4)
+        }
+        if (scenario == 4) {
             bad.bytes = Record(0x120);
-        if (scenario == 7)
+        }
+        if (scenario == 7) {
             bad.isLastChunk = false;
+        }
         if (scenario == 5 || scenario == 6) {
             CHECK(decoder.Consume(bad));
             PmSamplingResult result;
@@ -183,12 +192,15 @@ int AddressesAndLimits()
     for (int scenario = 0; scenario < 3; ++scenario) {
         PmSamplingDecoder badIdentity(7, Context());
         auto chunk = Chunk(Record(0x100));
-        if (scenario == 0)
+        if (scenario == 0) {
             chunk.deviceId = -1;
-        if (scenario == 1)
+        }
+        if (scenario == 1) {
             chunk.chunkModule = -1;
-        if (scenario == 2)
+        }
+        if (scenario == 2) {
             chunk.bytes.clear();
+        }
         CHECK(!badIdentity.Consume(chunk));
         CHECK(!badIdentity.Finish(result));
     }
@@ -263,8 +275,9 @@ int RealGatherCallback()
                             "8b20fc0003ff000000000000000000008b20fc0005ff00000000000200000000"
                             "8b20fc0004ff000000000000000000008b20fc0005ff00000000000000000000";
     std::vector<uint8_t> bytes;
-    for (size_t i = 0; i < hex.size(); i += 2)
+    for (size_t i = 0; i < hex.size(); i += 2) {
         bytes.push_back(std::stoul(hex.substr(i, 2), nullptr, 16));
+    }
     auto context = Context();
     context->elfEntry = 0xff40;
     context->aivRuntimeEntry = 0x12004fe0ff40;
@@ -272,8 +285,9 @@ int RealGatherCallback()
         std::make_shared<const std::map<uint64_t, uint64_t>>(std::map<uint64_t, uint64_t>{{0x10458, 0x268}});
     context->excludedInstructions = std::make_shared<const std::set<uint64_t>>();
     PmSamplingDecoder decoder(7, context);
-    for (size_t begin = 0; begin < bytes.size(); begin += 128)
+    for (size_t begin = 0; begin < bytes.size(); begin += 128) {
         CHECK(decoder.Consume(Chunk({bytes.begin() + begin, bytes.begin() + begin + 128})));
+    }
     PmSamplingResult result;
     CHECK(decoder.Finish(result));
     CHECK(result.decodedRecords == 64 && result.rows.size() == 1);

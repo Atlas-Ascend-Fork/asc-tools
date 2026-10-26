@@ -23,8 +23,9 @@ namespace sqlite = npucompute::sqlite;
 namespace {
 void Require(bool ok, const char* message)
 {
-    if (!ok)
+    if (!ok) {
         throw std::runtime_error(message);
+    }
 }
 void CheckDatabase()
 {
@@ -62,11 +63,13 @@ void CheckDatabase()
 
 int main(int argc, char** argv)
 {
-    if (argc != 2)
+    if (argc != 2) {
         return 2;
+    }
     const std::string mode = argv[1];
-    if (mode == "lazy")
+    if (mode == "lazy") {
         return 0;
+    }
     try {
         if (mode == "unavailable") {
             std::string first;
@@ -75,10 +78,11 @@ int main(int argc, char** argv)
                     sqlite::GetApi();
                     return 3;
                 } catch (const std::exception& error) {
-                    if (attempt == 0)
+                    if (attempt == 0) {
                         first = error.what();
-                    else
+                    } else {
                         Require(first == error.what(), "failed initialization was not cached");
+                    }
                 }
                 unsetenv("NPU_COMPUTE_SQLITE_STUB_MODE");
             }
@@ -88,7 +92,7 @@ int main(int argc, char** argv)
         if (mode == "concurrent") {
             std::atomic<bool> valid{true};
             std::vector<std::thread> threads;
-            for (int index = 0; index < 16; ++index)
+            for (int index = 0; index < 16; ++index) {
                 threads.emplace_back([&] {
                     try {
                         CheckDatabase();
@@ -96,8 +100,10 @@ int main(int argc, char** argv)
                         valid = false;
                     }
                 });
-            for (auto& thread : threads)
+            }
+            for (auto& thread : threads) {
                 thread.join();
+            }
             Require(valid, "concurrent first use failed");
         } else {
             CheckDatabase();

@@ -43,18 +43,21 @@ std::string SamplingDatabase()
         ~TemporaryFile() { ::unlink(path); }
     } temporary;
     const int descriptor = ::mkstemp(temporary.path);
-    if (descriptor < 0)
+    if (descriptor < 0) {
         throw std::runtime_error("cannot create sampling fixture");
+    }
     ::close(descriptor);
     npucompute::PmSamplingResult sampling;
     sampling.rows[0x268] = {0, 215, 16320, 0, 0, 0, 0, 0};
     std::string error;
-    if (!npucompute::WritePmSamplingSqlite(temporary.path, sampling, error))
+    if (!npucompute::WritePmSamplingSqlite(temporary.path, sampling, error)) {
         throw std::runtime_error(error);
+    }
     std::ifstream input(temporary.path, std::ios::binary);
     std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    if (input.bad() || bytes.empty())
+    if (input.bad() || bytes.empty()) {
         throw std::runtime_error("cannot read sampling fixture");
+    }
     return bytes;
 }
 
@@ -141,8 +144,9 @@ int main(int argc, char** argv)
                 ipc::EncodeArtifactBegin({2, ipc::DataKind::PmuCsv, "Memory.csv", ipc::ArtifactType::Csv}), deadline);
             channel.Send(ipc::Type::Pmu, ipc::EncodeArtifactChunk({2, 1, {'x'}}), deadline);
             const auto response = channel.Receive(deadline);
-            if (response.type != ipc::Type::Error)
+            if (response.type != ipc::Type::Error) {
                 throw std::runtime_error("expected protocol rejection");
+            }
             std::fprintf(stderr, "[rep-fixture] %s\n", ipc::DecodeError(response.payload).message.c_str());
             return 0;
         }
@@ -176,20 +180,23 @@ int main(int argc, char** argv)
                         continue;
                     }
                     if (mode != "pm-sampling-missing-all") {
-                        if (mode != "pm-sampling-missing-db")
+                        if (mode != "pm-sampling-missing-db") {
                             publish(
                                 "summary.db",
                                 mode == "pm-sampling-invalid-db" ? "broken database" : SamplingDatabase());
-                        if (mode != "pm-sampling-missing-objdump")
+                        }
+                        if (mode != "pm-sampling-missing-objdump") {
                             publish(
                                 "objdump.txt", mode == "pm-sampling-invalid-objdump" ?
                                                    "no instructions" :
                                                    "Disassembly of section .text:\n268: 00 00 STG\n");
-                        if (mode != "pm-sampling-missing-symbolizer")
+                        }
+                        if (mode != "pm-sampling-missing-symbolizer") {
                             publish(
                                 "symbolizer.json", mode == "pm-sampling-invalid-symbolizer" ?
                                                        "broken JSON" :
                                                        "[{\"Address\":\"0x0000000000000268\",\"Symbol\":[]}]\n");
+                        }
                     }
                     continue;
                 }
@@ -210,8 +217,9 @@ int main(int argc, char** argv)
                     section == "L2Cache"                               ? kL2CacheCsv :
                                                                          kMemoryCsv);
             }
-            if (mode.rfind("pm-sampling", 0) != 0 || summarySelected)
+            if (mode.rfind("pm-sampling", 0) != 0 || summarySelected) {
                 publish("summary.jsonl", kSummary);
+            }
         }
         npucompute::ipc::Result result;
         result.sections = hello.config.sections;

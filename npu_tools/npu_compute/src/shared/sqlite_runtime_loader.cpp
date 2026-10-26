@@ -58,8 +58,9 @@ std::string SystemError()
             return prefix + ": " + message;
         }
         if (GetLastError() != ERROR_INSUFFICIENT_BUFFER ||
-            message.size() > std::numeric_limits<DWORD>::max() / kBufferCapacityGrowthFactor)
+            message.size() > std::numeric_limits<DWORD>::max() / kBufferCapacityGrowthFactor) {
             return prefix;
+        }
         message.resize(message.size() * kBufferCapacityGrowthFactor);
     }
 }
@@ -68,15 +69,18 @@ fs::path ModuleDirectory()
     HMODULE module = nullptr;
     if (!GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(&ModuleDirectory), &module))
+            reinterpret_cast<LPCWSTR>(&ModuleDirectory), &module)) {
         return {};
+    }
     std::vector<wchar_t> path(kInitialModulePathCapacity);
     for (;;) {
         const auto size = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
-        if (size == 0)
+        if (size == 0) {
             return {};
-        if (size < path.size())
+        }
+        if (size < path.size()) {
             return fs::path(std::wstring(path.data(), size)).parent_path();
+        }
         path.resize(path.size() * kBufferCapacityGrowthFactor);
     }
 }
@@ -99,8 +103,9 @@ std::string SystemError()
 fs::path ModuleDirectory()
 {
     Dl_info info{};
-    if (dladdr(reinterpret_cast<const void*>(&ModuleDirectory), &info) == 0 || !info.dli_fname)
+    if (dladdr(reinterpret_cast<const void*>(&ModuleDirectory), &info) == 0 || !info.dli_fname) {
         return {};
+    }
     boost::system::error_code error;
     const auto path = fs::absolute(info.dli_fname, error);
     return error ? fs::path{} : path.parent_path();
@@ -120,8 +125,9 @@ std::vector<Candidate> Candidates()
     const auto directory = ModuleDirectory();
 #ifdef _WIN32
     result.push_back({L"winsqlite3.dll", true});
-    if (!directory.empty())
+    if (!directory.empty()) {
         result.push_back({directory / L"sqlite3.dll", false});
+    }
     result.push_back({L"sqlite3.dll", false});
 #else
     if (!directory.empty()) {
@@ -137,8 +143,9 @@ std::vector<Candidate> Candidates()
 void* Symbol(Library library, const char* name)
 {
     auto* address = FindSymbol(library, name);
-    if (!address)
+    if (!address) {
         throw std::runtime_error("resolve symbol " + std::string(name) + ": " + SystemError());
+    }
     return address;
 }
 
@@ -261,8 +268,9 @@ const Runtime& GetRuntime()
 const Api& GetApi()
 {
     const auto& runtime = GetRuntime();
-    if (!runtime.error.empty())
+    if (!runtime.error.empty()) {
         throw std::runtime_error(runtime.error);
+    }
     return runtime.api;
 }
 

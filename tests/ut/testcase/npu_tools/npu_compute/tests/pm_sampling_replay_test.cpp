@@ -127,8 +127,9 @@ int main()
                 ACLPTI_SUCCESS);
         }
         CHECK(unsetenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") == 0);
-        if (mapFailure)
+        if (mapFailure) {
             CHECK(setenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE", "1", 1) == 0);
+        }
         config.collectPipeline = scenario == 2 || scenario == kMappingFailureScenario;
         if (scenario == 1 || scenario == kMappingFailureScenario) {
             config.sections = &section;
@@ -153,8 +154,9 @@ int main()
             [&](aclrtFuncHandle h, bool instrumented) {
                 calls += 'L';
                 deviceOutput = kKernelOutput;
-                if (h != (instrumented ? &companion : &original))
+                if (h != (instrumented ? &companion : &original)) {
                     return ACL_ERROR_INVALID_PARAM;
+                }
                 if (modes.back() == PROF_COMPUTE_PC_SAMPLING) {
                     MsprofRawData raw{};
                     raw.type = PC_SAMPLING_DATA_TYPE;
@@ -162,11 +164,13 @@ int main()
                     raw.chunkSize = 1;
                     raw.chunk[0] = 0x5a;
                     raw.isLastChunk = true;
-                    if (aclpti::data::ProfilingDataManager::Instance().GetRawDataCallback()(&raw) != 0)
+                    if (aclpti::data::ProfilingDataManager::Instance().GetRawDataCallback()(&raw) != 0) {
                         return ACL_ERROR_PROFILING_FAILURE;
+                    }
                 }
-                if (scenario == 5)
+                if (scenario == 5) {
                     return ACL_ERROR_RT_FAILURE;
+                }
                 return ACL_SUCCESS;
             },
             nullptr);
@@ -178,16 +182,21 @@ int main()
             CHECK(memory.MirrorFree(deviceAddress) == ACLPTI_SUCCESS);
         }
         CHECK(calls.front() == 'S');
-        if (scenario != kSamplingOnlyMappingFailureScenario)
+        if (scenario != kSamplingOnlyMappingFailureScenario) {
             CHECK(calls.back() == 'E');
-        if (!mapFailure)
+        }
+        if (!mapFailure) {
             CHECK(modes.back() == PROF_COMPUTE_PC_SAMPLING);
-        if (scenario == 0)
+        }
+        if (scenario == 0) {
             CHECK(calls == "SBLSE");
-        if (scenario == 1)
+        }
+        if (scenario == 1) {
             CHECK(modes.front() == 0 && modes.size() > 1);
-        if (scenario == 2)
+        }
+        if (scenario == 2) {
             CHECK(modes == std::vector<unsigned>({PROF_COMPUTE_BIU_PERF, PROF_COMPUTE_PC_SAMPLING}));
+        }
         if (scenario == kMappingFailureScenario) {
             CHECK(modes.front() == 0 && modes.back() == PROF_COMPUTE_BIU_PERF);
             CHECK(std::count(calls.begin(), calls.end(), 'L') == static_cast<int>(modes.size()));
@@ -195,8 +204,9 @@ int main()
         if (scenario == kSamplingOnlyMappingFailureScenario) {
             CHECK(calls == "S" && modes.empty());
         }
-        if (scenario == 3 || scenario == 4)
+        if (scenario == 3 || scenario == 4) {
             CHECK(calls == "SBSE");
+        }
         CHECK(profiler.Shutdown() == ACLPTI_SUCCESS);
         CHECK(result != nullptr);
         CHECK((result->status == ACLPTI_SUCCESS) == (scenario < 3));

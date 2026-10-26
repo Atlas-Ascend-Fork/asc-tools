@@ -152,8 +152,9 @@ void RoundTrip(const std::string& mode = "success")
             publisher.Write(hardware);
             publisher.Commit(1);
             for (const auto& name : names) {
-                if (mode == "missing-file" && name == names[2])
+                if (mode == "missing-file" && name == names[2]) {
                     continue;
+                }
                 publisher.Begin(name);
                 publisher.Write(Read(source.path / name));
                 publisher.Commit(0);
@@ -185,10 +186,12 @@ void RoundTrip(const std::string& mode = "success")
         waitpid(child, nullptr, 0);
         throw;
     }
-    if (mode != "success")
+    if (mode != "success") {
         return; // Partial-report contents are checked below and in CLI tests.
-    for (const auto& name : names)
+    }
+    for (const auto& name : names) {
         CHECK(Read(source.path / name) == Read(received.path / name));
+    }
     CheckDatabase(received.path / names[0]);
     protocol::Bytes encoded;
     std::string error;
@@ -208,8 +211,9 @@ void RoundTrip(const std::string& mode = "success")
     std::vector<cli::ImportedProfileEntry> imported;
     CHECK(cli::ReadImportedProfileResults(report, &imported, &error));
     CHECK(cli::UnpackImportedProfileResults(imported, restored.path, &error));
-    for (const auto& name : names)
+    for (const auto& name : names) {
         CHECK(Read(source.path / name) == Read(restored.path / name));
+    }
     CheckDatabase(restored.path / names[0]);
 }
 void MissingAndInvalid()
@@ -225,9 +229,11 @@ void MissingAndInvalid()
         result.sections = config.sections;
         result.rowCount = 1;
         Send(receiver, result, "HardwareInfo.jsonl", hardware);
-        for (const auto& name : names)
-            if (name != omitted)
+        for (const auto& name : names) {
+            if (name != omitted) {
                 Send(receiver, result, name, Read(source.path / name));
+            }
+        }
         std::vector<std::string> issues;
         CHECK(!receiver.Validate(result, config, &issues) && !issues.empty());
         CHECK(issues.back().find(omitted) != std::string::npos);
@@ -237,8 +243,9 @@ void MissingAndInvalid()
         cli::DecodedRep decoded;
         CHECK(cli::DecodeRep(encoded, &decoded, &error));
         CHECK(decoded.entries.size() == 3);
-        for (const auto& entry : decoded.entries)
+        for (const auto& entry : decoded.entries) {
             CHECK(entry.file_name != omitted);
+        }
     }
     const std::vector<std::pair<std::string, std::string>> invalid = {
         {names[0], "not sqlite"},
@@ -253,8 +260,9 @@ void MissingAndInvalid()
         {names[2], "[{\"Address\":\"0x0000000000010458\",\"Symbol\":[1]}]"}};
     for (const auto& item : invalid) {
         Directory output;
-        for (const auto& name : names)
+        for (const auto& name : names) {
             Write(output.path / name, name == item.first ? item.second : Read(source.path / name));
+        }
         std::string error;
         protocol::Bytes encoded;
         CHECK(!cli::ValidatePmSamplingFile(output.path / item.first, &error));
@@ -265,8 +273,9 @@ void MissingAndInvalid()
         cli::DecodedRep decoded;
         CHECK(cli::DecodeRep(encoded, &decoded, &error));
         CHECK(decoded.entries.size() == 3); // Two good results plus collection status.
-        for (const auto& entry : decoded.entries)
+        for (const auto& entry : decoded.entries) {
             CHECK(entry.file_name != item.first);
+        }
     }
     Directory received;
     cli::ArtifactReceiver receiver(received.path.string());
@@ -276,8 +285,9 @@ void MissingAndInvalid()
     result.sections = config.sections;
     result.rowCount = 1;
     Send(receiver, result, "HardwareInfo.jsonl", hardware);
-    for (const auto& name : names)
+    for (const auto& name : names) {
         Send(receiver, result, name, Read(source.path / name));
+    }
     receiver.Validate(result, config);
     auto failed = result;
     failed.complete = false;
@@ -301,8 +311,9 @@ void MissingAndInvalid()
     Send(groups, failed, "HardwareInfo.jsonl", hardware);
     Send(groups, failed, "Memory.csv", "x\ny\n");
     Send(groups, failed, "summary.jsonl", "{}\n");
-    for (const auto& name : names)
+    for (const auto& name : names) {
         Send(groups, failed, "collection-p1-0001/" + name, Read(source.path / name));
+    }
     CHECK(groups.Validate(failed, config)); // Separate launch groups may have different successful Sections.
     Directory csvOnly;
     sqlite3* shared = nullptr;
@@ -371,6 +382,24 @@ void SharedDatabaseRoundTrip()
         std::string(reinterpret_cast<const char*>(sqlite::GetApi().columnText(query, 0))) == "us");
     CHECK(sqlite::GetApi().step(query) == SQLITE_DONE && sqlite::GetApi().finalize(query) == SQLITE_OK);
     CHECK(sqlite::GetApi().close(database) == SQLITE_OK);
+}
+void EmptySimdDatabase()
+{
+    Directory source, output;
+    npucompute::PmSamplingResult data;
+    std::string error;
+    CHECK(npucompute::WritePmSamplingSqlite((source.path / names[0]).string(), data, error));
+    cli::ArtifactReceiver receiver(output.path.string());
+    protocol::Config config;
+    config.sections = {"PmSampling"};
+    protocol::Result result;
+    result.sections = config.sections;
+    result.complete = true;
+    Send(receiver, result, "HardwareInfo.jsonl", hardware);
+    Send(receiver, result, names[0], Read(source.path / names[0]));
+    std::vector<std::string> issues;
+    CHECK(receiver.Validate(result, config, &issues));
+    CHECK(issues.empty());
 }
 void VersionsAndNested()
 {
@@ -454,6 +483,7 @@ int main()
         RoundTrip("missing-file");
         MissingAndInvalid();
         SharedDatabaseRoundTrip();
+        EmptySimdDatabase();
         VersionsAndNested();
         ProtocolRejections();
         std::puts("PmSampling UDS/report roundtrip and rejection checks passed");

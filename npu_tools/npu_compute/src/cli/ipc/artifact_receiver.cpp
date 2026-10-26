@@ -226,7 +226,7 @@ bool ArtifactReceiver::Validate(
 {
     Require(file_ < 0, "ARTIFACT: unfinished artifact");
     bool complete = true;
-    const auto checkCollection = [&](bool condition, const std::string& message) {
+    const auto CheckCollection = [&](bool condition, const std::string& message) {
         if (!condition) {
             complete = false;
             if (issues != nullptr) {
@@ -234,7 +234,7 @@ bool ArtifactReceiver::Validate(
             }
         }
     };
-    checkCollection(
+    CheckCollection(
         result.status == 0 && result.code == 0 && result.complete && result.errorCount == 0 && result.droppedCount == 0,
         "PROFILING: incomplete result");
     Require(
@@ -288,39 +288,48 @@ bool ArtifactReceiver::Validate(
             Require(pmuGroups[parent].insert(base).second, "ARTIFACT: duplicate PMU artifact");
         }
     }
-    checkCollection(hardwareFound, "HardwareInfo.jsonl: required artifact missing");
-    checkCollection(
+    CheckCollection(hardwareFound, "HardwareInfo.jsonl: required artifact missing");
+    CheckCollection(
         pipelineExpected == (pipelineManifestFound && pipelineFragments > 0),
         "ARTIFACT: required Pipeline artifact missing");
     if (samplingExpected) {
-        checkCollection(!samplingGroups.empty(), "PmSampling collection: no result files received");
-        const std::set<std::string> expected = {"summary.db", "objdump.txt", "symbolizer.json"};
+        CheckCollection(!samplingGroups.empty(), "PmSampling collection: no result files received");
         for (const auto& [parent, files] : samplingGroups) {
+            bool emptySampling = false;
+            if (files.size() == 1 && files.count("summary.db") != 0) {
+                std::string databaseError;
+                const bool inspected =
+                    IsEmptyPmSamplingDatabase(directory_path_ / parent / "summary.db", &emptySampling, &databaseError);
+                CheckCollection(inspected, databaseError);
+            }
+            const std::set<std::string> expected =
+                emptySampling ? std::set<std::string>{"summary.db"} :
+                                std::set<std::string>{"summary.db", "objdump.txt", "symbolizer.json"};
             if (!files.count("summary.db") && files.count("objdump.txt") &&
                 HasOnlySimdVectorCode(directory_path_ / parent / "objdump.txt")) {
-                checkCollection(
+                CheckCollection(
                     false,
                     (directory_path_ / parent / "objdump.txt").string() +
                         ": PmSampling requires SIMT instructions (VF_SIMT); only SIMD VF instructions were found. "
                         "PC/state samples are unavailable; other valid results are retained");
             }
             for (const auto& name : expected) {
-                checkCollection(
+                CheckCollection(
                     files.count(name) != 0, (directory_path_ / parent / name).string() +
                                                 ": PmSampling result missing; other valid results are retained");
             }
             for (const auto& name : files) {
                 std::string error;
                 const bool valid = ValidatePmSamplingFile(directory_path_ / parent / name, &error);
-                checkCollection(valid, error);
+                CheckCollection(valid, error);
             }
         }
     }
     if (!expectedPmu.empty()) {
-        checkCollection(!pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
+        CheckCollection(!pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
         for (const auto& [parent, files] : pmuGroups) {
             for (const auto& name : expectedPmu) {
-                checkCollection(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
+                CheckCollection(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
             }
         }
     } else {

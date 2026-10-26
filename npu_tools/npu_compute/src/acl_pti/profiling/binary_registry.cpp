@@ -311,8 +311,9 @@ bool BinaryRegistry::GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingB
             return true;
         }
         snapshot.elfEntry = entry->second;
-        if (!snapshot.error.empty())
+        if (!snapshot.error.empty()) {
             return true;
+        }
         void* aic = nullptr;
         void* aiv = nullptr;
         if (!getAddress || getAddress(function->second, &aic, &aiv) != ACL_SUCCESS || (!aic && !aiv)) {

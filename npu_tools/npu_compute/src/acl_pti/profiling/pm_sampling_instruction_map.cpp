@@ -566,8 +566,9 @@ bool BuildPmSamplingInstructionMap(
     const std::string& originalDisassembly, const std::string& companionDisassembly, PmSamplingInstructionMap& output,
     std::string& diagnostic)
 {
-    if (!BuildPmSamplingFunctionMap(originalImage, companionImage, output, diagnostic))
+    if (!BuildPmSamplingFunctionMap(originalImage, companionImage, output, diagnostic)) {
         return false;
+    }
     std::string functionContext;
     try {
         const Elf original(originalImage), companion(companionImage);
@@ -588,8 +589,9 @@ bool BuildPmSamplingInstructionMap(
             const auto found = companion.functions.find(named.first);
             std::ostringstream location;
             location << "function '" << named.first << "', original entry 0x" << std::hex << named.second.address;
-            if (found != companion.functions.end())
+            if (found != companion.functions.end()) {
                 location << ", companion entry 0x" << found->second.address;
+            }
             functionContext = location.str() + ": ";
             Require(
                 found != companion.functions.end() &&

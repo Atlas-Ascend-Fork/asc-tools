@@ -25,11 +25,13 @@ template <class Function>
 Function SqliteSymbol(const char* name)
 {
     static auto* library = dlopen(sqlite::LibraryPath().c_str(), RTLD_NOW | RTLD_LOCAL);
-    if (!library)
+    if (!library) {
         throw std::runtime_error("test SQLite library cannot be reopened");
+    }
     auto* symbol = dlsym(library, name);
-    if (!symbol)
+    if (!symbol) {
         throw std::runtime_error("test SQLite library missing symbol: " + std::string(name));
+    }
     return reinterpret_cast<Function>(symbol);
 }
 

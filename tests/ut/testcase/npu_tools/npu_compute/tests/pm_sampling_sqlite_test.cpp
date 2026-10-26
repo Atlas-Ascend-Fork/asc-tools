@@ -44,10 +44,12 @@ bool rollbackCompleted = false;
 int Authorize(void*, int action, const char* first, const char*, const char*, const char*)
 {
     if (action == npucompute::test::SQLITE_TRANSACTION && first) {
-        if (std::string(first) == "COMMIT")
+        if (std::string(first) == "COMMIT") {
             return SQLITE_DENY;
-        if (std::string(first) == "ROLLBACK")
+        }
+        if (std::string(first) == "ROLLBACK") {
             rollbackObserved = true;
+        }
     }
     return SQLITE_OK;
 }
@@ -55,9 +57,10 @@ int Trace(unsigned event, void*, void* value, void*)
 {
     if (event == npucompute::test::SQLITE_TRACE_PROFILE) {
         const auto* sql = npucompute::test::SqliteSql(static_cast<sqlite3_stmt*>(value));
-        if (sql && std::string(sql) == "ROLLBACK")
+        if (sql && std::string(sql) == "ROLLBACK") {
             rollbackCompleted = npucompute::test::SqliteGetAutocommit(
                                     npucompute::test::SqliteDbHandle(static_cast<sqlite3_stmt*>(value))) != 0;
+        }
     }
     return 0;
 }
@@ -85,8 +88,9 @@ int CheckDatabase(const fs::path& path, int expectedTables = 1)
     }
     CHECK(sqlite::GetApi().step(statement) == SQLITE_ROW);
     CHECK(sqlite::GetApi().columnInt64(statement, 0) == 0x108);
-    for (int column = 1; column < 9; ++column)
+    for (int column = 1; column < 9; ++column) {
         CHECK(sqlite::GetApi().columnInt64(statement, column) == 0);
+    }
     CHECK(sqlite::GetApi().step(statement) == SQLITE_ROW);
     CHECK(sqlite::GetApi().columnInt64(statement, 0) == std::numeric_limits<sqlite3_int64>::max());
     CHECK(sqlite::GetApi().columnInt64(statement, 8) == std::numeric_limits<sqlite3_int64>::max());

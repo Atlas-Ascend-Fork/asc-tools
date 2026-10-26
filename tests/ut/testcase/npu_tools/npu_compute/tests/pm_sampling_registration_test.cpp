@@ -30,8 +30,9 @@ extern "C" std::int32_t MsprofRegisterDataCallback(std::uint32_t, void*) { retur
 int main()
 {
     using aclpti::profiling::ReplayRuntime;
-    if (RuntimeStubSetOriginFunction("aclrtBinaryLoadFromData", &Load) != ACL_SUCCESS)
+    if (RuntimeStubSetOriginFunction("aclrtBinaryLoadFromData", &Load) != ACL_SUCCESS) {
         return 1;
+    }
     for (const auto mode : {0, 1, 2, 3}) {
         ReplayRuntime runtime;
         aclptiRangeProfilerSetConfigParams config{};
@@ -42,42 +43,51 @@ int main()
         }
         config.collectPipeline = mode == 1 || mode == 3;
         config.collectPcSampling = mode == 2 || mode == 3;
-        if (runtime.SetConfig(&config) != ACLPTI_SUCCESS)
+        if (runtime.SetConfig(&config) != ACLPTI_SUCCESS) {
             return 2;
+        }
         int binary;
         const char image[] = "ELF";
         const auto before = companionLoads;
         if (runtime.RegisterBinary(image, sizeof(image), nullptr, &binary) != ACLPTI_SUCCESS ||
-            runtime.RegisterBinary(image, sizeof(image), nullptr, &binary) != ACLPTI_SUCCESS)
+            runtime.RegisterBinary(image, sizeof(image), nullptr, &binary) != ACLPTI_SUCCESS) {
             return 3;
-        if (companionLoads - before != (mode == 0 ? 0 : 1))
+        }
+        if (companionLoads - before != (mode == 0 ? 0 : 1)) {
             return 4;
-        if (mode != 0 && runtime.RegisterBinaryFunction(&binary, "kernel", &token) != ACLPTI_SUCCESS)
+        }
+        if (mode != 0 && runtime.RegisterBinaryFunction(&binary, "kernel", &token) != ACLPTI_SUCCESS) {
             return 5;
+        }
     }
-    if (setenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE", "1", 1) != 0)
+    if (setenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE", "1", 1) != 0) {
         return 6;
+    }
     for (const bool pipeline : {false, true}) {
         ReplayRuntime runtime;
         aclptiRangeProfilerSetConfigParams config{};
         config.collectPcSampling = true;
         config.collectPipeline = pipeline;
-        if (runtime.SetConfig(&config) != ACLPTI_SUCCESS)
+        if (runtime.SetConfig(&config) != ACLPTI_SUCCESS) {
             return 7;
+        }
         int firstBinary, secondBinary;
         const char image[] = "ELF";
         const auto before = companionLoads;
         if (runtime.RegisterBinary(image, sizeof(image), nullptr, &firstBinary) != ACLPTI_SUCCESS ||
             runtime.RegisterBinaryFunction(&firstBinary, "kernel", &token) != ACLPTI_SUCCESS ||
             runtime.RegisterBinary(image, sizeof(image), nullptr, &secondBinary) != ACLPTI_SUCCESS ||
-            companionLoads != before + 2)
+            companionLoads != before + 2) {
             return 8;
+        }
         aclpti::profiling::PmSamplingBinarySnapshot snapshot;
         if (!runtime.GetPmSamplingSnapshot(&token, snapshot) || snapshot.error.empty() || !snapshot.image ||
-            snapshot.image->companionElf.empty())
+            snapshot.image->companionElf.empty()) {
             return 9;
+        }
     }
-    if (unsetenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") != 0)
+    if (unsetenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") != 0) {
         return 10;
+    }
     std::puts("PASS: registration gates, one companion per binary, mapping failure keeps profiling available");
 }

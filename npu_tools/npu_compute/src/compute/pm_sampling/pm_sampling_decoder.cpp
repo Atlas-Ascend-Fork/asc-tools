@@ -27,11 +27,13 @@ static_assert(
 bool AddPmSamplingStates(PmSamplingStateCounts& destination, const PmSamplingStateCounts& source)
 {
     for (std::size_t state = 0; state < destination.size(); ++state) {
-        if (source[state] > std::numeric_limits<std::uint64_t>::max() - destination[state])
+        if (source[state] > std::numeric_limits<std::uint64_t>::max() - destination[state]) {
             return false;
+        }
     }
-    for (std::size_t state = 0; state < destination.size(); ++state)
+    for (std::size_t state = 0; state < destination.size(); ++state) {
         destination[state] += source[state];
+    }
     return true;
 }
 
@@ -66,8 +68,9 @@ PmSamplingDecoder::PmSamplingDecoder(std::uint64_t replayId, std::shared_ptr<con
 
 bool PmSamplingDecoder::Fail(const char* message)
 {
-    if (error_.empty())
+    if (error_.empty()) {
         error_ = message;
+    }
     result_ = {};
     return false;
 }
@@ -83,30 +86,36 @@ bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordB
     const auto rawPc = encodedPc * kPmSamplingAddressScale;
     std::optional<std::uint64_t> selected;
     for (const auto entry : {context_->aicRuntimeEntry, context_->aivRuntimeEntry}) {
-        if (!entry)
+        if (!entry) {
             continue;
+        }
         const auto pc = (rawPc - ((entry - context_->elfEntry) & kPmSamplingPcMask)) & kPmSamplingPcMask;
-        if (!context_->businessInstructions->count(pc) && !context_->excludedInstructions->count(pc))
+        if (!context_->businessInstructions->count(pc) && !context_->excludedInstructions->count(pc)) {
             continue;
-        if (selected && *selected != pc)
+        }
+        if (selected && *selected != pc) {
             return Fail("ambiguous AIC/AIV sampling PC");
+        }
         selected = pc;
     }
-    if (!selected)
+    if (!selected) {
         return Fail("unknown sampling PC");
+    }
     ++result_.decodedRecords;
     if (context_->excludedInstructions->count(*selected)) {
         ++result_.excludedRecords;
         return true;
     }
     PmSamplingStateCounts counts{};
-    for (std::size_t state = 0; state < counts.size(); ++state)
+    for (std::size_t state = 0; state < counts.size(); ++state) {
         counts[state] = record[kPmSamplingStateOffset + state];
+    }
     // Byte 11 is Active; skip it without storing or accumulating it. Consume
     // still advances over the complete 16-byte record, including reserved bytes.
     const auto originalPc = context_->businessInstructions->at(*selected);
-    if (!AddPmSamplingStates(result_.rows[originalPc], counts))
+    if (!AddPmSamplingStates(result_.rows[originalPc], counts)) {
         return Fail("PmSampling state count overflow");
+    }
     ++result_.businessRecords;
     // Bytes 12..15 are reserved; do not infer a Core ID or reject future nonzero flags.
     return true;
@@ -114,35 +123,42 @@ bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordB
 
 bool PmSamplingDecoder::Consume(const aclptiRawDataChunk& chunk)
 {
-    if (!error_.empty())
+    if (!error_.empty()) {
         return false;
-    if (finished_)
+    }
+    if (finished_) {
         return Fail("PmSampling decoder already finished");
+    }
     if (chunk.replayId != replayId_ || chunk.deviceId < 0 || chunk.chunkModule < 0 || chunk.bytes.empty() ||
-        (deviceId_ != -1 && deviceId_ != chunk.deviceId))
+        (deviceId_ != -1 && deviceId_ != chunk.deviceId)) {
         return Fail("invalid PmSampling chunk identity");
-    if (chunk.bytes.size() > std::numeric_limits<std::uint64_t>::max() - result_.receivedBytes)
+    }
+    if (chunk.bytes.size() > std::numeric_limits<std::uint64_t>::max() - result_.receivedBytes) {
         return Fail("PmSampling received byte count overflow");
+    }
     try {
         auto& channel = channels_[chunk.chunkModule];
         if (chunk.offset != channel.offset ||
-            chunk.bytes.size() > std::numeric_limits<std::size_t>::max() - channel.offset)
+            chunk.bytes.size() > std::numeric_limits<std::size_t>::max() - channel.offset) {
             return Fail("discontinuous PmSampling chunk offset");
+        }
         deviceId_ = chunk.deviceId;
         result_.receivedBytes += chunk.bytes.size();
         channel.open = true;
         for (const auto byte : chunk.bytes) {
             channel.pending[channel.pendingSize++] = byte;
             if (channel.pendingSize == channel.pending.size()) {
-                if (!Decode(channel.pending))
+                if (!Decode(channel.pending)) {
                     return false;
+                }
                 channel.pendingSize = 0;
             }
         }
         channel.offset += chunk.bytes.size();
         if (chunk.isLastChunk) {
-            if (channel.pendingSize)
+            if (channel.pendingSize) {
                 return Fail("truncated PmSampling packet record");
+            }
             channel.offset = 0;
             channel.open = false;
         }
@@ -155,13 +171,16 @@ bool PmSamplingDecoder::Consume(const aclptiRawDataChunk& chunk)
 bool PmSamplingDecoder::Finish(PmSamplingResult& output)
 {
     output = {};
-    if (!error_.empty())
+    if (!error_.empty()) {
         return false;
-    if (finished_)
+    }
+    if (finished_) {
         return Fail("PmSampling decoder already finished");
+    }
     for (const auto& item : channels_) {
-        if (item.second.open || item.second.pendingSize)
+        if (item.second.open || item.second.pendingSize) {
             return Fail("unfinished PmSampling packet");
+        }
     }
     finished_ = true;
     output = std::move(result_);

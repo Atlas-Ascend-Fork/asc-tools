@@ -220,12 +220,15 @@ ArtifactType ArtifactTypeForName(const std::string& name)
     const auto kind = KindForName(name);
     const auto components = ArtifactPathComponents(name);
     const std::string& base = components.back();
-    if (base == "summary.db")
+    if (base == "summary.db") {
         return ArtifactType::Db;
-    if (base == "objdump.txt")
+    }
+    if (base == "objdump.txt") {
         return ArtifactType::Txt;
-    if (base == "symbolizer.json")
+    }
+    if (base == "symbolizer.json") {
         return ArtifactType::Json;
+    }
     if (kind == DataKind::PipelineTrace) {
         return ArtifactType::Json;
     }
@@ -240,8 +243,9 @@ Type TypeForKind(DataKind kind)
         kind == DataKind::PmuCsv || kind == DataKind::PipelineTrace || kind == DataKind::HardwareInfo ||
             kind == DataKind::PmSampling,
         "unknown artifact kind");
-    if (kind == DataKind::PmSampling)
+    if (kind == DataKind::PmSampling) {
         return Type::PmSampling;
+    }
     if (kind == DataKind::PipelineTrace) {
         return Type::Pipeline;
     }

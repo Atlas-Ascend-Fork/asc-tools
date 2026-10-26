@@ -30,16 +30,18 @@ constexpr const char* RELEASE = "RELEASE npu_compute_csv_table";
 
 void Check(sqlite3* database, int status)
 {
-    if (status != SQLITE_OK)
+    if (status != SQLITE_OK) {
         throw std::runtime_error(sqlite::GetApi().errmsg(database));
+    }
 }
 
 std::string QuoteIdentifier(const std::string& name)
 {
     std::string result = "\"";
     for (const auto character : name) {
-        if (character == '"')
+        if (character == '"') {
             result += '"';
+        }
         result += character;
     }
     return result + '"';
@@ -52,15 +54,17 @@ public:
         const auto status =
             sqlite::GetApi().prepareV2(database, sql.c_str(), sqlite::kNullTerminatedSql, &statement_, nullptr);
         if (status != SQLITE_OK) {
-            if (statement_)
+            if (statement_) {
                 sqlite::GetApi().finalize(statement_);
+            }
             Check(database, status);
         }
     }
     ~Statement()
     {
-        if (statement_)
+        if (statement_) {
             sqlite::GetApi().finalize(statement_);
+        }
     }
     Statement(const Statement&) = delete;
     Statement& operator=(const Statement&) = delete;
@@ -68,8 +72,9 @@ public:
     sqlite3_stmt* Get() const { return statement_; }
     void BindText(int index, const std::string& text)
     {
-        if (text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        if (text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
             throw std::runtime_error("text exceeds SQLite's supported binding length");
+        }
         Check(database_, sqlite::GetApi().bindText(statement_, index, text.data(), static_cast<int>(text.size())));
     }
     void Reset()
@@ -80,8 +85,9 @@ public:
     void Complete()
     {
         const auto status = sqlite::GetApi().step(statement_);
-        if (status != SQLITE_DONE)
+        if (status != SQLITE_DONE) {
             Check(database_, status);
+        }
     }
     void Finish()
     {
@@ -110,24 +116,28 @@ void WriteUnits(sqlite3* database, const CsvSchema& schema)
             std::optional<std::string> existing;
             if (api.columnType(find.Get(), kUnitResultColumn) != SQLITE_NULL) {
                 const auto* text = api.columnText(find.Get(), kUnitResultColumn);
-                if (!text)
+                if (!text) {
                     throw std::runtime_error("cannot read existing unit for field '" + column.name + "'");
+                }
                 existing =
                     std::string(reinterpret_cast<const char*>(text), api.columnBytes(find.Get(), kUnitResultColumn));
             }
-            if (existing != column.unit)
+            if (existing != column.unit) {
                 throw std::runtime_error(
                     "unit conflict for CSV field '" + column.sourceName + "' (normalized field '" + column.name +
                     "'): existing unit " + UnitLabel(existing) + ", incoming unit " + UnitLabel(column.unit));
+            }
             find.Complete();
         } else {
-            if (status != SQLITE_DONE)
+            if (status != SQLITE_DONE) {
                 Check(database, status);
+            }
             insert.BindText(kFieldNameParameter, column.name);
-            if (column.unit)
+            if (column.unit) {
                 insert.BindText(kUnitParameter, *column.unit);
-            else
+            } else {
                 Check(database, api.bindNull(insert.Get(), kUnitParameter));
+            }
             insert.Complete();
             insert.Reset();
         }
@@ -154,8 +164,9 @@ std::string CreateSql(const CsvSchema& schema)
 {
     std::string sql = "CREATE TABLE " + QuoteIdentifier(schema.tableName) + "(";
     for (std::size_t index = 0; index < schema.columns.size(); ++index) {
-        if (index)
+        if (index) {
             sql += ',';
+        }
         sql += QuoteIdentifier(schema.columns[index].name) + ' ' + SqlType(schema.columns[index].type);
     }
     return sql + ')';
@@ -164,8 +175,9 @@ std::string CreateSql(const CsvSchema& schema)
 std::string InsertSql(const CsvSchema& schema)
 {
     std::string sql = "INSERT INTO " + QuoteIdentifier(schema.tableName) + " VALUES(";
-    for (std::size_t index = 0; index < schema.columns.size(); ++index)
+    for (std::size_t index = 0; index < schema.columns.size(); ++index) {
         sql += index ? ",?" : "?";
+    }
     return sql + ')';
 }
 
@@ -174,10 +186,12 @@ bool IntegerFitsReal(std::int64_t integer)
     // Count significant binary digits, including values near both int64 limits.
     auto magnitude =
         integer < 0 ? std::uint64_t{0} - static_cast<std::uint64_t>(integer) : static_cast<std::uint64_t>(integer);
-    if (magnitude == 0)
+    if (magnitude == 0) {
         return true;
-    while ((magnitude & 1) == 0)
+    }
+    while ((magnitude & 1) == 0) {
         magnitude >>= 1;
+    }
     return magnitude <= (std::uint64_t{1} << std::numeric_limits<double>::digits);
 }
 
@@ -197,11 +211,12 @@ void BindValue(sqlite3* database, Statement& insert, int index, const CsvColumn&
         }
         if (column.type == CsvColumnType::Real) {
             double real = 0;
-            if (isInteger && IntegerFitsReal(integer))
+            if (isInteger && IntegerFitsReal(integer)) {
                 real = static_cast<double>(integer);
-            else if (isInteger || !ParseCsvReal(value, real))
+            } else if (isInteger || !ParseCsvReal(value, real)) {
                 throw std::runtime_error("value no longer matches analyzed REAL type without integer precision loss; "
                                          "CSV changed after analysis");
+            }
             Check(database, api.bindDouble(insert.Get(), index, real));
             return;
         }
@@ -211,8 +226,9 @@ void BindValue(sqlite3* database, Statement& insert, int index, const CsvColumn&
 
 std::string RecordContext(const CsvRecordLocation& location)
 {
-    if (location.record == 0)
+    if (location.record == 0) {
         return {};
+    }
     const auto lines =
         location.firstLine == location.lastLine ?
             "physical line " + std::to_string(location.firstLine) :
@@ -230,19 +246,22 @@ CsvSqliteWriteResult WriteCsvTable(sqlite3* database, const std::string& path, c
     std::string field;
     try {
         std::ifstream input(path, std::ios::binary);
-        if (!input)
+        if (!input) {
             throw std::runtime_error("cannot open CSV for reading");
+        }
         CsvReader reader(input, path);
         std::vector<std::string> fields;
         stage = "read CSV header";
         const auto hasHeader = reader.ReadRecord(fields);
         location = reader.Location();
-        if (hasHeader != !schema.columns.empty() || fields.size() != schema.columns.size())
+        if (hasHeader != !schema.columns.empty() || fields.size() != schema.columns.size()) {
             throw std::runtime_error("CSV header changed after analysis");
+        }
         for (std::size_t index = 0; index < fields.size(); ++index) {
-            if (fields[index] != schema.columns[index].sourceName)
+            if (fields[index] != schema.columns[index].sourceName) {
                 throw std::runtime_error(
                     "CSV header changed after analysis at field '" + schema.columns[index].sourceName + "'");
+            }
         }
         if (schema.rowCount == 0) {
             stage = "check empty CSV";
@@ -276,13 +295,15 @@ CsvSqliteWriteResult WriteCsvTable(sqlite3* database, const std::string& path, c
             stage = "read CSV record";
             field.clear();
             location = {};
-            if (!reader.ReadRecord(fields))
+            if (!reader.ReadRecord(fields)) {
                 break;
+            }
             location = reader.Location();
-            if (fields.size() != schema.columns.size())
+            if (fields.size() != schema.columns.size()) {
                 throw std::runtime_error(
                     "expected " + std::to_string(schema.columns.size()) + " fields, found " +
                     std::to_string(fields.size()));
+            }
             stage = "bind CSV field";
             for (std::size_t index = 0; index < fields.size(); ++index) {
                 field = schema.columns[index].sourceName;
@@ -298,10 +319,11 @@ CsvSqliteWriteResult WriteCsvTable(sqlite3* database, const std::string& path, c
             ++rows;
         }
         stage = "finish CSV table";
-        if (rows != schema.rowCount)
+        if (rows != schema.rowCount) {
             throw std::runtime_error(
                 "CSV record count changed after analysis: expected " + std::to_string(schema.rowCount) + ", found " +
                 std::to_string(rows));
+        }
         insert.Finish();
         Check(database, api.exec(database, RELEASE));
         savepoint = false;

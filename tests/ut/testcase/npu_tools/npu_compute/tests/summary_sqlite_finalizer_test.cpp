@@ -85,8 +85,9 @@ protected:
         const auto& api = sqlite::GetApi();
         sqlite3* db = nullptr;
         if (api.openV2(path.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
-            if (db)
+            if (db) {
                 api.closeV2(db);
+            }
             throw std::runtime_error("cannot query test database: " + path.string());
         }
         sqlite3_stmt* statement = nullptr;
@@ -100,12 +101,13 @@ protected:
         while ((status = api.step(statement)) == SQLITE_ROW) {
             std::vector<std::string> row;
             for (int index = 0; index < api.columnCount(statement); ++index) {
-                if (api.columnType(statement, index) == SQLITE_NULL)
+                if (api.columnType(statement, index) == SQLITE_NULL) {
                     row.emplace_back("<NULL>");
-                else
+                } else {
                     row.emplace_back(
                         reinterpret_cast<const char*>(api.columnText(statement, index)),
                         api.columnBytes(statement, index));
+                }
             }
             rows.push_back(std::move(row));
         }
@@ -127,10 +129,12 @@ protected:
     void ExpectIssue(const SummarySqliteFinalizationResult& result, const std::vector<std::string>& details)
     {
         std::string message;
-        for (const auto& issue : result.issues)
+        for (const auto& issue : result.issues) {
             message += issue + '\n';
-        for (const auto& detail : details)
+        }
+        for (const auto& detail : details) {
             EXPECT_NE(message.find(detail), std::string::npos) << message;
+        }
     }
     fs::path directory_;
 };
@@ -366,8 +370,9 @@ struct DatabaseFault {
     ~DatabaseFault() { Stop(); }
     void Stop()
     {
-        if (active != this)
+        if (active != this) {
             return;
+        }
         npucompute::test::SqliteCancelAutoExtension(reinterpret_cast<void (*)()>(&Initialize));
         if (leaked) {
             EXPECT_EQ(sqlite::GetApi().finalize(leaked), SQLITE_OK);
@@ -377,32 +382,39 @@ struct DatabaseFault {
     }
     static int Initialize(sqlite3* db, char**, const sqlite3_api_routines*)
     {
-        if (!active)
+        if (!active) {
             return SQLITE_OK;
+        }
         const auto filename =
             npucompute::test::SqliteSymbol<const char* (*)(sqlite3*, const char*)>("sqlite3_db_filename");
         const auto* name = filename(db, "main");
-        if (!name || (!active->filter.empty() && std::string(name).find(active->filter) == std::string::npos))
+        if (!name || (!active->filter.empty() && std::string(name).find(active->filter) == std::string::npos)) {
             return SQLITE_OK;
+        }
         active->path = name;
-        if (active->mode == Mode::CloseBusy)
+        if (active->mode == Mode::CloseBusy) {
             return sqlite::GetApi().prepareV2(db, "SELECT 1", -1, &active->leaked, nullptr);
-        if (active->mode == Mode::MoveWorkingFile)
+        }
+        if (active->mode == Mode::MoveWorkingFile) {
             return npucompute::test::SqliteTraceV2(db, npucompute::test::SQLITE_TRACE_PROFILE, Trace, active);
+        }
         return npucompute::test::SqliteSetAuthorizer(db, Authorize, active);
     }
     static int Authorize(void* context, int operation, const char* first, const char*, const char*, const char*)
     {
         auto& fault = *static_cast<DatabaseFault*>(context);
         const std::string_view value = first ? first : "";
-        if (fault.mode == Mode::DenyCommit && operation == npucompute::test::SQLITE_TRANSACTION && value == "COMMIT")
+        if (fault.mode == Mode::DenyCommit && operation == npucompute::test::SQLITE_TRANSACTION && value == "COMMIT") {
             return SQLITE_DENY;
+        }
         if ((fault.mode == Mode::DenyMemoryTable || fault.mode == Mode::DenyTableRollback) &&
-            operation == npucompute::test::SQLITE_CREATE_TABLE && value == "Memory")
+            operation == npucompute::test::SQLITE_CREATE_TABLE && value == "Memory") {
             return SQLITE_DENY;
+        }
         constexpr int sqliteSavepoint = 32;
-        if (fault.mode == Mode::DenyTableRollback && operation == sqliteSavepoint && value == "ROLLBACK")
+        if (fault.mode == Mode::DenyTableRollback && operation == sqliteSavepoint && value == "ROLLBACK") {
             return SQLITE_DENY;
+        }
         return SQLITE_OK;
     }
     static int Trace(unsigned, void* context, void* statement, void*)

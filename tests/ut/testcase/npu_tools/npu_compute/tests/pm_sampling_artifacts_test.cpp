@@ -74,12 +74,15 @@ int Tool(int argc, char** argv)
             std::cerr << "objdump failed";
             return 7;
         }
-        if (mode == "timeout")
+        if (mode == "timeout") {
             std::this_thread::sleep_for(std::chrono::seconds(5));
-        if (mode == "large")
+        }
+        if (mode == "large") {
             std::cout << std::string(4096, 'x');
-        if (mode != "empty")
+        }
+        if (mode != "empty") {
             std::cout << "Disassembly of section .text:\n" << Read(argv[4]);
+        }
         return 0;
     }
     CHECK(
@@ -121,19 +124,23 @@ int Tool(int argc, char** argv)
         json::object record;
         record["Address"] = mode == "wrong" ? "0x123" : pc;
         record["ModuleName"] = image; // Identifies which ELF the generator selected.
-        if (mode == "empty-frames")
+        if (mode == "empty-frames") {
             frames.clear();
+        }
         record["Symbol"] = std::move(frames);
         record["SelectedImage"] = image;
         records.push_back(std::move(record));
     }
-    if (mode == "bad-frames")
+    if (mode == "bad-frames") {
         records[0].as_object()["Symbol"] = json::object{};
-    if (mode == "stream")
-        for (const auto& record : records)
+    }
+    if (mode == "stream") {
+        for (const auto& record : records) {
             std::cout << json::serialize(record) << '\n';
-    else
+        }
+    } else {
         std::cout << " \n" << json::serialize(records) << '\n';
+    }
     return 0;
 }
 int Reference(int argc, char** argv)
@@ -200,12 +207,15 @@ int Real(int argc, char** argv)
 int main(int argc, char** argv)
 {
     const auto filename = fs::path(argv[0]).filename();
-    if (filename == "llvm-objdump" || filename == "llvm-symbolizer")
+    if (filename == "llvm-objdump" || filename == "llvm-symbolizer") {
         return Tool(argc, argv);
-    if (argc > 1 && std::string(argv[1]) == "--reference")
+    }
+    if (argc > 1 && std::string(argv[1]) == "--reference") {
         return Reference(argc, argv);
-    if (argc > 1 && std::string(argv[1]) == "--real")
+    }
+    if (argc > 1 && std::string(argv[1]) == "--real") {
         return Real(argc, argv);
+    }
     char pattern[] = "/tmp/pm-sampling-artifacts-XXXXXX";
     const char* created = ::mkdtemp(pattern);
     CHECK(created);
@@ -235,14 +245,16 @@ int main(int argc, char** argv)
         PmSamplingArtifacts artifacts;
         std::string error;
         auto limits = options;
-        if (std::string(mode) == "timeout")
+        if (std::string(mode) == "timeout") {
             limits.timeoutMs = 20;
+        }
         const bool ok = GeneratePmSamplingArtifacts(staging.string(), context, sampling, limits, artifacts, error);
         const bool expected = std::string(mode) == "array" || std::string(mode) == "stream" ||
                               std::string(mode) == "unresolved" || std::string(mode) == "empty-frames" ||
                               std::string(mode) == "large";
-        if (ok != expected)
+        if (ok != expected) {
             std::cerr << "mode=" << mode << " error=" << error << "\n";
+        }
         CHECK(ok == expected);
         if (!ok) {
             CHECK(!error.empty());
@@ -257,9 +269,9 @@ int main(int argc, char** argv)
             CHECK(records.size() == 2);
             CHECK(records[0].as_object().at("Address").as_string() == "0x0000000000000010");
             const auto& frames = records[0].as_object().at("Symbol").as_array();
-            if (std::string(mode) == "empty-frames")
+            if (std::string(mode) == "empty-frames") {
                 CHECK(frames.empty());
-            else {
+            } else {
                 CHECK(frames.size() == 9 && frames[8].as_object().at("Column").is_int64());
                 CHECK(frames[8].as_object().at("StartAddress").as_string().empty());
             }
@@ -268,8 +280,9 @@ int main(int argc, char** argv)
                 ((std::string(mode) == "unresolved" || std::string(mode) == "empty-frames") ? 2 : 0));
             CHECK(Read(artifacts.disassemblyPath).find("ELFO") != std::string::npos);
         }
-        for (const auto& entry : fs::directory_iterator(staging))
+        for (const auto& entry : fs::directory_iterator(staging)) {
             CHECK(!fs::is_directory(entry)); // Temporary ELF gone.
+        }
     }
     CHECK(::setenv("PM_SAMPLING_TOOL_TEST_MODE", "array", 1) == 0);
     // Independently choose original disassembly and companion symbolization, then vice versa.
@@ -285,10 +298,11 @@ int main(int argc, char** argv)
         CHECK(Read(artifacts.disassemblyPath).find(source == 0 ? "ELFO" : "ELFC") != std::string::npos);
         const auto records = json::parse(Read(artifacts.pcStackPath)).as_array();
         CHECK(records[0].as_object().at("Address").as_string() == "0x0000000000000010");
-        if (source == 0)
+        if (source == 0) {
             CHECK(records[0].as_object().at("SymbolizerAddress").as_string() == "0x0000000000000100");
-        else
+        } else {
             CHECK(!records[0].as_object().contains("SymbolizerAddress"));
+        }
         CHECK(records[0].as_object().at("SelectedImage").as_string().back() == (source == 0 ? 'C' : 'O'));
     }
     PmSamplingArtifacts artifacts;

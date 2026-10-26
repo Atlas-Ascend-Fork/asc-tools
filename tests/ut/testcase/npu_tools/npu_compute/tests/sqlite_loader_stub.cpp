@@ -53,13 +53,15 @@ extern "C" void* dlopen(const char* path, int flags)
     static const auto realOpen = reinterpret_cast<Open>(dlsym(RTLD_NEXT, "dlopen"));
     static std::atomic<unsigned> attempts{0};
     const auto* mode = std::getenv("NPU_COMPUTE_SQLITE_STUB_MODE");
-    if (!mode || !path || !std::strstr(path, "libsqlite3.so"))
+    if (!mode || !path || !std::strstr(path, "libsqlite3.so")) {
         return realOpen(path, flags);
+    }
     if (std::getenv("NPU_COMPUTE_SQLITE_STUB_EXCLUDE_FIXTURE")) {
         char executable[4096]{};
         const auto length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
-        if (length > 0 && std::strstr(executable, "rep_fixture_app"))
+        if (length > 0 && std::strstr(executable, "rep_fixture_app")) {
             return realOpen(path, flags);
+        }
     }
     const auto attempt = ++attempts;
     std::fprintf(stderr, "[sqlite_loader_stub] attempt=%u library=%s\n", attempt, path);
@@ -68,8 +70,9 @@ extern "C" void* dlopen(const char* path, int flags)
     }
     if (std::strcmp(mode, "commit-denied") == 0) {
         auto* library = realOpen(path, flags);
-        if (library)
+        if (library) {
             EnableCommitFailure(library);
+        }
         return library;
     }
     if (std::strcmp(mode, "incomplete") == 0 || std::strcmp(mode, "wrong-architecture") == 0 ||

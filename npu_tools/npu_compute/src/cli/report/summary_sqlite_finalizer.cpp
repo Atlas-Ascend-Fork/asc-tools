@@ -40,8 +40,9 @@ fs::file_status Inspect(const fs::path& path)
 {
     boost::system::error_code error;
     const auto status = fs::symlink_status(path, error);
-    if (error && status.type() != fs::file_not_found)
+    if (error && status.type() != fs::file_not_found) {
         throw std::runtime_error("cannot inspect '" + path.string() + "': " + error.message());
+    }
     return status;
 }
 
@@ -56,8 +57,9 @@ std::vector<CsvInput> AnalyzeInputs(const std::vector<fs::path>& paths, std::vec
     for (const auto& path : paths) {
         try {
             auto schema = AnalyzeCsv(path.string());
-            if (schema.rowCount != 0)
+            if (schema.rowCount != 0) {
                 inputs.push_back({path, std::move(schema)});
+            }
         } catch (const std::exception& error) {
             issues.push_back(std::string(error.what()) + "; skipped this CSV table; other valid results are retained");
         }
@@ -68,23 +70,27 @@ std::vector<CsvInput> AnalyzeInputs(const std::vector<fs::path>& paths, std::vec
 bool HasOriginal(const fs::path& path)
 {
     const auto status = Inspect(path);
-    if (fs::exists(status) && !fs::is_regular_file(status))
+    if (fs::exists(status) && !fs::is_regular_file(status)) {
         throw std::runtime_error("existing database is not a regular file");
+    }
     for (const auto* suffix : {"-wal", "-shm", "-journal"}) {
         const auto sidecar = fs::path(path.string() + suffix);
-        if (fs::exists(Inspect(sidecar)))
+        if (fs::exists(Inspect(sidecar))) {
             throw std::runtime_error(
                 "SQLite sidecar '" + sidecar.string() +
                 "' remains; cannot safely create or copy the main database while auxiliary SQLite files remain");
+        }
     }
-    if (!fs::exists(status))
+    if (!fs::exists(status)) {
         return false;
+    }
     std::ifstream input(path.string(), std::ios::binary);
     std::array<char, sizeof(sqlite::kDatabaseHeader)> header{};
     input.read(header.data(), header.size());
     if (input.gcount() != static_cast<std::streamsize>(header.size()) ||
-        std::memcmp(header.data(), sqlite::kDatabaseHeader, header.size()) != 0)
+        std::memcmp(header.data(), sqlite::kDatabaseHeader, header.size()) != 0) {
         throw std::runtime_error("existing database has an invalid SQLite header or cannot be read");
+    }
     return true;
 }
 
@@ -92,8 +98,9 @@ class WorkingDatabase {
 public:
     ~WorkingDatabase()
     {
-        if (handle)
+        if (handle) {
             sqlite::GetApi().closeV2(handle);
+        }
         if (!directory.empty()) {
             boost::system::error_code ignored;
             fs::remove_all(directory, ignored);
@@ -101,9 +108,10 @@ public:
     }
     void Check(int status) const
     {
-        if (status != SQLITE_OK)
+        if (status != SQLITE_OK) {
             throw std::runtime_error(
                 handle ? sqlite::GetApi().errmsg(handle) : "SQLite could not allocate a connection");
+        }
     }
     void Exec(const char* sql) const { Check(sqlite::GetApi().exec(handle, sql)); }
     void Close()
@@ -115,24 +123,27 @@ public:
     {
         if (handle) {
             const auto& api = sqlite::GetApi();
-            if (transaction && api.exec(handle, "ROLLBACK") != SQLITE_OK)
+            if (transaction && api.exec(handle, "ROLLBACK") != SQLITE_OK) {
                 issues.push_back(
                     "Cannot roll back working SQLite database '" + path.string() + "': " + api.errmsg(handle));
-            if (api.closeV2(handle) != SQLITE_OK)
+            }
+            if (api.closeV2(handle) != SQLITE_OK) {
                 issues.push_back(
                     "Cannot close discarded working SQLite database '" + path.string() + "': " + api.errmsg(handle));
-            else
+            } else {
                 handle = nullptr;
+            }
         }
         if (!directory.empty()) {
             boost::system::error_code error;
             fs::remove_all(directory, error);
-            if (error)
+            if (error) {
                 issues.push_back(
                     "Cannot remove temporary SQLite directory '" + directory.string() + "': " + error.message() +
                     "; temporary files are excluded from the report");
-            else
+            } else {
                 directory.clear();
+            }
         }
     }
     fs::path directory;
@@ -152,8 +163,9 @@ void UseDeleteJournal(WorkingDatabase& database)
     const bool selected = mode && std::strcmp(reinterpret_cast<const char*>(mode), "delete") == 0;
     const auto done = selected ? api.step(statement) : row;
     const auto finalized = api.finalize(statement);
-    if (!selected || done != SQLITE_DONE)
+    if (!selected || done != SQLITE_DONE) {
         throw std::runtime_error("cannot select SQLite DELETE journal mode for a self-contained database file");
+    }
     database.Check(finalized);
 }
 
@@ -161,8 +173,9 @@ void FinalizeDirectory(
     const fs::path& directory, const std::vector<fs::path>& paths, SummarySqliteFinalizationResult& result)
 {
     const auto inputs = AnalyzeInputs(paths, result.issues);
-    if (inputs.empty())
+    if (inputs.empty()) {
         return;
+    }
     const auto target = directory / "summary.db";
     WorkingDatabase database;
     std::string stage = "inspect original database";
@@ -170,8 +183,9 @@ void FinalizeDirectory(
         const bool original = HasOriginal(target);
         stage = "create temporary database directory";
         const auto temporary = directory / fs::unique_path(".summary.tmp.%%%%-%%%%-%%%%");
-        if (!fs::create_directory(temporary))
+        if (!fs::create_directory(temporary)) {
             throw std::runtime_error("temporary directory already exists");
+        }
         database.directory = temporary;
         database.path = temporary / "summary.db";
         if (original) {
@@ -195,12 +209,15 @@ void FinalizeDirectory(
         for (const auto& input : inputs) {
             stage = "write CSV table '" + input.schema.tableName + "' from '" + input.path.string() + "'";
             const auto imported = WriteCsvTable(database.handle, input.path.string(), input.schema);
-            if (!imported.error.empty())
+            if (!imported.error.empty()) {
                 result.issues.push_back(imported.error);
-            if (!imported.databaseUsable)
+            }
+            if (!imported.databaseUsable) {
                 throw std::runtime_error("CSV table rollback failed; discard all updates in this working database");
-            if (imported.written)
+            }
+            if (imported.written) {
                 ++written;
+            }
         }
         if (written != 0) {
             stage = "commit database transaction";
@@ -224,22 +241,25 @@ void CollectDirectory(
     const fs::path& directory, std::vector<fs::path>& csvs, std::vector<fs::path>& children,
     std::vector<std::string>& issues)
 {
-    if (!fs::is_directory(Inspect(directory)))
+    if (!fs::is_directory(Inspect(directory))) {
         throw std::runtime_error("collection path is not a regular directory");
+    }
     for (fs::directory_iterator iterator(directory), end; iterator != end; ++iterator) {
         const auto& path = iterator->path();
         const auto name = path.filename().string();
-        if (name == ".biu-staging" || IsTemporary(name))
+        if (name == ".biu-staging" || IsTemporary(name)) {
             continue;
+        }
         try {
             const auto status = Inspect(path);
             if (fs::is_symlink(status)) {
                 issues.push_back(
                     "Cannot import SQLite data through symbolic link '" + path.string() + "'; skipped this path");
-            } else if (fs::is_directory(status))
+            } else if (fs::is_directory(status)) {
                 children.push_back(path);
-            else if (fs::is_regular_file(status) && path.extension() == ".csv")
+            } else if (fs::is_regular_file(status) && path.extension() == ".csv") {
                 csvs.push_back(path);
+            }
         } catch (const std::exception& error) {
             issues.push_back("Cannot inspect SQLite input '" + path.string() + "': " + error.what());
         }

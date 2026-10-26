@@ -52,8 +52,9 @@ constexpr unsigned kHexBase = 16;
 constexpr unsigned kDecimalBase = 10;
 void Require(bool ok, const std::string& message)
 {
-    if (!ok)
+    if (!ok) {
         throw std::runtime_error(message);
+    }
 }
 // LLVM tools use hexadecimal addresses; SQLite stores the same numeric value as INTEGER.
 std::string Hex(std::uint64_t pc)
@@ -137,8 +138,9 @@ void Run(
                 "LLVM tool failed: " + arguments[0] + ": " + Read(errors));
             return;
         }
-        if (waited < 0 && errno == EINTR)
+        if (waited < 0 && errno == EINTR) {
             continue;
+        }
         Require(waited >= 0, "cannot wait for LLVM tool");
         Require(std::chrono::steady_clock::now() < deadline, "LLVM tool timed out: " + arguments[0]);
         std::this_thread::sleep_for(kToolPollInterval);
@@ -179,22 +181,26 @@ json::array Normalize(const std::string& text)
     std::size_t offset = 0;
     while (offset < text.size()) {
         while (offset < text.size() &&
-               (text[offset] == ' ' || text[offset] == '\n' || text[offset] == '\r' || text[offset] == '\t'))
+               (text[offset] == ' ' || text[offset] == '\n' || text[offset] == '\r' || text[offset] == '\t')) {
             ++offset;
-        if (offset == text.size())
+        }
+        if (offset == text.size()) {
             break;
+        }
         json::stream_parser parser;
         const auto consumed = parser.write_some(text.data() + offset, text.size() - offset);
         Require(consumed != 0, "invalid LLVM JSON stream");
-        if (!parser.done())
+        if (!parser.done()) {
             parser.finish();
+        }
         auto value = parser.release();
         if (value.is_array()) {
             Require(records.empty(), "unexpected LLVM JSON array in object stream");
             records = std::move(value.as_array());
             offset += consumed;
-            while (offset < text.size() && std::isspace(static_cast<unsigned char>(text[offset])))
+            while (offset < text.size() && std::isspace(static_cast<unsigned char>(text[offset]))) {
                 ++offset;
+            }
             Require(offset == text.size(), "trailing LLVM JSON after array");
         } else {
             Require(value.is_object(), "LLVM JSON entry is not an object");
@@ -237,8 +243,9 @@ bool GeneratePmSamplingArtifacts(
             } catch (const std::exception& failure) {
                 boost::system::error_code ignored;
                 fs::remove(path, ignored);
-                if (!error.empty())
+                if (!error.empty()) {
                     error += "\n";
+                }
                 error += path.filename().string() + ": LLVM result generation failed: " + failure.what() +
                          "; excluded this file; other valid results are retained";
                 return false;
@@ -304,8 +311,9 @@ bool GeneratePmSamplingArtifacts(
                         file && file->is_string() && !file->as_string().empty() && line &&
                         ((line->is_int64() && line->as_int64() > 0) || (line->is_uint64() && line->as_uint64() > 0));
                 }
-                if (!resolved)
+                if (!resolved) {
                     ++unresolved;
+                }
                 if (options.pcStackSource == PmSamplingElfSource::Companion) {
                     object["SymbolizerAddress"] = Hex(addresses[index].second);
                 }

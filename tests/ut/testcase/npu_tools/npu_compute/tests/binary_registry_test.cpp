@@ -91,8 +91,9 @@ extern "C" void* acltoolGetOriginalRuntimeApi(aclrtApiId id)
         case ACL_RT_API_aclrtMemcpy:
             return reinterpret_cast<void*>(
                 +[](void* target, std::size_t max, const void* source, std::size_t size, aclrtMemcpyKind) -> aclError {
-                    if (size > max)
+                    if (size > max) {
                         return ACL_ERROR_INVALID_PARAM;
+                    }
                     std::copy_n(
                         reinterpret_cast<const unsigned char*>(source), size, reinterpret_cast<unsigned char*>(target));
                     return ACL_SUCCESS;
@@ -135,8 +136,9 @@ extern "C" __attribute__((visibility("default"))) aclError
 BinaryRegistryTestGetFunctionAddr(const void*, void** aic, void** aiv)
 {
     ++snapshotAddressCalls;
-    if (failAddress)
+    if (failAddress) {
         return ACL_ERROR_RT_FAILURE;
+    }
     *aic = nullptr;
     *aiv = reinterpret_cast<void*>(0x12000000100ULL);
     return ACL_SUCCESS;

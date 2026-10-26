@@ -196,10 +196,12 @@ std::vector<char> MakeCodeElf(std::uint64_t address, std::uint64_t size)
         entry.sh_offset = offset;
         entry.sh_size = length;
         entry.sh_flags = flags;
-        if (index == kCodeSection)
+        if (index == kCodeSection) {
             entry.sh_addr = address;
-        if (index == kSymbolsSection)
+        }
+        if (index == kSymbolsSection) {
             entry.sh_link = kStringsSection;
+        }
         std::copy_n(
             reinterpret_cast<const unsigned char*>(&entry), sizeof(entry),
             reinterpret_cast<unsigned char*>(image.data() + sizeof(h) + index * sizeof(entry)));

@@ -73,8 +73,9 @@ TEST_F(NpuComputeCsvReader, NormalizesSectionTableNames)
         {"PmSampling", "PmSampling"},
         {"pipe_utilization.csv", "PipeUtilization"},
         {"ResourceConflictRatio.csv", "ResourceConflictRatio"}};
-    for (const auto& item : cases)
+    for (const auto& item : cases) {
         EXPECT_EQ(NormalizeCsvTableName(item.first), item.second);
+    }
 }
 
 TEST_F(NpuComputeCsvReader, NormalizesFieldsAndRemovesUnitSuffixes)
@@ -87,8 +88,9 @@ TEST_F(NpuComputeCsvReader, NormalizesFieldsAndRemovesUnitSuffixes)
         {"GM_to_L1_bw_usage_rate(%)", "gm_to_l1_bw_usage_rate"},
         {"a-b", "a_b"},
         {" a__b ", "a_b"}};
-    for (const auto& item : cases)
+    for (const auto& item : cases) {
         EXPECT_EQ(NormalizeCsvColumnName(item.first), item.second);
+    }
 }
 
 TEST_F(NpuComputeCsvReader, RejectsInvalidOrReservedNames)
@@ -97,8 +99,9 @@ TEST_F(NpuComputeCsvReader, RejectsInvalidOrReservedNames)
         EXPECT_THROW(NormalizeCsvTableName(name), std::runtime_error) << name;
         EXPECT_THROW(NormalizeCsvColumnName(name), std::runtime_error) << name;
     }
-    for (const auto* name : {"rowid", "OID", "_rowid_"})
+    for (const auto* name : {"rowid", "OID", "_rowid_"}) {
         EXPECT_THROW(NormalizeCsvColumnName(name), std::runtime_error) << name;
+    }
     EXPECT_EQ(NormalizeCsvColumnName("RowId"), "row_id");
     EXPECT_THROW(NormalizeCsvColumnName(std::string("x\0y", 3)), std::runtime_error);
 }
@@ -216,8 +219,9 @@ TEST_F(NpuComputeCsvReader, ScansWholeColumnsAndRetainsOriginalHeaderOrder)
     const std::vector<CsvColumnType> expected = {CsvColumnType::Integer, CsvColumnType::Integer,
                                                  CsvColumnType::Real,    CsvColumnType::Text,
                                                  CsvColumnType::Text,    CsvColumnType::Integer};
-    for (std::size_t i = 0; i < expected.size(); ++i)
+    for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(schema.columns[i].type, expected[i]);
+    }
     EXPECT_EQ(schema.columns[0].sourceName, "block_id");
     EXPECT_EQ(schema.columns[0].name, "block_id");
     EXPECT_EQ(schema.columns[5].name, "mixed");

@@ -70,19 +70,21 @@ protected:
     {
         const auto& api = sqlite::GetApi();
         sqlite3_stmt* statement = nullptr;
-        if (api.prepareV2(database_, sql, -1, &statement, nullptr) != SQLITE_OK)
+        if (api.prepareV2(database_, sql, -1, &statement, nullptr) != SQLITE_OK) {
             throw std::runtime_error(api.errmsg(database_));
+        }
         std::vector<Row> rows;
         int status;
         while ((status = api.step(statement)) == SQLITE_ROW) {
             Row row;
             for (int index = 0; index < api.columnCount(statement); ++index) {
-                if (api.columnType(statement, index) == SQLITE_NULL)
+                if (api.columnType(statement, index) == SQLITE_NULL) {
                     row.emplace_back(std::nullopt);
-                else
+                } else {
                     row.emplace_back(std::string(
                         reinterpret_cast<const char*>(api.columnText(statement, index)),
                         api.columnBytes(statement, index)));
+                }
             }
             rows.push_back(std::move(row));
         }
@@ -98,8 +100,9 @@ protected:
     {
         EXPECT_FALSE(result.written);
         EXPECT_TRUE(result.databaseUsable) << result.error;
-        for (const auto& detail : details)
+        for (const auto& detail : details) {
             EXPECT_NE(result.error.find(detail), std::string::npos) << result.error;
+        }
     }
     boost::filesystem::path directory_;
     sqlite3* database_ = nullptr;
@@ -296,8 +299,9 @@ TEST_F(NpuComputeCsvSqliteWriter, ChangedTypesCannotSilentlyTruncateOrRoundInteg
         const auto path = File("Memory.csv", original);
         const auto schema = AnalyzeCsv(path);
         File("Memory.csv", "field\n9007199254740993\n");
-        if (schema.columns.front().type == npucompute::cli::CsvColumnType::Integer)
+        if (schema.columns.front().type == npucompute::cli::CsvColumnType::Integer) {
             File("Memory.csv", "field\n1.5\n");
+        }
         ExpectFailure(WriteCsvTable(database_, path, schema), {"Memory.csv", "record 2", "field", "type"});
         EXPECT_FALSE(HasTable("Memory"));
         EXPECT_FALSE(HasTable("FieldUnitMap"));
@@ -320,8 +324,9 @@ struct SavepointFault {
     static int Authorize(void* context, int operation, const char* action, const char*, const char*, const char*)
     {
         constexpr int sqliteSavepoint = 32;
-        if (operation != sqliteSavepoint || action == nullptr)
+        if (operation != sqliteSavepoint || action == nullptr) {
             return SQLITE_OK;
+        }
         auto& fault = *static_cast<SavepointFault*>(context);
         if (std::string_view(action) == "RELEASE" && fault.denyRelease) {
             fault.denyRelease = false;

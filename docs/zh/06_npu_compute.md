@@ -221,8 +221,8 @@ npu-compute: directory= <parent-directory>/report_<timestamp-ms>_<8-lowercase-he
 | `summary.jsonl`      | 执行Kernel时生成                                     | 性能汇总及算子概览。                                               |
 | `PipeTrace.json`     | 选择`Pipeline`时生成                                 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
 | `summary.db`         | 存在有效CSV或PmSampling采样数据时                    | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)            |
-| `objdump.txt`        | 选择`PmSampling`时生成                               | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。  |
-| `symbolizer.json`    | 选择`PmSampling`时生成                               | 采样地址对应的函数和内联调用信息。                                 |
+| `objdump.txt`        | `PmSampling`采集到指令地址及状态计数时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。  |
+| `symbolizer.json`    | `PmSampling`采集到指令地址及状态计数时生成 | 采样地址对应的函数和内联调用信息。                                 |
 | `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`和`PmSampling`除外） | 该Section的指标数据。                                              |
 
 `Pipeline` Section基于采样机制生成流水图，与用户启用的核数无直接关系；即使启用全部核，流水图最多展示6个采样Group的数据。
@@ -242,7 +242,7 @@ CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常�
 | `Memory`                | 对应CSV入库成功                 | [Memory](#section-memory)                                                                                                                 |
 | `MemoryL0`              | 对应CSV入库成功                 | [MemoryL0](#section-memoryl0)                                                                                                             |
 | `MemoryUB`              | 对应CSV入库成功                 | [MemoryUB](#section-memoryub)                                                                                                             |
-| `PcSampling`            | PmSampling采样数据写入成功      | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数) |
+| `PcSampling`            | 选择`PmSampling` | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数) |
 | `PipeUtilization`       | 对应CSV入库成功                 | [PipeUtilization](#section-pipeutilization)                                                                                               |
 | `ResourceConflictRatio` | 对应CSV入库成功                 | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                   |
 | `FieldUnitMap`          | 至少一个含数据记录的CSV成功入库 | `field_name`保存字段名，`unit`保存单位；无单位时为NULL。                                                                                  |
