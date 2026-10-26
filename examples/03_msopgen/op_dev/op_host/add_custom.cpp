@@ -41,6 +41,7 @@ public:
             .AddConfig("ascend310p")
             .AddConfig("ascend310b")
             .AddConfig("ascend910b")
+            .AddConfig("ascend910_93")
             .AddConfig("ascend950");
     }
 };

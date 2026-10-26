@@ -250,7 +250,7 @@ source /usr/local/Ascend/cann/set_env.sh
 
    - python >= 3.7.0 (Note: Python has announced EOL for versions 3.7.x/3.8.x. CANN will soon stop supporting these versions. Please upgrade to version >= 3.9.x)
 
-   - gcc and g++ supported version range: 7.3.x to 14.x (Note: gcc and g++ versions must match)
+   - gcc >= 7.3.0 / g++ >= 7.3.0 (Note: gcc and g++ versions must be consistent)
 
    - cmake >= 3.16.0
 

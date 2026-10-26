@@ -244,7 +244,7 @@ source /usr/local/Ascend/cann/set_env.sh
 
    - python >= 3.7.0 (注意：python宣布3.7.x/3.8.x版本已经EOL，CANN即将停止对该版本的支持，请升级到>=3.9.x版本)
 
-   - gcc与g++支持版本范围为7.3.x版本至14.x版本 (注意：要求gcc与g++版本一致)
+   - gcc >= 7.3.0 / g++ >= 7.3.0 (注意：要求gcc与g++版本一致)
 
    - cmake >= 3.16.0
 
