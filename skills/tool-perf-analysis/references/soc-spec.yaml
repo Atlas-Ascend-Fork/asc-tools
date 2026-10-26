@@ -1,0 +1,146 @@
+# soc-spec.yaml — SoC 峰值标尺表（REVIEW2 G3 / 整改 P0-3）
+#
+# 目的：「还差多远」的客观标尺。MTE2 真假 bound 二分（data-copy.md 公式需要 GM 峰值
+# 带宽）与 NEAR_LIMIT 停止决策的第二证据源（距峰值 X% 读数）此前无可计算来源——本表补上。
+#
+# 溯源纪律（与规则包 threshold_source 同款）：
+#   [cann-ini]        本机 CANN 安装 platform_config/*.ini 静态配置（结构参数真源；
+#                     采集于 CANN 9.0.0 aarch64-linux，2026-10-15）
+#   [npu-arch-guide]  npu-arch SKILL 架构指南（算力公式推导 / 公开资料与经验值）
+#   [cann-bench]      cann-bench 仓 t_hw 模型元数据（950DT 4.1 / 950PR 1.65 TB/s 口径）
+#   [tuning-practice] 一线调优实践实测
+#   🟡                未实测标定（首期工程标定值）——判定引用时须在报告携带该标志
+#
+# 单位：gm_bw_gbps = GB/s；*_tflops = TFLOPS（FMA 计 2 FLOP）；容量 KB/MB/GB 二进制口径。
+# 消费方：
+#   verdict.py --soc-spec        active_bw 占峰值换算（反证标量）+ 距峰值读数
+#   facts_bridge.py（ops-collect）峰值换算（mte2_active_bw_pct_of_peak 等）
+#   tiling_candidates.py（ops-family）核数 / UB / L1 / L0 容量约束
+# 使用规则：reference 为判定默认值；调用方知道实际 SKU 时应从 skus 解析精确值
+#   （npu-smi 型号 → skus.sku 匹配）。本表不搬用 msAgent 910B 峰值表（训练卡口径
+#   来源不同，数值仅作交叉验证：910B3 fp16 294.91 与本表公式推导一致）。
+schema: opstune.soc-spec/1.0
+
+socs:
+  a2:
+    name: Ascend910B（Atlas A2 训练/推理）
+    arch: DAV_2201
+    skus:   # 调用方按实际 SKU 解析；reference 为典型口径
+      - {sku: Ascend910B1, ai_core_cnt: 24, vector_core_cnt: 48, freq_mhz: 1850, cube_fp16_tflops: 363.8, l2_mb: 192, memory_gb: 64, source: "[cann-ini] Ascend910B1.ini"}
+      - {sku: Ascend910B2, ai_core_cnt: 24, vector_core_cnt: 48, freq_mhz: 1800, cube_fp16_tflops: 353.9, l2_mb: 192, memory_gb: 64, source: "[cann-ini] Ascend910B2.ini"}
+      - {sku: Ascend910B2C, ai_core_cnt: 24, vector_core_cnt: 48, freq_mhz: 1800, cube_fp16_tflops: 353.9, l2_mb: 192, memory_gb: null, source: "[cann-ini] Ascend910B2C.ini"}
+      - {sku: Ascend910B3, ai_core_cnt: 20, vector_core_cnt: 40, freq_mhz: 1800, cube_fp16_tflops: 294.9, l2_mb: 192, memory_gb: 64, source: "[cann-ini] Ascend910B3.ini（本仓开发机实测设备，npu-smi 25.5.0）"}
+      - {sku: Ascend910B4, ai_core_cnt: 20, vector_core_cnt: 40, freq_mhz: 1500, cube_fp16_tflops: 245.8, l2_mb: 96, memory_gb: 32, source: "[cann-ini] Ascend910B4.ini"}
+    buffer:                      # 同架构子型号一致 [cann-ini]
+      l1_kb: 512
+      l0a_kb: 64
+      l0b_kb: 64
+      l0c_kb: 128
+      ub_kb: 192
+      bt_kb: 1
+    sparsity_42: true            # [cann-ini] sparsity=1（支持 4:2 稀疏）
+    reference:                   # 判定默认参考值（典型口径 = 910B2）
+      # ⚠ 消费方纪律：同 a5——B3/B4 为 20/40 核，直接用本 24/48 会低估满核利用率；
+      # 先按 chip info → skus 匹配，未命中才回退本值（报告须标注「典型口径」）。
+      ai_core_cnt: {value: 24, source: "[cann-ini] B1/B2；B3/B4 为 20（按 skus 解析实际值）"}
+      vector_core_cnt: {value: 48, source: "[cann-ini] B1/B2；B3/B4 为 40"}
+      gm_bw_gbps:
+        value: 1600
+        source: "[npu-arch-guide] 公开资料/经验值"
+        verified: false
+        note: "🟡 未实测标定；上板标定后回写。与 [cann-bench] 的 950PR 读带宽 1.65 TB/s
+               属不同芯片，未互证"
+      cube_peak_tflops:
+        fp16: {value: 353.9, source: "[npu-arch-guide] 4096×24×1800×2/1e6"}
+        bf16: {value: 353.9, source: "[npu-arch-guide] Cube bf16 与 fp16 同速率"}
+        int8: {value: 707.8, source: "[cann-ini DtypeMKN 16,32,16] = fp16 × 2"}
+        int4: {value: 1415.6, source: "[cann-ini DtypeMKN 16,64,16] = fp16 × 4"}
+        fp32: {value: null, note: "HF32 通路速率未标定 🟡"}
+        fp8: {value: null, note: "A2 不支持"}
+      vector_peak_tflops:
+        fp16: {value: 22, source: "[npu-arch-guide] 🟡 公开资料/经验值", verified: false}
+        fp32: {value: null, note: "未标定 🟡"}
+      head_overhead_us:
+        value: 21
+        source: "[tuning-practice] A2 满核头开销 ~20-21us 实测"
+    derived_formula:
+      cube_fp16_tflops: "4096 × ai_core_cnt × freq_mhz × 2 / 1e6"
+
+  a3:
+    name: Ascend910_93（Atlas A3 训练/推理）
+    arch: DAV_2201
+    note: 与 a2 同为 DAV_2201——buffer / DtypeMKN / 峰值公式与 a2 一致；差异在 SKU 裁剪。
+    skus:
+      - {sku: Ascend910_9362, ai_core_cnt: 20, vector_core_cnt: 40, freq_mhz: 1500, cube_fp16_tflops: 245.8, l2_mb: 168, memory_gb: null, source: "[cann-ini] Ascend910_9362.ini"}
+      - {sku: Ascend910_9372, ai_core_cnt: 20, vector_core_cnt: 40, freq_mhz: 1800, cube_fp16_tflops: 294.9, l2_mb: 192, memory_gb: null, source: "[cann-ini] Ascend910_9372.ini"}
+      - {sku: Ascend910_9381, ai_core_cnt: 24, vector_core_cnt: 48, freq_mhz: 1800, cube_fp16_tflops: 353.9, l2_mb: 192, memory_gb: 64, source: "[cann-ini] Ascend910_9381.ini"}
+      - {sku: Ascend910_9382, ai_core_cnt: 24, vector_core_cnt: 48, freq_mhz: 1800, cube_fp16_tflops: 353.9, l2_mb: 192, memory_gb: null, source: "[cann-ini] Ascend910_9382.ini"}
+      - {sku: Ascend910_9391, ai_core_cnt: 24, vector_core_cnt: 48, freq_mhz: 1850, cube_fp16_tflops: 363.8, l2_mb: 192, memory_gb: 64, source: "[cann-ini] Ascend910_9391.ini"}
+      - {sku: Ascend910_9392, ai_core_cnt: 24, vector_core_cnt: 48, freq_mhz: 1850, cube_fp16_tflops: 363.8, l2_mb: 192, memory_gb: null, source: "[cann-ini] Ascend910_9392.ini"}
+    buffer: {l1_kb: 512, l0a_kb: 64, l0b_kb: 64, l0c_kb: 128, ub_kb: 192, bt_kb: 1}
+    sparsity_42: true
+    reference:
+      ai_core_cnt: {value: 24, source: "[cann-ini] 典型 SKU（93_81/82）；20 核变体见 skus"}
+      vector_core_cnt: {value: 48, source: "[cann-ini] 同上"}
+      gm_bw_gbps:
+        value: 1600
+        source: "沿用 a2 参考值（同 DAV_2201）"
+        verified: false
+        note: "🟡 未单独标定——a3 与 a2 结构同源，暂共用标尺；上板标定后独立回写"
+      cube_peak_tflops:
+        fp16: {value: 353.9, source: "[npu-arch-guide] 4096×24×1800×2/1e6（典型 24 核 @1800）"}
+        bf16: {value: 353.9, source: "同 fp16"}
+        int8: {value: 707.8, source: "[cann-ini DtypeMKN] fp16 × 2"}
+        int4: {value: 1415.6, source: "[cann-ini DtypeMKN] fp16 × 4"}
+        fp32: {value: null, note: "HF32 未标定 🟡"}
+        fp8: {value: null, note: "A3 不支持"}
+      vector_peak_tflops:
+        fp16: {value: 22, source: "[npu-arch-guide] 🟡（同 a2 口径）", verified: false}
+      head_overhead_us: {value: 21, source: "[tuning-practice] 同 a2 口径（未单独标定 🟡）"}
+    derived_formula:
+      cube_fp16_tflops: "4096 × ai_core_cnt × freq_mhz × 2 / 1e6"
+
+  a5:
+    name: Ascend950（Atlas A5：950DT 训练 / 950PR 推理）
+    arch: DAV_3510
+    skus:
+      - {sku: Ascend950PR_957b, ai_core_cnt: 28, vector_core_cnt: 56, freq_mhz: 1650, cube_fp16_tflops: 378.5, l2_mb: 112, memory_gb: 112, source: "[cann-ini] Ascend950PR_957b.ini（PCIE 典型）"}
+      - {sku: Ascend950PR_9589, ai_core_cnt: 32, vector_core_cnt: 64, freq_mhz: 1650, cube_fp16_tflops: 432.5, l2_mb: 128, memory_gb: 128, source: "[cann-ini] Ascend950PR_9589.ini（Server 典型）"}
+      - {sku: Ascend950PR_9599, ai_core_cnt: 36, vector_core_cnt: 72, freq_mhz: 1800, cube_fp16_tflops: 530.8, l2_mb: 128, memory_gb: 128, source: "[cann-ini] Ascend950PR_9599.ini"}
+      - {sku: Ascend950DT_950x, ai_core_cnt: 8, vector_core_cnt: 16, freq_mhz: 1650, cube_fp16_tflops: 108.1, l2_mb: 32, memory_gb: 24, source: "[cann-ini] Ascend950DT_950x.ini（Decode 卡）"}
+    buffer:                      # 同架构子型号一致 [cann-ini]
+      l1_kb: 512
+      l0a_kb: 64
+      l0b_kb: 64
+      l0c_kb: 256
+      ub_kb: 248
+      bt_kb: 4
+    sparsity_42: false           # [cann-ini] sparsity=0（不再支持 4:2）
+    reference:                   # 判定默认参考值（典型口径 = 950PR PCIE 957b）
+      # ⚠ 消费方纪律：本 reference 是典型 SKU 口径，仅在无法确定实际 SKU 时兜底。
+      # 9599（36/72 核）与 9589（32/64 核）设备直接用本值会把核利用率算错——
+      # 消费方必须先按 HardwareInfo chip info → skus.sku 前缀匹配解析精确核数
+      # （extract_facts.py physical_cores 已实现该顺序：实测 > skus > reference）。
+      ai_core_cnt: {value: 28, source: "[cann-ini] 957b；Server 9589 为 32 / 9599 为 36（按 skus 解析）"}
+      vector_core_cnt: {value: 56, source: "[cann-ini] 957b；9589 为 64 / 9599 为 72"}
+      gm_bw_gbps:
+        value: 1400
+        source: "[npu-arch-guide] 950PR PCIE 公开资料/经验值"
+        verified: false
+        note: "🟡 未实测标定。[cann-bench] t_hw 模型采用 1.65 TB/s（读带宽口径）、950DT
+               4.1 TB/s——两源未对齐，本表取保守值 1400；上板标定后回写。
+               勘误：L2 规则包旧注释「A5 约 48 AIV/28 AIC」与 ini 不符
+               （957b 实为 56 AIV / 28 AIC），以本表为准"
+      cube_peak_tflops:
+        fp16: {value: 378.5, source: "[npu-arch-guide] 4096×28×1650×2/1e6"}
+        bf16: {value: 378.5, source: "同 fp16"}
+        int8: {value: 757.0, source: "[cann-ini DtypeMKN 16,32,16] = fp16 × 2"}
+        fp8: {value: 757.0, source: "[cann-ini DtypeMKN DT_FLOAT8_E4M3FN 16,32,16] = fp16 × 2"}
+        mxfp4: {value: 1514.0, source: "[npu-arch-guide] Server 口径比例（= fp16 × 4）🟡"}
+        fp32: {value: null, note: "HF32 通路未标定 🟡"}
+      vector_peak_tflops:
+        fp16: {value: 47, source: "[npu-arch-guide] 950PR PCIE 🟡 公开资料/经验值（基准 23.7T × 双发 2）", verified: false}
+        fp32: {value: null, note: "未标定 🟡"}
+      head_overhead_us: {value: null, note: "A5 头开销参考值未实测标定 🟡（待首个真实调优沉淀）"}
+    derived_formula:
+      cube_fp16_tflops: "4096 × ai_core_cnt × freq_mhz × 2 / 1e6"
