@@ -17,6 +17,10 @@
 
 namespace npucompute::cli {
 namespace {
+constexpr std::size_t LONG_OPTION_PREFIX_LENGTH = 2U;
+constexpr std::size_t MIN_LONG_OPTION_NAME_LENGTH = LONG_OPTION_PREFIX_LENGTH;
+constexpr std::size_t SHORT_OPTION_TOKEN_LENGTH = 2U;
+
 bool IsNameCharacter(char ch)
 {
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-';
@@ -24,8 +28,9 @@ bool IsNameCharacter(char ch)
 void ValidateDefinition(const OptionSpec& option)
 {
     const auto& name = option.long_name;
-    if (name.size() <= 2 || name.compare(0, 2, "--") != 0 || name[2] == '-' ||
-        !std::all_of(name.begin() + 2, name.end(), IsNameCharacter)) {
+    if (name.size() <= MIN_LONG_OPTION_NAME_LENGTH || name.compare(0, LONG_OPTION_PREFIX_LENGTH, "--") != 0 ||
+        name[LONG_OPTION_PREFIX_LENGTH] == '-' ||
+        !std::all_of(name.begin() + LONG_OPTION_PREFIX_LENGTH, name.end(), IsNameCharacter)) {
         throw std::invalid_argument("invalid option name: " + name);
     }
     if (option.short_name != '\0' && (!IsNameCharacter(option.short_name) || option.short_name == '-')) {
@@ -178,7 +183,7 @@ std::optional<OptionMatch> OptionRegistry::Match(const std::string& text) const
     if (exact != names_.end()) {
         return OptionMatch{exact->second, false, {}};
     }
-    if (text.compare(0, 2, "--") == 0) {
+    if (text.compare(0, LONG_OPTION_PREFIX_LENGTH, "--") == 0) {
         const auto equals = text.find('=');
         if (equals == std::string::npos) {
             return std::nullopt;
@@ -189,7 +194,7 @@ std::optional<OptionMatch> OptionRegistry::Match(const std::string& text) const
         }
         return std::nullopt;
     }
-    if (text.size() > 2 && text[0] == '-') {
+    if (text.size() > SHORT_OPTION_TOKEN_LENGTH && text[0] == '-') {
         const auto option = short_names_.find(text[1]);
         if (option != short_names_.end() && options_[option->second].arity == OptionArity::RequiredValue) {
             return OptionMatch{option->second, true, text.substr(2)};

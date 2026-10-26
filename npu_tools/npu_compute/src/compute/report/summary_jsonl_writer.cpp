@@ -31,10 +31,14 @@ namespace npucompute {
 namespace {
 
 using Metric = std::optional<double>;
+constexpr std::size_t MANGLED_NAME_PREFIX_BYTES = 2;
+constexpr std::size_t SUMMARY_METADATA_FIELDS = 2;
+constexpr double GM_THEORETICAL_BANDWIDTH_GBPS = 1600.0;
+constexpr double PERCENT_SCALE = 100.0;
 
 std::string DemangleName(const std::string& name)
 {
-    if (name.compare(0, 2, "_Z") != 0) {
+    if (name.compare(0, MANGLED_NAME_PREFIX_BYTES, "_Z") != 0) {
         return name;
     }
     int status = 0;
@@ -81,7 +85,7 @@ Fields Section(
     const auto header = PmuMetricBuilder::Header(section);
     auto fields = AggregateSummarySection(section, result, config);
     output << "{\"category\":" << Quote(section);
-    for (std::size_t index = 2; index < header.size(); ++index) {
+    for (std::size_t index = SUMMARY_METADATA_FIELDS; index < header.size(); ++index) {
         const auto& field = fields.at(header[index]);
         output << ',' << Quote(header[index]) << ':' << Number(field.value, field.integer);
     }
@@ -126,7 +130,8 @@ void OpInfo(
     const auto metrics = BuildSummaryMetrics(result, config, metadata);
     const Metric read = Sum(memory["aic_main_mem_read_bw(GB/s)"].value, memory["aiv_main_mem_read_bw(GB/s)"].value);
     const Metric write = Sum(memory["aic_main_mem_write_bw(GB/s)"].value, memory["aiv_main_mem_write_bw(GB/s)"].value);
-    const Metric usage = read && write ? Metric((*read + *write) / 1600.0 * 100.0) : std::nullopt;
+    const Metric usage =
+        read && write ? Metric((*read + *write) / GM_THEORETICAL_BANDWIDTH_GBPS * PERCENT_SCALE) : std::nullopt;
     output << "{\"category\":\"OpInfoSummary\",\"Op Name\":"
            << (metadata.name ? Quote(DemangleName(*metadata.name)) : "\"NA\"") << ",\"Op Type\":"
            << (hasAic ? (hasAiv ? "\"mix\"" : "\"cube\"") :
@@ -149,7 +154,9 @@ void OpInfo(
     field("aiv_flops", metrics.aivFlops);
     field("aicore_parallel_utilization", metrics.parallelUtilization);
     field("aicore_parallel_balance", metrics.parallelBalance);
-    field("aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(1600) : std::nullopt, true);
+    field(
+        "aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(GM_THEORETICAL_BANDWIDTH_GBPS) : std::nullopt,
+        true);
     field("aicore_gm_read_bw(GB/s)", read);
     field("aicore_gm_write_bw(GB/s)", write);
     field("aicore_gm_bw_usage_rate(%)", usage);
@@ -244,7 +251,7 @@ aclptiResult WriteSummaryJsonl(
         ASCTOOL_ERROR(
             "[npu-compute] summary failed: %s"
             " code=%u",
-            error.what(), static_cast<unsigned>(1));
+            error.what(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INTERNAL;
     }
 }

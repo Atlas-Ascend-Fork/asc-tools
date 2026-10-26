@@ -33,10 +33,41 @@
 
 namespace npucompute::ipc {
 namespace {
+constexpr uint32_t UDS_PROTOCOL_ERROR_CODE = 1;
+constexpr uint32_t UDS_DEADLINE_ERROR_CODE = 2;
+constexpr uint32_t UDS_CANCELLED_ERROR_CODE = 3;
+constexpr uint32_t UDS_POLL_ERROR_CODE = 4;
+constexpr uint32_t UDS_SOCKET_BUFFER_ERROR_CODE = 5;
+constexpr uint32_t UDS_PROTOCOL_MAGIC = 0x5A5B;
+constexpr uint16_t UDS_PROTOCOL_VERSION = 3;
+constexpr uint16_t UDS_RESERVED_FLAGS = 0;
+constexpr size_t UDS_TYPE_OFFSET = 4;
+constexpr size_t UDS_TYPE_BYTES = 2;
+constexpr size_t UDS_FLAGS_OFFSET = 6;
+constexpr size_t UDS_LENGTH_OFFSET = 8;
+constexpr size_t UDS_LENGTH_BYTES = 4;
+constexpr size_t UDS_VERSION_OFFSET = 12;
+constexpr size_t UDS_VERSION_BYTES = 2;
+constexpr size_t UDS_SESSION_OFFSET = 18;
+constexpr size_t UDS_SESSION_BYTES = 8;
+constexpr size_t UDS_SEQUENCE_OFFSET = 26;
+constexpr size_t UDS_SEQUENCE_BYTES = 8;
+constexpr size_t UDS_BYTE_BITS = 8;
+constexpr size_t UDS_IOV_COUNT = 1;
+constexpr nfds_t UDS_NO_FILE_DESCRIPTORS = 0;
+constexpr size_t UDS_TRAILING_FLAG_FIELDS = 2;
+constexpr int UDS_CANCEL_POLL_INTERVAL_MS = 20;
+constexpr int UDS_INITIAL_RETRY_DELAY_MS = 20;
+constexpr int UDS_MAX_RETRY_DELAY_MS = 100;
+constexpr int UDS_RETRY_BACKOFF_FACTOR = 2;
+constexpr int UDS_SOCKET_BACKLOG = 8;
+constexpr size_t UDS_RANDOM_BYTES = 16;
+constexpr uint8_t UDS_HEX_LOW_NIBBLE_MASK = 0x0F;
+
 void Check(bool condition, const char* message)
 {
     if (!condition) {
-        throw Exception({1, message, "protocol", "frame"});
+        throw Exception({UDS_PROTOCOL_ERROR_CODE, message, "protocol", "frame"});
     }
 }
 [[noreturn]] void SystemError(const char* operation)
@@ -49,7 +80,7 @@ int Remaining(Deadline deadline)
 {
     const auto now = std::chrono::steady_clock::now();
     if (now >= deadline) {
-        throw Exception({2, "UDS deadline exceeded", "transport", "deadline"});
+        throw Exception({UDS_DEADLINE_ERROR_CODE, "UDS deadline exceeded", "transport", "deadline"});
     }
     const auto count = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
     return static_cast<int>(std::min<int64_t>(INT_MAX, count + 1));
@@ -57,7 +88,7 @@ int Remaining(Deadline deadline)
 void CheckCancellation(const std::function<bool()>& cancelled)
 {
     if (cancelled && cancelled()) {
-        throw Exception({3, "UDS operation cancelled", "transport", "cancel"});
+        throw Exception({UDS_CANCELLED_ERROR_CODE, "UDS operation cancelled", "transport", "cancel"});
     }
 }
 void Wait(int fd, short events, Deadline deadline, const std::function<bool()>& cancelled = {})
@@ -65,8 +96,9 @@ void Wait(int fd, short events, Deadline deadline, const std::function<bool()>& 
     for (;;) {
         CheckCancellation(cancelled);
         pollfd descriptor{fd, events, 0};
-        const int timeout = cancelled ? std::min(20, Remaining(deadline)) : Remaining(deadline);
-        const int result = poll(&descriptor, 1, timeout);
+        const int timeout =
+            cancelled ? std::min(UDS_CANCEL_POLL_INTERVAL_MS, Remaining(deadline)) : Remaining(deadline);
+        const int result = poll(&descriptor, UDS_IOV_COUNT, timeout);
         if (result < 0 && errno == EINTR) {
             continue;
         }
@@ -79,7 +111,7 @@ void Wait(int fd, short events, Deadline deadline, const std::function<bool()>& 
         }
         CheckCancellation(cancelled);
         if ((static_cast<unsigned int>(descriptor.revents) & POLLNVAL) != 0) {
-            throw Exception({4, "UDS poll error", "transport", "poll"});
+            throw Exception({UDS_POLL_ERROR_CODE, "UDS poll error", "transport", "poll"});
         }
         if ((static_cast<unsigned int>(descriptor.revents) & POLLERR) != 0) {
             int error = 0;
@@ -128,7 +160,8 @@ void ConfigureBuffers(int fd)
         }
         // Linux reports twice the requested size; reserve that half for bookkeeping.
         if (size != sizeof(actual) || actual / 2 < static_cast<int>(kMaxFrameBytes)) {
-            throw Exception({5, "UDS socket buffer too small", "transport", "socket-buffer"});
+            throw Exception(
+                {UDS_SOCKET_BUFFER_ERROR_CODE, "UDS socket buffer too small", "transport", "socket-buffer"});
         }
     }
 }
@@ -193,14 +226,14 @@ void VerifyPeer(int fd, pid_t expectedPid, uid_t expectedUid, bool allowDescenda
 void Append(Bytes& bytes, uint64_t value, size_t size)
 {
     for (size_t i = 0; i < size; ++i) {
-        bytes.push_back(static_cast<uint8_t>(value >> (8 * i)));
+        bytes.push_back(static_cast<uint8_t>(value >> (UDS_BYTE_BITS * i)));
     }
 }
 uint64_t Read(const Bytes& bytes, size_t offset, size_t size)
 {
     uint64_t result = 0;
     for (size_t i = 0; i < size; ++i) {
-        result |= static_cast<uint64_t>(bytes[offset + i]) << (8 * i);
+        result |= static_cast<uint64_t>(bytes[offset + i]) << (UDS_BYTE_BITS * i);
     }
     return result;
 }
@@ -287,13 +320,13 @@ Deadline After(std::chrono::milliseconds timeout) { return std::chrono::steady_c
 Bootstrap MakeBootstrap()
 {
     Bootstrap result;
-    std::array<uint8_t, 16> random{};
+    std::array<uint8_t, UDS_RANDOM_BYTES> random{};
     Random(random.data(), random.size());
     constexpr char hex[] = "0123456789abcdef";
     result.name = "@npu-compute-";
     for (const auto byte : random) {
         result.name += hex[byte >> 4];
-        result.name += hex[byte & 15];
+        result.name += hex[byte & UDS_HEX_LOW_NIBBLE_MASK];
     }
     do {
         Random(&result.session, sizeof(result.session));
@@ -340,7 +373,7 @@ Channel Channel::Connect(
 {
     Check(session != 0, "zero UDS session");
     const auto address = Address(name);
-    int retryDelay = 20;
+    int retryDelay = UDS_INITIAL_RETRY_DELAY_MS;
     for (;;) {
         CheckCancellation(cancelled);
         Remaining(deadline);
@@ -371,12 +404,12 @@ Channel Channel::Connect(
         const auto retryAt = std::min(deadline, After(std::chrono::milliseconds(retryDelay)));
         while (std::chrono::steady_clock::now() < retryAt) {
             CheckCancellation(cancelled);
-            const int delay = std::min(20, Remaining(deadline));
-            if (poll(nullptr, 0, delay) < 0 && errno != EINTR) {
+            const int delay = std::min(UDS_CANCEL_POLL_INTERVAL_MS, Remaining(deadline));
+            if (poll(nullptr, UDS_NO_FILE_DESCRIPTORS, delay) < 0 && errno != EINTR) {
                 SystemError("UDS connect retry");
             }
         }
-        retryDelay = std::min(100, retryDelay * 2);
+        retryDelay = std::min(UDS_MAX_RETRY_DELAY_MS, retryDelay * UDS_RETRY_BACKOFF_FACTOR);
     }
 }
 void Channel::Send(Type type, const Bytes& payload, Deadline deadline, const std::function<bool()>& cancelled)
@@ -386,15 +419,15 @@ void Channel::Send(Type type, const Bytes& payload, Deadline deadline, const std
     Check(sendSequence_ != std::numeric_limits<uint64_t>::max(), "UDS send sequence exhausted");
     Bytes packet;
     packet.reserve(kHeaderBytes + kPrefixBytes + payload.size());
-    Append(packet, 0x5A5B, 4);
-    Append(packet, static_cast<uint16_t>(type), 2);
-    Append(packet, 0, 2);
-    Append(packet, kPrefixBytes + payload.size(), 4);
-    Append(packet, 3, 2);
-    Append(packet, 0, 2);
-    Append(packet, 0, 2);
-    Append(packet, session_, 8);
-    Append(packet, sendSequence_, 8);
+    Append(packet, UDS_PROTOCOL_MAGIC, UDS_LENGTH_BYTES);
+    Append(packet, static_cast<uint16_t>(type), UDS_TYPE_BYTES);
+    Append(packet, UDS_RESERVED_FLAGS, UDS_VERSION_BYTES);
+    Append(packet, kPrefixBytes + payload.size(), UDS_LENGTH_BYTES);
+    Append(packet, UDS_PROTOCOL_VERSION, UDS_VERSION_BYTES);
+    Append(packet, UDS_RESERVED_FLAGS, UDS_VERSION_BYTES);
+    Append(packet, UDS_RESERVED_FLAGS, UDS_VERSION_BYTES);
+    Append(packet, session_, UDS_SESSION_BYTES);
+    Append(packet, sendSequence_, UDS_SEQUENCE_BYTES);
     packet.insert(packet.end(), payload.begin(), payload.end());
     for (;;) {
         CheckCancellation(cancelled);
@@ -402,7 +435,7 @@ void Channel::Send(Type type, const Bytes& payload, Deadline deadline, const std
         iovec vector{packet.data(), packet.size()};
         msghdr message{};
         message.msg_iov = &vector;
-        message.msg_iovlen = 1;
+        message.msg_iovlen = UDS_IOV_COUNT;
         const auto sent = sendmsg(fd_, &message, MSG_NOSIGNAL);
         if (sent < 0 && errno == EINTR) {
             continue;
@@ -428,7 +461,7 @@ Frame Channel::Receive(Deadline deadline, const std::function<bool()>& cancelled
         iovec vector{packet.data(), packet.size()};
         msghdr message{};
         message.msg_iov = &vector;
-        message.msg_iovlen = 1;
+        message.msg_iovlen = UDS_IOV_COUNT;
         const auto received = recvmsg(fd_, &message, 0);
         if (received < 0 && errno == EINTR) {
             continue;
@@ -446,16 +479,23 @@ Frame Channel::Receive(Deadline deadline, const std::function<bool()>& cancelled
         break;
     }
     Check(packet.size() >= kHeaderBytes + kPrefixBytes, "short UDS packet");
-    Check(Read(packet, 0, 4) == 0x5A5B && Read(packet, 6, 2) == 0, "invalid UDS header");
-    Check(Read(packet, 8, 4) == packet.size() - kHeaderBytes, "UDS length mismatch");
     Check(
-        Read(packet, 12, 2) == 3 && Read(packet, 14, 2) == 0 && Read(packet, 16, 2) == 0,
+        Read(packet, 0, UDS_LENGTH_BYTES) == UDS_PROTOCOL_MAGIC &&
+            Read(packet, UDS_FLAGS_OFFSET, UDS_VERSION_BYTES) == UDS_RESERVED_FLAGS,
+        "invalid UDS header");
+    Check(Read(packet, UDS_LENGTH_OFFSET, UDS_LENGTH_BYTES) == packet.size() - kHeaderBytes, "UDS length mismatch");
+    Check(
+        Read(packet, UDS_VERSION_OFFSET, UDS_VERSION_BYTES) == UDS_PROTOCOL_VERSION &&
+            Read(packet, UDS_VERSION_OFFSET + UDS_VERSION_BYTES, UDS_VERSION_BYTES) == UDS_RESERVED_FLAGS &&
+            Read(packet, UDS_VERSION_OFFSET + UDS_TRAILING_FLAG_FIELDS * UDS_VERSION_BYTES, UDS_VERSION_BYTES) ==
+                UDS_RESERVED_FLAGS,
         "unsupported UDS version or flags");
-    Check(Read(packet, 18, 8) == session_, "UDS session mismatch");
+    Check(Read(packet, UDS_SESSION_OFFSET, UDS_SESSION_BYTES) == session_, "UDS session mismatch");
     Check(
-        Read(packet, 26, 8) == receiveSequence_ && receiveSequence_ != std::numeric_limits<uint64_t>::max(),
+        Read(packet, UDS_SEQUENCE_OFFSET, UDS_SEQUENCE_BYTES) == receiveSequence_ &&
+            receiveSequence_ != std::numeric_limits<uint64_t>::max(),
         "UDS sequence mismatch");
-    Frame result{static_cast<Type>(Read(packet, 4, 2)), {}};
+    Frame result{static_cast<Type>(Read(packet, UDS_TYPE_OFFSET, UDS_TYPE_BYTES)), {}};
     ValidateType(result.type);
     result.payload.assign(packet.begin() + kHeaderBytes + kPrefixBytes, packet.end());
     ++receiveSequence_;
@@ -465,7 +505,8 @@ Listener::Listener(const std::string& name)
 {
     const auto address = Address(name);
     fd_ = Socket();
-    if (bind(fd_, reinterpret_cast<const sockaddr*>(&address), AddressLength(name)) < 0 || listen(fd_, 8) < 0) {
+    if (bind(fd_, reinterpret_cast<const sockaddr*>(&address), AddressLength(name)) < 0 ||
+        listen(fd_, UDS_SOCKET_BACKLOG) < 0) {
         const int error = errno;
         close(fd_);
         fd_ = -1;

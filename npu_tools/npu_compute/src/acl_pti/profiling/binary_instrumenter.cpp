@@ -574,7 +574,7 @@ bool ResolveTools(KernelEndTools& tools)
         ASCTOOL_ERROR(
             "[aclpti] kernel-end requires ASCEND_HOME_PATH"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return false;
     }
     const fs::path directory = fs::path(cann) / "tools/bisheng_compiler/bin";
@@ -587,7 +587,7 @@ bool ResolveTools(KernelEndTools& tools)
         ASCTOOL_ERROR(
             "[aclpti] kernel-end toolchain is incomplete under %s"
             " code=%u",
-            directory.c_str(), static_cast<unsigned>(1));
+            directory.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return false;
     }
     return true;
@@ -617,7 +617,7 @@ bool PrepareProbe(const KernelEndTools& tools, fs::path& assets)
             ASCTOOL_ERROR(
                 "[aclpti] probe_compile failed for the kernel-end probe"
                 " code=%u",
-                static_cast<unsigned>(1));
+                NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return false;
         }
         // Publish only complete assets. Failed attempts are cleaned up and may be retried.
@@ -703,7 +703,7 @@ bool InstrumentKernelEnd(
         ASCTOOL_ERROR(
             "[aclpti] kernel-end argument metadata is invalid: %s"
             " code=%u",
-            diagnostic.c_str(), static_cast<unsigned>(1));
+            diagnostic.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return false;
     }
     fs::path assets;
@@ -711,7 +711,7 @@ bool InstrumentKernelEnd(
         ASCTOOL_ERROR(
             "[aclpti] failed to generate kernel-end assets"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return false;
     }
     char pattern[] = "/tmp/npu-compute-kernel-end-XXXXXX";
@@ -751,7 +751,7 @@ bool InstrumentKernelEnd(
         ASCTOOL_ERROR(
             "[aclpti] kernel-end parameter metadata update failed: %s"
             " code=%u",
-            diagnostic.c_str(), static_cast<unsigned>(1));
+            diagnostic.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return false;
     }
     std::vector<char> result(patchedImage.begin(), patchedImage.end());

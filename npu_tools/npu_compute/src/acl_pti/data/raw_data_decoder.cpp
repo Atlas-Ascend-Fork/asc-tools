@@ -12,9 +12,25 @@
 #include <map>
 
 namespace aclpti::data {
+namespace {
+constexpr uint32_t RAW_BYTE_BITS = 8;
+constexpr uint32_t FUNCTION_BITS = 6;
+constexpr uint32_t CORE_TYPE_BIT = 0;
+constexpr uint32_t CORE_ID_SHIFT = 8;
+constexpr uint32_t CORE_TYPE_MASK = 1;
+constexpr uint32_t CORE_ID_MASK = 0x7FU;
+constexpr uint32_t OVERFLOW_BIT = 10;
+constexpr uint32_t MAGIC_SHIFT = 16;
+constexpr uint32_t WORD_BITS = 32;
+} // namespace
+
 uint32_t ReadLittleEndianWord(const uint8_t* bytes)
 {
-    return uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8U) | (uint32_t(bytes[2]) << 16U) | (uint32_t(bytes[3]) << 24U);
+    uint32_t value = 0;
+    for (std::size_t index = 0; index < sizeof(value); ++index) {
+        value |= uint32_t(bytes[index]) << (index * RAW_BYTE_BITS);
+    }
+    return value;
 }
 
 namespace {
@@ -40,14 +56,14 @@ uint32_t Word(const std::byte* data, std::size_t index)
     const std::byte* bytes = data + index * sizeof(uint32_t);
     uint32_t value = 0;
     for (std::size_t index = 0; index < sizeof(value); ++index) {
-        value |= uint32_t(std::to_integer<uint8_t>(bytes[index])) << (index * 8U);
+        value |= uint32_t(std::to_integer<uint8_t>(bytes[index])) << (index * RAW_BYTE_BITS);
     }
     return value;
 }
 
 uint64_t Counter(const std::byte* data, std::size_t lowWord)
 {
-    return Word(data, lowWord) | (uint64_t(Word(data, lowWord + 1)) << 32U);
+    return Word(data, lowWord) | (uint64_t(Word(data, lowWord + 1)) << WORD_BITS);
 }
 
 } // namespace
@@ -65,12 +81,12 @@ DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t r
         return DecodeResult(ACLPTI_ERROR_INVALID_RAW_DATA);
     }
 
-    const uint32_t function = Word(data, 0) & 0x3fU;
+    const uint32_t function = Word(data, 0) & ((1U << FUNCTION_BITS) - 1U);
     const uint32_t taskAndStream = Word(data, 1);
     const auto taskId = static_cast<uint16_t>(taskAndStream >> 16U);
     const auto streamId = static_cast<uint16_t>(taskAndStream);
     if (size == TASK_LOG_BYTES) {
-        if ((Word(data, 0) >> 16U) != PMU_MAGIC ||
+        if ((Word(data, 0) >> MAGIC_SHIFT) != PMU_MAGIC ||
             (function != TASK_START_FUNCTION && function != TASK_END_FUNCTION && function != BLOCK_START_FUNCTION &&
              function != BLOCK_END_FUNCTION)) {
             return DecodeResult(ACLPTI_ERROR_DECODE);
@@ -84,13 +100,14 @@ DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t r
         if (function == BLOCK_START_FUNCTION || function == BLOCK_END_FUNCTION) {
             record.blockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD) >> 16U);
             record.subBlockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD));
-            record.coreType = (Word(data, CORE_ID_WORD) & 1U) == 0 ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV;
-            record.coreTypeId = static_cast<uint8_t>((Word(data, CORE_ID_WORD) >> 1U) & 0x7fU);
+            record.coreType = (Word(data, CORE_ID_WORD) & CORE_TYPE_MASK) == CORE_TYPE_BIT ? ACLPTI_CORE_TYPE_AIC :
+                                                                                             ACLPTI_CORE_TYPE_AIV;
+            record.coreTypeId = static_cast<uint8_t>((Word(data, CORE_ID_WORD) >> CORE_TYPE_MASK) & CORE_ID_MASK);
         }
         return DecodeResult(DecodedRecord{recordIndex, record});
     }
 
-    if ((Word(data, 0) >> 16U) != PMU_MAGIC ||
+    if ((Word(data, 0) >> MAGIC_SHIFT) != PMU_MAGIC ||
         (function != kBlockPmuFunctionType && function != kTaskPmuFunctionType)) {
         return DecodeResult(ACLPTI_ERROR_DECODE);
     }
@@ -102,9 +119,10 @@ DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t r
     record.totalCycles = Counter(data, CYCLE_COUNTER_WORD);
     record.taskStartSystemCounter = Counter(data, TASK_START_COUNTER_WORD);
     record.taskEndSystemCounter = Counter(data, TASK_END_COUNTER_WORD);
-    record.overflow = (Word(data, OVERFLOW_WORD) & (1U << 10U)) != 0;
-    record.coreType = (Word(data, CORE_ID_WORD) & 1U) == 0 ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV;
-    record.coreId = static_cast<uint8_t>(Word(data, CORE_ID_WORD) >> 8U);
+    record.overflow = (Word(data, OVERFLOW_WORD) & (1U << OVERFLOW_BIT)) != 0;
+    record.coreType =
+        (Word(data, CORE_ID_WORD) & CORE_TYPE_MASK) == CORE_TYPE_BIT ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV;
+    record.coreId = static_cast<uint8_t>(Word(data, CORE_ID_WORD) >> CORE_ID_SHIFT);
     record.blockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD) >> 16U);
     record.subBlockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD));
     struct EventAccumulator {

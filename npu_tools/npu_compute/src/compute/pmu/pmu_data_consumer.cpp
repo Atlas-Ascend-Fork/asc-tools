@@ -43,7 +43,7 @@ public:
             ASCTOOL_ERROR(
                 "[npu-compute] PMU consumer start rejected"
                 " code=%u",
-                static_cast<unsigned>(1));
+                NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return ACLPTI_ERROR_INVALID_STATE;
         }
         state_ = ConsumerState::Running;
@@ -54,7 +54,7 @@ public:
             ASCTOOL_ERROR(
                 "[npu-compute] PMU consumer start failed: worker thread"
                 " code=%u",
-                static_cast<unsigned>(1));
+                NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return ACLPTI_ERROR_INTERNAL;
         }
         ASCTOOL_DEBUG("[npu-compute] PMU consumer started");
@@ -67,7 +67,7 @@ public:
             ASCTOOL_ERROR(
                 "[npu-compute] PMU consumer submit rejected: null result"
                 " code=%u",
-                static_cast<unsigned>(1));
+                NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return ACLPTI_ERROR_INVALID_PARAMETER;
         }
         std::lock_guard<std::mutex> lock(mutex_);
@@ -75,7 +75,7 @@ public:
             ASCTOOL_ERROR(
                 "[npu-compute] PMU consumer submit rejected: not running"
                 " code=%u",
-                static_cast<unsigned>(1));
+                NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return ACLPTI_ERROR_INVALID_STATE;
         }
         if (queue_.size() == kQueueCapacity) {
@@ -85,7 +85,7 @@ public:
             ASCTOOL_ERROR(
                 "[npu-compute] PMU consumer submit rejected: queue full"
                 " code=%u",
-                static_cast<unsigned>(1));
+                NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return ACLPTI_ERROR_QUEUE_FULL;
         }
         queue_.push_back(std::move(result));
@@ -147,7 +147,7 @@ private:
                 ASCTOOL_ERROR(
                     "[npu-compute] PMU consumer processor threw"
                     " code=%u",
-                    static_cast<unsigned>(1));
+                    NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             }
             ASCTOOL_DEBUG("[npu-compute] PMU consumer processor status=%d", static_cast<int>(status));
             if (status != ACLPTI_SUCCESS) {

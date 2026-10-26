@@ -16,8 +16,10 @@
 #include <unistd.h>
 #include "dlog_pub.h"
 
+inline constexpr int NPU_CHECK_LOG_LEVEL_ENABLED = 1;
+
 #define ASCTOOL_MODULE_ID static_cast<int32_t>(ASCTOOL)
-#define ASCTOOL_DEBUG_ENABLED() (CheckLogLevel(ASCTOOL_MODULE_ID, DLOG_DEBUG) == 1)
+#define ASCTOOL_DEBUG_ENABLED() (CheckLogLevel(ASCTOOL_MODULE_ID, DLOG_DEBUG) == NPU_CHECK_LOG_LEVEL_ENABLED)
 
 // Append an empty string so C++17 callers can omit format arguments without GNU extensions.
 #define ASCTOOL_DEBUG(...) ASCTOOL_DEBUG_IMPL(__VA_ARGS__, "")

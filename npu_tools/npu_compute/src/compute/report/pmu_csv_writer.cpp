@@ -208,14 +208,14 @@ aclptiResult EnsureCsvOutputDirectory(const boost::filesystem::path& outputDirec
         ASCTOOL_ERROR(
             "[npu-compute] CSV write rejected: output path is empty"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
     if (!outputDirectory.is_absolute()) {
         ASCTOOL_ERROR(
             "[npu-compute] CSV write rejected: output path must be absolute path=%s"
             " code=%u",
-            outputDirectory.c_str(), static_cast<unsigned>(1));
+            outputDirectory.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
 
@@ -245,7 +245,7 @@ aclptiResult EnsureCsvOutputDirectory(const boost::filesystem::path& outputDirec
             ASCTOOL_ERROR(
                 "[npu-compute] CSV write rejected: output path is not a directory path=%s reason=not a directory"
                 " code=%u",
-                outputDirectory.c_str(), static_cast<unsigned>(1));
+                outputDirectory.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         }
         return ACLPTI_ERROR_CSV_WRITE;
     }
@@ -303,7 +303,7 @@ aclptiResult WritePmuCsv(
         ASCTOOL_ERROR(
             "[npu-compute] CSV write rejected: invalid config frequency=%f aicFrequency=%f aivFrequency=%f"
             " code=%u",
-            config.frequencyMhz, config.aicFrequencyMhz, config.aivFrequencyMhz, static_cast<unsigned>(1));
+            config.frequencyMhz, config.aicFrequencyMhz, config.aivFrequencyMhz, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
     bool hasAic = false;
@@ -331,7 +331,7 @@ aclptiResult WritePmuCsv(
                 ASCTOOL_ERROR(
                     "[npu-compute] CSV write rejected: unsupported section=%s"
                     " code=%u",
-                    section.c_str(), static_cast<unsigned>(1));
+                    section.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
                 return ACLPTI_ERROR_NOT_SUPPORTED;
             }
         }
@@ -424,7 +424,7 @@ aclptiResult WritePmuCsv(
         ASCTOOL_ERROR(
             "[npu-compute] CSV write failed: out of memory"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INTERNAL;
     } catch (const std::exception& error) {
         if (artifactStarted) {
@@ -433,7 +433,7 @@ aclptiResult WritePmuCsv(
         ASCTOOL_ERROR(
             "[npu-compute] artifact write failed: %s"
             " code=%u",
-            error.what(), static_cast<unsigned>(1));
+            error.what(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_CSV_WRITE;
     }
     ASCTOOL_DEBUG("[npu-compute] CSV write complete");

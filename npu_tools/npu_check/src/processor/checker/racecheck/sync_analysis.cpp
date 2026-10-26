@@ -24,6 +24,18 @@
 namespace npucheck {
 namespace {
 using namespace race;
+constexpr uint32_t DAV3510_BLOCKS_PER_DIE = 54U;
+constexpr uint32_t DAV3510_PHYSICAL_BLOCK_LIMIT = 2U * DAV3510_BLOCKS_PER_DIE;
+constexpr uint32_t DAV3510_CUBE_GROUPS_PER_DIE = 18U;
+constexpr uint32_t DAV3510_VECTOR_SUBBLOCKS_PER_GROUP = 2U;
+constexpr uint32_t CROSS_CORE_MODE_SAME_PIPE = 0U;
+constexpr uint32_t CROSS_CORE_MODE_VECTOR = 1U;
+constexpr uint32_t CROSS_CORE_MODE_CROSS_TYPE = 2U;
+constexpr uint32_t CROSS_CORE_MODE_RECEIVER_FLAG = 4U;
+constexpr uint32_t RECEIVER_FLAG_SELECTOR_SHIFT = 4U;
+constexpr uint32_t RECEIVER_FLAG_SELECTOR_MASK = 1U;
+constexpr uint32_t UNIT_FLAG_MODE_START = 2U;
+constexpr uint32_t UNIT_FLAG_MODE_END = 3U;
 bool IsSupportedMemorySpace(AclsanDeviceMemorySpace space)
 {
     switch (space) {
@@ -96,13 +108,16 @@ std::optional<CorePosition> Position3510(const Domain& domain)
 {
     const auto type = std::get<1>(domain);
     const auto physical = std::get<3>(domain);
-    const auto local = physical % 54U;
-    if (physical >= 108U)
+    const auto local = physical % DAV3510_BLOCKS_PER_DIE;
+    if (physical >= DAV3510_PHYSICAL_BLOCK_LIMIT)
         return std::nullopt;
-    if (type == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE && local < 18U)
-        return CorePosition{physical / 54U, local, 0U};
-    if (type == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR && local >= 18U)
-        return CorePosition{physical / 54U, (local - 18U) / 2U, (local - 18U) % 2U};
+    if (type == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE && local < DAV3510_CUBE_GROUPS_PER_DIE)
+        return CorePosition{physical / DAV3510_BLOCKS_PER_DIE, local, 0U};
+    if (type == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR && local >= DAV3510_CUBE_GROUPS_PER_DIE)
+        return CorePosition{
+            physical / DAV3510_BLOCKS_PER_DIE,
+            (local - DAV3510_CUBE_GROUPS_PER_DIE) / DAV3510_VECTOR_SUBBLOCKS_PER_GROUP,
+            (local - DAV3510_CUBE_GROUPS_PER_DIE) % DAV3510_VECTOR_SUBBLOCKS_PER_GROUP};
     return std::nullopt;
 }
 // Whether this sender contributes to a receiver's hardware counter. Mode 4
@@ -112,18 +127,19 @@ bool CrossParticipant(uint32_t mode, const Domain& sender, const Domain& receive
     if (std::get<0>(sender) != std::get<0>(receiver))
         return false;
     const auto st = std::get<1>(sender), rt = std::get<1>(receiver);
-    if (mode == 0)
+    if (mode == CROSS_CORE_MODE_SAME_PIPE)
         return st == rt;
     const auto sp = Position3510(sender), rp = Position3510(receiver);
     if (!sp || !rp || sp->die != rp->die || sp->group != rp->group)
         return false;
-    if (mode == 1)
+    if (mode == CROSS_CORE_MODE_VECTOR)
         return st == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR && st == rt;
-    if (mode == 2)
+    if (mode == CROSS_CORE_MODE_CROSS_TYPE)
         return st != rt;
-    if (mode == 4)
+    if (mode == CROSS_CORE_MODE_RECEIVER_FLAG)
         return st != rt &&
-               (rt == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR || sp->subblock == ((receiverFlag >> 4U) & 1U));
+               (rt == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR ||
+                sp->subblock == ((receiverFlag >> RECEIVER_FLAG_SELECTOR_SHIFT) & RECEIVER_FLAG_SELECTOR_MASK));
     return false;
 }
 } // namespace
@@ -239,7 +255,7 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
         const auto& s = *static_cast<const AclsanDeviceSyncData*>(data);
         if (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_PIPE && s.syncKind == ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG &&
             s.srcPipe == ACLSAN_DEVICE_PIPE_MATRIX && s.dstPipe == ACLSAN_DEVICE_PIPE_FIXPIPE &&
-            (s.mode == 2 || s.mode == 3)) {
+            (s.mode == UNIT_FLAG_MODE_START || s.mode == UNIT_FLAG_MODE_END)) {
             // unitFlag is a per-fragment, bidirectional hardware handshake.
             // The current whole-instruction graph cannot prove those edges.
             // Do not treat it as a cross-core flag or report an unproven race.

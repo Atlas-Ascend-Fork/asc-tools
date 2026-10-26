@@ -20,6 +20,11 @@
 #include <signal.h>
 namespace npucompute::cli {
 namespace {
+constexpr int SIGNAL_EXIT_CODE_BASE = 128;
+constexpr int INTERRUPT_GRACE_PERIOD_MS = 200;
+constexpr int RECEIVER_DRAIN_INTERVAL_MS = 5;
+constexpr int CHILD_POLL_INTERVAL_MS = 10;
+
 void SetEnvironment(const std::string& name, const std::string& value, std::vector<std::string>& environment)
 {
     const auto prefix = name + "=";
@@ -65,7 +70,7 @@ int CollectionSession::Run(
         if (signal != 0) {
             outcome_.outcome = "app_failed";
             *error = "collection interrupted during startup by signal " + std::to_string(signal);
-            return 128 + signal;
+            return SIGNAL_EXIT_CODE_BASE + signal;
         }
         return kInternalErrorExitCode;
     }
@@ -102,9 +107,9 @@ int CollectionSession::Run(
             cancelled = true;
             // Wait for the communication owner to attempt INTERRUPT. A stuck
             // filesystem must not indefinitely delay forwarding the signal.
-            const auto interruptDeadline = ipc::After(std::chrono::milliseconds(200));
+            const auto interruptDeadline = ipc::After(std::chrono::milliseconds(INTERRUPT_GRACE_PERIOD_MS));
             while (!done && !client.InterruptAttempted() && std::chrono::steady_clock::now() < interruptDeadline) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                std::this_thread::sleep_for(std::chrono::milliseconds(RECEIVER_DRAIN_INTERVAL_MS));
             }
             child.Signal(signal);
             terminated = true;
@@ -118,7 +123,7 @@ int CollectionSession::Run(
         if (terminated && std::chrono::steady_clock::now() >= killDeadline) {
             child.Signal(SIGKILL);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(CHILD_POLL_INTERVAL_MS));
     }
     childExited = true;
     // Reaping the child does not end the session: retain signal handling while
@@ -128,7 +133,7 @@ int CollectionSession::Run(
             signal = child.PendingSignal();
             cancelled = true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(RECEIVER_DRAIN_INTERVAL_MS));
     }
     receiver.join();
     if (!signal) {
@@ -143,7 +148,7 @@ int CollectionSession::Run(
         outcome_.outcome = "app_failed";
         outcome_.childExit = "signal:" + std::to_string(signal);
         *error = "collection interrupted by signal " + std::to_string(signal);
-        return 128 + signal;
+        return SIGNAL_EXIT_CODE_BASE + signal;
     }
     if (appResult != 0 && !terminated) {
         outcome_.outcome = "app_failed";

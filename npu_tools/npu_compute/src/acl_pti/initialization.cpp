@@ -53,7 +53,7 @@ aclptiResult InitializeDependencies()
         ASCTOOL_ERROR(
             "[aclpti] runtime handler registration failed"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INITIALIZATION_FAILED;
     }
     initialized = true;

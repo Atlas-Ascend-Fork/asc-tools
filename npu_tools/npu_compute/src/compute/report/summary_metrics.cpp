@@ -15,6 +15,15 @@
 
 namespace npucompute {
 namespace {
+constexpr std::size_t SOC_NAME_PREFIX_BYTES = 3;
+constexpr std::size_t ASCEND950_SOC_NAME_BYTES = 11;
+constexpr std::size_t SUMMARY_METADATA_FIELDS = 2;
+constexpr uint64_t SINGLE_CORE_RATIO = 1;
+constexpr uint64_t MIX_VECTOR_RATIO = 2;
+constexpr double AIC_FLOPS_PER_CYCLE = 8192;
+constexpr double AIV_FLOPS_PER_CYCLE = 256;
+constexpr double MICROSECONDS_PER_SECOND = 1000000;
+constexpr double PERCENT_SCALE = 100;
 SummaryMetric Positive(SummaryMetric value)
 {
     return value && std::isfinite(*value) && *value > 0 ? value : std::nullopt;
@@ -36,8 +45,9 @@ bool SupportsSummary(const KernelMetadata& metadata, const ReportConfig& config)
 {
     const auto soc =
         metadata.hardware.collected ? metadata.hardware.socName : std::optional<std::string>(config.socName);
-    return soc && (soc->compare(0, 3, "950") == 0 || soc->compare(0, 11, "Ascend950PR") == 0 ||
-                   soc->compare(0, 11, "Ascend950DT") == 0);
+    return soc && (soc->compare(0, SOC_NAME_PREFIX_BYTES, "950") == 0 ||
+                   soc->compare(0, ASCEND950_SOC_NAME_BYTES, "Ascend950PR") == 0 ||
+                   soc->compare(0, ASCEND950_SOC_NAME_BYTES, "Ascend950DT") == 0);
 }
 SummaryMetric Cycles(const aclptiBlockKey& key, const aclptiPmuDataRow& row)
 {
@@ -71,7 +81,7 @@ std::pair<SummaryMetric, SummaryMetric> Parallel(
             return {};
         }
         vectorRatio = *metadata.mixBlockDim / *metadata.blockDim;
-        if (vectorRatio != 1 && vectorRatio != 2) {
+        if (vectorRatio != SINGLE_CORE_RATIO && vectorRatio != MIX_VECTOR_RATIO) {
             return {};
         }
     }
@@ -123,8 +133,8 @@ std::pair<SummaryMetric, SummaryMetric> Parallel(
     }
     const auto duration = Positive(PmuMetricBuilder::TaskDuration(result));
     return {
-        duration ? SummaryMetric(sum / static_cast<double>(expected) / *duration * 100) : std::nullopt,
-        maximum > 0 ? SummaryMetric(sum / static_cast<double>(expected) / maximum * 100) : std::nullopt};
+        duration ? SummaryMetric(sum / static_cast<double>(expected) / *duration * PERCENT_SCALE) : std::nullopt,
+        maximum > 0 ? SummaryMetric(sum / static_cast<double>(expected) / maximum * PERCENT_SCALE) : std::nullopt};
 }
 SummaryMetric Estimate(const aclptiProfilingDataResult& result, const ReportConfig& config, bool aic)
 {
@@ -158,9 +168,10 @@ SummaryMetric Estimate(const aclptiProfilingDataResult& result, const ReportConf
     }
     const auto meanCycles = cycles.Value();
     const auto meanRatio = ratios.Value();
-    return meanCycles && meanRatio ?
-               SummaryMetric(*meanCycles * *meanRatio * (aic ? 8192 : 256) / (*duration * 1000000)) :
-               std::nullopt;
+    return meanCycles && meanRatio ? SummaryMetric(
+                                         *meanCycles * *meanRatio * (aic ? AIC_FLOPS_PER_CYCLE : AIV_FLOPS_PER_CYCLE) /
+                                         (*duration * MICROSECONDS_PER_SECOND)) :
+                                     std::nullopt;
 }
 } // namespace
 
@@ -203,13 +214,13 @@ SummaryFields AggregateSummarySection(
     const auto duration = PmuMetricBuilder::OperationDuration(result, PmuDataLevel::Task);
     for (const auto& [key, row] : result.taskPmuLogs) {
         const auto fields = PmuMetricBuilder::Build(section, key, row, config, duration);
-        for (size_t i = 2; i < fields.size(); ++i) {
+        for (size_t i = SUMMARY_METADATA_FIELDS; i < fields.size(); ++i) {
             averages[i].Add(fields[i].value);
             integers[i] = integers[i] || fields[i].integer;
         }
     }
     SummaryFields fields;
-    for (size_t i = 2; i < header.size(); ++i) {
+    for (size_t i = SUMMARY_METADATA_FIELDS; i < header.size(); ++i) {
         fields.emplace(header[i], SummaryField{averages[i].Value(), integers[i]});
     }
     return fields;
@@ -227,9 +238,10 @@ SummaryMetrics BuildSummaryMetrics(
     const auto theoretical = [&](bool aic) -> SummaryMetric {
         const auto count = aic ? metadata.hardware.cubeCoreCount : metadata.hardware.vectorCoreCount;
         const auto frequency = SummaryEffectiveFrequency(metadata, config, aic);
-        return count && *count > 0 && frequency ?
-                   SummaryMetric(*count * (aic ? 8192.0 : 256.0) * *frequency / 1000000) :
-                   std::nullopt;
+        return count && *count > 0 && frequency ? SummaryMetric(
+                                                      *count * (aic ? AIC_FLOPS_PER_CYCLE : AIV_FLOPS_PER_CYCLE) *
+                                                      *frequency / MICROSECONDS_PER_SECOND) :
+                                                  std::nullopt;
     };
     metrics.aicFlopsTheoretical = theoretical(true);
     metrics.aivFlopsTheoretical = theoretical(false);

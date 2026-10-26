@@ -144,7 +144,7 @@ aclError BuildInstrumentedReplayArgsArray(
         ASCTOOL_ERROR(
             "[aclpti] error operation=instrumented_replay_args_array function=%p hidden_offset=%zu trace_offset=%u"
             " code=%u",
-            function, hiddenOffset, traceArgumentOffset, static_cast<unsigned>(1));
+            function, hiddenOffset, traceArgumentOffset, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACL_ERROR_FEATURE_UNSUPPORTED;
     }
     const std::size_t originalCount = parameterCount - 1;
@@ -183,7 +183,7 @@ aclError BuildInstrumentedReplayHostArgs(
         ASCTOOL_ERROR(
             "[aclpti] error operation=instrumented_trace_offset function=%p args_size=%zu"
             " code=%u",
-            function, argsSize, static_cast<unsigned>(1));
+            function, argsSize, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACL_ERROR_PROFILING_FAILURE;
     }
     const std::size_t hiddenOffset = traceArgumentOffset;
@@ -346,7 +346,7 @@ aclError InvokeLaunch(
             if (instrumented) {
                 ASCTOOL_DEBUG(
                     "[aclpti] pipeline replay launch api=%s instrumented=%d original=%p selected=%p status=%d", apiName,
-                    instrumented ? 1 : 0, function, selectedFunction, launchStatus);
+                    static_cast<int>(instrumented), function, selectedFunction, launchStatus);
             }
             return launchStatus;
         };
@@ -773,7 +773,7 @@ bool RegisterRuntimeApiHandlers()
         ASCTOOL_ERROR(
             "[aclpti] runtime handler registration failed"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return false;
     }
     ASCTOOL_DEBUG("[aclpti] runtime handler registration complete");

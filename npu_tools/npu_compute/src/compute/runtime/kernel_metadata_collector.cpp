@@ -20,14 +20,19 @@
 namespace npucompute {
 namespace {
 
-constexpr uint32_t kKernelTypeMetadata = 1;
-constexpr uint32_t kMixRatioMetadata = 3;
-constexpr uint32_t kCubeKernelType = 2;
-constexpr uint32_t kVectorKernelType = 3;
-constexpr uint32_t kMixCubeMainKernelType = 4;
-constexpr uint32_t kMixVectorMainKernelType = 5;
-constexpr uint32_t kCubeRollbackKernelType = 6;
-constexpr uint32_t kVectorRollbackKernelType = 7;
+constexpr uint32_t KERNEL_TYPE_METADATA_TAG = 1U;
+constexpr uint32_t MIX_RATIO_METADATA_TAG = 3U;
+constexpr uint32_t CUBE_KERNEL_TYPE = 2U;
+constexpr uint32_t VECTOR_KERNEL_TYPE = 3U;
+constexpr uint32_t MIX_CUBE_MAIN_KERNEL_TYPE = 4U;
+constexpr uint32_t MIX_VECTOR_MAIN_KERNEL_TYPE = 5U;
+constexpr uint32_t CUBE_ROLLBACK_KERNEL_TYPE = 6U;
+constexpr uint32_t VECTOR_ROLLBACK_KERNEL_TYPE = 7U;
+constexpr std::size_t SOC_NAME_PREFIX_BYTES = 11U;
+constexpr std::size_t MIX_RATIO_COUNT = 2U;
+constexpr uint16_t PURE_KERNEL_RATIO = 1U;
+constexpr uint16_t DISABLED_KERNEL_RATIO = 0U;
+constexpr uint16_t MIX_VECTOR_RATIO = 2U;
 
 template <typename Value>
 bool ReadElfValue(std::ifstream& input, uint64_t offset, uint64_t fileSize, Value& value)
@@ -155,7 +160,8 @@ std::optional<Value> FunctionMetadata(aclrtFuncHandle function, uint32_t tag)
 
 bool SupportsMixDimension(std::string_view soc)
 {
-    return soc.compare(0, 11, "Ascend950PR") == 0 || soc.compare(0, 11, "Ascend950DT") == 0;
+    return soc.compare(0, SOC_NAME_PREFIX_BYTES, "Ascend950PR") == 0 ||
+           soc.compare(0, SOC_NAME_PREFIX_BYTES, "Ascend950DT") == 0;
 }
 
 std::optional<uint64_t> MixDimension(uint64_t blocks, uint16_t aivRatio)
@@ -183,22 +189,22 @@ void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata
             metadata.kind = KernelKind::Mix;
         }
     }
-    const auto rawType = FunctionMetadata<uint32_t>(function, kKernelTypeMetadata);
+    const auto rawType = FunctionMetadata<uint32_t>(function, KERNEL_TYPE_METADATA_TAG);
     if (!metadata.kind) {
         if (rawType) {
-            if (*rawType == kCubeKernelType || *rawType == kCubeRollbackKernelType) {
+            if (*rawType == CUBE_KERNEL_TYPE || *rawType == CUBE_ROLLBACK_KERNEL_TYPE) {
                 metadata.kind = KernelKind::Cube;
-            } else if (*rawType == kVectorKernelType || *rawType == kVectorRollbackKernelType) {
+            } else if (*rawType == VECTOR_KERNEL_TYPE || *rawType == VECTOR_ROLLBACK_KERNEL_TYPE) {
                 metadata.kind = KernelKind::Vector;
-            } else if (*rawType == kMixCubeMainKernelType || *rawType == kMixVectorMainKernelType) {
+            } else if (*rawType == MIX_CUBE_MAIN_KERNEL_TYPE || *rawType == MIX_VECTOR_MAIN_KERNEL_TYPE) {
                 metadata.kind = KernelKind::Mix;
             }
         }
     }
     // Pure kernels need not contain MIX_TASK_RATION. Querying this absent tag
     // produces an EE1014 runtime error even though the kernel itself is valid.
-    if (rawType && (*rawType == kCubeKernelType || *rawType == kVectorKernelType ||
-                    *rawType == kCubeRollbackKernelType || *rawType == kVectorRollbackKernelType)) {
+    if (rawType && (*rawType == CUBE_KERNEL_TYPE || *rawType == VECTOR_KERNEL_TYPE ||
+                    *rawType == CUBE_ROLLBACK_KERNEL_TYPE || *rawType == VECTOR_ROLLBACK_KERNEL_TYPE)) {
         return;
     }
     using GetSoc = const char* (*)();
@@ -208,7 +214,7 @@ void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata
         return;
     }
     // npu-compute supports 950 only; ACL_FUNC_ATTR_KERNEL_RATIO is unsupported on this product.
-    const auto rawRatio = FunctionMetadata<std::array<uint16_t, 2>>(function, kMixRatioMetadata);
+    const auto rawRatio = FunctionMetadata<std::array<uint16_t, MIX_RATIO_COUNT>>(function, MIX_RATIO_METADATA_TAG);
     if (!rawRatio) {
         return;
     }
@@ -216,11 +222,11 @@ void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata
     const uint16_t aivRatio = (*rawRatio)[1];
     // The supported 950 ratios are {1,0}, {0,1}, {1,1} and {1,2}.
     // Pure kernels keep their launch Block Dim; only MIX has an additional AIV dimension.
-    if (aicRatio == 1 && aivRatio == 0) {
+    if (aicRatio == PURE_KERNEL_RATIO && aivRatio == DISABLED_KERNEL_RATIO) {
         metadata.kind = KernelKind::Cube;
-    } else if (aicRatio == 0 && aivRatio == 1) {
+    } else if (aicRatio == DISABLED_KERNEL_RATIO && aivRatio == PURE_KERNEL_RATIO) {
         metadata.kind = KernelKind::Vector;
-    } else if (aicRatio == 1 && (aivRatio == 1 || aivRatio == 2)) {
+    } else if (aicRatio == PURE_KERNEL_RATIO && (aivRatio == PURE_KERNEL_RATIO || aivRatio == MIX_VECTOR_RATIO)) {
         metadata.kind = KernelKind::Mix;
         if (metadata.blockDim) {
             metadata.mixBlockDim = MixDimension(*metadata.blockDim, aivRatio);

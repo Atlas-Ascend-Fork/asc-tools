@@ -40,7 +40,7 @@ void LogRawData(uint64_t replayId, const MsprofRawData& raw, bool biu, uint64_t 
         "[aclpti-data] [DEBUG-rawdata] replay=%llu type=%d device=%d module=%d offset=%zu last=%d "
         "validBytes=%zu validWords=%zu acceptedBytes=%llu",
         static_cast<unsigned long long>(replayId), static_cast<int>(raw.type), raw.deviceId, raw.chunkModule,
-        raw.offset, raw.isLastChunk ? 1 : 0, raw.chunkSize, raw.chunkSize / sizeof(uint32_t),
+        raw.offset, static_cast<int>(raw.isLastChunk), raw.chunkSize, raw.chunkSize / sizeof(uint32_t),
         static_cast<unsigned long long>(acceptedBytes));
     const auto* bytes = reinterpret_cast<const uint8_t*>(raw.chunk);
     // Print every BIU word, including timestamp headers, to diagnose framing without filtering.
@@ -170,10 +170,10 @@ aclptiResult DataProcessor::ReceiveRawData(const MsprofRawData* raw)
             "module=%d offset=%zu chunk_size=%zu last=%d expected_record_size=%zu expected_device=%d"
             " code=%u",
             static_cast<unsigned long long>(replay.info.replayId), static_cast<int>(replay.info.kind),
-            static_cast<int>(status), primary ? 1 : 0, raw == nullptr ? -1 : static_cast<int>(raw->type),
+            static_cast<int>(status), static_cast<int>(primary), raw == nullptr ? -1 : static_cast<int>(raw->type),
             raw == nullptr ? -1 : raw->deviceId, raw == nullptr ? -1 : raw->chunkModule,
             raw == nullptr ? 0 : raw->offset, raw == nullptr ? 0 : raw->chunkSize,
-            raw != nullptr && raw->isLastChunk ? 1 : 0, recordSize, replay.deviceId,
+            static_cast<int>(raw != nullptr && raw->isLastChunk), recordSize, replay.deviceId,
             static_cast<unsigned>(static_cast<uint32_t>(status)));
         return status;
     };

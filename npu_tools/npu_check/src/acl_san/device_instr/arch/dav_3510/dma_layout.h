@@ -116,6 +116,7 @@ struct FixL0cToOutLayout {
 
 // Packed register and cube-operation fields consumed by the dav-3510 decoder.
 struct FmatrixLayout {
+    static constexpr BitRange WIDTH{0, 15};
     static constexpr BitRange HEIGHT{16, 31};
     static constexpr BitRange PADDING_LEFT{32, 39};
     static constexpr BitRange PADDING_RIGHT{40, 47};
@@ -124,6 +125,7 @@ struct FmatrixLayout {
 };
 
 struct L3dRptLayout {
+    static constexpr BitRange REPEAT_STRIDE{0, 15};
     static constexpr BitRange REPEAT_TIMES{16, 23};
     static constexpr BitRange REPEAT_ALONG_K{24, 24};
     static constexpr BitRange DST_STRIDE{32, 39};
@@ -131,6 +133,7 @@ struct L3dRptLayout {
 };
 
 struct LoadL1ToL0Layout {
+    static constexpr BitRange M_START_POSITION{0, 15};
     static constexpr BitRange K_START_POSITION{16, 31};
     static constexpr BitRange M_STEP{32, 39};
     static constexpr BitRange K_STEP{40, 47};
@@ -138,14 +141,17 @@ struct LoadL1ToL0Layout {
 };
 
 struct LoadL1TransposeLayout {
+    static constexpr BitRange INDEX_ID{0, 15};
     static constexpr BitRange REPEAT{16, 23};
     static constexpr BitRange SRC_STRIDE{24, 39};
     static constexpr BitRange DST_GAP{44, 59};
+    static constexpr BitRange DST_FRAC_GAP{0, 15};
     static constexpr BitRange SRC_FRAC_GAP{16, 31};
     static constexpr BitRange DECREMENT{63, 63};
 };
 
 struct Img2ColLayout {
+    static constexpr BitRange K_EXTENSION{0, 15};
     static constexpr BitRange M_EXTENSION{16, 31};
     static constexpr BitRange K_START_POINT{32, 47};
     static constexpr BitRange M_START_POINT{48, 63};
@@ -166,15 +172,30 @@ struct MmadLayout {
     static constexpr BitRange M_SIZE{0, 11};
     static constexpr BitRange K_SIZE{12, 23};
     static constexpr BitRange N_SIZE{24, 35};
+    static constexpr BitRange UNIT_FLAG{55, 56};
     static constexpr BitRange DISABLE_GEMV{61, 61};
     static constexpr BitRange CMATRIX_SOURCE{62, 62};
     static constexpr BitRange CMATRIX_INIT_VAL{63, 63};
 };
 
+struct LocalMemoryTransferLayout {
+    static constexpr BitRange SUB_BLOCK_ID{0, 0};
+    static constexpr BitRange CVT_ENABLE{3, 3};
+    static constexpr BitRange N_BURST{4, 15};
+    static constexpr BitRange LEN_BURST{16, 31};
+    static constexpr BitRange SRC_STRIDE{32, 47};
+    static constexpr BitRange DST_STRIDE{48, 63};
+    static constexpr BitRange DST_MEM_BLOCK{16, 19};
+    static constexpr BitRange DUAL_DST_CONTROL{16, 17};
+    static constexpr BitRange SUB_BLOCK_CONTROL{18, 18};
+};
+
 struct LoadL1MxLayout {
+    static constexpr BitRange X_START{0, 15};
     static constexpr BitRange Y_START{16, 31};
     static constexpr BitRange X_STEP{32, 39};
     static constexpr BitRange Y_STEP{40, 47};
+    static constexpr BitRange SRC_STRIDE{0, 15};
 };
 
 } // namespace aclsan::dav3510

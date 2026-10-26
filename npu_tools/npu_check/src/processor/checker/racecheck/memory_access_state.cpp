@@ -14,12 +14,20 @@
 #include <limits>
 
 namespace npucheck::race {
+namespace {
+constexpr size_t MAP_CONTROL_BLOCK_ALLOWANCE = 64U;
+constexpr size_t SEGMENT_METADATA_ALLOWANCE = 32U;
+constexpr size_t PATCH_COST_MULTIPLIER = 3U;
+constexpr size_t PATCH_BOOKKEEPING_ALLOWANCE = 128U;
+constexpr size_t REPLACEMENT_BOOKKEEPING_ALLOWANCE = 64U;
+} // namespace
+
 size_t MemoryAccessState::Cost(const StatePtr& s)
 {
     // Conservative logical accounting, including map/control-block allowances.
     // Shared states are charged per segment; this is not a process RSS measurement.
-    return sizeof(Segment) + sizeof(uint64_t) + 64 + sizeof(State) + 32 +
-           (s ? s->readers.capacity() * sizeof(size_t) : 0);
+    return sizeof(Segment) + sizeof(uint64_t) + MAP_CONTROL_BLOCK_ALLOWANCE + sizeof(State) +
+           SEGMENT_METADATA_ALLOWANCE + (s ? s->readers.capacity() * sizeof(size_t) : 0);
 }
 bool MemoryAccessState::Equal(const StatePtr& a, const StatePtr& b) { return a == b || (a && b && *a == *b); }
 bool MemoryAccessState::Visit(const Storage& storage, Interval range, const Visitor& visitor) const
@@ -82,7 +90,7 @@ bool MemoryAccessState::Apply(const std::vector<Update>& updates)
                       (u.storage == updates[i - 1].storage && u.range.begin < updates[i - 1].range.end)))
                 return false;
             // Reserve a conservative bound for new endpoints, split survivors and bookkeeping.
-            if (!charge(3 * Cost(u.state) + 128))
+            if (!charge(PATCH_COST_MULTIPLIER * Cost(u.state) + PATCH_BOOKKEEPING_ALLOWANCE))
                 return false;
             auto& patch = patches[u.storage];
             auto source = spaces_.find(u.storage);
@@ -94,7 +102,7 @@ bool MemoryAccessState::Apply(const std::vector<Update>& updates)
             for (; it != source->second.end() && it->first < u.range.end; ++it) {
                 if (it->second.end <= u.range.begin || patch.removed.count(it->first))
                     continue;
-                if (!charge(3 * Cost(it->second.state) + 64))
+                if (!charge(PATCH_COST_MULTIPLIER * Cost(it->second.state) + REPLACEMENT_BOOKKEEPING_ALLOWANCE))
                     return false;
                 patch.removed.insert(it->first);
                 patch.replacement.emplace(*it);

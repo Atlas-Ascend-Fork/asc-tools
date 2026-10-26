@@ -36,10 +36,17 @@
 
 namespace aclsan {
 namespace {
-constexpr int HASH_HEX_DIGITS = sizeof(uint64_t) * 2;
+constexpr int HEX_DIGITS_PER_BYTE = 2;
+constexpr int HASH_HEX_DIGITS = sizeof(uint64_t) * HEX_DIGITS_PER_BYTE;
 constexpr int TOOLCHAIN_PARENT_SEARCH_LIMIT = 3;
 constexpr int CANN_PARENT_SEARCH_LIMIT = 5;
 constexpr std::size_t OBJDUMP_SYMBOL_NAME_COLUMN = 5;
+constexpr std::size_t OBJDUMP_SECTION_COLUMN = 3;
+constexpr std::size_t MIN_OBJDUMP_SECTION_FIELDS = OBJDUMP_SECTION_COLUMN + 1;
+constexpr std::size_t TEXT_SECTION_PREFIX_BYTES = 6;
+constexpr uint64_t FNV1A_OFFSET_BASIS = 1469598103934665603ULL;
+constexpr uint64_t FNV1A_PRIME = 1099511628211ULL;
+constexpr uint8_t HASH_SEPARATOR = 0xFFU;
 
 constexpr const char* TOOL_NAMES[] = {"bisheng", "bisheng-tune", "ld.lld", "llvm-objdump"};
 std::atomic<uint64_t> g_cacheBuildId{0};
@@ -130,13 +137,12 @@ std::string FindInDirectory(const boost::filesystem::path& directory, const char
 
 uint64_t HashText(uint64_t hash, const std::string& text)
 {
-    constexpr uint64_t PRIME = 1099511628211ULL;
     for (const unsigned char value : text) {
         hash ^= value;
-        hash *= PRIME;
+        hash *= FNV1A_PRIME;
     }
-    hash ^= 0xffU;
-    return hash * PRIME;
+    hash ^= HASH_SEPARATOR;
+    return hash * FNV1A_PRIME;
 }
 
 bool IsNonEmptyFile(const boost::filesystem::path& path)
@@ -246,7 +252,7 @@ std::vector<std::string> ProbeCompileFlags(
 
 std::string TextIdentity(const std::vector<std::string>& values)
 {
-    uint64_t hash = 1469598103934665603ULL;
+    uint64_t hash = FNV1A_OFFSET_BASIS;
     for (const std::string& value : values) {
         hash = HashText(hash, value);
     }
@@ -335,11 +341,10 @@ std::string FileDigest(const boost::filesystem::path& path)
     if (content.empty()) {
         return {};
     }
-    uint64_t hash = 1469598103934665603ULL;
-    constexpr uint64_t PRIME = 1099511628211ULL;
+    uint64_t hash = FNV1A_OFFSET_BASIS;
     for (const unsigned char value : content) {
         hash ^= value;
-        hash *= PRIME;
+        hash *= FNV1A_PRIME;
     }
     std::ostringstream output;
     output << std::hex << std::setfill('0') << std::setw(HASH_HEX_DIGITS) << hash;
@@ -461,9 +466,11 @@ std::vector<std::string> ParseTextSymbols(const std::string& text, const std::st
         std::istringstream fields(line);
         std::vector<std::string> items{
             std::istream_iterator<std::string>(fields), std::istream_iterator<std::string>()};
-        const bool textSection = items.size() > 3 && (items[3] == ".text" || items[3].compare(0, 6, ".text.") == 0);
+        const bool textSection = items.size() >= MIN_OBJDUMP_SECTION_FIELDS &&
+                                 (items[OBJDUMP_SECTION_COLUMN] == ".text" ||
+                                  items[OBJDUMP_SECTION_COLUMN].compare(0, TEXT_SECTION_PREFIX_BYTES, ".text.") == 0);
         if (items.size() > OBJDUMP_SYMBOL_NAME_COLUMN && items[1] == property && items[2] == "F" && textSection) {
-            symbols.push_back(items[5]);
+            symbols.push_back(items[OBJDUMP_SYMBOL_NAME_COLUMN]);
         }
     }
     return symbols;
@@ -504,9 +511,12 @@ bool HasTextSymbol(const std::string& text, const std::string& property, const s
         std::istringstream fields(line);
         const std::vector<std::string> items{
             std::istream_iterator<std::string>(fields), std::istream_iterator<std::string>()};
-        const bool textSection = items.size() > 3 && (items[3] == ".text" || items[3].compare(0, 6, ".text.") == 0);
+        const bool textSection = items.size() >= MIN_OBJDUMP_SECTION_FIELDS &&
+                                 (items[OBJDUMP_SECTION_COLUMN] == ".text" ||
+                                  items[OBJDUMP_SECTION_COLUMN].compare(0, TEXT_SECTION_PREFIX_BYTES, ".text.") == 0);
         if (items.size() > OBJDUMP_SYMBOL_NAME_COLUMN && items[1] == property && items[2] == "F" && textSection &&
-            (items[5] == symbol || items[5].find(mangledPrefix) != std::string::npos)) {
+            (items[OBJDUMP_SYMBOL_NAME_COLUMN] == symbol ||
+             items[OBJDUMP_SYMBOL_NAME_COLUMN].find(mangledPrefix) != std::string::npos)) {
             return true;
         }
     }
@@ -795,7 +805,7 @@ std::string MakeCacheKey(
     const std::string& arch, const std::vector<ProbeGroup>& groups, const std::string& objectIdentity,
     ProbeCoreType coreType)
 {
-    uint64_t hash = 1469598103934665603ULL;
+    uint64_t hash = FNV1A_OFFSET_BASIS;
     hash = HashText(hash, arch);
     hash = HashText(hash, ProbeCoreTypeName(coreType));
     for (const auto group : NormalizeProbeGroups(groups)) {

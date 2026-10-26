@@ -25,11 +25,26 @@ constexpr size_t MAX_ARTIFACT_COUNT = 64;
 constexpr size_t MAX_ERROR_MESSAGE_BYTES = 4096;
 constexpr unsigned int BITS_PER_BYTE = std::numeric_limits<uint8_t>::digits;
 constexpr std::size_t MAX_PM_SAMPLING_PATH_COMPONENTS = 2;
+constexpr size_t UINT8_BYTES = sizeof(uint8_t);
+constexpr size_t UINT16_BYTES = sizeof(uint16_t);
+constexpr size_t UINT32_BYTES = sizeof(uint32_t);
+constexpr size_t UINT64_BYTES = sizeof(uint64_t);
+constexpr uint32_t IPC_PROTOCOL_ERROR_CODE = 1;
+constexpr size_t MAX_ARTIFACT_PATH_COMPONENTS = 3;
+constexpr size_t COLLECTION_PATH_COMPONENTS = 2;
+constexpr size_t STAGING_PATH_COMPONENTS = 3;
+constexpr size_t RESULT_NAME_MIN_BYTES = 12;
+constexpr size_t JSON_SUFFIX_BYTES = 5;
+constexpr uint64_t NO_FEATURE_FLAGS = 0U;
+constexpr uint64_t BOOLEAN_FALSE = 0U;
+constexpr uint64_t BOOLEAN_TRUE = 1U;
+constexpr std::size_t PATH_START_OFFSET = 0U;
+constexpr std::size_t PATH_COMPONENT_INCREMENT = 1U;
 
 void Check(bool condition, const char* reason)
 {
     if (!condition) {
-        throw Exception({1, reason, "protocol", "payload"});
+        throw Exception({IPC_PROTOCOL_ERROR_CODE, reason, "protocol", "payload"});
     }
 }
 class Writer {
@@ -43,7 +58,7 @@ public:
     void String(const std::string& value, size_t limit = DEFAULT_STRING_BYTES)
     {
         Check(value.size() <= limit && value.find('\0') == std::string::npos, "invalid IPC string");
-        Integer(value.size(), sizeof(uint32_t));
+        Integer(value.size(), UINT32_BYTES);
         data.insert(data.end(), value.begin(), value.end());
     }
     Bytes data;
@@ -62,7 +77,7 @@ public:
     }
     std::string String(size_t limit = DEFAULT_STRING_BYTES)
     {
-        const auto count = Integer(sizeof(uint32_t));
+        const auto count = Integer(UINT32_BYTES);
         Check(count <= limit && count <= data_.size() - position_, "invalid IPC string length");
         std::string result(data_.begin() + position_, data_.begin() + position_ + count);
         position_ += count;
@@ -71,7 +86,7 @@ public:
     }
     Bytes Blob(size_t limit)
     {
-        const auto count = Integer(sizeof(uint32_t));
+        const auto count = Integer(UINT32_BYTES);
         Check(count <= limit && count <= data_.size() - position_, "invalid IPC blob length");
         Bytes result(data_.begin() + position_, data_.begin() + position_ + count);
         position_ += count;
@@ -86,14 +101,14 @@ private:
 void WriteSections(Writer& writer, const std::vector<std::string>& sections)
 {
     Check(!sections.empty() && sections.size() <= MAX_SECTION_COUNT, "invalid section count");
-    writer.Integer(sections.size(), sizeof(uint32_t));
+    writer.Integer(sections.size(), UINT32_BYTES);
     for (const auto& section : sections) {
         writer.String(section);
     }
 }
 std::vector<std::string> ReadSections(Reader& reader)
 {
-    const auto count = reader.Integer(sizeof(uint32_t));
+    const auto count = reader.Integer(UINT32_BYTES);
     Check(count > 0 && count <= MAX_SECTION_COUNT, "invalid section count");
     std::vector<std::string> result;
     for (uint64_t i = 0; i < count; ++i) {
@@ -107,8 +122,8 @@ void WriteConfig(Writer& writer, const Config& value)
     WriteSections(writer, value.sections);
     writer.String(value.replayMode);
     writer.String(value.pmuLevel);
-    writer.Integer(value.featureFlags, sizeof(uint64_t));
-    writer.Integer(value.cacheControlMode, sizeof(uint32_t));
+    writer.Integer(value.featureFlags, UINT64_BYTES);
+    writer.Integer(value.cacheControlMode, UINT32_BYTES);
 }
 Config ReadConfig(Reader& reader)
 {
@@ -116,8 +131,8 @@ Config ReadConfig(Reader& reader)
     result.sections = ReadSections(reader);
     result.replayMode = reader.String();
     result.pmuLevel = reader.String();
-    result.featureFlags = reader.Integer(sizeof(uint64_t));
-    result.cacheControlMode = static_cast<uint32_t>(reader.Integer(sizeof(uint32_t)));
+    result.featureFlags = reader.Integer(UINT64_BYTES);
+    result.cacheControlMode = static_cast<uint32_t>(reader.Integer(UINT32_BYTES));
     ValidateConfig(result);
     return result;
 }
@@ -141,7 +156,7 @@ std::vector<std::string> ArtifactPathComponents(const std::string& name)
         !name.empty() && name.front() != '/' && name.back() != '/' && name.find('\\') == std::string::npos,
         "artifact name is not allowed");
     std::vector<std::string> components;
-    std::size_t start = 0;
+    std::size_t start = PATH_START_OFFSET;
     while (start <= name.size()) {
         const auto separator = name.find('/', start);
         const auto component =
@@ -158,12 +173,14 @@ std::vector<std::string> ArtifactPathComponents(const std::string& name)
         if (separator == std::string::npos) {
             break;
         }
-        start = separator + 1;
+        start = separator + PATH_COMPONENT_INCREMENT;
     }
-    Check(components.size() <= 3, "artifact name is not allowed");
-    if (components.size() == 2) {
-        Check(components[0].rfind("collection-p", 0) == 0, "artifact name is not allowed");
-    } else if (components.size() == 3) {
+    Check(components.size() <= MAX_ARTIFACT_PATH_COMPONENTS, "artifact name is not allowed");
+    if (components.size() == COLLECTION_PATH_COMPONENTS) {
+        Check(
+            components[0].rfind("collection-p", PATH_START_OFFSET) == PATH_START_OFFSET,
+            "artifact name is not allowed");
+    } else if (components.size() == STAGING_PATH_COMPONENTS) {
         Check(components[0] == ".biu-staging" && components[1] == "process-uds", "artifact name is not allowed");
     }
     return components;
@@ -184,7 +201,7 @@ void ValidateConfig(const Config& config)
     }
     Check(config.replayMode == "kernel", "unsupported replay mode");
     Check(config.pmuLevel == "block" || config.pmuLevel == "task", "unsupported PMU level");
-    Check(config.featureFlags == 0, "unsupported feature flags");
+    Check(config.featureFlags == NO_FEATURE_FLAGS, "unsupported feature flags");
     Check(
         config.cacheControlMode == kCacheControlModeAll || config.cacheControlMode == kCacheControlModeNone,
         "unsupported cache control mode");
@@ -197,8 +214,9 @@ DataKind KindForName(const std::string& name)
         return DataKind::HardwareInfo;
     }
     const bool pipelinePath =
-        components.size() == 3 && (base == "manifest.json" || (base.rfind("result-", 0) == 0 && base.size() > 12 &&
-                                                               base.compare(base.size() - 5, 5, ".json") == 0));
+        components.size() == STAGING_PATH_COMPONENTS &&
+        (base == "manifest.json" || (base.rfind("result-", 0) == 0 && base.size() > RESULT_NAME_MIN_BYTES &&
+                                     base.compare(base.size() - JSON_SUFFIX_BYTES, JSON_SUFFIX_BYTES, ".json") == 0));
     if ((base == "PipeTrace.json" && components.size() == 1) || pipelinePath) {
         return DataKind::PipelineTrace;
     }
@@ -267,8 +285,8 @@ Config DecodeConfig(const Bytes& value)
 Bytes EncodeHello(const Hello& value)
 {
     Writer writer;
-    writer.Integer(value.pid, sizeof(uint32_t));
-    writer.Integer(value.uid, sizeof(uint32_t));
+    writer.Integer(value.pid, UINT32_BYTES);
+    writer.Integer(value.uid, UINT32_BYTES);
     WriteConfig(writer, value.config);
     return writer.data;
 }
@@ -276,8 +294,8 @@ Hello DecodeHello(const Bytes& value)
 {
     Reader reader(value);
     Hello result;
-    result.pid = reader.Integer(sizeof(uint32_t));
-    result.uid = reader.Integer(sizeof(uint32_t));
+    result.pid = reader.Integer(UINT32_BYTES);
+    result.uid = reader.Integer(UINT32_BYTES);
     result.config = ReadConfig(reader);
     reader.End();
     return result;
@@ -285,18 +303,18 @@ Hello DecodeHello(const Bytes& value)
 Bytes EncodeReady(const Ready& value)
 {
     Writer writer;
-    writer.Integer(value.pid, sizeof(uint32_t));
-    writer.Integer(value.uid, sizeof(uint32_t));
-    writer.Integer(value.status, sizeof(uint32_t));
+    writer.Integer(value.pid, UINT32_BYTES);
+    writer.Integer(value.uid, UINT32_BYTES);
+    writer.Integer(value.status, UINT32_BYTES);
     return writer.data;
 }
 Ready DecodeReady(const Bytes& value)
 {
     Reader reader(value);
     Ready result;
-    result.pid = reader.Integer(sizeof(uint32_t));
-    result.uid = reader.Integer(sizeof(uint32_t));
-    result.status = reader.Integer(sizeof(uint32_t));
+    result.pid = reader.Integer(UINT32_BYTES);
+    result.uid = reader.Integer(UINT32_BYTES);
+    result.status = reader.Integer(UINT32_BYTES);
     reader.End();
     return result;
 }
@@ -305,9 +323,9 @@ Bytes EncodeArtifactBegin(const ArtifactBegin& value)
     Check(KindForName(value.name) == value.kind, "artifact kind does not match name");
     Check(value.artifactType == ArtifactTypeForName(value.name), "artifact type does not match kind");
     Writer writer;
-    writer.Integer(value.id, sizeof(uint64_t));
-    writer.Integer(static_cast<uint16_t>(value.kind), sizeof(uint16_t));
-    writer.Integer(static_cast<uint16_t>(value.artifactType), sizeof(uint16_t));
+    writer.Integer(value.id, UINT64_BYTES);
+    writer.Integer(static_cast<uint16_t>(value.kind), UINT16_BYTES);
+    writer.Integer(static_cast<uint16_t>(value.artifactType), UINT16_BYTES);
     writer.String(value.name);
     return writer.data;
 }
@@ -315,9 +333,9 @@ ArtifactBegin DecodeArtifactBegin(const Bytes& value)
 {
     Reader reader(value);
     ArtifactBegin result;
-    result.id = reader.Integer(sizeof(uint64_t));
-    result.kind = static_cast<DataKind>(reader.Integer(sizeof(uint16_t)));
-    result.artifactType = static_cast<ArtifactType>(reader.Integer(sizeof(uint16_t)));
+    result.id = reader.Integer(UINT64_BYTES);
+    result.kind = static_cast<DataKind>(reader.Integer(UINT16_BYTES));
+    result.artifactType = static_cast<ArtifactType>(reader.Integer(UINT16_BYTES));
     result.name = reader.String();
     reader.End();
     Check(KindForName(result.name) == result.kind, "artifact kind does not match name");
@@ -330,9 +348,9 @@ Bytes EncodeArtifactChunk(const ArtifactChunk& value)
         value.data.size() <= kChunkBytes && value.data.size() <= std::numeric_limits<uint64_t>::max() - value.offset,
         "invalid artifact chunk size");
     Writer writer;
-    writer.Integer(value.id, sizeof(uint64_t));
-    writer.Integer(value.offset, sizeof(uint64_t));
-    writer.Integer(value.data.size(), sizeof(uint32_t));
+    writer.Integer(value.id, UINT64_BYTES);
+    writer.Integer(value.offset, UINT64_BYTES);
+    writer.Integer(value.data.size(), UINT32_BYTES);
     writer.data.insert(writer.data.end(), value.data.begin(), value.data.end());
     return writer.data;
 }
@@ -340,8 +358,8 @@ ArtifactChunk DecodeArtifactChunk(const Bytes& value)
 {
     Reader reader(value);
     ArtifactChunk result;
-    result.id = reader.Integer(sizeof(uint64_t));
-    result.offset = reader.Integer(sizeof(uint64_t));
+    result.id = reader.Integer(UINT64_BYTES);
+    result.offset = reader.Integer(UINT64_BYTES);
     result.data = reader.Blob(kChunkBytes);
     reader.End();
     Check(result.data.size() <= std::numeric_limits<uint64_t>::max() - result.offset, "artifact byte offset overflow");
@@ -350,18 +368,18 @@ ArtifactChunk DecodeArtifactChunk(const Bytes& value)
 Bytes EncodeArtifactEnd(const ArtifactEnd& value)
 {
     Writer writer;
-    writer.Integer(value.id, sizeof(uint64_t));
-    writer.Integer(value.bytes, sizeof(uint64_t));
-    writer.Integer(value.records, sizeof(uint64_t));
+    writer.Integer(value.id, UINT64_BYTES);
+    writer.Integer(value.bytes, UINT64_BYTES);
+    writer.Integer(value.records, UINT64_BYTES);
     return writer.data;
 }
 ArtifactEnd DecodeArtifactEnd(const Bytes& value)
 {
     Reader reader(value);
     ArtifactEnd result;
-    result.id = reader.Integer(sizeof(uint64_t));
-    result.bytes = reader.Integer(sizeof(uint64_t));
-    result.records = reader.Integer(sizeof(uint64_t));
+    result.id = reader.Integer(UINT64_BYTES);
+    result.bytes = reader.Integer(UINT64_BYTES);
+    result.records = reader.Integer(UINT64_BYTES);
     reader.End();
     return result;
 }
@@ -369,20 +387,20 @@ Bytes EncodeResult(const Result& value)
 {
     ValidateResult(value);
     Writer writer;
-    writer.Integer(value.status, sizeof(uint32_t));
-    writer.Integer(value.code, sizeof(uint32_t));
-    writer.Integer(value.complete ? 1 : 0, sizeof(uint8_t));
-    writer.Integer(value.degraded ? 1 : 0, sizeof(uint8_t));
-    writer.Integer(value.replayCount, sizeof(uint64_t));
-    writer.Integer(value.rowCount, sizeof(uint64_t));
-    writer.Integer(value.droppedCount, sizeof(uint64_t));
-    writer.Integer(value.errorCount, sizeof(uint64_t));
+    writer.Integer(value.status, UINT32_BYTES);
+    writer.Integer(value.code, UINT32_BYTES);
+    writer.Integer(value.complete ? BOOLEAN_TRUE : BOOLEAN_FALSE, UINT8_BYTES);
+    writer.Integer(value.degraded ? BOOLEAN_TRUE : BOOLEAN_FALSE, UINT8_BYTES);
+    writer.Integer(value.replayCount, UINT64_BYTES);
+    writer.Integer(value.rowCount, UINT64_BYTES);
+    writer.Integer(value.droppedCount, UINT64_BYTES);
+    writer.Integer(value.errorCount, UINT64_BYTES);
     WriteSections(writer, value.sections);
-    writer.Integer(value.manifest.size(), sizeof(uint32_t));
+    writer.Integer(value.manifest.size(), UINT32_BYTES);
     for (const auto& item : value.manifest) {
-        writer.Integer(item.id, sizeof(uint64_t));
+        writer.Integer(item.id, UINT64_BYTES);
         writer.String(item.name);
-        writer.Integer(item.bytes, sizeof(uint64_t));
+        writer.Integer(item.bytes, UINT64_BYTES);
     }
     return writer.data;
 }
@@ -390,25 +408,25 @@ Result DecodeResult(const Bytes& value)
 {
     Reader reader(value);
     Result result;
-    result.status = reader.Integer(sizeof(uint32_t));
-    result.code = reader.Integer(sizeof(uint32_t));
-    const auto complete = reader.Integer(sizeof(uint8_t));
-    const auto degraded = reader.Integer(sizeof(uint8_t));
-    Check(complete <= 1 && degraded <= 1, "invalid result flags");
-    result.complete = complete != 0;
-    result.degraded = degraded != 0;
-    result.replayCount = reader.Integer(sizeof(uint64_t));
-    result.rowCount = reader.Integer(sizeof(uint64_t));
-    result.droppedCount = reader.Integer(sizeof(uint64_t));
-    result.errorCount = reader.Integer(sizeof(uint64_t));
+    result.status = reader.Integer(UINT32_BYTES);
+    result.code = reader.Integer(UINT32_BYTES);
+    const auto complete = reader.Integer(UINT8_BYTES);
+    const auto degraded = reader.Integer(UINT8_BYTES);
+    Check(complete <= BOOLEAN_TRUE && degraded <= BOOLEAN_TRUE, "invalid result flags");
+    result.complete = complete != BOOLEAN_FALSE;
+    result.degraded = degraded != BOOLEAN_FALSE;
+    result.replayCount = reader.Integer(UINT64_BYTES);
+    result.rowCount = reader.Integer(UINT64_BYTES);
+    result.droppedCount = reader.Integer(UINT64_BYTES);
+    result.errorCount = reader.Integer(UINT64_BYTES);
     result.sections = ReadSections(reader);
-    const auto count = reader.Integer(sizeof(uint32_t));
+    const auto count = reader.Integer(UINT32_BYTES);
     Check(count <= MAX_ARTIFACT_COUNT, "invalid manifest length");
     for (uint64_t i = 0; i < count; ++i) {
         ManifestEntry item;
-        item.id = reader.Integer(sizeof(uint64_t));
+        item.id = reader.Integer(UINT64_BYTES);
         item.name = reader.String();
-        item.bytes = reader.Integer(sizeof(uint64_t));
+        item.bytes = reader.Integer(UINT64_BYTES);
         result.manifest.push_back(item);
     }
     reader.End();
@@ -418,7 +436,7 @@ Result DecodeResult(const Bytes& value)
 Bytes EncodeError(const Error& value)
 {
     Writer writer;
-    writer.Integer(value.code, sizeof(uint32_t));
+    writer.Integer(value.code, UINT32_BYTES);
     writer.String(value.message, MAX_ERROR_MESSAGE_BYTES);
     writer.String(value.domain);
     writer.String(value.phase);
@@ -428,7 +446,7 @@ Error DecodeError(const Bytes& value)
 {
     Reader reader(value);
     Error result;
-    result.code = reader.Integer(sizeof(uint32_t));
+    result.code = reader.Integer(UINT32_BYTES);
     result.message = reader.String(MAX_ERROR_MESSAGE_BYTES);
     result.domain = reader.String();
     result.phase = reader.String();

@@ -34,6 +34,165 @@ constexpr uint32_t BLOCK_TYPE_AIC = 0;
 constexpr uint32_t BLOCK_TYPE_AIV = 1;
 constexpr std::size_t MEMORY_ND_MAX_RANK = 5;
 constexpr std::size_t MAX_EXPANDED_MEMORY_ACCESSES_PER_INSTRUCTION = 4096;
+constexpr uint32_t BITS_PER_BYTE = 8;
+constexpr uint32_t CUBE_M_DIMENSION = 16;
+constexpr uint32_t CUBE_K_BYTES = 256;
+constexpr uint32_t CUBE_L1_BLOCK_BYTES = 32;
+constexpr uint32_t CUBE_FRACTAL_BYTES = 512;
+constexpr uint32_t CUBE_OUTPUT_FRACTAL_BYTES = 1024;
+constexpr uint32_t AIV_BLOCKS_PER_AIC = 2;
+constexpr std::size_t TWO_DIMENSIONAL_RANK = 2;
+constexpr std::size_t THREE_DIMENSIONAL_RANK = 3;
+constexpr uint32_t NO_ACCESS_COUNT = 0U;
+constexpr uint32_t SINGLE_ACCESS_COUNT = 1U;
+constexpr uint32_t TWO_ACCESS_COUNT = 2U;
+constexpr uint32_t FOUR_BIT_DATA = 4U;
+constexpr uint32_t SIXTEEN_BIT_DATA = 2U * BITS_PER_BYTE;
+constexpr uint32_t THIRTY_TWO_BIT_DATA = 4U * BITS_PER_BYTE;
+constexpr uint32_t PAD_FUNCTION_MODE_MIN = 1U;
+constexpr uint32_t PAD_FUNCTION_MODE_MAX = 5U;
+constexpr uint32_t PAD_FUNCTION_ENCODING_MAX = 8U;
+constexpr uint32_t CUBE_C0_BYTES = 32U;
+constexpr uint32_t CUBE_N_ALIGNMENT = 16U;
+constexpr uint32_t CUBE_PACKED4_ALIGNMENT = 64U;
+constexpr uint32_t SUPPORTED_DMA_DIRECTION_COUNT = 3U;
+constexpr uint32_t LOOP_DIMENSION_COUNT = 2U;
+constexpr uint32_t SUPPORTED_NDDMA_DIMENSION_COUNT = 5U;
+constexpr uint32_t CUBE_ROW_BYTES = 64U;
+constexpr uint32_t FIXPIPE_CONFIG_LENGTH_SHIFT = 16U;
+constexpr uint32_t FIXPIPE_CONFIG_GAP_READ_SHIFT = 32U;
+constexpr uint32_t FIXPIPE_CONFIG_GAP_WRITE_SHIFT = 48U;
+constexpr uint32_t FIXPIPE_CONFIG_FIELD_MASK = 0xFFFFU;
+constexpr uint32_t FIXPIPE_CONFIG_COUNT_SHIFT = 4U;
+constexpr uint32_t FIXPIPE_CONFIG_COUNT_MASK = 0xFFFU;
+constexpr uint32_t QUANT_PRE_FIELD_MASK = 0xFU;
+constexpr uint32_t ATOMIC_TYPE_SHIFT = 6U;
+constexpr uint32_t ATOMIC_TYPE_MASK = 7U;
+constexpr uint32_t ATOMIC_OPERATION_SHIFT = 9U;
+constexpr uint32_t ATOMIC_OPERATION_MASK = 3U;
+constexpr uint32_t DUAL_DST_MODE_NONE = 0U;
+constexpr uint32_t DUAL_DST_MODE_FIRST = 1U;
+constexpr uint32_t DUAL_DST_MODE_SECOND = 2U;
+constexpr uint32_t DUAL_DST_MODE_BOTH = 3U;
+constexpr uint32_t FOUR_BIT_FRACTAL_COUNT = 4U;
+constexpr uint32_t TWO_FRACTAL_COUNT = 2U;
+constexpr uint32_t NO_INDEX_ID = 0U;
+constexpr uint32_t REGISTER_BANK_A = 0U;
+constexpr uint32_t REGISTER_BANK_B = 1U;
+constexpr uint32_t DMA_DESCRIPTOR_DIMENSION_COUNT = 3U;
+constexpr uint32_t UNSPECIFIED_DATA_BITS = 0U;
+
+constexpr std::array<uint8_t, 3> FIXPIPE_F32_32BIT_QUANT_PRE{0, 14, 15};
+constexpr std::array<uint8_t, 6> FIXPIPE_F32_16BIT_QUANT_PRE{1, 16, 31, 32, 33, 34};
+constexpr std::array<uint8_t, 8> FIXPIPE_F32_8BIT_QUANT_PRE{2, 3, 4, 5, 12, 13, 23, 24};
+constexpr std::array<uint8_t, 2> FIXPIPE_F32_4BIT_QUANT_PRE{25, 26};
+constexpr std::array<uint8_t, 4> FIXPIPE_S32_16BIT_QUANT_PRE{10, 11, 35, 36};
+constexpr std::array<uint8_t, 2> FIXPIPE_S32_8BIT_QUANT_PRE{8, 9};
+constexpr std::array<uint8_t, 2> FIXPIPE_S32_4BIT_QUANT_PRE{21, 22};
+
+template <std::size_t N>
+bool Contains(const std::array<uint8_t, N>& values, uint8_t value) noexcept
+{
+    return std::find(values.begin(), values.end(), value) != values.end();
+}
+
+uint32_t MmadDataBits(InstructionId id) noexcept
+{
+    switch (id) {
+        case InstructionId::MadF32F32:
+            return THIRTY_TWO_BIT_DATA;
+        case InstructionId::MadF16F32:
+        case InstructionId::MadBf16F32:
+            return SIXTEEN_BIT_DATA;
+        case InstructionId::MadMxE1m2E1m2:
+        case InstructionId::MadMxE1m2E2m1:
+        case InstructionId::MadMxE2m1E1m2:
+        case InstructionId::MadMxE2m1E2m1:
+            return FOUR_BIT_DATA;
+        case InstructionId::MadS8:
+        case InstructionId::MadE4m3E4m3:
+        case InstructionId::MadE4m3E5m2:
+        case InstructionId::MadE5m2E4m3:
+        case InstructionId::MadE5m2E5m2:
+        case InstructionId::MadMxE4m3E4m3:
+        case InstructionId::MadMxE4m3E5m2:
+        case InstructionId::MadMxE5m2E4m3:
+        case InstructionId::MadMxE5m2E5m2:
+            return BITS_PER_BYTE;
+        default:
+            return NO_ACCESS_COUNT;
+    }
+}
+
+bool IsMmadInstruction(InstructionId id) noexcept { return MmadDataBits(id) != 0; }
+
+uint32_t LoadCbufToL0DataBits(InstructionId id) noexcept
+{
+    switch (id) {
+        case InstructionId::LoadCbufToCaB4:
+        case InstructionId::LoadCbufToCbB4:
+            return FOUR_BIT_DATA;
+        case InstructionId::LoadCbufToCaB16:
+        case InstructionId::LoadCbufToCbB16:
+            return SIXTEEN_BIT_DATA;
+        case InstructionId::LoadCbufToCaB8:
+        case InstructionId::LoadCbufToCbB8:
+            return BITS_PER_BYTE;
+        case InstructionId::LoadCbufToCaB32:
+        case InstructionId::LoadCbufToCbB32:
+            return THIRTY_TWO_BIT_DATA;
+        default:
+            return NO_ACCESS_COUNT;
+    }
+}
+
+uint32_t LoadCbufToCbTransposeDataBits(InstructionId id) noexcept
+{
+    switch (id) {
+        case InstructionId::LoadCbufToCbTransposeB8:
+            return BITS_PER_BYTE;
+        case InstructionId::LoadCbufToCbTransposeB16:
+            return SIXTEEN_BIT_DATA;
+        case InstructionId::LoadCbufToCbTransposeB32:
+            return THIRTY_TWO_BIT_DATA;
+        case InstructionId::LoadCbufToCbTransposeB4:
+            return FOUR_BIT_DATA;
+        default:
+            return NO_ACCESS_COUNT;
+    }
+}
+
+bool IsImg2ColInstruction(InstructionId id) noexcept
+{
+    switch (id) {
+        case InstructionId::Img2ColCbufToCaB16:
+        case InstructionId::Img2ColCbufToCaB8:
+        case InstructionId::Img2ColCbufToCbB16:
+        case InstructionId::Img2ColCbufToCbB8:
+        case InstructionId::Img2ColCbufToCbB32:
+        case InstructionId::Img2ColCbufToCaB32:
+            return true;
+        default:
+            return false;
+    }
+}
+
+uint32_t Img2ColDataBits(InstructionId id) noexcept
+{
+    switch (id) {
+        case InstructionId::Img2ColCbufToCaB16:
+        case InstructionId::Img2ColCbufToCbB16:
+            return SIXTEEN_BIT_DATA;
+        case InstructionId::Img2ColCbufToCaB8:
+        case InstructionId::Img2ColCbufToCbB8:
+            return BITS_PER_BYTE;
+        case InstructionId::Img2ColCbufToCbB32:
+        case InstructionId::Img2ColCbufToCaB32:
+            return THIRTY_TWO_BIT_DATA;
+        default:
+            return NO_ACCESS_COUNT;
+    }
+}
 
 struct RangeDescriptor {
     uint64_t bytes;
@@ -120,7 +279,7 @@ public:
     {
         const auto id = static_cast<InstructionId>(field.instrId);
         const uint32_t dataBits = FixpipeDestinationDataBits(id, field.quantPre);
-        if (dataBits == 0) {
+        if (dataBits == NO_ACCESS_COUNT) {
             return std::nullopt;
         }
         return MemoryInstructionProfile{dataBits, ACLSAN_DEVICE_SOURCE_FIXPIPE, BLOCK_TYPE_AIC};
@@ -147,59 +306,35 @@ private:
     static uint32_t FixpipeDestinationDataBits(InstructionId id, uint8_t quantPre) noexcept
     {
         if (id == InstructionId::FixL0cToOutF32) {
-            switch (quantPre) {
-                case 0:
-                case 14:
-                case 15:
-                    return 32;
-                case 1:
-                case 16:
-                case 31:
-                case 32:
-                case 33:
-                case 34:
-                    return 16;
-                case 2:
-                case 3:
-                case 4:
-                case 5:
-                case 12:
-                case 13:
-                case 23:
-                case 24:
-                    return 8;
-                case 25:
-                case 26:
-                    return 4;
-                default:
-                    return 0;
+            if (Contains(FIXPIPE_F32_32BIT_QUANT_PRE, quantPre)) {
+                return THIRTY_TWO_BIT_DATA;
             }
+            if (Contains(FIXPIPE_F32_16BIT_QUANT_PRE, quantPre)) {
+                return SIXTEEN_BIT_DATA;
+            }
+            if (Contains(FIXPIPE_F32_8BIT_QUANT_PRE, quantPre)) {
+                return BITS_PER_BYTE;
+            }
+            return Contains(FIXPIPE_F32_4BIT_QUANT_PRE, quantPre) ? FOUR_BIT_DATA : NO_ACCESS_COUNT;
         }
         if (id != InstructionId::FixL0cToOutS32) {
-            return 0;
+            return NO_ACCESS_COUNT;
         }
-        switch (quantPre) {
-            case 0:
-                return 32;
-            case 10:
-            case 11:
-            case 35:
-            case 36:
-                return 16;
-            case 8:
-            case 9:
-                return 8;
-            case 21:
-            case 22:
-                return 4;
-            default:
-                return 0;
+        if (quantPre == NO_ACCESS_COUNT) {
+            return THIRTY_TWO_BIT_DATA;
         }
+        if (Contains(FIXPIPE_S32_16BIT_QUANT_PRE, quantPre)) {
+            return SIXTEEN_BIT_DATA;
+        }
+        if (Contains(FIXPIPE_S32_8BIT_QUANT_PRE, quantPre)) {
+            return BITS_PER_BYTE;
+        }
+        return Contains(FIXPIPE_S32_4BIT_QUANT_PRE, quantPre) ? FOUR_BIT_DATA : NO_ACCESS_COUNT;
     }
 
     static bool IsSupportedReadDataBits(uint32_t dataBits) noexcept
     {
-        return dataBits == 8 || dataBits == 16 || dataBits == 32;
+        return dataBits == BITS_PER_BYTE || dataBits == SIXTEEN_BIT_DATA || dataBits == THIRTY_TWO_BIT_DATA;
     }
 };
 
@@ -239,7 +374,7 @@ std::optional<MemoryCbdataContext> ContextForL1(const MemoryCbdataContext& conte
     }
     auto result = context;
     result.coreId = core;
-    result.blockId /= 2U;
+    result.blockId /= AIV_BLOCKS_PER_AIC;
     result.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     return result;
 }
@@ -253,7 +388,8 @@ public:
         uint64_t rangeBytes = bytes;
         bool isRange = count == 1;
         if (count > 1 && strideBytes <= bytes &&
-            (strideBytes == 0 || count - 1 <= (std::numeric_limits<uint64_t>::max() - bytes) / strideBytes)) {
+            (strideBytes == NO_ACCESS_COUNT ||
+             count - 1 <= (std::numeric_limits<uint64_t>::max() - bytes) / strideBytes)) {
             rangeBytes += (count - 1) * strideBytes;
             isRange = true;
         }
@@ -264,17 +400,17 @@ public:
     }
 
     static MemoryAccessDescriptor NdRead(
-        uint64_t address, uint32_t dataBits, uint64_t bytes, std::array<uint64_t, 2> counts,
-        std::array<uint64_t, 2> strides) noexcept
+        uint64_t address, uint32_t dataBits, uint64_t bytes, std::array<uint64_t, TWO_DIMENSIONAL_RANK> counts,
+        std::array<uint64_t, TWO_DIMENSIONAL_RANK> strides) noexcept
     {
         struct Axis {
             uint64_t count;
             uint64_t stride;
         };
-        std::array<Axis, 2> axes{};
+        std::array<Axis, TWO_DIMENSIONAL_RANK> axes{};
         std::size_t axisCount = 0;
         for (std::size_t index = 0; index < counts.size(); ++index) {
-            if (counts[index] > 1 && strides[index] != 0) {
+            if (counts[index] > SINGLE_ACCESS_COUNT && strides[index] != 0) {
                 axes[axisCount++] = {counts[index], strides[index]};
             }
         }
@@ -282,7 +418,7 @@ public:
             return left.stride < right.stride;
         });
 
-        std::array<Axis, 2> sparseAxes{};
+        std::array<Axis, TWO_DIMENSIONAL_RANK> sparseAxes{};
         std::size_t sparseCount = 0;
         uint64_t segmentBytes = bytes;
         for (std::size_t index = 0; index < axisCount; ++index) {
@@ -294,7 +430,7 @@ public:
                 sparseAxes[sparseCount++] = axis;
             }
         }
-        if (sparseCount == 0) {
+        if (sparseCount == NO_ACCESS_COUNT) {
             return Linear(address, ACLSAN_DEVICE_MEMORY_ACCESS_READ, dataBits, 1, segmentBytes, 0);
         }
         if (sparseCount == 1) {
@@ -312,7 +448,7 @@ public:
         }
 
         NdAffineDescriptor layout{};
-        layout.rank = 2;
+        layout.rank = TWO_DIMENSIONAL_RANK;
         layout.bytes = segmentBytes;
         for (std::size_t index = 0; index < sparseCount; ++index) {
             layout.counts[index] = sparseAxes[index].count;
@@ -326,12 +462,13 @@ public:
         const std::array<uint64_t, 5>& strides) noexcept
     {
         return {
-            address, ACLSAN_DEVICE_MEMORY_ACCESS_READ, dataBits, NdAffineDescriptor{5, elementBytes, counts, strides}};
+            address, ACLSAN_DEVICE_MEMORY_ACCESS_READ, dataBits,
+            NdAffineDescriptor{MEMORY_ND_MAX_RANK, elementBytes, counts, strides}};
     }
 
     static MemoryAccessDescriptor NdWrite(
-        uint64_t address, uint32_t dataBits, uint64_t bytes, std::array<uint64_t, 2> counts,
-        std::array<uint64_t, 2> strides) noexcept
+        uint64_t address, uint32_t dataBits, uint64_t bytes, std::array<uint64_t, TWO_DIMENSIONAL_RANK> counts,
+        std::array<uint64_t, TWO_DIMENSIONAL_RANK> strides) noexcept
     {
         MemoryAccessDescriptor descriptor = NdRead(address, dataBits, bytes, counts, strides);
         descriptor.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
@@ -339,11 +476,12 @@ public:
     }
 
     static MemoryAccessDescriptor DmaAffine(
-        uint64_t address, uint32_t accessMode, uint32_t dataBits, uint64_t bytes, const std::array<uint64_t, 3>& counts,
-        const std::array<uint64_t, 3>& strides) noexcept
+        uint64_t address, uint32_t accessMode, uint32_t dataBits, uint64_t bytes,
+        const std::array<uint64_t, THREE_DIMENSIONAL_RANK>& counts,
+        const std::array<uint64_t, THREE_DIMENSIONAL_RANK>& strides) noexcept
     {
         NdAffineDescriptor layout{};
-        layout.rank = 3;
+        layout.rank = THREE_DIMENSIONAL_RANK;
         layout.bytes = bytes;
         std::copy(counts.begin(), counts.end(), layout.counts.begin());
         std::copy(strides.begin(), strides.end(), layout.strideBytes.begin());
@@ -447,14 +585,14 @@ private:
         const bool valid = std::visit(
             [&lastOffset](const auto& layout) noexcept {
                 using Layout = std::decay_t<decltype(layout)>;
-                if (layout.bytes == 0) {
+                if (layout.bytes == NO_ACCESS_COUNT) {
                     return false;
                 }
                 lastOffset = layout.bytes - 1;
                 if constexpr (std::is_same_v<Layout, RangeDescriptor>) {
                     return true;
                 } else if constexpr (std::is_same_v<Layout, StridedDescriptor>) {
-                    if (layout.bytes > std::numeric_limits<uint32_t>::max() || layout.count == 0 ||
+                    if (layout.bytes > std::numeric_limits<uint32_t>::max() || layout.count == NO_ACCESS_COUNT ||
                         layout.count > std::numeric_limits<uint32_t>::max() ||
                         layout.strideBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
                         return false;
@@ -462,12 +600,12 @@ private:
                     lastOffset += static_cast<unsigned __int128>(layout.count - 1) * layout.strideBytes;
                     return true;
                 } else {
-                    if (layout.bytes > std::numeric_limits<uint32_t>::max() || layout.rank == 0 ||
+                    if (layout.bytes > std::numeric_limits<uint32_t>::max() || layout.rank == NO_ACCESS_COUNT ||
                         layout.rank > MEMORY_ND_MAX_RANK) {
                         return false;
                     }
                     for (std::size_t index = 0; index < layout.rank; ++index) {
-                        if (layout.counts[index] == 0 ||
+                        if (layout.counts[index] == NO_ACCESS_COUNT ||
                             layout.strideBytes[index] > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
                             return false;
                         }
@@ -573,7 +711,7 @@ ScalarGmAddressResult ResolveScalarGmAddress(
     const uint64_t effective = static_cast<uint64_t>(address);
     constexpr uint64_t windowMask = (UINT64_C(1) << 24) - 1;
     const bool systemWindow = ((effective >> 25) & windowMask) == ((field.sysVaBase >> 25) & windowMask);
-    if (systemWindow && ((effective >> 24) & 1U) == 0) {
+    if (systemWindow && ((effective >> 24) & 1U) == NO_ACCESS_COUNT) {
         const bool ub = ((effective >> 20) & 0x1fU) == 0 && ((effective >> 19) & 1U) != 0;
         const bool stack = ((effective >> 20) & 0xfU) != 0;
         return {
@@ -620,7 +758,7 @@ public:
                              field.instrId <= static_cast<uint32_t>(InstructionId::StpB8)) ||
                             (field.instrId >= static_cast<uint32_t>(InstructionId::LdpB64) &&
                              field.instrId <= static_cast<uint32_t>(InstructionId::LdpB8));
-        if (isPair && field.post != 0U) {
+        if (isPair && field.post != NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const bool hasRegisterOffset = (field.instrId >= static_cast<uint32_t>(InstructionId::StB64Reg) &&
@@ -742,26 +880,29 @@ public:
 
     MemoryCbdataResult operator()(const CopyGmToCbufV2ParamField& field) const noexcept
     {
-        constexpr uint64_t C0_BYTES = 32;
+        constexpr uint64_t C0_BYTES = CUBE_C0_BYTES;
         constexpr std::array<uint64_t, 5> INSERTED_PADDING_SOURCE_BYTES{1, 2, 4, 8, 16};
         const auto profile = MemoryInstructionProfileFactory::Create(field);
         if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (field.burstNum == 0 || field.burstLen == 0) {
+        if (field.burstNum == NO_ACCESS_COUNT || field.burstLen == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        if (field.padFunctionMode > 8 ||
-            (field.padFunctionMode >= 1 && field.padFunctionMode <= 5 && field.burstLen != 1)) {
+        if (field.padFunctionMode > PAD_FUNCTION_ENCODING_MAX ||
+            (field.padFunctionMode >= PAD_FUNCTION_MODE_MIN && field.padFunctionMode <= PAD_FUNCTION_MODE_MAX &&
+             field.burstLen != SINGLE_ACCESS_COUNT)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        const bool insertsPadding = field.padFunctionMode >= 1 && field.padFunctionMode <= 5;
+        const bool insertsPadding =
+            field.padFunctionMode >= PAD_FUNCTION_MODE_MIN && field.padFunctionMode <= PAD_FUNCTION_MODE_MAX;
         if (field.burstLen > std::numeric_limits<uint64_t>::max() / C0_BYTES ||
             (!insertsPadding && field.srcStride > std::numeric_limits<uint64_t>::max() / C0_BYTES)) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
-        const uint64_t burstBytes = insertsPadding ? INSERTED_PADDING_SOURCE_BYTES[field.padFunctionMode - 1] :
-                                                     static_cast<uint64_t>(field.burstLen) * C0_BYTES;
+        const uint64_t burstBytes = insertsPadding ?
+                                        INSERTED_PADDING_SOURCE_BYTES[field.padFunctionMode - PAD_FUNCTION_MODE_MIN] :
+                                        static_cast<uint64_t>(field.burstLen) * C0_BYTES;
         const uint64_t burstStride = insertsPadding ? burstBytes : field.srcStride * C0_BYTES;
         if (burstBytes > std::numeric_limits<uint32_t>::max() ||
             burstStride > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
@@ -778,7 +919,7 @@ public:
         if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (field.burstNum == 0 || field.burstLen == 0) {
+        if (field.burstNum == NO_ACCESS_COUNT || field.burstLen == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         return ConvertDmaAccess(
@@ -795,38 +936,41 @@ public:
         if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (field.nSize == 0 || field.mSize == 0) {
+        if (field.nSize == NO_ACCESS_COUNT || field.mSize == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         if ((field.nz2ndEnable && field.nz2dnEnable) ||
             (field.splitEnable && (field.nz2ndEnable || field.nz2dnEnable))) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (field.splitEnable &&
-            (field.instrId != static_cast<uint32_t>(InstructionId::FixL0cToOutF32) || profile->dataBits != 32)) {
+        if (field.splitEnable && (field.instrId != static_cast<uint32_t>(InstructionId::FixL0cToOutF32) ||
+                                  profile->dataBits != THIRTY_TWO_BIT_DATA)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         if (!field.nz2ndEnable && !field.nz2dnEnable &&
-            ((field.splitEnable && field.nSize % 8 != 0) || (!field.splitEnable && field.nSize % 16 != 0))) {
+            ((field.splitEnable && field.nSize % (CUBE_N_ALIGNMENT / TWO_ACCESS_COUNT) != 0) ||
+             (!field.splitEnable && field.nSize % CUBE_N_ALIGNMENT != 0))) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         if (field.c0PadEnable &&
-            (field.instrId != static_cast<uint32_t>(InstructionId::FixL0cToOutF32) || field.sid != 0 ||
-             field.nSize % 16 != 0 || field.mSize != 16 || field.loopDstStride != 256 || field.loopSrtStride != 16 ||
-             field.l2CacheControl != 0 || field.clipReluPre != 0 || field.unitFlag != 0 || field.quantPre != 0 ||
-             field.reluPre != 0 || field.splitEnable || field.nz2ndEnable || field.nz2dnEnable)) {
+            (field.instrId != static_cast<uint32_t>(InstructionId::FixL0cToOutF32) || field.sid != NO_ACCESS_COUNT ||
+             field.nSize % CUBE_N_ALIGNMENT != NO_ACCESS_COUNT || field.mSize != CUBE_N_ALIGNMENT ||
+             field.loopDstStride != CUBE_K_BYTES || field.loopSrtStride != CUBE_N_ALIGNMENT ||
+             field.l2CacheControl != NO_ACCESS_COUNT || field.clipReluPre != NO_ACCESS_COUNT ||
+             field.unitFlag != NO_ACCESS_COUNT || field.quantPre != NO_ACCESS_COUNT ||
+             field.reluPre != NO_ACCESS_COUNT || field.splitEnable || field.nz2ndEnable || field.nz2dnEnable)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
 
         MemoryCbdataBuilder builder(context_, *profile, fixOutputSpace_);
-        if (profile->dataBits == 4) {
-            if (!field.nz2ndEnable && !field.nz2dnEnable && field.nSize % 64 != 0) {
+        if (profile->dataBits == FOUR_BIT_DATA) {
+            if (!field.nz2ndEnable && !field.nz2dnEnable && field.nSize % CUBE_PACKED4_ALIGNMENT != 0) {
                 return {MemoryCbdataStatus::INVALID_FIELD, {}};
             }
             return ConvertFixpipePacked4(field, std::move(builder));
         }
 
-        const uint64_t dstElementBytes = profile->dataBits / 8U;
+        const uint64_t dstElementBytes = profile->dataBits / BITS_PER_BYTE;
         if (field.loopDstStride > std::numeric_limits<uint64_t>::max() / dstElementBytes) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
@@ -837,7 +981,7 @@ public:
                     MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, static_cast<uint64_t>(InstructionId::Loop3Param)};
             }
             const Loop3ParamField& loop3 = *registerState_.loop3;
-            if (loop3.loopCount == 0) {
+            if (loop3.loopCount == NO_ACCESS_COUNT) {
                 return {MemoryCbdataStatus::NO_ACCESS, {}};
             }
             if (loop3.dstStride > std::numeric_limits<uint64_t>::max() / dstElementBytes) {
@@ -867,7 +1011,7 @@ public:
         if (field.decompMode != 0) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        if (field.mStep == 0 || field.kStep == 0) {
+        if (field.mStep == NO_ACCESS_COUNT || field.kStep == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         if (!registerState_.mte2Source.has_value()) {
@@ -905,9 +1049,9 @@ public:
         if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        const std::array<uint64_t, 5> counts{
+        const std::array<uint64_t, SUPPORTED_NDDMA_DIMENSION_COUNT> counts{
             field.loop0Size, field.loop1Size, field.loop2Size, field.loop3Size, field.loop4Size};
-        if (std::any_of(counts.begin(), counts.end(), [](uint64_t count) { return count == 0; })) {
+        if (std::any_of(counts.begin(), counts.end(), [](uint64_t count) { return count == NO_ACCESS_COUNT; })) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         if (field.paddingMode && !registerState_.ndDmaPadCount.has_value()) {
@@ -915,7 +1059,7 @@ public:
                 MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, static_cast<uint64_t>(InstructionId::NdDmaPadCount)};
         }
         for (std::size_t index = 0; index < counts.size(); ++index) {
-            if (counts[index] > 1 && !registerState_.ndDmaLoopStrides[index].has_value()) {
+            if (counts[index] > SINGLE_ACCESS_COUNT && !registerState_.ndDmaLoopStrides[index].has_value()) {
                 return {
                     MemoryCbdataStatus::MISSING_REGISTER_STATE,
                     {},
@@ -923,10 +1067,10 @@ public:
             }
         }
 
-        const uint64_t elementBytes = profile->dataBits / 8U;
+        const uint64_t elementBytes = profile->dataBits / BITS_PER_BYTE;
         std::array<uint64_t, 5> strideBytes{};
         for (std::size_t index = 0; index < strideBytes.size(); ++index) {
-            if (counts[index] <= 1) {
+            if (counts[index] <= SINGLE_ACCESS_COUNT) {
                 continue;
             }
             const uint64_t srcStride = registerState_.ndDmaLoopStrides[index]->srcStride;
@@ -945,9 +1089,9 @@ public:
 private:
     static bool HasUnsupportedFixpipeMode(const FixL0cToOutParamField& field) noexcept
     {
-        return field.quantPost != 0 || field.reluPost != 0 || field.clipReluPost || field.loopEnhanceEnable ||
-               field.eltwiseOp != 0 || field.eltwiseAntqEnable || field.loopEnhanceMergeEnable ||
-               field.winoPostEnable || field.brcbEnable;
+        return field.quantPost != NO_ACCESS_COUNT || field.reluPost != NO_ACCESS_COUNT || field.clipReluPost ||
+               field.loopEnhanceEnable || field.eltwiseOp != NO_ACCESS_COUNT || field.eltwiseAntqEnable ||
+               field.loopEnhanceMergeEnable || field.winoPostEnable || field.brcbEnable;
     }
 
     template <typename Field>
@@ -957,7 +1101,7 @@ private:
         if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (field.burstNum == 0 || field.burstLen == 0) {
+        if (field.burstNum == NO_ACCESS_COUNT || field.burstLen == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         return ConvertDmaAccess(
@@ -982,11 +1126,12 @@ private:
             return {
                 MemoryCbdataStatus::MISSING_REGISTER_STATE,
                 {},
-                static_cast<uint64_t>(InstructionId::LoopSizeUbufToGm) + directionIndex * 3};
+                static_cast<uint64_t>(InstructionId::LoopSizeUbufToGm) +
+                    directionIndex * SUPPORTED_DMA_DIRECTION_COUNT};
         }
         const DmaLoopSizeParamField& size = *registerState_.dmaLoopSizes[directionIndex];
         const std::array<uint64_t, 2> loopCounts{size.loop1Size, size.loop2Size};
-        if (loopCounts[0] == 0 || loopCounts[1] == 0) {
+        if (loopCounts[0] == NO_ACCESS_COUNT || loopCounts[1] == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
 
@@ -1010,7 +1155,7 @@ private:
         }
 
         MemoryCbdataBuilder builder(context_, profile);
-        if (loopCounts[0] == 1 && loopCounts[1] == 1) {
+        if (loopCounts[0] == SINGLE_ACCESS_COUNT && loopCounts[1] == SINGLE_ACCESS_COUNT) {
             return BuildSingleAccess(
                 std::move(builder), MemoryAccessDescriptorFactory::Linear(
                                         address, accessMode, profile.dataBits, burstNum, burstBytes, burstStride));
@@ -1029,10 +1174,10 @@ private:
         if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        const uint64_t elementBytes = profile->dataBits / 8U;
+        const uint64_t elementBytes = profile->dataBits / BITS_PER_BYTE;
         const uint64_t rowCount = ConversionMode == NdNzConversionMode::ND2NZ ? field.nValue : field.dValue;
         const uint64_t rowElements = ConversionMode == NdNzConversionMode::ND2NZ ? field.dValue : field.nValue;
-        if (rowCount == 0 || rowElements == 0) {
+        if (rowCount == NO_ACCESS_COUNT || rowElements == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         if (!registerState_.mte2Nz.has_value()) {
@@ -1040,7 +1185,7 @@ private:
                 MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, static_cast<uint64_t>(InstructionId::SetMte2NzPara)};
         }
         const uint16_t matrixNum = registerState_.mte2Nz->matrixNum;
-        if (matrixNum == 0) {
+        if (matrixNum == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         if (rowElements > std::numeric_limits<uint64_t>::max() / elementBytes) {
@@ -1088,7 +1233,7 @@ private:
         const unsigned __int128 byteOffset = bitOffset / 8U;
         const unsigned __int128 leadingBits = bitOffset % 8U;
         const unsigned __int128 byteCount = (leadingBits + elementCount * 4U + 7U) / 8U;
-        if (elementCount == 0 || byteOffset > std::numeric_limits<uint64_t>::max() ||
+        if (elementCount == NO_ACCESS_COUNT || byteOffset > std::numeric_limits<uint64_t>::max() ||
             byteCount > std::numeric_limits<uint64_t>::max() ||
             static_cast<unsigned __int128>(baseAddress) + byteOffset > std::numeric_limits<uint64_t>::max()) {
             return std::nullopt;
@@ -1118,7 +1263,7 @@ private:
                     MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, static_cast<uint64_t>(InstructionId::Loop3Param)};
             }
             const Loop3ParamField& loop3 = *registerState_.loop3;
-            if (loop3.loopCount == 0) {
+            if (loop3.loopCount == NO_ACCESS_COUNT) {
                 return {MemoryCbdataStatus::NO_ACCESS, {}};
             }
             const uint64_t innerCount = field.nz2ndEnable ? field.mSize : field.nSize;
@@ -1224,58 +1369,57 @@ public:
     {
         return Linear(
             f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, f.repeatTimes,
-            uint64_t(f.blockNum) * 32, uint64_t(f.repeatGap) * 32, f.dataBits);
+            uint64_t(f.blockNum) * CUBE_L1_BLOCK_BYTES, uint64_t(f.repeatGap) * CUBE_L1_BLOCK_BYTES, f.dataBits);
     }
 
     MemoryCbdataResult operator()(const LoadL1MxParamField& f) const noexcept
     {
-        const uint64_t offset = (uint64_t(f.xStart) * f.srcStride + f.yStart) * 32;
+        const uint64_t offset = (uint64_t(f.xStart) * f.srcStride + f.yStart) * CUBE_L1_BLOCK_BYTES;
         if (f.srcAddr > UINT64_MAX - offset) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
         return Linear(
             f.srcAddr + offset, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.xStep,
-            uint64_t(f.yStep) * 32, uint64_t(f.srcStride) * 32);
+            uint64_t(f.yStep) * CUBE_L1_BLOCK_BYTES, uint64_t(f.srcStride) * CUBE_L1_BLOCK_BYTES);
     }
 
     MemoryCbdataResult operator()(const MmadParamField& f) const noexcept
     {
-        if (f.instrId < 400 || f.instrId > 415) {
+        const auto instructionId = static_cast<InstructionId>(f.instrId);
+        if (!IsMmadInstruction(instructionId)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.m == 0 || f.n == 0 || f.k == 0) {
+        if (f.m == NO_ACCESS_COUNT || f.n == NO_ACCESS_COUNT || f.k == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        const uint32_t bits = f.instrId == 403                       ? 32 :
-                              (f.instrId == 401 || f.instrId == 402) ? 16 :
-                              (f.instrId >= 408 && f.instrId <= 411) ? 4 :
-                                                                       8;
-        const uint64_t m = CeilDiv(f.m, 16), n = CeilDiv(f.n, 16), k = CeilDiv(f.k, 256 / bits);
+        const uint32_t bits = MmadDataBits(instructionId);
+        const uint64_t m = CeilDiv(f.m, CUBE_M_DIMENSION), n = CeilDiv(f.n, CUBE_M_DIMENSION),
+                       k = CeilDiv(f.k, CUBE_K_BYTES / bits);
         uint64_t aFractals = m * k;
         if (f.m == 1 && !f.disableGemv) {
             // The reference packs GEMV's A into 16-row fractals. Do not silently
             // truncate a partial fractal where the instruction constraints are unknown.
-            if (aFractals % 16 != 0) {
+            if (aFractals % CUBE_M_DIMENSION != 0) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
-            aFractals /= 16;
+            aFractals /= CUBE_M_DIMENSION;
         }
         MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, BLOCK_TYPE_AIC});
         if (!Add(
                 builder, f.src0Addr, ACLSAN_DEVICE_MEMORY_SPACE_L0A, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1,
-                aFractals * 512, 0, bits) ||
+                aFractals * CUBE_FRACTAL_BYTES, 0, bits) ||
             !Add(
-                builder, f.src1Addr, ACLSAN_DEVICE_MEMORY_SPACE_L0B, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1, n * k * 512,
-                0, bits) ||
+                builder, f.src1Addr, ACLSAN_DEVICE_MEMORY_SPACE_L0B, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1,
+                n * k * CUBE_FRACTAL_BYTES, 0, bits) ||
             !Add(
-                builder, f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 1, m * n * 1024,
-                0, 32)) {
+                builder, f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 1,
+                m * n * CUBE_OUTPUT_FRACTAL_BYTES, 0, 4 * BITS_PER_BYTE)) {
             return std::move(builder).Build();
         }
         if (!f.cmatrixSource && !f.cmatrixInitVal &&
             !Add(
-                builder, f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1, m * n * 1024,
-                0, 32)) {
+                builder, f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1,
+                m * n * CUBE_OUTPUT_FRACTAL_BYTES, 0, 4 * BITS_PER_BYTE)) {
             return std::move(builder).Build();
         }
         return std::move(builder).Build();
@@ -1283,35 +1427,40 @@ public:
 
     MemoryCbdataResult operator()(const LoadCbufToL0ParamField& f) const noexcept
     {
-        if (f.instrId < 141 || f.instrId > 148) {
+        const auto instructionId = static_cast<InstructionId>(f.instrId);
+        const uint32_t bits = LoadCbufToL0DataBits(instructionId);
+        if (bits == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.mStep == 0 || f.kStep == 0) {
+        if (f.mStep == NO_ACCESS_COUNT || f.kStep == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        const uint32_t bits = (f.instrId == 141 || f.instrId == 146) ? 4 :
-                              (f.instrId == 142 || f.instrId == 145) ? 16 :
-                              (f.instrId == 143 || f.instrId == 147) ? 8 :
-                                                                       32;
         uint64_t dstBlocks = f.mStep, dstRepeats = f.kStep;
         if (f.transpose) {
-            if ((bits == 4 && f.mStep % 4) || (bits == 8 && f.mStep % 2) || (bits == 32 && f.kStep % 2)) {
+            if ((bits == FOUR_BIT_DATA && f.mStep % 4) || (bits == BITS_PER_BYTE && f.mStep % 2) ||
+                (bits == THIRTY_TWO_BIT_DATA && f.kStep % 2)) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
-            dstBlocks = uint64_t(f.kStep) * 16 / bits;
-            dstRepeats = uint64_t(f.mStep) * bits / 16;
+            dstBlocks = uint64_t(f.kStep) * CUBE_M_DIMENSION / bits;
+            dstRepeats = uint64_t(f.mStep) * bits / CUBE_M_DIMENSION;
         }
-        const uint64_t offset = (uint64_t(f.kStartPosition) * f.srcStride + f.mStartPosition) * 512;
+        const uint64_t offset = (uint64_t(f.kStartPosition) * f.srcStride + f.mStartPosition) * CUBE_FRACTAL_BYTES;
         if (f.srcAddr > UINT64_MAX - offset) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
         MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, BLOCK_TYPE_AIC});
         if (!Add(
                 builder, f.srcAddr + offset, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.kStep,
-                uint64_t(f.mStep) * 512, uint64_t(f.srcStride) * 512, bits) ||
+                uint64_t(f.mStep) * CUBE_FRACTAL_BYTES, uint64_t(f.srcStride) * CUBE_FRACTAL_BYTES, bits) ||
             !Add(
-                builder, f.dstAddr, f.instrId <= 144 ? ACLSAN_DEVICE_MEMORY_SPACE_L0A : ACLSAN_DEVICE_MEMORY_SPACE_L0B,
-                ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, dstRepeats, dstBlocks * 512, uint64_t(f.dstStride) * 512, bits)) {
+                builder, f.dstAddr,
+                instructionId == InstructionId::LoadCbufToCaB4 || instructionId == InstructionId::LoadCbufToCaB16 ||
+                        instructionId == InstructionId::LoadCbufToCaB8 ||
+                        instructionId == InstructionId::LoadCbufToCaB32 ?
+                    ACLSAN_DEVICE_MEMORY_SPACE_L0A :
+                    ACLSAN_DEVICE_MEMORY_SPACE_L0B,
+                ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, dstRepeats, dstBlocks * CUBE_FRACTAL_BYTES,
+                uint64_t(f.dstStride) * CUBE_FRACTAL_BYTES, bits)) {
             return std::move(builder).Build();
         }
         return std::move(builder).Build();
@@ -1319,26 +1468,31 @@ public:
 
     MemoryCbdataResult operator()(const LoadCbufToCbTransposeParamField& f) const noexcept
     {
-        if (f.instrId < 137 || f.instrId > 140) {
+        const auto instructionId = static_cast<InstructionId>(f.instrId);
+        const uint32_t bits = LoadCbufToCbTransposeDataBits(instructionId);
+        if (bits == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.repeat == 0) {
+        if (f.repeat == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         // The dav-3510 reference does not restore index/decrement addressing.
         // Do not pretend those modes use the same source base as index zero.
-        if (f.indexId != 0 || f.decrement) {
+        if (f.indexId != NO_INDEX_ID || f.decrement) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
-        const uint32_t bits = f.instrId == 137 ? 8 : f.instrId == 138 ? 16 : f.instrId == 139 ? 32 : 4;
-        const uint64_t fractals = bits == 4 ? 4 : bits == 16 ? 1 : 2;
-        const uint64_t srcFracStride = bits == 16 ? 1 : uint64_t(f.srcFracGap) + 1;
-        const uint64_t dstFracStride = bits == 16 ? 1 : uint64_t(f.dstFracGap) + 1;
+        const uint64_t fractals = bits == FOUR_BIT_DATA    ? FOUR_BIT_FRACTAL_COUNT :
+                                  bits == SIXTEEN_BIT_DATA ? SINGLE_ACCESS_COUNT :
+                                                             TWO_FRACTAL_COUNT;
+        const uint64_t srcFracStride = bits == SIXTEEN_BIT_DATA ? SINGLE_ACCESS_COUNT : uint64_t(f.srcFracGap) + 1;
+        const uint64_t dstFracStride = bits == SIXTEEN_BIT_DATA ? SINGLE_ACCESS_COUNT : uint64_t(f.dstFracGap) + 1;
         auto read = MemoryAccessDescriptorFactory::NdRead(
-            f.srcAddr, bits, 512, std::array<uint64_t, 2>{fractals, f.repeat},
-            std::array<uint64_t, 2>{srcFracStride * 512, uint64_t(f.srcStride) * 512});
+            f.srcAddr, bits, CUBE_FRACTAL_BYTES, std::array<uint64_t, TWO_DIMENSIONAL_RANK>{fractals, f.repeat},
+            std::array<uint64_t, TWO_DIMENSIONAL_RANK>{
+                srcFracStride * CUBE_FRACTAL_BYTES, uint64_t(f.srcStride) * CUBE_FRACTAL_BYTES});
         auto write = MemoryAccessDescriptorFactory::NdWrite(
-            f.dstAddr, bits, 512, {fractals, f.repeat}, {dstFracStride * 512, (uint64_t(f.dstGap) + 1) * 512});
+            f.dstAddr, bits, CUBE_FRACTAL_BYTES, {fractals, f.repeat},
+            {dstFracStride * CUBE_FRACTAL_BYTES, (uint64_t(f.dstGap) + 1) * CUBE_FRACTAL_BYTES});
         return Merge(
             Build(std::move(read), ACLSAN_DEVICE_MEMORY_SPACE_L1),
             Build(std::move(write), ACLSAN_DEVICE_MEMORY_SPACE_L0B));
@@ -1346,38 +1500,43 @@ public:
 
     MemoryCbdataResult operator()(const Img2ColParamField& f) const noexcept
     {
-        if (!((f.instrId >= 153 && f.instrId <= 157) || f.instrId == 422)) {
+        const auto instructionId = static_cast<InstructionId>(f.instrId);
+        if (!IsImg2ColInstruction(instructionId)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.mExtension == 0 || f.kExtension == 0) {
+        if (f.mExtension == NO_ACCESS_COUNT || f.kExtension == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        const size_t bank = f.fMatrixControl ? 1 : 0;
+        const size_t bank = f.fMatrixControl ? REGISTER_BANK_B : REGISTER_BANK_A;
         if (!state_.fmatrix[bank]) {
-            return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, 386 + bank};
+            return {
+                MemoryCbdataStatus::MISSING_REGISTER_STATE,
+                {},
+                static_cast<uint64_t>(InstructionId::SetFmatrix) + bank};
         }
         if (!state_.l3dRpt[bank]) {
-            return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, 390 + bank};
+            return {
+                MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, static_cast<uint64_t>(InstructionId::SetL3dRpt) + bank};
         }
-        const uint32_t bits = (f.instrId == 153 || f.instrId == 155) ? 16 :
-                              (f.instrId == 154 || f.instrId == 156) ? 8 :
-                                                                       32;
-        const uint64_t c0 = 256 / bits;
+        const uint32_t bits = Img2ColDataBits(instructionId);
+        const uint64_t c0 = CUBE_K_BYTES / bits;
         const auto& rpt = *state_.l3dRpt[bank];
         // For one full C0, NC1HWC0 and NHWC share the same byte layout. Other
         // channel packing and repeated-window modes need separate validation.
-        if (f.channelSize != c0 || rpt.repeatTimes != 1 || f.mExtension % 16 || f.kExtension % c0 ||
-            f.kStartPoint % c0 || (f.transpose && (f.mExtension % c0 || f.kExtension % 16))) {
+        if (f.channelSize != c0 || rpt.repeatTimes != SINGLE_ACCESS_COUNT || f.mExtension % CUBE_M_DIMENSION ||
+            f.kExtension % c0 || f.kStartPoint % c0 ||
+            (f.transpose && (f.mExtension % c0 || f.kExtension % CUBE_M_DIMENSION))) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         const auto& fm = *state_.fmatrix[bank];
         const uint64_t width = fm.width, height = fm.height;
         const int64_t left = fm.paddingLeft, right = fm.paddingRight;
         const int64_t top = fm.paddingTop, bottom = fm.paddingBottom;
-        const uint64_t fw = uint64_t(f.filterWidth) + (f.filterSizeWidth ? 256 : 0);
-        const uint64_t fh = uint64_t(f.filterHeight) + (f.filterSizeHeight ? 256 : 0);
-        if (width == 0 || height == 0 || fw == 0 || fh == 0 || f.strideWidth == 0 || f.strideHeight == 0 ||
-            f.dilationFilterWidth == 0 || f.dilationFilterHeight == 0) {
+        const uint64_t fw = uint64_t(f.filterWidth) + (f.filterSizeWidth ? CUBE_K_BYTES : 0);
+        const uint64_t fh = uint64_t(f.filterHeight) + (f.filterSizeHeight ? CUBE_K_BYTES : 0);
+        if (width == NO_ACCESS_COUNT || height == NO_ACCESS_COUNT || fw == NO_ACCESS_COUNT || fh == NO_ACCESS_COUNT ||
+            f.strideWidth == NO_ACCESS_COUNT || f.strideHeight == NO_ACCESS_COUNT ||
+            f.dilationFilterWidth == NO_ACCESS_COUNT || f.dilationFilterHeight == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const int64_t availableW = int64_t(width) + left + right - int64_t((fw - 1) * f.dilationFilterWidth + 1);
@@ -1403,29 +1562,31 @@ public:
                 if (y < 0 || x < 0 || uint64_t(y) >= height || uint64_t(x) >= width) {
                     continue;
                 }
-                const uint64_t offset = (uint64_t(y) * width + uint64_t(x)) * 32;
+                const uint64_t offset = (uint64_t(y) * width + uint64_t(x)) * CUBE_L1_BLOCK_BYTES;
                 if (f.srcAddr > UINT64_MAX - offset) {
                     return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
                 }
                 if (!Add(
                         builder, f.srcAddr + offset, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1,
-                        32, 0, bits)) {
+                        CUBE_L1_BLOCK_BYTES, 0, bits)) {
                     return std::move(builder).Build();
                 }
             }
         }
-        const uint64_t dstOffset = uint64_t(rpt.dstOffset) * 512;
+        const uint64_t dstOffset = uint64_t(rpt.dstOffset) * CUBE_FRACTAL_BYTES;
         if (f.dstAddr > UINT64_MAX - dstOffset) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
-        const uint64_t rows = f.transpose ? f.kExtension / 16 : f.mExtension / 16;
+        const uint64_t rows = f.transpose ? f.kExtension / CUBE_M_DIMENSION : f.mExtension / CUBE_M_DIMENSION;
         const uint64_t columns = f.transpose ? f.mExtension / c0 : f.kExtension / c0;
-        const uint32_t space = (f.instrId == 153 || f.instrId == 154 || f.instrId == 422) ?
-                                   ACLSAN_DEVICE_MEMORY_SPACE_L0A :
-                                   ACLSAN_DEVICE_MEMORY_SPACE_L0B;
+        const uint32_t space =
+            (instructionId == InstructionId::Img2ColCbufToCaB16 || instructionId == InstructionId::Img2ColCbufToCaB8 ||
+             instructionId == InstructionId::Img2ColCbufToCaB32) ?
+                ACLSAN_DEVICE_MEMORY_SPACE_L0A :
+                ACLSAN_DEVICE_MEMORY_SPACE_L0B;
         if (!Add(
-                builder, f.dstAddr + dstOffset, space, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, columns, rows * 512,
-                uint64_t(rpt.dstStride) * 512, bits)) {
+                builder, f.dstAddr + dstOffset, space, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, columns,
+                rows * CUBE_FRACTAL_BYTES, uint64_t(rpt.dstStride) * CUBE_FRACTAL_BYTES, bits)) {
             return std::move(builder).Build();
         }
         return std::move(builder).Build();
@@ -1433,46 +1594,51 @@ public:
 
     MemoryCbdataResult operator()(const CopyGmToCbufV2ParamField& f) const noexcept
     {
-        if (f.burstNum == 0 || f.burstLen == 0) {
+        if (f.burstNum == NO_ACCESS_COUNT || f.burstLen == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        if (f.padFunctionMode != 0) {
+        if (f.padFunctionMode != NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
-        return DmaWrite(f.dstAddr, f.burstNum, uint64_t(f.burstLen) * 32, (uint64_t(f.burstLen) + f.dstStride) * 32, 0);
+        return DmaWrite(
+            f.dstAddr, f.burstNum, uint64_t(f.burstLen) * CUBE_L1_BLOCK_BYTES,
+            (uint64_t(f.burstLen) + f.dstStride) * CUBE_L1_BLOCK_BYTES, 0);
     }
 
     MemoryCbdataResult operator()(const CopyGmToCbufAlignV2ParamField& f) const noexcept
     {
-        if (f.burstLen == 0 || f.burstNum == 0) {
+        if (f.burstLen == NO_ACCESS_COUNT || f.burstNum == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        const uint64_t padding = uint64_t(f.leftPaddingCount + f.rightPaddingCount) * (f.dataBits / 8);
+        const uint64_t padding = uint64_t(f.leftPaddingCount + f.rightPaddingCount) * (f.dataBits / BITS_PER_BYTE);
         // With no padding, the padding-value selector cannot change the written bytes.
-        if ((f.dataSelectBit && padding != 0) || f.leftPaddingCount * (f.dataBits / 8) > 32 ||
-            f.rightPaddingCount * (f.dataBits / 8) > 32) {
+        if ((f.dataSelectBit && padding != NO_ACCESS_COUNT) ||
+            f.leftPaddingCount * (f.dataBits / BITS_PER_BYTE) > CUBE_L1_BLOCK_BYTES ||
+            f.rightPaddingCount * (f.dataBits / BITS_PER_BYTE) > CUBE_L1_BLOCK_BYTES) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         const auto& loops = state_.dmaLoopSizes[static_cast<size_t>(DmaLoopDirection::GM_TO_CBUF)];
-        if (padding && loops && (loops->loop1Size > 1 || loops->loop2Size > 1)) {
+        if (padding && loops && (loops->loop1Size > SINGLE_ACCESS_COUNT || loops->loop2Size > SINGLE_ACCESS_COUNT)) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         const bool compact = f.burstDstStride == f.burstLen;
-        if (!compact && f.burstDstStride % 32 != 0) {
+        if (!compact && f.burstDstStride % CUBE_L1_BLOCK_BYTES != 0) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
-        const uint64_t bytes = CeilDiv((uint64_t(f.burstLen) + padding) * (compact ? f.burstNum : 1), 32) * 32;
-        return DmaWrite(f.dstAddr, compact ? 1 : f.burstNum, bytes, f.burstDstStride, f.dataBits);
+        const uint64_t bytes =
+            CeilDiv((uint64_t(f.burstLen) + padding) * (compact ? f.burstNum : 1), CUBE_L1_BLOCK_BYTES) *
+            CUBE_L1_BLOCK_BYTES;
+        return DmaWrite(f.dstAddr, compact ? SINGLE_ACCESS_COUNT : f.burstNum, bytes, f.burstDstStride, f.dataBits);
     }
 
     MemoryCbdataResult operator()(const LoadGmToCbuf2DV2ParamField& f) const noexcept
     {
-        if (f.decompMode != 0) {
+        if (f.decompMode != NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         return Linear(
             f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, f.kStep,
-            uint64_t(f.mStep) * 512, uint64_t(f.dstStride) * 512);
+            uint64_t(f.mStep) * CUBE_FRACTAL_BYTES, uint64_t(f.dstStride) * CUBE_FRACTAL_BYTES);
     }
 
     template <NdNzConversionMode Mode>
@@ -1485,46 +1651,56 @@ public:
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         const auto& s = *state_.mte2Nz;
-        if (f.nValue == 0 || f.dValue == 0 || s.matrixNum == 0) {
+        if (f.nValue == NO_ACCESS_COUNT || f.dValue == NO_ACCESS_COUNT || s.matrixNum == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         auto d = MemoryAccessDescriptorFactory::DmaAffine(
-            f.dstAddr, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, f.dataBits, 32,
-            {f.nValue, CeilDiv(uint64_t(f.dValue) * (f.dataBits / 8), 32), s.matrixNum},
-            {uint64_t(s.loop2DstStride) * 32, uint64_t(s.loop3DstStride) * 32, uint64_t(s.loop4DstStride) * 32});
+            f.dstAddr, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, f.dataBits, CUBE_L1_BLOCK_BYTES,
+            {f.nValue, CeilDiv(uint64_t(f.dValue) * (f.dataBits / BITS_PER_BYTE), CUBE_L1_BLOCK_BYTES), s.matrixNum},
+            {uint64_t(s.loop2DstStride) * CUBE_L1_BLOCK_BYTES, uint64_t(s.loop3DstStride) * CUBE_L1_BLOCK_BYTES,
+             uint64_t(s.loop4DstStride) * CUBE_L1_BLOCK_BYTES});
         return Build(std::move(d), ACLSAN_DEVICE_MEMORY_SPACE_L1);
     }
 
-    MemoryCbdataResult operator()(const FixL0cToOutParamField& f) const noexcept { return FixRead(f, 64); }
+    MemoryCbdataResult operator()(const FixL0cToOutParamField& f) const noexcept
+    {
+        return FixRead(f, TWO_ACCESS_COUNT * CUBE_L1_BLOCK_BYTES);
+    }
 
     MemoryCbdataResult operator()(const LocalMemoryTransferParamField& f) const noexcept
     {
         if (f.kind == LocalMemoryTransferKind::CopyCbufToFbuf) {
-            if (f.dstMemBlock >= 2 || (f.dstMemBlock == 0 && (f.lenBurst % 2 != 0 || f.dstStride % 2 != 0))) {
+            if (f.dstMemBlock >= AIV_BLOCKS_PER_AIC ||
+                (f.dstMemBlock == NO_ACCESS_COUNT &&
+                 (f.lenBurst % AIV_BLOCKS_PER_AIC != NO_ACCESS_COUNT || f.dstStride % AIV_BLOCKS_PER_AIC != 0))) {
                 return {MemoryCbdataStatus::INVALID_FIELD, {}};
             }
             // MOV_L1_TO_FB uses 64-byte lengths and absolute 32-byte source strides.
             return Linear(
                 f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.nBurst,
-                uint64_t(f.lenBurst) * 64, uint64_t(f.srcStride) * 32);
+                uint64_t(f.lenBurst) * (TWO_ACCESS_COUNT * CUBE_L1_BLOCK_BYTES),
+                uint64_t(f.srcStride) * CUBE_L1_BLOCK_BYTES);
         }
         if (f.kind == LocalMemoryTransferKind::CopyCbufToBt) {
             const bool source32 = f.instrId == uint32_t(InstructionId::CopyCbufToBtF32) ||
                                   f.instrId == uint32_t(InstructionId::CopyCbufToBtS32);
-            if ((source32 && (f.lenBurst % 2 != 0 || f.cvtEnable)) || f.dstGap % 2 != 0) {
+            if ((source32 && (f.lenBurst % AIV_BLOCKS_PER_AIC != NO_ACCESS_COUNT || f.cvtEnable)) ||
+                f.dstGap % AIV_BLOCKS_PER_AIC != 0) {
                 return {MemoryCbdataStatus::INVALID_FIELD, {}};
             }
             // BT conversion changes the destination footprint, not the L1 read footprint.
             return Linear(
                 f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.nBurst,
-                uint64_t(f.lenBurst) * 32, (uint64_t(f.lenBurst) + f.srcGap) * 32);
+                uint64_t(f.lenBurst) * CUBE_L1_BLOCK_BYTES, (uint64_t(f.lenBurst) + f.srcGap) * CUBE_L1_BLOCK_BYTES);
         }
         if (f.kind == LocalMemoryTransferKind::CopyUbufToCbuf || f.kind == LocalMemoryTransferKind::CopyCbufToUbuf) {
             const bool write = f.kind == LocalMemoryTransferKind::CopyUbufToCbuf;
-            const uint64_t count = (f.config0 >> 4) & 0xfff;
-            const uint64_t length = (f.config0 >> 16) & 0xffff;
-            const uint64_t gap = (f.config0 >> (write ? 48 : 32)) & 0xffff;
-            if (count == 0 || length == 0) {
+            const uint64_t count = (f.config0 >> FIXPIPE_CONFIG_COUNT_SHIFT) & FIXPIPE_CONFIG_COUNT_MASK;
+            const uint64_t length = (f.config0 >> FIXPIPE_CONFIG_LENGTH_SHIFT) & FIXPIPE_CONFIG_FIELD_MASK;
+            const uint64_t gap =
+                (f.config0 >> (write ? FIXPIPE_CONFIG_GAP_WRITE_SHIFT : FIXPIPE_CONFIG_GAP_READ_SHIFT)) &
+                FIXPIPE_CONFIG_FIELD_MASK;
+            if (count == NO_ACCESS_COUNT || length == NO_ACCESS_COUNT) {
                 return {MemoryCbdataStatus::NO_ACCESS, {}};
             }
             const auto l1Context = ContextForL1(context_);
@@ -1533,17 +1709,20 @@ public:
             }
             return LinearInContext(
                 *l1Context, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1,
-                write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, count, length * 32,
-                (length + gap) * 32);
+                write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, count,
+                length * CUBE_L1_BLOCK_BYTES, (length + gap) * CUBE_L1_BLOCK_BYTES);
         }
         // FIX's common fields have the same encoding. Decode through the existing
         // architecture decoder; bits 16..19 describe local destinations, not L2.
         AclsanRawTraceRecord raw{};
-        raw.instrId = (f.instrId == 168 || f.instrId == 170) ? 91 : 92;
+        raw.instrId = (f.instrId == static_cast<uint32_t>(InstructionId::FixL0cToCbufF32) ||
+                       f.instrId == static_cast<uint32_t>(InstructionId::FixL0cToUbufF32)) ?
+                          static_cast<uint32_t>(InstructionId::FixL0cToOutF32) :
+                          static_cast<uint32_t>(InstructionId::FixL0cToOutS32);
         raw.args[0] = f.dstAddr;
         raw.args[1] = f.srcAddr;
         raw.args[2] = f.config0;
-        raw.args[3] = f.config1 & ~(uint64_t(0xf) << 16);
+        raw.args[3] = f.config1 & ~(uint64_t(QUANT_PRE_FIELD_MASK) << FIXPIPE_CONFIG_LENGTH_SHIFT);
         const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw);
         if (!decoded) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
@@ -1551,11 +1730,14 @@ public:
         const auto& fix = std::get<FixL0cToOutParamField>(decoded->params);
         // L0C stores 32-bit accumulators: an N=16 row occupies 64 bytes,
         // independent of the destination type or destination memory space.
-        auto read = FixRead(fix, 64);
-        if (read.status != MemoryCbdataStatus::SUCCESS || f.instrId == 170 || f.instrId == 171) {
+        auto read = FixRead(fix, TWO_ACCESS_COUNT * CUBE_L1_BLOCK_BYTES);
+        if (read.status != MemoryCbdataStatus::SUCCESS ||
+            f.instrId == static_cast<uint32_t>(InstructionId::FixL0cToUbufF32) ||
+            f.instrId == static_cast<uint32_t>(InstructionId::FixL0cToUbufS32)) {
             return read;
         }
-        if ((f.config1 & (uint64_t(0xf) << 16)) != 0 || fix.splitEnable) {
+        if ((f.config1 & (uint64_t(QUANT_PRE_FIELD_MASK) << FIXPIPE_CONFIG_LENGTH_SHIFT)) != NO_ACCESS_COUNT ||
+            fix.splitEnable) {
             read.status = MemoryCbdataStatus::PARTIAL_COVERAGE;
             return read;
         }
@@ -1639,7 +1821,7 @@ private:
         uint64_t address, uint32_t space, uint32_t mode, uint64_t count, uint64_t bytes, uint64_t stride,
         uint32_t bits = 0) const noexcept
     {
-        if (count == 0 || bytes == 0) {
+        if (count == NO_ACCESS_COUNT || bytes == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         return Build(MemoryAccessDescriptorFactory::Linear(address, mode, bits, count, bytes, stride), space);
@@ -1649,7 +1831,7 @@ private:
         MemoryCbdataContext context, uint64_t address, uint32_t space, uint32_t mode, uint64_t count, uint64_t bytes,
         uint64_t stride, uint32_t bits = 0) const noexcept
     {
-        if (count == 0 || bytes == 0) {
+        if (count == NO_ACCESS_COUNT || bytes == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         return BuildInContext(
@@ -1659,18 +1841,19 @@ private:
     MemoryCbdataResult DmaWrite(
         uint64_t address, uint64_t count, uint64_t bytes, uint64_t stride, uint32_t bits) const noexcept
     {
-        if (count == 0 || bytes == 0) {
+        if (count == NO_ACCESS_COUNT || bytes == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         const size_t direction = static_cast<size_t>(DmaLoopDirection::GM_TO_CBUF);
         const auto& size = state_.dmaLoopSizes[direction];
-        const std::array<uint64_t, 3> counts{count, size ? size->loop1Size : 1, size ? size->loop2Size : 1};
-        if (counts[1] == 0 || counts[2] == 0) {
+        const std::array<uint64_t, DMA_DESCRIPTOR_DIMENSION_COUNT> counts{
+            count, size ? size->loop1Size : 1, size ? size->loop2Size : 1};
+        if (counts[1] == NO_ACCESS_COUNT || counts[2] == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        std::array<uint64_t, 3> strides{stride, 0, 0};
-        for (size_t i = 0; i < 2; ++i) {
-            if (counts[i + 1] > 1) {
+        std::array<uint64_t, DMA_DESCRIPTOR_DIMENSION_COUNT> strides{stride, 0, 0};
+        for (size_t i = 0; i < LOOP_DIMENSION_COUNT; ++i) {
+            if (counts[i + 1] > SINGLE_ACCESS_COUNT) {
                 if (!state_.dmaLoopStrides[direction][i]) {
                     return {
                         MemoryCbdataStatus::MISSING_REGISTER_STATE,
@@ -1680,7 +1863,7 @@ private:
                 strides[i + 1] = state_.dmaLoopStrides[direction][i]->dstStride;
             }
         }
-        if (counts[1] == 1 && counts[2] == 1) {
+        if (counts[1] == SINGLE_ACCESS_COUNT && counts[2] == SINGLE_ACCESS_COUNT) {
             return Linear(
                 address, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, count, bytes, stride, bits);
         }
@@ -1692,10 +1875,10 @@ private:
 
     MemoryCbdataResult FixRead(const FixL0cToOutParamField& f, uint64_t rowBytes) const noexcept
     {
-        if (f.nSize == 0 || f.mSize == 0) {
+        if (f.nSize == NO_ACCESS_COUNT || f.mSize == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        if ((f.nz2ndEnable || f.nz2dnEnable) && state_.loop3 && state_.loop3->loopCount == 0) {
+        if ((f.nz2ndEnable || f.nz2dnEnable) && state_.loop3 && state_.loop3->loopCount == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         // NZ2DN additionally needs CHANNEL_PARA, which is not captured yet.
@@ -1706,36 +1889,39 @@ private:
         }
         if (!f.nz2ndEnable) {
             return Linear(
-                f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ, CeilDiv(f.nSize, 16),
-                uint64_t(f.mSize) * rowBytes, uint64_t(f.loopSrtStride) * rowBytes, 32);
+                f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ,
+                CeilDiv(f.nSize, CUBE_N_ALIGNMENT), uint64_t(f.mSize) * rowBytes, uint64_t(f.loopSrtStride) * rowBytes,
+                CUBE_L1_BLOCK_BYTES);
         }
         if (!state_.loop3) {
             return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, uint64_t(InstructionId::Loop3Param)};
         }
-        if (state_.loop3->loopCount == 0) {
+        if (state_.loop3->loopCount == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        MemoryCbdataBuilder builder(context_, {32, ACLSAN_DEVICE_SOURCE_FIXPIPE, BLOCK_TYPE_AIC});
+        MemoryCbdataBuilder builder(context_, {CUBE_L1_BLOCK_BYTES, ACLSAN_DEVICE_SOURCE_FIXPIPE, BLOCK_TYPE_AIC});
         for (uint64_t matrix = 0; matrix < state_.loop3->loopCount; ++matrix) {
             const uint64_t offset = matrix * state_.loop3->srcStride * rowBytes;
             if (f.srcAddr > UINT64_MAX - offset) {
                 return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
             }
             const uint64_t base = f.srcAddr + offset;
-            if (f.nSize / 16 &&
+            if (f.nSize / CUBE_N_ALIGNMENT &&
                 !Add(
-                    builder, base, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.nSize / 16,
-                    uint64_t(f.mSize) * rowBytes, uint64_t(f.loopSrtStride) * rowBytes, 32)) {
+                    builder, base, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ,
+                    f.nSize / CUBE_N_ALIGNMENT, uint64_t(f.mSize) * rowBytes, uint64_t(f.loopSrtStride) * rowBytes,
+                    CUBE_L1_BLOCK_BYTES)) {
                 return std::move(builder).Build();
             }
-            if (f.nSize % 16) {
-                const uint64_t tailOffset = uint64_t(f.nSize / 16) * f.loopSrtStride * rowBytes;
+            if (f.nSize % CUBE_N_ALIGNMENT) {
+                const uint64_t tailOffset = uint64_t(f.nSize / CUBE_N_ALIGNMENT) * f.loopSrtStride * rowBytes;
                 if (base > UINT64_MAX - tailOffset) {
                     return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
                 }
                 if (!Add(
                         builder, base + tailOffset, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ,
-                        f.mSize, uint64_t(f.nSize % 16) * 4, 64, 32)) {
+                        f.mSize, uint64_t(f.nSize % CUBE_N_ALIGNMENT) * FOUR_BIT_DATA, CUBE_ROW_BYTES,
+                        CUBE_L1_BLOCK_BYTES)) {
                     return std::move(builder).Build();
                 }
             }
@@ -1763,16 +1949,16 @@ public:
 
     MemoryCbdataResult operator()(const CopyGmToUbufAlignV2ParamField& f) const noexcept
     {
-        if (f.burstNum == 0 || f.burstLen == 0) {
+        if (f.burstNum == NO_ACCESS_COUNT || f.burstLen == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         const auto profile = MemoryInstructionProfileFactory::Create(f);
         if (!profile) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        const uint64_t padding = uint64_t(f.leftPaddingCount + f.rightPaddingCount) * f.dataBits / 8;
+        const uint64_t padding = uint64_t(f.leftPaddingCount + f.rightPaddingCount) * f.dataBits / BITS_PER_BYTE;
         const bool compact = f.burstDstStride == f.burstLen && padding == 0;
-        if (!compact && f.burstNum > 1 && f.burstDstStride % 32 != 0) {
+        if (!compact && f.burstNum > SINGLE_ACCESS_COUNT && f.burstDstStride % CUBE_L1_BLOCK_BYTES != 0) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         // Compact copies pad the complete burst group once; normal copies pad
@@ -1780,12 +1966,14 @@ public:
         const uint64_t bytes = compact ? uint64_t(f.burstLen) * f.burstNum : uint64_t(f.burstLen) + padding;
         return Dma(
             *profile, DmaLoopDirection::GM_TO_UBUF, f.dstAddr, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE,
-            compact ? 1 : f.burstNum, (bytes + 31) / 32 * 32, f.burstDstStride);
+            compact ? SINGLE_ACCESS_COUNT : f.burstNum,
+            (bytes + CUBE_L1_BLOCK_BYTES - SINGLE_ACCESS_COUNT) / CUBE_L1_BLOCK_BYTES * CUBE_L1_BLOCK_BYTES,
+            f.burstDstStride);
     }
 
     MemoryCbdataResult operator()(const CopyUbufToGmAlignV2ParamField& f) const noexcept
     {
-        if (f.burstNum == 0 || f.burstLen == 0) {
+        if (f.burstNum == NO_ACCESS_COUNT || f.burstLen == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         const auto profile = MemoryInstructionProfileFactory::Create(f);
@@ -1793,7 +1981,7 @@ public:
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const bool compact = f.srcStride == f.burstLen;
-        if (!compact && f.burstNum > 1 && f.srcStride % 32 != 0) {
+        if (!compact && f.burstNum > SINGLE_ACCESS_COUNT && f.srcStride % CUBE_L1_BLOCK_BYTES != 0) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         // The hardware reads the UB alignment tail, then discards it before
@@ -1801,7 +1989,9 @@ public:
         const uint64_t bytes = compact ? uint64_t(f.burstLen) * f.burstNum : f.burstLen;
         return Dma(
             *profile, DmaLoopDirection::UBUF_TO_GM, f.srcAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ,
-            compact ? 1 : f.burstNum, (bytes + 31) / 32 * 32, f.srcStride);
+            compact ? SINGLE_ACCESS_COUNT : f.burstNum,
+            (bytes + CUBE_L1_BLOCK_BYTES - SINGLE_ACCESS_COUNT) / CUBE_L1_BLOCK_BYTES * CUBE_L1_BLOCK_BYTES,
+            f.srcStride);
     }
 
     MemoryCbdataResult operator()(const NdDmaOutToUbufParamField& f) const noexcept
@@ -1811,8 +2001,11 @@ public:
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         NdAffineDescriptor layout{
-            5, f.dataBits / 8, {f.loop0Size, f.loop1Size, f.loop2Size, f.loop3Size, f.loop4Size}, {}};
-        if (std::any_of(layout.counts.begin(), layout.counts.end(), [](uint64_t n) { return n == 0; })) {
+            SUPPORTED_NDDMA_DIMENSION_COUNT,
+            f.dataBits / BITS_PER_BYTE,
+            {f.loop0Size, f.loop1Size, f.loop2Size, f.loop3Size, f.loop4Size},
+            {}};
+        if (std::any_of(layout.counts.begin(), layout.counts.end(), [](uint64_t n) { return n == NO_ACCESS_COUNT; })) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         if (!state_.ndDmaPadCount) {
@@ -1826,7 +2019,7 @@ public:
                                 state_.ndDmaPadCount->rightPaddingCounts[i - 1];
         }
         for (size_t i = 0; i < layout.counts.size(); ++i) {
-            if (layout.counts[i] <= 1) {
+            if (layout.counts[i] <= SINGLE_ACCESS_COUNT) {
                 continue;
             }
             if (!state_.ndDmaLoopStrides[i]) {
@@ -1842,19 +2035,19 @@ public:
         if (f.instrId != uint32_t(InstructionId::CopyUbufToUbuf)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.burstNum == 0 || f.burstLen == 0) {
+        if (f.burstNum == NO_ACCESS_COUNT || f.burstLen == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        const MemoryInstructionProfile profile{0, ACLSAN_DEVICE_SOURCE_VECTOR, BLOCK_TYPE_AIV};
+        const MemoryInstructionProfile profile{UNSPECIFIED_DATA_BITS, ACLSAN_DEVICE_SOURCE_VECTOR, BLOCK_TYPE_AIV};
         auto read = Build(
             MemoryAccessDescriptorFactory::Linear(
-                f.srcAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, f.burstNum, uint64_t(f.burstLen) * 32,
-                (uint64_t(f.burstLen) + f.srcGap) * 32),
+                f.srcAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, f.burstNum, uint64_t(f.burstLen) * CUBE_L1_BLOCK_BYTES,
+                (uint64_t(f.burstLen) + f.srcGap) * CUBE_L1_BLOCK_BYTES),
             profile);
         auto write = Build(
             MemoryAccessDescriptorFactory::Linear(
-                f.dstAddr, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, f.burstNum, uint64_t(f.burstLen) * 32,
-                (uint64_t(f.burstLen) + f.dstGap) * 32),
+                f.dstAddr, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, f.burstNum, uint64_t(f.burstLen) * CUBE_L1_BLOCK_BYTES,
+                (uint64_t(f.burstLen) + f.dstGap) * CUBE_L1_BLOCK_BYTES),
             profile);
         return CubeMemoryFieldVisitor::Merge(std::move(read), std::move(write));
     }
@@ -1866,7 +2059,7 @@ public:
             const uint64_t count = (f.config0 >> 4U) & 0xfffU;
             const uint64_t length = (f.config0 >> 16U) & 0xffffU;
             const uint64_t gap = (f.config0 >> (write ? 48U : 32U)) & 0xffffU;
-            if (length == 0 || count == 0) {
+            if (length == NO_ACCESS_COUNT || count == NO_ACCESS_COUNT) {
                 return {MemoryCbdataStatus::NO_ACCESS, {}};
             }
             const auto ubContext = ContextForUbuf(context_, write && f.subBlockId ? 1U : 0U);
@@ -1875,8 +2068,8 @@ public:
             }
             return LinearInContext(
                 *ubContext, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_UB,
-                write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, count, length * 32U,
-                (length + gap) * 32U);
+                write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, count,
+                length * CUBE_L1_BLOCK_BYTES, (length + gap) * CUBE_L1_BLOCK_BYTES);
         }
         if (f.kind != LocalMemoryTransferKind::FixL0cToUbufF32 && f.kind != LocalMemoryTransferKind::FixL0cToUbufS32) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
@@ -1889,25 +2082,26 @@ public:
         raw.args[0] = f.dstAddr;
         raw.args[1] = f.srcAddr;
         raw.args[2] = f.config0;
-        raw.args[3] = f.config1 & ~(uint64_t(0xf) << 16U);
+        raw.args[3] = f.config1 & ~(uint64_t(QUANT_PRE_FIELD_MASK) << FIXPIPE_CONFIG_LENGTH_SHIFT);
         const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw);
         if (!decoded || !std::holds_alternative<FixL0cToOutParamField>(decoded->params)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const auto& fix = std::get<FixL0cToOutParamField>(decoded->params);
-        if (fix.nSize == 0 || fix.mSize == 0) {
+        if (fix.nSize == NO_ACCESS_COUNT || fix.mSize == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        if (f.dualDstCtl == 3U) {
+        if (f.dualDstCtl == DUAL_DST_MODE_BOTH) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.dualDstCtl == 1U && (fix.mSize == 0 || fix.mSize % 2U != 0)) {
+        if (f.dualDstCtl == DUAL_DST_MODE_FIRST && (fix.mSize == NO_ACCESS_COUNT || fix.mSize % 2U != 0)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.dualDstCtl == 2U && fix.nSize % (fix.nz2ndEnable ? 2U : 32U) != 0) {
+        if (f.dualDstCtl == DUAL_DST_MODE_SECOND &&
+            fix.nSize % (fix.nz2ndEnable ? TWO_ACCESS_COUNT : CUBE_L1_BLOCK_BYTES) != 0) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.dualDstCtl != 0 &&
+        if (f.dualDstCtl != DUAL_DST_MODE_NONE &&
             (fix.quantPre || fix.reluPre || fix.clipReluPre || fix.splitEnable || fix.nz2dnEnable)) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
@@ -1920,16 +2114,16 @@ public:
             return MemoryFieldVisitor(*ubContext, state_, ACLSAN_DEVICE_MEMORY_SPACE_UB)(target);
         };
 
-        if (f.dualDstCtl == 0U) {
+        if (f.dualDstCtl == DUAL_DST_MODE_NONE) {
             return emit(f.subBlockId ? 1U : 0U, fix);
         }
         FixL0cToOutParamField first = fix;
         FixL0cToOutParamField second = fix;
-        if (f.dualDstCtl == 1U) {
-            first.mSize = static_cast<uint16_t>(fix.mSize / 2U);
+        if (f.dualDstCtl == DUAL_DST_MODE_FIRST) {
+            first.mSize = static_cast<uint16_t>(fix.mSize / TWO_ACCESS_COUNT);
             second.mSize = first.mSize;
         } else {
-            first.nSize = static_cast<uint16_t>(fix.nSize / 2U);
+            first.nSize = static_cast<uint16_t>(fix.nSize / TWO_ACCESS_COUNT);
             second.nSize = first.nSize;
         }
         return CubeMemoryFieldVisitor::Merge(emit(0, first), emit(1, second));
@@ -1948,7 +2142,7 @@ private:
         MemoryCbdataContext context, uint64_t address, uint32_t space, uint32_t mode, uint64_t count, uint64_t bytes,
         uint64_t stride, uint32_t bits = 0) const noexcept
     {
-        if (count == 0 || bytes == 0) {
+        if (count == NO_ACCESS_COUNT || bytes == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         auto descriptor = MemoryAccessDescriptorFactory::Linear(address, mode, bits, count, bytes, stride);
@@ -1968,29 +2162,32 @@ private:
     {
         const size_t d = static_cast<size_t>(direction);
         if (!state_.dmaLoopSizes[d]) {
-            return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, uint64_t(InstructionId::LoopSizeUbufToGm) + d * 3};
+            return {
+                MemoryCbdataStatus::MISSING_REGISTER_STATE,
+                {},
+                uint64_t(InstructionId::LoopSizeUbufToGm) + d * SUPPORTED_DMA_DIRECTION_COUNT};
         }
         const auto& size = *state_.dmaLoopSizes[d];
-        const std::array<uint64_t, 3> counts{bursts, size.loop1Size, size.loop2Size};
-        if (counts[1] == 0 || counts[2] == 0) {
+        const std::array<uint64_t, DMA_DESCRIPTOR_DIMENSION_COUNT> counts{bursts, size.loop1Size, size.loop2Size};
+        if (counts[1] == NO_ACCESS_COUNT || counts[2] == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        std::array<uint64_t, 3> strides{stride, 0, 0};
-        for (size_t i = 0; i < 2; ++i) {
-            if (counts[i + 1] <= 1) {
+        std::array<uint64_t, DMA_DESCRIPTOR_DIMENSION_COUNT> strides{stride, 0, 0};
+        for (size_t i = 0; i < LOOP_DIMENSION_COUNT; ++i) {
+            if (counts[i + 1] <= SINGLE_ACCESS_COUNT) {
                 continue;
             }
             if (!state_.dmaLoopStrides[d][i]) {
                 return {
                     MemoryCbdataStatus::MISSING_REGISTER_STATE,
                     {},
-                    uint64_t(InstructionId::Loop1StrideUbufToGm) + d * 3 + i};
+                    uint64_t(InstructionId::Loop1StrideUbufToGm) + d * SUPPORTED_DMA_DIRECTION_COUNT + i};
             }
             const auto& s = *state_.dmaLoopStrides[d][i];
             strides[i + 1] = direction == DmaLoopDirection::UBUF_TO_GM ? s.srcStride : s.dstStride;
         }
         return Build(
-            counts[1] == 1 && counts[2] == 1 ?
+            counts[1] == SINGLE_ACCESS_COUNT && counts[2] == SINGLE_ACCESS_COUNT ?
                 MemoryAccessDescriptorFactory::Linear(address, mode, profile.dataBits, bursts, bytes, stride) :
                 MemoryAccessDescriptorFactory::DmaAffine(address, mode, profile.dataBits, bytes, counts, strides),
             profile);
@@ -2043,19 +2240,20 @@ void ApplyAtomicConfiguration(MemoryCbdataResult& output, const MemoryRegisterSt
         return;
     }
     // CTRL[8:6] 选择原子类型；类型为 0 时禁用原子操作，忽略保留的操作位。
-    const uint64_t type = (state.ctrl->value >> 6U) & 7U;
-    if (type == 0) {
+    const uint64_t type = (state.ctrl->value >> ATOMIC_TYPE_SHIFT) & ATOMIC_TYPE_MASK;
+    if (type == NO_ACCESS_COUNT) {
         return;
     }
-    const uint64_t operation = (state.ctrl->value >> 9U) & 3U;
+    const uint64_t operation = (state.ctrl->value >> ATOMIC_OPERATION_SHIFT) & ATOMIC_OPERATION_MASK;
     constexpr uint32_t typeBits[] = {0, 32, 16, 16, 32, 8, 16, 0};
     constexpr AclsanDeviceMemoryAccessMode modes[] = {
         ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX,
         ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN};
-    const bool widthMismatch = std::any_of(
-        output.data.begin(), output.data.end(),
-        [type, &typeBits](const auto& access) { return access.dataBits != 0 && access.dataBits != typeBits[type]; });
-    if (operation >= std::size(modes) || typeBits[type] == 0 || widthMismatch) {
+    const bool widthMismatch =
+        std::any_of(output.data.begin(), output.data.end(), [type, &typeBits](const auto& access) {
+            return access.dataBits != NO_ACCESS_COUNT && access.dataBits != typeBits[type];
+        });
+    if (operation >= std::size(modes) || typeBits[type] == NO_ACCESS_COUNT || widthMismatch) {
         output.data.clear();
         output.status = MemoryCbdataStatus::PARTIAL_COVERAGE;
         return;

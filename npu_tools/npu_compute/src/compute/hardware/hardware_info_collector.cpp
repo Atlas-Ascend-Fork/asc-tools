@@ -154,7 +154,7 @@ private:
         ASCTOOL_ERROR(
             "[HardwareInfo] %.*s"
             " code=%u",
-            static_cast<int>(message.size()), message.data(), static_cast<unsigned>(1));
+            static_cast<int>(message.size()), message.data(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         try {
             const auto* defaultSink = dependencies_.diagnostics.target<void (*)(std::string_view)>();
             if (dependencies_.diagnostics && (defaultSink == nullptr || *defaultSink != DefaultDiagnostic)) {

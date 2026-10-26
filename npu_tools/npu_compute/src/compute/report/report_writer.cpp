@@ -62,7 +62,7 @@ aclptiResult WritePmuReport(
         ASCTOOL_ERROR(
             "[npu-compute] report failed: %s"
             " code=%u",
-            error.what(), static_cast<unsigned>(1));
+            error.what(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INTERNAL;
     }
 }

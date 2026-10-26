@@ -27,6 +27,7 @@ struct aclApiTable {
 };
 
 constexpr uint32_t kMsprofDataCallbackType = 0U;
+constexpr int32_t INJECTION_SUCCESS_STATUS = 0;
 
 constexpr const char* kRuntimeApiNames[ACL_RT_API_MAX] = {
     "aclrtLaunchKernelWithHostArgs",
@@ -111,7 +112,7 @@ int32_t RegisterCallback(aclrtApiId id, void* callback)
         ASCTOOL_ERROR(
             "[tool_injection] register callback failed: name=%s id=%d"
             " code=%u",
-            name == nullptr ? "unknown" : name, static_cast<int>(id), static_cast<unsigned>(1));
+            name == nullptr ? "unknown" : name, static_cast<int>(id), INJECTION_LOG_CODE_UNSPECIFIED);
         return ACL_ERROR_INVALID_PARAM;
     }
     const size_t index = static_cast<size_t>(id);
@@ -155,7 +156,7 @@ void LogMissingCallback(const char* name, aclrtApiId id)
     ASCTOOL_ERROR(
         "[tool_injection] hook call failed: callback and origin are unavailable name=%s id=%d"
         " code=%u",
-        name == nullptr ? "unknown" : name, static_cast<int>(id), static_cast<unsigned>(1));
+        name == nullptr ? "unknown" : name, static_cast<int>(id), INJECTION_LOG_CODE_UNSPECIFIED);
 }
 
 void LogHookResult(const char* name, aclrtApiId id, aclError result)
@@ -624,14 +625,14 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolUploaderInit(MsprofRawDataCa
         ASCTOOL_ERROR(
             "[tool_injection] uploader registration failed: null uploader"
             " code=%u",
-            static_cast<unsigned>(1));
+            INJECTION_LOG_CODE_UNSPECIFIED);
         return ACL_ERROR_INVALID_PARAM;
     }
     const int32_t result = MsprofRegisterDataCallback(kMsprofDataCallbackType, FunctionToAddress(uploader));
     ASCTOOL_DEBUG(
         "[tool_injection] uploader registration: type=%u uploader=%p result=%d", kMsprofDataCallbackType,
         FunctionToAddress(uploader), result);
-    if (result != 0) {
+    if (result != INJECTION_SUCCESS_STATUS) {
         ASCTOOL_ERROR(
             "[tool_injection] uploader registration failed: result=%d"
             " code=%u",
@@ -668,7 +669,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
                 "[tool_injection] hook initialization failed: invalid entry id=%d name=%s hook=%p"
                 " code=%u",
                 static_cast<int>(id), name == nullptr ? "unknown" : name, FunctionToAddress(hook),
-                static_cast<unsigned>(1));
+                INJECTION_LOG_CODE_UNSPECIFIED);
             return ACL_ERROR_INTERNAL_ERROR;
         }
         aclrtApiFunc origin = nullptr;
@@ -694,7 +695,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
             ASCTOOL_ERROR(
                 "[tool_injection] hook initialization failed: empty runtime entry name=%s"
                 " code=%u",
-                name, static_cast<unsigned>(1));
+                name, INJECTION_LOG_CODE_UNSPECIFIED);
             return ACL_ERROR_UNINITIALIZE;
         }
         if (!SaveOriginalRuntimeEntry(id, FunctionToAddress(origin))) {
@@ -702,7 +703,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
             ASCTOOL_ERROR(
                 "[tool_injection] hook initialization failed: save origin entry name=%s"
                 " code=%u",
-                name, static_cast<unsigned>(1));
+                name, INJECTION_LOG_CODE_UNSPECIFIED);
             return ACL_ERROR_INTERNAL_ERROR;
         }
 
@@ -737,7 +738,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT void* acltoolGetOriginalRuntimeApi(aclrtApi
         ASCTOOL_ERROR(
             "[tool_injection] get original runtime api failed: invalid id=%d"
             " code=%u",
-            static_cast<int>(id), static_cast<unsigned>(1));
+            static_cast<int>(id), INJECTION_LOG_CODE_UNSPECIFIED);
         return nullptr;
     }
 
@@ -746,7 +747,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT void* acltoolGetOriginalRuntimeApi(aclrtApi
         ASCTOOL_ERROR(
             "[tool_injection] get original runtime api failed: unknown id=%d"
             " code=%u",
-            static_cast<int>(id), static_cast<unsigned>(1));
+            static_cast<int>(id), INJECTION_LOG_CODE_UNSPECIFIED);
         return nullptr;
     }
 

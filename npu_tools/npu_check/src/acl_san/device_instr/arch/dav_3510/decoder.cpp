@@ -21,6 +21,12 @@ constexpr uint32_t DATA_BITS_B8 = 8;
 constexpr uint32_t DATA_BITS_B16 = 16;
 constexpr uint32_t DATA_BITS_B32 = 32;
 constexpr uint32_t DATA_BITS_B64 = 64;
+constexpr uint32_t CROSS_CORE_MODE_SHIFT = 4U;
+constexpr uint32_t CROSS_CORE_MODE_MASK = 0x3U;
+constexpr uint32_t CROSS_CORE_FLAG_ID_SHIFT = 8U;
+constexpr uint32_t CROSS_CORE_FLAG_ID_MASK = 0xFU;
+constexpr uint32_t CROSS_CORE_RECEIVER_FLAG_MODE = 4U;
+constexpr uint64_t BOOLEAN_MAX_VALUE = 1U;
 
 constexpr uint32_t RawId(InstructionId instructionId) noexcept { return static_cast<uint32_t>(instructionId); }
 
@@ -270,23 +276,27 @@ DecodedInstruction DecodeLocalMemoryTransfer(
     params.config1 = record.args[3];
     params.kind = kind;
     if (kind == LocalMemoryTransferKind::CopyCbufToFbuf || kind == LocalMemoryTransferKind::CopyCbufToBt) {
-        params.nBurst = static_cast<uint16_t>(ExtractBitRange(record.args[2], {4, 15}));
-        params.lenBurst = static_cast<uint16_t>(ExtractBitRange(record.args[2], {16, 31}));
+        params.nBurst = static_cast<uint16_t>(ExtractBitRange(record.args[2], LocalMemoryTransferLayout::N_BURST));
+        params.lenBurst = static_cast<uint16_t>(ExtractBitRange(record.args[2], LocalMemoryTransferLayout::LEN_BURST));
     }
     if (kind == LocalMemoryTransferKind::CopyCbufToFbuf) {
-        params.srcStride = static_cast<uint16_t>(ExtractBitRange(record.args[2], {32, 47}));
-        params.dstStride = static_cast<uint16_t>(ExtractBitRange(record.args[2], {48, 63}));
-        params.dstMemBlock = static_cast<uint8_t>(ExtractBitRange(record.args[0], {16, 19}));
+        params.srcStride =
+            static_cast<uint16_t>(ExtractBitRange(record.args[2], LocalMemoryTransferLayout::SRC_STRIDE));
+        params.dstStride =
+            static_cast<uint16_t>(ExtractBitRange(record.args[2], LocalMemoryTransferLayout::DST_STRIDE));
+        params.dstMemBlock =
+            static_cast<uint8_t>(ExtractBitRange(record.args[0], LocalMemoryTransferLayout::DST_MEM_BLOCK));
     } else if (kind == LocalMemoryTransferKind::CopyCbufToBt) {
-        params.srcGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], {32, 47}));
-        params.dstGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], {48, 63}));
-        params.cvtEnable = ExtractBitRange(record.args[2], {3, 3}) != 0;
+        params.srcGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], LocalMemoryTransferLayout::SRC_STRIDE));
+        params.dstGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], LocalMemoryTransferLayout::DST_STRIDE));
+        params.cvtEnable = ExtractBitRange(record.args[2], LocalMemoryTransferLayout::CVT_ENABLE) != 0;
     }
     if (kind == LocalMemoryTransferKind::CopyCbufToUbuf) {
-        params.subBlockId = ExtractBitRange(record.args[2], {0, 0}) != 0;
+        params.subBlockId = ExtractBitRange(record.args[2], LocalMemoryTransferLayout::SUB_BLOCK_ID) != 0;
     } else if (kind == LocalMemoryTransferKind::FixL0cToUbufF32 || kind == LocalMemoryTransferKind::FixL0cToUbufS32) {
-        params.dualDstCtl = static_cast<uint8_t>(ExtractBitRange(record.args[3], {16, 17}));
-        params.subBlockId = ExtractBitRange(record.args[3], {18, 18}) != 0;
+        params.dualDstCtl =
+            static_cast<uint8_t>(ExtractBitRange(record.args[3], LocalMemoryTransferLayout::DUAL_DST_CONTROL));
+        params.subBlockId = ExtractBitRange(record.args[3], LocalMemoryTransferLayout::SUB_BLOCK_CONTROL) != 0;
     }
     return DecodedInstruction{DeviceInstructionKind::LocalMemoryTransfer, params};
 }
@@ -341,7 +351,7 @@ std::optional<DecodedInstruction> DecodeFlag(
 std::optional<DecodedInstruction> DecodeHardwareFlag(
     const aclsan::AclsanRawTraceRecord& record, DeviceInstructionKind kind) noexcept
 {
-    if (record.args[0] > UINT32_MAX || record.args[1] > UINT32_MAX || record.args[4] > 1U) {
+    if (record.args[0] > UINT32_MAX || record.args[1] > UINT32_MAX || record.args[4] > BOOLEAN_MAX_VALUE) {
         return std::nullopt;
     }
     const HardwareFlagParamField params{
@@ -409,8 +419,8 @@ std::optional<DecodedInstruction> DecodeCrossCore(
         case InstructionId::FftsCrossCoreSync:
         case InstructionId::FftsCrossCoreSyncV:
             pipe = static_cast<uint32_t>(record.args[0]);
-            mode = static_cast<uint32_t>((record.args[1] >> 4U) & 0x3U);
-            flagId = (record.args[1] >> 8U) & 0xfU;
+            mode = static_cast<uint32_t>((record.args[1] >> CROSS_CORE_MODE_SHIFT) & CROSS_CORE_MODE_MASK);
+            flagId = (record.args[1] >> CROSS_CORE_FLAG_ID_SHIFT) & CROSS_CORE_FLAG_ID_MASK;
             break;
         case InstructionId::WaitFlagDev:
         case InstructionId::WaitFlagDevI:
@@ -427,7 +437,7 @@ std::optional<DecodedInstruction> DecodeCrossCore(
         case InstructionId::SetIntraBlockV:
         case InstructionId::SetIntraBlockIV:
             pipe = static_cast<uint32_t>(record.args[0]);
-            mode = 4;
+            mode = CROSS_CORE_RECEIVER_FLAG_MODE;
             flagId = record.args[1];
             break;
         case InstructionId::WaitIntraBlock:
@@ -452,23 +462,23 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         const uint64_t config = record.args[0];
         FmatrixParamField fields{};
         fields.instrId = record.instrId;
-        fields.width = static_cast<uint16_t>(config);
-        fields.height = static_cast<uint16_t>(config >> 16);
-        fields.paddingLeft = static_cast<uint8_t>(config >> 32);
-        fields.paddingRight = static_cast<uint8_t>(config >> 40);
-        fields.paddingTop = static_cast<uint8_t>(config >> 48);
-        fields.paddingBottom = static_cast<uint8_t>(config >> 56);
+        fields.width = static_cast<uint16_t>(ExtractBitRange(config, FmatrixLayout::WIDTH));
+        fields.height = static_cast<uint16_t>(ExtractBitRange(config, FmatrixLayout::HEIGHT));
+        fields.paddingLeft = static_cast<uint8_t>(ExtractBitRange(config, FmatrixLayout::PADDING_LEFT));
+        fields.paddingRight = static_cast<uint8_t>(ExtractBitRange(config, FmatrixLayout::PADDING_RIGHT));
+        fields.paddingTop = static_cast<uint8_t>(ExtractBitRange(config, FmatrixLayout::PADDING_TOP));
+        fields.paddingBottom = static_cast<uint8_t>(ExtractBitRange(config, FmatrixLayout::PADDING_BOTTOM));
         return DecodedInstruction{DeviceInstructionKind::Img2ColRegister, fields};
     }
     if (record.instrId == RawId(InstructionId::SetL3dRpt) || record.instrId == RawId(InstructionId::SetL3dRptB)) {
         const uint64_t config = record.args[0];
         L3dRptParamField fields{};
         fields.instrId = record.instrId;
-        fields.repeatStride = static_cast<uint16_t>(config);
-        fields.repeatTimes = static_cast<uint8_t>(config >> 16);
-        fields.repeatAlongK = ((config >> 24) & 1) != 0;
-        fields.dstStride = static_cast<uint8_t>(config >> 32);
-        fields.dstOffset = static_cast<uint8_t>(config >> 48);
+        fields.repeatStride = static_cast<uint16_t>(ExtractBitRange(config, L3dRptLayout::REPEAT_STRIDE));
+        fields.repeatTimes = static_cast<uint8_t>(ExtractBitRange(config, L3dRptLayout::REPEAT_TIMES));
+        fields.repeatAlongK = ExtractBitRange(config, L3dRptLayout::REPEAT_ALONG_K) != 0;
+        fields.dstStride = static_cast<uint8_t>(ExtractBitRange(config, L3dRptLayout::DST_STRIDE));
+        fields.dstOffset = static_cast<uint8_t>(ExtractBitRange(config, L3dRptLayout::DST_OFFSET));
         return DecodedInstruction{DeviceInstructionKind::Img2ColRegister, fields};
     }
     if (record.instrId >= RawId(InstructionId::LoadCbufToCaB4) &&
@@ -477,12 +487,12 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         f.instrId = record.instrId;
         f.dstAddr = record.args[0];
         f.srcAddr = record.args[1];
-        f.mStartPosition = static_cast<uint16_t>(record.args[2]);
-        f.kStartPosition = static_cast<uint16_t>(record.args[2] >> 16);
-        f.mStep = static_cast<uint8_t>(record.args[2] >> 32);
-        f.kStep = static_cast<uint8_t>(record.args[2] >> 40);
+        f.mStartPosition = static_cast<uint16_t>(ExtractBitRange(record.args[2], LoadL1ToL0Layout::M_START_POSITION));
+        f.kStartPosition = static_cast<uint16_t>(ExtractBitRange(record.args[2], LoadL1ToL0Layout::K_START_POSITION));
+        f.mStep = static_cast<uint8_t>(ExtractBitRange(record.args[2], LoadL1ToL0Layout::M_STEP));
+        f.kStep = static_cast<uint8_t>(ExtractBitRange(record.args[2], LoadL1ToL0Layout::K_STEP));
         f.srcStride = static_cast<uint16_t>(record.args[3]);
-        f.dstStride = static_cast<uint16_t>(record.args[3] >> 16);
+        f.dstStride = static_cast<uint16_t>(ExtractBitRange(record.args[3], LoadL1ToL0Layout::DST_STRIDE));
         f.transpose = record.args[4] != 0;
         return DecodedInstruction{DeviceInstructionKind::LoadL1ToL0, f};
     }
@@ -492,37 +502,39 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         f.instrId = record.instrId;
         f.dstAddr = record.args[0];
         f.srcAddr = record.args[1];
-        f.indexId = static_cast<uint16_t>(record.args[2]);
-        f.repeat = static_cast<uint8_t>(record.args[2] >> 16);
-        f.srcStride = static_cast<uint16_t>(record.args[2] >> 24);
-        f.dstGap = static_cast<uint16_t>(record.args[2] >> 44);
-        f.dstFracGap = static_cast<uint16_t>(record.args[3]);
-        f.srcFracGap = static_cast<uint16_t>(record.args[3] >> 16);
-        f.decrement = (record.args[2] >> 63) != 0;
+        f.indexId = static_cast<uint16_t>(ExtractBitRange(record.args[2], LoadL1TransposeLayout::INDEX_ID));
+        f.repeat = static_cast<uint8_t>(ExtractBitRange(record.args[2], LoadL1TransposeLayout::REPEAT));
+        f.srcStride = static_cast<uint16_t>(ExtractBitRange(record.args[2], LoadL1TransposeLayout::SRC_STRIDE));
+        f.dstGap = static_cast<uint16_t>(ExtractBitRange(record.args[2], LoadL1TransposeLayout::DST_GAP));
+        f.dstFracGap = static_cast<uint16_t>(ExtractBitRange(record.args[3], LoadL1TransposeLayout::DST_FRAC_GAP));
+        f.srcFracGap = static_cast<uint16_t>(ExtractBitRange(record.args[3], LoadL1TransposeLayout::SRC_FRAC_GAP));
+        f.decrement = ExtractBitRange(record.args[2], LoadL1TransposeLayout::DECREMENT) != 0;
         return DecodedInstruction{DeviceInstructionKind::LoadL1Transpose, f};
     }
     if ((record.instrId >= RawId(InstructionId::Img2ColCbufToCaB16) &&
          record.instrId <= RawId(InstructionId::Img2ColCbufToCbB32)) ||
-        record.instrId == 422) {
+        record.instrId == RawId(InstructionId::Img2ColCbufToCaB32)) {
         Img2ColParamField f{};
         f.instrId = record.instrId;
         f.dstAddr = record.args[0];
         f.srcAddr = static_cast<uint32_t>(record.args[1]);
-        f.kExtension = static_cast<uint16_t>(record.args[2]);
-        f.mExtension = static_cast<uint16_t>(record.args[2] >> 16);
-        f.kStartPoint = static_cast<uint16_t>(record.args[2] >> 32);
-        f.mStartPoint = static_cast<uint16_t>(record.args[2] >> 48);
-        f.strideWidth = record.args[3] & 63;
-        f.strideHeight = (record.args[3] >> 6) & 63;
-        f.filterWidth = static_cast<uint8_t>(record.args[3] >> 12);
-        f.filterHeight = static_cast<uint8_t>(record.args[3] >> 20);
-        f.dilationFilterWidth = static_cast<uint8_t>(record.args[3] >> 28);
-        f.dilationFilterHeight = static_cast<uint8_t>(record.args[3] >> 36);
-        f.filterSizeWidth = (record.args[3] >> 44) & 1;
-        f.filterSizeHeight = (record.args[3] >> 45) & 1;
-        f.transpose = (record.args[3] >> 46) & 1;
-        f.fMatrixControl = (record.args[3] >> 47) & 1;
-        f.channelSize = static_cast<uint16_t>(record.args[3] >> 48);
+        f.kExtension = static_cast<uint16_t>(ExtractBitRange(record.args[2], Img2ColLayout::K_EXTENSION));
+        f.mExtension = static_cast<uint16_t>(ExtractBitRange(record.args[2], Img2ColLayout::M_EXTENSION));
+        f.kStartPoint = static_cast<uint16_t>(ExtractBitRange(record.args[2], Img2ColLayout::K_START_POINT));
+        f.mStartPoint = static_cast<uint16_t>(ExtractBitRange(record.args[2], Img2ColLayout::M_START_POINT));
+        f.strideWidth = ExtractBitRange(record.args[3], Img2ColLayout::STRIDE_WIDTH);
+        f.strideHeight = ExtractBitRange(record.args[3], Img2ColLayout::STRIDE_HEIGHT);
+        f.filterWidth = static_cast<uint8_t>(ExtractBitRange(record.args[3], Img2ColLayout::FILTER_WIDTH));
+        f.filterHeight = static_cast<uint8_t>(ExtractBitRange(record.args[3], Img2ColLayout::FILTER_HEIGHT));
+        f.dilationFilterWidth =
+            static_cast<uint8_t>(ExtractBitRange(record.args[3], Img2ColLayout::DILATION_FILTER_WIDTH));
+        f.dilationFilterHeight =
+            static_cast<uint8_t>(ExtractBitRange(record.args[3], Img2ColLayout::DILATION_FILTER_HEIGHT));
+        f.filterSizeWidth = ExtractBitRange(record.args[3], Img2ColLayout::FILTER_SIZE_WIDTH) != 0;
+        f.filterSizeHeight = ExtractBitRange(record.args[3], Img2ColLayout::FILTER_SIZE_HEIGHT) != 0;
+        f.transpose = ExtractBitRange(record.args[3], Img2ColLayout::TRANSPOSE) != 0;
+        f.fMatrixControl = ExtractBitRange(record.args[3], Img2ColLayout::FMATRIX_CONTROL) != 0;
+        f.channelSize = static_cast<uint16_t>(ExtractBitRange(record.args[3], Img2ColLayout::CHANNEL_SIZE));
         return DecodedInstruction{DeviceInstructionKind::Img2Col, f};
     }
     if (record.instrId >= RawId(InstructionId::MadS8) && record.instrId <= RawId(InstructionId::MadMxE5m2E5m2)) {
@@ -531,9 +543,13 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
             DeviceInstructionKind::Mmad,
             MmadParamField{
                 record.instrId, static_cast<uint32_t>(record.args[0]), record.args[1], record.args[2],
-                static_cast<uint16_t>(config & 0xfff), static_cast<uint16_t>((config >> 12) & 0xfff),
-                static_cast<uint16_t>((config >> 24) & 0xfff), static_cast<uint8_t>((config >> 55) & 0x3),
-                bool((config >> 61) & 1), bool((config >> 62) & 1), bool((config >> 63) & 1)}};
+                static_cast<uint16_t>(ExtractBitRange(config, MmadLayout::M_SIZE)),
+                static_cast<uint16_t>(ExtractBitRange(config, MmadLayout::K_SIZE)),
+                static_cast<uint16_t>(ExtractBitRange(config, MmadLayout::N_SIZE)),
+                static_cast<uint8_t>(ExtractBitRange(config, MmadLayout::UNIT_FLAG)),
+                ExtractBitRange(config, MmadLayout::DISABLE_GEMV) != 0,
+                ExtractBitRange(config, MmadLayout::CMATRIX_SOURCE) != 0,
+                ExtractBitRange(config, MmadLayout::CMATRIX_INIT_VAL) != 0}};
     }
     if (record.instrId == RawId(InstructionId::LoadCbufToCaMx) ||
         record.instrId == RawId(InstructionId::LoadCbufToCbMx)) {
@@ -541,9 +557,11 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         return DecodedInstruction{
             DeviceInstructionKind::LoadL1Mx,
             LoadL1MxParamField{
-                record.instrId, record.args[1], static_cast<uint16_t>(config), static_cast<uint16_t>(config >> 16),
-                static_cast<uint8_t>(config >> 32), static_cast<uint8_t>(config >> 40),
-                static_cast<uint16_t>(record.args[3])}};
+                record.instrId, record.args[1], static_cast<uint16_t>(ExtractBitRange(config, LoadL1MxLayout::X_START)),
+                static_cast<uint16_t>(ExtractBitRange(config, LoadL1MxLayout::Y_START)),
+                static_cast<uint8_t>(ExtractBitRange(config, LoadL1MxLayout::X_STEP)),
+                static_cast<uint8_t>(ExtractBitRange(config, LoadL1MxLayout::Y_STEP)),
+                static_cast<uint16_t>(ExtractBitRange(record.args[3], LoadL1MxLayout::SRC_STRIDE))}};
     }
     if (record.instrId == RawId(InstructionId::CopyCbufToUbuf)) {
         return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToUbuf);

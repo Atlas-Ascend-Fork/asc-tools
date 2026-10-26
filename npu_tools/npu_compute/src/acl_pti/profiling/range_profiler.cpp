@@ -166,7 +166,7 @@ aclptiResult RangeProfiler::Initialize()
         ASCTOOL_ERROR(
             "[aclpti] RangeProfiler callback registration missing callback"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         Shutdown();
         return ACLPTI_ERROR_INITIALIZATION_FAILED;
     }
@@ -203,7 +203,7 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
         ASCTOOL_ERROR(
             "[aclpti] profiling configuration rejected: invalid parameters"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
 
@@ -216,7 +216,7 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
                 ASCTOOL_ERROR(
                     "[aclpti] section configuration rejected: null section index=%zu"
                     " code=%u",
-                    index, static_cast<unsigned>(1));
+                    index, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
                 return ACLPTI_ERROR_INVALID_PARAMETER;
             }
             const std::size_t length = ::strnlen(name, ACLPTI_MAX_SECTION_NAME_LENGTH + 1);
@@ -224,7 +224,7 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
                 ASCTOOL_ERROR(
                     "[aclpti] section configuration rejected: invalid section index=%zu"
                     " code=%u",
-                    index, static_cast<unsigned>(1));
+                    index, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
                 return ACLPTI_ERROR_INVALID_PARAMETER;
             }
 
@@ -233,7 +233,7 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
                 ASCTOOL_ERROR(
                     "[aclpti] section configuration rejected: unsupported section=%.*s"
                     " code=%u",
-                    static_cast<int>(length), name, static_cast<unsigned>(1));
+                    static_cast<int>(length), name, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
                 return ACLPTI_ERROR_NOT_SUPPORTED;
             }
             ASCTOOL_DEBUG("[aclpti] selected section name=%.*s", static_cast<int>(length), name);
@@ -253,13 +253,14 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
         collectPcSampling_ = params->collectPcSampling;
         ASCTOOL_DEBUG(
             "[aclpti] requested sections=%zu events=%zu block=%d pipeline=%d pcSampling=%d", params->numSections,
-            pmuEvents_.size(), static_cast<int>(blockResult_), collectPipeline_ ? 1 : 0, collectPcSampling_ ? 1 : 0);
+            pmuEvents_.size(), static_cast<int>(blockResult_), static_cast<int>(collectPipeline_),
+            static_cast<int>(collectPcSampling_));
         return ACLPTI_SUCCESS;
     } catch (const std::bad_alloc&) {
         ASCTOOL_ERROR(
             "[aclpti] section configuration failed: out of memory"
             " code=%u",
-            static_cast<unsigned>(1));
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     }
 }
