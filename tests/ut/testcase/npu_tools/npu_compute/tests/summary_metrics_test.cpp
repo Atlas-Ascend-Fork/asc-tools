@@ -219,18 +219,15 @@ TEST(SummaryMetrics, ZeroAndInvalidFrequenciesKeepAvailabilityDistinct)
     metadata.hardware.ratedAicFrequencyMhz = 1000;
     Near(Render(result, metadata).records.back(), "aicore_parallel_utilization", 0);
 }
-TEST(SummaryMetrics, FlopsUseTaskMeansWithoutLaunchDimensionAndIgnoreBlockRows)
+TEST(SummaryMetrics, FlopsUseTaskCountersWithoutLaunchDimensionAndIgnoreBlockRows)
 {
     aclptiProfilingDataResult result;
     Duration(result);
     aclptiPmuDataRow aic{};
     aic.coreType = ACLPTI_CORE_TYPE_AIC;
-    aic.totalCycles = 1000;
-    aic.values = {{808, 250}, {810, 900}};
-    result.taskPmuLogs.emplace(aclptiBlockKey{}, aic);
-    aic.totalCycles = 3000;
-    aic.values[808] = 2250;
-    result.taskPmuLogs.emplace(aclptiBlockKey{1, 0, ACLPTI_CORE_TYPE_AIC, 0}, aic);
+    aic.totalCycles = 2000;
+    aic.values = {{808, 1000}, {810, 1800}};
+    result.taskPmuData.aic = aclptiTaskPmuCoreData{aic.totalCycles, false, aic.values};
     Row(result, 0, 0, ACLPTI_CORE_TYPE_AIC, 99999);
     result.pmuLogs.begin()->second.values[808] = 99999;
     auto metadata = Metadata(KernelKind::Cube, 100);
@@ -239,9 +236,9 @@ TEST(SummaryMetrics, FlopsUseTaskMeansWithoutLaunchDimensionAndIgnoreBlockRows)
     Na(info, "aiv_flops");
     metadata.blockDim = 1;
     Near(Render(result, metadata).records.back(), "aic_flops", 0.8192);
-    result.taskPmuLogs.begin()->second.values.clear();
+    result.taskPmuData.aic->values.clear();
     Na(Render(result, metadata).records.back(), "aic_flops");
-    result.taskPmuLogs.clear();
+    result.taskPmuData = {};
     Na(Render(result, metadata).records.back(), "aic_flops");
 }
 TEST(SummaryMetrics, FlopsKeepZeroAndRejectInvalidSamples)
@@ -252,12 +249,12 @@ TEST(SummaryMetrics, FlopsKeepZeroAndRejectInvalidSamples)
     row.coreType = ACLPTI_CORE_TYPE_AIV;
     row.totalCycles = 1000;
     row.values = {{1281, 0}};
-    result.taskPmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, row);
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{row.totalCycles, row.overflow, row.values};
     auto metadata = Metadata(KernelKind::Vector, 1);
     Near(Render(result, metadata).records.back(), "aiv_flops", 0);
     Na(Render(result, metadata).records.back(), "aic_flops");
     for (double invalid : {-1.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
-        result.taskPmuLogs.begin()->second.values[1281] = invalid;
+        result.taskPmuData.aiv->values[1281] = invalid;
         Na(Render(result, metadata).records.back(), "aiv_flops");
     }
 }
@@ -269,7 +266,7 @@ TEST(SummaryMetrics, EstimatesAndRatiosUseRawTaskValuesWithoutFrequency)
     row.coreType = ACLPTI_CORE_TYPE_AIC;
     row.totalCycles = 3000000;
     row.values = {{808, 1000000}, {810, 2000000}};
-    result.taskPmuLogs.emplace(aclptiBlockKey{}, row);
+    result.taskPmuData.aic = aclptiTaskPmuCoreData{row.totalCycles, row.overflow, row.values};
     auto metadata = Metadata(KernelKind::Cube, 1);
     metadata.hardware.currentAicFrequencyMhz.reset();
     metadata.hardware.currentAivFrequencyMhz.reset();
@@ -300,8 +297,8 @@ TEST(SummaryMetrics, SortsDeduplicatesSelectionsAndPreservesJsonTypes)
         "ArithmeticUtilization", "Memory"};
     const auto output = Render({}, Metadata(KernelKind::Cube, 3), sections);
     const std::vector<std::string> sorted = {
-        "ArithmeticUtilization", "L2Cache",      "Memory", "MemoryL0", "MemoryUB", "PipeUtilization",
-        "ResourceConflictRatio", "OpInfoSummary"};
+        "ArithmeticUtilization", "L2Cache",          "Memory",       "MemoryL0", "MemoryUB", "PipeUtilization",
+        "ResourceConflictRatio", "PerformanceHints", "OpInfoSummary"};
     ASSERT_EQ(output.records.size(), sorted.size());
     EXPECT_EQ(output.rows, sorted.size());
     for (size_t i = 0; i < sorted.size(); ++i) {
@@ -313,13 +310,80 @@ TEST(SummaryMetrics, SortsDeduplicatesSelectionsAndPreservesJsonTypes)
     Na(info, "Op Name");
     Na(Render({}, {}).records.back(), "Op Type");
     const auto subset = Render({}, {}, {"MemoryUB", "ArithmeticUtilization", "MemoryUB"});
-    ASSERT_EQ(subset.records.size(), 3U);
+    ASSERT_EQ(subset.records.size(), 4U);
     EXPECT_EQ(subset.records[0].at("category").as_string(), "ArithmeticUtilization");
     EXPECT_EQ(subset.records[1].at("category").as_string(), "MemoryUB");
-    EXPECT_EQ(subset.rows, 3U);
+    EXPECT_EQ(subset.rows, 4U);
     const auto empty = Render({}, {});
-    EXPECT_EQ(empty.records.size(), 1U);
-    EXPECT_EQ(empty.rows, 1U);
+    EXPECT_EQ(empty.records.size(), 2U);
+    EXPECT_EQ(empty.rows, 2U);
+}
+TEST(SummaryMetrics, PerformanceHintsUsesTaskValuesAndPrecedesOpInfo)
+{
+    aclptiProfilingDataResult result;
+    aclptiPmuDataRow row{};
+    row.coreType = ACLPTI_CORE_TYPE_AIV;
+    row.totalCycles = 1000;
+    row.values = {{0x501, 800}, {0x1, 100}, {0x202, 200}, {0x203, 100}};
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{row.totalCycles, row.overflow, row.values};
+    row.values[0x501] = 100;
+    result.pmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, row);
+    const auto output = Render(result, Metadata(KernelKind::Vector, 1), {"PipeUtilization"});
+    ASSERT_EQ(output.records.size(), 3U);
+    EXPECT_EQ(output.rows, 3U);
+    EXPECT_EQ(output.records[1].at("category").as_string(), "PerformanceHints");
+    const auto& hints = output.records[1].at("hints").as_array();
+    ASSERT_EQ(hints.size(), 1U);
+    EXPECT_NE(hints[0].as_string().find("[PH01][AIV]"), boost::json::string::npos);
+    EXPECT_NE(hints[0].as_string().find("80%"), boost::json::string::npos);
+    EXPECT_EQ(output.records.back().at("category").as_string(), "OpInfoSummary");
+}
+TEST(SummaryMetrics, MixTaskUsesBothSidesAndSumsMainMemoryTraffic)
+{
+    aclptiProfilingDataResult result;
+    result.taskPmuData.aic = aclptiTaskPmuCoreData{1000, false, {{0x422, 8}, {0x423, 4}}};
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{2000, false, {{0x422, 16}, {0x423, 8}}};
+    const auto metadata = Metadata(KernelKind::Mix, 1, 2);
+    const auto memory = Render(result, metadata, {"Memory"}).records.front();
+    Near(memory, "read_main_memory_datas(KB)", 3);
+    Near(memory, "write_main_memory_datas(KB)", 1.5);
+    Near(memory, "GM_to_L1_datas(KB)", 1);
+    EXPECT_FALSE(memory.contains("block_id"));
+    EXPECT_FALSE(memory.contains("sub_block_id"));
+
+    result.taskPmuData.aiv->values.erase(0x422);
+    const auto missing = Render(result, metadata, {"Memory"}).records.front();
+    Na(missing, "read_main_memory_datas(KB)");
+    Near(missing, "GM_to_L1_datas(KB)", 1);
+    result.taskPmuData.aiv.reset();
+    result.taskPmuData.aic->values[0x422] = 0;
+    Near(Render(result, metadata, {"Memory"}).records.front(), "read_main_memory_datas(KB)", 0);
+}
+
+TEST(SummaryMetrics, TransferHintDividesTaskDataByInstructionCount)
+{
+    aclptiProfilingDataResult result;
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{1000, false, {{0x422, 8192}, {0x57f, 0}, {0x580, 0}, {0x200, 80}}};
+    const auto output = Render(result, Metadata(KernelKind::Vector, 2), {"Memory"});
+    const auto& hints = output.records[1].at("hints").as_array();
+    ASSERT_EQ(hints.size(), 1U);
+    EXPECT_NE(hints[0].as_string().find("[PH04][AIV]"), boost::json::string::npos);
+    EXPECT_NE(hints[0].as_string().find("12.8 KB/指令"), boost::json::string::npos);
+}
+TEST(SummaryMetrics, HintThresholdUsesRawValuesBeforeSummaryRounding)
+{
+    aclptiProfilingDataResult result;
+    aclptiPmuDataRow row{};
+    row.coreType = ACLPTI_CORE_TYPE_AIV;
+    row.totalCycles = 1000;
+    row.values = {{0x501, 500.0001}, {0x1, 100}, {0x202, 200}, {0x203, 100}};
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{row.totalCycles, row.overflow, row.values};
+    const auto output = Render(result, Metadata(KernelKind::Vector, 1), {"PipeUtilization"});
+    Near(output.records[0], "aiv_vec_ratio", .5);
+    const auto& hints = output.records[1].at("hints").as_array();
+    ASSERT_EQ(hints.size(), 1U);
+    EXPECT_NE(hints[0].as_string().find("[PH01][AIV]"), boost::json::string::npos);
+    EXPECT_EQ(hints[0].as_string().find("为 50%，"), boost::json::string::npos);
 }
 TEST(SummaryMetrics, SupportsActual950ProductNames)
 {
@@ -348,18 +412,15 @@ TEST(SummaryMetrics, FixedMetricsAreIndependentOfSelectedSections)
     EXPECT_EQ(noSections.at("aicore_parallel_utilization"), selected.at("aicore_parallel_utilization"));
     EXPECT_EQ(noSections.at("aic_flops_theoretical"), selected.at("aic_flops_theoretical"));
 }
-TEST(SummaryMetrics, AivTaskMeansRemainIndependentOfMixRatioAndBlockInputs)
+TEST(SummaryMetrics, AivTaskCountersRemainIndependentOfMixRatioAndBlockInputs)
 {
     aclptiProfilingDataResult result;
     Duration(result);
     aclptiPmuDataRow row{};
     row.coreType = ACLPTI_CORE_TYPE_AIV;
-    row.totalCycles = 2000;
-    row.values = {{1281, 1000}};
-    result.taskPmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, row);
-    row.totalCycles = 4000;
-    row.values = {{1281, 3200}};
-    result.taskPmuLogs.emplace(aclptiBlockKey{1, 0, ACLPTI_CORE_TYPE_AIV, 0}, row);
+    row.totalCycles = 3000;
+    row.values = {{1281, 1950}};
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{row.totalCycles, false, row.values};
     auto metadata = Metadata(KernelKind::Mix, 1, 1);
     const auto first = Render(result, metadata, {"ArithmeticUtilization"});
     Near(first.records.front(), "aiv_total_cycles", 3000);
@@ -370,7 +431,7 @@ TEST(SummaryMetrics, AivTaskMeansRemainIndependentOfMixRatioAndBlockInputs)
     Row(result, 0, 0, ACLPTI_CORE_TYPE_AIC, 99999);
     Row(result, 0, 0, ACLPTI_CORE_TYPE_AIV, 11111);
     Near(Render(result, metadata).records.back(), "aiv_flops", 0.049920);
-    result.taskPmuLogs.clear();
+    result.taskPmuData = {};
     Na(Render(result, metadata).records.back(), "aiv_flops");
 }
 TEST(SummaryMetrics, UsesSideFrequenciesAndRejectsInvalidBlockTimesOrIdentities)

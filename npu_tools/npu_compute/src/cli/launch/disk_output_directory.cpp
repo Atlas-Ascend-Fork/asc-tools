@@ -9,6 +9,8 @@
  */
 #include "launch/disk_output_directory.h"
 
+#include <boost/filesystem.hpp>
+
 #include <cerrno>
 #include <system_error>
 #include <utility>

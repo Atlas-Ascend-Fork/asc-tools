@@ -152,6 +152,8 @@ set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_jsonl_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_metrics.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/performance_hints/performance_hint_analyzer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/performance_hints/performance_hint_utils.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/report_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/compute_service.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/kernel_metadata_collector.cpp
@@ -194,6 +196,7 @@ add_library(npu_compute_launcher_core_test STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/ipc/uds_client.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/pm_sampling_file_validator.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/collection_file_validator.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/collection_processor.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/pipe_trace_finalizer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/config.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/option_registry.cpp
@@ -204,13 +207,11 @@ add_library(npu_compute_launcher_core_test STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/launch/launcher.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/launch/process_launcher.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/rep_decoder.cpp
-  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/rep_directory_packer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/rep_encoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/rep_report_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/report_name.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/launch/staging_directory.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/launch/disk_output_directory.cpp
-  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/collection_directory_validator.cpp
 )
 target_include_directories(npu_compute_launcher_core_test PUBLIC
   "${NPU_COMPUTE_SOURCE_DIR}/src/cli")
@@ -538,6 +539,8 @@ set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_jsonl_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_metrics.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/performance_hints/performance_hint_analyzer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/performance_hints/performance_hint_utils.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/report_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/kernel_metadata_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/section_config.cpp

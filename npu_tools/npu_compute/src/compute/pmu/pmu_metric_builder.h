@@ -41,9 +41,12 @@ using PmuMetricRow = std::vector<PmuMetricField>;
 
 class PmuMetricBuilder final {
 public:
-    static std::vector<std::string> Header(std::string_view section);
-    static PmuMetricRow Build(
+    static std::vector<std::string> Header(std::string_view section, PmuDataLevel level = PmuDataLevel::Block);
+    static PmuMetricRow BuildBlock(
         std::string_view section, const aclptiBlockKey& key, const aclptiPmuDataRow& row, const ReportConfig& config,
+        std::optional<double> duration = std::nullopt);
+    static PmuMetricRow BuildTask(
+        std::string_view section, const aclptiTaskPmuData& taskPmuData, const ReportConfig& config,
         std::optional<double> duration = std::nullopt);
     static std::optional<double> TaskDuration(const aclptiProfilingDataResult& result);
     static std::optional<double> OperationDuration(const aclptiProfilingDataResult& result, PmuDataLevel level);

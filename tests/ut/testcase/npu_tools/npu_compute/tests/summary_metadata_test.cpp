@@ -32,7 +32,8 @@ boost::property_tree::ptree Summary(
 {
     SummarySink sink;
     EXPECT_EQ(npucompute::WriteSummaryJsonl(result, {}, config, metadata, &sink), ACLPTI_SUCCESS);
-    std::istringstream input(sink.content);
+    const auto previous = sink.content.rfind('\n', sink.content.size() - 2);
+    std::istringstream input(sink.content.substr(previous + 1));
     boost::property_tree::ptree fields;
     boost::property_tree::read_json(input, fields);
     return fields;
@@ -48,9 +49,7 @@ TEST(SummaryMetadata, UsesLaunchTypeAndMixDimensionWithoutPmu)
     EXPECT_EQ(summary.get<std::string>("Op Type"), "mix");
     EXPECT_EQ(summary.get<uint64_t>("Mix Block Dim"), 16U);
     aclptiProfilingDataResult partial;
-    aclptiPmuDataRow row{};
-    row.coreType = ACLPTI_CORE_TYPE_AIC;
-    partial.taskPmuLogs.emplace(aclptiBlockKey{}, row);
+    partial.taskPmuData.aic = aclptiTaskPmuCoreData{};
     EXPECT_EQ(Summary(metadata, {}, partial).get<std::string>("Op Type"), "mix");
     metadata.kind = npucompute::KernelKind::Cube;
     const auto cube = Summary(metadata);
@@ -67,9 +66,7 @@ TEST(SummaryMetadata, MissingActualFrequenciesDoNotUseCsvDefaults)
     npucompute::ReportConfig config;
     config.frequencyMhz = 1650;
     aclptiProfilingDataResult result;
-    aclptiPmuDataRow row{};
-    row.coreType = ACLPTI_CORE_TYPE_AIV;
-    result.taskPmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, row);
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{};
     const auto summary = Summary(metadata, config, result);
     EXPECT_EQ(summary.get<std::string>("Op Type"), "vector");
     EXPECT_EQ(summary.get<std::string>("Current Freq"), "NA");

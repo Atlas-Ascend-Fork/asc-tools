@@ -305,7 +305,9 @@ def test_cli_real_aclpti_callback_chain(tmp_path, sections):
             assert section_metrics[path.stem] in reader.fieldnames
         assert rows, path
         assert all(None not in row and None not in row.values() for row in rows)
-        assert all(row["block_id"] != "" and row["sub_block_id"] != "" for row in rows)
+        assert len(rows) == 1
+        assert "block_id" not in reader.fieldnames
+        assert "sub_block_id" not in reader.fieldnames
 
     reports = list(work_directory.glob("*.npu-rep"))
     assert len(reports) == 1, result.stderr
@@ -343,8 +345,10 @@ def test_cli_real_aclpti_callback_chain(tmp_path, sections):
         ]
         assert [record["category"] for record in records] == [
             *sorted(set(sections)),
+            "PerformanceHints",
             "OpInfoSummary",
         ]
+        assert isinstance(records[-2]["hints"], list)
         for section, record in zip(sorted(set(sections)), records):
             assert section_metrics[section] in record
             assert "block_id" not in record

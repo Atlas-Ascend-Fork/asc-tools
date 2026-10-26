@@ -12,8 +12,7 @@
 
 #include <array>
 #include <cstdint>
-#include <boost/filesystem.hpp>
-#include <boost/system/error_code.hpp>
+#include <boost/filesystem/path.hpp>
 #include <optional>
 #include <string>
 

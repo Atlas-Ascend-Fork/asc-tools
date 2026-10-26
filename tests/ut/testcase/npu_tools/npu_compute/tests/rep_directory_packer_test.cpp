@@ -7,7 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-#include "report/rep_directory_packer.h"
+#include "report/collection_processor.h"
 
 #include <gtest/gtest.h>
 #include "rep_test_decoder.h"
@@ -17,6 +17,8 @@
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <fstream>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -73,6 +75,19 @@ public:
 
 private:
     boost::filesystem::path path_;
+};
+
+class StdoutCapture {
+public:
+    StdoutCapture() : previous_(std::cout.rdbuf(output_.rdbuf())) {}
+
+    ~StdoutCapture() { std::cout.rdbuf(previous_); }
+
+    std::string Text() const { return output_.str(); }
+
+private:
+    std::ostringstream output_;
+    std::streambuf* previous_;
 };
 
 bool WriteFile(const boost::filesystem::path& path, std::string_view content)
@@ -259,4 +274,86 @@ TEST(NpuComputeRepDirectoryPacker, KeepsValidFilesWhenOneCollectionFileFails)
     ASSERT_EQ(child.entries.size(), 1U);
     EXPECT_EQ(child.entries[0].file_name, "L2Cache.csv");
     EXPECT_EQ(child.entries[0].payload, Bytes(csv));
+}
+
+TEST(NpuComputeRepDirectoryPacker, PrintsValidatedSummaryHints)
+{
+    TempDirectory temporary;
+    ASSERT_FALSE(temporary.Path().empty());
+    const std::string summary = "{\"category\":\"PerformanceHints\",\"hints\":[\"hint\"]}\n"
+                                "{\"category\":\"OpInfoSummary\",\"Op Name\":\"kernel\",\"Device Id\":1}\n";
+    ASSERT_TRUE(WriteFile(temporary.Path() / "summary.jsonl", summary));
+
+    std::vector<uint8_t> encoded;
+    std::string error;
+    StdoutCapture output;
+    ASSERT_TRUE(PackDirectoryToRep(temporary.Path(), &encoded, &error)) << error;
+    EXPECT_EQ(output.Text(), "npu-compute: Performance Hints\n  op=kernel  device=1\n  hint\n");
+
+    DecodedRep decoded;
+    ASSERT_TRUE(DecodeRep(encoded, &decoded, &error)) << error;
+    ASSERT_EQ(decoded.entries.size(), 1U);
+    EXPECT_EQ(decoded.entries[0].file_name, "summary.jsonl");
+    EXPECT_EQ(decoded.entries[0].payload, Bytes(summary));
+}
+
+TEST(NpuComputeRepDirectoryPacker, SkippedSummaryDoesNotPrintHints)
+{
+    TempDirectory temporary;
+    ASSERT_FALSE(temporary.Path().empty());
+    ASSERT_TRUE(WriteFile(temporary.Path() / "Memory.csv", "header\nvalue\n"));
+    ASSERT_TRUE(
+        WriteFile(temporary.Path() / "summary.jsonl", "{\"category\":\"PerformanceHints\",\"hints\":[\"hint\"]}\n"));
+
+    std::vector<uint8_t> encoded;
+    std::vector<std::string> issues;
+    std::string error;
+    StdoutCapture output;
+    ASSERT_TRUE(PackDirectoryToRep(temporary.Path(), &encoded, &error, &issues)) << error;
+    ASSERT_EQ(issues.size(), 1U);
+    EXPECT_NE(issues[0].find("summary.jsonl"), std::string::npos);
+    EXPECT_TRUE(output.Text().empty());
+
+    DecodedRep decoded;
+    ASSERT_TRUE(DecodeRep(encoded, &decoded, &error)) << error;
+    ASSERT_EQ(decoded.entries.size(), 2U);
+    EXPECT_EQ(decoded.entries[0].file_name, "Memory.csv");
+    EXPECT_EQ(decoded.entries[1].file_name, "collection-status.json");
+}
+
+TEST(NpuComputeRepDirectoryPacker, PrintsRootAndNestedSummaryHintsOnce)
+{
+    TempDirectory temporary;
+    ASSERT_FALSE(temporary.Path().empty());
+    const auto nested = temporary.Path() / "collection";
+    ASSERT_TRUE(boost::filesystem::create_directory(nested));
+    const std::string summary = "{\"category\":\"PerformanceHints\",\"hints\":[\"nested hint\"]}\n"
+                                "{\"category\":\"OpInfoSummary\",\"Op Name\":\"nested kernel\",\"Device Id\":1}\n";
+    ASSERT_TRUE(WriteFile(nested / "summary.jsonl", summary));
+    const std::string rootSummary = "{\"category\":\"PerformanceHints\",\"hints\":[\"root hint\"]}\n"
+                                    "{\"category\":\"OpInfoSummary\",\"Op Name\":\"root kernel\",\"Device Id\":0}\n";
+    ASSERT_TRUE(WriteFile(temporary.Path() / "summary.jsonl", rootSummary));
+
+    std::vector<uint8_t> encoded;
+    std::string error;
+    StdoutCapture output;
+    ASSERT_TRUE(PackDirectoryToRep(temporary.Path(), &encoded, &error)) << error;
+    const auto text = output.Text();
+    for (const std::string expected :
+         {"op=root kernel  device=0", "op=nested kernel  device=1", "root hint", "nested hint"}) {
+        const auto position = text.find(expected);
+        ASSERT_NE(position, std::string::npos) << expected;
+        EXPECT_EQ(text.find(expected, position + expected.size()), std::string::npos) << expected;
+    }
+
+    DecodedRep decoded;
+    ASSERT_TRUE(DecodeRep(encoded, &decoded, &error)) << error;
+    ASSERT_EQ(decoded.entries.size(), 2U);
+    DecodedRep child;
+    ASSERT_TRUE(DecodeRep(decoded.entries[0].payload, &child, &error)) << error;
+    ASSERT_EQ(child.entries.size(), 1U);
+    EXPECT_EQ(child.entries[0].file_name, "summary.jsonl");
+    EXPECT_EQ(child.entries[0].payload, Bytes(summary));
+    EXPECT_EQ(decoded.entries[1].file_name, "summary.jsonl");
+    EXPECT_EQ(decoded.entries[1].payload, Bytes(rootSummary));
 }

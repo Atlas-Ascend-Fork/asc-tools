@@ -97,6 +97,7 @@ SUMMARY_RECORD_TYPES = [
     "L2Cache",
     "ArithmeticUtilization",
     "ResourceConflictRatio",
+    "PerformanceHints",
     "OpInfoSummary",
 ]
 
@@ -432,7 +433,7 @@ def validate_section_catalog(metric_catalog, hardware_catalog, pipe_trace_catalo
 def validate_summary_section(category, record_type, metric_catalog):
     require(
         record_type.get("kind") == "pmu-section-summary"
-        and record_type.get("data_level") == "task-average",
+        and record_type.get("data_level") == "task",
         f"summary {category} 记录属性不一致",
     )
     require(
@@ -449,6 +450,26 @@ def validate_summary_section(category, record_type, metric_catalog):
         f"summary {category} 指标字段来源不一致",
     )
     require(category in metric_catalog["sections"], f"summary {category} 没有指标定义")
+
+
+def validate_performance_hints(record_type):
+    require(
+        record_type.get("kind") == "performance-hints"
+        and record_type.get("data_level") == "kernel",
+        "PerformanceHints 记录属性不一致",
+    )
+    fields = record_type.get("fields", [])
+    require(
+        [(field.get("name"), field.get("json_types")) for field in fields]
+        == [("category", ["string"]), ("hints", ["string[]"])],
+        "PerformanceHints 字段或类型不一致",
+    )
+    for field in fields:
+        require(
+            set(field) == SUMMARY_FIELD_KEYS
+            and all(value != "" for value in field.values()),
+            f"PerformanceHints.{field.get('name')} 元数据不完整",
+        )
 
 
 def validate_op_info(op_info, names):
@@ -511,10 +532,12 @@ def validate_summary_catalog(metric_catalog):
     catalog = load_json(SKILL_ROOT / "assets" / "summary-catalog.json")
     require(catalog.get("schema_version") == 1, "summary 目录 schema_version 必须为 1")
     require(catalog.get("output_file") == "summary.jsonl", "summary 输出文件名不一致")
+    require(catalog.get("unavailable_value") == "NA", "summary 不可用值必须为 NA")
     record_types = catalog.get("record_types", {})
     require(list(record_types) == SUMMARY_RECORD_TYPES, "summary 记录类别或顺序不一致")
-    for category in SUMMARY_RECORD_TYPES[:-1]:
+    for category in SUMMARY_RECORD_TYPES[:-2]:
         validate_summary_section(category, record_types[category], metric_catalog)
+    validate_performance_hints(record_types["PerformanceHints"])
     names = []
     fields = validate_op_info(record_types["OpInfoSummary"], names)
     selected_fields = catalog.get("op_info_selected_fields", [])

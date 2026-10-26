@@ -7,12 +7,15 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <boost/filesystem.hpp>
 #include <gtest/gtest.h>
 #include "launch/disk_output_directory.h"
-#include "report/collection_directory_validator.h"
+#include "report/collection_processor.h"
 
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
+#include <sstream>
 #include <utility>
 #include <vector>
 #include <sys/stat.h>
@@ -41,6 +44,19 @@ protected:
         ASSERT_TRUE(stream.good());
     }
     boost::filesystem::path parent;
+};
+
+class StdoutCapture {
+public:
+    StdoutCapture() : previous_(std::cout.rdbuf(output_.rdbuf())) {}
+
+    ~StdoutCapture() { std::cout.rdbuf(previous_); }
+
+    std::string Text() const { return output_.str(); }
+
+private:
+    std::ostringstream output_;
+    std::streambuf* previous_;
 };
 
 struct FixedNames {
@@ -156,7 +172,7 @@ TEST_F(DiskResultsTest, ValidationPreservesNestedFilesAndRemovesOnlyInternalLock
     Write(parent / ".hardware_info.lock", "");
     Write(parent / "child/.hardware_info.lock", "");
     std::string error;
-    ASSERT_TRUE(ValidateCollectionDirectory(parent, &error)) << error;
+    ASSERT_TRUE(ValidateAndCleanCollectionDirectory(parent, &error)) << error;
     EXPECT_TRUE(boost::filesystem::exists(parent / "child/result.json"));
     EXPECT_FALSE(boost::filesystem::exists(parent / ".hardware_info.lock"));
     EXPECT_FALSE(boost::filesystem::exists(parent / "child/.hardware_info.lock"));
@@ -173,18 +189,18 @@ TEST_F(DiskResultsTest, NoValidFilesPreventDirectoryDelivery)
              {"left.tmp.123", "x"},
              {"unknown.bin", "x"}}) {
         Write(parent / item.first, item.second);
-        EXPECT_FALSE(ValidateCollectionDirectory(parent, &error)) << item.first;
+        EXPECT_FALSE(ValidateAndCleanCollectionDirectory(parent, &error)) << item.first;
         boost::filesystem::remove(parent / item.first);
     }
     Write(parent / "good.json", "{}");
     boost::filesystem::create_symlink(parent / "good.json", parent / "linked.json");
-    EXPECT_FALSE(ValidateCollectionDirectory(parent, &error));
+    EXPECT_FALSE(ValidateAndCleanCollectionDirectory(parent, &error));
     boost::filesystem::remove(parent / "linked.json");
     ASSERT_EQ(::mkfifo((parent / "fifo.csv").c_str(), 0600), 0);
-    EXPECT_FALSE(ValidateCollectionDirectory(parent, &error));
+    EXPECT_FALSE(ValidateAndCleanCollectionDirectory(parent, &error));
     boost::filesystem::remove(parent / "fifo.csv");
     boost::filesystem::create_directory(parent / ".hardware_info.lock");
-    EXPECT_FALSE(ValidateCollectionDirectory(parent, &error));
+    EXPECT_FALSE(ValidateAndCleanCollectionDirectory(parent, &error));
 }
 } // namespace
 
@@ -202,12 +218,45 @@ TEST_F(DiskResultsTest, InvalidSamplingFilesAreRemovedWithoutDeletingValidSiblin
     Write(parent / ".biu-staging/fragment.json", "{}");
     std::vector<std::string> issues;
     std::string error;
-    EXPECT_TRUE(ValidateCollectionDirectory(parent, &error, &issues)) << error;
+    EXPECT_TRUE(ValidateAndCleanCollectionDirectory(parent, &error, &issues)) << error;
     EXPECT_EQ(issues.size(), 5U);
     EXPECT_TRUE(boost::filesystem::exists(parent / "child/Memory.csv"));
     for (const auto* name :
          {"summary.db", "objdump.txt", "symbolizer.json", "bad.jsonl", ".hardware_info.lock", ".biu-staging"}) {
         EXPECT_FALSE(boost::filesystem::exists(parent / name)) << name;
+    }
+}
+
+TEST_F(DiskResultsTest, NoPackValidatesAndPrintsRootAndNestedSummaries)
+{
+    ASSERT_TRUE(boost::filesystem::create_directory(parent / "child"));
+    const std::string root_summary = "{\"category\":\"PerformanceHints\",\"hints\":[\"root hint\"]}\n"
+                                     "{\"category\":\"OpInfoSummary\",\"Op Name\":\"root kernel\",\"Device Id\":0}\n";
+    const std::string nested_summary =
+        "{\"category\":\"PerformanceHints\",\"hints\":[\"nested hint\"]}\n"
+        "{\"category\":\"OpInfoSummary\",\"Op Name\":\"nested kernel\",\"Device Id\":1}\n";
+    ASSERT_NO_FATAL_FAILURE(Write(parent / "summary.jsonl", root_summary));
+    ASSERT_NO_FATAL_FAILURE(Write(parent / "child/summary.jsonl", nested_summary));
+    // Generic JSONL results must still end with a newline; this sibling is
+    // intentionally malformed so retain mode removes it after the scan.
+    ASSERT_NO_FATAL_FAILURE(Write(parent / "invalid.jsonl", "{}"));
+
+    std::vector<std::string> issues;
+    std::string error;
+    StdoutCapture output;
+    ASSERT_TRUE(ValidateAndCleanCollectionDirectory(parent, &error, &issues)) << error;
+
+    EXPECT_TRUE(boost::filesystem::exists(parent / "summary.jsonl"));
+    EXPECT_TRUE(boost::filesystem::exists(parent / "child/summary.jsonl"));
+    EXPECT_FALSE(boost::filesystem::exists(parent / "invalid.jsonl"));
+    ASSERT_EQ(issues.size(), 1U);
+    EXPECT_NE(issues.front().find("invalid.jsonl"), std::string::npos);
+    const std::string text = output.Text();
+    for (const std::string& expected :
+         {"op=root kernel  device=0", "op=nested kernel  device=1", "root hint", "nested hint"}) {
+        const auto position = text.find(expected);
+        ASSERT_NE(position, std::string::npos) << expected;
+        EXPECT_EQ(text.find(expected, position + expected.size()), std::string::npos) << expected;
     }
 }
 } // namespace

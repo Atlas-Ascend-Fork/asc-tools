@@ -218,6 +218,33 @@ class InspectCsvTest(unittest.TestCase):
         self.assertIn("**数据行数：**", result.stdout)
         self.assertIn("`aiv_ub_read_bw_gm(GB/s)`", result.stdout)
 
+    def test_task_csv_without_block_columns_is_accepted(self):
+        rows = [row[2:] for row in self.fixture_rows("MemoryUB.csv")]
+        for filename in ("MemoryUB.csv", "renamed.csv"):
+            with (
+                self.subTest(filename=filename),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / filename
+                self.write_csv(path, rows)
+                result = self.run_inspect(path)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output = json.loads(result.stdout)
+                self.assertEqual(output["section"], "MemoryUB")
+                self.assertEqual(
+                    [column["name"] for column in output["columns"]], rows[0]
+                )
+                self.assertEqual(output["columns"][0]["na_count"], len(rows) - 1)
+
+    def test_csv_with_only_one_block_column_is_rejected(self):
+        rows = [row[1:] for row in self.fixture_rows("MemoryUB.csv")]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "MemoryUB.csv"
+            self.write_csv(path, rows)
+            result = self.run_inspect(path)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("缺少字段：block_id", result.stderr)
+
     def test_unknown_and_missing_columns_are_reported(self):
         rows = self.fixture_rows("MemoryUB.csv")
         rows[0][-1] = "unknown_column"
@@ -982,14 +1009,99 @@ class InspectSummaryTest(unittest.TestCase):
             if line
         ]
 
-    def inspect_records(self, records):
+    def inspect_records(self, records, output_format="json"):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.jsonl"
             path.write_text(
                 "".join(json.dumps(record) + "\n" for record in records),
                 encoding="utf-8",
             )
-            return self.run_inspect(path)
+            return self.run_inspect(path, output_format)
+
+    def test_performance_hints_are_separate_from_section_summaries(self):
+        for hints in ([], ["检测到低流水线利用率", "check memory bandwidth"]):
+            with self.subTest(hints=hints):
+                records = self.copied_records()
+                records.insert(-1, {"category": "PerformanceHints", "hints": hints})
+                result = self.inspect_records(records)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output = json.loads(result.stdout)
+                self.assertEqual(output["performance_hints"], hints)
+                self.assertEqual(output["record_count"], len(records))
+                self.assertEqual(
+                    output["section_categories"],
+                    self.expected["real_fixture"]["section_categories"],
+                )
+
+    def test_sampling_only_summary_without_pmu_sections_is_accepted(self):
+        op_info = self.copied_records()[-1]
+        records = [{"category": "PerformanceHints", "hints": []}, op_info]
+        result = self.inspect_records(records)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["record_count"], 2)
+        self.assertEqual(output["section_categories"], [])
+        self.assertEqual(output["section_records"], [])
+        self.assertEqual(output["performance_hints"], [])
+        self.assertEqual(
+            output["op_info_summary"]["selected_values"],
+            self.expected["real_fixture"]["op_info_summary"]["selected_values"],
+        )
+
+    def test_legacy_summary_without_performance_hints_is_accepted(self):
+        result = self.inspect_records(self.copied_records())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(json.loads(result.stdout)["performance_hints"])
+
+    def test_performance_hints_must_immediately_precede_op_info(self):
+        records = self.copied_records()
+        records.insert(0, {"category": "PerformanceHints", "hints": []})
+        result = self.inspect_records(records)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("PerformanceHints 必须是倒数第二条记录", result.stderr)
+
+    def test_performance_hints_reject_non_string_arrays(self):
+        for hints in (None, "hint", {}, [1], [True], [None], [["hint"]]):
+            with self.subTest(hints=hints):
+                records = self.copied_records()
+                records.insert(-1, {"category": "PerformanceHints", "hints": hints})
+                result = self.inspect_records(records)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("PerformanceHints.hints 类型应为 string[]", result.stderr)
+
+    def test_duplicate_performance_hints_are_rejected(self):
+        records = self.copied_records()
+        records[-1:-1] = [{"category": "PerformanceHints", "hints": []}] * 2
+        result = self.inspect_records(records)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("重复类别：PerformanceHints", result.stderr)
+
+    def test_performance_hints_markdown_contains_hints(self):
+        records = self.copied_records()
+        records.insert(-1, {"category": "PerformanceHints", "hints": ["检查访存带宽"]})
+        result = self.inspect_records(records, "markdown")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("## PerformanceHints", result.stdout)
+        self.assertIn("检查访存带宽", result.stdout)
+
+    def test_na_sentinel_is_accepted_for_unavailable_summary_fields(self):
+        records = self.copied_records()
+        records[1]["aiv_total_cycles"] = "NA"
+        for name in ("Op Name", "Op Type", "Current Freq", "Block Dim"):
+            records[-1][name] = "NA"
+        result = self.inspect_records(records)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(
+            output["op_info_summary"]["selected_values"]["Block Dim"], "NA"
+        )
+
+    def test_numeric_op_info_fields_reject_strings_other_than_na(self):
+        records = self.copied_records()
+        records[-1]["Block Dim"] = "8"
+        result = self.inspect_records(records)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("OpInfoSummary.Block Dim 类型应为 integer 或 null", result.stderr)
 
     def test_help_describes_jsonl_path_and_output_format(self):
         result = subprocess.run(

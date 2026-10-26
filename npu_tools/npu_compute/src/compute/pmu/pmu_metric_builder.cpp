@@ -42,8 +42,6 @@ constexpr double MICROSECONDS_PER_SECOND = 1000000.0;
 constexpr double MEMORY_EVENT_UNIT_BYTES = 128.0;
 constexpr double L1_READ_BYTES_PER_EVENT = 256.0;
 constexpr double UB_TRANSFER_BYTES_PER_EVENT = 256.0;
-constexpr uint32_t LOG_TYPE_START = 0x00U;
-constexpr uint32_t LOG_TYPE_END = 0x01U;
 
 struct BandwidthLimits {
     double gmToL1;
@@ -78,7 +76,7 @@ struct TypeMetrics {
 };
 
 struct RowMetrics {
-    aclptiBlockKey key{};
+    std::optional<aclptiBlockKey> key;
     TypeMetrics aic;
     TypeMetrics aiv;
 };
@@ -316,13 +314,13 @@ Metric TaskLogDurationUs(const aclptiProfilingDataResult& result)
             } else if (pair.taskId != log.taskId || pair.streamId != log.rtStreamId) {
                 pair.invalid = true;
             }
-            if (log.funcType == LOG_TYPE_START) {
+            if (log.funcType == 0x00U) {
                 if (pair.start.has_value()) {
                     pair.invalid = true;
                 } else {
                     pair.start = log.systemCounter;
                 }
-            } else if (log.funcType == LOG_TYPE_END) {
+            } else if (log.funcType == 0x01U) {
                 if (pair.end.has_value()) {
                     pair.invalid = true;
                 } else {
@@ -501,8 +499,10 @@ void SetEvent(CsvFields& fields, std::string name, const TypeMetrics& metrics, u
 CsvFields CommonFields(const RowMetrics& row, const ReportConfig& config)
 {
     CsvFields fields;
-    fields.emplace("block_id", ValueCell(Integer(row.key.blockId)));
-    fields.emplace("sub_block_id", ValueCell(CoreSubBlockLabel(row.key)));
+    if (row.key) {
+        fields.emplace("block_id", ValueCell(Integer(row.key->blockId)));
+        fields.emplace("sub_block_id", ValueCell(CoreSubBlockLabel(*row.key)));
+    }
     const double aicFrequencyMhz = AicFrequencyMhz(config);
     const double aivFrequencyMhz = AivFrequencyMhz(config);
     SetMetric(fields, "aic_time(us)", Time(row.aic, aicFrequencyMhz), TimeReason(row.aic, aicFrequencyMhz));
@@ -555,44 +555,31 @@ CsvRow L2Row(const RowMetrics& row, const ReportConfig& config)
         const std::vector<std::string> names = {"read_close_hit", "read_close_miss", "read_close_victim",
                                                 "read_far_hit",   "read_far_miss",   "read_far_victim"};
         std::size_t index = 0;
-        for (const uint32_t event :
-             {pmu::L0A_READ_HIT_EVENT, pmu::L0A_READ_MISS_EVENT, pmu::L0A_READ_OTHER_EVENT, pmu::L0A_READ_HIT_ALT_EVENT,
-              pmu::L0A_READ_MISS_ALT_EVENT, pmu::L0A_READ_OTHER_ALT_EVENT}) {
+        for (const uint32_t event : {0x424U, 0x425U, 0x426U, 0x427U, 0x428U, 0x429U}) {
             SetEvent(fields, std::string(prefix) + names[index++], *metrics, event);
         }
-        const auto readHit = SumEvents(*metrics, {pmu::L0A_READ_HIT_EVENT, pmu::L0A_READ_HIT_ALT_EVENT});
-        const auto readTotal = SumEvents(
-            *metrics, {pmu::L0A_READ_HIT_EVENT, pmu::L0A_READ_MISS_EVENT, pmu::L0A_READ_OTHER_EVENT,
-                       pmu::L0A_READ_HIT_ALT_EVENT, pmu::L0A_READ_MISS_ALT_EVENT, pmu::L0A_READ_OTHER_ALT_EVENT});
+        const auto readHit = SumEvents(*metrics, {0x424U, 0x427U});
+        const auto readTotal = SumEvents(*metrics, {0x424U, 0x425U, 0x426U, 0x427U, 0x428U, 0x429U});
         SetMetric(
             fields, std::string(prefix) + "read_hit_rate(%)",
             !readHit.has_value() || !readTotal.has_value() ? std::nullopt :
             *readTotal == 0.0                              ? Metric(0.0) :
                                                              Metric(PERCENT_SCALE * *readHit / *readTotal),
-            EventReason(
-                *metrics, {pmu::L0A_READ_HIT_EVENT, pmu::L0A_READ_MISS_EVENT, pmu::L0A_READ_OTHER_EVENT,
-                           pmu::L0A_READ_HIT_ALT_EVENT, pmu::L0A_READ_MISS_ALT_EVENT, pmu::L0A_READ_OTHER_ALT_EVENT}));
+            EventReason(*metrics, {0x424U, 0x425U, 0x426U, 0x427U, 0x428U, 0x429U}));
         const std::vector<std::string> writeNames = {"write_close_hit", "write_close_miss", "write_close_victim",
                                                      "write_far_hit",   "write_far_miss",   "write_far_victim"};
         index = 0;
-        for (const uint32_t event :
-             {pmu::L0A_WRITE_HIT_EVENT, pmu::L0A_WRITE_MISS_EVENT, pmu::L0A_WRITE_OTHER_EVENT,
-              pmu::L0A_WRITE_HIT_ALT_EVENT, pmu::L0A_WRITE_MISS_ALT_EVENT, pmu::L0A_WRITE_OTHER_ALT_EVENT}) {
+        for (const uint32_t event : {0x42aU, 0x42bU, 0x42cU, 0x42dU, 0x42eU, 0x42fU}) {
             SetEvent(fields, std::string(prefix) + writeNames[index++], *metrics, event);
         }
-        const auto writeHit = SumEvents(*metrics, {pmu::L0A_WRITE_HIT_EVENT, pmu::L0A_WRITE_HIT_ALT_EVENT});
-        const auto writeTotal = SumEvents(
-            *metrics, {pmu::L0A_WRITE_HIT_EVENT, pmu::L0A_WRITE_MISS_EVENT, pmu::L0A_WRITE_OTHER_EVENT,
-                       pmu::L0A_WRITE_HIT_ALT_EVENT, pmu::L0A_WRITE_MISS_ALT_EVENT, pmu::L0A_WRITE_OTHER_ALT_EVENT});
+        const auto writeHit = SumEvents(*metrics, {0x42aU, 0x42dU});
+        const auto writeTotal = SumEvents(*metrics, {0x42aU, 0x42bU, 0x42cU, 0x42dU, 0x42eU, 0x42fU});
         SetMetric(
             fields, std::string(prefix) + "write_hit_rate(%)",
             !writeHit.has_value() || !writeTotal.has_value() ? std::nullopt :
             *writeTotal == 0.0                               ? Metric(0.0) :
                                                                Metric(PERCENT_SCALE * *writeHit / *writeTotal),
-            EventReason(
-                *metrics,
-                {pmu::L0A_WRITE_HIT_EVENT, pmu::L0A_WRITE_MISS_EVENT, pmu::L0A_WRITE_OTHER_EVENT,
-                 pmu::L0A_WRITE_HIT_ALT_EVENT, pmu::L0A_WRITE_MISS_ALT_EVENT, pmu::L0A_WRITE_OTHER_ALT_EVENT}));
+            EventReason(*metrics, {0x42aU, 0x42bU, 0x42cU, 0x42dU, 0x42eU, 0x42fU}));
     }
     return BuildRow(L2Header(), fields);
 }
@@ -700,15 +687,36 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     SetMetric(
         fields, "aiv_mte3_ratio", ValueRatio(row.aiv, pmu::MTE3_ACTIVE_CYCLES_EVENT),
         RatioReason(row.aiv, {pmu::MTE3_ACTIVE_CYCLES_EVENT}));
-    const TypeMetrics& current = row.key.coreType == ACLPTI_CORE_TYPE_AIC ? row.aic : row.aiv;
+    // Block rows report the current core's traffic; Task rows sum AIC and AIV traffic.
+    // An absent side contributes zero, but a present side missing the event makes the total unavailable.
+    const auto mainMemoryTraffic = [&](uint32_t event) -> Metric {
+        if (row.key) {
+            const auto& current = row.key->coreType == ACLPTI_CORE_TYPE_AIC ? row.aic : row.aiv;
+            return Scale(current.Value(event), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB);
+        }
+        if (!row.aic.present && !row.aiv.present) {
+            return std::nullopt;
+        }
+        const auto aic = row.aic.present ? row.aic.Value(event) : Metric(0);
+        const auto aiv = row.aiv.present ? row.aiv.Value(event) : Metric(0);
+        return aic && aiv ? Metric((*aic + *aiv) * MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB) : std::nullopt;
+    };
+    const auto trafficReason = [&](uint32_t event) {
+        if (row.key) {
+            const auto& current = row.key->coreType == ACLPTI_CORE_TYPE_AIC ? row.aic : row.aiv;
+            return EventReason(current, {event});
+        }
+        // SetMetric uses this reason only when the computed traffic is unavailable.
+        return row.aic.present || row.aiv.present ? MissingReason::EventMissing : MissingReason::CoreTypeNotApplicable;
+    };
     SetMetric(
-        fields, "read_main_memory_datas(KB)",
-        Scale(current.Value(pmu::GM_TO_L1_EVENT), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
-        EventReason(current, {pmu::GM_TO_L1_EVENT}));
+        fields, "read_main_memory_datas(KB)", mainMemoryTraffic(pmu::GM_TO_L1_EVENT),
+        trafficReason(pmu::GM_TO_L1_EVENT));
     SetMetric(
-        fields, "write_main_memory_datas(KB)",
-        Scale(current.Value(pmu::L0C_TO_GM_EVENT), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
-        EventReason(current, {pmu::L0C_TO_GM_EVENT}));
+        fields, "write_main_memory_datas(KB)", mainMemoryTraffic(pmu::L0C_TO_GM_EVENT),
+        trafficReason(pmu::L0C_TO_GM_EVENT));
+    // Directional transfers retain their core ownership at both levels:
+    // GM/L0C to L1 and L0C to GM use AIC; GM to UB and UB to GM use AIV.
     SetMetric(
         fields, "GM_to_L1_datas(KB)", Scale(row.aic.Value(pmu::GM_TO_L1_EVENT), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB),
         EventReason(row.aic, {pmu::GM_TO_L1_EVENT}));
@@ -792,12 +800,7 @@ CsvRow MemoryL0Row(const RowMetrics& row, const ReportConfig& config, Metric ope
                                             "aic_l0c_read_bw_cube(GB/s)", "aic_l0c_write_bw_cube(GB/s)"};
     std::size_t index = 0;
     for (const auto& [event, bytes] : std::initializer_list<std::pair<uint32_t, double>>{
-             {pmu::L0A_READ_EVENT, 64.0},
-             {pmu::L0A_WRITE_EVENT, 256.0},
-             {pmu::L0B_READ_EVENT, 256.0},
-             {pmu::L0B_WRITE_EVENT, 256.0},
-             {pmu::L0C_READ_EVENT, 1024.0},
-             {pmu::L0C_WRITE_EVENT, 1024.0}}) {
+             {0x304U, 64.0}, {0x703U, 256.0}, {0x306U, 256.0}, {0x705U, 256.0}, {0x30aU, 1024.0}, {0x308U, 1024.0}}) {
         SetMetric(
             fields, names[index++], EventBandwidth(row.aic, event, bytes, aicFrequencyMhz, operationDurationUs),
             EventBandwidthReason(row.aic, {event}, aicFrequencyMhz, operationDurationUs));
@@ -900,7 +903,7 @@ CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
         SetMetric(fields, ratioName, ValueRatio(metrics, eventId), RatioReason(metrics, {eventId}));
     };
     setPipePair("aic_cube_time(us)", "aic_cube_ratio", row.aic, pmu::CUBE_ACTIVE_CYCLES_EVENT, aicFrequencyMhz);
-    setPipePair("aic_scalar_time(us)", "aic_scalar_ratio", row.aic, pmu::SCALAR_ACTIVE_CYCLES_EVENT, aicFrequencyMhz);
+    setPipePair("aic_scalar_time(us)", "aic_scalar_ratio", row.aic, 0x1U, aicFrequencyMhz);
     setPipePair("aic_mte1_time(us)", "aic_mte1_ratio", row.aic, pmu::MTE1_ACTIVE_CYCLES_EVENT, aicFrequencyMhz);
     setPipePair("aic_mte2_time(us)", "aic_mte2_ratio", row.aic, pmu::MTE2_ACTIVE_CYCLES_EVENT, aicFrequencyMhz);
     setPipePair("aic_mte3_time(us)", "aic_mte3_ratio", row.aic, pmu::MTE3_ACTIVE_CYCLES_EVENT, aicFrequencyMhz);
@@ -910,7 +913,7 @@ CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
         fields, "aic_icache_miss_rate", IcacheMissRate(row.aic),
         EventReason(row.aic, {pmu::ICACHE_ACCESS_EVENT, pmu::ICACHE_MISS_EVENT}));
     setPipePair("aiv_vec_time(us)", "aiv_vec_ratio", row.aiv, pmu::VECTOR_ACTIVE_CYCLES_EVENT, aivFrequencyMhz);
-    setPipePair("aiv_scalar_time(us)", "aiv_scalar_ratio", row.aiv, pmu::SCALAR_ACTIVE_CYCLES_EVENT, aivFrequencyMhz);
+    setPipePair("aiv_scalar_time(us)", "aiv_scalar_ratio", row.aiv, 0x1U, aivFrequencyMhz);
     setPipePair("aiv_mte2_time(us)", "aiv_mte2_ratio", row.aiv, pmu::MTE2_ACTIVE_CYCLES_EVENT, aivFrequencyMhz);
     setPipePair("aiv_mte3_time(us)", "aiv_mte3_ratio", row.aiv, pmu::MTE3_ACTIVE_CYCLES_EVENT, aivFrequencyMhz);
     SetMetric(
@@ -1179,18 +1182,47 @@ const SectionWriter* FindWriter(std::string_view section)
 
 } // namespace
 
-std::vector<std::string> PmuMetricBuilder::Header(std::string_view section)
+std::vector<std::string> PmuMetricBuilder::Header(std::string_view section, PmuDataLevel level)
 {
     const auto* writer = FindWriter(section);
-    return writer == nullptr ? std::vector<std::string>{} : writer->header();
+    auto header = writer == nullptr ? std::vector<std::string>{} : writer->header();
+    if (level == PmuDataLevel::Task && header.size() >= 2) {
+        header.erase(header.begin(), header.begin() + 2);
+    }
+    return header;
 }
 
-PmuMetricRow PmuMetricBuilder::Build(
+PmuMetricRow PmuMetricBuilder::BuildBlock(
     std::string_view section, const aclptiBlockKey& key, const aclptiPmuDataRow& row, const ReportConfig& config,
     std::optional<double> duration)
 {
     const auto* writer = FindWriter(section);
     return writer == nullptr ? PmuMetricRow{} : writer->row(MakeRowMetrics(key, row), config, duration);
+}
+
+PmuMetricRow PmuMetricBuilder::BuildTask(
+    std::string_view section, const aclptiTaskPmuData& taskPmuData, const ReportConfig& config,
+    std::optional<double> duration)
+{
+    const auto* writer = FindWriter(section);
+    if (writer == nullptr) {
+        return {};
+    }
+    // Reuse the Section writer with both Task sides and no Block identity.
+    RowMetrics metrics;
+    const auto assignCoreMetrics = [](TypeMetrics& coreMetrics, const std::optional<aclptiTaskPmuCoreData>& coreData) {
+        if (coreData) {
+            coreMetrics.present = true;
+            coreMetrics.totalCycles = coreData->totalCycles;
+            coreMetrics.overflow = coreData->overflow;
+            coreMetrics.values = coreData->values;
+        }
+    };
+    assignCoreMetrics(metrics.aic, taskPmuData.aic);
+    assignCoreMetrics(metrics.aiv, taskPmuData.aiv);
+    auto fields = writer->row(metrics, config, duration);
+    fields.erase(fields.begin(), fields.begin() + 2);
+    return fields;
 }
 
 std::optional<double> PmuMetricBuilder::TaskDuration(const aclptiProfilingDataResult& result)
@@ -1200,10 +1232,12 @@ std::optional<double> PmuMetricBuilder::TaskDuration(const aclptiProfilingDataRe
 
 std::optional<double> PmuMetricBuilder::OperationDuration(const aclptiProfilingDataResult& result, PmuDataLevel level)
 {
-    const auto& logs = level == PmuDataLevel::Task ? result.taskPmuLogs : result.pmuLogs;
+    if (level == PmuDataLevel::Task) {
+        return result.taskPmuData.aic && result.taskPmuData.aiv ? TaskDuration(result) : std::nullopt;
+    }
     bool hasAic = false;
     bool hasAiv = false;
-    for (const auto& [key, row] : logs) {
+    for (const auto& [key, row] : result.pmuLogs) {
         hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
         hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
     }

@@ -10,13 +10,15 @@
 #include "report/collection_file_validator.h"
 
 #include <boost/filesystem.hpp>
+#include <boost/json.hpp>
 #include <boost/system/error_code.hpp>
-#include <boost/property_tree/json_parser.hpp>
 
 #include <fstream>
+#include <set>
+#include <stdexcept>
 #include <string>
-#include <sstream>
 #include <system_error>
+#include <utility>
 
 namespace npucompute::cli {
 namespace {
@@ -29,41 +31,101 @@ bool Fail(const std::string& message, std::string* error)
     return false;
 }
 
-bool ValidateJsonl(std::ifstream* input, const boost::filesystem::path& path, std::string* error)
+std::string Text(const boost::json::value* value)
 {
+    if (value == nullptr || value->is_null()) {
+        return "NA";
+    }
+    if (value->is_string()) {
+        return std::string(value->as_string());
+    }
+    if (value->is_number()) {
+        return boost::json::serialize(*value);
+    }
+    throw std::runtime_error("invalid OpInfoSummary context field");
+}
+
+SummaryJsonlInfo ParseSummaryJsonl(std::ifstream& input)
+{
+    SummaryJsonlInfo info;
+    std::string line;
+    std::string previous;
+    std::set<std::string> categories;
+    while (std::getline(input, line)) {
+        if (input.eof()) {
+            throw std::runtime_error("summary must end with a newline");
+        }
+        if (line.find_first_not_of(" \t\r") == std::string::npos) {
+            continue;
+        }
+        const auto record = boost::json::parse(line);
+        if (!record.is_object()) {
+            throw std::runtime_error("summary record must be an object");
+        }
+        const auto& object = record.as_object();
+        const auto* categoryValue = object.if_contains("category");
+        if (categoryValue == nullptr || !categoryValue->is_string()) {
+            throw std::runtime_error("summary category must be a string");
+        }
+        const std::string category(categoryValue->as_string());
+        if (category.empty() || !categories.insert(category).second) {
+            throw std::runtime_error("empty or duplicate summary category");
+        }
+        if (previous == "OpInfoSummary" || (previous == "PerformanceHints" && category != "OpInfoSummary")) {
+            throw std::runtime_error("invalid PerformanceHints/OpInfoSummary ordering");
+        }
+        if (category == "PerformanceHints") {
+            const auto* hints = object.if_contains("hints");
+            if (hints == nullptr || !hints->is_array()) {
+                throw std::runtime_error("PerformanceHints.hints must be a string array");
+            }
+            info.hasHintsRecord = true;
+            for (const auto& hint : hints->as_array()) {
+                if (!hint.is_string()) {
+                    throw std::runtime_error("PerformanceHints.hints contains a non-string item");
+                }
+                info.hints.emplace_back(hint.as_string());
+            }
+        } else if (category == "OpInfoSummary") {
+            info.opName = Text(object.if_contains("Op Name"));
+            info.device = Text(object.if_contains("Device Id"));
+        }
+        previous = category;
+    }
+    if (input.bad() || previous != "OpInfoSummary") {
+        throw std::runtime_error("summary is incomplete or missing final OpInfoSummary");
+    }
+    return info;
+}
+
+bool ValidateJsonl(
+    std::ifstream* input, const boost::filesystem::path& path, std::string* error, SummaryJsonlInfo* summary)
+{
+    if (path.filename() == "summary.jsonl") {
+        try {
+            auto parsed = ParseSummaryJsonl(*input);
+            if (summary != nullptr) {
+                *summary = std::move(parsed);
+            }
+            return true;
+        } catch (const std::exception& exception) {
+            return Fail("invalid summary JSONL: " + path.string() + ": " + exception.what(), error);
+        }
+    }
+
     std::size_t line_count = 0;
     bool line_has_content = false;
     char last = '\0';
     char character = '\0';
-    std::string line;
-    std::string lastCategory;
-    const bool summary = path.filename() == "summary.jsonl";
     while (input->get(character)) {
         last = character;
         if (character == '\n') {
             if (line_has_content) {
                 ++line_count;
-                if (summary) {
-                    try {
-                        if (lastCategory == "OpInfoSummary") {
-                            return Fail("OpInfoSummary must be the last JSONL record: " + path.string(), error);
-                        }
-                        boost::property_tree::ptree record;
-                        std::istringstream stream(line);
-                        boost::property_tree::read_json(stream, record);
-                        lastCategory = record.get<std::string>("category");
-                    } catch (const std::exception&) {
-                        return Fail("invalid summary JSONL record: " + path.string(), error);
-                    }
-                }
             }
             line_has_content = false;
-            line.clear();
         } else if (character != '\r') {
             line_has_content = true;
-            if (summary) {
-                line.push_back(character);
-            }
         }
     }
     if (input->bad()) {
@@ -75,8 +137,8 @@ bool ValidateJsonl(std::ifstream* input, const boost::filesystem::path& path, st
     if (path.filename() == "HardwareInfo.jsonl" && line_count < 5U) {
         return Fail("JSONL collection file contains fewer than five lines: " + path.string(), error);
     }
-    if (line_count == 0 || (summary && lastCategory != "OpInfoSummary")) {
-        return Fail("JSONL has no records or summary does not end with OpInfoSummary: " + path.string(), error);
+    if (line_count == 0) {
+        return Fail("JSONL has no records: " + path.string(), error);
     }
     return true;
 }
@@ -134,12 +196,12 @@ bool ResolveCollectionFileType(const boost::filesystem::path& path, NpuRepFileTy
     return true;
 }
 
-bool ValidateCollectionFile(const boost::filesystem::path& path, NpuRepFileType type, std::string* error)
+bool ValidateCollectionFile(
+    const boost::filesystem::path& path, NpuRepFileType type, std::string* error, SummaryJsonlInfo* summary)
 {
     if (error != nullptr) {
         error->clear();
     }
-
     boost::system::error_code status_error;
     const boost::filesystem::file_status status = boost::filesystem::symlink_status(path, status_error);
     if (status_error) {
@@ -177,7 +239,7 @@ bool ValidateCollectionFile(const boost::filesystem::path& path, NpuRepFileType 
         return Fail("open collection file failed: " + path.string(), error);
     }
     if (type == NpuRepFileType::Jsonl) {
-        return ValidateJsonl(&input, path, error);
+        return ValidateJsonl(&input, path, error, summary);
     }
     return ValidateCsv(&input, path, error);
 }

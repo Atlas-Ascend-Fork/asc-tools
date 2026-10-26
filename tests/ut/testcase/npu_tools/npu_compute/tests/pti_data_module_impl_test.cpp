@@ -325,14 +325,65 @@ TEST(NpuComputePtiDataModule, BlockAndTaskPmuAreAggregatedSeparately)
     ASSERT_TRUE(result != nullptr);
     ASSERT_TRUE(result != nullptr);
     ASSERT_TRUE(result->pmuLogs.size() == 1);
-    ASSERT_TRUE(result->taskPmuLogs.size() == 1);
+    ASSERT_TRUE(result->taskPmuData.aic.has_value());
+    ASSERT_FALSE(result->taskPmuData.aiv.has_value());
     const aclptiBlockKey key{0, 0, ACLPTI_CORE_TYPE_AIC, 3};
     ASSERT_TRUE(result->pmuLogs.at(key).totalCycles == 200.0);
     ASSERT_TRUE(result->pmuLogs.at(key).values.at(0x701) == 100.0);
     ASSERT_TRUE(result->pmuLogs.at(key).values.at(0x702) == 200.0);
-    ASSERT_TRUE(result->taskPmuLogs.at(key).totalCycles == 2000.0);
-    ASSERT_TRUE(result->taskPmuLogs.at(key).values.at(0x701) == 1000.0);
-    ASSERT_TRUE(result->taskPmuLogs.at(key).values.at(0x702) == 2000.0);
+    ASSERT_TRUE(result->taskPmuData.aic->totalCycles == 2000.0);
+    ASSERT_TRUE(result->taskPmuData.aic->values.at(0x701) == 1000.0);
+    ASSERT_TRUE(result->taskPmuData.aic->values.at(0x702) == 2000.0);
+}
+
+TEST(NpuComputePtiDataModule, TaskReplayMergeKeepsAicAndAivIndependent)
+{
+    ResultSink sink;
+    auto& module = data::ProfilingDataManager::Instance();
+    ASSERT_EQ(module.Initialize([&sink](const auto& result) { return sink.Accept(result); }), ACLPTI_SUCCESS);
+    const auto callback = module.GetRawDataCallback();
+    ASSERT_NE(callback, nullptr);
+    const auto emit = [&](aclptiCoreType side, uint32_t cycles, uint64_t firstCounter, bool overflow = false) {
+        auto payload = PmuRecord(1, 2, 0, firstCounter, 0x2aU);
+        StoreWord(payload.data(), 2, cycles);
+        StoreWord(payload.data(), 4, overflow ? 1U << 10U : 0U);
+        StoreWord(payload.data(), 5, side == ACLPTI_CORE_TYPE_AIV ? 1U : 0U);
+        auto raw = RawData(payload, PMU_DATA_TYPE);
+        EXPECT_EQ(callback(&raw), 0);
+    };
+
+    ASSERT_EQ(module.PrepareReplay({10, PmuEvents({0x422, 0x200})}), ACLPTI_SUCCESS);
+    emit(ACLPTI_CORE_TYPE_AIC, 900, 5, true);
+    emit(ACLPTI_CORE_TYPE_AIC, 1000, 10);
+    emit(ACLPTI_CORE_TYPE_AIV, 2000, 20);
+    ASSERT_EQ(module.RecordReplayStatus({10, ACLPTI_SUCCESS}).status, ACLPTI_SUCCESS);
+    ASSERT_EQ(module.ReleaseReplay(10), ACLPTI_SUCCESS);
+
+    ASSERT_EQ(module.PrepareReplay({11, PmuEvents({0x422, 0x501})}), ACLPTI_SUCCESS);
+    emit(ACLPTI_CORE_TYPE_AIV, 3000, 90);
+    ASSERT_EQ(module.RecordReplayStatus({11, ACLPTI_SUCCESS}).status, ACLPTI_SUCCESS);
+    ASSERT_EQ(module.ReleaseReplay(11), ACLPTI_SUCCESS);
+
+    ASSERT_EQ(module.PrepareReplay({12, PmuEvents({0x999})}), ACLPTI_SUCCESS);
+    emit(ACLPTI_CORE_TYPE_AIC, 4000, 999);
+    emit(ACLPTI_CORE_TYPE_AIV, 5000, 999, true);
+    ASSERT_EQ(module.RecordReplayStatus({12, ACLPTI_ERROR_RESULT_UNRELIABLE}).status, ACLPTI_ERROR_RESULT_UNRELIABLE);
+    ASSERT_EQ(module.ReleaseReplay(12), ACLPTI_SUCCESS);
+    ASSERT_EQ(module.Shutdown(), ACLPTI_SUCCESS);
+
+    const auto result = sink.Wait();
+    ASSERT_NE(result, nullptr);
+    EXPECT_TRUE(result->pmuLogs.empty());
+    ASSERT_TRUE(result->taskPmuData.aic);
+    ASSERT_TRUE(result->taskPmuData.aiv);
+    const auto& aic = *result->taskPmuData.aic;
+    const auto& aiv = *result->taskPmuData.aiv;
+    EXPECT_EQ(aic.totalCycles, 1000);
+    EXPECT_TRUE(aic.overflow);
+    EXPECT_EQ(aic.values, (std::map<uint32_t, double>{{0x422, 10}, {0x200, 11}}));
+    EXPECT_EQ(aiv.totalCycles, 3000);
+    EXPECT_FALSE(aiv.overflow);
+    EXPECT_EQ(aiv.values, (std::map<uint32_t, double>{{0x422, 20}, {0x200, 21}, {0x501, 91}}));
 }
 
 TEST(NpuComputePtiDataModule, ReplayLifecycle)

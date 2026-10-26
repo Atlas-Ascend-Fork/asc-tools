@@ -10,8 +10,9 @@
 #include <gtest/gtest.h>
 
 #include "report/report_writer.h"
+#include "artifact_sink.h"
 #include "report/collection_file_validator.h"
-#include "report/rep_directory_packer.h"
+#include "report/collection_processor.h"
 #include "report/rep_decoder.h"
 #include "import/imported_profile_results.h"
 
@@ -61,7 +62,7 @@ static int RunSuiteMain()
     task.coreType = ACLPTI_CORE_TYPE_AIV;
     task.totalCycles = 2000;
     task.values = {{0x422, 8}, {0x423, 4}};
-    result.taskPmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, task);
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{task.totalCycles, false, task.values};
     task.totalCycles = 9999;
     result.pmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, task);
     CHECK(npucompute::WritePmuReport(result, {"Memory"}, config) == ACLPTI_SUCCESS);
@@ -80,11 +81,11 @@ static int RunSuiteMain()
     CHECK(npucompute::cli::ValidateCollectionFile(
         std::string(directory) + "/summary.jsonl", npucompute::cli::NpuRepFileType::Jsonl, &error));
     auto records = ReadSummary(directory);
-    CHECK(records.size() == 2);
+    CHECK(records.size() == 3);
     CHECK(std::abs(records[0].get<double>("aiv_main_mem_read_bw(GB/s)") - 0.476837) < 1e-6);
-    CHECK(records[1].get<std::string>("Op Name") == "NA");
-    CHECK(records[1].get<std::string>("aicore_parallel_utilization") == "NA");
-    CHECK(records[1].size() == 20);
+    CHECK(records.back().get<std::string>("Op Name") == "NA");
+    CHECK(records.back().get<std::string>("aicore_parallel_utilization") == "NA");
+    CHECK(records.back().size() == 20);
 
     std::vector<uint8_t> encoded;
     CHECK(npucompute::cli::PackDirectoryToRep(directory, &encoded, &error));
@@ -106,10 +107,10 @@ static int RunSuiteMain()
     metadata.deviceId = 0;
     metadata.ratedAivFrequencyMhz = 1800;
     const std::vector<std::string> sections = {"PipeUtilization", "Memory", "L2Cache", "MemoryUB", "MemoryL0"};
-    result.taskPmuLogs.begin()->second.values[0x501] = 1000;
+    result.taskPmuData.aiv->values[0x501] = 1000;
     CHECK(npucompute::WritePmuReport(result, sections, config, metadata) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
-    CHECK(records.size() == 6);
+    CHECK(records.size() == 7);
     auto sortedSections = sections;
     std::sort(sortedSections.begin(), sortedSections.end());
     for (std::size_t index = 0; index < sortedSections.size(); ++index) {
@@ -148,18 +149,20 @@ static int RunSuiteMain()
     missing.pmuLogs = result.pmuLogs;
     CHECK(npucompute::WritePmuReport(missing, {"Memory"}, config) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
-    CHECK(records.size() == 2);
+    CHECK(records.size() == 3);
     CHECK(records[0].get<std::string>("aiv_total_cycles") == "NA");
     CHECK(!boost::filesystem::exists(boost::filesystem::path(config.outputDirectory) / "Memory.csv"));
 
-    config.outputDirectory = (boost::filesystem::path(directory) / "average").string();
-    result.taskPmuLogs.begin()->second.values[0x501] = 1000;
-    auto secondTask = result.taskPmuLogs.begin()->second;
-    secondTask.blockId = 1;
-    secondTask.totalCycles = 4000;
-    secondTask.values[0x501] = 3200;
-    result.taskPmuLogs.emplace(aclptiBlockKey{1, 0, ACLPTI_CORE_TYPE_AIV, 0}, secondTask);
-    result.pmuLogs = result.taskPmuLogs;
+    config.outputDirectory = (boost::filesystem::path(directory) / "task-counters").string();
+    result.taskPmuData.aiv->totalCycles = 3000;
+    result.taskPmuData.aiv->values[0x501] = 1950;
+    result.pmuLogs.clear();
+    for (uint16_t block = 0; block < 2; ++block) {
+        auto row = task;
+        row.blockId = block;
+        row.totalCycles = block == 0 ? 2000 : 4000;
+        result.pmuLogs.emplace(aclptiBlockKey{block, 0, ACLPTI_CORE_TYPE_AIV, 0}, row);
+    }
     npucompute::KernelMetadata averageMetadata;
     averageMetadata.kind = npucompute::KernelKind::Vector;
     averageMetadata.blockDim = 2;
@@ -169,38 +172,38 @@ static int RunSuiteMain()
     records = ReadSummary(config.outputDirectory);
     CHECK(records[0].get<double>("aiv_total_cycles") == 3000);
     CHECK(std::abs(records[0].get<double>("aiv_vec_ratio") - 0.65) < 1e-6);
-    CHECK(std::abs(records[1].get<double>("aicore_parallel_utilization") - 30) < 1e-6);
-    CHECK(std::abs(records[1].get<double>("aicore_parallel_balance") - 75) < 1e-6);
+    CHECK(std::abs(records.back().get<double>("aicore_parallel_utilization") - 30) < 1e-6);
+    CHECK(std::abs(records.back().get<double>("aicore_parallel_balance") - 75) < 1e-6);
 
     config.outputDirectory = (boost::filesystem::path(directory) / "mixed").string();
     aclptiPmuDataRow cube{};
     cube.coreType = ACLPTI_CORE_TYPE_AIC;
     cube.totalCycles = 1000;
     cube.values = {{0x422, 16}, {0x423, 8}};
-    result.taskPmuLogs.emplace(aclptiBlockKey{}, cube);
+    result.taskPmuData.aic = aclptiTaskPmuCoreData{cube.totalCycles, false, cube.values};
     result.taskLogs[1] = {
         {0, 0, 1, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0}, {0, 1, 1, 0, 10100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0}};
     config.aicFrequencyMhz = 1200;
     config.aivFrequencyMhz = 1000;
     CHECK(npucompute::WritePmuReport(result, {"Memory"}, config) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
-    CHECK(records[1].get<std::string>("Op Type") == "mix");
-    CHECK(records[1].get<double>("Task Duration(us)") == 10);
-    CHECK(records[1].get<std::string>("Current Freq") == "NA");
-    CHECK(std::abs(records[1].get<double>("aicore_gm_read_bw(GB/s)") - 0.286102) < 1e-6);
-    CHECK(std::abs(records[1].get<double>("aicore_gm_bw_usage_rate(%)") - 0.026822) < 1e-6);
+    CHECK(records.back().get<std::string>("Op Type") == "mix");
+    CHECK(records.back().get<double>("Task Duration(us)") == 10);
+    CHECK(records.back().get<std::string>("Current Freq") == "NA");
+    CHECK(std::abs(records.back().get<double>("aicore_gm_read_bw(GB/s)") - 0.286102) < 1e-6);
+    CHECK(std::abs(records.back().get<double>("aicore_gm_bw_usage_rate(%)") - 0.026822) < 1e-6);
 
     config.outputDirectory = (boost::filesystem::path(directory) / "zero").string();
     aclptiProfilingDataResult zero;
     cube.totalCycles = 0;
     cube.values = {{810, 0}};
-    zero.taskPmuLogs.emplace(aclptiBlockKey{}, cube);
-    zero.pmuLogs = zero.taskPmuLogs;
+    zero.taskPmuData.aic = aclptiTaskPmuCoreData{cube.totalCycles, false, cube.values};
+    zero.pmuLogs.emplace(aclptiBlockKey{}, cube);
     CHECK(npucompute::WritePmuReport(zero, {"PipeUtilization"}, config) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
     CHECK(records[0].get<std::string>("aic_cube_ratio") == "NA");
     CHECK(records[0].get<double>("aic_total_cycles") == 0);
-    CHECK(records[1].get<std::string>("aicore_parallel_balance") == "NA");
+    CHECK(records.back().get<std::string>("aicore_parallel_balance") == "NA");
 
     // Summary metrics must use task PMU rows even when CSV selects block rows.
     config.outputDirectory = (boost::filesystem::path(directory) / "arithmetic-conflict").string();
@@ -211,14 +214,17 @@ static int RunSuiteMain()
     arithmeticCube.totalCycles = 1000;
     arithmeticCube.values = {{768, 99},  {789, 21}, {790, 32}, {808, 100}, {809, 200},
                              {810, 300}, {11, 10},  {13, 20},  {14, 30},   {15, 40}};
-    arithmeticConflict.taskPmuLogs.emplace(aclptiBlockKey{}, arithmeticCube);
+    arithmeticConflict.taskPmuData.aic =
+        aclptiTaskPmuCoreData{arithmeticCube.totalCycles, false, arithmeticCube.values};
     aclptiPmuDataRow arithmeticVector{};
     arithmeticVector.coreType = ACLPTI_CORE_TYPE_AIV;
     arithmeticVector.totalCycles = 2000;
     arithmeticVector.values = {{1281, 1000}, {1282, 200}, {1283, 300}, {1284, 500}, {12, 100},  {14, 200}, {15, 300},
                                {1344, 400},  {1366, 500}, {1376, 10},  {1377, 20},  {1378, 30}, {1379, 40}};
-    arithmeticConflict.taskPmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, arithmeticVector);
-    arithmeticConflict.pmuLogs = arithmeticConflict.taskPmuLogs;
+    arithmeticConflict.taskPmuData.aiv =
+        aclptiTaskPmuCoreData{arithmeticVector.totalCycles, false, arithmeticVector.values};
+    arithmeticConflict.pmuLogs.emplace(aclptiBlockKey{}, arithmeticCube);
+    arithmeticConflict.pmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, arithmeticVector);
     for (auto& entry : arithmeticConflict.pmuLogs) {
         entry.second.totalCycles = 9999;
         entry.second.values.clear();
@@ -226,7 +232,7 @@ static int RunSuiteMain()
     const std::vector<std::string> arithmeticSections = {"ArithmeticUtilization", "ResourceConflictRatio"};
     CHECK(npucompute::WritePmuReport(arithmeticConflict, arithmeticSections, config) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
-    CHECK(records.size() == 3);
+    CHECK(records.size() == 4);
     for (std::size_t index = 0; index < arithmeticSections.size(); ++index) {
         CHECK(records[index].get<std::string>("category") == arithmeticSections[index]);
         CHECK(records[index].get<double>("aic_total_cycles") == 1000);
@@ -241,7 +247,7 @@ static int RunSuiteMain()
     CHECK(std::abs(records[0].get<double>("aiv_vec_ratio") - 0.5) < 1e-6);
     CHECK(std::abs(records[1].get<double>("aic_cube_wait_ratio") - 0.01) < 1e-6);
     CHECK(std::abs(records[1].get<double>("aiv_vec_sfu_cflt_ratio") - 0.05) < 1e-6);
-    CHECK(records[2].get<std::string>("category") == "OpInfoSummary");
+    CHECK(records.back().get<std::string>("category") == "OpInfoSummary");
     CHECK(npucompute::cli::ValidateCollectionFile(
         boost::filesystem::path(config.outputDirectory) / "summary.jsonl", npucompute::cli::NpuRepFileType::Jsonl,
         &error));
@@ -264,7 +270,7 @@ static int RunSuiteMain()
     }
     boost::filesystem::remove_all(directory);
 
-    // VF summary metrics average valid AIV task rows and represent unavailable values as null.
+    // VF summary metrics use the single AIV task counters and represent unavailable values as NA.
     {
         const auto ipcDirectory =
             boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("vf-ipc-summary-%%%%-%%%%");
@@ -275,90 +281,101 @@ static int RunSuiteMain()
         ipcConfig.aivFrequencyMhz = 800;
         ipcConfig.pmuDataLevel = npucompute::PmuDataLevel::Block;
 
-        // AIV task rows have SIMD IPCs 1, 3 and NA; SIMT IPCs are 0.6, 0.6 and NA.
         aclptiProfilingDataResult ipcResult;
+        ipcResult.taskPmuData.aiv = aclptiTaskPmuCoreData{
+            1000, false, {{1281, 800}, {1282, 300}, {1284, 100}, {1320, 900}, {1466, 40}, {1467, 80}, {1468, 120}}};
+        // Large AIC task counts must not contribute to AIV summary metrics.
+        ipcResult.taskPmuData.aic = aclptiTaskPmuCoreData{
+            2000,
+            false,
+            {{1281, 100}, {1282, 100}, {1284, 100}, {1320, 9000}, {1466, 9000}, {1467, 9000}, {1468, 9000}}};
         for (const auto type : {ACLPTI_CORE_TYPE_AIC, ACLPTI_CORE_TYPE_AIV}) {
-            for (uint16_t block = 0; block < 3; ++block) {
-                aclptiPmuDataRow row{};
-                row.coreType = type;
-                row.blockId = block;
-                row.totalCycles = 1000;
-                row.values = {{1281, 800}, {1282, block == 0 ? 100.0 : 300.0},
-                              {1284, 100}, {1320, block == 0 ? 100.0 : 900.0},
-                              {1466, 40},  {1467, 80},
-                              {1468, 120}};
-                if (block == 2) {
-                    row.values.erase(1320);
-                    row.values.erase(1467);
-                }
-                if (type == ACLPTI_CORE_TYPE_AIC) {
-                    // Large AIC counts must not contribute to AIV summary metrics.
-                    row.values = {{1281, 100},  {1282, 100},  {1284, 100}, {1320, 9000},
-                                  {1466, 9000}, {1467, 9000}, {1468, 9000}};
-                }
-                ipcResult.taskPmuLogs.emplace(aclptiBlockKey{block, 0, type, 0}, row);
-
-                // Large block counts distinguish task-based summaries from the configured CSV level.
-                row.values = {{1281, 100},  {1282, 100},  {1284, 100}, {1320, 9000},
-                              {1466, 9000}, {1467, 9000}, {1468, 9000}};
-                ipcResult.pmuLogs.emplace(aclptiBlockKey{block, 0, type, 0}, row);
-            }
+            // Different block counts distinguish task summaries from the configured CSV data level.
+            aclptiPmuDataRow row{};
+            row.coreType = type;
+            row.totalCycles = 9000;
+            row.values = {{1281, 100},  {1282, 100},  {1284, 100}, {1320, 9000},
+                          {1466, 9000}, {1467, 9000}, {1468, 9000}};
+            ipcResult.pmuLogs.emplace(aclptiBlockKey{0, 0, type, 0}, row);
         }
 
-        // Average valid per-row IPCs: (1+3)/2 = 2, rather than dividing summed counts by summed cycles.
+        // Task SIMD IPC is 900/300; SIMT IPC is (40+80+120)/100/4.
         CHECK(npucompute::WritePmuReport(ipcResult, {"ArithmeticUtilization"}, ipcConfig) == ACLPTI_SUCCESS);
         auto ipcRecords = ReadSummary(ipcDirectory);
         CHECK(!ipcRecords.empty());
+        CHECK(ipcRecords[0].get<double>("aic_total_cycles") == 2000);
+        CHECK(ipcRecords[0].get<double>("aiv_total_cycles") == 1000);
+        CHECK(!ipcRecords[0].get_child_optional("block_id"));
+        CHECK(!ipcRecords[0].get_child_optional("sub_block_id"));
         CHECK(!ipcRecords[0].get_child_optional("aiv_simd_ipc"));
-        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_ipc") - 2.0) < 1e-12);
-        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_ipc") - 0.6) < 1e-12);
-
-        // Missing instruction counts do not invalidate ratios or times; all three AIV task rows contribute.
         CHECK(!ipcRecords[0].get_child_optional("aiv_vec_vf_ratio"));
         CHECK(!ipcRecords[0].get_child_optional("aiv_vec_simt_vf_ratio"));
-        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_ratio") - 0.233333) < 1e-6);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_ipc") - 3.0) < 1e-12);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_ipc") - 0.6) < 1e-12);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_ratio") - 0.3) < 1e-12);
         CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_ratio") - 0.1) < 1e-12);
-        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_time") - 0.291667) < 1e-6);
+        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_time") - 0.375) < 1e-12);
         CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_time") - 0.125) < 1e-12);
 
-        // A zero time is valid and participates in the mean; a missing cycle event does not.
-        ipcResult.taskPmuLogs.at({0, 0, ACLPTI_CORE_TYPE_AIV, 0}).values[1282] = 0;
-        ipcResult.taskPmuLogs.at({0, 0, ACLPTI_CORE_TYPE_AIV, 0}).values[1284] = 0;
-        ipcResult.taskPmuLogs.at({2, 0, ACLPTI_CORE_TYPE_AIV, 0}).values.erase(1282);
-        ipcResult.taskPmuLogs.at({2, 0, ACLPTI_CORE_TYPE_AIV, 0}).values.erase(1284);
-        CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
-        ipcRecords = ReadSummary(ipcDirectory);
-        CHECK(!ipcRecords.empty());
-        // SIMD: (0 + 300/800)/2; SIMT: (0 + 100/800)/2.
-        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_time") - 0.1875) < 1e-12);
-        CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_time") - 0.0625) < 1e-12);
+        auto& taskCore = *ipcResult.taskPmuData.aiv;
+        const auto complete = taskCore.values;
+        // Missing instruction counts leave ratios and times valid; SIMT requires all three counts.
+        for (const auto missing : {1320U, 1466U, 1467U, 1468U}) {
+            taskCore.values = complete;
+            taskCore.values.erase(missing);
+            CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
+            ipcRecords = ReadSummary(ipcDirectory);
+            CHECK(ipcRecords[0].get<std::string>(missing == 1320U ? "aiv_simd_vf_ipc" : "aiv_simt_vf_ipc") == "NA");
+            CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_ratio") - 0.3) < 1e-12);
+            CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_ratio") - 0.1) < 1e-12);
+            CHECK(std::abs(ipcRecords[0].get<double>("aiv_simd_vf_time") - 0.375) < 1e-12);
+            CHECK(std::abs(ipcRecords[0].get<double>("aiv_simt_vf_time") - 0.125) < 1e-12);
+        }
 
-        // Zero VF cycles make all IPC samples unavailable, while ratios and times remain valid zeros.
-        for (auto& [key, row] : ipcResult.taskPmuLogs) {
-            row.values[1282] = 0;
-            row.values[1284] = 0;
+        // Missing VF cycle counts make the corresponding ratio, time and IPC unavailable.
+        for (const auto missing : {1282U, 1284U}) {
+            taskCore.values = complete;
+            taskCore.values.erase(missing);
+            CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
+            ipcRecords = ReadSummary(ipcDirectory);
+            const std::string prefix = missing == 1282U ? "aiv_simd_vf_" : "aiv_simt_vf_";
+            for (const auto* suffix : {"ratio", "time", "ipc"}) {
+                CHECK(ipcRecords[0].get<std::string>(prefix + suffix) == "NA");
+            }
+        }
+
+        // Collected zero instruction counts are valid and produce zero IPCs.
+        taskCore.values = complete;
+        for (const auto event : {1320U, 1466U, 1467U, 1468U}) {
+            taskCore.values[event] = 0;
         }
         CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
         ipcRecords = ReadSummary(ipcDirectory);
-        CHECK(!ipcRecords.empty());
+        CHECK(ipcRecords[0].get<double>("aiv_simd_vf_ipc") == 0);
+        CHECK(ipcRecords[0].get<double>("aiv_simt_vf_ipc") == 0);
+
+        // Zero VF cycles leave valid zero ratios and times, while IPCs are unavailable.
+        taskCore.values = complete;
+        taskCore.values[1282] = 0;
+        taskCore.values[1284] = 0;
+        CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
+        ipcRecords = ReadSummary(ipcDirectory);
         CHECK(ipcRecords[0].get<std::string>("aiv_simd_vf_ipc") == "NA");
         CHECK(ipcRecords[0].get<std::string>("aiv_simt_vf_ipc") == "NA");
         CHECK(ipcRecords[0].get<double>("aiv_simd_vf_ratio") == 0);
         CHECK(ipcRecords[0].get<double>("aiv_simt_vf_ratio") == 0);
-
         CHECK(ipcRecords[0].get<double>("aiv_simd_vf_time") == 0);
         CHECK(ipcRecords[0].get<double>("aiv_simt_vf_time") == 0);
 
-        // An AIC-only task collection retains the AIV VF time and IPC fields as NA.
-        ipcResult.taskPmuLogs.erase({0, 0, ACLPTI_CORE_TYPE_AIV, 0});
-        ipcResult.taskPmuLogs.erase({1, 0, ACLPTI_CORE_TYPE_AIV, 0});
-        ipcResult.taskPmuLogs.erase({2, 0, ACLPTI_CORE_TYPE_AIV, 0});
+        // An AIC-only task collection retains all AIV VF fields as NA despite AIV block data.
+        ipcResult.taskPmuData.aiv.reset();
         CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"ArithmeticUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
         ipcRecords = ReadSummary(ipcDirectory);
-        CHECK(ipcRecords[0].get<std::string>("aiv_simd_vf_time") == "NA");
-        CHECK(ipcRecords[0].get<std::string>("aiv_simd_vf_ipc") == "NA");
-        CHECK(ipcRecords[0].get<std::string>("aiv_simt_vf_time") == "NA");
-        CHECK(ipcRecords[0].get<std::string>("aiv_simt_vf_ipc") == "NA");
+        for (const auto* field :
+             {"aiv_simd_vf_ratio", "aiv_simt_vf_ratio", "aiv_simd_vf_time", "aiv_simd_vf_ipc", "aiv_simt_vf_time",
+              "aiv_simt_vf_ipc"}) {
+            CHECK(ipcRecords[0].get<std::string>(field) == "NA");
+        }
 
         // A summary requested only for PipeUtilization does not expose the ArithmeticUtilization IPCs.
         CHECK(npucompute::WriteSummaryJsonl(ipcResult, {"PipeUtilization"}, ipcConfig, {}) == ACLPTI_SUCCESS);
@@ -374,3 +391,47 @@ static int RunSuiteMain()
 }
 
 TEST(NpuComputePmuReportWriter, Main) { ASSERT_EQ(RunSuiteMain(), 0) << "NpuComputePmuReportWriter reported failure"; }
+
+TEST(NpuComputePmuReportWriter, TaskCsvHasOneRowWithBothSidesAndNoBlockColumns)
+{
+    class Sink final : public npucompute::ArtifactSink {
+    public:
+        void Begin(const std::string&) override { text.clear(); }
+        void Write(std::string_view bytes) override { text.append(bytes); }
+        void Commit(uint64_t count) override { rows = count; }
+        void Abort() noexcept override {}
+        std::string text;
+        uint64_t rows = 0;
+    } sink;
+    aclptiProfilingDataResult result;
+    result.taskPmuData.aic = aclptiTaskPmuCoreData{1000, false, {}};
+    result.taskPmuData.aiv = aclptiTaskPmuCoreData{2000, false, {}};
+    npucompute::ReportConfig config;
+    config.pmuDataLevel = npucompute::PmuDataLevel::Task;
+    ASSERT_EQ(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config, &sink), ACLPTI_SUCCESS);
+    EXPECT_EQ(sink.rows, 1U);
+    EXPECT_EQ(std::count(sink.text.begin(), sink.text.end(), '\n'), 2);
+    EXPECT_EQ(sink.text.find("block_id"), std::string::npos);
+    EXPECT_EQ(sink.text.find("sub_block_id"), std::string::npos);
+    EXPECT_NE(sink.text.find("aic_total_cycles"), std::string::npos);
+    EXPECT_NE(sink.text.find("aiv_total_cycles"), std::string::npos);
+    std::istringstream input(sink.text);
+    std::string line;
+    std::getline(input, line);
+    std::vector<std::string> header;
+    std::istringstream headerStream(line);
+    while (std::getline(headerStream, line, ',')) {
+        header.push_back(line);
+    }
+    std::getline(input, line);
+    std::vector<std::string> values;
+    std::istringstream valueStream(line);
+    while (std::getline(valueStream, line, ',')) {
+        values.push_back(line);
+    }
+    ASSERT_EQ(header.size(), values.size());
+    const auto aic = std::find(header.begin(), header.end(), "aic_total_cycles") - header.begin();
+    const auto aiv = std::find(header.begin(), header.end(), "aiv_total_cycles") - header.begin();
+    EXPECT_EQ(values.at(aic), "1000");
+    EXPECT_EQ(values.at(aiv), "2000");
+}

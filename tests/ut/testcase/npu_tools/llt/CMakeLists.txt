@@ -105,6 +105,8 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/kernel_metadata_collector_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_metadata_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_metrics_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/performance_hints_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/performance_hint_analyzer_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/pipe_trace_finalizer_test.cpp"
   # 直接编译的产品源（与原单测目标保持一致）
     "${NPU_TOOLS_LLT_CLI_DIR}/options.cpp"
@@ -135,13 +137,12 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/pm_sampling_file_validator.cpp"
 
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/launch/disk_output_directory.cpp"
-  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/collection_directory_validator.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/collection_processor.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/collection_file_validator.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/csv_reader.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/csv_sqlite_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/summary_sqlite_finalizer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/rep_decoder.cpp"
-  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/rep_directory_packer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/rep_encoder.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/rep_report_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/report_name.cpp"
@@ -157,6 +158,8 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/pmu_csv_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/summary_jsonl_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/summary_metrics.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/performance_hints/performance_hint_analyzer.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/performance_hints/performance_hint_utils.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/report_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/runtime/kernel_metadata_collector.cpp"
 )

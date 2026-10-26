@@ -19,6 +19,10 @@
 inline constexpr int NPU_COMPUTE_LOG_LEVEL_ENABLED = 1;
 inline constexpr unsigned NPU_COMPUTE_LOG_CODE_UNSPECIFIED = 1U;
 
+// Collector/library diagnostics use this interface and the dlog backend's level
+// and destination settings. CLI output must stay independent of dlog: help,
+// lists and performance hints use stdout; errors, warnings, report paths and
+// optional CLI debug diagnostics use stderr.
 #define ASCTOOL_MODULE_ID static_cast<int32_t>(ASCTOOL)
 #define ASCTOOL_DEBUG_ENABLED() (CheckLogLevel(ASCTOOL_MODULE_ID, DLOG_DEBUG) == NPU_COMPUTE_LOG_LEVEL_ENABLED)
 

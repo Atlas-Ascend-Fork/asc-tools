@@ -265,10 +265,7 @@ bool RunSummaryHardwareChild(const std::string& scenario, const boost::filesyste
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
     CHECK(g_profilingDataCallback != nullptr);
     auto result = std::make_shared<aclptiProfilingDataResult>();
-    aclptiPmuDataRow row{};
-    row.coreType = ACLPTI_CORE_TYPE_AIV;
-    row.totalCycles = 1000;
-    result->taskPmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, row);
+    result->taskPmuData.aiv = aclptiTaskPmuCoreData{1000, false, {}};
     CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
     npucompute::NpuComputeRuntime::Instance().Stop();
     CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);

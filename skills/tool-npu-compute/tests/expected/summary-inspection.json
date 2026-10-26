@@ -8,6 +8,7 @@
     "L2Cache",
     "ArithmeticUtilization",
     "ResourceConflictRatio",
+    "PerformanceHints",
     "OpInfoSummary"
   ],
   "real_fixture": {

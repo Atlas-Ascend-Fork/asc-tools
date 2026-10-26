@@ -12,6 +12,7 @@
 #include "artifact_sink.h"
 #include "pmu/pmu_metric_builder.h"
 #include "report/summary_metrics.h"
+#include "performance_hints/performance_hint_analyzer.h"
 
 #include <boost/filesystem.hpp>
 #include <algorithm>
@@ -31,14 +32,10 @@ namespace npucompute {
 namespace {
 
 using Metric = std::optional<double>;
-constexpr std::size_t MANGLED_NAME_PREFIX_BYTES = 2;
-constexpr std::size_t SUMMARY_METADATA_FIELDS = 2;
-constexpr double GM_THEORETICAL_BANDWIDTH_GBPS = 1600.0;
-constexpr double PERCENT_SCALE = 100.0;
 
 std::string DemangleName(const std::string& name)
 {
-    if (name.compare(0, MANGLED_NAME_PREFIX_BYTES, "_Z") != 0) {
+    if (name.compare(0, 2, "_Z") != 0) {
         return name;
     }
     int status = 0;
@@ -82,12 +79,12 @@ Fields Section(
     std::ostream& output, const std::string& section, const aclptiProfilingDataResult& result,
     const ReportConfig& config)
 {
-    const auto header = PmuMetricBuilder::Header(section);
-    auto fields = AggregateSummarySection(section, result, config);
+    const auto header = PmuMetricBuilder::Header(section, PmuDataLevel::Task);
+    auto fields = BuildTaskSummarySection(section, result, config);
     output << "{\"category\":" << Quote(section);
-    for (std::size_t index = SUMMARY_METADATA_FIELDS; index < header.size(); ++index) {
-        const auto& field = fields.at(header[index]);
-        output << ',' << Quote(header[index]) << ':' << Number(field.value, field.integer);
+    for (const auto& name : header) {
+        const auto& field = fields.at(name);
+        output << ',' << Quote(name) << ':' << Number(field.value, field.integer);
     }
     output << "}\n";
     return fields;
@@ -95,6 +92,9 @@ Fields Section(
 
 Metric Sum(Metric left, Metric right)
 {
+    // OpInfo bandwidth totals retain any available side, treating an unavailable side as zero.
+    // This does not distinguish an absent core side from missing events on a present side,
+    // unlike the stricter main-memory traffic totals in MemoryRow.
     return !left && !right ? std::nullopt : Metric(left.value_or(0) + right.value_or(0));
 }
 
@@ -110,12 +110,8 @@ void OpInfo(
     std::ostream& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
     const ReportConfig& config, const KernelMetadata& metadata, Fields memory)
 {
-    bool hasAic = false;
-    bool hasAiv = false;
-    for (const auto& [key, row] : result.taskPmuLogs) {
-        hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
-        hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
-    }
+    bool hasAic = result.taskPmuData.aic.has_value();
+    bool hasAiv = result.taskPmuData.aiv.has_value();
     if (metadata.kind) {
         hasAic = *metadata.kind != KernelKind::Vector;
         hasAiv = *metadata.kind != KernelKind::Cube;
@@ -130,8 +126,7 @@ void OpInfo(
     const auto metrics = BuildSummaryMetrics(result, config, metadata);
     const Metric read = Sum(memory["aic_main_mem_read_bw(GB/s)"].value, memory["aiv_main_mem_read_bw(GB/s)"].value);
     const Metric write = Sum(memory["aic_main_mem_write_bw(GB/s)"].value, memory["aiv_main_mem_write_bw(GB/s)"].value);
-    const Metric usage =
-        read && write ? Metric((*read + *write) / GM_THEORETICAL_BANDWIDTH_GBPS * PERCENT_SCALE) : std::nullopt;
+    const Metric usage = read && write ? Metric((*read + *write) / 1600.0 * 100.0) : std::nullopt;
     output << "{\"category\":\"OpInfoSummary\",\"Op Name\":"
            << (metadata.name ? Quote(DemangleName(*metadata.name)) : "\"NA\"") << ",\"Op Type\":"
            << (hasAic ? (hasAiv ? "\"mix\"" : "\"cube\"") :
@@ -154,9 +149,7 @@ void OpInfo(
     field("aiv_flops", metrics.aivFlops);
     field("aicore_parallel_utilization", metrics.parallelUtilization);
     field("aicore_parallel_balance", metrics.parallelBalance);
-    field(
-        "aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(GM_THEORETICAL_BANDWIDTH_GBPS) : std::nullopt,
-        true);
+    field("aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(1600) : std::nullopt, true);
     field("aicore_gm_read_bw(GB/s)", read);
     field("aicore_gm_write_bw(GB/s)", write);
     field("aicore_gm_bw_usage_rate(%)", usage);
@@ -218,23 +211,33 @@ aclptiResult WriteSummaryJsonl(
         std::sort(selectedSections.begin(), selectedSections.end());
         selectedSections.erase(std::unique(selectedSections.begin(), selectedSections.end()), selectedSections.end());
         const auto summaryConfig = SummaryReportConfig(metadata, config);
-        Fields memory;
+        HintSections summarySections;
         for (const auto& section : selectedSections) {
             if (PmuMetricBuilder::Header(section).empty()) {
                 return ACLPTI_ERROR_NOT_SUPPORTED;
             }
-            auto values = Section(output, section, result, summaryConfig);
-            if (section == "Memory") {
-                memory = std::move(values);
-            }
+            summarySections.emplace(section, Section(output, section, result, summaryConfig));
         }
-        OpInfo(output, result, selectedSections, config, metadata, std::move(memory));
+        std::vector<std::string> hints;
+        try {
+            hints = AnalyzePerformanceHints(result, summarySections, config, metadata).hints;
+        } catch (const std::exception& error) {
+            ASCTOOL_WARNING("[npu-compute] performance hint analysis failed: %s", error.what());
+        } catch (...) {
+            ASCTOOL_WARNING("[npu-compute] performance hint analysis failed: unexpected exception");
+        }
+        output << "{\"category\":\"PerformanceHints\",\"hints\":[";
+        for (size_t index = 0; index < hints.size(); ++index) {
+            output << (index == 0 ? "" : ",") << Quote(hints[index]);
+        }
+        output << "]}\n";
+        OpInfo(output, result, selectedSections, config, metadata, summarySections["Memory"]);
         const std::string content = output.str();
         if (sink != nullptr) {
             sink->Begin(std::string(artifactPrefix) + "summary.jsonl");
             artifactStarted = true;
             sink->Write(content);
-            sink->Commit(selectedSections.size() + 1U);
+            sink->Commit(selectedSections.size() + 2U);
             artifactStarted = false;
         } else if (!Publish(config.outputDirectory, content)) {
             ASCTOOL_ERROR(
@@ -251,7 +254,7 @@ aclptiResult WriteSummaryJsonl(
         ASCTOOL_ERROR(
             "[npu-compute] summary failed: %s"
             " code=%u",
-            error.what(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+            error.what(), static_cast<unsigned>(1));
         return ACLPTI_ERROR_INTERNAL;
     }
 }

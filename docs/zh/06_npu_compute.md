@@ -104,7 +104,7 @@ npu-compute --list-sets
 
 ## 性能数据采集
 
-采集命令在运行目标程序的过程中采集所选指标，采集成功后生成`.npu-rep`报告文件。目标程序的指定要求和参数传递规则见[命令格式](#命令格式)，芯片支持范围和目标程序要求见[约束说明](#约束说明)。
+采集命令在运行目标程序的过程中采集所选指标，采集成功后生成`.npu-rep`报告文件。采集结束后，工具会根据预设规则分析结果，并输出相关性能提示；详细规则见[性能数据说明](appendix/npu_compute_performance_data.md)。目标程序的指定要求和参数传递规则见[命令格式](#命令格式)，芯片支持范围和目标程序要求见[约束说明](#约束说明)。
 
 ### 选择指标
 
@@ -215,21 +215,19 @@ npu-compute: directory= <parent-directory>/report_<timestamp-ms>_<8-lowercase-he
 
 报告可包含以下文件：
 
-| 文件                 | 生成条件                                             | 内容                                                               |
-| :------------------- | :--------------------------------------------------- | :----------------------------------------------------------------- |
-| `HardwareInfo.jsonl` | 每次采集时生成                                       | 主机和NPU硬件信息。                                                |
-| `summary.jsonl`      | 执行Kernel时生成                                     | 性能汇总及算子概览。                                               |
-| `PipeTrace.json`     | 选择`Pipeline`时生成                                 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
-| `summary.db`         | 存在有效CSV或PmSampling采样数据时                    | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)            |
-| `objdump.txt`        | `PmSampling`采集到指令地址及状态计数时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。  |
-| `symbolizer.json`    | `PmSampling`采集到指令地址及状态计数时生成 | 采样地址对应的函数和内联调用信息。                                 |
-| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`和`PmSampling`除外） | 该Section的指标数据。                                              |
+| 文件 | 生成条件 | 内容 |
+| :--- | :--- | :--- |
+| `HardwareInfo.jsonl` | 每次采集时生成 | 主机和NPU硬件信息。 |
+| `summary.jsonl` | 执行Kernel时生成 | 性能汇总、[性能提示](appendix/npu_compute_performance_data.md#performancehints)及算子概览。 |
+| `PipeTrace.json` | 选择`Pipeline`时生成 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
+| `summary.db` | 存在有效CSV或PmSampling采样数据时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库) |
+| `objdump.txt` | 选择`PmSampling`时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
+| `symbolizer.json` | 选择`PmSampling`时生成 | 采样地址对应的函数和内联调用信息。 |
+| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`和`PmSampling`除外） | 该Section的指标数据。 |
 
 `Pipeline` Section基于采样机制生成流水图，与用户启用的核数无直接关系；即使启用全部核，流水图最多展示6个采样Group的数据。
 
 CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常查看。
-
-各文件的字段含义、计算方法及CSV与summary的关系，请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
 
 ### SQLite数据库
 
@@ -274,7 +272,7 @@ npu-compute --import ./reports/profile.npu-rep --export ./restored
 
 ## 约束说明
 
-- 芯片类型：当前仅支持Ascend 950（dav-3510）。
+- 芯片类型：当前仅支持Ascend 950PR&950DT系列产品。
 - 编程语言：待采集的算子当前仅支持Ascend C。
 - 算子调用方式：当前支持通过`<<<>>>`或aclnn方式进行单算子单次调用。
 - `Pipeline`采集受硬件限制：同一Device上只能有一个进程采集`Pipeline`；多个进程同时采集时，只有一个进程能正常输出，其他进程采集失败。

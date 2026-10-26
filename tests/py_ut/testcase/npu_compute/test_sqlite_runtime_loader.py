@@ -179,7 +179,7 @@ def test_unavailable_sqlite_keeps_other_sampling_files_and_report(
     for name in ("objdump.txt", "symbolizer.json", "HardwareInfo.jsonl"):
         assert len(list(restored.rglob(name))) == 1
     assert len(list(restored.rglob("Memory.csv"))) == int("Memory" in sections)
-    assert len(list(restored.rglob("summary.jsonl"))) == int("Memory" in sections)
+    assert len(list(restored.rglob("summary.jsonl"))) == 1
     assert "sqlite_loader_stub" not in imported.stderr, "unpacking must not load SQLite"
 
 
@@ -197,6 +197,7 @@ def test_worker_unavailable_sqlite_keeps_disassembly_and_symbols(tmp_path, failu
     assert not list(tmp_path.rglob("summary.db"))
     assert (tmp_path / "received/objdump.txt").is_file()
     assert (tmp_path / "received/symbolizer.json").is_file()
+    assert (tmp_path / "received/summary.jsonl").is_file()
     assert "SQLite runtime loading failed" in result.stderr
 
 

@@ -94,7 +94,7 @@ void FinishMergedRows(
     }
 }
 
-void AddPmu(std::map<aclptiBlockKey, aclptiPmuDataRow>& rows, const PmuRecord128& record)
+void AddBlockPmuData(std::map<aclptiBlockKey, aclptiPmuDataRow>& rows, const PmuRecord128& record)
 {
     // The physical core can change within a logical block. Normalize the map key at Finish.
     auto& row = rows[{record.blockId, record.subBlockId, record.coreType, 0}];
@@ -114,6 +114,32 @@ void AddPmu(std::map<aclptiBlockKey, aclptiPmuDataRow>& rows, const PmuRecord128
     } else {
         ++core->count;
     }
+}
+
+void AddTaskPmuData(aclptiTaskPmuData& taskPmuData, const PmuRecord128& record)
+{
+    auto& coreData = record.coreType == ACLPTI_CORE_TYPE_AIC ? taskPmuData.aic : taskPmuData.aiv;
+    if (!coreData) {
+        coreData.emplace();
+    }
+    coreData->totalCycles = static_cast<double>(record.totalCycles);
+    coreData->overflow = coreData->overflow || record.overflow;
+    coreData->values = record.pmuValues;
+}
+
+void MergeTaskPmuCoreData(
+    const std::optional<aclptiTaskPmuCoreData>& source, std::optional<aclptiTaskPmuCoreData>& destination)
+{
+    if (!source) {
+        return;
+    }
+    if (!destination) {
+        destination = source;
+        return;
+    }
+    destination->totalCycles = source->totalCycles;
+    destination->overflow = destination->overflow || source->overflow;
+    destination->values.insert(source->values.begin(), source->values.end());
 }
 
 void FinishRows(std::map<aclptiBlockKey, aclptiPmuDataRow>& rows)
@@ -166,7 +192,11 @@ void DataProcessor::AddDecodedRecord(uint64_t replayId, const DecodedRecord& rec
         }
     } else {
         const auto& pmu = std::get<PmuRecord128>(record.payload);
-        AddPmu(pmu.funcType == kTaskPmuFunctionType ? replay.taskPmuLogs : replay.pmuLogs, pmu);
+        if (pmu.funcType == kTaskPmuFunctionType) {
+            AddTaskPmuData(replay.taskPmuData, pmu);
+        } else {
+            AddBlockPmuData(replay.pmuLogs, pmu);
+        }
     }
 }
 
@@ -184,7 +214,6 @@ aclptiResult DataProcessor::FinishReplayResult(
     if (status == ACLPTI_SUCCESS) {
         try {
             FinishRows(replay.pmuLogs);
-            FinishRows(replay.taskPmuLogs);
         } catch (const std::bad_alloc&) {
             ++replay.stats.failedRecordCount;
             status = ACLPTI_ERROR_OUT_OF_MEMORY;
@@ -192,7 +221,7 @@ aclptiResult DataProcessor::FinishReplayResult(
     }
     if (status != ACLPTI_SUCCESS) {
         replay.pmuLogs.clear();
-        replay.taskPmuLogs.clear();
+        replay.taskPmuData = {};
     }
     replay.status = status;
     if (replay.kind == ReplayKind::Pipeline) {
@@ -215,7 +244,6 @@ aclptiResult DataProcessor::FinishReplayResult(
 void DataProcessor::AssembleProfilingResult()
 {
     std::map<LogicalKey, RowAccumulator> pmuRows;
-    std::map<LogicalKey, RowAccumulator> taskPmuRows;
     for (auto& [replayId, replay] : replays_) {
         result_.stats.receivedBytes += replay.stats.receivedBytes;
         result_.stats.acceptedBytes += replay.stats.acceptedBytes;
@@ -235,7 +263,8 @@ void DataProcessor::AssembleProfilingResult()
         }
         if (replay.kind == ReplayKind::Pmu && replay.status == ACLPTI_SUCCESS) {
             MergeRows(replay.pmuLogs, &pmuRows);
-            MergeRows(replay.taskPmuLogs, &taskPmuRows);
+            MergeTaskPmuCoreData(replay.taskPmuData.aic, result_.taskPmuData.aic);
+            MergeTaskPmuCoreData(replay.taskPmuData.aiv, result_.taskPmuData.aiv);
         }
         if (replay.kind == ReplayKind::Pipeline) {
             result_.pipelineData.emplace(
@@ -248,7 +277,6 @@ void DataProcessor::AssembleProfilingResult()
             std::make_move_iterator(replay.pcSamplingData.end()));
     }
     FinishMergedRows(&pmuRows, &result_.pmuLogs);
-    FinishMergedRows(&taskPmuRows, &result_.taskPmuLogs);
     replays_.clear();
 }
 } // namespace aclpti::data

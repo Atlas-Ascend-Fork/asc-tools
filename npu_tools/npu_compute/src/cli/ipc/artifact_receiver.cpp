@@ -213,9 +213,11 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
             close(active_directory_);
             active_directory_ = -1;
             active_name_.clear();
+            return;
         } else {
             throw std::runtime_error("ARTIFACT: unexpected message");
         }
+        return;
     } catch (...) {
         Abort();
         throw;
@@ -252,7 +254,7 @@ bool ArtifactReceiver::Validate(
             expectedPmu.insert(section + ".csv");
         }
     }
-    if (!expectedPmu.empty() || pipelineExpected) {
+    if (!expectedPmu.empty() || pipelineExpected || samplingExpected) {
         expectedPmu.insert("summary.jsonl");
     }
     std::set<uint64_t> ids;
@@ -305,6 +307,10 @@ bool ArtifactReceiver::Validate(
             const std::set<std::string> expected =
                 emptySampling ? std::set<std::string>{"summary.db"} :
                                 std::set<std::string>{"summary.db", "objdump.txt", "symbolizer.json"};
+            const auto pmu = pmuGroups.find(parent);
+            CheckCollection(
+                pmu != pmuGroups.end() && pmu->second.count("summary.jsonl") != 0,
+                (directory_path_ / parent / "summary.jsonl").string() + ": required summary artifact missing");
             if (!files.count("summary.db") && files.count("objdump.txt") &&
                 HasOnlySimdVectorCode(directory_path_ / parent / "objdump.txt")) {
                 CheckCollection(

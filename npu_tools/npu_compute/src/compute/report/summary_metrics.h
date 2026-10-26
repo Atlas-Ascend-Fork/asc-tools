@@ -31,7 +31,7 @@ struct SummaryMetrics {
 SummaryMetric SummaryEffectiveFrequency(const KernelMetadata& metadata, const ReportConfig& config, bool aic);
 SummaryMetric SummaryRatedFrequency(const KernelMetadata& metadata, bool aic);
 ReportConfig SummaryReportConfig(const KernelMetadata& metadata, const ReportConfig& config);
-SummaryFields AggregateSummarySection(
+SummaryFields BuildTaskSummarySection(
     const std::string& section, const aclptiProfilingDataResult& result, const ReportConfig& config);
 SummaryMetrics BuildSummaryMetrics(
     const aclptiProfilingDataResult& result, const ReportConfig& config, const KernelMetadata& metadata);

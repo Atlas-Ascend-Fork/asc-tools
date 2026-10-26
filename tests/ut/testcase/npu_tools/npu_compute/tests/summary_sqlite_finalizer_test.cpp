@@ -9,7 +9,7 @@
  */
 #include "report/summary_sqlite_finalizer.h"
 #include "report/rep_decoder.h"
-#include "report/rep_directory_packer.h"
+#include "report/collection_processor.h"
 #include "shared/sqlite_runtime_loader.h"
 #include "sqlite_test_api.h"
 

@@ -1,11 +1,12 @@
 # npu-compute performance data
 
-This document describes the fields and calculations in Section CSV files, `summary.jsonl`, and `HardwareInfo.jsonl`. CSV files contain Block/sub-block details. The summary contains Task-level metrics for the selected Sections and an `OpInfoSummary` operator overview. HardwareInfo records host and device information.
+This document describes the fields and calculations in Section CSV files, `summary.jsonl`, and `HardwareInfo.jsonl`. CSV files contain Block/sub-block details or Task metrics according to the collection level. The summary contains Task-level metrics for the selected Sections, performance hints, and an `OpInfoSummary` operator overview. HardwareInfo records host and device information.
 
 | Output | Scope | Relationship to other data |
 |---|---|---|
-| Section CSV | Block/sub-block | Counters, execution times, and derived metrics for each logical execution object. |
+| Section CSV | Block/sub-block or Task | Block CSV has one row per logical execution object. Task CSV has one row per Section with both AIC/AIV metrics and omits `block_id` and `sub_block_id`. |
 | Section records in the summary | Task | Cycles, counters, and data volumes correspond to cumulative totals. Ratios, hit rates, and bandwidths use cumulative inputs and their respective denominators; they are not uniformly Block averages. |
+| `PerformanceHints` | Current Task | Checks from predefined rules, with separate hints for AIC/AIV where applicable. |
 | `OpInfoSummary` | Current Kernel | Combines Task metrics, Block parallel statistics, runtime metadata, and hardware capabilities. |
 | `HardwareInfo.jsonl` | Collection environment | Host and device information, distinct from the Kernel's logical launch counts. |
 
@@ -264,13 +265,71 @@ NA means inapplicable to the current Core or unavailable data; it does not mean 
 
 ## summary (Section summaries and operator information)
 
-`summary.jsonl` uses JSON Lines, one object per line. The selected subset of the seven PMU Sections is emitted in alphabetical order, without duplicates, followed by OpInfoSummary. Pipeline-only collection also emits an operator summary when a Kernel collection result exists. Commands that execute no Kernel do not create a summary.
+`summary.jsonl` uses JSON Lines, one object per line. The selected subset of the seven PMU Sections is emitted in alphabetical order, without duplicates, followed by one `PerformanceHints` record and the final `OpInfoSummary`. Pipeline-only and PmSampling-only collections must also emit a summary containing PerformanceHints and OpInfoSummary when a Kernel collection result exists. Commands that execute no Kernel do not create a summary.
+
+### PerformanceHints
+
+This record stores an overall performance assessment for the current Task. New reports contain exactly one record after the selected PMU Sections and before `OpInfoSummary`. The total is the selected PMU Section count plus 2 (`Pipeline` produces a separate `PipeTrace.json`). Historical reports can contain only Section records and the final `OpInfoSummary`.
+
+| Field | JSON type | Meaning |
+|---|---|---|
+| `category` | string | Always `PerformanceHints`. |
+| `hints` | string[] | Triggered hint messages, one line per item; `[]` when no rule triggers. |
+
+Rules use raw ratios (`0.50` means 50%) and `1 KB = 1024 B`:
+
+| Hint | Core types | Section and fields | Trigger and suggested checks |
+|---|---|---|---|
+| PH01 | AIV | `PipeUtilization`: `aiv_vec_ratio` and the complete AIV pipeline set | `aiv_vec_ratio > 0.50` and equal to the set maximum; check Vector instructions, redundant calculations, conversions, and reductions. |
+| PH02 | AIC, AIV | `PipeUtilization`: `aic_scalar_ratio` / `aiv_scalar_ratio` | Value `> 0.30`; check address calculations, parameter reconstruction, branches, and loop invariants. |
+| PH03 | AIC, AIV | `PipeUtilization`: `aic_mte2_ratio` / `aiv_mte2_ratio` and the corresponding complete pipeline set | Value `> 0.50` and equal to the maximum for that Core type; check input transfers, transfer granularity, and data reuse. |
+| PH04 | AIV | `Memory`: `GM_to_UB_datas(KB)`, `aiv_mte2_instructions` | Instruction count `> 0` and `GM_to_UB_datas(KB) / aiv_mte2_instructions < 16 KB/instruction`; check adjacent transfer merging and contiguous access. |
+| PH05 | AIC, AIV | `PipeUtilization`: `aic_icache_miss_rate` / `aiv_icache_miss_rate` | Value `> 0.15`; check code size, loop unrolling, and template branches. |
+| PH06 | AIC, AIV | `PipeUtilization`: Block execution durations within the same Task | Group by Core type and sub-block role, compute `I = (max(t_i) - min(t_i)) / max(t_i)`, and take the maximum valid group for each Core type. `I >= 0.10` triggers an uneven-duration hint; check partitioning, tail Blocks, and workload distribution. |
+
+The AIV comparison set is `aiv_vec_ratio`, `aiv_scalar_ratio`, `aiv_mte2_ratio`, and `aiv_mte3_ratio`. The AIC set is `aic_cube_ratio`, `aic_scalar_ratio`, `aic_mte1_ratio`, `aic_mte2_ratio`, `aic_mte3_ratio`, and `aic_fixpipe_ratio`. All set members must be valid; ties satisfy the maximum condition.
+
+PH01–PH05 directly reuse the unrounded Task summary values already calculated for `summary.jsonl`, without traversing raw Task samples for validation or aggregation. PH04 divides the summary data volume by the summary instruction count. A missing, null, or invalid summary field skips the affected rule and Core type; PH04 also requires a positive instruction count. PH06 uses internal Block collection data: `t_i` is the duration of logical instance `i` in the group, corresponding to CSV field `aic_time(us)` or `aiv_time(us)`. Instances are deduplicated by `(blockId, subBlockId, coreType)`; each group requires at least two positive, finite durations. The hint describes the Task's overall distribution and produces separate AIC/AIV conclusions. The frequency is constant within a group, so the implementation calculates the equivalent ratio directly from cycles to preserve the 10% boundary; valid frequency is still required. CSV display values can help cross-check the result; threshold decisions use unrounded data.
+
+Each rule produces at most one hint per applicable Core type, ordered by hint ID and then AIC before AIV. Missing or invalid data or an unselected Section skips the affected rule while other valid data continues to be evaluated; the unified `ASCTOOL_DEBUG` interface records the reason in PLOG. An empty array record is retained when no rule triggers.
+
+In this example, `aiv_mte2_ratio=0.82` is the maximum AIV pipeline ratio. Hint messages are emitted in Chinese:
+
+```json
+{"category":"PerformanceHints","hints":["[PH03][AIV] aiv_mte2_ratio（MTE2 流水占比）为 82%，超过 50% 且占比最高；建议检查搬入链路、搬运粒度和数据复用。"]}
+```
+
+When no rule triggers:
+
+```json
+{"category":"PerformanceHints","hints":[]}
+```
+
+After online collection finishes, each summary's hints are displayed once that summary passes validation, with the corresponding operator name and Device. This also applies when using `--no-pack`. Performance hints go to stdout; CLI errors, warnings, report paths, and debug diagnostics go to stderr. For example:
+
+```bash
+npu-compute --section PipeUtilization --section Memory ./application
+```
+
+```text
+npu-compute: Performance Hints
+  op=MyKernel  device=0
+  [PH03][AIV] aiv_mte2_ratio（MTE2 流水占比）为 82%，超过 50% 且占比最高；建议检查搬入链路、搬运粒度和数据复用。
+```
+
+When no rule triggers, the terminal retains the usual report output. Collector diagnostics, including skipped rules, use the dlog backend and follow `ASCEND_GLOBAL_LOG_LEVEL`; for example, `0` enables DEBUG records. PLOG configuration determines where those records are saved. `NPU_COMPUTE_DEBUG=1` enables only CLI debug diagnostics. The following command saves them together with other CLI status messages to `cli-debug.log`; it does not capture PLOG:
+
+```bash
+NPU_COMPUTE_DEBUG=1 npu-compute --section PipeUtilization --section Memory ./application 2>cli-debug.log
+```
+
+`--import` restores stored hints without printing them again. Read the hints from `PerformanceHints.hints` in `summary.jsonl`.
 
 ### Section summary records
 
-The category is ArithmeticUtilization, L2Cache, Memory, MemoryL0, MemoryUB, PipeUtilization, or ResourceConflictRatio. Fields use the corresponding CSV names and units, excluding block_id and sub_block_id. Each field is independently averaged over valid Task PMU records. Unavailable fields remain present and use the exact JSON string "NA"; valid zero remains a number. Counter averages have no decimal places; other finite metrics have six.
+The category is ArithmeticUtilization, L2Cache, Memory, MemoryL0, MemoryUB, PipeUtilization, or ResourceConflictRatio. Fields use the corresponding CSV names and units, excluding block_id and sub_block_id. Each Section computes one metric record directly from the current Task's AIC/AIV counters. Unavailable fields remain present and use the exact JSON string "NA"; valid zero remains a number. Counters have no decimal places; other finite metrics have six.
 
-This averaging is across Task records, a separate level from the cumulative Block coverage of a single Task. Task summaries read Task PMU directly. They neither generate Task data by multiplying Block data by a Block count nor fall back to Block data when Task input is missing. Valid sample counts may differ between Section fields; summaries cannot reconstruct Block details.
+Each result contains one Task PMU object with separate optional AIC/AIV counters. Events for each side are merged across successful replays. Task summaries use this object directly; metrics with a missing side or required event use "NA". Task CSV files contain one row per Section with both sides and omit block_id and sub_block_id. Block CSV files retain one row per logical execution object.
 
 ### Relationship between Block and Task metrics
 
@@ -292,7 +351,7 @@ The relationships below require the same Core type, the same Task execution, mat
 
 Bandwidth fields in Memory, MemoryL0, and MemoryUB that use operation duration use Task duration when both AIC/AIV data and valid Task Logs are present; otherwise, they use cycles and frequency for the corresponding Core type. PipeUtilization active bandwidth uses pipeline active time. The summary prefers actual Current frequency, falls back to Rated frequency, and never substitutes CSV defaults when both are missing. Compare matching time and bandwidth fields only after checking that their effective frequencies and time denominators agree.
 
-For example, two Blocks with cycles `1000, 3000` and active cycles `100, 1500` give Task cycles `4000`, active cycles `1600`, and ratio `0.4`. The arithmetic mean of the Block ratios is `0.3` and cannot replace the Task ratio. When multiple Task records exist, the summary then averages valid Task values independently for each field. Fields without an AIC/AIV prefix also use their applicable records; do not unconditionally treat the sum of both Core types as the final summary value. Calculations use unrounded inputs, so recomputing from rounded CSV values may differ in the last digits.
+For example, two Blocks with cycles `1000, 3000` and active cycles `100, 1500` give Task cycles `4000`, active cycles `1600`, and ratio `0.4`. The arithmetic mean of the Block ratios is `0.3` and cannot replace the Task ratio. Task read_main_memory_datas(KB) and write_main_memory_datas(KB) sum the read and write data volumes, respectively, across the collected sides. If a collected side lacks the required event, the corresponding field is "NA". Calculations use unrounded inputs, so recomputing from rounded CSV values may differ in the last digits.
 
 ### OpInfoSummary fields
 
@@ -312,8 +371,8 @@ Numeric fields accept a number or the exact string "NA". Integer metadata accept
 | `Rated Freq` | number/NA | Rated frequency in MHz; NA when unavailable or mix sides differ. |
 | `aic_flops_theoretical` | number/NA | Hardware Cube count × 8192 × effective AIC frequency(MHz) / 10^6; FP16 TFLOPS, two decimal places. |
 | `aiv_flops_theoretical` | number/NA | Hardware Vector count × 256 × effective AIV frequency(MHz) / 10^6; FP16 TFLOPS, two decimal places. |
-| `aic_flops` | number/NA | mean_task(aic_total_cycles) × mean_task(aic_cube_fp_ratio) × 8192 / (TaskDuration(us) × 10^6). |
-| `aiv_flops` | number/NA | mean_task(aiv_total_cycles) × mean_task(aiv_vec_ratio) × 256 / (TaskDuration(us) × 10^6). |
+| `aic_flops` | number/NA | aic_total_cycles × aic_cube_fp_ratio × 8192 / (TaskDuration(us) × 10^6). |
+| `aiv_flops` | number/NA | aiv_total_cycles × aiv_vec_ratio × 256 / (TaskDuration(us) × 10^6). |
 | `aicore_parallel_utilization` | number/NA | Sum of logical object execution times / (logical object count × TaskDuration) × 100, in percent. |
 | `aicore_parallel_balance` | number/NA | Mean logical object execution time / maximum execution time × 100, in percent. Does not require Task duration. |
 | `aicore_gm_bw_theoretical(GB/s)` | integer/NA | 1600 GB/s when Memory is selected, otherwise NA. |
@@ -323,9 +382,9 @@ Numeric fields accept a number or the exact string "NA". Integer metadata accept
 
 Parallel metrics require the complete logical object set, identified by (blockId, subBlockId, coreType), ignoring physical coreId changes. Each time is total cycles divided by the effective frequency for that side. Missing records, conflicting duplicate cycles, or missing frequency make the metrics unavailable; the denominator is never reduced to the received row count. Mix preserves separate AIC/AIV times. All-zero times produce utilization 0 and balance NA. Missing Task duration only prevents utilization.
 
-Estimated TFLOPS use unrounded cycles and ratios averaged over the same valid Task record set for each side. They do not multiply by Block Dim or Mix Block Dim, and never fall back to Block data when Task input is missing. These are active-cycle estimates, not exact operation counts. Hardware core counts are used only for theoretical compute capacity; 36/72 cores at 1650 MHz produce 486.60/30.41 TFLOPS.
+Estimated TFLOPS use the current Task's unrounded cycles and ratio for each side. Missing Task input produces "NA". These are active-cycle estimates, not exact operation counts. Hardware core counts are used only for theoretical compute capacity; 36/72 cores at 1650 MHz produce 486.60/30.41 TFLOPS.
 
-Each side prefers valid Current frequency, then valid Rated frequency; missing values do not use CSV defaults. The explicit NPU_COMPUTE_FREQUENCY_MHZ override remains supported. The tool currently supports 950 only: ratios {1,0}/{0,1} identify pure cube/vector, while {1,1}/{1,2} identify mix. Mix Block Dim is AIV ratio times launch Block Dim, representing the logical Vector count.
+Each side prefers valid Current frequency, then valid Rated frequency; missing values do not use CSV defaults. The explicit NPU_COMPUTE_FREQUENCY_MHZ override remains supported. The tool currently supports Ascend 950PR&950DT products only: ratios {1,0}/{0,1} identify pure cube/vector, while {1,1}/{1,2} identify mix. Mix Block Dim is AIV ratio times launch Block Dim, representing the logical Vector count.
 
 ## HardwareInfo (host and device information)
 

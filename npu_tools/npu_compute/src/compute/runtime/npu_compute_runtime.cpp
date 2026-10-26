@@ -455,12 +455,10 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
     if (result == nullptr) {
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
-    for (const auto* pmuLogs : {&result->pmuLogs, &result->taskPmuLogs}) {
-        for (const auto& [blockKey, row] : *pmuLogs) {
-            if (blockKey.blockId != row.blockId || blockKey.subBlockId != row.subBlockId ||
-                blockKey.coreType != row.coreType || blockKey.coreId != row.coreId) {
-                return ACLPTI_ERROR_ASSEMBLE;
-            }
+    for (const auto& [blockKey, row] : result->pmuLogs) {
+        if (blockKey.blockId != row.blockId || blockKey.subBlockId != row.subBlockId ||
+            blockKey.coreType != row.coreType || blockKey.coreId != row.coreId) {
+            return ACLPTI_ERROR_ASSEMBLE;
         }
     }
     ReportConfig csvConfig;
@@ -486,8 +484,9 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
         metadata.hardware.currentAicFrequencyMhz = csvConfig.aicFrequencyMhz;
         metadata.hardware.currentAivFrequencyMhz = csvConfig.aivFrequencyMhz;
     }
-    const auto& rows = csvConfig.pmuDataLevel == PmuDataLevel::Block ? result->pmuLogs : result->taskPmuLogs;
-    row_count_ += rows.size();
+    row_count_ += csvConfig.pmuDataLevel == PmuDataLevel::Block ?
+                      result->pmuLogs.size() :
+                      static_cast<size_t>(result->taskPmuData.aic || result->taskPmuData.aiv);
     error_count_ += result->errorStats.failedRecordCount;
     if (result->status != ACLPTI_SUCCESS && result->errorStats.failedRecordCount == 0) {
         ++error_count_;
@@ -509,11 +508,9 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
     }
     replay_count_ += replayIds.size();
     const auto prefix = ReportPrefix(report_sequence_);
-    aclptiResult csvStatus = ACLPTI_SUCCESS;
-    if (!section_config_.Sections().empty() || pipeline_enabled_) {
-        csvStatus = WritePmuReport(
-            *result, section_config_.Sections(), csvConfig, metadata, artifact_sink_, prefix, &degraded_);
-    }
+    // Every kernel result has a summary, including sampling-only launches with no PMU sections.
+    const aclptiResult csvStatus =
+        WritePmuReport(*result, section_config_.Sections(), csvConfig, metadata, artifact_sink_, prefix, &degraded_);
 
     ++report_sequence_;
     aclptiResult firstStatus = result->status == ACLPTI_SUCCESS ? csvStatus : result->status;

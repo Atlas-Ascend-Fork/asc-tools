@@ -29,7 +29,7 @@
 #include <string_view>
 #include <vector>
 
-#include "report/rep_directory_packer.h"
+#include "report/collection_processor.h"
 #include "report/rep_encoder.h"
 
 namespace {

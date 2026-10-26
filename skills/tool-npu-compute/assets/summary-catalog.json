@@ -1,11 +1,12 @@
 {
   "schema_version": 1,
   "output_file": "summary.jsonl",
+  "unavailable_value": "NA",
   "record_types": {
     "PipeUtilization": {
-      "description": "PipeUtilization 各指标在有效 Task 级记录上的算术平均值。",
+      "description": "PipeUtilization 当前 Task 的 AIC/AIV 计数直接计算的指标。",
       "kind": "pmu-section-summary",
-      "data_level": "task-average",
+      "data_level": "task",
       "category_field": {
         "name": "category",
         "json_types": ["string"],
@@ -21,9 +22,9 @@
       }
     },
     "Memory": {
-      "description": "Memory 各指标在有效 Task 级记录上的算术平均值。",
+      "description": "Memory 当前 Task 的 AIC/AIV 计数直接计算的指标。",
       "kind": "pmu-section-summary",
-      "data_level": "task-average",
+      "data_level": "task",
       "category_field": {
         "name": "category",
         "json_types": ["string"],
@@ -39,9 +40,9 @@
       }
     },
     "MemoryL0": {
-      "description": "MemoryL0 各指标在有效 Task 级记录上的算术平均值。",
+      "description": "MemoryL0 当前 Task 的 AIC/AIV 计数直接计算的指标。",
       "kind": "pmu-section-summary",
-      "data_level": "task-average",
+      "data_level": "task",
       "category_field": {
         "name": "category",
         "json_types": ["string"],
@@ -57,9 +58,9 @@
       }
     },
     "MemoryUB": {
-      "description": "MemoryUB 各指标在有效 Task 级记录上的算术平均值。",
+      "description": "MemoryUB 当前 Task 的 AIC/AIV 计数直接计算的指标。",
       "kind": "pmu-section-summary",
-      "data_level": "task-average",
+      "data_level": "task",
       "category_field": {
         "name": "category",
         "json_types": ["string"],
@@ -75,9 +76,9 @@
       }
     },
     "L2Cache": {
-      "description": "L2Cache 各指标在有效 Task 级记录上的算术平均值。",
+      "description": "L2Cache 当前 Task 的 AIC/AIV 计数直接计算的指标。",
       "kind": "pmu-section-summary",
-      "data_level": "task-average",
+      "data_level": "task",
       "category_field": {
         "name": "category",
         "json_types": ["string"],
@@ -93,9 +94,9 @@
       }
     },
     "ArithmeticUtilization": {
-      "description": "ArithmeticUtilization 各指标在有效 Task 级记录上的算术平均值。",
+      "description": "ArithmeticUtilization 当前 Task 的 AIC/AIV 计数直接计算的指标。",
       "kind": "pmu-section-summary",
-      "data_level": "task-average",
+      "data_level": "task",
       "category_field": {
         "name": "category",
         "json_types": ["string"],
@@ -111,9 +112,9 @@
       }
     },
     "ResourceConflictRatio": {
-      "description": "ResourceConflictRatio 各指标在有效 Task 级记录上的算术平均值。",
+      "description": "ResourceConflictRatio 当前 Task 的 AIC/AIV 计数直接计算的指标。",
       "kind": "pmu-section-summary",
-      "data_level": "task-average",
+      "data_level": "task",
       "category_field": {
         "name": "category",
         "json_types": ["string"],
@@ -127,6 +128,29 @@
         "section": "ResourceConflictRatio",
         "excluded_fields": ["block_id", "sub_block_id"]
       }
+    },
+    "PerformanceHints": {
+      "description": "当前 Kernel 的 Task 级性能提示；PH01–PH05 使用 Section 汇总值，PH06 按核类型汇总同角色 Block 耗时差异；没有触发提示时 hints 为空数组。",
+      "kind": "performance-hints",
+      "data_level": "kernel",
+      "fields": [
+        {
+          "name": "category",
+          "json_types": ["string"],
+          "meaning": "记录类别",
+          "unit": "无",
+          "nullable_when": "不允许为 null",
+          "analysis": "固定为 PerformanceHints"
+        },
+        {
+          "name": "hints",
+          "json_types": ["string[]"],
+          "meaning": "命中的提示文案，按 PH01–PH06 和 AIC/AIV 排序",
+          "unit": "无",
+          "nullable_when": "不允许为 null；无提示时为空数组",
+          "analysis": "位于 OpInfoSummary 前一条；历史结果可不包含此记录"
+        }
+      ]
     },
     "OpInfoSummary": {
       "description": "当前 Kernel 的标识、执行配置、频率和跨 Block 概览指标。",

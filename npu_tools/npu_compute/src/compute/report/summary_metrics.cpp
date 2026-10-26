@@ -15,39 +15,20 @@
 
 namespace npucompute {
 namespace {
-constexpr std::size_t SOC_NAME_PREFIX_BYTES = 3;
-constexpr std::size_t ASCEND950_SOC_NAME_BYTES = 11;
-constexpr std::size_t SUMMARY_METADATA_FIELDS = 2;
-constexpr uint64_t SINGLE_CORE_RATIO = 1;
-constexpr uint64_t MIX_VECTOR_RATIO = 2;
-constexpr double AIC_FLOPS_PER_CYCLE = 8192;
-constexpr double AIV_FLOPS_PER_CYCLE = 256;
-constexpr double MICROSECONDS_PER_SECOND = 1000000;
-constexpr double PERCENT_SCALE = 100;
+constexpr double AIC_FLOPS_PER_CYCLE = 8192.0;
+constexpr double AIV_FLOPS_PER_CYCLE = 256.0;
+constexpr double MICROSECONDS_PER_SECOND = 1000000.0;
 SummaryMetric Positive(SummaryMetric value)
 {
     return value && std::isfinite(*value) && *value > 0 ? value : std::nullopt;
 }
 bool Nonnegative(double value) { return std::isfinite(value) && value >= 0; }
-struct Average {
-    double sum = 0;
-    size_t count = 0;
-    void Add(SummaryMetric value)
-    {
-        if (value && std::isfinite(*value)) {
-            sum += *value;
-            ++count;
-        }
-    }
-    SummaryMetric Value() const { return count ? SummaryMetric(sum / count) : std::nullopt; }
-};
 bool SupportsSummary(const KernelMetadata& metadata, const ReportConfig& config)
 {
     const auto soc =
         metadata.hardware.collected ? metadata.hardware.socName : std::optional<std::string>(config.socName);
-    return soc && (soc->compare(0, SOC_NAME_PREFIX_BYTES, "950") == 0 ||
-                   soc->compare(0, ASCEND950_SOC_NAME_BYTES, "Ascend950PR") == 0 ||
-                   soc->compare(0, ASCEND950_SOC_NAME_BYTES, "Ascend950DT") == 0);
+    return soc && (soc->compare(0, 3, "950") == 0 || soc->compare(0, 11, "Ascend950PR") == 0 ||
+                   soc->compare(0, 11, "Ascend950DT") == 0);
 }
 SummaryMetric Cycles(const aclptiBlockKey& key, const aclptiPmuDataRow& row)
 {
@@ -81,7 +62,7 @@ std::pair<SummaryMetric, SummaryMetric> Parallel(
             return {};
         }
         vectorRatio = *metadata.mixBlockDim / *metadata.blockDim;
-        if (vectorRatio != SINGLE_CORE_RATIO && vectorRatio != MIX_VECTOR_RATIO) {
+        if (vectorRatio != 1 && vectorRatio != 2) {
             return {};
         }
     }
@@ -133,8 +114,8 @@ std::pair<SummaryMetric, SummaryMetric> Parallel(
     }
     const auto duration = Positive(PmuMetricBuilder::TaskDuration(result));
     return {
-        duration ? SummaryMetric(sum / static_cast<double>(expected) / *duration * PERCENT_SCALE) : std::nullopt,
-        maximum > 0 ? SummaryMetric(sum / static_cast<double>(expected) / maximum * PERCENT_SCALE) : std::nullopt};
+        duration ? SummaryMetric(sum / static_cast<double>(expected) / *duration * 100) : std::nullopt,
+        maximum > 0 ? SummaryMetric(sum / static_cast<double>(expected) / maximum * 100) : std::nullopt};
 }
 SummaryMetric Estimate(const aclptiProfilingDataResult& result, const ReportConfig& config, bool aic)
 {
@@ -142,36 +123,19 @@ SummaryMetric Estimate(const aclptiProfilingDataResult& result, const ReportConf
     if (!duration) {
         return std::nullopt;
     }
-    const auto header = PmuMetricBuilder::Header("ArithmeticUtilization");
+    const auto header = PmuMetricBuilder::Header("ArithmeticUtilization", PmuDataLevel::Task);
+    const auto fields = PmuMetricBuilder::BuildTask("ArithmeticUtilization", result.taskPmuData, config);
     const std::string cycleName = aic ? "aic_total_cycles" : "aiv_total_cycles";
     const std::string ratioName = aic ? "aic_cube_fp_ratio" : "aiv_vec_ratio";
     const auto cycleIndex = static_cast<size_t>(std::find(header.begin(), header.end(), cycleName) - header.begin());
     const auto ratioIndex = static_cast<size_t>(std::find(header.begin(), header.end(), ratioName) - header.begin());
-    Average cycles;
-    Average ratios;
-    for (const auto& [key, row] : result.taskPmuLogs) {
-        if (key.coreType != (aic ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV)) {
-            continue;
-        }
-        const auto fields = PmuMetricBuilder::Build("ArithmeticUtilization", key, row, config);
-        if (fields.size() <= std::max(cycleIndex, ratioIndex)) {
-            return std::nullopt;
-        }
-        const auto cycle = fields[cycleIndex].value;
-        const auto ratio = fields[ratioIndex].value;
-        // No missing task sample may silently shrink the averaging population.
-        if (!cycle || !ratio || !Nonnegative(*cycle) || !Nonnegative(*ratio)) {
-            return std::nullopt;
-        }
-        cycles.Add(cycle);
-        ratios.Add(ratio);
-    }
-    const auto meanCycles = cycles.Value();
-    const auto meanRatio = ratios.Value();
-    return meanCycles && meanRatio ? SummaryMetric(
-                                         *meanCycles * *meanRatio * (aic ? AIC_FLOPS_PER_CYCLE : AIV_FLOPS_PER_CYCLE) /
-                                         (*duration * MICROSECONDS_PER_SECOND)) :
-                                     std::nullopt;
+    const auto cycles = fields.at(cycleIndex).value;
+    const auto ratio = fields.at(ratioIndex).value;
+    return cycles && ratio && Nonnegative(*cycles) && Nonnegative(*ratio) ?
+               SummaryMetric(
+                   *cycles * *ratio * (aic ? AIC_FLOPS_PER_CYCLE : AIV_FLOPS_PER_CYCLE) /
+                   (*duration * MICROSECONDS_PER_SECOND)) :
+               std::nullopt;
 }
 } // namespace
 
@@ -205,23 +169,15 @@ ReportConfig SummaryReportConfig(const KernelMetadata& metadata, const ReportCon
     }
     return summary;
 }
-SummaryFields AggregateSummarySection(
+SummaryFields BuildTaskSummarySection(
     const std::string& section, const aclptiProfilingDataResult& result, const ReportConfig& config)
 {
-    const auto header = PmuMetricBuilder::Header(section);
-    std::vector<Average> averages(header.size());
-    std::vector<bool> integers(header.size(), false);
-    const auto duration = PmuMetricBuilder::OperationDuration(result, PmuDataLevel::Task);
-    for (const auto& [key, row] : result.taskPmuLogs) {
-        const auto fields = PmuMetricBuilder::Build(section, key, row, config, duration);
-        for (size_t i = SUMMARY_METADATA_FIELDS; i < fields.size(); ++i) {
-            averages[i].Add(fields[i].value);
-            integers[i] = integers[i] || fields[i].integer;
-        }
-    }
+    const auto header = PmuMetricBuilder::Header(section, PmuDataLevel::Task);
+    const auto values = PmuMetricBuilder::BuildTask(
+        section, result.taskPmuData, config, PmuMetricBuilder::OperationDuration(result, PmuDataLevel::Task));
     SummaryFields fields;
-    for (size_t i = SUMMARY_METADATA_FIELDS; i < header.size(); ++i) {
-        fields.emplace(header[i], SummaryField{averages[i].Value(), integers[i]});
+    for (size_t i = 0; i < header.size(); ++i) {
+        fields.emplace(header[i], SummaryField{values.at(i).value, values.at(i).integer});
     }
     return fields;
 }

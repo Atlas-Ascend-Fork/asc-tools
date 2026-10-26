@@ -13,6 +13,7 @@
 #include "npu_compute/acl_pti_callback_stub.h"
 #include "sqlite_test_api.h"
 #include "cli/report/summary_sqlite_finalizer.h"
+#include <boost/property_tree/json_parser.hpp>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -25,6 +26,7 @@
 #include <limits>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -65,6 +67,25 @@ std::string Read(const fs::path& path)
 {
     std::ifstream input(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+void CheckSummary(const fs::path& path, bool samplingOnly)
+{
+    std::istringstream input(Read(path));
+    std::vector<boost::property_tree::ptree> records;
+    std::string line;
+    while (std::getline(input, line)) {
+        std::istringstream recordInput(line);
+        boost::property_tree::ptree record;
+        boost::property_tree::read_json(recordInput, record);
+        records.push_back(std::move(record));
+    }
+    CHECK(records.size() == (samplingOnly ? 2U : 3U));
+    CHECK(records[records.size() - 2].get<std::string>("category") == "PerformanceHints");
+    if (samplingOnly)
+        CHECK(records[0].get_child("hints").empty());
+    CHECK(records.back().get<std::string>("category") == "OpInfoSummary");
+    // No kernel metadata callback was delivered: the result must still be published.
+    CHECK(records.back().get<std::string>("Op Name") == "NA");
 }
 void CheckDatabase(const fs::path& path, bool zero, bool empty = false)
 {
@@ -294,6 +315,12 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     CHECK(StagingDirectories("/tmp") == initialStaging);
     CHECK(StagingDirectories(root).empty());
     CHECK(callback(Result("success")) == ACLPTI_ERROR_INVALID_STATE);
+    if (mode == "no-callback") {
+        CHECK(!fs::exists(sink.output / "summary.jsonl"));
+    } else {
+        CheckSummary(
+            sink.output / "summary.jsonl", mode != "combo" && mode != "combo-failure" && mode != "map-failure");
+    }
     const bool partial = mode == "mixed-results";
     if (success || partial) {
         const auto output = sink.output;
@@ -313,9 +340,11 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
             expectedRows = 2;
         }
         CHECK(runtime.RowCount() == static_cast<std::uint64_t>(expectedRows));
-        if (mode == "repeat") {
+        if (mode == "repeat" || mode == "mixed-results") {
             const auto prefix = "collection-p" + std::to_string(getpid()) + "-0001";
-            CheckDatabase(output / prefix / "summary.db", false);
+            if (mode == "repeat")
+                CheckDatabase(output / prefix / "summary.db", false);
+            CheckSummary(output / prefix / "summary.jsonl", true);
         }
         if (mode == "combo") {
             CHECK(fs::exists(output / "Memory.csv"));

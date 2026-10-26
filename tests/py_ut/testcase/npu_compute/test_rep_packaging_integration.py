@@ -118,6 +118,7 @@ def run_fixture(
     export_path: Optional[Path] = None,
     work_directory: Optional[Path] = None,
     mode: Optional[str] = None,
+    no_pack: bool = False,
 ):
     if work_directory is None:
         work_directory = tmp_path / "work"
@@ -132,6 +133,8 @@ def run_fixture(
     ]
     if export_path is not None:
         command.extend(("--export", str(export_path)))
+    if no_pack:
+        command.append("--no-pack")
     command.append(str(FIXTURE_APP))
     if mode is not None:
         command.extend(("--mode", mode))
@@ -514,3 +517,67 @@ def test_concurrent_collections_remove_data_directories_and_use_unique_reports(
         assert report.parent == work_directory
         assert report.is_file()
     assert_no_temporary_report_files(work_directory)
+
+
+@pytest.mark.parametrize(
+    "mode", ("performance-hints", "chunked-hints", "hints-before-exit")
+)
+def test_performance_hints_print_after_collection_and_are_preserved_on_import(
+    tmp_path, mode
+):
+    result, work = run_fixture(tmp_path, mode=mode)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("npu-compute: Performance Hints") == 1
+    assert "  op=fixture_kernel  device=0" in result.stdout
+    assert result.stdout.count("[PH03][AIV]") == 1
+    assert "[PH03][AIV]" not in result.stderr
+    if mode == "hints-before-exit":
+        assert result.stdout.index("fixture-exiting") < result.stdout.index(
+            "[PH03][AIV]"
+        )
+    report = extract_path(result.stderr, "report")
+    entries = {entry.name: entry for entry in decode_rep(report.read_bytes()).entries}
+    records = [
+        json.loads(line) for line in entries["summary.jsonl"].payload.splitlines()
+    ]
+    assert records[-2]["category"] == "PerformanceHints"
+    assert len(records[-2]["hints"]) == 1
+    imported = subprocess.run(
+        [str(CLI), "--import", str(report)],
+        cwd=work,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert imported.returncode == 0, imported.stderr
+    assert "Performance Hints" not in imported.stdout
+    assert "[PH03][AIV]" not in imported.stdout
+    restored = extract_path(imported.stderr, "unpacked")
+    assert (restored / "summary.jsonl").read_bytes() == entries["summary.jsonl"].payload
+
+
+def test_no_pack_prints_performance_hints_after_collection(tmp_path):
+    result, _ = run_fixture(tmp_path, mode="hints-before-exit", no_pack=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("npu-compute: Performance Hints") == 1
+    assert "  op=fixture_kernel  device=0" in result.stdout
+    assert result.stdout.count("[PH03][AIV]") == 1
+    assert result.stdout.index("fixture-exiting") < result.stdout.index("[PH03][AIV]")
+    output = extract_path(result.stderr, "directory")
+    records = [
+        json.loads(line) for line in (output / "summary.jsonl").read_text().splitlines()
+    ]
+    assert records[-2]["category"] == "PerformanceHints"
+    assert len(records[-2]["hints"]) == 1
+
+
+@pytest.mark.parametrize("mode", ("empty-hints", "invalid-hints"))
+@pytest.mark.parametrize("no_pack", (False, True))
+def test_empty_or_invalid_performance_hints_do_not_print(tmp_path, mode, no_pack):
+    result, _ = run_fixture(tmp_path, mode=mode, no_pack=no_pack)
+    assert result.returncode == (0 if mode == "empty-hints" else 3), result.stderr
+    assert "Performance Hints" not in result.stdout
+    assert "[PH" not in result.stdout
+    assert (
+        "empty_hints" if mode == "empty-hints" else "invalid summary JSONL"
+    ) in result.stderr

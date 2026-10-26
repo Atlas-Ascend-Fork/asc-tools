@@ -97,6 +97,21 @@ void End(ArtifactReceiver& receiver, uint64_t id, uint64_t length)
 {
     receiver.Receive({Type::DataEnd, EncodeArtifactEnd({id, length, 1})});
 }
+TEST(NpuComputeUdsArtifact, ReceiveCommitsArtifactOnDataEnd)
+{
+    TempDirectory temporary;
+    ArtifactReceiver receiver(temporary.Path());
+    EXPECT_EQ(receiver.Count(), 0U);
+    receiver.Receive(
+        {Type::DataBegin, EncodeArtifactBegin({1, DataKind::PmuCsv, "summary.jsonl", ArtifactType::Jsonl})});
+    receiver.Receive({Type::Pmu, EncodeArtifactChunk({1, 0, Bytes{'{', '}', '\n'}})});
+    EXPECT_EQ(receiver.Count(), 0U);
+    receiver.Receive({Type::DataEnd, EncodeArtifactEnd({1, 3, 1})});
+    EXPECT_EQ(ReadFile(fs::path(temporary.Path()) / "summary.jsonl"), "{}\n");
+    EXPECT_EQ(receiver.Count(), 1U);
+    receiver.Receive({Type::DataBegin, EncodeArtifactBegin({2, DataKind::PmuCsv, "Memory.csv", ArtifactType::Csv})});
+    EXPECT_EQ(receiver.Count(), 1U);
+}
 TEST(NpuComputeUdsArtifact, RoundTripAndManifest)
 {
     TempDirectory temporary;

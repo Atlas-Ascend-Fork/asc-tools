@@ -20,6 +20,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <tuple>
 #include <set>
 #include <string>
@@ -28,6 +29,18 @@
 enum aclptiCoreType : uint8_t {
     ACLPTI_CORE_TYPE_AIC = 0,
     ACLPTI_CORE_TYPE_AIV = 1,
+};
+
+struct aclptiTaskPmuCoreData {
+    double totalCycles = 0;
+    bool overflow = false;
+    std::map<uint32_t, double> values;
+};
+
+// One original Task, with independent AIC/AIV counters merged across successful replays.
+struct aclptiTaskPmuData {
+    std::optional<aclptiTaskPmuCoreData> aic;
+    std::optional<aclptiTaskPmuCoreData> aiv;
 };
 
 struct aclptiPmuDataRow {
@@ -162,7 +175,7 @@ struct aclptiProfilingDataResult {
     std::map<uint16_t, std::vector<aclptiTaskLogRow>> taskLogs;
     std::map<aclptiBlockKey, std::vector<aclptiTaskLogRow>> blockLogs;
     std::map<aclptiBlockKey, aclptiPmuDataRow> pmuLogs;
-    std::map<aclptiBlockKey, aclptiPmuDataRow> taskPmuLogs;
+    aclptiTaskPmuData taskPmuData;
     std::map<uint64_t, aclptiPipelineData> pipelineData;
     std::vector<aclptiRawDataChunk> pcSamplingData;
     std::map<uint64_t, std::shared_ptr<const aclptiPmSamplingContext>> pmSamplingContexts;

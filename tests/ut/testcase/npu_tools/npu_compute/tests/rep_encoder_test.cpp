@@ -67,6 +67,7 @@ int TestMultipleEntries()
     const std::vector<uint8_t> csv = {'a', ',', 'b', '\n', '1', ',', '2', '\n'};
     const std::vector<RepEntry> entries = {
         {"HardwareInfo.jsonl", NpuRepFileType::Jsonl, jsonl},
+        {"empty.csv", NpuRepFileType::Csv, {}},
         {"PipeUtilization.csv", NpuRepFileType::Csv, csv},
     };
     std::vector<uint8_t> encoded;
@@ -81,8 +82,12 @@ int TestMultipleEntries()
     CHECK(decoded.entries[0].payload == jsonl);
     CHECK(decoded.entries[1].file_name == entries[1].file_name);
     CHECK(decoded.entries[1].file_type == entries[1].file_type);
-    CHECK(decoded.entries[1].payload == csv);
+    CHECK(decoded.entries[1].payload.empty());
     CHECK(decoded.entries[1].file_offset == decoded.entries[0].file_offset + jsonl.size());
+    CHECK(decoded.entries[2].file_name == entries[2].file_name);
+    CHECK(decoded.entries[2].file_type == entries[2].file_type);
+    CHECK(decoded.entries[2].payload == csv);
+    CHECK(decoded.entries[2].file_offset == decoded.entries[1].file_offset);
     return 0;
 }
 

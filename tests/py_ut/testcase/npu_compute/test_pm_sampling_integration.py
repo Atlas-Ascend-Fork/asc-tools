@@ -79,12 +79,18 @@ def check_report(cli, directory, sections, environment):
     assert report.is_file()
     assert struct.unpack_from("<I", report.read_bytes(), 8)[0] == 0x10000
     files = report_files(report.read_bytes())
-    expected = {"HardwareInfo.jsonl", *NAMES}
+    expected = {"HardwareInfo.jsonl", "summary.jsonl", *NAMES}
     if "Memory" in sections:
-        expected.update(("Memory.csv", "summary.jsonl"))
+        expected.add("Memory.csv")
     if "Pipeline" in sections:
-        expected.update(("PipeTrace.json", "summary.jsonl"))
+        expected.add("PipeTrace.json")
     assert set(files) == expected
+    records = [json.loads(line) for line in files["summary.jsonl"][1].splitlines()]
+    assert records[-2]["category"] == "PerformanceHints"
+    assert records[-1]["category"] == "OpInfoSummary"
+    if sections == ("PmSampling",):
+        assert len(records) == 2
+        assert records[0] == {"category": "PerformanceHints", "hints": []}
     for name, kind in NAMES.items():
         assert files[name][0] == kind and files[name][1]
     imported = directory / "imported"
@@ -266,6 +272,7 @@ def test_real_gather_round_trip(tmp_path, sections):
         "missing-db",
         "missing-objdump",
         "missing-symbolizer",
+        "missing-summary",
         "invalid-db",
         "invalid-objdump",
         "invalid-symbolizer",
@@ -296,11 +303,16 @@ def test_partial_sampling_report(tmp_path, failure):
     assert result.returncode == 3, result.stdout + result.stderr
     assert "collection incomplete" in result.stderr
     files = report_files((tmp_path / "partial.npu-rep").read_bytes())
-    assert {"HardwareInfo.jsonl", "Memory.csv", "summary.jsonl"} <= files.keys()
+    assert {"HardwareInfo.jsonl", "Memory.csv"} <= files.keys()
+    if failure == "missing-summary":
+        assert "summary.jsonl" not in files
+    else:
+        assert "summary.jsonl" in files
     omitted = {
         "db": "summary.db",
         "objdump": "objdump.txt",
         "symbolizer": "symbolizer.json",
+        "summary": "summary.jsonl",
     }
     expected = (
         set()

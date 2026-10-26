@@ -1,11 +1,12 @@
 # npu-compute性能数据
 
-本文说明各Section CSV、`summary.jsonl`和`HardwareInfo.jsonl`的字段含义与计算方法。CSV展示Block/sub-block明细；summary包含所选Section的Task级指标及`OpInfoSummary`算子概览；HardwareInfo记录主机和设备信息。
+本文说明各Section CSV、`summary.jsonl`和`HardwareInfo.jsonl`的字段含义与计算方法。CSV按采集级别展示Block/sub-block明细或Task指标；summary包含所选Section的Task级指标、性能提示及`OpInfoSummary`算子概览；HardwareInfo记录主机和设备信息。
 
 | 输出内容 | 数据范围 | 与其他数据的关系 |
 |---|---|---|
-| Section CSV | Block/sub-block | 各逻辑执行对象的计数、执行时间及派生指标。 |
+| Section CSV | Block/sub-block或Task | Block级每个逻辑执行对象一行；Task级每个Section一行，同时包含AIC/AIV指标，省略`block_id`和`sub_block_id`。 |
 | summary的Section记录 | Task | 周期、计数和数据量对应累计；比例、命中率和带宽按累计基础数据及相应分母重算，不能统一理解为Block均值。 |
+| `PerformanceHints` | 当前Task | 按预定义规则生成的检查建议，支持AIC/AIV的规则分别成条。 |
 | `OpInfoSummary` | 当前Kernel | 组合Task指标、Block并行统计、运行时元数据和硬件能力信息。 |
 | `HardwareInfo.jsonl` | 采集环境 | 提供主机及设备信息，与Kernel的启动逻辑数量不同。 |
 
@@ -264,13 +265,71 @@ NA表示当前Core不适用或所需数据不可用，不表示数值零。
 
 ## summary（Section汇总和算子基础信息）
 
-所选性能指标的Task汇总和算子基础信息保存在`summary.jsonl`中，每行一个JSON对象。七个PMU Section按名称字母升序输出所选子集，重复选择只输出一次；最后固定为`OpInfoSummary`。仅选择Pipeline时，有Kernel采集结果也生成概览。未执行Kernel时不凭空创建摘要。
+所选性能指标的Task汇总、性能提示和算子基础信息保存在`summary.jsonl`中，每行一个JSON对象。七个PMU Section按名称字母升序输出所选子集，重复选择只输出一次；新报告随后写入一条`PerformanceHints`，最后固定为`OpInfoSummary`。仅选择Pipeline或PmSampling时，有Kernel采集结果也必须生成摘要，包含PerformanceHints和OpInfoSummary。未执行Kernel时不凭空创建摘要。
+
+### PerformanceHints
+
+此记录保存当前Task的整体性能评估结论。新报告中固定包含一条，位于所选PMU Section记录之后、`OpInfoSummary`之前；记录总数为所选PMU Section数加2（`Pipeline`输出独立的`PipeTrace.json`）。历史报告可只包含Section记录与末行`OpInfoSummary`。
+
+| 字段 | JSON类型 | 含义 |
+|---|---|---|
+| `category` | string | 固定为`PerformanceHints`。 |
+| `hints` | string[] | 命中的提示文本，每条为单行字符串；无命中时为`[]`。 |
+
+提示规则如下，比例字段按原始比值判定（`0.50`表示50%），容量按`1 KB = 1024 B`换算：
+
+| 提示 | 适用核类型 | Section及字段 | 触发条件与检查方向 |
+|---|---|---|---|
+| PH01 | AIV | `PipeUtilization`：`aiv_vec_ratio`及完整AIV流水集合 | `aiv_vec_ratio > 0.50`且为集合最大值；检查Vector指令序列、冗余计算、转换和归约。 |
+| PH02 | AIC、AIV | `PipeUtilization`：`aic_scalar_ratio` / `aiv_scalar_ratio` | 对应值`> 0.30`；检查循环内地址计算、参数重建、分支和可外提不变量。 |
+| PH03 | AIC、AIV | `PipeUtilization`：`aic_mte2_ratio` / `aiv_mte2_ratio`及对应完整流水集合 | 对应值`> 0.50`且为该核类型集合最大值；检查搬入链路、搬运粒度和数据复用。 |
+| PH04 | AIV | `Memory`：`GM_to_UB_datas(KB)`、`aiv_mte2_instructions` | 指令数`> 0`且两个汇总值相除`< 16 KB/指令`；检查相邻搬运合并和连续访问。 |
+| PH05 | AIC、AIV | `PipeUtilization`：`aic_icache_miss_rate` / `aiv_icache_miss_rate` | 对应值`> 0.15`；检查代码体积、循环展开和模板分支。 |
+| PH06 | AIC、AIV | `PipeUtilization`：同一Task内各Block执行实例的耗时 | 按核类型和sub-block角色分组计算`I = (max(t_i) - min(t_i)) / max(t_i)`，各核类型取有效组最大值，`I >= 0.10`时提示核间耗时分布不均匀；检查任务切分、尾块分配及各核工作量。 |
+
+AIV流水比较集合为`aiv_vec_ratio`、`aiv_scalar_ratio`、`aiv_mte2_ratio`、`aiv_mte3_ratio`；AIC集合为`aic_cube_ratio`、`aic_scalar_ratio`、`aic_mte1_ratio`、`aic_mte2_ratio`、`aic_mte3_ratio`、`aic_fixpipe_ratio`。比较集合需完整有效，并列最大值也满足最大值条件。
+
+PH01–PH05直接复用summary已经计算好的未舍入Task汇总值，不再遍历原始Task样本校验或重新汇总。PH04使用summary中的数据量除以指令数。所需汇总字段缺失、为空或无效时，跳过受影响的规则与核类型；PH04还要求指令数大于零。PH06使用内部Block采集结果，`t_i`为组内第`i`个逻辑执行实例的耗时，对应CSV字段`aic_time(us)`或`aiv_time(us)`；按`(blockId, subBlockId, coreType)`去重，每组至少两个正的有限耗时。该提示表示Task整体的核间分布，按AIC、AIV分别输出结论。同组频率相同，内部直接使用周期计算等价比例，以保持10%边界的判定一致；耗时输入仍要求有效频率。CSV显示值可辅助复核，阈值判定使用未舍入数据。
+
+每条规则对每种适用核类型至多输出一条，按提示编号、AIC先于AIV的顺序排列。数据缺失、无效或Section未选择时跳过受影响规则，其余有效数据继续评估，原因通过统一的`ASCTOOL_DEBUG`接口写入PLOG。没有命中时仍保留空数组记录。
+
+以下示例中`aiv_mte2_ratio=0.82`且为AIV流水集合最大值：
+
+```json
+{"category":"PerformanceHints","hints":["[PH03][AIV] aiv_mte2_ratio（MTE2 流水占比）为 82%，超过 50% 且占比最高；建议检查搬入链路、搬运粒度和数据复用。"]}
+```
+
+无命中时：
+
+```json
+{"category":"PerformanceHints","hints":[]}
+```
+
+在线采集结束后，每个summary校验通过时展示其提示，并附对应的算子名和Device；使用`--no-pack`时同样展示。性能提示写入stdout；CLI的错误、警告、报告路径及调试诊断写入stderr。例如：
+
+```bash
+npu-compute --section PipeUtilization --section Memory ./application
+```
+
+```text
+npu-compute: Performance Hints
+  op=MyKernel  device=0
+  [PH03][AIV] aiv_mte2_ratio（MTE2 流水占比）为 82%，超过 50% 且占比最高；建议检查搬入链路、搬运粒度和数据复用。
+```
+
+无命中时，终端保持原有报告输出。规则跳过等采集侧诊断使用dlog后端，受`ASCEND_GLOBAL_LOG_LEVEL`控制；例如设为`0`开启DEBUG日志，日志保存位置由PLOG配置决定。`NPU_COMPUTE_DEBUG=1`只开启CLI调试诊断，以下命令将其与其他CLI状态信息保存在`cli-debug.log`，不会收集PLOG：
+
+```bash
+NPU_COMPUTE_DEBUG=1 npu-compute --section PipeUtilization --section Memory ./application 2>cli-debug.log
+```
+
+`--import`恢复报告内保存的提示，不重新打印提示。提示内容可从`summary.jsonl`的`PerformanceHints.hints`中查看。
 
 ### Section汇总记录
 
-Section的`category`为对应名称：ArithmeticUtilization、L2Cache、Memory、MemoryL0、MemoryUB、PipeUtilization或ResourceConflictRatio。指标沿用对应CSV字段及单位，去除`block_id`和`sub_block_id`。每字段独立对有效Task PMU记录求算术平均；无有效值时保留字段并输出精确字符串`"NA"`，数值零保持number。
+Section的`category`为对应名称：ArithmeticUtilization、L2Cache、Memory、MemoryL0、MemoryUB、PipeUtilization或ResourceConflictRatio。指标沿用对应CSV字段及单位，去除`block_id`和`sub_block_id`。每个Section直接使用当前Task的AIC/AIV计数计算一条指标记录；无有效值时保留字段并输出精确字符串`"NA"`，数值零保持number。
 
-这里的平均发生在多条Task记录之间，与单次Task对Block数据的累计覆盖是两个层级。Task摘要直接使用Task PMU，不通过Block数据乘Block数量生成，缺Task输入时不从Block数据回退。计数均值不保留小数，其他有限指标保留六位；各字段可能使用不同有效样本数，不能从摘要还原Block明细。
+一份结果包含一个Task PMU对象，分别保存AIC/AIV两侧计数；同侧事件在成功的replay之间合并。Task摘要直接使用该对象，计数字段不保留小数，其他有限指标保留六位。缺少对应侧或必需事件的指标输出`"NA"`。
 
 ### Block与Task指标的关系
 
@@ -292,7 +351,7 @@ Section的`category`为对应名称：ArithmeticUtilization、L2Cache、Memory�
 
 Memory、MemoryL0、MemoryUB中使用operation duration的带宽字段，在同时有AIC/AIV数据且Task Log有效时以Task耗时为分母，否则按对应侧周期和频率计算；PipeUtilization的active bandwidth以流水线活跃时间为分母。summary优先实际当前频率，失效时回退对应额定频率，均缺失时不使用CSV默认频率。因此比较同名时间和带宽时，还需确认两者的有效频率和时间分母一致。
 
-例如两个Block周期为`1000、3000`，活跃周期为`100、1500`，则Task周期为`4000`、活跃周期为`1600`，ratio为`0.4`；Block ratio的简单均值为`0.3`，不能代替Task ratio。存在多条Task记录时，summary再按每个字段的有效Task值求均值；无侧前缀的字段也按实际适用记录聚合，不无条件将AIC/AIV两侧之和当作最终摘要。计算使用未舍入输入，已舍入CSV值的复算可能存在末位误差。
+例如两个Block周期为`1000、3000`，活跃周期为`100、1500`，则Task周期为`4000`、活跃周期为`1600`，ratio为`0.4`；Block ratio的简单均值为`0.3`，不能代替Task ratio。Task的`read_main_memory_datas(KB)`和`write_main_memory_datas(KB)`分别汇总已采集两侧的主存读、写数据量；已采集侧缺少对应事件时，该字段为`"NA"`。计算使用未舍入输入，已舍入CSV值的复算可能存在末位误差。
 
 ### OpInfoSummary字段
 
@@ -312,8 +371,8 @@ Memory、MemoryL0、MemoryUB中使用operation duration的带宽字段，在同�
 | `Rated Freq` | number/NA | 硬件信息中记录的额定Core频率。用于比较当前频率与额定频率；不可用条件：额定频率缺失，或混合Kernel的AIC与AIV额定频率不一致。 |
 | `aic_flops_theoretical` | number/NA | Cube FP16理论算力。硬件Cube核数 × 8192 × 有效频率(MHz) / 10^6；保留两位小数，与逻辑Block数量及Section选择无关；不可用条件：对应硬件核数或有效频率不可用。 |
 | `aiv_flops_theoretical` | number/NA | Vector FP16理论算力。硬件Vector核数 × 256 × 有效频率(MHz) / 10^6；保留两位小数，与逻辑Block数量及Section选择无关；不可用条件：对应硬件核数或有效频率不可用。 |
-| `aic_flops` | number/NA | Cube FP16估算算力。mean_task(aic_total_cycles) × mean_task(aic_cube_fp_ratio) × 8192 / (TaskDuration(us) × 10^6)；同侧同一有效Task集合，不乘Block数量，不从Block数据回退；保留六位小数；不可用条件：对应侧不适用、缺少必需Task PMU输入、Task时长无效或输入为负/非有限。 |
-| `aiv_flops` | number/NA | Vector FP16估算算力。mean_task(aiv_total_cycles) × mean_task(aiv_vec_ratio) × 256 / (TaskDuration(us) × 10^6)；同侧同一有效Task集合，不乘Block数量，不从Block数据回退；保留六位小数；不可用条件：对应侧不适用、缺少必需Task PMU输入、Task时长无效或输入为负/非有限。 |
+| `aic_flops` | number/NA | Cube FP16估算算力。aic_total_cycles × aic_cube_fp_ratio × 8192 / (TaskDuration(us) × 10^6)；使用当前Task同侧计数；保留六位小数；不可用条件：对应侧不适用、缺少必需Task PMU输入、Task时长无效或输入为负/非有限。 |
+| `aiv_flops` | number/NA | Vector FP16估算算力。aiv_total_cycles × aiv_vec_ratio × 256 / (TaskDuration(us) × 10^6)；使用当前Task同侧计数；保留六位小数；不可用条件：对应侧不适用、缺少必需Task PMU输入、Task时长无效或输入为负/非有限。 |
 | `aicore_parallel_utilization` | number/NA | 逻辑执行对象平均执行时间占Task时长的百分比。Σ Block执行时间 / (逻辑对象数量 × TaskDuration) × 100；mix保留AIC/AIV独立对象，数量为Block Dim + Mix Block Dim；不使用设备硬件核数或活跃ratio；不可用条件：缺少有效Task时长、元数据预期数量、完整Block执行记录或有效频率。 |
 | `aicore_parallel_balance` | number/NA | 完整逻辑执行对象的平均时间与最大时间之比。mean(Block执行时间) / max(Block执行时间) × 100；mix合并各侧独立时间序列，不逐Block相加或取最大；不依赖Task时长；不可用条件：缺少完整Block执行记录、预期数量、有效频率或最大执行时间不大于零。 |
 | `aicore_gm_bw_theoretical(GB/s)` | integer/NA | 计算GM带宽使用率时采用的理论带宽。当前值为1600 GB/s；不可用条件：未选择Memory。 |
@@ -323,9 +382,9 @@ Memory、MemoryL0、MemoryUB中使用operation duration的带宽字段，在同�
 
 并行指标的逻辑身份为`(blockId, subBlockId, coreType)`，忽略物理coreId变化；完整对象集合中的时间为总周期除以对应侧有效频率。缺行、冲突周期或无有效频率时不缩小分母。全零时间的利用率为0、均衡度为NA；缺Task时长仅使利用率不可用。mix保留两侧独立时间，不逐Block求和或取最大值。
 
-算力采用FP16口径、TFLOPS单位，AIC每周期系数8192，AIV为256。估算仅使用同侧同一组有效Task PMU记录，周期和ratio先求均值再求乘积，不乘Block Dim或Mix Block Dim。缺Task数据时不能从Block数据回退。理论算力使用硬件核数，与启动逻辑数量不同；36/72核、1650 MHz对应486.60/30.41 TFLOPS。
+算力采用FP16口径、TFLOPS单位，AIC每周期系数8192，AIV为256。估算直接使用当前Task同侧的周期和ratio，按上述公式计算。缺少Task输入时输出`"NA"`。理论算力使用硬件核数，与启动逻辑数量不同；36/72核、1650 MHz对应486.60/30.41 TFLOPS。
 
-各侧频率优先有效Current，其次有效Rated，均缺失时不用CSV默认频率。显式`NPU_COMPUTE_FREQUENCY_MHZ`仍可覆盖。当前仅支持950，合法配比`{1,0}`/`{0,1}`为cube/vector，`{1,1}`/`{1,2}`为mix。Mix Block Dim为AIV比例乘Block Dim，表示从侧Vector逻辑数量。
+各侧频率优先有效Current，其次有效Rated，均缺失时不用CSV默认频率。显式`NPU_COMPUTE_FREQUENCY_MHZ`仍可覆盖。当前仅支持Ascend 950PR&950DT系列产品，合法配比`{1,0}`/`{0,1}`为cube/vector，`{1,1}`/`{1,2}`为mix。Mix Block Dim为AIV比例乘Block Dim，表示从侧Vector逻辑数量。
 
 ## HardwareInfo（主机和设备信息）
 

@@ -87,6 +87,24 @@ bool AddChecked(uint64_t value, uint64_t* total, std::string* error)
     return true;
 }
 
+bool CopyPayload(uint8_t* destination, std::size_t capacity, const std::vector<uint8_t>& payload)
+{
+    if (payload.size() > capacity) {
+        return false;
+    }
+    std::size_t offset = 0;
+    while (offset < payload.size()) {
+        // Secure C limits both the destination capacity and the copy length per call.
+        const std::size_t remainingCapacity = std::min(capacity - offset, std::size_t{SECUREC_MEM_MAX_LEN});
+        const std::size_t count = std::min(payload.size() - offset, remainingCapacity);
+        if (memcpy_s(destination + offset, remainingCapacity, payload.data() + offset, count) != EOK) {
+            return false;
+        }
+        offset += count;
+    }
+    return true;
+}
+
 } // namespace
 
 bool EncodeRep(const std::vector<RepEntry>& entries, std::vector<uint8_t>* encoded, std::string* error)
@@ -133,7 +151,10 @@ bool EncodeRep(const std::vector<RepEntry>& entries, std::vector<uint8_t>* encod
 
         encoded->assign(static_cast<std::size_t>(total_length), 0);
         uint8_t* output = encoded->data();
-        std::copy(NPU_REP_MAGIC.begin(), NPU_REP_MAGIC.end(), output);
+        if (memcpy_s(output, NPU_REP_HEAD_SIZE, NPU_REP_MAGIC.data(), NPU_REP_MAGIC.size()) != EOK) {
+            encoded->clear();
+            return Fail("copy rep header magic failed", error);
+        }
         WriteLe32(NPU_REP_VERSION, output + NPU_REP_HEADER_VERSION_OFFSET);
         WriteLe16(NPU_REP_ORIGIN, output + NPU_REP_HEADER_ORIGIN_OFFSET);
         WriteLe16(static_cast<uint16_t>(NPU_REP_HEAD_SIZE), output + NPU_REP_HEADER_HEADER_LENGTH_OFFSET);
@@ -146,7 +167,10 @@ bool EncodeRep(const std::vector<RepEntry>& entries, std::vector<uint8_t>* encod
         for (std::size_t index = 0; index < entries.size(); ++index) {
             const RepEntry& entry = entries[index];
             uint8_t* info = output + NPU_REP_HEAD_SIZE + index * NPU_REP_FILE_INFO_SIZE;
-            std::copy(NPU_REP_MAGIC.begin(), NPU_REP_MAGIC.end(), info);
+            if (memcpy_s(info, NPU_REP_FILE_INFO_SIZE, NPU_REP_MAGIC.data(), NPU_REP_MAGIC.size()) != EOK) {
+                encoded->clear();
+                return Fail("copy rep entry magic failed", error);
+            }
             if (memcpy_s(
                     info + NPU_REP_ENTRY_NAME_OFFSET, NPU_REP_FILE_NAME_SIZE, entry.file_name.data(),
                     entry.file_name.size()) != EOK) {
@@ -158,7 +182,10 @@ bool EncodeRep(const std::vector<RepEntry>& entries, std::vector<uint8_t>* encod
             WriteLe32(0, info + NPU_REP_ENTRY_RESERVED32_OFFSET);
             WriteLe64(static_cast<uint64_t>(entry.payload.size()), info + NPU_REP_ENTRY_LENGTH_OFFSET);
             WriteLe64(static_cast<uint64_t>(payload_offset), info + NPU_REP_ENTRY_PAYLOAD_OFFSET);
-            std::copy(entry.payload.begin(), entry.payload.end(), output + payload_offset);
+            if (!CopyPayload(output + payload_offset, encoded->size() - payload_offset, entry.payload)) {
+                encoded->clear();
+                return Fail("copy rep entry payload failed", error);
+            }
             payload_offset += entry.payload.size();
         }
         return true;

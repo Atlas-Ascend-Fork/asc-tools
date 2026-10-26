@@ -370,16 +370,27 @@ class CatalogContractTest(unittest.TestCase):
         self.assertEqual(catalog["schema_version"], expected["schema_version"])
         self.assertEqual(list(catalog["record_types"]), expected["record_categories"])
 
-        section_categories = expected["record_categories"][:-1]
+        section_categories = expected["record_categories"][:-2]
         for category in section_categories:
             self.assert_summary_section(catalog["record_types"][category], category)
 
         op_info = catalog["record_types"]["OpInfoSummary"]
         self.assert_op_info_summary(op_info)
 
+    def test_summary_catalog_declares_performance_hints_and_na_sentinel(self):
+        catalog = load_json(SUMMARY_CATALOG_PATH)
+        self.assertEqual(catalog["unavailable_value"], "NA")
+        definition = catalog["record_types"]["PerformanceHints"]
+        self.assertEqual(definition["kind"], "performance-hints")
+        self.assertEqual(definition["data_level"], "kernel")
+        self.assertEqual(
+            [(field["name"], field["json_types"]) for field in definition["fields"]],
+            [("category", ["string"]), ("hints", ["string[]"])],
+        )
+
     def assert_summary_section(self, record_type, category):
         self.assertEqual(record_type["kind"], "pmu-section-summary")
-        self.assertEqual(record_type["data_level"], "task-average")
+        self.assertEqual(record_type["data_level"], "task")
         self.assertEqual(
             record_type["metric_fields"],
             {

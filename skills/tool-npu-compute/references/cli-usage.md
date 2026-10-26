@@ -82,6 +82,10 @@ npu-compute --set basic -- ./add_custom --help --section app-value
 
 ## 采集
 
+在线采集结束后，每个 `summary.jsonl` 校验通过时通过 stdout 展示其命中的 Task 级性能提示，并附对应的算子名和 Device；使用 `--no-pack` 时同样展示。提示同时保存在 `PerformanceHints.hints` 数组中；`--import` 保留报告内容和现有终端输出，不重新打印提示。无有效数据时通过 `NPU_COMPUTE_DEBUG=1` 查看 DebugLog 原因。
+
+输出样例和诊断日志命令见[性能数据说明：PerformanceHints](../../../docs/zh/appendix/npu_compute_performance_data.md#performancehints)。
+
 默认 basic：
 
 ```bash

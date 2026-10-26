@@ -12,14 +12,13 @@
 
 #include "launch/injection_path.h"
 #include "launch/process_launcher.h"
-#include "report/rep_directory_packer.h"
+#include "report/collection_processor.h"
 #include "report/pipe_trace_finalizer.h"
 #include "report/summary_sqlite_finalizer.h"
 #include "report/rep_report_writer.h"
 #include "report/report_name.h"
 #include "launch/staging_directory.h"
 #include "launch/disk_output_directory.h"
-#include "report/collection_directory_validator.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -269,7 +268,10 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     issues.insert(issues.end(), databaseResults.issues.begin(), databaseResults.issues.end());
 
     if (config.no_pack) {
-        if (!ValidateCollectionDirectory(collection_path, &stage_error, &issues)) {
+        // Retain mode uses the same directory traversal and file processing as
+        // packing. It cleans rejected paths only after the complete scan, so a
+        // valid sibling can still be delivered when another file is invalid.
+        if (!ValidateAndCleanCollectionDirectory(collection_path, &stage_error, &issues)) {
             SetStageError("validate collection results failed", stage_error, error);
             return finishCollection(kCollectionErrorExitCode);
         }
@@ -287,6 +289,8 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     }
 
     std::vector<uint8_t> encoded;
+    // Pack mode uses the shared per-file validation result, then adds the
+    // mode-specific nested rep encoding and collection status.
     if (!PackDirectoryToRep(collection_path, &encoded, &stage_error, &issues)) {
         SetStageError("pack collection results failed", stage_error, error);
         return finishCollection(kReportErrorExitCode);

@@ -13,7 +13,7 @@
 #include "report/pm_sampling_file_validator.h"
 #include "report/rep_decoder.h"
 #include "report/rep_encoder.h"
-#include "report/rep_directory_packer.h"
+#include "report/collection_processor.h"
 #include "report/summary_sqlite_finalizer.h"
 #include "import/imported_profile_results.h"
 #include "launch/staging_directory.h"
@@ -50,6 +50,7 @@ namespace {
             throw std::runtime_error(std::string("line ") + std::to_string(__LINE__) + ": " #x); \
     } while (false)
 const std::array<std::string, 3> names = {"summary.db", "objdump.txt", "symbolizer.json"};
+const std::string summary = "{\"category\":\"PerformanceHints\",\"hints\":[]}\n{\"category\":\"OpInfoSummary\"}\n";
 const std::string hardware = "{}\n{}\n{}\n{}\n{}\n";
 struct Directory {
     fs::path path;
@@ -136,6 +137,7 @@ void RoundTrip(const std::string& mode = "success")
 {
     Directory source, received, restored;
     Fixture(source.path);
+    Write(source.path / "summary.jsonl", summary);
     const auto bootstrap = protocol::MakeBootstrap();
     const auto child = fork();
     CHECK(child >= 0);
@@ -151,6 +153,11 @@ void RoundTrip(const std::string& mode = "success")
             publisher.Begin("HardwareInfo.jsonl");
             publisher.Write(hardware);
             publisher.Commit(1);
+            if (mode != "missing-summary") {
+                publisher.Begin("summary.jsonl");
+                publisher.Write(summary);
+                publisher.Commit(2);
+            }
             for (const auto& name : names) {
                 if (mode == "missing-file" && name == names[2]) {
                     continue;
@@ -178,7 +185,7 @@ void RoundTrip(const std::string& mode = "success")
         std::atomic<bool> exited{false}, cancelled{false};
         client.Run(bootstrap, child, config, received.path.string(), exited, cancelled);
         CHECK(client.Complete() == (mode == "success"));
-        CHECK(client.ArtifactCount() == (mode == "missing-file" ? 3 : 4));
+        CHECK(client.ArtifactCount() == (mode == "missing-file" || mode == "missing-summary" ? 4 : 5));
         int status = 0;
         CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
     } catch (...) {
@@ -192,6 +199,7 @@ void RoundTrip(const std::string& mode = "success")
     for (const auto& name : names) {
         CHECK(Read(source.path / name) == Read(received.path / name));
     }
+    CHECK(Read(received.path / "summary.jsonl") == summary);
     CheckDatabase(received.path / names[0]);
     protocol::Bytes encoded;
     std::string error;
@@ -229,6 +237,7 @@ void MissingAndInvalid()
         result.sections = config.sections;
         result.rowCount = 1;
         Send(receiver, result, "HardwareInfo.jsonl", hardware);
+        Send(receiver, result, "summary.jsonl", summary);
         for (const auto& name : names) {
             if (name != omitted) {
                 Send(receiver, result, name, Read(source.path / name));
@@ -242,7 +251,7 @@ void MissingAndInvalid()
         CHECK(cli::PackDirectoryToRep(output.path, &encoded, &error));
         cli::DecodedRep decoded;
         CHECK(cli::DecodeRep(encoded, &decoded, &error));
-        CHECK(decoded.entries.size() == 3);
+        CHECK(decoded.entries.size() == 4);
         for (const auto& entry : decoded.entries) {
             CHECK(entry.file_name != omitted);
         }
@@ -285,10 +294,11 @@ void MissingAndInvalid()
     result.sections = config.sections;
     result.rowCount = 1;
     Send(receiver, result, "HardwareInfo.jsonl", hardware);
+    Send(receiver, result, "summary.jsonl", summary);
     for (const auto& name : names) {
         Send(receiver, result, name, Read(source.path / name));
     }
-    receiver.Validate(result, config);
+    CHECK(receiver.Validate(result, config));
     auto failed = result;
     failed.complete = false;
     CHECK(!receiver.Validate(failed, config));
@@ -310,11 +320,19 @@ void MissingAndInvalid()
     failed.rowCount = 1;
     Send(groups, failed, "HardwareInfo.jsonl", hardware);
     Send(groups, failed, "Memory.csv", "x\ny\n");
-    Send(groups, failed, "summary.jsonl", "{}\n");
+    Send(groups, failed, "summary.jsonl", summary);
     for (const auto& name : names) {
         Send(groups, failed, "collection-p1-0001/" + name, Read(source.path / name));
     }
-    CHECK(groups.Validate(failed, config)); // Separate launch groups may have different successful Sections.
+    std::vector<std::string> issues;
+    CHECK(!groups.Validate(failed, config, &issues));
+    CHECK(std::any_of(issues.begin(), issues.end(), [](const auto& issue) {
+        return issue.find("collection-p1-0001/summary.jsonl") != std::string::npos;
+    }));
+    Send(groups, failed, "collection-p1-0001/summary.jsonl", summary);
+    Send(groups, failed, "collection-p1-0001/Memory.csv", "x\ny\n");
+    // Each launch needs its own summary and the requested PMU Sections.
+    CHECK(groups.Validate(failed, config));
     Directory csvOnly;
     sqlite3* shared = nullptr;
     CHECK(
@@ -481,6 +499,7 @@ int main()
         RoundTrip();
         RoundTrip("failed-result");
         RoundTrip("missing-file");
+        RoundTrip("missing-summary");
         MissingAndInvalid();
         SharedDatabaseRoundTrip();
         EmptySimdDatabase();

@@ -18,7 +18,6 @@
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
-#include <unistd.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,6 +34,8 @@ constexpr std::string_view kPipeCsv = "block_id,pipe_utilization\n0,75\n";
 constexpr std::string_view kMemoryCsv = "block_id,read_bytes\n0,128\n";
 constexpr std::string_view kL2CacheCsv = "block_id,hit_rate\n0,99\n";
 constexpr std::string_view kSummary = "{\"category\":\"PipeUtilization\"}\n{\"category\":\"OpInfoSummary\"}\n";
+constexpr std::string_view kSamplingSummary =
+    "{\"category\":\"PerformanceHints\",\"hints\":[]}\n{\"category\":\"OpInfoSummary\"}\n";
 
 std::string SamplingDatabase()
 {
@@ -160,10 +161,8 @@ int main(int argc, char** argv)
             if (mode != "missing-hardware") {
                 publish("HardwareInfo.jsonl", kHardwareInfo);
             }
-            bool summarySelected = false;
             for (const auto& section : hello.config.sections) {
                 if (section == "Pipeline") {
-                    summarySelected = true;
                     if (mode == "cli-echo" || mode.rfind("pm-sampling", 0) == 0) {
                         publish(
                             ".biu-staging/process-uds/manifest.json",
@@ -200,7 +199,6 @@ int main(int argc, char** argv)
                     }
                     continue;
                 }
-                summarySelected = true;
                 if (mode == "csv-directories" && section == "Memory") {
                     publish("collection-p1-0001/Memory.csv", "block_id,read_bytes\n1,256\n");
                     publish("collection-p1-0001/PipeUtilization.csv", kPipeCsv);
@@ -217,7 +215,30 @@ int main(int argc, char** argv)
                     section == "L2Cache"                               ? kL2CacheCsv :
                                                                          kMemoryCsv);
             }
-            if (mode.rfind("pm-sampling", 0) != 0 || summarySelected) {
+            if (mode == "performance-hints" || mode == "empty-hints" || mode == "invalid-hints" ||
+                mode == "chunked-hints" || mode == "hints-before-exit") {
+                const std::string hint = "[PH03][AIV] aiv_mte2_ratio（MTE2 流水占比）为 82%，超过 50% 且占比最高。";
+                std::string hints =
+                    mode == "empty-hints" ?
+                        "[]" :
+                    mode == "invalid-hints" ?
+                        "[1]" :
+                        "[\"" + hint + (mode == "chunked-hints" ? std::string(200000, 'x') : "") + "\"]";
+                publish(
+                    "summary.jsonl",
+                    "{\"category\":\"PipeUtilization\"}\n"
+                    "{\"category\":\"PerformanceHints\",\"hints\":" +
+                        hints +
+                        "}\n"
+                        "{\"category\":\"OpInfoSummary\",\"Op Name\":\"fixture_kernel\",\"Device Id\":0}\n");
+                if (mode == "hints-before-exit") {
+                    ::usleep(500000);
+                    std::puts("fixture-exiting");
+                    std::fflush(stdout);
+                }
+            } else if (mode.rfind("pm-sampling", 0) == 0 && mode != "pm-sampling-missing-summary") {
+                publish("summary.jsonl", kSamplingSummary);
+            } else if (mode != "pm-sampling-missing-summary") {
                 publish("summary.jsonl", kSummary);
             }
         }

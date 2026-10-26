@@ -22,14 +22,13 @@ add_library(npu_compute_launcher_core STATIC
   report/pm_sampling_file_validator.cpp
 
   launch/disk_output_directory.cpp
-  report/collection_directory_validator.cpp
+  report/collection_processor.cpp
   report/collection_file_validator.cpp
   report/csv_reader.cpp
   report/csv_sqlite_writer.cpp
   report/summary_sqlite_finalizer.cpp
   report/pipe_trace_finalizer.cpp
   report/rep_decoder.cpp
-  report/rep_directory_packer.cpp
   report/rep_encoder.cpp
   report/rep_report_writer.cpp
   report/report_name.cpp

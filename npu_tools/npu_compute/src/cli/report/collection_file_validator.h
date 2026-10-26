@@ -12,15 +12,24 @@
 
 #include "report/rep_format.h"
 
-#include <boost/filesystem.hpp>
-#include <boost/system/error_code.hpp>
+#include <boost/filesystem/path.hpp>
 #include <string>
+#include <vector>
 
 namespace npucompute::cli {
 
+struct SummaryJsonlInfo {
+    bool hasHintsRecord = false;
+    std::string opName = "NA";
+    std::string device = "NA";
+    std::vector<std::string> hints;
+};
+
 bool ResolveCollectionFileType(const boost::filesystem::path& path, NpuRepFileType* type, std::string* error);
 
-bool ValidateCollectionFile(const boost::filesystem::path& path, NpuRepFileType type, std::string* error);
+// Summary info is assigned only when summary.jsonl passes validation.
+bool ValidateCollectionFile(
+    const boost::filesystem::path& path, NpuRepFileType type, std::string* error, SummaryJsonlInfo* summary = nullptr);
 
 } // namespace npucompute::cli
 

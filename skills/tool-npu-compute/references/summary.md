@@ -1,15 +1,31 @@
 # summary.jsonl 字段说明
 
-`summary.jsonl` 按行保存 JSON 对象，用于查看所选 PMU Section 的汇总指标以及当前 Kernel 的概览信息。使用[summary 检查脚本](../scripts/inspect_summary.py)检查文件结构和数值类型。
+`summary.jsonl` 按行保存 JSON 对象，用于查看所选 PMU Section 的汇总指标、性能提示以及当前 Kernel 的概览信息。使用[summary 检查脚本](../scripts/inspect_summary.py)检查文件结构和数值类型。
 
 ## 记录组成
 
 - 每个所选 PMU Section 对应一条汇总记录，`category` 是 Section 名称。
 - Section 记录的指标字段与同名 CSV 一致，但不包含 `block_id` 和 `sub_block_id`。
-- 最后一条记录固定为 `OpInfoSummary`。
+- 新报告在 Section 记录之后写入一条 `PerformanceHints`，最后一条固定为 `OpInfoSummary`；记录总数为所选 PMU Section 数量加 2。
+- 仅选择 Pipeline 或 PmSampling 时，每个 Kernel 结果也必须生成摘要，包含 `PerformanceHints` 和 `OpInfoSummary`。未执行 Kernel 时不凭空生成摘要。
+- 历史报告可仅包含 Section 与末尾的 `OpInfoSummary`。
 - 同一个 `category` 在一个文件中只出现一次。
 
-Section 记录中的每个指标分别对有效的 Task 级数值计算算术平均值。某个指标没有有效数值时为 `null`；不同指标的有效样本数可能不同，因此不能用汇总值还原各 Block 或 Sub-block 的明细。各指标的含义、单位和不可用条件以对应 Section 字段说明为准。
+每个 Section 直接使用当前 Task 的 AIC/AIV 计数计算一条记录；同侧事件在成功的 replay 之间合并。缺少对应侧或必需事件的指标为精确字符串 `"NA"`。Task CSV 每个 Section 输出一行，包含两侧指标并省略 Block 定位列。各指标的含义、单位和不可用条件以对应 Section 字段说明为准。
+
+## PerformanceHints
+
+```json
+{"category":"PerformanceHints","hints":["[PH03][AIV] aiv_mte2_ratio（MTE2 流水占比）为 82%，超过 50% 且占比最高；建议检查搬入链路、搬运粒度和数据复用。"]}
+```
+
+`hints` 为字符串数组，无命中或缺少有效数据时为 `[]`。提示适用于 Ascend 950PR&950DT系列产品：PH01 检查 Vector 占比，PH02 检查 Scalar 占比，PH03 检查 MTE2 占比，PH04 检查平均 GM→UB 搬运量，PH05 检查 ICache 缺失率，PH06 检查核间耗时分布。
+
+PH01–PH05 使用当前 Task 的 Section 汇总值。PH06 按 AIC/AIV 及 sub-block 角色分组，使用 `(最长耗时 - 最短耗时) / 最长耗时`，每类核取有效组最大值。支持两类核的规则分别输出 AIC、AIV 提示，容量单位为 KB（1 KB = 1024 B）。字段不可用和未选择对应 Section 的原因写入 DebugLog。
+
+完整字段、触发条件、流水比较集合及 PH06 有效样本要求见[性能数据说明](../../../docs/zh/appendix/npu_compute_performance_data.md#performancehints)。性能提示提供检查方向，优化效果通过可比条件下的重新采集确认。
+
+在线 CLI 在采集结束、summary 校验并保存报告后将命中的提示写入 stdout，并附算子名、Device 和结果相对路径；同一份 summary 展示一次。`--import` 解包保留提示内容，终端输出沿用现有行为。
 
 ## OpInfoSummary 字段
 

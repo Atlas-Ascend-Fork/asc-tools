@@ -52,6 +52,15 @@ def read_rows(path):
         raise InspectionError(f"读取 CSV 失败：{error}") from error
 
 
+def fields_for_header(section, header):
+    """Task CSV 省略两列 Block 标识；历史 Block CSV 保留两列。"""
+    fields = section["fields"]
+    block_fields = {"block_id", "sub_block_id"}
+    if not block_fields.intersection(header):
+        return [field for field in fields if field["name"] not in block_fields]
+    return fields
+
+
 def identify_section(path, header, sections):
     by_filename = {
         section["output_file"]: (name, section) for name, section in sections.items()
@@ -61,7 +70,9 @@ def identify_section(path, header, sections):
 
     matches = []
     for name, section in sections.items():
-        expected_header = [field["name"] for field in section["fields"]]
+        expected_header = [
+            field["name"] for field in fields_for_header(section, header)
+        ]
         if header == expected_header:
             matches.append((name, section))
     if len(matches) == 1:
@@ -70,7 +81,7 @@ def identify_section(path, header, sections):
 
 
 def validate_header(header, section_name, section):
-    expected = [field["name"] for field in section["fields"]]
+    expected = [field["name"] for field in fields_for_header(section, header)]
     duplicate_fields = [name for name, count in Counter(header).items() if count > 1]
     unknown_fields = [name for name in header if name not in expected]
     missing_fields = [name for name in expected if name not in header]
@@ -105,7 +116,7 @@ def inspect(path, catalog):
     data_rows = rows[1:]
     row_count = len(data_rows)
     columns = []
-    for index, field in enumerate(section["fields"]):
+    for index, field in enumerate(fields_for_header(section, header)):
         values = [row[index] for row in data_rows]
         na_count = sum(value == "NA" for value in values)
         empty_count = sum(value == "" for value in values)

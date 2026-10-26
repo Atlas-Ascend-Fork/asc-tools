@@ -24,6 +24,8 @@ add_library(npu_compute SHARED
   pmu/pmu_data_consumer.cpp
   report/pmu_csv_writer.cpp
   pmu/pmu_metric_builder.cpp
+  performance_hints/performance_hint_analyzer.cpp
+  performance_hints/performance_hint_utils.cpp
   report/summary_jsonl_writer.cpp
   report/summary_metrics.cpp
   report/report_writer.cpp
