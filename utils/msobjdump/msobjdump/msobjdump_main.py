@@ -164,6 +164,8 @@ class ObjDump:
         )  # 落盘文件目录，用户未设置时当前路径
         self._aicore_binary_meta_printed = set()
         self._sass_tools = {}
+        self.sass_lineinfo = getattr(args, "lineinfo", False)
+        self.sass_source = getattr(args, "source", False)
         try:
             self._set_out_dir()
             # preprocess args
@@ -602,7 +604,12 @@ class ObjDump:
 
     def _disassemble_sass_image(self, image: SassImage, objdump_path: str) -> tuple:
         try:
-            result = utils.disassemble_with_llvm_objdump(image.path, objdump_path)
+            result = utils.disassemble_with_llvm_objdump(
+                image.path,
+                objdump_path,
+                lineinfo=self.sass_lineinfo,
+                source=self.sass_source,
+            )
         except FileNotFoundError as error:
             return "", f"llvm-objdump is not available: {error}"
 
@@ -610,6 +617,9 @@ class ObjDump:
         error = self._completed_process_error(result)
         if getattr(result, "returncode", 1) != 0:
             return output, error or "llvm-objdump -d failed"
+
+        if error:
+            print(error, file=sys.stderr)
 
         instruction_lines = self._sass_instruction_lines(output)
         if not instruction_lines:
@@ -1236,7 +1246,11 @@ class SassFileAction(argparse.Action):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        prog="msobjdump", description="objdump tool for Ascend C elf file"
+        prog="msobjdump",
+        description="objdump tool for Ascend C elf file",
+        epilog="Examples: msobjdump --sass kernel.o --lineinfo; "
+        "msobjdump --sass kernel.o --source; "
+        "msobjdump --sass kernel.o --lineinfo -s",
     )
     elf_operator_group = parser.add_argument_group()
     elf_operator_group.add_argument(
@@ -1283,6 +1297,19 @@ def parse_args(argv=None):
         action=SassFileAction,
         help="Disassemble Ascend AICore instructions with llvm-objdump.",
     )
+    elf_operator_group.add_argument(
+        "--lineinfo",
+        action="store_true",
+        help="Show source file names and line numbers alongside SASS disassembly. "
+        "Requires --sass and debug line information.",
+    )
+    elf_operator_group.add_argument(
+        "--source",
+        "-s",
+        action="store_true",
+        help="Show source code interleaved with SASS disassembly. "
+        "Requires --sass, debug line information and accessible source files.",
+    )
     parser.add_argument(
         "--out-dir",
         "-o",
@@ -1299,6 +1326,12 @@ def parse_args(argv=None):
         parser.exit(0)
 
     args = parser.parse_args(argv)
+
+    if (args.lineinfo or args.source) and not args.sass:
+        parser.error(
+            "--lineinfo and --source/-s require --sass <input>. "
+            "Run 'msobjdump --help' for usage information."
+        )
 
     if args.sass:
         if args.dump_elf or args.extr_elf or args.list_elf:

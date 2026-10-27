@@ -153,10 +153,18 @@ def extract_archive_member(archive_name: str, member_name: str, output_file: str
         )
 
 
-def disassemble_with_llvm_objdump(file_name: str, objdump_path: str):
+def disassemble_with_llvm_objdump(
+    file_name: str, objdump_path: str, lineinfo: bool = False, source: bool = False
+):
     """调用 CANN llvm-objdump 反汇编一个设备 ELF。"""
+    command = [objdump_path, "-d"]
+    if lineinfo:
+        command.append("-l")
+    if source:
+        command.append("-S")
+    command.append(file_name)
     return subprocess.run(
-        [objdump_path, "-d", file_name],
+        command,
         capture_output=True,
         text=True,
         shell=False,

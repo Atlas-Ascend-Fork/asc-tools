@@ -1,6 +1,6 @@
 # msobjdump：查看、提取与反汇编 Ascend C 产物
 
-`msobjdump` 读取 Ascend C 编译产物，查看 Kernel 元数据、列出或提取内嵌设备 ELF，并在工具支持时反汇编 Ascend AICore 指令。它静态读取文件，不执行输入程序；分析已有 ELF 不需要先运行算子。
+`msobjdump` 读取 Ascend C 编译产物，查看 Kernel 元数据、列出或提取内嵌设备 ELF，并在工具支持时反汇编 AI Core 指令。它静态读取文件，不执行输入程序；分析已有 ELF 不需要先运行算子。
 
 ## 使用场景
 
@@ -65,9 +65,23 @@ mkdir -p "<artifact-dir>/disassembly"
 msobjdump --sass "<input-elf>" > "<artifact-dir>/disassembly/device.txt" 2> "<artifact-dir>/disassembly/stderr.log"
 ```
 
-`--sass` 输出到标准输出，不能与 `--out-dir`、`--verbose` 或其他主操作组合。SASS 是选项名，实际输出为 Ascend AICore 指令。当前上游支持独立设备 ELF、融合 Host ELF 和普通 `.a` 归档；归档会逐个处理成员，thin archive 不支持。
+`--sass` 输出到标准输出，不能与 `--out-dir`、`--verbose` 或其他主操作组合。当前上游支持独立设备 ELF、融合 Host ELF 和普通 `.a` 归档；归档会逐个处理成员，thin archive 不支持。
 
 正常反汇编应包含指令地址、编码、助记符和操作数。只有文件格式标题，或指令全为 `<not available>`，都不能算成功；工具也可能直接报告 `no valid instruction lines`，不转发这类无效输出。此时检查所用 `llvm-objdump` 是否能反汇编该设备架构。多个镜像的输出按 `===== [SASS] 来源 =====` 分段，先看来源再对应 Kernel。
+
+如果帮助信息包含源码定位选项，可以使用：
+
+```bash
+msobjdump --sass "<input-elf>" --lineinfo
+msobjdump --sass "<input-elf>" --source
+msobjdump --sass "<input-elf>" --lineinfo --source
+```
+
+`--lineinfo`显示源文件名和行号；`--source`/`-s`在反汇编结果中显示对应源码。使用这两个选项时需要指定`--sass`。
+
+编译算子时请使用 `-g` 生成调试信息，配置方法请参见[常用的编译选项](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/guide/programming_guide/compilation_and_execution/operator_compilation/ai_core_operator_compilation.md#ZH-CN_TOPIC_0000002462746461)和[自定义编译选项](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/guide/programming_guide/advanced_programming/aclnn_operator_development/compilation_and_deployment/basic_process.md#custom-compile-options)。
+
+显示源码时需保留调试信息中记录的源文件及其路径。即使 device ELF 不含调试信息，`--sass` 仍可输出反汇编指令，但 `--lineinfo` 无法显示源码位置，`--source` 无法显示源码。使用 `--source` 时，若源文件无法访问，工具会输出告警并继续反汇编，但不显示对应源码。
 
 ## 元数据怎样解释
 

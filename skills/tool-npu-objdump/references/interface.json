@@ -2,7 +2,7 @@
   "schema_version": 1,
   "tool": "msobjdump",
   "provenance": {
-    "asc_tools_commit": "d06e515",
+    "asc_tools_commit": "9c2e17b",
     "generated_by": "skills/tool-npu-objdump/scripts/gen_interface.py",
     "note": "接口面语义快照（参数、字段映射、跟踪文案）。变更需重新生成并随 PR 评审；不做整文件哈希，无关重构不触发。"
   },
@@ -53,6 +53,23 @@
         ],
         "kind": "primary",
         "takes_value": true,
+        "optional_capability": true
+      },
+      {
+        "names": [
+          "--lineinfo"
+        ],
+        "kind": "modifier",
+        "takes_value": false,
+        "optional_capability": true
+      },
+      {
+        "names": [
+          "-s",
+          "--source"
+        ],
+        "kind": "modifier",
+        "takes_value": false,
         "optional_capability": true
       },
       {

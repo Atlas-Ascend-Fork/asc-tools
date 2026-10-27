@@ -40,6 +40,12 @@ OPTION_CLASS: Dict[str, Dict[str, Any]] = {
         "takes_value": True,
         "optional_capability": True,
     },
+    "--lineinfo": {
+        "kind": "modifier",
+        "takes_value": False,
+        "optional_capability": True,
+    },
+    "--source": {"kind": "modifier", "takes_value": False, "optional_capability": True},
     "--out-dir": {"kind": "modifier", "takes_value": True},
 }
 

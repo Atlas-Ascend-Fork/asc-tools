@@ -2,7 +2,7 @@
 
 ## 概述
 
-本工具主要针对生成的算子ELF文件（Executable and Linkable Format）提供解析、提取和Ascend AICore指令反汇编功能，并将结果信息以可读形式呈现，方便开发者直观获得kernel文件信息。关于本工具的详细介绍请参考《[Ascend C算子开发](https://hiascend.com/document/redirect/CannCommunityOpdevAscendC)》中的“编程指南 > 附录 > msobjdump工具”。
+本工具主要针对生成的算子ELF文件（Executable and Linkable Format）提供解析、提取和AI Core指令反汇编功能，并将结果信息以可读形式呈现，方便开发者直观获得kernel文件信息。关于本工具的详细介绍请参考《[Ascend C算子开发](https://hiascend.com/document/redirect/CannCommunityOpdevAscendC)》中的“编程指南 > 附录 > msobjdump工具”。
 
 工具调用演示可参考[msobjdump样例](../../examples/04_msobjdump/README.md)。
 
@@ -16,7 +16,10 @@
     msobjdump --dump-elf ${elf_file} [--verbose]
     ```
 
-    `--dump-elf ${elf_file}`为必选，表示待解析ELF文件路径。[--verbose]为可选，用于开启ELF文件中全量打印device信息功能。
+    | 参数（区分大小写） | 可选/必选 | 说明 |
+    | ---- | ---- | ---- |
+    | `--dump-elf ${elf_file}`，`-d` | 必选 | 解析ELF文件中包含的device信息，并打印显示。<br>`${elf_file}`表示待解析的ELF文件路径。 |
+    | `--verbose`，`-V` | 可选 | 与`--dump-elf`配套使用，开启ELF文件中全量打印device信息功能。 |
 
 - 解压ELF文件的命令
 
@@ -24,7 +27,10 @@
     msobjdump --extract-elf ${elf_file} [--out-dir ${out_path}]
     ```
 
-    `--extract-elf ${elf_file}`为必选，表示待解析ELF文件路径。[--out-dir ${out_path}]为可选，用于设置解压文件的落盘路径。指定的目录必须已存在且可写，工具不会自动创建；未指定时使用当前工作目录。
+    | 参数（区分大小写） | 可选/必选 | 说明 |
+    | ---- | ---- | ---- |
+    | `--extract-elf ${elf_file}`，`-e` | 必选 | 解压ELF文件中包含的device信息，并将结果保存到输出路径下。<br>`${elf_file}`表示待解压的ELF文件路径，默认输出路径为当前执行路径。 |
+    | `--out-dir ${out_path}`，`-o` | 可选 | 与`--extract-elf`配套使用，设置解压文件的落盘路径。指定的目录必须已存在且可写，工具不会自动创建；未指定时使用当前工作目录。 |
 
 - 获取ELF文件列表的命令
 
@@ -32,19 +38,30 @@
     msobjdump --list-elf ${elf_file}
     ```
 
-    `--list-elf ${elf_file}`为必选，获取ELF文件中包含的device信息文件列表，并打印显示。
+    | 参数（区分大小写） | 可选/必选 | 说明 |
+    | ---- | ---- | ---- |
+    | `--list-elf ${elf_file}`，`-l` | 必选 | 获取ELF文件中包含的device信息文件列表，并打印显示。<br>`${elf_file}`表示待打印的ELF文件路径。 |
 
-- 反汇编Ascend AICore指令的命令
+- 反汇编AI Core指令的命令
 
     ```bash
-    msobjdump --sass ${input_file}
+    msobjdump --sass ${input_file} [--lineinfo] [--source]
     ```
 
-    `--sass ${input_file}`为必选，用于输出输入文件中Device侧的Ascend AICore指令。该选项支持独立Device ELF、融合编译生成的Host ELF（如可执行文件`demo`或动态库`libcustom.so`）、静态库`libkernels.a`以及包含`.aicore_binary`、`.ascend.kernel.*`或`_o/_json`内容的封装文件。对于Host ELF或静态库，工具会自动遍历并提取其中的Device ELF后进行反汇编；若输入中不包含Device ELF，则返回错误。
+    | 参数（区分大小写） | 可选/必选 | 说明 |
+    | ---- | ---- | ---- |
+    | `--sass ${input_file}` | 必选 | 反汇编输入的ELF文件，显示Device侧的AI Core指令；`${input_file}`表示待反汇编的ELF文件路径。 |
+    | `--lineinfo` | 可选 | 与`--sass`配套使用，在反汇编结果中显示源文件名和行号。编译算子时需添加`-g`生成调试信息。 |
+    | `--source`，`-s` | 可选 | 与`--sass`配套使用，在反汇编结果中显示对应源码。编译算子时需添加`-g`生成调试信息，并确保调试信息记录路径下的源文件可访问。 |
 
-    `SASS`仅为命令选项名称，实际输出为Ascend AICore指令，不是NVIDIA SASS。`--sass`不支持与`--dump-elf`、`--extract-elf`、`--list-elf`、`--verbose`或`--out-dir`组合；输出默认写入标准输出，如需保存结果可使用Shell重定向。当前不支持thin archive。
+    支持独立Device ELF、融合编译生成的Host ELF（如可执行文件`demo`或动态库`libcustom.so`）、静态库`libkernels.a`以及包含`.aicore_binary`、`.ascend.kernel.*`或`_o/_json`内容的封装文件。对于Host ELF或静态库，工具会自动遍历并提取其中的Device ELF后进行反汇编；若输入中不包含Device ELF，则返回错误。
+
+    `--sass`不支持与`--dump-elf`、`--extract-elf`、`--list-elf`、`--verbose`或`--out-dir`组合使用；输出默认写入标准输出，如需保存结果可使用Shell重定向。当前不支持thin archive。
 
     安装包的主命令为`npu-objdump`，同时提供指向它的`msobjdump`软链接以兼容既有用法，两个命令支持相同的参数和处理逻辑；当前仅提供`--sass`长选项，不提供`-sass`别名。
+
+    `--lineinfo` 和 `--source` 依赖 Device ELF 中的调试信息。编译算子时请使用 `-g` 生成调试信息，配置方法请参见[常用的编译选项](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/guide/programming_guide/compilation_and_execution/operator_compilation/ai_core_operator_compilation.md#ZH-CN_TOPIC_0000002462746461)和[自定义编译选项](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/guide/programming_guide/advanced_programming/aclnn_operator_development/compilation_and_deployment/basic_process.md#custom-compile-options)。即使ELF不含调试信息，仍可使用`--sass`输出反汇编指令；此时`--lineinfo`无法显示源码位置，`--source`无法显示源码。使用`--source`时，若调试信息记录的源文件无法访问，工具会输出告警并继续反汇编，但不显示对应源码。
+
 
 下表为ELF文件中常见字段说明：
 

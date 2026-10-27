@@ -195,7 +195,7 @@ msobjdump 能显示帮助，分析融合 ELF 时却报 llvm-objcopy is not avail
 
 ## Expected Output
 
-说明本 Skill 用于 Ascend 编译产物元数据、内嵌文件处理与 device 侧 AICore 指令反汇编（--sass），不能完成 host 侧（x86 等）普通指令反汇编和运行时间测量；建议使用 GNU/LLVM objdump 与计时工具，不编造 msobjdump 的 host 反汇编或 profiling 参数。
+说明本 Skill 用于 Ascend 编译产物元数据、内嵌文件处理与 device 侧 AI Core 指令反汇编（--sass），不能完成 host 侧（x86 等）普通指令反汇编和运行时间测量；建议使用 GNU/LLVM objdump 与计时工具，不编造 msobjdump 的 host 反汇编或 profiling 参数。
 
 ## Expectations
 
@@ -354,7 +354,7 @@ msobjdump 能显示帮助，分析融合 ELF 时却报 llvm-objcopy is not avail
 
 ## Expected Output
 
-使用 `msobjdump --sass demo`；说明输出打印到 stdout、保存用 Shell 重定向，融合产物会自动提取 .aicore_binary 后反汇编；依赖 llvm-objcopy 与带 Ascend 反汇编后端的 llvm-objdump。解释 SASS 只是选项名、输出为 Ascend AICore 指令。不与 --out-dir 组合。
+使用 `msobjdump --sass demo`；说明输出打印到 stdout、保存用 Shell 重定向，融合产物会自动提取 .aicore_binary 后反汇编；依赖 llvm-objcopy 与带 Ascend 反汇编后端的 llvm-objdump。不与 --out-dir 组合。
 
 ## Expectations
 
@@ -442,3 +442,65 @@ msobjdump 能显示帮助，分析融合 ELF 时却报 llvm-objcopy is not avail
 
 - [contains] --sass
 - [contains] 升级
+
+
+# Case 27: SASS 行号显示
+
+## Prompt
+
+我想在反汇编时同时查看源码文件名和行号，应该怎么使用？
+
+## Expected Output
+
+使用 `msobjdump --sass <input> --lineinfo`。编译算子时需要使用 `-g` 生成调试信息；`--lineinfo` 显示 device ELF 调试行信息中的源文件名和行号。
+
+## Expectations
+
+- [contains] --sass
+- [contains] --lineinfo
+- [contains] 文件名
+- [contains] 行号
+- [contains] -g
+
+---
+
+# Case 28: SASS 源码显示
+
+## Prompt
+
+我想在 SASS 反汇编中同时显示对应的 Ascend C 源码，应该怎么使用？
+
+## Expected Output
+
+使用 `msobjdump --sass <input> --source`。编译算子时需要使用 `-g` 生成调试信息；`--source` 在反汇编结果中显示对应源码，需保留调试信息中记录的源文件及其路径。即使 device ELF 不含调试信息，仍会输出反汇编，但无法显示源码；源文件无法访问时，工具会输出告警并继续反汇编，不显示对应源码。
+
+## Expectations
+
+- [contains] --sass
+- [contains] --source
+- [contains] 源码
+- [contains] 源文件
+- [contains] -g
+- [contains] 告警
+- [contains] 无法显示对应源码
+- [contains] 仍会输出反汇编
+
+---
+
+# Case 29: SASS 选项的前置条件
+
+## Prompt
+
+使用 `--lineinfo` 或 `--source` 时需要注意什么？
+
+## Expected Output
+
+使用这两个选项时需要指定 `--sass`；编译算子时需要使用 `-g` 生成调试信息；缺少 `--sass` 时，命令返回参数错误并提示查看 help。
+
+## Expectations
+
+- [contains] --lineinfo
+- [contains] --source
+- [contains] --sass
+- [contains] help
+- [contains] -g

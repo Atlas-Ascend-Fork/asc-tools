@@ -1,6 +1,6 @@
 ---
 name: tool-npu-objdump
-description: 使用 msobjdump 查看 Ascend C 算子编译产物的 kernel 元数据、列出或提取内嵌 device ELF、反汇编 device 侧 Ascend AICore 指令，并定位工具调用问题。当用户询问 msobjdump 用法、分析 Ascend 算子 ELF、查询核类型或 TilingKey、提取 device 文件、反汇编算子 AICore 指令时使用。不用于 host 侧（x86/AArch64 等）普通 ELF 反汇编或 NPU 运行性能采集。
+description: 使用 msobjdump 查看 Ascend C 算子编译产物的 kernel 元数据、列出或提取内嵌 device ELF、反汇编 device 侧 AI Core 指令，并定位工具调用问题。当用户询问 msobjdump 用法、分析 Ascend 算子 ELF、查询核类型或 TilingKey、提取 device 文件、反汇编算子 AI Core 指令时使用。不用于 host 侧（x86/AArch64 等）普通 ELF 反汇编或 NPU 运行性能采集。
 ---
 
 # Ascend 算子产物查看、提取与指令反汇编
@@ -15,7 +15,7 @@ description: 使用 msobjdump 查看 Ascend C 算子编译产物的 kernel 元�
 - **文件分析**：复用用户提供的文件与环境。用户只说“看看这个 Ascend 算子文件”时默认 dump；输入路径缺失且上下文无法确定时再询问。
 - **问题定位**：围绕实际命令、输出和相关依赖检查，按需读取 [故障排查](references/troubleshooting.md)。
 
-一个没有扩展名的可执行文件也可能含 device ELF；不能仅凭 `.o`、`.so` 或 `.a` 后缀判断工具支持。device 侧 Ascend AICore 指令反汇编属于本流程（`--sass`）；host 侧（x86/AArch64 等）普通反汇编与性能采集使用 GNU/LLVM objdump 等相应工具，不因出现 ELF 一词而触发本流程。
+一个没有扩展名的可执行文件也可能含 device ELF；不能仅凭 `.o`、`.so` 或 `.a` 后缀判断工具支持。device 侧 AI Core 指令反汇编属于本流程（`--sass`）；host 侧（x86/AArch64 等）普通反汇编与性能采集使用 GNU/LLVM objdump 等相应工具，不因出现 ELF 一词而触发本流程。
 
 ### 2. 准备环境
 
@@ -67,11 +67,20 @@ python3 skills/tool-npu-objdump/scripts/check_interface.py --json
 | ELF header、section、symbol 等完整信息 | `msobjdump --dump-elf "$input_file" --verbose` |
 | 列出内嵌 device ELF | `msobjdump --list-elf "$input_file"` |
 | 提取文件 | `msobjdump --extract-elf "$input_file" --out-dir "$output_dir"` |
-| 反汇编 device 侧 AICore 指令 | `msobjdump --sass "$input_file"` |
+| 反汇编 device 侧 AI Core 指令 | `msobjdump --sass "$input_file"` |
+| 反汇编并显示文件名和行号 | `msobjdump --sass "$input_file" --lineinfo` |
+| 显示源码和反汇编 | `msobjdump --sass "$input_file" --source` |
+| 同时显示行号和源码 | `msobjdump --sass "$input_file" --lineinfo --source` |
+
+`--lineinfo`显示源文件名和行号；`--source`/`-s`在反汇编结果中显示对应源码。使用这两个选项时需要指定`--sass`。
+
+编译算子时请使用 `-g` 生成调试信息，配置方法请参见[常用的编译选项](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/guide/programming_guide/compilation_and_execution/operator_compilation/ai_core_operator_compilation.md#ZH-CN_TOPIC_0000002462746461)和[自定义编译选项](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/guide/programming_guide/advanced_programming/aclnn_operator_development/compilation_and_deployment/basic_process.md#custom-compile-options)。
+
+显示源码时需保留调试信息中记录的源文件及其路径。即使device ELF不含调试信息，`--sass`仍可输出反汇编指令，但`--lineinfo`无法显示源码位置，`--source`无法显示源码。使用`--source`时，若源文件无法访问，工具会输出告警并继续反汇编，但不显示对应源码。
 
 `input_file` 使用已确认的绝对路径，`output_dir` 在调用前创建并解析为绝对路径。一个调用只带 dump/list/extract/sass 中一个主操作；多个目标分别调用——新版 argparse 对组合使用直接报错退出 2（如 `--sass cannot be combined with an existing ELF action`），旧版则可能静默按第一个参数执行，都不能拼在一起当批量操作。`--verbose` / `-V` 是 dump 的详细模式，不是版本查询。不能写成 `msobjdump 文件名`。普通查询不自动执行提取或反汇编，也不默认执行全部操作。
 
-`--sass` 输出打印到 stdout，保存结果用 Shell 重定向（如 `> "$output_file"`），不能与 `--out-dir` 组合。它支持独立 device ELF、融合编译 host ELF（自动提取 `.aicore_binary` 后反汇编）、`.a` 静态库（自动遍历成员到临时目录，不污染当前目录）以及 `.ascend.kernel.*`、`_o/_json` 封装；thin archive 不支持。`SASS` 只是选项名，输出为 Ascend AICore 指令，与 NVIDIA SASS 无关。
+`--sass` 输出打印到 stdout，保存结果用 Shell 重定向（如 `> "$output_file"`），不能与 `--out-dir` 组合。它支持独立 device ELF、融合编译 host ELF（自动提取 `.aicore_binary` 后反汇编）、`.a` 静态库（自动遍历成员到临时目录，不污染当前目录）以及 `.ascend.kernel.*`、`_o/_json` 封装；thin archive 不支持。
 
 **路径含空格或 Shell 通配字符时**：当前已安装 CANN 的 Shell 入口以未引用的 `$@` 转发参数，外层引号无法阻止入口内部拆词或展开，表现为 `unrecognized arguments` 或“文件不存在”；asc-tools 新版入口已修复为 `"$@"`，随后续安装包发布。遇到拆词报错时先确认入口与安装版本，再用同包模块 CLI 规避：
 
@@ -96,7 +105,7 @@ python3 -m msobjdump --dump-elf "$input_file"
 - verbose：摘录与问题相关的结构；输出过长时保存完整日志并给出路径。
 - list：展示实际列出的文件名；单算子 ELF 的 `nothing to list` 表示没有内嵌文件，不是文件损坏。
 - extract：给出实际生成文件的路径；`nothing to extra` 表示该输入没有可提取内容，不声称成功提取。
-- sass：结果打印到 stdout，多个 device 镜像以 `===== [SASS] 来源 =====` 分隔，来源标注提取路径（如 `demo[.aicore_binary]`、`lib.a(member.o)`）。退出码 0 要求找到镜像且无任何诊断。无 device ELF、thin archive、`llvm-objdump` 缺失或其输出全为 `<not available>`（当前环境的 llvm-objdump 不带 Ascend 反汇编后端）都会报错并返回非零；此时按 [故障排查](references/troubleshooting.md) 定位环境，不要声称已反汇编。
+- sass：结果打印到 stdout，多个 device 镜像以 `===== [SASS] 来源 =====` 分隔，来源标注提取路径（如 `demo[.aicore_binary]`、`lib.a(member.o)`）。退出码 0 要求找到镜像且无错误诊断。源码文件无法访问会产生 warning，但该告警本身不会使有效指令反汇编失败，对应源码不会显示。无 device ELF、thin archive、`llvm-objdump` 缺失或其输出全为 `<not available>`（当前环境的 llvm-objdump 不带 Ascend 反汇编后端）都会报错并返回非零；此时按 [故障排查](references/troubleshooting.md) 定位环境，不要声称已反汇编。
 
 回答围绕用户问题组织，不强制生成固定报告。保留可复现命令和必要证据。元数据说明编译产物配置，不能证明真实运行核数、精度或性能收益；`BLOCK_NUM: 0xFFFFFFFF` 是当前实现的占位输出。
 

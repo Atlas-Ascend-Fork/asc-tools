@@ -132,6 +132,197 @@ class TestMsObjdump(unittest.TestCase):
 
         self.assertEqual(context.exception.code, 2)
 
+    def test_sass_display_options_are_independent_and_order_independent(self):
+        from itertools import permutations
+
+        for source_flag in ("--source", "-s"):
+            for lineinfo, source in (
+                (False, False),
+                (True, False),
+                (False, True),
+                (True, True),
+            ):
+                groups = [["--sass", __file__]]
+                if lineinfo:
+                    groups.append(["--lineinfo"])
+                if source:
+                    groups.append([source_flag])
+                for ordered in permutations(groups):
+                    argv = [arg for group in ordered for arg in group]
+                    with self.subTest(argv=argv):
+                        args = msobjdump_main.parse_args(argv)
+                        self.assertEqual(args.lineinfo, lineinfo)
+                        self.assertEqual(args.source, source)
+                        with tempfile.TemporaryDirectory() as directory:
+                            args.out_dir = directory
+                            objdump = msobjdump_main.ObjDump(args)
+                            try:
+                                self.assertEqual(objdump.sass_lineinfo, lineinfo)
+                                self.assertEqual(objdump.sass_source, source)
+                            finally:
+                                objdump._clean()
+
+    def test_sass_modifiers_require_sass_and_suggest_help(self):
+        for argv in (
+            ["--lineinfo"],
+            ["--source"],
+            ["-s"],
+            ["--source", "--lineinfo"],
+            ["--dump-elf", __file__, "--lineinfo"],
+        ):
+            with (
+                self.subTest(argv=argv),
+                contextlib.redirect_stderr(StringIO()) as error,
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    msobjdump_main.parse_args(argv)
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("require --sass", error.getvalue())
+                self.assertIn("--help", error.getvalue())
+
+    def test_sass_display_options_preserve_existing_cli(self):
+        args = msobjdump_main.parse_args(["-l", __file__])
+        self.assertEqual(args.list_elf, os.path.realpath(__file__))
+        for alias in ("-g", "--line-info"):
+            with self.subTest(alias=alias), contextlib.redirect_stderr(StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    msobjdump_main.parse_args(["--sass", __file__, alias])
+                self.assertEqual(raised.exception.code, 2)
+        for conflicting in (
+            ["--dump-elf", __file__],
+            ["--extract-elf", __file__],
+            ["--list-elf", __file__],
+            ["--verbose"],
+            ["--out-dir", "."],
+        ):
+            with (
+                self.subTest(conflicting=conflicting),
+                contextlib.redirect_stderr(StringIO()),
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    msobjdump_main.parse_args(
+                        ["--sass", __file__, "--source", *conflicting]
+                    )
+                self.assertEqual(raised.exception.code, 2)
+
+    def test_sass_help_describes_dependencies(self):
+        with contextlib.redirect_stdout(StringIO()) as output:
+            with self.assertRaises(SystemExit) as raised:
+                msobjdump_main.parse_args(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        help_text = " ".join(output.getvalue().split())
+        for text in (
+            "--lineinfo",
+            "--source",
+            "-s",
+            "Requires --sass",
+        ):
+            self.assertIn(text, help_text)
+
+    def test_sass_command_options_keep_paths_as_arguments(self):
+        for lineinfo, source in (
+            (False, False),
+            (True, False),
+            (False, True),
+            (True, True),
+        ):
+            with (
+                self.subTest(lineinfo=lineinfo, source=source),
+                patch.object(utils.subprocess, "run") as run,
+            ):
+                utils.disassemble_with_llvm_objdump(
+                    "目录/device with spaces.o",
+                    "/tool path/llvm-objdump",
+                    lineinfo=lineinfo,
+                    source=source,
+                )
+                expected = ["/tool path/llvm-objdump", "-d"]
+                if lineinfo:
+                    expected.append("-l")
+                if source:
+                    expected.append("-S")
+                expected.append("目录/device with spaces.o")
+                self.assertEqual(run.call_args.args[0], expected)
+                self.assertFalse(run.call_args.kwargs["shell"])
+
+    def test_sass_annotations_and_warnings_preserved_for_each_image(self):
+        for lineinfo, source in (
+            (False, False),
+            (True, False),
+            (False, True),
+            (True, True),
+        ):
+            with (
+                self.subTest(lineinfo=lineinfo, source=source),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                args = msobjdump_main.parse_args(["--sass", __file__])
+                args.out_dir, args.lineinfo, args.source = directory, lineinfo, source
+                objdump = msobjdump_main.ObjDump(args)
+                images = [
+                    msobjdump_main.SassImage("first.o", "archive(first.o)"),
+                    msobjdump_main.SassImage("second.o", "archive(second.o)"),
+                ]
+                output = "目录/source file.cce:12\nint value = 1; // <unknown> in source\n  0: 00000000 END\n"
+                warning = "llvm-objdump: warning: source file not found\n"
+                try:
+                    with (
+                        patch.object(
+                            utils,
+                            "disassemble_with_llvm_objdump",
+                            return_value=subprocess.CompletedProcess(
+                                [], 0, output, warning
+                            ),
+                        ) as run,
+                        contextlib.redirect_stdout(StringIO()) as out,
+                        contextlib.redirect_stderr(StringIO()) as err,
+                    ):
+                        self.assertEqual(
+                            objdump._report_sass_results(images, [], "llvm-objdump"), 0
+                        )
+                    self.assertEqual(run.call_count, 2)
+                    for call, image in zip(run.call_args_list, images):
+                        self.assertEqual(call.args, (image.path, "llvm-objdump"))
+                        self.assertEqual(
+                            call.kwargs, {"lineinfo": lineinfo, "source": source}
+                        )
+                        self.assertIn(image.source, out.getvalue())
+                    self.assertEqual(out.getvalue().count(output), 2)
+                    self.assertEqual(err.getvalue().count(warning.strip()), 2)
+                finally:
+                    objdump._clean()
+
+    def test_sass_partial_failure_keeps_successful_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = msobjdump_main.parse_args(["--sass", __file__, "--source"])
+            args.out_dir = directory
+            objdump = msobjdump_main.ObjDump(args)
+            try:
+                images = [
+                    msobjdump_main.SassImage("good.o", "good.o"),
+                    msobjdump_main.SassImage("bad.o", "bad.o"),
+                ]
+                results = [
+                    subprocess.CompletedProcess([], 0, "  0: 00000000 END\n", ""),
+                    subprocess.CompletedProcess([], 1, "", "backend failure"),
+                ]
+                with (
+                    patch.object(
+                        utils, "disassemble_with_llvm_objdump", side_effect=results
+                    ),
+                    contextlib.redirect_stdout(StringIO()) as out,
+                    contextlib.redirect_stderr(StringIO()) as err,
+                ):
+                    self.assertEqual(
+                        objdump._report_sass_results(images, [], "llvm-objdump"), 1
+                    )
+                self.assertIn("good.o", out.getvalue())
+                self.assertIn("END", out.getvalue())
+                self.assertIn("bad.o", err.getvalue())
+                self.assertIn("backend failure", err.getvalue())
+            finally:
+                objdump._clean()
+
     def test_classify_sass_file_recognizes_device_machine(self):
         objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
         with tempfile.NamedTemporaryFile() as input_file:
@@ -224,6 +415,8 @@ class TestMsObjdump(unittest.TestCase):
 
     def test_disassemble_sass_rejects_placeholder_output(self):
         objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.sass_lineinfo = False
+        objdump.sass_source = False
         image = msobjdump_main.SassImage("device.o", "device.o")
         result = subprocess.CompletedProcess(
             [],
@@ -240,6 +433,8 @@ class TestMsObjdump(unittest.TestCase):
 
     def test_disassemble_sass_rejects_empty_output(self):
         objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.sass_lineinfo = False
+        objdump.sass_source = False
         image = msobjdump_main.SassImage("device.o", "device.o")
         result = subprocess.CompletedProcess([], 0, "", "")
         with patch.object(utils, "disassemble_with_llvm_objdump", return_value=result):
@@ -250,6 +445,8 @@ class TestMsObjdump(unittest.TestCase):
 
     def test_disassemble_sass_rejects_partial_unknown_output(self):
         objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.sass_lineinfo = False
+        objdump.sass_source = False
         image = msobjdump_main.SassImage("device.o", "device.o")
         result = subprocess.CompletedProcess(
             [],

@@ -43,6 +43,7 @@ python3 -m msobjdump --sass "$input_file"
 | `thin archive is not supported` | `--sass` 不支持 thin archive；改用普通归档或先解出成员再反汇编 |
 | `llvm-objdump produced no valid instruction lines` / 输出全为 `<not available>` | 当前 PATH 选中的 llvm-objdump 缺 Ascend device 架构反汇编后端（同版本号也可能有差异）；换用带该后端的环境（如 CANN 的 bisheng_compiler 工具链）或更新 CANN，不重命名输入 |
 | `llvm-objdump is not available, please source the matching CANN environment` | `--sass` 需要 llvm-objdump；source 匹配的 CANN 后重试，不要安装系统 llvm 替代 |
+| `failed to find source` | 使用 `--source` 时按 debug 信息记录的路径检查源码文件；源码不可访问时会输出告警并继续反汇编，但不显示对应源码；该告警本身不会使有效指令反汇编失败 |
 | `--sass cannot be combined with ...`（退出码 2） | 参数互斥属预期行为；dump/list/extract/sass 分开调用，保存结果用 Shell 重定向 |
 | 提取失败、结果为空或异常回溯 | 保存 stderr 和实际文件检查结果；确认工具版本与产物格式，不能自动用其他格式解释 |
 | 重复全局元数据或未知字段 | 保留原输出；当前源码只在部分输入路径去重。重复行不等于重复 kernel，未知字段不猜义 |
