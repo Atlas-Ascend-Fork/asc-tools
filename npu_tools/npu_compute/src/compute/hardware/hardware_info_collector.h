@@ -12,7 +12,6 @@
 
 #include "hardware/hardware_info_device.h"
 #include "hardware/hardware_info_types.h"
-#include "hardware/hardware_info_writer.h"
 
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
@@ -30,6 +29,11 @@ enum class HardwareCollectionState {
     Completed,
     Failed,
     NoKernelLaunch,
+};
+
+enum class PublishResult {
+    Published,
+    Failed,
 };
 
 using HostInfoCollectionFunction = std::function<bool(const boost::filesystem::path&, HostInfo*, DiagnosticSink*)>;
@@ -54,7 +58,6 @@ public:
     HardwareInfoCollector(HardwareInfoCollector&&) = delete;
     HardwareInfoCollector& operator=(HardwareInfoCollector&&) = delete;
 
-    bool Initialize(const boost::filesystem::path& outputDirectory, std::string* error);
     bool Initialize(const boost::filesystem::path& probePath, HardwareInfoPublishFunction publish, std::string* error);
     void CollectOnKernelLaunch() noexcept;
     void Stop() noexcept;

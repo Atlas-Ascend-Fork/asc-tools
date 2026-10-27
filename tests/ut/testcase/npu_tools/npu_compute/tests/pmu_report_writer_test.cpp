@@ -9,7 +9,7 @@
  */
 #include <gtest/gtest.h>
 
-#include "report/report_writer.h"
+#include "report_test_sink.h"
 #include "artifact_sink.h"
 #include "report/collection_file_validator.h"
 #include "report/collection_processor.h"
@@ -52,7 +52,7 @@ static int RunSuiteMain()
 {
     char directory[] = "/tmp/npu-summary-test-XXXXXX";
     CHECK(::mkdtemp(directory) != nullptr);
-    npucompute::ReportConfig config;
+    npucompute::test::ReportFileConfig config;
     config.outputDirectory = directory;
     config.frequencyMhz = 1000;
     config.aicFrequencyMhz = 1000;
@@ -283,7 +283,7 @@ static int RunSuiteMain()
         const auto ipcDirectory =
             boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("vf-ipc-summary-%%%%-%%%%");
         boost::filesystem::create_directories(ipcDirectory);
-        npucompute::ReportConfig ipcConfig;
+        npucompute::test::ReportFileConfig ipcConfig;
         ipcConfig.outputDirectory = ipcDirectory.string();
         ipcConfig.frequencyMhz = 800;
         ipcConfig.aivFrequencyMhz = 800;
@@ -420,7 +420,7 @@ TEST(NpuComputePmuReportWriter, BlockCsvRetainsIdentityAndIgnoresTaskCounters)
     block.coreType = ACLPTI_CORE_TYPE_AIV;
     block.totalCycles = 3000;
     result.pmuLogs.emplace(aclptiBlockKey{7, 3, ACLPTI_CORE_TYPE_AIV, 0}, block);
-    ASSERT_EQ(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config, &sink), ACLPTI_SUCCESS);
+    ASSERT_EQ(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config, sink), ACLPTI_SUCCESS);
     EXPECT_EQ(sink.rows, 1U);
     EXPECT_EQ(std::count(sink.text.begin(), sink.text.end(), '\n'), 2);
     EXPECT_NE(sink.text.find("block_id"), std::string::npos);
@@ -452,7 +452,7 @@ TEST(NpuComputePmuReportWriter, BlockCsvRetainsIdentityAndIgnoresTaskCounters)
     result.pmuLogs.clear();
     sink.text.clear();
     sink.rows = 0;
-    ASSERT_EQ(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config, &sink), ACLPTI_SUCCESS);
+    ASSERT_EQ(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config, sink), ACLPTI_SUCCESS);
     EXPECT_EQ(sink.rows, 0U);
     EXPECT_TRUE(sink.text.empty());
 }

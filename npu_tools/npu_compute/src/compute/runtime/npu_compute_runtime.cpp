@@ -503,7 +503,7 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
     const auto prefix = ReportPrefix(report_sequence_);
     // Every kernel result has a summary, including sampling-only launches with no PMU sections.
     const aclptiResult csvStatus =
-        WritePmuReport(*result, section_config_.Sections(), csvConfig, metadata, artifact_sink_, prefix, &degraded_);
+        WritePmuReport(*result, section_config_.Sections(), csvConfig, metadata, *artifact_sink_, prefix, &degraded_);
 
     ++report_sequence_;
     aclptiResult firstStatus = result->status == ACLPTI_SUCCESS ? csvStatus : result->status;

@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "artifact_sink.h"
+#include "report_test_sink.h"
 #include "report/report_writer.h"
 #include <boost/json.hpp>
 #include <gtest/gtest.h>
@@ -45,7 +46,7 @@ SummaryOutput Render(
     const std::vector<std::string>& sections = {}, const ReportConfig& config = {})
 {
     MetricsSink sink;
-    EXPECT_EQ(WriteSummaryJsonl(result, sections, config, metadata, &sink), ACLPTI_SUCCESS);
+    EXPECT_EQ(WriteSummaryJsonl(result, sections, config, metadata, sink), ACLPTI_SUCCESS);
     SummaryOutput out{{}, sink.content, sink.rows};
     std::istringstream stream(sink.content);
     std::string line;
@@ -459,7 +460,7 @@ TEST(SummaryMetrics, LocalAndSinkPayloadsMatchAndFailedSinkAborts)
 {
     char directory[] = "/tmp/npu-summary-payload-XXXXXX";
     ASSERT_NE(::mkdtemp(directory), nullptr);
-    ReportConfig config;
+    npucompute::test::ReportFileConfig config;
     config.outputDirectory = directory;
     const auto metadata = Metadata(KernelKind::Vector, 2);
     const auto expected = Render({}, metadata, {"Memory", "ArithmeticUtilization"}, config);
@@ -477,7 +478,7 @@ TEST(SummaryMetrics, LocalAndSinkPayloadsMatchAndFailedSinkAborts)
         bool committed = false;
         bool aborted = false;
     } sink;
-    EXPECT_EQ(WriteSummaryJsonl({}, {}, config, metadata, &sink), ACLPTI_ERROR_INTERNAL);
+    EXPECT_EQ(WriteSummaryJsonl({}, {}, config, metadata, sink), ACLPTI_ERROR_INTERNAL);
     EXPECT_TRUE(sink.aborted);
     EXPECT_FALSE(sink.committed);
 }

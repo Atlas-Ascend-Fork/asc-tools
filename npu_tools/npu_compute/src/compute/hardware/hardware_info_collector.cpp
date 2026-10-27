@@ -41,7 +41,6 @@ HardwareInfoDependencies MakeDefaultDependencies()
         return CollectHostInfo(outputDirectory, host, diagnostics);
     };
     dependencies.deviceApi = std::make_shared<DynamicHardwareDeviceApi>();
-    dependencies.publish = PublishHardwareInfoJsonl;
     dependencies.diagnostics = DefaultDiagnostic;
     return dependencies;
 }
@@ -53,6 +52,16 @@ public:
     explicit Impl(HardwareInfoDependencies dependencies) : dependencies_(std::move(dependencies)) {}
 
     ~Impl() { Stop(); }
+
+    bool SetPublisher(HardwareInfoPublishFunction publish)
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        if (state_ != HardwareCollectionState::Created) {
+            return false;
+        }
+        dependencies_.publish = std::move(publish);
+        return true;
+    }
 
     bool Initialize(const boost::filesystem::path& outputDirectory, std::string* error)
     {
@@ -221,25 +230,17 @@ HardwareInfoCollector::HardwareInfoCollector(HardwareInfoDependencies dependenci
 
 HardwareInfoCollector::~HardwareInfoCollector() = default;
 
-bool HardwareInfoCollector::Initialize(const boost::filesystem::path& outputDirectory, std::string* error)
-{
-    return impl_->Initialize(outputDirectory, error);
-}
-
 void HardwareInfoCollector::CollectOnKernelLaunch() noexcept { impl_->CollectOnKernelLaunch(); }
 
 bool HardwareInfoCollector::Initialize(
     const boost::filesystem::path& probePath, HardwareInfoPublishFunction publish, std::string* error)
 {
-    if (State() != HardwareCollectionState::Created) {
+    if (!impl_->SetPublisher(std::move(publish))) {
         if (error != nullptr) {
             *error = "HardwareInfoCollector is already initialized";
         }
         return false;
     }
-    auto dependencies = MakeDefaultDependencies();
-    dependencies.publish = std::move(publish);
-    impl_ = std::make_unique<Impl>(std::move(dependencies));
     return impl_->Initialize(probePath, error);
 }
 

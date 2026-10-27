@@ -14,7 +14,6 @@ add_library(npu_compute SHARED
   hardware/hardware_info_device.cpp
   hardware/hardware_info_host.cpp
   hardware/hardware_info_json.cpp
-  hardware/hardware_info_writer.cpp
   ipc/artifact_publisher.cpp
   ipc/uds_server.cpp
   npu_compute.cpp

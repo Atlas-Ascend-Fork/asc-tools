@@ -139,7 +139,6 @@ set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_device.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_host.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_json.cpp
-  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/artifact_publisher.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/uds_server.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/npu_compute.cpp
@@ -529,7 +528,6 @@ set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_device.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_host.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_json.cpp
-  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/npu_compute_runtime.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_data_consumer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_decoder.cpp

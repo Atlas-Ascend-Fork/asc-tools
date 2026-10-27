@@ -21,12 +21,10 @@ enum class PmuDataLevel {
 };
 
 struct ReportConfig {
-    std::string outputDirectory;
     double frequencyMhz = 1000.0;
     double aicFrequencyMhz = 0.0;
     double aivFrequencyMhz = 0.0;
     std::string socName = "950X"; // Selects model-specific theoretical transfer bandwidths.
-    bool fixedOutputDirectory = false;
 };
 
 enum class KernelKind {

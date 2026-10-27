@@ -10,7 +10,7 @@
 #include "plog_capture.h"
 #include <gtest/gtest.h>
 
-#include "report/report_writer.h"
+#include "report_test_sink.h"
 
 #include <algorithm>
 #include <array>
@@ -284,7 +284,7 @@ static int RunSuiteMain()
     {
         const auto path = boost::filesystem::temp_directory_path() /
                           boost::filesystem::unique_path("npu_compute_arithmetic_%%%%-%%%%");
-        npucompute::ReportConfig config;
+        npucompute::test::ReportFileConfig config;
         config.outputDirectory = path.string();
         config.frequencyMhz = 1000.0;
         aclptiProfilingDataResult result;
@@ -440,7 +440,7 @@ static int RunSuiteMain()
     result.pmuLogs.emplace(aclptiBlockKey{2, 3, ACLPTI_CORE_TYPE_AIC, 3}, aicRow);
     result.pmuLogs.emplace(aclptiBlockKey{2, 3, ACLPTI_CORE_TYPE_AIV, 3}, aivRow);
 
-    npucompute::ReportConfig config;
+    npucompute::test::ReportFileConfig config;
     config.outputDirectory = directory.string();
     config.frequencyMhz = 1000.0;
     config.socName = "950X";
@@ -554,9 +554,7 @@ static int RunSuiteMain()
     CHECK(CapturePlog(
         [&] { filesystemStatus = npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config); }, &filesystemLog));
     CHECK(filesystemStatus == ACLPTI_ERROR_CSV_WRITE);
-    CHECK(filesystemLog.find("CSV write rejected: output path is not a directory") != std::string::npos);
-    CHECK(filesystemLog.find("path=" + blockedDirectory.string()) != std::string::npos);
-    CHECK(filesystemLog.find("reason=") != std::string::npos);
+    CHECK(filesystemLog.find("artifact write failed:") != std::string::npos);
     boost::filesystem::remove(blockedDirectory);
 
     config.outputDirectory = "relative_csv_output";
@@ -564,9 +562,8 @@ static int RunSuiteMain()
     aclptiResult relativeStatus = ACLPTI_SUCCESS;
     CHECK(CapturePlog(
         [&] { relativeStatus = npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config); }, &relativeLog));
-    CHECK(relativeStatus == ACLPTI_ERROR_INVALID_PARAMETER);
-    CHECK(relativeLog.find("CSV write rejected: output path must be absolute") != std::string::npos);
-    CHECK(relativeLog.find("path=relative_csv_output") != std::string::npos);
+    CHECK(relativeStatus == ACLPTI_ERROR_CSV_WRITE);
+    CHECK(relativeLog.find("test artifact root must be an absolute path") != std::string::npos);
     if (hadPreviousDebug) {
         CHECK(setenv("NPU_COMPUTE_DEBUG", previousDebugValue.c_str(), 1) == 0);
     } else {
@@ -595,15 +592,14 @@ static int RunSuiteMain()
 
     boost::filesystem::remove_all(emptyDirectory);
 
-    CHECK(npucompute::ReportConfig{}.outputDirectory.empty());
     config.outputDirectory.clear();
     CHECK(setenv("NPU_COMPUTE_DEBUG", "1", 1) == 0);
     std::string emptyOutputLog;
     aclptiResult emptyOutputStatus = ACLPTI_SUCCESS;
     CHECK(CapturePlog(
         [&] { emptyOutputStatus = npucompute::WritePmuCsv(sparseResult, {"L2Cache"}, config); }, &emptyOutputLog));
-    CHECK(emptyOutputStatus == ACLPTI_ERROR_INVALID_PARAMETER);
-    CHECK(emptyOutputLog.find("CSV write rejected: output path is empty") != std::string::npos);
+    CHECK(emptyOutputStatus == ACLPTI_ERROR_CSV_WRITE);
+    CHECK(emptyOutputLog.find("artifact write failed:") != std::string::npos);
     if (hadPreviousDebug) {
         CHECK(setenv("NPU_COMPUTE_DEBUG", previousDebugValue.c_str(), 1) == 0);
     } else {
@@ -625,7 +621,7 @@ static int RunSuiteMain()
             row.coreData.push_back(Core(ACLPTI_CORE_TYPE_AIC, 0, 4000.0, {}));
             s1Result.pmuLogs.emplace(aclptiBlockKey{i, 0, ACLPTI_CORE_TYPE_AIC, 0}, row);
         }
-        npucompute::ReportConfig s1Config;
+        npucompute::test::ReportFileConfig s1Config;
         s1Config.outputDirectory = s1Dir.string();
         s1Config.frequencyMhz = 1000.0;
         CHECK(npucompute::WritePmuCsv(s1Result, {"L2Cache"}, s1Config) == ACLPTI_SUCCESS);
@@ -646,7 +642,7 @@ static int RunSuiteMain()
         s2Row.coreId = 0;
         s2Row.coreData.push_back(Core(ACLPTI_CORE_TYPE_AIC, 0, 4000.0, {}));
         s2Result.pmuLogs.emplace(aclptiBlockKey{5, 0, ACLPTI_CORE_TYPE_AIC, 0}, s2Row);
-        npucompute::ReportConfig s2Config;
+        npucompute::test::ReportFileConfig s2Config;
         s2Config.outputDirectory = s2Dir.string();
         s2Config.frequencyMhz = 1000.0;
         CHECK(npucompute::WritePmuCsv(s2Result, {"L2Cache"}, s2Config) == ACLPTI_SUCCESS);
@@ -669,7 +665,7 @@ static int RunSuiteMain()
             row.coreData.push_back(Core(ACLPTI_CORE_TYPE_AIC, 0, 3000.0, {}));
             s3Result.pmuLogs.emplace(aclptiBlockKey{i, 0, ACLPTI_CORE_TYPE_AIC, 0}, row);
         }
-        npucompute::ReportConfig s3Config;
+        npucompute::test::ReportFileConfig s3Config;
         s3Config.outputDirectory = s3Dir.string();
         s3Config.frequencyMhz = 1000.0;
         CHECK(npucompute::WritePmuCsv(s3Result, {"L2Cache"}, s3Config) == ACLPTI_SUCCESS);
@@ -690,7 +686,7 @@ static int RunSuiteMain()
         s4Row.coreId = 0;
         s4Row.coreData.push_back(Core(ACLPTI_CORE_TYPE_AIV, 0, 4000.0, {}));
         s4Result.pmuLogs.emplace(aclptiBlockKey{10, 0, ACLPTI_CORE_TYPE_AIV, 0}, s4Row);
-        npucompute::ReportConfig s4Config;
+        npucompute::test::ReportFileConfig s4Config;
         s4Config.outputDirectory = s4Dir.string();
         s4Config.frequencyMhz = 1000.0;
         CHECK(npucompute::WritePmuCsv(s4Result, {"L2Cache"}, s4Config) == ACLPTI_SUCCESS);
@@ -719,7 +715,7 @@ static int RunSuiteMain()
         pureAivResult.taskLogs.emplace(
             1, std::vector<aclptiTaskLogRow>{{1, 0x00U, 1, 2, 1000}, {1, 0x01U, 1, 2, 5000}});
 
-        npucompute::ReportConfig config;
+        npucompute::test::ReportFileConfig config;
         config.outputDirectory = pureAivDir.string();
         config.frequencyMhz = 1000.0;
         CHECK(npucompute::WritePmuCsv(pureAivResult, {"Memory", "MemoryUB"}, config) == ACLPTI_SUCCESS);
@@ -751,7 +747,7 @@ static int RunSuiteMain()
         pureAicResult.taskLogs.emplace(
             1, std::vector<aclptiTaskLogRow>{{1, 0x00U, 1, 2, 1000}, {1, 0x01U, 1, 2, 5000}});
 
-        npucompute::ReportConfig config;
+        npucompute::test::ReportFileConfig config;
         config.outputDirectory = pureAicDir.string();
         config.frequencyMhz = 1000.0;
         CHECK(npucompute::WritePmuCsv(pureAicResult, {"Memory", "MemoryL0"}, config) == ACLPTI_SUCCESS);
@@ -804,7 +800,7 @@ static int RunSuiteMain()
         formulaResult.pmuLogs.emplace(aclptiBlockKey{20, 7, ACLPTI_CORE_TYPE_AIC, 9}, formulaAic);
         formulaResult.pmuLogs.emplace(aclptiBlockKey{20, 7, ACLPTI_CORE_TYPE_AIV, 11}, formulaAiv);
 
-        npucompute::ReportConfig formulaConfig;
+        npucompute::test::ReportFileConfig formulaConfig;
         formulaConfig.outputDirectory = formulaDir.string();
         formulaConfig.frequencyMhz = 1000.0;
         formulaConfig.socName = "950X";
@@ -911,7 +907,7 @@ static int RunSuiteMain()
         mixedSourceResult.pmuLogs.emplace(aclptiBlockKey{7, 3, ACLPTI_CORE_TYPE_AIC, 1}, blockRow);
         mixedSourceResult.taskPmuData.aic = aclptiTaskPmuCoreData{2000, false, {}};
 
-        npucompute::ReportConfig config;
+        npucompute::test::ReportFileConfig config;
         config.outputDirectory = (directory / "mixed").string();
         CHECK(npucompute::WritePmuCsv(mixedSourceResult, sections, config) == ACLPTI_SUCCESS);
         CHECK(CsvValue(directory / "mixed/L2Cache.csv", "cube3", "block_id") == "7");
@@ -944,11 +940,11 @@ static int RunSuiteMain()
     {
         const auto directory =
             boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("vf-ipc-%%%%-%%%%");
-        npucompute::ReportConfig config;
+        npucompute::test::ReportFileConfig config;
         config.outputDirectory = directory.string();
         config.frequencyMhz = 800;
         config.aivFrequencyMhz = 1000;
-        config.fixedOutputDirectory = true;
+        npucompute::test::ReportFileSink sink(directory.string(), false);
 
         // Give block and task rows different instruction counts to detect source selection errors.
         aclptiProfilingDataResult result;
@@ -967,7 +963,7 @@ static int RunSuiteMain()
         }
 
         // Renamed ratio columns replace the old names; the four new fields are appended in order.
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         const auto csv = directory / "ArithmeticUtilization.csv";
         const auto header = CsvHeader(csv);
         CHECK(header.size() == 20U);
@@ -996,7 +992,7 @@ static int RunSuiteMain()
 
         // Removing task counters must not change CSV values or its block schema.
         result.taskPmuData = {};
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvHeader(csv) == header);
         const auto blockCsv = ReadFile(csv);
         CHECK(std::count(blockCsv.begin(), blockCsv.end(), '\n') == 3);
@@ -1009,21 +1005,21 @@ static int RunSuiteMain()
         for (const auto missing : {1320U, 1466U, 1467U, 1468U}) {
             core.values = complete;
             core.values.erase(missing);
-            CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+            CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
             CHECK(CsvValue(csv, "vector0", missing == 1320U ? "aiv_simd_vf_ipc" : "aiv_simt_vf_ipc") == "NA");
         }
 
         // Missing event 1281 does not affect VF ratios.
         core.values = complete;
         core.values.erase(1281);
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio") == "0.200000");
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ratio") == "0.100000");
 
         // Missing SIMD cycle event 1282 makes SIMD ratio, time and IPC unavailable.
         core.values = complete;
         core.values.erase(1282);
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio") == "NA");
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_time") == "NA");
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ipc") == "NA");
@@ -1031,7 +1027,7 @@ static int RunSuiteMain()
         // Missing SIMT cycle event 1284 makes SIMT ratio, time and IPC unavailable.
         core.values = complete;
         core.values.erase(1284);
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ratio") == "NA");
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_time") == "NA");
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ipc") == "NA");
@@ -1039,7 +1035,7 @@ static int RunSuiteMain()
         // Zero SIMD cycles produce zero ratio and time; IPC remains unavailable.
         core.values = complete;
         core.values[1282] = 0;
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio") == "0.000000");
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_time") == "0.000000");
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ipc") == "NA");
@@ -1047,7 +1043,7 @@ static int RunSuiteMain()
         // Zero SIMT cycles produce zero ratio and time; IPC remains unavailable.
         core.values = complete;
         core.values[1284] = 0;
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ratio") == "0.000000");
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_time") == "0.000000");
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ipc") == "NA");
@@ -1055,7 +1051,7 @@ static int RunSuiteMain()
         // Zero active cycles (1281) do not change ratios whose denominator is total cycles.
         core.values = complete;
         core.values[1281] = 0;
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio") == "0.200000");
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ratio") == "0.100000");
 
@@ -1065,15 +1061,16 @@ static int RunSuiteMain()
         core.values[1466] = 0;
         core.values[1467] = 0;
         core.values[1468] = 0;
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ipc") == "0.000000");
         CHECK(CsvValue(csv, "vector0", "aiv_simt_vf_ipc") == "0.000000");
 
         // An AIC-only collection keeps the same header and renders all AIV VF fields as NA.
         result.pmuLogs.erase({0, 0, ACLPTI_CORE_TYPE_AIV, 0});
-        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"ArithmeticUtilization"}, config, sink) == ACLPTI_SUCCESS);
         const auto aicHeader = CsvHeader(csv);
         CHECK(aicHeader == header);
+        CHECK(CsvValue(csv, "vector0", "aiv_simd_vf_ratio").empty());
         CHECK(CsvValue(csv, "cube0", "aiv_simd_vf_ratio") == "NA");
         CHECK(CsvValue(csv, "cube0", "aiv_simt_vf_ratio") == "NA");
         for (const auto& field : vfFields) {
@@ -1081,7 +1078,7 @@ static int RunSuiteMain()
         }
 
         // ArithmeticUtilization additions do not alter the PipeUtilization CSV schema.
-        CHECK(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config) == ACLPTI_SUCCESS);
+        CHECK(npucompute::WritePmuCsv(result, {"PipeUtilization"}, config, sink) == ACLPTI_SUCCESS);
         CHECK(CsvHeader(directory / "PipeUtilization.csv") == ExpectedA5Header("PipeUtilization"));
 
         boost::filesystem::remove_all(directory);

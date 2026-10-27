@@ -31,7 +31,7 @@ boost::property_tree::ptree Summary(
     const aclptiProfilingDataResult& result = {})
 {
     SummarySink sink;
-    EXPECT_EQ(npucompute::WriteSummaryJsonl(result, {}, config, metadata, &sink), ACLPTI_SUCCESS);
+    EXPECT_EQ(npucompute::WriteSummaryJsonl(result, {}, config, metadata, sink), ACLPTI_SUCCESS);
     const auto previous = sink.content.rfind('\n', sink.content.size() - 2);
     std::istringstream input(sink.content.substr(previous + 1));
     boost::property_tree::ptree fields;

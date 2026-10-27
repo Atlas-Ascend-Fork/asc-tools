@@ -14,20 +14,16 @@
 #include "report/summary_metrics.h"
 #include "performance_hints/performance_hint_analyzer.h"
 
-#include <boost/filesystem.hpp>
 #include <algorithm>
-#include <cerrno>
 #include <cmath>
-#include <cstdlib>
 #include <cxxabi.h>
-#include <fcntl.h>
+#include <cstdlib>
 #include <iomanip>
 #include <locale>
 #include <map>
 #include <memory>
 #include <sstream>
 #include <unistd.h>
-
 namespace npucompute {
 namespace {
 
@@ -156,52 +152,11 @@ void OpInfo(
     output << "}\n";
 }
 
-bool Publish(const boost::filesystem::path& directory, const std::string& content)
-{
-    std::string temporary = (directory / "summary.jsonl.tmp.XXXXXX").string();
-    const int descriptor = ::mkstemp(temporary.data());
-    if (descriptor < 0) {
-        return false;
-    }
-    bool success = true;
-    std::size_t offset = 0;
-    while (offset < content.size()) {
-        const auto written = ::write(descriptor, content.data() + offset, content.size() - offset);
-        if (written < 0 && errno == EINTR) {
-            continue;
-        }
-        if (written <= 0) {
-            success = false;
-            break;
-        }
-        offset += static_cast<std::size_t>(written);
-    }
-    if (::fsync(descriptor) != 0) {
-        success = false;
-    }
-    if (::close(descriptor) != 0) {
-        success = false;
-    }
-    if (success) {
-        success = ::rename(temporary.c_str(), (directory / "summary.jsonl").c_str()) == 0;
-    }
-    if (!success) {
-        ::unlink(temporary.c_str());
-        return false;
-    }
-    const int directoryFd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (directoryFd < 0) {
-        return false;
-    }
-    success = ::fsync(directoryFd) == 0;
-    return ::close(directoryFd) == 0 && success;
-}
-
 } // namespace
 
 aclptiResult WriteSummaryJsonl(
     const aclptiProfilingDataResult& result, const std::vector<std::string>& sections, const ReportConfig& config,
-    const KernelMetadata& metadata, ArtifactSink* sink, std::string_view artifactPrefix)
+    const KernelMetadata& metadata, ArtifactSink& sink, std::string_view artifactPrefix)
 {
     bool artifactStarted = false;
     try {
@@ -233,23 +188,15 @@ aclptiResult WriteSummaryJsonl(
         output << "]}\n";
         OpInfo(output, result, selectedSections, config, metadata, summarySections["Memory"]);
         const std::string content = output.str();
-        if (sink != nullptr) {
-            sink->Begin(std::string(artifactPrefix) + "summary.jsonl");
-            artifactStarted = true;
-            sink->Write(content);
-            sink->Commit(selectedSections.size() + 2U);
-            artifactStarted = false;
-        } else if (!Publish(config.outputDirectory, content)) {
-            ASCTOOL_ERROR(
-                "[npu-compute] summary publication failed: %s errno=%d"
-                " code=%u",
-                config.outputDirectory.c_str(), errno, static_cast<unsigned>(static_cast<uint32_t>(errno)));
-            return ACLPTI_ERROR_INTERNAL;
-        }
+        sink.Begin(std::string(artifactPrefix) + "summary.jsonl");
+        artifactStarted = true;
+        sink.Write(content);
+        sink.Commit(selectedSections.size() + 2U);
+        artifactStarted = false;
         return ACLPTI_SUCCESS;
     } catch (const std::exception& error) {
         if (artifactStarted) {
-            sink->Abort();
+            sink.Abort();
         }
         ASCTOOL_ERROR(
             "[npu-compute] summary failed: %s"

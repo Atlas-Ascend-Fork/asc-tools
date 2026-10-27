@@ -169,6 +169,27 @@ private:
     std::shared_ptr<SharedState> state_;
 };
 
+npucompute::HardwareInfoPublishFunction MakePublisher(const std::shared_ptr<SharedState>& state)
+{
+    return [state](const boost::filesystem::path&, std::string_view jsonl, std::string* error) {
+        ++state->publishCalls;
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->publishThread = std::this_thread::get_id();
+            state->callOrder.emplace_back("publish");
+        }
+        if (!state->publisherSuccess.load()) {
+            if (error != nullptr) {
+                *error = "injected publisher failure";
+            }
+            return npucompute::PublishResult::Failed;
+        }
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->publishedJsonl = std::string(jsonl);
+        return npucompute::PublishResult::Published;
+    };
+}
+
 npucompute::HardwareInfoDependencies MakeDependencies(const std::shared_ptr<SharedState>& state)
 {
     npucompute::HardwareInfoDependencies dependencies;
@@ -193,23 +214,6 @@ npucompute::HardwareInfoDependencies MakeDependencies(const std::shared_ptr<Shar
             return true;
         };
     dependencies.deviceApi = std::make_shared<FakeHardwareDeviceApi>(state);
-    dependencies.publish = [state](const boost::filesystem::path&, std::string_view jsonl, std::string* error) {
-        ++state->publishCalls;
-        {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            state->publishThread = std::this_thread::get_id();
-            state->callOrder.emplace_back("publish");
-        }
-        if (!state->publisherSuccess.load()) {
-            if (error != nullptr) {
-                *error = "injected publisher failure";
-            }
-            return npucompute::PublishResult::Failed;
-        }
-        std::lock_guard<std::mutex> lock(state->mutex);
-        state->publishedJsonl = std::string(jsonl);
-        return npucompute::PublishResult::Published;
-    };
     dependencies.diagnostics = [state](std::string_view message) {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->diagnostics.emplace_back(message);
@@ -225,7 +229,7 @@ bool TestCollectsOnTriggerThreadInOrderAndOnlyOnce()
     npucompute::HardwareInfoCollector collector(MakeDependencies(state));
     std::string error;
 
-    CHECK(collector.Initialize(temporary.Path(), &error));
+    CHECK(collector.Initialize(temporary.Path(), MakePublisher(state), &error));
     CHECK(error.empty());
     CHECK(collector.State() == npucompute::HardwareCollectionState::WaitingKernel);
     CHECK(state->hostCalls.load() == 0);
@@ -262,7 +266,7 @@ bool TestConcurrentNotificationsStillCollectOnce()
     CHECK(!temporary.Path().empty());
     auto state = std::make_shared<SharedState>();
     npucompute::HardwareInfoCollector collector(MakeDependencies(state));
-    CHECK(collector.Initialize(temporary.Path(), nullptr));
+    CHECK(collector.Initialize(temporary.Path(), MakePublisher(state), nullptr));
 
     std::vector<std::thread> notifiers;
     for (int threadIndex = 0; threadIndex < 10; ++threadIndex) {
@@ -291,7 +295,7 @@ bool TestNotificationAndStopWaitForActiveCollection()
     auto state = std::make_shared<SharedState>();
     state->blockHost = true;
     npucompute::HardwareInfoCollector collector(MakeDependencies(state));
-    CHECK(collector.Initialize(temporary.Path(), nullptr));
+    CHECK(collector.Initialize(temporary.Path(), MakePublisher(state), nullptr));
 
     std::atomic<bool> notificationReturned{false};
     std::thread notifier([&collector, &notificationReturned] {
@@ -353,7 +357,7 @@ bool TestStopWithoutNotificationDoesNotCollect()
     CHECK(!temporary.Path().empty());
     auto state = std::make_shared<SharedState>();
     npucompute::HardwareInfoCollector collector(MakeDependencies(state));
-    CHECK(collector.Initialize(temporary.Path(), nullptr));
+    CHECK(collector.Initialize(temporary.Path(), MakePublisher(state), nullptr));
     collector.Stop();
     collector.CollectOnKernelLaunch();
     collector.Stop();
@@ -373,7 +377,7 @@ bool TestCollectionAndPublishFailuresSetFailedState()
     auto hostFailure = std::make_shared<SharedState>();
     hostFailure->hostSuccess = false;
     npucompute::HardwareInfoCollector hostCollector(MakeDependencies(hostFailure));
-    CHECK(hostCollector.Initialize(temporary.Path(), nullptr));
+    CHECK(hostCollector.Initialize(temporary.Path(), MakePublisher(hostFailure), nullptr));
     hostCollector.CollectOnKernelLaunch();
     hostCollector.Stop();
     CHECK(hostCollector.State() == npucompute::HardwareCollectionState::Failed);
@@ -384,7 +388,7 @@ bool TestCollectionAndPublishFailuresSetFailedState()
     auto publishFailure = std::make_shared<SharedState>();
     publishFailure->publisherSuccess = false;
     npucompute::HardwareInfoCollector publishCollector(MakeDependencies(publishFailure));
-    CHECK(publishCollector.Initialize(temporary.Path(), nullptr));
+    CHECK(publishCollector.Initialize(temporary.Path(), MakePublisher(publishFailure), nullptr));
     publishCollector.CollectOnKernelLaunch();
     publishCollector.Stop();
     CHECK(publishCollector.State() == npucompute::HardwareCollectionState::Failed);
@@ -406,7 +410,7 @@ bool TestConcurrentNotificationsWaitForFailure()
     state->blockHost = true;
     state->hostSuccess = false;
     npucompute::HardwareInfoCollector collector(MakeDependencies(state));
-    CHECK(collector.Initialize(temporary.Path(), nullptr));
+    CHECK(collector.Initialize(temporary.Path(), MakePublisher(state), nullptr));
 
     constexpr int kNotifierCount = 10;
     std::atomic<int> returnedCount{0};
