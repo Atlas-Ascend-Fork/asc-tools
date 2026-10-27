@@ -58,4 +58,5 @@ public:
 };
 } // namespace hifloat4
 using hifloat4x2_t = hifloat4::Fp4e1m2T;
+using hif4x2_t = hifloat4x2_t;
 #endif
