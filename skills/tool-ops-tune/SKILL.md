@@ -39,7 +39,7 @@ Step 执行手册：`agent/workflows/task-prompts.md`；故障分流：`agent/wo
 
 | 子域 | 回答的问题 | 关键资产 | 交付状态 |
 |------|-----------|---------|---------|
-| `ops-collect/` | 数据怎么采对采全 | 采集模式路由决策树 + collect_board/collect_cases/facts_bridge/jsonl_to_cases/collect_sim + isolation_test（MC² 隔离测试）+ manifest 契约（opstune.collection/1.0） | ✅ 已交付 |
+| `ops-collect/` | 数据怎么采对采全 | 采集模式路由决策树 + collect_board/collect_cases/facts_bridge/jsonl_to_cases/collect_sim + isolation_test（MC² 隔离测试）+ manifest 契约（opstune.collection/1.0）+ npu-compute DB 格式通道（csv_to_db/db_bench，Roadmap #4） | ✅ 已交付 |
 | `ops-verdict/` ★ | 瓶颈是什么、为什么不是别的；改好了吗 | 判定引擎 6 脚本 + L0-L3 规则包 24 条 + 口径指纹互锁（snapshot/delta_compare） + soc-spec 峰值标尺 + 执行式回归（evals 38 用例 + 离线冒烟 smoke） | ✅ 已交付 |
 | `ops-mechanism/` | 怎么改、能涨多少、风险在哪 | 机制卡八要素 + 案例证据库（A-E 证据分级；含 MC² 机制卡与配平搜索） | ✅ 已交付 |
 | `ops-family/` | 代码怎么写（模板货架） | 算子族 A/B 双型文档 + 可拷贝代码模板 + tiling 候选生成器（含 mc2 族设计参考） | ✅ 已交付 |
@@ -68,10 +68,14 @@ python3 ops-verdict/scripts/verdict.py \
 # 上板标准采集（7 组 aic-metrics 顺序采集 + manifest 契约落盘）：
 bash ops-collect/scripts/collect_board.sh --mode standard --exe ./build/demo --args "8448 4096 4096" -o PROF_OUT
 
+# 950/A5 DB 格式采集（npu-compute → .npu-rep → 解包 → summary.db，Roadmap #4）：
+bash ops-collect/scripts/collect_board.sh --mode npu-compute --exe ./build/demo -o NPC_OUT
+
 # 逐 case 批量采集（cases.csv → perf_data.csv，batch_pipeline 直连）：
 python3 ops-collect/scripts/collect_cases.py --cases cases.csv --exe ./build/demo -o collect_out
 
-# 采集产物 → 判定标量桥接（L0 规则与 L1 反证的标量生产者）：
+# 采集产物 → 判定标量桥接（L0 规则与 L1 反证的标量生产者；
+# --source auto 按目录特征判源，npu-compute 解包目录自动走 DB 通道）：
 python3 ops-collect/scripts/facts_bridge.py --prof PROF_OUT --soc a5
 ```
 

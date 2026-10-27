@@ -80,6 +80,45 @@ def load_csv_rows(csv_path: str) -> list[dict]:
     return rows
 
 
+def load_db_rows(db_path: str, table: str) -> list[dict]:
+    """读 npu-compute summary.db 表 → 与 CSV 行同构的 dict 行（Roadmap #4 DB 输入）。
+
+    列名规范化差异由 FieldUnitMap 还原：DB `aiv_time` → 键 `aiv_time(us)`——
+    下游 pipe 指标/kernel 分组/规则求值零改动（同一批候选列命中）。
+    NULL → "NA" 字符串（与 CSV 侧 NA 语义对齐，parse_float 按缺失处理）。
+    DB 是同一次采集 CSV 的入库副本（npu-compute 双格式），数值口径等价；
+    全表 dict 化形态 DB 并不占优（行对象化开销 > csv.DictReader，实测
+    见 ops-collect db_bench W2）——DB 输入的价值在 facts 聚合下推与多表查询。
+    """
+    import sqlite3
+
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        tables = {
+            r[0]
+            for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if table not in tables:
+            raise SystemExit(
+                f"ERROR: summary.db 无表 {table}（表集合 {sorted(tables)}）。"
+                f"检查 --db-table 或改喂 Section CSV（--csv）。"
+            )
+        units = {}
+        if "FieldUnitMap" in tables:
+            units = dict(db.execute("SELECT field_name, unit FROM FieldUnitMap"))
+        cur = db.execute(f'SELECT * FROM "{table}" ORDER BY rowid')
+        names = [d[0] for d in cur.description]
+        keys = [f"{n}({units[n]})" if units.get(n) else n for n in names]
+        return [
+            {k: ("NA" if v is None else v) for k, v in zip(keys, row)}
+            for row in cur.fetchall()
+        ]
+    finally:
+        db.close()
+
+
 def parse_float(value) -> float:
     try:
         return float(str(value).strip().replace("%", ""))
@@ -734,6 +773,17 @@ def main() -> int:
         "--csv", default=None, help="PipeUtilization.csv（pipe/时间类指标源）"
     )
     ap.add_argument(
+        "--db",
+        default=None,
+        help="npu-compute summary.db（DB 输入，与 --csv 二选一；"
+        "Roadmap #4——列名规范化由 FieldUnitMap 自动还原）",
+    )
+    ap.add_argument(
+        "--db-table",
+        default="PipeUtilization",
+        help="--db 输入的指标表名（缺省 PipeUtilization）",
+    )
+    ap.add_argument(
         "--kernel-name",
         default=None,
         help="目标 kernel 名（Op Name 列存在且多 kernel 时必填——G15 混采防护；"
@@ -773,7 +823,24 @@ def main() -> int:
                     )
                     scalars[k.strip()] = None
 
-    rows = load_csv_rows(args.csv) if args.csv else []
+    if args.csv and args.db:
+        print(
+            "ERROR: --csv 与 --db 互斥（同一指标源选一个输入形态）",
+            file=sys.stderr,
+        )
+        return 1
+    if args.db:
+        if not Path(args.db).exists():
+            print(f"ERROR: --db 文件不存在: {args.db}", file=sys.stderr)
+            return 1
+        rows = load_db_rows(args.db, args.db_table)
+        print(
+            f"[db] {args.db}::{args.db_table}：{len(rows)} 行（DB 通道；列名按"
+            f" FieldUnitMap 还原单位后缀）",
+            file=sys.stderr,
+        )
+    else:
+        rows = load_csv_rows(args.csv) if args.csv else []
     # ---- G15 kernel 归属校验：多 kernel CSV 混采防护（fail loud，不静默跨 kernel 平均）----
     kernel_groups = split_rows_by_kernel(rows)
     if len(kernel_groups) > 1:
@@ -959,6 +1026,8 @@ def main() -> int:
         "soc": soc,
         "rules_files": rules_files,
         "csv": args.csv,
+        "db": args.db,
+        "db_table": args.db_table if args.db else None,
         "kernel_name": args.kernel_name,
         "rows": len(rows),
         "kernels_in_csv": sorted(k for k in kernel_groups if k != "<all>")

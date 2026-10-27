@@ -394,7 +394,7 @@ Step 4/5 执行+对比: 配平候选逐个实测（跨 rank max 口径）→ 择
 | 1 | 性能报告解读 SKILL（AscendC Toolkit 插件：性能问题 + 证据 + 修复建议，引用本套件判定引擎与机制卡） |
 | 2 | 补充最佳实践案例（A/B 级官方 PR + E 级实测回流） |
 | 3 | 优化 HTML 报告（交互式钻取 / Bound 演化时间线 / 多轮对比视图） |
-| 4 | 采集工具切换 DB 格式数据（npu-compute 产物 sqlite 化：查询更快、多指标联合分析） |
+| 4 | ~~采集工具切换 DB 格式数据~~ ✅ 已交付（npu-compute 产物 sqlite 化：采集编排 --mode npu-compute / facts_bridge DB 通道 / verdict --db / csv_to_db 升级器 / db_bench 等价性门禁；PcSampling → top_stall_pct 打通 L0_STALL_DOMINANT） |
 | 5 | 知识标准化 OKF 格式对接 CANN-KNOWLEDGE（知识资产可被生态检索复用） |
 | 6 | AGENT/SKILL 增加 trace 能力（判定与调优决策链全程留痕可视化） |
 | 7 | 新芯片 / API 适配（soc-spec / 规则包 soc 域 / 列名兼容层随芯片演进） |

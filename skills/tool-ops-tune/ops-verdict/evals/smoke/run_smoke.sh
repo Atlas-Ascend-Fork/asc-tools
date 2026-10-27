@@ -270,6 +270,131 @@ else
   fail "P0-1 直连端到端"
 fi
 
+echo "=== smoke 11: csv_to_db + facts_bridge DB 通道端到端（Roadmap #4）==="
+DB_TMP="$SMOKE_TMP/db_channel"; mkdir -p "$DB_TMP/fixtures"
+# fixture：npu-compute 解包形态（Section CSV 顶层平铺 + summary.jsonl）
+printf 'block_id,sub_block_id,aic_time(us),aiv_time(us),aiv_vec_ratio,aiv_mte2_active_bw(GB/s)\n0,vector0,NA,100.5,0.32,1200.0\n1,vector0,NA,99.8,0.31,1240.0\n' > "$DB_TMP/fixtures/PipeUtilization.csv"
+printf 'block_id,sub_block_id,aiv_read_hit_rate(%%)\n0,vector0,96.1\n1,vector0,95.7\n' > "$DB_TMP/fixtures/L2Cache.csv"
+printf 'block_id,sub_block_id,aiv_vec_stu_cflt_ratio,aiv_vec_ldu_cflt_ratio,aiv_vec_sfu_cflt_ratio\n0,vector0,0.01,0.03,0.00\n1,vector0,0.01,0.05,0.00\n' > "$DB_TMP/fixtures/ResourceConflictRatio.csv"
+printf 'block_id,sub_block_id,aiv_vec_vf_ratio\n0,vector0,0.61\n1,vector0,0.63\n' > "$DB_TMP/fixtures/ArithmeticUtilization.csv"
+printf '{"category":"OpInfoSummary","Op Name":"vec_demo","Op Type":"vector","Task Duration(us)":51.7,"Block Dim":8}\n' > "$DB_TMP/fixtures/summary.jsonl"
+if python3 "$REPO_ROOT/ops-collect/scripts/csv_to_db.py" \
+    --csv-dir "$DB_TMP/fixtures" --db "$DB_TMP/fixtures/summary.db" --quiet >/dev/null 2>&1 \
+  && ! python3 "$REPO_ROOT/ops-collect/scripts/csv_to_db.py" \
+    --csv-dir "$DB_TMP/fixtures" --db "$DB_TMP/fixtures/summary.db" --quiet >/dev/null 2>&1 \
+  && python3 -c "
+import sqlite3
+# 注入 PcSampling 行（DB 独有表——真源 DDL 同构，冒烟只验证消费链不验证采集）
+db = sqlite3.connect('$DB_TMP/fixtures/summary.db')
+db.execute('''CREATE TABLE PcSampling(address INTEGER NOT NULL PRIMARY KEY,
+    ibuf_empty INTEGER NOT NULL, nop_cycles INTEGER NOT NULL,
+    scoreboard_not_ready INTEGER NOT NULL, register_bank_conflict INTEGER NOT NULL,
+    resource_conflict INTEGER NOT NULL, warp_level_sync INTEGER NOT NULL,
+    divergence_stack_spill INTEGER NOT NULL, others INTEGER NOT NULL)''')
+db.execute('INSERT INTO PcSampling VALUES(616,0,210,16320,0,0,0,0,0)')
+db.commit(); db.close()
+" 2>/dev/null \
+  && python3 "$REPO_ROOT/ops-collect/scripts/facts_bridge.py" \
+    --manifest "$DB_TMP/fixtures" --soc a5 --no-db \
+    --output "$DB_TMP/scalars_csv.json" >/dev/null 2>&1 \
+  && python3 "$REPO_ROOT/ops-collect/scripts/facts_bridge.py" \
+    --manifest "$DB_TMP/fixtures" --soc a5 \
+    --output "$DB_TMP/scalars_db.json" >/dev/null 2>&1 \
+  && python3 -c "
+import json
+d_csv = json.load(open('$DB_TMP/scalars_csv.json'))
+d_db = json.load(open('$DB_TMP/scalars_db.json'))
+assert d_csv['source_tool'] == 'npu-compute' and d_db['source_tool'] == 'npu-compute'
+s_db = d_db['scalars']
+# DB 通道产出（PcSampling/OpInfoSummary/列候选扩充三类新能力全断言）：
+assert abs(s_db['top_stall_pct'] - 98.73) < 0.01, s_db     # PcSampling → L0 生产者
+assert abs(s_db['task_duration_us'] - 51.7) < 0.01, s_db  # Summary.jsonl OpInfoSummary
+assert abs(s_db['block_dim'] - 8.0) < 0.01, s_db
+assert abs(s_db['l2_hit_rate'] - 95.9) < 0.01, s_db        # read_hit_rate 口径补位
+assert abs(s_db['vec_total_cflt_ratio'] - 5.0) < 0.01, s_db  # stu+ldu+sfu 分量和 ×100
+assert d_db['pcsampling'] and d_db['pcsampling']['top_stall'] == 'scoreboard_not_ready'
+# 双通道等价（同数据两格式，标量必须一致）：
+common = set(d_csv['scalars']) - {'top_stall_pct'}   # top_stall 为 DB 独有
+assert common == set(d_db['scalars']) - {'top_stall_pct'}, (d_csv['scalars'], d_db['scalars'])
+for k in common:
+    assert abs(d_csv['scalars'][k] - d_db['scalars'][k]) < 0.02, (k, d_csv['scalars'][k], d_db['scalars'][k])
+" 2>/dev/null; then
+  pass "csv_to_db 转换（覆盖保护：二次转换拒覆盖）+ facts_bridge DB 通道（top_stall/OpInfoSummary/双通道等价）"
+else
+  fail "facts_bridge DB 通道端到端"
+fi
+
+echo "=== smoke 12: db_bench 等价性门禁（W1-W3 双通道数值一致）==="
+if python3 "$REPO_ROOT/ops-collect/scripts/db_bench.py" \
+    --dir "$DB_TMP/fixtures" --repeat 3 \
+    -o "$DB_TMP/db_bench_report.json" >/dev/null 2>&1 \
+  && python3 -c "
+import json
+r = json.load(open('$DB_TMP/db_bench_report.json'))
+assert r['schema'] == 'opstune.db-bench/1.0'
+assert r['all_equivalent'] is True, r
+for w in ('W1-facts-scalar-extract', 'W2-verdict-full-load', 'W3-analytical-batch'):
+    assert r['workloads'][w]['equivalent'] is True
+    assert r['workloads'][w]['csv_ms'] > 0 and r['workloads'][w]['db_ms'] > 0
+# 不断言具体倍数（机器相关）；W4 PcSampling 独有断言：
+assert r['workloads']['W4-pcsampling-dist']['db_value'] is not None
+" 2>/dev/null; then
+  pass "db_bench 等价性门禁（提速比如实呈现不作门禁）"
+else
+  fail "db_bench 等价性"
+fi
+
+echo "=== smoke 13: collect_board --mode npu-compute shim 干跑（DB 格式采集编排）==="
+NPC_TMP="$SMOKE_TMP/npc"; mkdir -p "$NPC_TMP/bin" "$NPC_TMP/fixtures/unpacked"
+# fixture：解包形态目录（采集 shim 的 --import 复制源）
+printf 'block_id,sub_block_id,aic_time(us),aiv_time(us),aiv_vec_ratio\n0,vector0,NA,100.5,0.32\n' > "$NPC_TMP/fixtures/unpacked/PipeUtilization.csv"
+cp "$NPC_TMP/fixtures/unpacked/PipeUtilization.csv" "$NPC_TMP/fixtures/unpacked/L2Cache.csv"
+# shim npu-compute：--list-sets/--list-sections 查询门禁 + --export 落 rep 副本 +
+# --import 复制 fixture 目录并打印 unpacked= 路径（真实工具的终端契约）
+cat > "$NPC_TMP/bin/npu-compute" <<'NPCSHIM'
+#!/usr/bin/env bash
+FIXTURE="$(dirname "$0")/../fixtures"
+IMPORT=""; EXPORT=""
+for ((i=1; i<=$#; i++)); do
+  arg="${!i}"
+  case "$arg" in
+    --list-sets) echo "basic: Pipeline PipeUtilization Memory MemoryL0 MemoryUB L2Cache ArithmeticUtilization"; echo "full: + ResourceConflictRatio"; exit 0 ;;
+    --list-sections) printf 'PipeUtilization\nMemory\nMemoryL0\nMemoryUB\nL2Cache\nPipeline\nArithmeticUtilization\nResourceConflictRatio\n'; exit 0 ;;
+    --import) n=$((i+1)); IMPORT="${!n}" ;;
+    --export) n=$((i+1)); EXPORT="${!n}" ;;
+  esac
+done
+if [[ -n "$IMPORT" ]]; then
+  DIR="$EXPORT/unpacked_1"; mkdir -p "$DIR"
+  cp -r "$FIXTURE/unpacked/." "$DIR/"
+  echo "npu-compute: unpacked= $DIR"; exit 0
+fi
+printf 'npu-rep-container-fixture' > "$EXPORT"
+echo "npu-compute: report= $EXPORT"; exit 0
+NPCSHIM
+chmod +x "$NPC_TMP/bin/npu-compute"
+if PATH="$NPC_TMP/bin:$PATH" bash "$REPO_ROOT/ops-collect/scripts/collect_board.sh" \
+    --exe /bin/true --mode npu-compute --sections PmSampling,BogusSection \
+    --output "$NPC_TMP/npc_out" >/dev/null 2>&1 \
+  && python3 -c "
+import json
+m = json.load(open('$NPC_TMP/npc_out/collection_manifest.json'))
+assert m['mode'] == 'npu-compute'
+b = m['blocks'][0]
+assert b['name'] == 'npu-compute' and b['status'] == 'ok', m
+assert 'unpacked=' in b['note'], b
+# 产物断言（伪 Green 防护路径）：解包目录主输入在位
+# （note 含中文括号注记——用 (\S+) 在 ASCII 路径后截断）
+import pathlib, re
+unpacked = re.search(r'unpacked=(\S+)', b['note']).group(1)
+unpacked = unpacked.rstrip('（无含')
+assert (pathlib.Path(unpacked) / 'PipeUtilization.csv').exists(), unpacked
+" 2>/dev/null; then
+  pass "collect_board --mode npu-compute（探测门禁 + manifest + 解包产物断言）"
+else
+  fail "npu-compute 采集模式干跑"
+fi
+
 echo ""
 if [[ $FAILURES -eq 0 ]]; then
   echo "smoke: 全部通过"

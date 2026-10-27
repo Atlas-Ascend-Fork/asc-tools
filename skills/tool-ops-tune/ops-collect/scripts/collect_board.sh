@@ -24,8 +24,11 @@
 #   bash collect_board.sh --exe ./build/demo --mode quick  --output ./prof/quick_check
 #   bash collect_board.sh --exe ./build/timing_harness --mode timing --output ./prof/timing_base   # 跑 event 计时 harness（P0-2）
 #   bash collect_board.sh --exe ./build/mc2_demo --mode mc2 --ranks 4 --output ./prof/mc2_base
+#   bash collect_board.sh --exe ./build/demo --mode npu-compute --output ./prof/npc_base   # 950/A5 DB 格式采集（Roadmap #4）
 #   可选：--kernel-name <名>（单卡 msprof op 分支过滤，本机 --help 为门禁）
 #         --timeout <秒>（msprof 单块超时，默认 1800）
+#         --sections <A,B>（npu-compute 模式追加 Section，如 PmSampling——本机
+#           npu-compute --list-sections 为门禁，不支持者跳过并告警）
 #   注：稳态 warm-up 由被测程序自身循环保证（循环 ≥10 次前 5 warm-up），
 #       采集脚本不做应用层 warmup（F17：原 --warmup 为死参数，已删除）。
 
@@ -40,7 +43,7 @@ KERNEL_NAME=""
 MSPROF_TIMEOUT=1800   # msprof 单块采集超时（秒）；挂起程序不再无限阻塞（检视 F23）
 
 usage() {
-  sed -n '2,21p' "$0"; exit 1
+  sed -n '2,32p' "$0"; exit 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -52,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) MSPROF_TIMEOUT="$2"; shift 2 ;;
     --ranks) RANKS="$2"; shift 2 ;;
     --kernel-name) KERNEL_NAME="$2"; shift 2 ;;
+    --sections) NPU_SECTIONS="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
   esac
@@ -60,19 +64,35 @@ done
 [[ -x "$EXE" || -f "$EXE" ]] || { echo "ERROR: --exe 不存在或不可执行: $EXE" >&2; exit 1; }
 
 # ---- 工具探测（先探测再选命令：本机帮助为门禁，不复制跨版本命令）----
+# npu-compute 模式（Roadmap #4）：950/A5 单卡 DB 格式采集——工具探测与
+# msprof 分开（不同二进制）；timing 模式两者都不依赖。
+if [[ "$MODE" == "npu-compute" ]]; then
+  command -v npu-compute >/dev/null 2>&1 || {
+    echo "ERROR: npu-compute 不可用（本机未安装或不在 PATH）。" >&2
+    echo "       npu-compute 为 950/A5 平台采集器（随本仓 npu_tools 构建）；" >&2
+    echo "       非 950 环境请回退 --mode standard（msprof 7 组）路径。" >&2
+    exit 1
+  }
+  npu-compute --list-sets >/dev/null 2>&1 || {
+    echo "ERROR: npu-compute --list-sets 探测失败（工具异常）。" >&2
+    exit 1
+  }
+fi
 # P0-2：timing 模式跑 event harness 不依赖 msprof，探测跳过（harness 直跑）
-if [[ "$MODE" != "timing" ]] && ! command -v msprof >/dev/null 2>&1; then
+if [[ "$MODE" != "timing" && "$MODE" != "npu-compute" ]] && ! command -v msprof >/dev/null 2>&1; then
   echo "ERROR: msprof 不可用。检查 CANN 安装与 source set_env.sh" >&2
   exit 1
 fi
-msprof op --help >/dev/null 2>&1 && MSPROF_OP_OK=1 || MSPROF_OP_OK=0
-echo "[probe] msprof op 支持: $MSPROF_OP_OK"
-# F17：MSPROF_OP_OK 真正参与路由（tool-routing 决策树：单卡且本机 msprof op
-# 可用 → msprof op 分支；不可用 → 完整 msprof 7 组）。kernel-name 仅
-# msprof op 形态有效（本机 --help 实测），完整 msprof 透传无此参数。
-MSPROF_KERNEL_FILTER_OK=0
-if [[ $MSPROF_OP_OK -eq 1 ]] && msprof op --help 2>&1 | grep -q -- "--kernel-name"; then
-  MSPROF_KERNEL_FILTER_OK=1
+if [[ "$MODE" != "timing" && "$MODE" != "npu-compute" ]]; then
+  msprof op --help >/dev/null 2>&1 && MSPROF_OP_OK=1 || MSPROF_OP_OK=0
+  echo "[probe] msprof op 支持: $MSPROF_OP_OK"
+  # F17：MSPROF_OP_OK 真正参与路由（tool-routing 决策树：单卡且本机 msprof op
+  # 可用 → msprof op 分支；不可用 → 完整 msprof 7 组）。kernel-name 仅
+  # msprof op 形态有效（本机 --help 实测），完整 msprof 透传无此参数。
+  MSPROF_KERNEL_FILTER_OK=0
+  if [[ $MSPROF_OP_OK -eq 1 ]] && msprof op --help 2>&1 | grep -q -- "--kernel-name"; then
+    MSPROF_KERNEL_FILTER_OK=1
+  fi
 fi
 
 mkdir -p "$OUTPUT"
@@ -332,7 +352,68 @@ case "$MODE" in
   mc2)
     run_msprof_mc2
     ;;
-  *) echo "ERROR: 未知 mode: $MODE（standard/quick/timing/mc2）" >&2; exit 1 ;;
+  npu-compute)
+    # ---- Roadmap #4：npu-compute DB 格式采集（950/A5 单卡）----
+    # 产物形态：.npu-rep（单文件报告：7 Section CSV + Summary.jsonl +
+    # summary.db[PcSampling/FieldUnitMap] + PipeTrace.json）→ 解包后喂
+    # facts_bridge DB 通道 / verdict --db。
+    # npu-compute 采集的指标范围以 --set full 为底座（7 Section 全量）；
+    # PmSampling 等 Section 以 --sections 追加（本机 --list-sections 为门禁，
+    # 先探测再选命令纪律同 msprof 段）。
+    NPU_REP="$OUTPUT/report.npu-rep"
+    NPU_LOG="$OUTPUT/npu_compute.log"
+    # 可选 Section 追加（逗号分隔）：仅当本机支持时进命令（探测门禁）
+    declare -a npc_cmd=(timeout "$MSPROF_TIMEOUT" npu-compute --set full)
+    if [[ -n "${NPU_SECTIONS:-}" ]]; then
+      IFS=',' read -r -a EXTRA_SECTIONS <<< "$NPU_SECTIONS"
+      for s in "${EXTRA_SECTIONS[@]}"; do
+        s="${s//[[:space:]]/}"
+        [[ -z "$s" ]] && continue
+        if npu-compute --list-sections 2>/dev/null | grep -qx "$s"; then
+          npc_cmd+=(--section "$s")
+        else
+          echo "[warn] 本机 npu-compute 不支持 Section $s（--list-sections 为门禁），跳过" >&2
+        fi
+      done
+    fi
+    npc_cmd+=(--export "$NPU_REP" -- "$EXE")
+    # EXE_ARGS 追加（bash -c 拼接与 msprof --application 形态对齐）
+    if [[ -n "$EXE_ARGS" ]]; then
+      npc_cmd+=($EXE_ARGS)
+    fi
+    if "${npc_cmd[@]}" >"$NPU_LOG" 2>&1 && [[ -f "$NPU_REP" ]]; then
+      # 解包（--import；解包目录以终端 unpacked= 输出为准，不猜测）
+      UNPACK_LOG="$OUTPUT/npu_compute_import.log"
+      UNPACKED_DIR=""
+      if timeout "$MSPROF_TIMEOUT" npu-compute --import "$NPU_REP" \
+           --export "$OUTPUT/unpacked" >"$UNPACK_LOG" 2>&1; then
+        UNPACKED_DIR=$(sed -n 's/.*npu-compute: unpacked= *//p' "$UNPACK_LOG" | tail -1)
+      fi
+      # 产物断言（P2-1 伪 Green 防护同款）：解包目录须含判定引擎主输入
+      # （PipeUtilization.csv 或 summary.db 任一）
+      ASSERT_NOTE=""
+      if [[ -z "$UNPACKED_DIR" || ! -d "$UNPACKED_DIR" ]]; then
+        ASSERT_NOTE="解包目录缺失或未解析到 unpacked= 路径（日志: $UNPACK_LOG）"
+      elif [[ ! -f "$UNPACKED_DIR/PipeUtilization.csv" && ! -f "$UNPACKED_DIR/summary.db" ]]; then
+        ASSERT_NOTE="解包目录无 PipeUtilization.csv / summary.db（判定引擎主输入）"
+      fi
+      DB_NOTE="无 summary.db"
+      [[ -f "$UNPACKED_DIR/summary.db" ]] && DB_NOTE="含 summary.db（DB 通道可用）"
+      if [[ -z "$ASSERT_NOTE" ]]; then
+        record_block "npu-compute" ok "$NPU_REP" "unpacked=$UNPACKED_DIR（$DB_NOTE）"
+      else
+        record_block "npu-compute" partial "$NPU_REP" "断言未过：$ASSERT_NOTE（伪 Green 防护，P2-1）"
+      fi
+    else
+      rc=$?
+      if [[ $rc -eq 124 ]]; then
+        record_block "npu-compute" failed "$NPU_REP" "npu-compute 超时（>${MSPROF_TIMEOUT}s），日志: $NPU_LOG"
+      else
+        record_block "npu-compute" failed "$NPU_REP" "npu-compute 退出非 0（rc=$rc），日志: $NPU_LOG"
+      fi
+    fi
+    ;;
+  *) echo "ERROR: 未知 mode: $MODE（standard/quick/timing/mc2/npu-compute）" >&2; exit 1 ;;
 esac
 
 # ---- manifest 落盘（采集块唯一真源；verdict.py 与报告按此定位产物）----
