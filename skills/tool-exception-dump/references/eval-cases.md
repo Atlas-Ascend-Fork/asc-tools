@@ -1,6 +1,6 @@
 # tool-exception-dump 技能评测用例集（RED-GREEN）
 
-本文件包含14个RED-GREEN评测用例，用于验证`tool-exception-dump`技能的诊断正确性：Phase 0至Phase 5每阶段至少1个专项用例，另含2个端到端用例与1个真机日志用例；GREEN段的步骤级判读断言合计覆盖SKILL.md全部34个编号步骤（P0.1至P5.5，覆盖映射表见文末）。关键行文案一律抄录自本技能SKILL.md对应步骤的判读规则原文；fixture相关的实测口径（退出码、输出串、结果码）以oam-tools测试断言为据并逐处标注path:line，不虚构fixture中不存在的内容。
+本文件包含14个RED-GREEN评测用例，用于验证`tool-exception-dump`技能的诊断正确性：Phase 0至Phase 5每阶段至少1个专项用例，另含2个端到端用例与1个真机日志用例；GREEN段的步骤级判读断言合计覆盖SKILL.md全部31个编号步骤（P0.1至P5.5，覆盖映射表见文末）。关键行文案一律抄录自本技能SKILL.md对应步骤的判读规则原文；fixture相关的实测口径（退出码、输出串、结果码）以oam-tools测试断言为据并逐处标注path:line，不虚构fixture中不存在的内容。
 
 ## 通用约定
 
@@ -60,8 +60,9 @@
 
 - 步骤P1.1：断言输入形态判定：`ls -d <输入路径>/dfx`命中即收集目录形态，走分支A转P1.3；同一步骤须覆盖另两个分支的判定：输入为`*.tar.gz`走分支B转P1.2，只有报错现象、无目录无压缩包走分支C转P1.4；路径不存在或形态不明时按求助模板向用户确认，不得猜测路径继续。
 - 步骤P1.2：断言（分支B变体，构造：把该fixture打包为tar.gz）必须手动执行`mkdir -p <解压目录> && tar -xzf <压缩包路径> -C <解压目录>`，且`ls <解压目录>`恰好列出一个asys_output_*子目录才以该子目录为收集目录转P1.3；多于一个子目录时工具侧get_select_dir会抛ValueError（`oam-tools/src/msaicerr/msaicerr.py:84-89`），须向用户确认哪个是有效收集目录，不得自行挑选。
-- 步骤P1.3：断言三要素逐项校验：`ls <收集目录>/dfx/data-dump/`失败（目录不存在）、`ls <收集目录>/dfx/ops/`非空、`ls <收集目录>/dfx/log/host/cann/`非空；判读为"缺dump"，转P1.5打降级标记后继续；反断言：plog（业务进程运行日志）存在时不得误判"缺plog"而停止分析（缺plog才停止并要求重新收集）；工具侧印证：该目录在ST的collect校验中实测不通过（`test_run_collect`参数化标注"验证在日志中无法匹配dump exception to file"，`oam-tools/test/st/msaicerr/testcase/test_collection_st.py:66-72`）。
-- 步骤P1.4：断言（分支C变体）无任何收集时执行`asys collect --task_dir=<编译缓存目录> --tar="True" --output=<输出前缀>`（入口1，产出`{output}/asys_output_时间戳`目录）或`asys analyze -r=aicore_error`（入口2，自动收集后内部直接调msaicerr -p）；执行前必须核对6个环境变量（ASCEND_PROCESS_LOG_PATH、NPU_COLLECT_PATH、DUMP_GRAPH_PATH、ASCEND_WORK_PATH、ASCEND_CACHE_PATH、ASCEND_CUSTOM_OPP_PATH）与业务运行时一致，不一致先警示用户并要求确认，不得静默继续；为保证解析数据准确性，复现前建议先清理日志。
+- 步骤P1.3：断言按msaicerr查找链校验输入：`ls <收集目录>/dfx/data-dump/`失败（目录不存在）、`ls <收集目录>/dfx/ops/`非空、`ls <收集目录>/dfx/log/host/cann/`非空、`find <收集目录> -name "ge_proto_*_Build.txt"`命中GE图；缺dump时先在plog中检索IDEDD组件日志：`grep -nE "IDEDD.*dump (exception|host kernel|kernel json|kernel) to file" <plog文件或目录>`，并从`file: <路径>`字段提取实际落盘路径；命中后先核验该路径并按工具口径补采，不得直接询问用户；本fixture无dump落盘记录，转P1.5打降级标记后继续；反断言：plog存在时不得误判"缺plog"而停止分析（缺plog才停止并要求重新收集）；plog中已有落盘路径时不得未检索就询问用户；GE图缺失不阻断主分析但须降级标注。
+- 步骤P1.4：断言（分支C变体）无任何收集时先执行`asys collect --task_dir=<编译缓存目录> --tar="True" --output=<输出前缀>`准确归集既有产物，随后转P1.3按msaicerr查找链校验plog、dump、算子编译信息与GE图；采集后缺dump时，先在plog的IDEDD日志中检索`dump ... to file, file: <路径>`并提取实际落盘路径，命中后按工具口径修正task_dir或环境变量后重跑asys collect，不直接询问用户；无记录或路径不存在时再询问用户遗漏文件位置；缺算子编译信息、GE图或其他文件时同样先从日志推导，再询问用户；仍不足时询问用户是否执行业务复跑，用户确认后要求其提供完整前台复跑命令（可前台执行、可等待退出，不接受后台任务）并执行`asys launch --task="<用户提供的完整前台复跑命令>" --tar="True" --output=<输出前缀>`；一键分析执行`asys analyze -r=aicore_error`（自动收集后内部直接调msaicerr -p）。执行asys collect/analyze前必须核对6个环境变量（ASCEND_PROCESS_LOG_PATH、NPU_COLLECT_PATH、DUMP_GRAPH_PATH、ASCEND_WORK_PATH、ASCEND_CACHE_PATH、ASCEND_CUSTOM_OPP_PATH）与业务运行时一致，不一致先警示用户并要求确认，不得静默继续；为保证解析数据准确性，复现前建议先清理日志；反断言：用户已有足够信息时不得直接要求复跑，采到目录后不得跳过msaicerr输入校验，plog已有dump落盘路径时不得未检索就询问用户，业务复跑必须先经用户确认并索取完整前台复跑命令。
+- 反断言（工具边界）：.o/.json/.cce的查找、匹配与收集只通过asys工具和msaicerr工具完成；AI不得自行find/grep系统目录、编译缓存或OPP安装目录，只能在工具产出目录dfx/ops或collection/compile内做三要素核验。
 - 步骤P1.5：断言降级标记：缺dump标记"缺dump"，P4改走构造数据路径且不得基于无dump证据下104结论；`ls <收集目录>/dfx/ops/*.o <收集目录>/dfx/ops/*.json 2>/dev/null`中.o无命中（该fixture只有.json无.o）时加打"定位降级"标记，报错行定位置信度降低；SK（SuperKernel，多算子融合编译形态）场景（`grep -rln "Begin to dump callback exception" <收集目录>`命中）只生成host.o，同样定位降级；工具侧收集失败或日志无法提取AI Core Error信息时写出空结论报告并返回退出码8（`oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1819-1824`），见到退出码8即按"输入信息不可用"处理（该fixture在ST中-p的断言结果即为8，仅mock反编译与dump结果，日志提取路径未被mock，`oam-tools/test/st/msaicerr/testcase/test_msaicerr_st.py:102-114`）；反断言：见到退出码8不得盲目重复执行-p，须回P1.3复核三要素与日志时间窗。
 
 **涉及步骤号**：P1.1、P1.2、P1.3、P1.4、P1.5。
@@ -98,7 +99,7 @@
 
 - 步骤P2.1：断言`grep -rn "fftsplus task execute failed" <收集目录>`命中即ffts场景标志成立（该fixture实测命中）；三个标志（L1、ffts、SK）相互独立、可同时为真，判定只依赖日志文案命中与否。
 - 步骤P2.6：断言dump失败分类与多错误判读：`grep -rn "D2H failed" <收集目录>`命中（该fixture实测命中）即dump失败、结论码102（内存分配错误方向），P4无dump输入可用、改走路径B；info.txt第⑤段出现`Failed to get dump data of error op!`或`Dump exception.*failed`、`the address maybe invalid`任一特征命中同样判dump失败；多错误场景工具按日志时间只解析第一个AI Core Error，修复首个错误后仍有报错须重新收集走一轮P1至P5；反断言：不得把102当作工具自身bug报告，也不得在dump失败后仍对data-dump目录执行-d解析；实测口径印证：该fixture在ST中parse结果102、ffts_flag=True（`oam-tools/test/st/msaicerr/testcase/test_aicore_error_parse_st.py:202-207`，参数化注释"日志中含有D2H failed标识dump数据失败"），且collect校验实测不通过（`oam-tools/test/st/msaicerr/testcase/test_collection_st.py:73`）。
-- 步骤P4.1：断言（前置决策）dump失败场景下复现路径决策直接落路径B（构造数据复现）；反断言：不得因无dump而停止复现（无dump只影响复现输入来源）。
+- 步骤P4.1：断言从msaicerr -p生成的info.txt第⑥段读取自动复现结果，不重新执行单算子复现；dump失败场景下自动复现结果按第⑥段三态文案判读，缺dump只影响输入来源，不得据此停止结果判读；反断言：不得在msaicerr已生成结果时默认重跑单算子。
 
 **涉及步骤号**：P2.1、P2.6、P4.1。
 
@@ -160,9 +161,9 @@
 
 ---
 
-## 用例9（P4）：路径A之dump解析与复现成功判读
+## 用例9（P4）：读取自动复现结果与复现成功判读
 
-**场景描述**：收集目录含真实exception dump，走路径A完成dump解析、输入数据有效性判读与复现结果三态判读。
+**场景描述**：收集目录含真实exception dump，msaicerr已具备自动复现输入；本用例读取并判读其自动结果与输入有效性结论。
 
 **输入**：`oam-tools/test/st/msaicerr/res/ori_data/asys_output_20240912164014958/`，真实结构：`dfx/data-dump/0/exception_info.42.1.1726159207469285`（exception dump文件）、`dfx/log/host/cann/debug/plog/plog-1592007_20240912164003456.log`（真实含`fault kernel_name=FlashAttentionScore_5881aeec01e51adb01fb1db8be1c04f0_10000000000022420943_mix_aic`与`[aicore exception]`字样）、`dfx/log/host/cann/run/plog/plog-1592007_20240912163952762.log`、`dfx/log/host/cann/run/device-0/device-1592007_20240912164001269.log`；无`dfx/ops`。该目录在ST的collect校验中实测通过（`oam-tools/test/st/msaicerr/testcase/test_collection_st.py:70`标注"验证正常流程"）。
 
@@ -170,18 +171,17 @@
 
 **GREEN（有skill时的预期行为与判读）**：
 
-- 步骤P4.1：断言路径决策：`ls <收集目录>/dfx/data-dump/<device_id>/`列出`exception_info.42.1.1726159207469285`，存在exception_info.*文件即走路径A转P4.2；拿不准时直接查看`dfx/data-dump/<device_id>/`下exception_info.*开头文件，存在则路径A、否则路径B；反断言：不得因拿不准而停止复现决策。
-- 步骤P4.2：断言解析执行：`python3 msaicerr.py -d <dump文件或目录路径> -out <结果目录> -dtype <目标dtype>`（`.bin`文件必须给-dtype）；产出tensor文件命名`{kernel名}.{input|output|workspace}.{序号}[.{dtype}].{npy|bin}`；`.npy`文件被拒绝，报`The dump file cannot be an npy file.`（UT（单元测试）以`oam-tools/test/st/msaicerr/res/ori_data/dump_data/invalid.npy`实测该文案，`oam-tools/test/ut/msaicerr/testcase/test_msaicerr_ut.py:167-173`）；-dtype官方文档列举13种常用值（float32、float16、float64、int8、int16、int32、int64、uint8、uint16、uint32、uint64、bool、bfloat16），代码实际校验集VALID_DTYPES为DATA_TYPE_TO_DTYPE_MAP全部43个值，判读以代码校验集为准，bfloat16依赖第三方库bfloat16ext；dump文件头input_type==7的条目即tiling数据；反断言：报`Can not read with dtype bfloat16`时安装bfloat16ext后重试，不得换dtype碰运气；退出码4为-d路径校验失败或解析异常，核查路径形态后重试而非放弃。
-- 步骤P4.3：断言有效性判读：`grep -n "Input data invalid\|Input data maybe invalid" <解析输出日志>`；NaN/Inf命中（`{类型}[{序号}] NaN/INF. Input data invalid. Please check!`）为强证据，输入数据非法、关联104；0.9倍值域命中（`{类型}[{序号}] max <最大值> or min <最小值>. Input data maybe invalid. Please check!`）为弱证据（源码措辞为maybe），须结合业务值域人工确认后再关联104；两提示串均含子串`data invalid`，是结论码104的直接判定依据（`oam-tools/src/msaicerr/ms_interface/dump_data_parser.py:184-218`，0.9规则在该文件第212行）；反断言：两提示均无命中时判数据有效转P4.4，不得在无命中时臆造104证据；数据无效只关联104，不得臆断101、103等其他结论。
-- 步骤P4.6：断言三态判读：复现成功等于日志命中五种错误串之一且同一日志文件内出现目标kernel名（RetCode.FAILED，注意语义反转，FAILED才是复现成功），问题锁定算子自身；五种错误串为`there is an aivec error exception`、`there is an aicore error exception`、`there is an exception of aivec error`、`there is an exception of aicore error`、`aicore exception`（`oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1524-1531`）；判读演示：该fixture的plog中`[aicore exception]`与`FlashAttentionScore_5881aeec01e51adb01fb1db8be1c04f0_10000000000022420943_mix_aic`同文件共现，满足共现条件；未复现（RetCode.SUCCESS）什么都没证明，走升级路径；未运行（NOT_RUN）检查用例文件、依赖（numpy、tbe、ccec、驱动）、日志路径与权限后重试，NOT_RUN同样计入101方向；越界判读以magic_ret（1为向前越界、2为向后越界）与tail遍sync_ret为主；`Access Memory without OverBoundary`关键字在当前msaicerr代码内没有产出方（mem_monitor字段实际常为空串，属待接通钩子），运行时侧若输出该关键字仍可作越界佐证，判读时如实注明此口径；反断言：不得仅凭日志含aicore error关键字就认定复现成功（NEVER清单第11条）。
+- 步骤P4.1：断言读取msaicerr自动复现结果：`grep -n "Execution Result of the Single-Operator Test Case" <info.txt路径>`定位第⑥段，再检索三种结果文案；本fixture收集目录含exception_info文件说明工具具备路径A输入，但仍以info.txt自动结果为准，不重新执行dump解析或单算子复现；反断言：不得在自动结果存在时另行执行-d或重跑单算子。
+- 步骤P4.1补充：从info.txt第⑤段检索`Input data invalid`与`Input data maybe invalid`。NaN/Inf为强证据，0.9倍值域为弱证据，须结合业务值域确认；两提示只支撑104，不得据此臆断101或103；均无命中时dump校验链判有效，不得臆造104。`-d`是独立解析入口，仅当用户要求单独解析dump或msaicerr结果缺失时使用，本用例不执行。
+- 步骤P4.2：断言三态与越界判读：第⑥段命中`The AI Core error was reproduced...`即复现成功（RetCode.FAILED）；`...was executed, but the AI Core error was not reproduced.`即未复现（RetCode.SUCCESS，不代表算子无问题）；`...was not executed...`即未运行（RetCode.NOT_RUN）。复现成功的底层判据是同一日志文件内错误串与目标kernel名共现，但该判定已由msaicerr完成，主流程读取结果文案而非重扫日志；未复现走升级路径；未运行计入101方向。越界判读以magic_ret与tail遍sync_ret为主；`Access Memory without OverBoundary`无当前代码产出方，运行时侧输出仅作佐证；反断言：不得仅凭日志含aicore error关键字就认定复现成功。
 
-**涉及步骤号**：P4.1、P4.2、P4.3、P4.6。
+**涉及步骤号**：P4.1、P4.2。
 
 ---
 
-## 用例10（P4）：路径B之无dump构造数据复现
+## 用例10（P4）：自动结果NOT_RUN时的手动复现回退
 
-**场景描述**：L1场景无dump数据，走路径B构造数据复现，tiling从plog重建，遵守三变体顺序与运行规范。
+**场景描述**：L1场景无dump数据，msaicerr自动单算子结果为NOT_RUN或结果缺失，需评估是否执行手动复现回退。
 
 **输入**：`oam-tools/test/st/msaicerr/res/ori_data/collect/l1/`（仅`collection/plog/plog-17890_202506017074109552.log`，无dump目录、无编译产物）；该plog真实含tiling证据行`[AIC_INFO] tiling_data:0x5a 0x28 0x00 0x00 ...`。
 
@@ -189,11 +189,10 @@
 
 **GREEN（有skill时的预期行为与判读）**：
 
-- 步骤P4.1：断言路径决策：L1场景无exception dump数据，走路径B（转P4.4起构造）；反断言：不得因无dump而停止复现（无dump只影响复现输入来源）。
-- 步骤P4.4：断言tiling重建三源按优先级：一是dump内tiling（input_type==7条目）、二是plog十六进制args（从`after execute:`串推算）、三是`[AIC_INFO] tiling_data`（L1）；本fixture命中第三源（真实证据行如上）；tiling落盘为`{kernel_name}_tiling.bin`，config写入`test_{op_test}.py`用例文件；config共16键，即SingleOpCase.generate_config的15键（`oam-tools/src/msaicerr/ms_interface/single_op_test_frame/single_op_case.py:77-95`）加第16键compile_temp_dir；样例文件test_single_op.py仅展示其中12键（缺workspace_file_list、bin_file_list、sub_ptr_addrs、workspace这4键，缺省按空值处理）；三源都无时打印`No tiling data is found in dump files and logs.`，路径B可传空串或手工构造字符串继续（非.bin后缀按utf-8编码处理）；反断言：不得把12键样例当16键全量。
-- 步骤P4.5：断言三变体固定顺序：host_single_op（校验host与device加载同一份kernel，比对hash_id）、single_op（用dump真实输入重跑故障算子，仅dump有效时执行）、error_single_op（仅single_op未复现时执行，末参置零反向验证检测链路）；本场景无dump，single_op不执行属正常；运行规范：ASCEND_SLOG_PRINT_TO_STDOUT=0、ASCEND_PROCESS_LOG_PATH与故障plog物理隔离、PYTHONPATH指向msaicerr根目录；每次run_kernel前自动执行脏UB预写（run_dirty_ub，用极大浮点值填满UB，把依赖UB初值为0的隐性缺陷变成确定问题）；复现失败或未运行时按工具打印的手动复现命令执行：`export PYTHONPATH=<msaicerr根目录>:$PYTHONPATH;cd <msaicerr根目录>;python3 <用例文件路径>`；反断言：SK场景跳过single_op与error_single_op（无device侧.o）属正常；NOT_RUN不得当作"无问题"处理，须检查环境后重试。
+- 步骤P4.1：断言先读取info.txt第⑥段；自动结果为NOT_RUN或缺失时才进入回退评估，不得默认重新执行单算子复现；反断言：不得因无dump而直接重跑复现。
+- 步骤P4.3：断言回退前置条件：自动结果缺失、NOT_RUN或用户明确要求补充验证；回退前向用户说明触发原因并确认。若执行手动复现，`ASCEND_WORK_PATH`作为第一优先级环境变量指向独立运行目录，stdout/stderr用tee留存，命令退出后立即快照`${ASCEND_WORK_PATH}/log`；重试使用新时间戳目录。自动结果存在时以未重编译的自动流程结果优先，手动结果仅补证并在报告中单独记录；反断言：用户未确认或自动结果已充分时不得执行手动复现。
 
-**涉及步骤号**：P4.1、P4.4、P4.5。
+**涉及步骤号**：P4.1、P4.3。
 
 ---
 
@@ -211,7 +210,7 @@
 - 步骤P5.2：断言优先级链判定：优先级链105→107→104→106→102→101→103→0，先命中先返回（`oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1963-1980`）；本场景无框架memset缺失（105未命中）、无atomic溢出（107未命中），命中104；复现未复现不推翻104（链上104先于101，未复现须走P5.4升级而非改写结论）；四个判读细节：107在返回码层面实际不可达（atomic_add_err求值前提含atomic_clean_check为假，会先命中105，两条件互斥）、NOT_RUN同样命中101、flag_check与AI Core数量不足与current_pc为0x0没有专属返回码只进结论文案、结论文案链与返回码链排序不同（人工读文案、脚本读返回码时预期到差异）。
 - 步骤P5.3：断言修复建议映射：按四元组（触发条件、根因方向、修复建议、验证方法）查映射表输出；结论码104触发输入数据非法方向，建议检查上游数据生成与预处理链路；结论码触发与错误位触发同时存在时以结论码行为主、错误位行为根因细化；映射表未覆盖且无法按已覆盖根因方向（越界读写、UB越界绕回、原子溢出、输入数据非法、地址未对齐、ECC硬件类）就近归类时，只给排查方向不给确定性根因，并注明依据不足。
 - 步骤P5.4：断言升级路径：复现未复现时输出四条路径：用msSanitizer工具再次检查算子、开启op_debug_config=oom内存错误检测后复跑检查、SK场景关闭算子融合后重跑让故障以单算子形式复现（四链全部生效）、怀疑框架问题时联系技术支持上报；反断言：复现失败场景只给排查方向，不给确定性根因（未复现什么都没证明）。
-- 步骤P5.5：断言报告输出：六段齐备（环境与输入、场景与定位、错误类型、复现结果、证据链汇聚判定、修复建议与升级路径）；每个诊断结论包含事实、对比（判据出处）、判定、置信度四要素并附反证；置信度口径：高为结论码由判定字段直接触发且至少两条证据链相互印证，中为仅一条链支撑或存在可解释反证，低为0兜底或证据链大面积缺失只输出排查方向；本场景104由dump校验链单链直接触发、复现链未复现构成可解释反证，置信度应为中并在反证段如实呈现。
+- 步骤P5.5：断言报告输出并落盘：六段齐备（环境与输入、场景与定位、错误类型、复现结果、证据链汇聚判定、修复建议与升级路径）；每个诊断结论包含事实、对比（判据出处）、判定、置信度四要素并附反证；置信度口径：高为结论码由判定字段直接触发且至少两条证据链相互印证，中为仅一条链支撑或存在可解释反证，低为0兜底或证据链大面积缺失只输出排查方向；本场景104由dump校验链单链直接触发、复现链未复现构成可解释反证，置信度应为中并在反证段如实呈现；报告必须保存为`.md`文件，回复用户时必须告知该文件的绝对路径。
 
 **涉及步骤号**：P5.1、P5.2、P5.3、P5.4、P5.5。
 
@@ -231,10 +230,10 @@
 - Phase 1：步骤P1.1`ls -d <输入路径>/dfx`命中走分支A；步骤P1.3三要素校验：`dfx/data-dump/0/`非空（exception dump在）、`dfx/ops`缺失（无.o/.json，定位降级）、`dfx/log/host/cann/`非空；步骤P1.5打"定位降级"标记后继续（plog在，不触发停止条件）。
 - Phase 2：步骤P2.1三条grep：`[AIC_INFO] dev_func:`无命中判L0、`fftsplus task execute failed`无命中、`Begin to dump callback exception`无命中；反断言：不得因plog存在`fftsplus aivector error exception`字样而误判ffts场景（场景判定只认`fftsplus task execute failed`文案命中与否）。步骤P2.2执行-p并按`Analysis info is saved in <info.txt路径>`定位info.txt。步骤P2.3判读第③段：L0场景报错行定位到汇编偏移为止（三级信息L0只有第一级），`Error occurred most likely at line: <汇编偏移>`且偏移是估算值。步骤P2.4与步骤P2.5因无.o（fixture无dfx/ops）符号化与反汇编链断链，属正常降级：保留偏移级结果，按P2.4失败分支提示补齐dfx/ops编译产物后可重试，不得伪造cce行号。步骤P2.6三条dump失败grep（`Dump exception.*failed`、`D2H failed`、`the address maybe invalid`）均无命中，dump有效，直接转P3.1。
 - Phase 3：步骤P3.1判型：错误码裸`0`两芯片同形只能落Stars走trap_or_timeout兜底，方法二dump info含`ifu error info:`、`ccu error info:`、`biu error info:`键指向Stars，两法一致。步骤P3.2无位置位，输出兜底文案`trap_or_timeout, timeout or trap error`，不能直接读成"确认超时"。步骤P3.3提取vec、mte、ifu、ccu子寄存器串做子域解读（真实串如`vec error info: 0x99000000a2`、`mte error info: 0x5003000031`）。步骤P3.4场景5：三元组行`The extend info: errcode:(0, 0, 0) errorStr: timeout or trap error.`重建失败，按无位置位兜底处理并注明置信度低。步骤P3.5核对`rts_block_dim`与`driver_aicore_num`并对照结论码语义表。
-- Phase 4：步骤P4.1`dfx/data-dump/0/`存在exception_info文件走路径A。步骤P4.2执行`-d`解析dump为npy或bin（命令与命名规则同用例9）。步骤P4.3判读输入数据有效性（NaN/Inf与0.9倍值域两提示，命中才关联104）。步骤P4.4tiling重建：本fixture无`[AIC_INFO] tiling_data`（实测无命中），但plog有`args(0 to 20) after execute:`串，按源二（plog十六进制args）推算；推算不出时如实记录并按路径B口径传空串继续。步骤P4.5三变体按序执行并遵守运行规范（每次run_kernel前自动执行脏UB预写）；若因缺编译产物用例未跑起来，按NOT_RUN处置（检查用例文件、依赖、日志路径与权限后重试）并计入101方向，不得虚报复现结果。步骤P4.6按三态判读，复现成功判据为五种错误串之一加目标kernel名共现（本fixture目标kernel为`FlashAttentionScore_5881aeec01e51adb01fb1db8be1c04f0_10000000000022420943_mix_aic`）。
-- Phase 5：步骤P5.1四链逐链填写（反编译链因无.o失效须如实写"本链失效（原因）"）。步骤P5.2按优先级链105→107→104→106→102→101→103→0取最终结论码。步骤P5.3按结论码与错误位查映射表输出修复建议与验证方法。步骤P5.4仅在复现未复现或证据不足时输出四条升级路径。步骤P5.5输出六段式报告，每个结论附事实、对比、判定、置信度与反证，降级与证据不足如实标注。
+- Phase 4：步骤P4.1读取msaicerr自动复现结果与第⑤段输入有效性结论；不重复执行-d或单算子复现。步骤P4.2按第⑥段三态文案判读，复现成功底层判据是错误串与目标kernel名共现（本fixture目标kernel为`FlashAttentionScore_5881aeec01e51adb01fb1db8be1c04f0_10000000000022420943_mix_aic`），但主流程读取工具结果而非重扫日志。若自动结果缺失或NOT_RUN，步骤P4.3先向用户确认是否手动回退；自动结果充分时不执行回退。
+- Phase 5：步骤P5.1四链逐链填写（反编译链因无.o失效须如实写"本链失效（原因）"）。步骤P5.2按优先级链105→107→104→106→102→101→103→0取最终结论码。步骤P5.3按结论码与错误位查映射表输出修复建议与验证方法。步骤P5.4仅在复现未复现或证据不足时输出四条升级路径。步骤P5.5输出六段式报告并保存为Markdown文件，每个结论附事实、对比、判定、置信度与反证，降级与证据不足如实标注，回复用户时告知报告绝对路径。
 
-**涉及步骤号**：P0.1、P0.2、P0.3、P0.4、P0.5、P0.6、P0.7、P1.1、P1.3、P1.5、P2.1、P2.2、P2.3、P2.4、P2.5、P2.6、P3.1、P3.2、P3.3、P3.4、P3.5、P4.1、P4.2、P4.3、P4.4、P4.5、P4.6、P5.1、P5.2、P5.3、P5.4、P5.5（共32步；P1.2与P1.4由用例3覆盖）。
+**涉及步骤号**：P0.1、P0.2、P0.3、P0.4、P0.5、P0.6、P0.7、P1.1、P1.3、P1.5、P2.1、P2.2、P2.3、P2.4、P2.5、P2.6、P3.1、P3.2、P3.3、P3.4、P3.5、P4.1、P4.2、P4.3、P5.1、P5.2、P5.3、P5.4、P5.5（共29步；P1.2与P1.4由用例3覆盖）。
 
 ---
 
@@ -252,10 +251,10 @@
 - Phase 1：步骤P1.1`ls -d <输入路径>/dfx`命中走分支A；步骤P1.3三要素校验：`dfx/data-dump`不存在判缺dump、`dfx/ops`非空但只有json无.o、`dfx/log/host/cann/`非空；步骤P1.5打"缺dump"与"定位降级"双标记，继续P2（plog在，不停止）。
 - Phase 2：步骤P2.1`grep -rn "\[AIC_INFO\] dev_func:" <收集目录>`命中（真实证据行在run/plog）判L1。步骤P2.2执行-p，成功判据为终端打印`Analysis info is saved in <info.txt路径>`（ST在mock反编译与dump结果后实测该输出并读取info.txt，`oam-tools/test/st/msaicerr/testcase/test_msaicerr_st.py:267-292`）。步骤P2.3判读第③段：L1期望三级定位信息，但本场景info.txt第①段cce file字段值为空（ST断言原文`'cce file          : \n'`，`oam-tools/test/st/msaicerr/testcase/test_msaicerr_st.py:291-292`），判读为定位降级并如实呈现；反断言：不得伪造cce行号或TBE源码行号。步骤P2.4.o不存在，失败分支为回P1检查编译产物收集（dfx/ops），补齐后重试本步。步骤P2.5反汇编链断链（.o不存在属断链点），保留已有级结果，向用户说明补齐.o后可重试。步骤P2.6三条dump失败grep无命中：本场景是"缺dump数据"（收集侧无data-dump目录，P1.5已标记）而非"dump失败"，不得误关联102。
 - Phase 3：步骤P3.1错误码裸`0`落Stars走兜底，方法二dump info含`ifu error info:`等Stars键，两法一致。步骤P3.2兜底文案`trap_or_timeout, timeout or trap error`，不读成"确认超时"。步骤P3.3提取vec、mte、ifu子寄存器串做Stars子域解读（真实串`vec error info: 0x51000070f7`、`mte error info: 0x206000046`）。步骤P3.4场景5三元组（真实证据行`The extend info: errcode:(0, 0, 0) errorStr: timeout or trap error.`）重建失败按兜底处理并注明置信度低。
-- Phase 4：步骤P4.1无dump，走路径B。步骤P4.4以plog可得信息构造tiling与16键config（三源都没有时如实记录并传空串继续）。步骤P4.5三变体按序执行（无dump，single_op不执行属正常）并遵守运行规范。步骤P4.6按三态判读，目标kernel名为`GatherV3_9e31943a1a48bf81ddff1fc6379e0be3_high_performance_10330`。
-- Phase 5：步骤P5.1反编译链失效如实写"本链失效（无.o编译产物）"，dump校验链失效如实写"本链失效（无dump）"；链大面积缺失时结论置信度降级为低，只输出排查方向。步骤P5.2仍按优先级链105→107→104→106→102→101→103→0取结论码，全部判据未命中返回0时逐节核对六节报告证据，0不代表故障不存在。步骤P5.4证据不足时输出四条升级路径。步骤P5.5输出六段式报告，降级与证据不足如实标注，反证段不得省略。
+- Phase 4：步骤P4.1读取msaicerr自动复现结果；无dump只影响工具内部single_op输入，不触发主流程重跑。步骤P4.2按三态判读，目标kernel名为`GatherV3_9e31943a1a48bf81ddff1fc6379e0be3_high_performance_10330`。步骤P4.3仅在结果缺失或NOT_RUN且用户确认后手动回退。
+- Phase 5：步骤P5.1反编译链失效如实写"本链失效（无.o编译产物）"，dump校验链失效如实写"本链失效（无dump）"；链大面积缺失时结论置信度降级为低，只输出排查方向。步骤P5.2仍按优先级链105→107→104→106→102→101→103→0取结论码，全部判据未命中返回0时逐节核对六节报告证据，0不代表故障不存在。步骤P5.4证据不足时输出四条升级路径。步骤P5.5输出六段式报告并保存为Markdown文件，降级与证据不足如实标注，反证段不得省略，回复用户时告知报告绝对路径。
 
-**涉及步骤号**：P0.1、P0.2、P0.3、P0.4、P0.5、P0.6、P0.7、P1.1、P1.3、P1.5、P2.1、P2.2、P2.3、P2.4、P2.5、P2.6、P3.1、P3.2、P3.3、P3.4、P4.1、P4.4、P4.5、P4.6、P5.1、P5.2、P5.4、P5.5。
+**涉及步骤号**：P0.1、P0.2、P0.3、P0.4、P0.5、P0.6、P0.7、P1.1、P1.3、P1.5、P2.1、P2.2、P2.3、P2.4、P2.5、P2.6、P3.1、P3.2、P3.3、P3.4、P4.1、P4.2、P4.3、P5.1、P5.2、P5.4、P5.5。
 
 ---
 
@@ -307,13 +306,13 @@
 - 步骤P3.1：断言芯片形态判定：PrintCoreInfo行`error code = 0`为裸0，两芯片同形，只能落到Stars（ASCEND_910B）路径走兜底（真机SoC=Ascend910B4，与Stars判定一致）；方法二dump info含`ifu error info:`、`ccu error info:`、`biu error info:`键同样指向Stars，两法一致。
 - 步骤P3.3：断言六模块子域分析：从`Error register information`行与PrintCoreInfo行提取CUBE子域串（`CUBE_ERR_0=0x100003b`、`cube error info: 0x100003b`，CUBE_ERR_INFO取自`cube error info:`），结合`errorStr: The CUBE instruction parameter is invalid.`判CUBE模块错误类型为CUBE指令参数非法类；反断言：不得把AIC_ERR_3=0x40000000等其他模块寄存器值当主错误源（errorStr与CUBE寄存器已共同指向CUBE）。
 - 步骤P3.4：断言场景5三元组重读：错误码`0x0`不等于无异常，对`The extend info: errcode:(0, 0x4000000000000000, 0) errorStr: The CUBE instruction parameter is invalid.`行执行三元组重读，结合errorStr与CUBE寄存器证据落CUBE指令参数非法方向；重建不出时按trap_or_timeout兜底并注明置信度低；反断言：不得因`error code = 0`判"无错误"终止分析，也不得把兜底文案直接读成"确认超时"。
-- 步骤P4.4：断言复现config素材判读：`dump host kernel to file`行`~/runtime/example/5_performance/adump/4_adump_error_locate/extra-info/data-dump/0/_Z12error_kernelPDhS_S__host.o`落盘说明收集目录已具备kernel二进制产物（dump与编译产物侧素材在案）；`fault kernel_name=_Z12error_kernelPDhS_S_`、`args(0 to 2) after execute:0x12c0c0015000, 0x12c0c0016000, 0x12c0c0017000`、`tilingKey = 0`、`blockDim=1`与`hash=13023285847820503829`共同构成16键复现config的素材（kernel_name、tiling_key、block_dim等键有真值可填，plog十六进制args串可推算tiling）；反断言：不得在素材已齐备的情况下要求用户重新收集。
+- 步骤P4.1补充：断言复现config素材判读（仅供手动回退参考）：`dump host kernel to file`行`~/runtime/example/5_performance/adump/4_adump_error_locate/extra-info/data-dump/0/_Z12error_kernelPDhS_S__host.o`落盘说明收集目录已具备kernel二进制产物；`fault kernel_name=_Z12error_kernelPDhS_S_`、`args(0 to 2) after execute:0x12c0c0015000, 0x12c0c0016000, 0x12c0c0017000`、`tilingKey = 0`、`blockDim=1`与`hash=13023285847820503829`共同构成16键复现config的素材；反断言：不得在素材已齐备且自动结果存在的情况下要求用户重新收集或重跑复现。
 
-**涉及步骤号**：P2.1、P2.3、P2.4、P2.5、P3.1、P3.3、P3.4、P4.4。
+**涉及步骤号**：P2.1、P2.3、P2.4、P2.5、P3.1、P3.3、P3.4、P4.1。
 
 ---
 
-## 步骤覆盖映射表（34步自查）
+## 步骤覆盖映射表（31步自查）
 
 | 步骤 | 提供正/反断言的用例 | 步骤 | 提供正/反断言的用例 |
 | --- | --- | --- | --- |
@@ -329,9 +328,8 @@
 | P1.3 | 用例3、12、13 | P3.4 | 用例8、12、13、14 |
 | P1.4 | 用例3 | P3.5 | 用例8、12 |
 | P1.5 | 用例3、12、13 | P4.1 | 用例5、9、10、12、13 |
-| P4.2 | 用例9、12 | P4.3 | 用例9、12 |
-| P4.4 | 用例10、12、13、14 | P4.5 | 用例10、12、13 |
-| P4.6 | 用例9、12、13 | P5.1 | 用例11、12、13 |
+| P4.2 | 用例5、9、12、13 | P4.3 | 用例10、12、13 |
+| P5.1 | 用例11、12、13 | P5.2 | 用例11、12、13 |
 | P5.2 | 用例11、12、13 | P5.3 | 用例11、12 |
 | P5.4 | 用例11、12、13 | P5.5 | 用例11、12、13 |
 
@@ -342,6 +340,6 @@
 | 判读规则遵循 | 高 | GREEN断言的关键行文案、退出码、结论码与SKILL.md对应步骤判读规则一致 |
 | fixture事实准确 | 高 | 用例输入引用的路径、目录结构、日志证据行真实存在，构造项明确标注构造方法 |
 | 降级与失效如实标注 | 高 | 链失效、定位降级、缺dump等场景如实标注，不臆造定位或复现结果 |
-| NEVER违反 | 高 | 任何用例的GREEN预期行为不得违反SKILL.md NEVER清单12条 |
+| NEVER违反 | 高 | 任何用例的GREEN预期行为不得违反SKILL.md NEVER清单14条 |
 | 反断言有效性 | 中 | 每个专项用例至少含1条反断言（明确必须避免的误判） |
-| 报告契约完整 | 中 | 端到端用例的预期输出覆盖六段式报告全部段落 |
+| 报告契约完整 | 中 | 端到用例的预期输出覆盖六段式报告全部段落，并断言报告落盘为Markdown文件且告知绝对路径 |

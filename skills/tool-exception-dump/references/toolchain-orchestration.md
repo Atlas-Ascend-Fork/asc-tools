@@ -16,12 +16,19 @@
 | 环境准备三步（装 Toolkit、source set_env.sh、cd 工具目录）、ASCEND_OPP_PATH、python 版本、仅本地分析、RC 形态约束 | oam-tools docs/zh/msaicerr | 环境准备、硬约束 |
 | 环境自检（-e，golden op 标杆算子）命令与输出判读 | oam-tools docs/zh/msaicerr | environment-check |
 | 收集目录三要素排查（dfx/data-dump、dfx/ops、dfx/log/host/cann） | oam-tools docs/zh/msaicerr | 使用要点 |
+| msaicerr -p 输入目录递归查找链（[Dump][Exception] plog、exception dump、fault kernel 编译产物、ge_proto_*_Build.txt） | oam-tools src/msaicerr/ms_interface/collection.py | collection.py:255-431 |
 | 8 个暂不支持分析的算子清单（MatmulAllReduce 类、AllGatherMatmul、MemSet 等） | oam-tools docs/zh/msaicerr | functions-and-restrictions |
 | dump 文件解析（-d）、-dtype 数据类型转换、bfloat16ext 依赖 | oam-tools docs/zh/msaicerr | dump-parsing、dump-dtype-conversion |
 | 多个 AI Core Error 只解析第一个（按日志时间取首次出现） | oam-tools docs/zh/msaicerr | 使用要点 |
 | asys collect / asys analyze 用法与参数（task_dir、tar、output、-r、--path） | oam-tools docs/zh/asys | collect-and-launch、analyze-files |
+| asys launch 业务复跑、自动预置 NPU_COLLECT_PATH/ASCEND_PROCESS_LOG_PATH/ASCEND_WORK_PATH、任务后自动归集 | oam-tools docs/zh/asys | rerun-fault-information-collection |
+| asys launch 的 task 命令约束（完整前台命令、可等待退出、不支持后台任务） | oam-tools docs/zh/asys | rerun-fault-information-collection |
 | asys 自动收集的 6 个环境变量一致性清单（ASCEND_PROCESS_LOG_PATH、NPU_COLLECT_PATH、DUMP_GRAPH_PATH、ASCEND_WORK_PATH、ASCEND_CACHE_PATH、ASCEND_CUSTOM_OPP_PATH） | oam-tools docs/zh/asys | constraints |
 | asys_output 收集目录树全景（software_info.txt、dfx 各子目录） | oam-tools docs/zh/asys | collect-and-launch 产物结构 |
+
+## 工具查找边界
+
+`.o`/`.json`/`.cce` 算子编译产物的查找、匹配与收集只通过 asys 工具和 msaicerr 工具完成。asys 侧由 `collect_ops_files_env_var()` 按官方优先级 `task_dir > NPU_COLLECT_PATH > ASCEND_CACHE_PATH > ASCEND_WORK_PATH > $HOME/atc_data > ASCEND_CUSTOM_OPP_PATH > ASCEND_OPP_PATH > ./` 查找并匹配 fault kernel；msaicerr 侧由 `collect_kernel_file()` 在收集目录内核验并收集目标算子编译文件。本技能只执行 asys/msaicerr 命令并核验产出的 `dfx/ops` 或 `collection/compile` 目录，不在系统目录、编译缓存或 OPP 安装目录中自行检索这些文件。
 
 ## 二、msaicerr 退出码全表
 

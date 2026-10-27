@@ -1,11 +1,12 @@
 ---
 name: tool-exception-dump
-description: 昇腾 NPU AI Core Error 系统化诊断工作流 skill：基于 msaicerr/asys 工具管线，按 34 步主流程执行环境与输入检查、故障信息收集、场景判定与报错行定位、错误类型识别、单算子复现、证据链汇聚与修复建议，输出六段式诊断报告。触发：用户提到 aicore error、aivec error、AI Core 异常、核错误、算子报错、越界或内存踩踏、exception dump 解析、报错行定位、错误码定位、结论码 101-107、单算子复现、根因分析等强信号，即使只是询问某报错是否为 AI Core Error 也应触发。非目标：仅询问 msaicerr/asys 工具用法与参数细节（指向官方文档 oam-tools docs/zh/msaicerr、docs/zh/asys）；GE/图编译层问题（说明不在覆盖范围）；算子精度不达标（转 tool-precision-debug）；AI CPU Error、HCCL 等其他错误类型（说明后指路）。
+description: 昇腾 NPU AI Core Error 系统化诊断工作流 skill：基于 msaicerr/asys 工具管线，按 31 步主流程执行环境与输入检查、故障信息收集、场景判定与报错行定位、错误类型识别、单算子复现结果判读、证据链汇聚与修复建议，输出六段式诊断报告；最终报告必须保存为 Markdown 文件并告知用户绝对路径，执行 demo 或用例前必须通过 ASCEND_WORK_PATH 预设独立运行目录并在结束后立即留存日志。触发：用户提到 aicore error、aivec error、AI Core 异常、核错误、算子报错、越界或内存踩踏、exception dump 解析、报错行定位、错误码定位、结论码 101-107、单算子复现、根因分析等强信号，即使只是询问某报错是否为 AI Core Error 也应触发。非目标：仅询问 msaicerr/asys 工具用法与参数细节（指向官方文档 oam-tools docs/zh/msaicerr、docs/zh/asys）；GE/图编译层问题（说明不在覆盖范围）；算子精度不达标（转 tool-precision-debug）；AI CPU Error、HCCL 等其他错误类型（说明后指路）。
 ---
 
 # tool-exception-dump：AI Core Error 系统化诊断工作流
 
-> **执行纪律**：本技能运行于故障发生环境本地；按 Phase 0→Phase 5 顺序推进 34 个编号步骤，每步四要素齐全（动作、命令、预期输出与判读、失败分支）；不可跳步，失败分支指明的回退动作优先；穷尽细节按第二节路由表读取 references/ 文件或官方文档后再操作；全程只读分析，不修改任何产品代码。
+> **执行纪律**：本技能运行于故障发生环境本地；按 Phase 0→Phase 5 顺序推进 31 个编号步骤，每步四要素齐全（动作、命令、预期输出与判读、失败分支）；不可跳步，失败分支指明的回退动作优先；穷尽细节按第二节路由表读取 references/ 文件或官方文档后再操作；全程只读分析，不修改任何产品代码。最终诊断报告必须落盘为 Markdown 文件并在回复中告知用户绝对路径；执行任何 demo 或测试用例前必须先通过 ASCEND_WORK_PATH 指定独立运行目录，命令结束后立即留存日志，防止日志被后续运行冲刷。
+> **工具边界**：`.o`/`.json`/`.cce` 算子编译产物的查找、匹配与收集只通过 asys 工具和 msaicerr 工具完成；本技能只执行工具命令并核验工具产出的 `dfx/ops` 或 `collection/compile` 目录，不在系统目录、编译缓存或 OPP 安装目录中自行检索这些文件。
 
 ## 一、身份与边界
 
@@ -29,13 +30,13 @@ description: 昇腾 NPU AI Core Error 系统化诊断工作流 skill：基于 ms
 | P3 错误类型识别 | [error-type-decode.md](references/error-type-decode.md) | 芯片形态判定两法、高频错误位表、六模块子域分析、五类特殊场景、结论码 101-107 全表 |
 | P4 单算子复现 | [reproduction-guide.md](references/reproduction-guide.md) | 复现路径决策、路径 A/B、tiling 三源重建、16 键 config、三变体、越界探测双模式、三态判读 |
 | P5 证据链汇聚与修复建议 | [fix-suggestions.md](references/fix-suggestions.md) | 四证据链框架、优先级链逐级触发条件、修复建议映射表、升级路径、证据链格式报告模板 |
-| 评测自查 | [eval-cases.md](references/eval-cases.md) | 14 个 RED-GREEN 用例，GREEN 断言覆盖全部 34 步 |
+| 评测自查 | [eval-cases.md](references/eval-cases.md) | 14 个 RED-GREEN 用例，GREEN 断言覆盖全部 31 步 |
 
 官方文档分工（知识依赖单向性，工具用法知识只读引用不复制）：msaicerr CLI 参数与命令速查、环境准备、`-e` 环境自检、收集目录三要素排查、8 个暂不支持算子清单、dump 解析与 `-dtype` 转换 → oam-tools docs/zh/msaicerr；asys collect/analyze 用法与参数、asys_output 目录树全景、自动收集的 6 个环境变量一致性清单 → oam-tools docs/zh/asys。
 
-## 三、诊断剧本（Phase 0-5，34 个编号步骤）
+## 三、诊断剧本（Phase 0-5，31 个编号步骤）
 
-步骤编号规则：P<阶段>.<序号>，P0×7、P1×5、P2×6、P3×5、P4×6、P5×5，共 34 步。命令中的 `<占位符>` 为需替换项，命令均在 msaicerr.py 所在目录执行；关键命令内联呈现，判读的穷尽细节路由至 references/ 与官方文档。
+步骤编号规则：P<阶段>.<序号>，P0×7、P1×5、P2×6、P3×5、P4×3、P5×5，共 31 步。命令中的 `<占位符>` 为需替换项，命令均在 msaicerr.py 所在目录执行；关键命令内联呈现，判读的穷尽细节路由至 references/ 与官方文档。
 
 ### Phase 0：环境与输入检查（P0.1-P0.7）
 
@@ -129,7 +130,7 @@ ls debug_info.txt    # msaicerr 每次执行后生成的过程日志，作为 Ph
 
 ### Phase 1：收集准备（P1.1-P1.5）
 
-阶段说明：本阶段是收集准备（输入形态判定、三要素校验、asys collect、tar.gz 处理、降级标记）。注意与工具内部行为区分：`msaicerr -p` 执行时内部自动完成的 6 步收集（拷贝日志→定位 dump 文件→提取算子名→按算子名取编译文件→收集编译产物→收集 GE 图，oam-tools/src/msaicerr/ms_interface/collection.py:383-429）发生在 P2.2 执行 -p 的时刻，不是本阶段步骤，两者不得混淆。
+阶段说明：本阶段的目标是为 `msaicerr -p` 构造一个能让其内置查找链正确且准确执行的输入目录。msaicerr 会在 `-p` 目录下递归查找四类信息：含 `[Dump][Exception]` 的 plog、exception dump 文件、与 fault kernel 匹配的 `.o`/`.json`/`.cce` 编译产物、`ge_proto_*_Build.txt` 图文件（collection.py:255-431）。因此收集顺序遵循“先准确归集既有信息，再补位，最后才复跑”：无收集目录时先执行 asys collect；采集后立即按 P1.3 校验 msaicerr 所需的 plog、dump、算子编译信息与图文件；缺少文件时先从 plog 的 IDEDD 落盘记录推导实际路径，再按工具口径补采；仍无法定位时才向用户询问；仍不足时再向用户确认是否执行业务复跑，并要求用户提供完整前台复跑命令。注意与工具内部行为区分：`msaicerr -p` 执行时内部自动完成的 6 步收集（拷贝日志→定位 dump 文件→提取算子名→按算子名取编译文件→收集编译产物→收集 GE 图，oam-tools/src/msaicerr/ms_interface/collection.py:383-429）发生在 P2.2 执行 -p 的时刻，不是本阶段步骤，两者不得混淆。`.o`/`.json`/`.cce` 的查找与匹配由 asys 的`collect_ops_files_env_var()`和 msaicerr 的`collect_kernel_file()`内置完成；本阶段与 P2.2 只执行工具命令，不在系统目录、编译缓存或 OPP 安装目录中自行检索这些文件。
 
 #### P1.1 输入形态判定（三分支）
 
@@ -159,30 +160,34 @@ ls <解压目录>    # 必须恰好一个 asys_output_* 子目录
 
 #### P1.3 收集目录三要素校验（分支 A）
 
-**动作**：对收集目录逐项校验 dump 文件、算子编译信息、日志文件三要素。
+**动作**：以 msaicerr 内置查找链为目标，对收集目录逐项校验 plog、exception dump、算子编译信息与 GE 图四类输入；缺 dump 时先在 plog 的 IDEDD 日志中检索 dump 落盘记录，推断实际落盘路径，再决定是否需要向用户询问。
 **命令**：
 
 ```bash
 ls <收集目录>/dfx/data-dump/        # dump 文件（L0 场景 exception dump）
 ls <收集目录>/dfx/ops/              # 算子编译信息（*.o 与 *.json）
 ls <收集目录>/dfx/log/host/cann/    # host 侧 cann 日志（含 plog）
+find <收集目录> -name "ge_proto_*_Build.txt"    # GE 图文件（msaicerr collect_ge_graph 查找目标）
+grep -nE "IDEDD.*dump (exception|host kernel|kernel json|kernel) to file" <plog文件或目录>
+grep -nE "dump (exception|host kernel|kernel json|kernel) to file, file: " <plog文件或目录>
 ```
 
-**判读**：三个目录均非空即三要素齐备（oam-tools/docs/zh/msaicerr/AI_Core_error_analysis.md:19）；任一为空转 P1.5 降级标记。三要素排查口径与 asys_output 目录树全景详见官方文档（oam-tools docs/zh/msaicerr、docs/zh/asys）。
-**失败分支**：缺 plog（dfx/log/host/cann 无日志）时停止分析、要求用户重新收集（转 P1.5 与停止条件）；缺 dump 或缺 .o/.json 带降级标记继续，转 P1.5。
+**判读**：plog、dump、算子编译信息三类核心要素齐备，且存在 GE 图文件时，msaicerr 输入最完整；plog、dump、算子编译信息对应目录均非空即满足官方三要素要求（oam-tools/docs/zh/msaicerr/AI_Core_error_analysis.md:19）；GE 图缺失不阻断主分析，只影响图侧证据，转 P1.5 降级标记。缺 dump 但 plog 存在时，先检索 IDEDD 组件的 dump 落盘日志；命中 `dump exception to file, file: <路径>`、`dump host kernel to file, file: <路径>`、`dump kernel json to file, file: <路径>`、`dump kernel to file, file: <路径>` 等关键字后，从 file 字段提取实际落盘路径，并核对该路径是否存在。该场景常见原因是业务运行时设置了 `ASCEND_DUMP_PATH`，其优先级高于 `ASCEND_WORK_PATH`，导致 dump 落在 asys collect 未归集的目录（runtime/docs/zh/env_vars/ASCEND_DUMP_PATH.md:9-11；runtime/src/dfx/adump/adump/exception/dump_args_callback.cpp:228、dump_operator.cpp:273、kernel_info_collector.cpp:297、:393、:406）。
+**失败分支**：缺 plog（dfx/log/host/cann 无日志）时停止分析、要求用户重新收集（转 P1.5 与停止条件）；plog 中能提取 dump 实际落盘路径时，先按该路径核验文件并提示用户用 asys 工具以该路径补采，不得直接询问用户位置；plog 中无 dump 落盘记录或路径不存在时，再向用户询问 dump 文件位置；缺 .o/.json 或 GE 图带降级标记继续，转 P1.5。
 
 #### P1.4 执行故障信息收集（分支 C）
 
-**动作**：无任何收集时执行 asys collect 收集故障信息，或用 asys analyze 一键入口。
+**动作**：无任何收集时，先执行 asys collect 准确归集既有产物；采集后转 P1.3 按 msaicerr 查找链校验 plog、dump、算子编译信息与 GE 图。若缺 dump、算子编译信息、GE 图或其他遗漏文件，先按 P1.3 从 plog 的 IDEDD 日志中推导实际落盘路径；仍无法定位时再向用户询问文件位置并补采；仍不足时再询问用户是否执行业务复跑，并要求用户提供完整前台复跑命令。
 **命令**：
 
 ```bash
-asys collect --task_dir=<编译缓存目录> --tar="True" --output=<输出前缀>    # 入口 1：先收集，产出目录后走分支 A
-asys analyze -r=aicore_error    # 入口 2：不带 --path，自动收集后内部直接调 msaicerr -p
+asys collect --task_dir=<编译缓存目录> --tar="True" --output=<输出前缀>    # 入口 1：先归集既有产物，随后转 P1.3 检查
+asys launch --task="<用户提供的完整前台复跑命令>" --tar="True" --output=<输出前缀>    # 入口 2：仅在入口 1 补位后仍不足且用户确认复跑时执行
+asys analyze -r=aicore_error                                              # 入口 3：一键入口，自动收集后内部直接调 msaicerr -p
 ```
 
-**判读**：入口 1 产出 `{output}/asys_output_时间戳` 目录（不带 output 时存放在命令执行目录）；执行 asys 前必须核对 6 个环境变量（ASCEND_PROCESS_LOG_PATH、NPU_COLLECT_PATH、DUMP_GRAPH_PATH、ASCEND_WORK_PATH、ASCEND_CACHE_PATH、ASCEND_CUSTOM_OPP_PATH）与业务运行时一致（oam-tools/docs/zh/asys/fault_information_collection.md:17）；为保证解析数据准确性，复现前建议先清理日志（oam-tools/docs/zh/asys/AI_Core_error_analysis.md:9）。参数细节与目录树详见官方文档（oam-tools docs/zh/asys）。
-**失败分支**：环境变量不一致时先警示用户并要求确认，不得静默继续；收集失败检查 task_dir 与 output 参数合法性、写权限，否则转 P1.5 记录降级。
+**判读**：入口 1 产出 `{output}/asys_output_时间戳` 后必须转 P1.3 检查三要素，不得直接进入 P2。入口 2 仅在既有信息补位后仍不足且用户明确确认复跑时使用；复跑命令必须由用户提供，形态为可前台执行、可等待退出的完整命令（如 `python3 train.py --xxx` 或 `sh run.sh`），不接受后台任务或无法确定结束点的脚本。入口 2 会在任务启动前自动设置 NPU_COLLECT_PATH、ASCEND_PROCESS_LOG_PATH、ASCEND_WORK_PATH，并自动归集（oam-tools/docs/zh/asys/rerun_fault_information_collection.md:9-11；oam-tools/src/asys/launch/asys_launch.py:50-77）。执行入口 1/3 前必须核对 6 个环境变量（ASCEND_PROCESS_LOG_PATH、NPU_COLLECT_PATH、DUMP_GRAPH_PATH、ASCEND_WORK_PATH、ASCEND_CACHE_PATH、ASCEND_CUSTOM_OPP_PATH）与业务运行时一致（oam-tools/docs/zh/asys/fault_information_collection.md:17）；为保证解析数据准确性，复现前建议先清理日志（oam-tools/docs/zh/asys/AI_Core_error_analysis.md:9）。参数细节与目录树详见官方文档（oam-tools docs/zh/asys）。
+**失败分支**：采集后缺 dump 时，先在 plog 中检索 IDEDD 的 `dump ... to file` 记录并提取实际路径；命中且路径存在时，按工具口径修正 task_dir 或环境变量后重跑 asys collect，不直接询问用户；无记录、路径不存在或仍缺算子编译信息时，再向用户询问遗漏文件位置并补采；仍不足时询问用户是否执行业务复跑，用户确认后要求其提供完整前台复跑命令并执行入口 2；环境变量不一致时先警示用户并要求确认，不得静默继续；禁止在系统目录、编译缓存或 OPP 安装目录中自行检索 `.o`/`.json`/`.cce`；其他收集失败检查 task_dir 与 output 参数合法性、写权限，否则转 P1.5 记录降级。
 
 #### P1.5 降级标记
 
@@ -328,74 +333,40 @@ grep -rn "The extend info: errcode:" <收集目录>    # 错误码 0x0 的 v300 
 **判读**：两者均有效且 rts_block_dim 大于 driver_aicore_num 的 2 倍时，结论为环境 AI Core 数量不满足算子并发需求（oam-tools/src/msaicerr/ms_interface/aic_error_info.py:219-224）；结论码语义：101 单算子运行错误、102 内存分配错误、103 硬件错误、104 算子输入数据错误、105 框架未执行 memset 清零、106 算子 args 被踩、107 atomic 算子溢出（oam-tools/src/msaicerr/ms_interface/constant.py:72-78），全表见 references/error-type-decode.md「结论码 101-107 全表」。P3 产出的错误位与特殊场景结论供 P5 证据链汇聚使用。
 **失败分支**：driver_aicore_num 获取失败对应工具状态码 10，检查驱动与 runtime 动态库后重试；否则转 P4.1。
 
-### Phase 4：单算子复现（P4.1-P4.6）
+### Phase 4：单算子复现结果判读与回退（P4.1-P4.3）
 
-#### P4.1 复现路径选择决策
+阶段说明：`msaicerr -p` 内部 Step 9 已自动执行单算子验证（run_single_operator，aicore_error_parser.py:1818-1880），包括 dump 解析、tiling/config 构造、host_single_op/single_op/error_single_op 三变体与结果字段填充。本阶段只读取并判读工具已有结果，禁止默认重复执行单算子复现；仅在结果缺失或 NOT_RUN 且需要补证时，按 references/reproduction-guide.md 的手动复现规范回退执行。
 
-**动作**：按 dump 有效性选择复现路径 A（基于 dump 的标准复现）或路径 B（构造数据复现）。
+#### P4.1 读取 msaicerr 自动复现结果
+
+**动作**：从 info.txt 第⑥段读取单算子复现结果、内存监测结论与日志路径；从第⑤段读取 dump 解析与输入数据有效性结论。
 **命令**：
 
 ```bash
-ls <收集目录>/dfx/data-dump/<device_id>/    # 人工快速核对是否存在 exception_info.* 文件
+grep -n "Execution Result of the Single-Operator Test Case" <info.txt路径>
+grep -n "The AI Core error was reproduced" <info.txt路径>
+grep -n "The single-operator test case was executed, but the AI Core error was not reproduced" <info.txt路径>
+grep -n "The single-operator test case was not executed" <info.txt路径>
+grep -n "Input data invalid" <info.txt路径>
+grep -n "Input data maybe invalid" <info.txt路径>
 ```
 
-**判读**：dump 解析产出输入数据（info.input_list 非空）或 dfx/data-dump 下存在 exception dump 文件则走路径 A（转 P4.2）；L1 场景无 exception dump 数据或 dump 收集失败则走路径 B（转 P4.4 起构造）。决策表见 references/reproduction-guide.md「二、复现路径选择决策」。
-**失败分支**：拿不准时直接查看 dfx/data-dump/{device_id}/ 下 exception_info.* 开头文件，存在则路径 A，否则路径 B；不得因无 dump 而停止复现（无 dump 只影响复现输入来源）。
+**判读**：第⑥段三种结果文案分别对应三态：`The AI Core error was reproduced...` 为复现成功（RetCode.FAILED）；`...was executed, but the AI Core error was not reproduced.` 为未复现（RetCode.SUCCESS，不代表算子无问题）；`...was not executed...` 为未运行（RetCode.NOT_RUN），info.txt 会提示查看 single_op 日志路径（aic_error_info.py:179-183、218-221、271-277）。第⑤段出现 `Input data invalid` 或 `Input data maybe invalid` 时，dump 校验链支撑 104；NaN/Inf 为强证据，0.9 倍值域为弱证据，须结合业务值域确认。
+**失败分支**：info.txt 第⑥段缺失或三态文案无法判读时，标记“自动复现结果缺失”；不得编造复现结果，转 P4.3 判断是否需要手动回退。
 
-#### P4.2 路径 A：dump 数据解析
+#### P4.2 三态与越界结果判读
 
-**动作**：用 msaicerr -d 把 dump 文件解析为 npy 或 bin 张量文件。
-**命令**：
+**动作**：按三态判读复现结果，并结合第⑥段 mem_monitor、magic_ret 与 tail 遍 sync_ret 判读越界。
+**命令**：无独立命令（判读动作：以 info.txt 第⑥段与 msaicerr 过程日志为准）。
+**判读**：复现成功说明问题锁定算子自身，进入 P5 证据链汇聚；未复现什么都没证明，走 P5.4 升级路径；未运行同样计入 101 方向，不得当作“无问题”。越界判读以 magic_ret（1 为向前越界、2 为向后越界）与 tail 遍 sync_ret 为主；`Access Memory without OverBoundary` 关键字在当前 msaicerr 代码内没有产出方，运行时侧输出仍可作越界佐证，须如实注明。三态与双模式全表见 references/reproduction-guide.md「六、复现结果三态与下一步动作」与「五、内存越界探测：tail 与 magic 双模式」。
+**失败分支**：mem_monitor 为空且 magic_ret/sync_ret 均无有效值时，越界判读链失效并如实标注；未复现不得臆断根因，转 P5.4。
 
-```bash
-python3 msaicerr.py -d <dump文件或目录路径> -out <结果目录> -dtype <目标dtype>    # .bin 文件必须给 -dtype
-```
+#### P4.3 手动复现回退
 
-**判读**：产出 tensor 文件命名 `{kernel名}.{input|output|workspace}.{序号}[.{dtype}].{npy|bin}`；`.npy` 文件被拒绝（报 `The dump file cannot be an npy file.`）；-dtype 官方文档列举 13 种常用值，代码实际校验集 VALID_DTYPES 为 DATA_TYPE_TO_DTYPE_MAP 全部 43 个值，判读以代码校验集为准（依据：docs/zh/msaicerr/Dump_files_data_types_conversion.md:21；ms_interface/dump_data_parser.py:93、:496-497）；bfloat16 依赖第三方库 bfloat16ext；dump 文件头 input_type==7 的条目即 tiling 数据。输入形态三分支与命名规则见 references/reproduction-guide.md「3.1 dump 数据解析（msaicerr -d）」，-dtype 与 bfloat16ext 详见官方文档（oam-tools docs/zh/msaicerr）。
-**失败分支**：报 `Can not read with dtype bfloat16` 时安装 bfloat16ext 后重试；退出码 4 为 -d 路径校验失败或解析异常，核查路径形态后重试；否则转 P4.3。
-
-#### P4.3 输入数据有效性判读（104 证据链）
-
-**动作**：判读 dump 解析输出的数据有效性提示，形成 104 证据链。
-**命令**：
-
-```bash
-grep -n "Input data invalid\|Input data maybe invalid" <解析输出日志>
-```
-
-**判读**：NaN/Inf 命中（`{类型}[{序号}] NaN/INF. Input data invalid. Please check!`）为强证据，输入数据非法、关联 104；0.9 倍值域命中（`{类型}[{序号}] max <最大值> or min <最小值>. Input data maybe invalid. Please check!`）为弱证据（源码措辞为 maybe），须结合业务值域人工确认后再关联 104；两提示串均含子串 `data invalid`，是结论码 104 的直接判定依据（oam-tools/src/msaicerr/ms_interface/dump_data_parser.py:184-218，0.9 规则在 :212）。判读表见 references/reproduction-guide.md「3.2 输入数据有效性判读（NaN/Inf 与 0.9 倍值域，关联 104）」。
-**失败分支**：数据无效只关联 104，不得臆断其他结论（见第五节 NEVER 清单）；无命中则数据有效，转 P4.4。
-
-#### P4.4 tiling 重建与 16 键 config 构造
-
-**动作**：重建 tiling 数据并构造单算子复现 config（路径 A 与路径 B 共用）。
-**命令**：无统一命令（构造动作：tiling 落盘为 `{kernel_name}_tiling.bin`，config 写入 `test_{op_test}.py` 用例文件）。
-**判读**：tiling 三源按优先级：一是 dump 内 tiling（input_type==7 条目），二是 plog 十六进制 args（从 `after execute:` 串推算），三是 `[AIC_INFO] tiling_data`（L1）；三源都无时打印 `No tiling data is found in dump files and logs.`。config 共 16 键，即 SingleOpCase.generate_config 的 15 键（oam-tools/src/msaicerr/ms_interface/single_op_test_frame/single_op_case.py:77-95）加第 16 键 compile_temp_dir（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1237-1238）；样例文件 test_single_op.py:27-48 仅展示其中 12 键（缺 workspace_file_list、bin_file_list、sub_ptr_addrs、workspace 这 4 键，缺省按空值处理）。逐键说明见 references/reproduction-guide.md「3.3 tiling 数据重建（三个来源）」与「3.4 复现 config 的 16 个键」。
-**失败分支**：tiling 三源都拿不到时如实记录；路径 B 可传空串或手工构造字符串继续（非 .bin 后缀按 utf-8 编码处理）；否则转 P4.5。
-
-#### P4.5 执行单算子复现（三变体顺序）
-
-**动作**：按固定顺序执行三个复现变体，复现失败或未运行时按工具提示手动复现。
-**命令**：
-
-```bash
-export PYTHONPATH=<msaicerr根目录>:$PYTHONPATH;cd <msaicerr根目录>;python3 <用例文件路径>    # 手动复现命令，工具在复现失败或未运行时打印（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1310-1319）
-```
-
-**判读**：三变体固定顺序 host_single_op（校验 host 与 device 加载同一份 kernel，比对 hash_id）→single_op（用 dump 真实输入重跑故障算子，仅 dump 有效时执行）→error_single_op（仅 single_op 未复现时执行，末参置零反向验证检测链路）；运行规范：ASCEND_SLOG_PRINT_TO_STDOUT=0、ASCEND_PROCESS_LOG_PATH 与故障 plog 物理隔离、PYTHONPATH 指向 msaicerr 根目录；每次 run_kernel 前自动执行脏 UB 预写（run_dirty_ub，用极大浮点值填满 UB，把依赖 UB 初值为 0 的隐性缺陷变成确定问题）。变体表见 references/reproduction-guide.md「3.6 三变体执行顺序与判读」，运行规范见「3.5 复现用例的生成与运行规范」，路径 B 构造见「四、路径 B：无 dump 数据的构造复现」。
-**失败分支**：SK 场景跳过 single_op 与 error_single_op（无 device 侧 .o）属正常；用例未跑起来（NOT_RUN）时检查用例文件、依赖（numpy、tbe、ccec、驱动）、日志路径与权限后重试；执行后转 P4.6 判读结果。
-
-#### P4.6 复现结果三态判读与越界探测
-
-**动作**：按三态判读复现结果，结合 magic 与 tail 两遍结果判读越界。
-**命令**：
-
-```bash
-grep -n "aicore error\|aivec error\|aicore exception" <单算子日志目录>/*.log
-```
-
-**判读**：三态判读：复现成功等于日志命中五种错误串之一（如 `there is an aicore error exception`）且同一日志文件内出现目标 kernel 名（RetCode.FAILED，注意语义反转，FAILED 才是复现成功），问题锁定算子自身；未复现（RetCode.SUCCESS）什么都没证明，走升级路径；未运行（NOT_RUN）检查环境后重试，NOT_RUN 同样计入 101 方向。越界判读以 magic_ret（1 为向前越界、2 为向后越界）与 tail 遍 sync_ret 为主；`Access Memory without OverBoundary` 关键字在当前 msaicerr 代码内没有产出方（mem_monitor 字段实际常为空串，属待接通钩子），运行时侧若输出该关键字仍可作越界佐证，判读时如实注明此口径。三态表见 references/reproduction-guide.md「六、复现结果三态与下一步动作」，双模式见「五、内存越界探测：tail 与 magic 双模式」。
-**失败分支**：未复现不臆断根因，转 P5.4 升级路径；复现成功或 NOT_RUN 转 P5.1 汇聚。
+**动作**：仅在自动结果缺失、NOT_RUN、或用户要求补充验证时执行手动复现；默认不重复执行 msaicerr 已完成的 Step 9。
+**命令**：按 references/reproduction-guide.md「3.5 复现用例的生成与运行规范」与「3.5.1 复现产物目录与环境变量」执行。回退前必须向用户说明触发原因并确认执行；若需 demo 或用例，先创建本轮独立运行目录，`ASCEND_WORK_PATH` 作为第一优先级环境变量指向该目录，stdout/stderr 用 tee 留存，命令退出后立即快照 `${ASCEND_WORK_PATH}/log`。
+**判读**：手动复现结果仍按 P4.2 三态判读；自动结果存在时以未重编译的自动流程结果优先。手动复现仅用于补证，不得覆盖已有自动结果，报告中分别记录自动结果与手动回退结果。
+**失败分支**：用户未确认或自动结果已充分时不得执行手动复现；NOT_RUN 回退前先检查用例文件、依赖（numpy、tbe、ccec、驱动）、日志路径与权限；回退仍失败则保留 NOT_RUN 结论并转 P5.4 升级路径。
 
 ### Phase 5：证据链汇聚与修复建议（P5.1-P5.5）
 
@@ -427,12 +398,21 @@ grep -n "aicore error\|aivec error\|aicore exception" <单算子日志目录>/*.
 **判读**：四条路径：一是用 msSanitizer 工具再次检查算子；二是开启 op_debug_config=oom 内存错误检测后复跑检查；三是 SK 场景关闭算子融合后重跑，让故障以单算子形式复现（四链全部生效）；四是怀疑框架问题时联系技术支持上报。复现失败场景只给排查方向，不给确定性根因（未复现什么都没证明）。详见 references/fix-suggestions.md「四、复现失败升级路径」。
 **失败分支**：升级路径执行后仍未定位时按停止条件结束本轮，如实汇报已排除项与剩余未知；否则转 P5.5。
 
-#### P5.5 输出六段式诊断报告
+#### P5.5 输出六段式诊断报告并落盘
 
-**动作**：按第四节输出契约组装诊断报告，每个结论附证据链格式与反证。
-**命令**：无（输出动作：报告模板含 `counter_evidence` 反证字段）。
-**判读**：六段齐备（环境与输入、场景与定位、错误类型、复现结果、证据链汇聚判定、修复建议与升级路径）；每个诊断结论包含事实、对比（判据出处）、判定、置信度四要素并附反证；置信度口径：高为结论码由判定字段直接触发且至少两条证据链相互印证，中为仅一条链支撑或存在可解释反证，低为 0 兜底或证据链大面积缺失只输出排查方向。模板见 references/fix-suggestions.md「五、证据链格式诊断报告模板」。
-**失败分支**：任一段证据不足时如实写"证据不足"与缺失原因，不得编造；报告输出后对照停止条件判定结束或进入新一轮收集。
+**动作**：按第四节输出契约组装诊断报告，每个结论附证据链格式与反证；无论正常完成还是因停止条件提前结束，本轮最终报告都必须保存为 Markdown 文件。
+**命令**：
+
+```bash
+mkdir -p <结果目录>
+cat > <结果目录>/tool_exception_dump_report_<执行时间戳>.md <<'EOF'
+<按第四节六段式契约组装的完整报告内容>
+EOF
+readlink -f <结果目录>/tool_exception_dump_report_<执行时间戳>.md    # 校验并取得绝对路径，回复用户时必须原样告知
+```
+
+**判读**：六段齐备（环境与输入、场景与定位、错误类型、复现结果、证据链汇聚判定、修复建议与升级路径）；每个诊断结论包含事实、对比（判据出处）、判定、置信度四要素并附反证；置信度口径：高为结论码由判定字段直接触发且至少两条证据链相互印证，中为仅一条链支撑或存在可解释反证，低为 0 兜底或证据链大面积缺失只输出排查方向。报告文件必须为 `.md` 后缀，回复中同时给出报告摘要与该文件的绝对路径；提前停止时报告如实标注已执行步骤、停止原因与缺失证据。模板见 references/fix-suggestions.md「五、证据链格式诊断报告模板」。
+**失败分支**：报告目录不可写时先更换结果目录并重写报告，不得只把报告打印在对话中；任一段证据不足时如实写"证据不足"与缺失原因，不得编造；报告落盘并告知路径后对照停止条件判定结束或进入新一轮收集。
 
 ## 四、六段式诊断报告输出契约
 
@@ -445,7 +425,7 @@ grep -n "aicore error\|aivec error\|aicore exception" <单算子日志目录>/*.
 5. **证据链汇聚判定**：四链汇总表（链名、事实、判定字段、是否支撑结论码）、优先级链命中的最终结论码、置信度与反证。
 6. **修复建议与升级路径**：按映射表给出修复建议与验证方法；复现失败或证据不足时给出升级路径。
 
-写入规则：事实列只写工具实际产出；每个判定附判据出处（path:line 或字典行号）；降级与证据不足如实标注；反证段不得省略，无反证时写"无"。
+写入规则：事实列只写工具实际产出；每个判定附判据出处（path:line 或字典行号）；降级与证据不足如实标注；反证段不得省略，无反证时写"无"。本报告必须完整保存为 Markdown 文件，推荐路径 `<结果目录>/tool_exception_dump_report_<执行时间戳>.md`；回复用户时必须包含该文件的绝对路径。提前停止时同样保存已完成部分，并明确标注停止原因与未执行步骤。
 
 **停止条件**（出现以下任一情形即停止或结束本轮诊断）：
 
@@ -471,6 +451,8 @@ grep -n "aicore error\|aivec error\|aicore exception" <单算子日志目录>/*.
 10. NEVER 把退出码 101-107 当作工具报错（它们是分析结论码），也不把退出码 0 当作无故障（0 是兜底，不代表故障不存在）。
 11. NEVER 仅凭日志含 aicore error 关键字就认定复现成功：必须同一日志文件内出现目标 kernel 名，防止把其他算子的错误算到目标算子头上。
 12. NEVER 假设设备内存或 UB 初值为 0（malloc 后填随机字节、UB 不自动清零），也不在异地环境分析故障日志（仅本地分析）。
+13. NEVER 只在对话中输出最终报告：最终报告必须保存为 `.md` 文件，并在回复中告知用户该文件的绝对路径；提前停止时同样落盘已完成内容与停止原因。
+14. NEVER 未预先指定独立运行目录就执行 demo 或测试用例：启动前必须设置 `ASCEND_WORK_PATH` 指向本轮独立目录，使日志落在 ${ASCEND_WORK_PATH}/log；命令退出后必须立即留存 stdout、stderr 与运行日志快照，禁止等待后续重跑、报告生成或清理动作后再收集。
 
 ## 六、信息来源
 

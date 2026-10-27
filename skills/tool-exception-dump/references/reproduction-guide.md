@@ -1,6 +1,6 @@
 # 单算子复现指南（P4阶段知识）
 
-> **使用时机**：诊断流程Phase 4（单算子复现）开始时必读本文件。本文件覆盖复现路径选择决策、路径A（基于dump数据的标准复现）、路径B（构造数据复现）、内存越界探测机制与复现结果三态判读，是SKILL.md步骤P4.1至P4.6的知识底座。
+> **使用时机**：诊断流程Phase 4（单算子复现结果判读与回退）开始时必读本文件。本文件覆盖msaicerr自动复现的内部机制、结果三态判读、内存越界探测机制与手动复现回退规范，是SKILL.md步骤P4.1至P4.3的知识底座。
 >
 > **引用约定**：本文 path:line 引用相对于 CANN 社区仓 cann/oam-tools 根目录。行号为源文件真实行号，可疑时按行号回读源码核实。
 
@@ -131,7 +131,51 @@ tiling数据统一由`write_tiling_data_to_file`落盘为`{kernel_path}/{kernel_
 export PYTHONPATH=<msaicerr根目录>:$PYTHONPATH;cd <msaicerr根目录>;python3 <用例文件路径>
 ```
 
+执行任何 demo、单算子用例或复现用例时，不得直接使用上述最简命令作为实际执行形态。启动前必须先创建本轮专用日志目录，并在命令退出后立即留存日志：
+
+1. 在结果目录下创建`repro_env/<执行时间戳>/work/`作为本轮独立运行目录，并在其中预创建`log/`；同时在同级位置创建`work_log_snapshot/`。快照目录必须位于`${ASCEND_WORK_PATH}/log`之外。
+2. 只为本条命令设置环境变量：`ASCEND_WORK_PATH`作为第一优先级变量指向上述独立运行目录，`ASCEND_SLOG_PRINT_TO_STDOUT=0`，`PYTHONPATH`指向 msaicerr 根目录；需要强制在线编译或收集异常算子信息时再配置`NPU_COLLECT_PATH`，需要独立共享缓存时再配置`ASCEND_CACHE_PATH`。推荐使用单次命令作用域（如 `VAR=value ... python3 ...`）或子 shell，不得 `export` 污染当前 shell；否则同 shell 后续启动的其他进程也会把产物写入该目录。该目录必须与故障 plog 物理隔离，防止复现日志覆盖或混入原始证据。
+3. 使用`tee`同步留存 stdout 与 stderr；shell 需开启`pipefail`，确保用例失败时退出码不被`tee`吞掉。
+4. 用例进程退出后、任何复现判读、重跑、报告生成或清理动作之前，立即用`cp -a <结果目录>/repro_env/<执行时间戳>/work/log/. <结果目录>/repro_env/<执行时间戳>/work_log_snapshot/`留存运行日志快照。`cp` 使用启动前确定的字面绝对路径，不读取环境变量。若工具自身已把日志写入专用目录，也必须执行快照，防止日志轮转或后续运行冲刷。
+5. 若随后执行`asys collect`采集本次运行的 plog，必须在 asys collect 命令上继续传入同一个`ASCEND_WORK_PATH=<结果目录>/repro_env/<执行时间戳>/work`；asys 会从`${ASCEND_WORK_PATH}/log`采集日志。asys 的日志来源由 asys 自身进程环境决定；单次命令作用域不会留在当前 shell，后续单独执行`asys collect`时变量已不存在，会导致采不到本次 demo 的 plog。若同时使用了 NPU_COLLECT_PATH、ASCEND_CACHE_PATH，采集命令也应显式传入与 demo 一致的值。
+6. 重试或执行下一个变体时必须使用新的时间戳目录，不得复用上一轮运行目录。
+
 手动运行未改写的用例文件时`cce_file`键有效，run_kernel会走`update_kernel_by_cce`用ccec重编译一份`{kernel_name}_new.o`（single_op_case.py:203-213；重编译实现:137-171：从cce文件头`//`注释行提取ccec命令，ccec不在PATH时按`/usr/local/Ascend/latest/{aarch64-linux|x86_64-linux}/ccec_compiler/bin/ccec`猜测路径）。判读手动复现结果时优先相信未重编译（自动流程）的结果。
+
+### 3.5.1 复现产物目录与环境变量
+
+如果 demo 或用例会触发算子编译，先创建独立产物目录，并以单次命令作用域设置环境变量。`ASCEND_WORK_PATH`是复现运行时的第一优先级设置，用于统一承接日志、算子编译调试文件与运行产物；`NPU_COLLECT_PATH`与`ASCEND_CACHE_PATH`按需配置，使 .o/.json/.cce 落盘到可收集位置：
+
+| 环境变量 | 作用 | 典型落盘内容 |
+| --- | --- | --- |
+| `ASCEND_WORK_PATH` | 复现运行时的第一优先级环境变量；设置单机独享文件的存储路径，保存当前进程运行、编译、调试过程中产生的文件 | `${ASCEND_WORK_PATH}/aoe_data/` 下的 AOE 调优数据；`/kernel_meta/` 下的算子编译调试文件（.o、.json、.cce 等）；`/log/` 下的应用日志；`/atrace/` 下的 Trace 文件；`/profiling_data/` 下的性能数据；`/${pid}_${device_id}` 下的 Dump 图文件；`/extra-info/data-dump/` 下的异常 Dump 信息；权重外置文件、融合规则结果、模型预检结果、算子 Kernel 数据 Dump 等 |
+| `ASCEND_CACHE_PATH` | 设置共享缓存文件的存储路径，保存多进程或多次运行间可复用的数据 | 在线编译算子生成的 .o 与 .json；AOE 调优等过程生成的知识库文件 |
+| `NPU_COLLECT_PATH` | 设置故障信息保存路径；设置后系统会开启异常算子 Dump 数据采集，并强制在线编译算子 | `${NPU_COLLECT_PATH}/extra-info/ops/op_compile_stats.log` 记录算子编译成功/失败、结果来源（缓存/在线/二进制）；L1 Exception Dump 信息；在线编译生成的 .o 与 .json |
+
+推荐目录结构：
+
+```bash
+mkdir -p <结果目录>/repro_env/<执行时间戳>/{work,cache,collect}
+```
+
+执行 demo 或用例时，以单次命令作用域设置：
+
+```bash
+ASCEND_WORK_PATH=<结果目录>/repro_env/<执行时间戳>/work \
+NPU_COLLECT_PATH=<结果目录>/repro_env/<执行时间戳>/collect \
+ASCEND_CACHE_PATH=<结果目录>/repro_env/<执行时间戳>/cache \
+<原 demo 或用例命令>
+```
+
+使用约束：
+
+1. 这些变量只改变产物落盘位置，不改变 asys/msaicerr 的查找边界；`.o`/`.json`/`.cce` 的查找、匹配与收集仍只通过 asys 工具和 msaicerr 工具完成。
+2. 若随后执行 asys collect，应在 asys collect 命令上继续传入同一个 `ASCEND_WORK_PATH`，并按需传入同一个 `NPU_COLLECT_PATH` 与 `ASCEND_CACHE_PATH`，或通过 `--task_dir` 指向上述独立目录，保证收集到的信息与业务运行时一致。
+3. `NPU_COLLECT_PATH` 会强制在线编译并增加数据量，仅在复现或调试场景使用；调试完成后应及时清理该目录。
+4. 该配置用于 demo 或用例自身的编译与落盘；msaicerr 单算子复现仍优先使用已收集的现场 .o/.json。
+5. 在线编译产物优先级为 `NPU_COLLECT_PATH > ASCEND_CACHE_PATH > 默认路径`；L1 Exception Dump 信息优先级为 `NPU_COLLECT_PATH > ASCEND_WORK_PATH > 默认路径`。
+
+`ASCEND_PROCESS_LOG_PATH`是`ASCEND_WORK_PATH`日志能力的更窄子集，只控制 CANN 进程日志落盘路径；复现运行默认通过`ASCEND_WORK_PATH`统一承接日志与其他运行产物，不单独设置该变量。
 
 ### 3.6 三变体执行顺序与判读
 
