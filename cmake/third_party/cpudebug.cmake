@@ -31,14 +31,14 @@ if (IS_DIRECTORY ${CMAKE_SOURCE_DIR}/libraries/lib AND NOT EXISTS ${CMAKE_SOURCE
 endif()
 
 if (NOT EXISTS ${CMAKE_SOURCE_DIR}/libraries/lib/include/stub_fun.h)
-    set(CPUDEBUG_PKG_NAME cann-asc-tools-cpudebug-deps-lib_${BUILD_TYPE_LOWER}_${ASC_TOOLS_VERSION}_linux-${CMAKE_SYSTEM_PROCESSOR}.tar.gz)
+    set(CPUDEBUG_PKG_NAME cann-asc-tools-cpudebug-deps-lib_${BUILD_TYPE_LOWER}_${ASC_TOOLS_VERSION}_linux-${CPUDEBUG_PKG_ARCH}.tar.gz)
     file(GLOB CPUDEBUG_PKG
         LIST_DIRECTORIES True
         ${CANN_3RD_LIB_PATH}/${CPUDEBUG_PKG_NAME}
     )
 
     if(NOT EXISTS ${CPUDEBUG_PKG})
-        set(CPUDEBUG_PKG_URL "https://ascend-ci.obs.cn-north-4.myhuaweicloud.com/asc-toolkit-dev/package/176/cann-asc-toolkit-dev_linux-${CPUDEBUG_PKG_ARCH}.tar.gz")
+        set(CPUDEBUG_PKG_URL "https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/package/master/20261026/${CPUDEBUG_PKG_ARCH}/${CPUDEBUG_PKG_NAME}")
         message(STATUS "cpudebug pkg not found in ${CANN_3RD_LIB_PATH}, downloading from ${CPUDEBUG_PKG_URL}")
     else()
         set(CPUDEBUG_PKG_URL ${CPUDEBUG_PKG})
@@ -51,7 +51,6 @@ if (NOT EXISTS ${CMAKE_SOURCE_DIR}/libraries/lib/include/stub_fun.h)
         URL ${CPUDEBUG_PKG_URL}
         TLS_VERIFY FALSE
         DOWNLOAD_DIR ${CANN_3RD_LIB_PATH}
-        DOWNLOAD_NAME ${CPUDEBUG_PKG_NAME}
         DOWNLOAD_NO_EXTRACT TRUE
     )
     FetchContent_MakeAvailable(${PKG_NAME})
