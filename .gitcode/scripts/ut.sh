@@ -68,10 +68,15 @@ if [ $ret -ne 200 ] && [ $ret -ne 0 ]; then
     exit 1
 fi
 if [ $ret -eq 0 ]; then
+    coverage_info=$(find "${WORKSPACE}" -type f -name "coverage.info" | head -n1)
+    if [ -n "${coverage_info}" ]; then
+        mkdir -p "${WORKSPACE}/cov"
+        cp -rf ${coverage_info} ${WORKSPACE}/cov/
+    fi
     if [ "$coverage_save" = "true" ];then
-    echo "ut_process=coverage" >> $ATOMGIT_OUTPUT
+        echo "ut_process=coverage" >> $ATOMGIT_OUTPUT
     else
-    echo "ut_process=ut_cov" >> $ATOMGIT_OUTPUT
+        echo "ut_process=ut_cov" >> $ATOMGIT_OUTPUT
     fi
 fi
 exit 0

@@ -9,6 +9,10 @@ on:
       ut_package:
         type: string
         default: 'ut_cov_*.tar.gz'
+      classify_type:
+          description: '覆盖率解析用的 classify_rule.yaml 组件键（asc-tools 传 asc-tools）'
+          required: false
+          type: string
       image_version:
         required: true
         type: string
@@ -54,7 +58,7 @@ jobs:
         with:
           ut_process: ${{ steps.ut.outputs.ut_process }}
           workspace: ${{ steps.process_checkout.outputs.path }}
-          ut_type: ${{ inputs.ut_type }}
+          ut_type: ${{ inputs.classify_type }}
           target_branch: ${{ env.TARGET_BRANCH }}
           git_token: ${{secrets.GIT_TOKEN}}
       -

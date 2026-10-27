@@ -123,14 +123,16 @@ stages:
         uses: .gitcode/workflows/ut_action.yml
         with:
           ut_type: 'UT_Test_Python'
-          ut_package: 'coverage_*.info'
+          ut_package: 'ut_cov_*.tar.gz'
+          classify_type: 'UT_Test_Python'
           image_version: ${{ jobs.JOB_image.outputs.UT_Test }}
       JOB_UT_Test:
         name: UT_Test
         uses: .gitcode/workflows/ut_action.yml
         with:
           ut_type: 'UT_Test'
-          ut_package: 'coverage_*.info'
+          classify_type: 'asc-tools'
+          ut_package: 'ut_cov_*.tar.gz'
           image_version: ${{ jobs.JOB_image.outputs.UT_Test }}
     pre:
     - type: auto
