@@ -107,7 +107,7 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
         diagnostic = "Device ELF section table is out of bounds";
         return false;
     }
-    const auto ReadSection = [&](size_t index, Elf64_Shdr& section) {
+    const auto ReadSection = [&header, &bytes](size_t index, Elf64_Shdr& section) {
         const size_t offset = static_cast<size_t>(header.e_shoff) + index * sizeof(Elf64_Shdr);
         return memcpy_s(&section, sizeof(section), bytes + offset, sizeof(section)) == EOK;
     };

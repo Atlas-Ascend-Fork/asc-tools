@@ -621,7 +621,7 @@ aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept
         return ACL_SUCCESS;
     }
     std::vector<PreparedTraceLaunch::HostInput> inputs;
-    const auto fail = [&](aclError status) {
+    const auto fail = [&inputs](aclError status) {
         ReleaseHostInputs(inputs);
         return status;
     };

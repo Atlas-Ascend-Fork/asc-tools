@@ -81,6 +81,10 @@ constexpr uint32_t REGISTER_BANK_A = 0U;
 constexpr uint32_t REGISTER_BANK_B = 1U;
 constexpr uint32_t DMA_DESCRIPTOR_DIMENSION_COUNT = 3U;
 constexpr uint32_t UNSPECIFIED_DATA_BITS = 0U;
+constexpr uint32_t SCALAR_SYSTEM_WINDOW_MASK_BITS = 24U;
+constexpr uint32_t TRANSPOSE_B4_M_STEP_ALIGNMENT = 4U;
+constexpr uint32_t TRANSPOSE_B8_M_STEP_ALIGNMENT = 2U;
+constexpr uint32_t TRANSPOSE_B32_K_STEP_ALIGNMENT = 2U;
 
 constexpr std::array<uint8_t, 3> FIXPIPE_F32_32BIT_QUANT_PRE{0, 14, 15};
 constexpr std::array<uint8_t, 6> FIXPIPE_F32_16BIT_QUANT_PRE{1, 16, 31, 32, 33, 34};
@@ -458,8 +462,9 @@ public:
     }
 
     static MemoryAccessDescriptor NdRead(
-        uint64_t address, uint32_t dataBits, uint64_t elementBytes, const std::array<uint64_t, 5>& counts,
-        const std::array<uint64_t, 5>& strides) noexcept
+        uint64_t address, uint32_t dataBits, uint64_t elementBytes,
+        const std::array<uint64_t, SUPPORTED_NDDMA_DIMENSION_COUNT>& counts,
+        const std::array<uint64_t, SUPPORTED_NDDMA_DIMENSION_COUNT>& strides) noexcept
     {
         return {
             address, ACLSAN_DEVICE_MEMORY_ACCESS_READ, dataBits,
@@ -516,7 +521,7 @@ public:
             return false;
         }
         // Suppress only whole accesses contained in this launch's exact internal ranges.
-        const auto contains = [&](uint64_t base, uint64_t bytes) {
+        const auto contains = [&descriptor, &lastOffset](uint64_t base, uint64_t bytes) {
             return descriptor.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && base != 0 && bytes != 0 &&
                    descriptor.address >= base &&
                    static_cast<unsigned __int128>(base) + bytes <= (static_cast<unsigned __int128>(1) << 64U) &&
@@ -709,7 +714,7 @@ ScalarGmAddressResult ResolveScalarGmAddress(
     // Match dav-3510 RemapAddress after effective-address calculation.
     // Stack backing is irrelevant here: local spaces are outside this GM-only scope.
     const uint64_t effective = static_cast<uint64_t>(address);
-    constexpr uint64_t windowMask = (UINT64_C(1) << 24) - 1;
+    constexpr uint64_t windowMask = (UINT64_C(1) << SCALAR_SYSTEM_WINDOW_MASK_BITS) - 1;
     const bool systemWindow = ((effective >> 25) & windowMask) == ((field.sysVaBase >> 25) & windowMask);
     if (systemWindow && ((effective >> 24) & 1U) == NO_ACCESS_COUNT) {
         const bool ub = ((effective >> 20) & 0x1fU) == 0 && ((effective >> 19) & 1U) != 0;
@@ -996,8 +1001,8 @@ public:
             return BuildSingleAccess(
                 std::move(builder), MemoryAccessDescriptorFactory::NdWrite(
                                         field.dstAddr, profile->dataBits, segmentElements * dstElementBytes,
-                                        std::array<uint64_t, 2>{innerCount, loop3.loopCount},
-                                        std::array<uint64_t, 2>{dstStrideBytes, matrixStrideBytes}));
+                                        std::array<uint64_t, TWO_DIMENSIONAL_RANK>{innerCount, loop3.loopCount},
+                                        std::array<uint64_t, TWO_DIMENSIONAL_RANK>{dstStrideBytes, matrixStrideBytes}));
         }
         return ConvertFixpipeNz(field, profile->dataBits, dstElementBytes, dstStrideBytes, std::move(builder));
     }
@@ -1017,18 +1022,17 @@ public:
         if (!registerState_.mte2Source.has_value()) {
             return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, static_cast<uint64_t>(InstructionId::Mte2SrcPara)};
         }
-        constexpr uint64_t kFractalBytes = 512;
         const int64_t signedSrcStride = registerState_.mte2Source->srcStride;
         const __int128 strideMagnitude =
             signedSrcStride < 0 ? -static_cast<__int128>(signedSrcStride) : static_cast<__int128>(signedSrcStride);
-        const __int128 repeatStrideBytes = strideMagnitude * kFractalBytes;
+        const __int128 repeatStrideBytes = strideMagnitude * CUBE_FRACTAL_BYTES;
         if (repeatStrideBytes > std::numeric_limits<int64_t>::max()) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
 
         const __int128 firstFractal =
             static_cast<__int128>(field.kStartPosition) * strideMagnitude + field.mStartPosition;
-        const __int128 firstAddress = static_cast<__int128>(field.srcAddr) + firstFractal * kFractalBytes;
+        const __int128 firstAddress = static_cast<__int128>(field.srcAddr) + firstFractal * CUBE_FRACTAL_BYTES;
         const __int128 lowestAddress = signedSrcStride < 0 ?
                                            firstAddress - static_cast<__int128>(field.kStep - 1) * repeatStrideBytes :
                                            firstAddress;
@@ -1038,9 +1042,10 @@ public:
         MemoryCbdataBuilder builder(context_, *profile);
         return BuildSingleAccess(
             std::move(builder), MemoryAccessDescriptorFactory::NdRead(
-                                    static_cast<uint64_t>(lowestAddress), profile->dataBits, kFractalBytes,
-                                    std::array<uint64_t, 2>{field.mStep, field.kStep},
-                                    std::array<uint64_t, 2>{kFractalBytes, static_cast<uint64_t>(repeatStrideBytes)}));
+                                    static_cast<uint64_t>(lowestAddress), profile->dataBits, CUBE_FRACTAL_BYTES,
+                                    std::array<uint64_t, TWO_DIMENSIONAL_RANK>{field.mStep, field.kStep},
+                                    std::array<uint64_t, TWO_DIMENSIONAL_RANK>{
+                                        CUBE_FRACTAL_BYTES, static_cast<uint64_t>(repeatStrideBytes)}));
     }
 
     MemoryCbdataResult operator()(const NdDmaOutToUbufParamField& field) const noexcept
@@ -1068,7 +1073,7 @@ public:
         }
 
         const uint64_t elementBytes = profile->dataBits / BITS_PER_BYTE;
-        std::array<uint64_t, 5> strideBytes{};
+        std::array<uint64_t, SUPPORTED_NDDMA_DIMENSION_COUNT> strideBytes{};
         for (std::size_t index = 0; index < strideBytes.size(); ++index) {
             if (counts[index] <= SINGLE_ACCESS_COUNT) {
                 continue;
@@ -1130,14 +1135,14 @@ private:
                     directionIndex * SUPPORTED_DMA_DIRECTION_COUNT};
         }
         const DmaLoopSizeParamField& size = *registerState_.dmaLoopSizes[directionIndex];
-        const std::array<uint64_t, 2> loopCounts{size.loop1Size, size.loop2Size};
+        const std::array<uint64_t, LOOP_DIMENSION_COUNT> loopCounts{size.loop1Size, size.loop2Size};
         if (loopCounts[0] == NO_ACCESS_COUNT || loopCounts[1] == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
 
-        std::array<uint64_t, 2> loopStrides{};
+        std::array<uint64_t, LOOP_DIMENSION_COUNT> loopStrides{};
         for (std::size_t index = 0; index < loopCounts.size(); ++index) {
-            if (loopCounts[index] <= 1) {
+            if (loopCounts[index] <= SINGLE_ACCESS_COUNT) {
                 continue;
             }
             const auto& strideState = registerState_.dmaLoopStrides[directionIndex][index];
@@ -1161,10 +1166,11 @@ private:
                                         address, accessMode, profile.dataBits, burstNum, burstBytes, burstStride));
         }
         return BuildSingleAccess(
-            std::move(builder), MemoryAccessDescriptorFactory::DmaAffine(
-                                    address, accessMode, profile.dataBits, burstBytes,
-                                    std::array<uint64_t, 3>{burstNum, loopCounts[0], loopCounts[1]},
-                                    std::array<uint64_t, 3>{burstStride, loopStrides[0], loopStrides[1]}));
+            std::move(builder),
+            MemoryAccessDescriptorFactory::DmaAffine(
+                address, accessMode, profile.dataBits, burstBytes,
+                std::array<uint64_t, DMA_DESCRIPTOR_DIMENSION_COUNT>{burstNum, loopCounts[0], loopCounts[1]},
+                std::array<uint64_t, DMA_DESCRIPTOR_DIMENSION_COUNT>{burstStride, loopStrides[0], loopStrides[1]}));
     }
 
     template <NdNzConversionMode ConversionMode>
@@ -1194,10 +1200,11 @@ private:
 
         MemoryCbdataBuilder builder(context_, *profile);
         return BuildSingleAccess(
-            std::move(builder), MemoryAccessDescriptorFactory::NdRead(
-                                    field.srcAddr, profile->dataBits, rowElements * elementBytes,
-                                    std::array<uint64_t, 2>{rowCount, matrixNum},
-                                    std::array<uint64_t, 2>{field.loop1SrcStride, field.loop4SrcStride}));
+            std::move(builder),
+            MemoryAccessDescriptorFactory::NdRead(
+                field.srcAddr, profile->dataBits, rowElements * elementBytes,
+                std::array<uint64_t, TWO_DIMENSIONAL_RANK>{rowCount, matrixNum},
+                std::array<uint64_t, TWO_DIMENSIONAL_RANK>{field.loop1SrcStride, field.loop4SrcStride}));
     }
 
     static MemoryCbdataResult BuildSingleAccess(
@@ -1413,13 +1420,13 @@ public:
                 n * k * CUBE_FRACTAL_BYTES, 0, bits) ||
             !Add(
                 builder, f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 1,
-                m * n * CUBE_OUTPUT_FRACTAL_BYTES, 0, 4 * BITS_PER_BYTE)) {
+                m * n * CUBE_OUTPUT_FRACTAL_BYTES, 0, THIRTY_TWO_BIT_DATA)) {
             return std::move(builder).Build();
         }
         if (!f.cmatrixSource && !f.cmatrixInitVal &&
             !Add(
                 builder, f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1,
-                m * n * CUBE_OUTPUT_FRACTAL_BYTES, 0, 4 * BITS_PER_BYTE)) {
+                m * n * CUBE_OUTPUT_FRACTAL_BYTES, 0, THIRTY_TWO_BIT_DATA)) {
             return std::move(builder).Build();
         }
         return std::move(builder).Build();
@@ -1437,8 +1444,9 @@ public:
         }
         uint64_t dstBlocks = f.mStep, dstRepeats = f.kStep;
         if (f.transpose) {
-            if ((bits == FOUR_BIT_DATA && f.mStep % 4U != 0U) || (bits == BITS_PER_BYTE && f.mStep % 2U != 0U) ||
-                (bits == THIRTY_TWO_BIT_DATA && f.kStep % 2U != 0U)) {
+            if ((bits == FOUR_BIT_DATA && f.mStep % TRANSPOSE_B4_M_STEP_ALIGNMENT != 0U) ||
+                (bits == BITS_PER_BYTE && f.mStep % TRANSPOSE_B8_M_STEP_ALIGNMENT != 0U) ||
+                (bits == THIRTY_TWO_BIT_DATA && f.kStep % TRANSPOSE_B32_K_STEP_ALIGNMENT != 0U)) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
             dstBlocks = uint64_t(f.kStep) * CUBE_M_DIMENSION / bits;
@@ -2111,7 +2119,7 @@ public:
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
 
-        const auto emit = [&](uint32_t subBlockId, FixL0cToOutParamField target) noexcept {
+        const auto emit = [this](uint32_t subBlockId, FixL0cToOutParamField target) noexcept {
             const auto ubContext = ContextForUbuf(context_, subBlockId);
             if (!ubContext.has_value()) {
                 return MemoryCbdataResult{MemoryCbdataStatus::PARTIAL_COVERAGE, {}};

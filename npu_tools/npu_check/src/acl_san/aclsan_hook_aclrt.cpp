@@ -68,7 +68,6 @@ uint64_t AlignDeviceMemorySize(uint64_t bytes) noexcept
     return (bytes + alignmentMask) & ~alignmentMask;
 }
 
-// TODO: 中间要加上异常报错 / 中止机制
 // 复制业务参数地址，再追加调用方保存的隐藏指针的地址；其存储需保持有效直到 launch 返回。
 // 基于originalArgs更新增加参数隐藏trace指针的存储地址，最终aclrtLaunchKernelWithArgsArray使用的是args
 // 将原有的args复制一份后，增加一个trace指针
@@ -163,7 +162,9 @@ struct DeferredBinary {
     bool fromFile = false;
     // A separate object per load is the generation; handles may be reused.
     std::mutex mutex;
+    // Key fields: byEntry, entry, name, argumentMode, plan, context, traceOffset.
     using Key = std::tuple<bool, uint64_t, std::string, int, uint32_t, uintptr_t, uint32_t>;
+    static constexpr std::size_t CONTEXT_KEY_INDEX = 5;
     std::map<Key, std::shared_ptr<DeferredVariant>> variants;
 };
 
@@ -282,7 +283,6 @@ AclsanCallbackCommonData MakeCallbackCommonData(const char* apiName, int result,
     return {ACLSAN_API_VERSION, size, apiName, result, 0};
 }
 
-// TODO: resourceId目前感觉用不到，可能得改成0
 AclsanResourceData MakeDeviceResourceData(
     const char* apiName, int result, void* deviceAddress, uint64_t bytes, uint32_t deviceId) noexcept
 {
@@ -534,7 +534,6 @@ aclError aclrtBinaryLoadFromDataHook(
     const auto getSocName =
         GetOriginalRuntimeFunction<aclrtGetSocNameFunc>(ACL_RT_API_aclrtGetSocName, "aclrtGetSocName");
     Dl_info runtimeInfo{};
-    // TODO: 是否没必要，可以通过ENV ASCEND_HOME_PATH来推断，这样的话动态库可以不用链接dl
     const char* runtimeLibrary =
         dladdr(reinterpret_cast<const void*>(getSocName), &runtimeInfo) != 0 ? runtimeInfo.dli_fname : nullptr;
     const aclsan::RuntimeBinaryInstrumentationResult instrumentation = aclsan::InstrumentRuntimeBinary(
@@ -848,7 +847,8 @@ void CollectRetiredVariants() noexcept
             auto& variants = (*source)->variants;
             for (auto it = variants.begin(); it != variants.end();) {
                 auto& variant = *it->second;
-                if (it->second.use_count() != 1 || std::get<5>(it->first) != reinterpret_cast<uintptr_t>(context)) {
+                if (it->second.use_count() != 1 ||
+                    std::get<DeferredBinary::CONTEXT_KEY_INDEX>(it->first) != reinterpret_cast<uintptr_t>(context)) {
                     ++it;
                     continue;
                 }
@@ -901,7 +901,6 @@ void ResetDeferredDevice(int32_t deviceId) noexcept
     }
 }
 
-// TODO：是否没必要，因为aclrtBinaryGetFunctionByEntry是预留接口
 aclError aclrtBinaryGetFunctionByEntryHook(
     aclrtBinHandle binHandle, uint64_t functionEntry, aclrtFuncHandle* funcHandle) noexcept
 {
@@ -941,7 +940,7 @@ aclError aclrtLaunchKernelWithHostArgsHook(
     aclrtFuncHandle funcHandle, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void* hostArgs,
     size_t argsSize, aclrtPlaceHolderInfo* placeHolderArray, size_t placeHolderNum) noexcept
 {
-    const auto fail = [&](aclError status) {
+    const auto fail = [&funcHandle, &stream, &numBlocks](aclError status) {
         const AclsanLaunchData callback{
             MakeCallbackCommonData("aclrtLaunchKernelWithHostArgs", status, sizeof(AclsanLaunchData)),
             0,
@@ -1018,7 +1017,7 @@ aclError aclrtLaunchKernelWithHostArgsHook(
 aclError aclrtLaunchKernelWithArgsArrayHook(
     void* func, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void** args) noexcept
 {
-    const auto fail = [&](aclError status) {
+    const auto fail = [&func, &stream, &numBlocks](aclError status) {
         const AclsanLaunchData callback{
             MakeCallbackCommonData("aclrtLaunchKernelWithArgsArray", status, sizeof(AclsanLaunchData)),
             0,
