@@ -220,7 +220,7 @@ A report can contain the following files:
 | `HardwareInfo.jsonl` | Every collection | Host and NPU hardware information. |
 | `summary.jsonl` | A kernel is executed | Performance summary, [performance hints](appendix/npu_compute_performance_data.md#performancehints), and operator overview. |
 | `PipeTrace.json` | `Pipeline` is selected | Pipeline timeline data in Chrome Trace format, viewable with Chrome Trace-compatible tools. |
-| `summary.db` | Valid CSV or PmSampling data is available | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database) |
+| `summary.db` | Valid CSV or PmSampling data is available | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database). |
 | `objdump.txt` | When `PmSampling` is selected | Original operator disassembly. Compile with `-lineinfo` to include source line information. |
 | `symbolizer.json` | When `PmSampling` is selected | Function and inline information for sampled addresses. |
 | `<Section-name>.csv` | Metric data is collected (except for `Pipeline` and `PmSampling`) | Metric data for the Section. |
@@ -240,7 +240,7 @@ Collected CSV data is automatically written to `summary.db` in the same result d
 | `Memory`                | Its CSV is imported successfully                                  | [Memory](#section-memory)                                                                                                                                                                          |
 | `MemoryL0`              | Its CSV is imported successfully                                  | [MemoryL0](#section-memoryl0)                                                                                                                                                                      |
 | `MemoryUB`              | Its CSV is imported successfully                                  | [MemoryUB](#section-memoryub)                                                                                                                                                                      |
-| `PcSampling`            | `PmSampling` is selected | Sampling counts for eight wait or stall states, aggregated by business instruction address; see [PC Sampling States](appendix/npu_compute_performance_data.md#pcsampling-pc-sampling-state-totals) |
+| `PcSampling`            | `PmSampling` is selected | Sampling counts for eight wait or stall states, aggregated by business instruction address; see [PC Sampling States](appendix/npu_compute_performance_data.md#pcsampling-pc-sampling-state-totals). |
 | `PipeUtilization`       | Its CSV is imported successfully                                  | [PipeUtilization](#section-pipeutilization)                                                                                                                                                        |
 | `ResourceConflictRatio` | Its CSV is imported successfully                                  | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                                                                            |
 | `FieldUnitMap`          | At least one CSV containing data records is imported successfully | `field_name` stores the column name and `unit` stores its unit, or NULL for a column without a unit.                                                                                               |
