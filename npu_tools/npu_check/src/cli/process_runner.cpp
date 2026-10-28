@@ -200,11 +200,28 @@ class OutputSink {
 public:
     explicit OutputSink(const std::string& logPath) : logRequired_(!logPath.empty())
     {
-        if (!logPath.empty()) {
-            // 覆盖而非追加：同一路径重复跑时，上一次的报告必须被清掉，否则用户读到的是
-            // 多次运行拼在一起的内容，很容易把上一轮的诊断当成本轮结论。
-            log_.open(logPath, std::ios::binary | std::ios::trunc);
+        if (!logRequired_) {
+            return;
         }
+
+        boost::system::error_code ec;
+        // 日志文件可能尚未创建，规范化已存在的路径部分后保留待创建的文件名。
+        const auto normalizedPath = boost::filesystem::weakly_canonical(boost::filesystem::path(logPath), ec);
+        if (ec) {
+            LogInfraDetail("cannot normalize log file path: " + ec.message());
+            return;
+        }
+
+        const std::string normalizedLogPath = normalizedPath.string();
+        std::string error;
+        if (!ValidateLogFilePath(normalizedLogPath, error)) {
+            LogInfraDetail(error);
+            return;
+        }
+
+        // 覆盖而非追加：同一路径重复跑时，上一次的报告必须被清掉，否则用户读到的是
+        // 多次运行拼在一起的内容，很容易把上一轮的诊断当成本轮结论。
+        log_.open(normalizedLogPath, std::ios::binary | std::ios::trunc);
     }
 
     bool Good() const { return !logRequired_ || log_.is_open(); }
@@ -402,23 +419,47 @@ std::vector<char*> BuildArgv(std::vector<std::string>& arguments)
     return argv;
 }
 
+int ChildTerminationSignal(int status)
+{
+    constexpr unsigned int SIGNAL_MASK = 0x7fU;
+    return static_cast<int>(static_cast<unsigned int>(status) & SIGNAL_MASK);
+}
+
+bool IsChildSignaled(int status)
+{
+    // Linux wait 状态的低 7 位：0 表示正常退出，0x7f 表示停止状态。
+    constexpr int STOPPED_STATUS = 0x7f;
+    const int signal = ChildTerminationSignal(status);
+    return (signal != 0) && (signal != STOPPED_STATUS);
+}
+
+bool IsChildExited(int status) { return ChildTerminationSignal(status) == 0; }
+
+int ChildNormalExitCode(int status)
+{
+    // Linux wait 状态的第 8 至 15 位保存正常退出码。
+    constexpr unsigned int EXIT_CODE_MASK = 0xff00U;
+    constexpr unsigned int EXIT_CODE_SHIFT = 8U;
+    return static_cast<int>((static_cast<unsigned int>(status) & EXIT_CODE_MASK) >> EXIT_CODE_SHIFT);
+}
+
 int ChildExitCode(int status)
 {
     constexpr int SIGNAL_EXIT_CODE_BASE = 128;
-    if (WIFSIGNALED(status)) {
-        return SIGNAL_EXIT_CODE_BASE + WTERMSIG(status);
+    if (IsChildSignaled(status)) {
+        return SIGNAL_EXIT_CODE_BASE + ChildTerminationSignal(status);
     }
-    return WIFEXITED(status) ? WEXITSTATUS(status) : INFRASTRUCTURE_ERROR_EXIT_CODE;
+    return IsChildExited(status) ? ChildNormalExitCode(status) : INFRASTRUCTURE_ERROR_EXIT_CODE;
 }
 
 // 摘要行里的 child_exit 字段。被信号杀死与正常退出必须能区分开：两者映射到同一个
 // 数值空间时，"退出码 137" 和 "被 SIGKILL 杀死" 就再也分不出来了。
 std::string FormatChildExit(int status)
 {
-    if (WIFSIGNALED(status)) {
-        return std::string(SIGNAL_EXIT_PREFIX) + std::to_string(WTERMSIG(status));
+    if (IsChildSignaled(status)) {
+        return std::string(SIGNAL_EXIT_PREFIX) + std::to_string(ChildTerminationSignal(status));
     }
-    return WIFEXITED(status) ? std::to_string(WEXITSTATUS(status)) : "unknown";
+    return IsChildExited(status) ? std::to_string(ChildNormalExitCode(status)) : "unknown";
 }
 
 // 把 Options 里的工具集合转成线路上的 Configure 请求。解析阶段已经保证了排序与去重，
