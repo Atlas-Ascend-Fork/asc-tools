@@ -253,11 +253,11 @@ private:
         LaunchSyncState& state, const ParticipantKey& participant, const AclsanDeviceSyncData& data, uint32_t flagId);
     bool ValidateFlagMode(
         LaunchSyncState& state, const FlagUsageKey& key, uint32_t mode, const AclsanDeviceSyncData& trigger);
-    void ActivateSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round);
+    static void ActivateSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round);
     void ReleaseSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round);
     void ProduceCounterToken(
         LaunchSyncState& state, const CounterContribution& contribution, const AclsanDeviceSyncData& trigger);
-    void CleanupFlagUsage(LaunchSyncState& state, const FlagUsageKey& key);
+    static void CleanupFlagUsage(LaunchSyncState& state, const FlagUsageKey& key);
     void FinalizeCrossCore(LaunchSyncState& state, Reports& reports);
     Reports FinalizeLaunches(void* stream, bool filterByStream);
 

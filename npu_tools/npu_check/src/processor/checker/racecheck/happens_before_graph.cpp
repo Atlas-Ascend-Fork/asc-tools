@@ -13,8 +13,8 @@
 #include <limits>
 
 namespace npucheck::race {
-HappensBeforeGraph::HappensBeforeGraph(size_t edges, size_t work, size_t cache)
-    : edgeBudget_(edges), workBudget_(work), cacheBudget_(cache)
+HappensBeforeGraph::HappensBeforeGraph(size_t edgeBudget, size_t workBudget, size_t cacheBudget)
+    : edgeBudget_(edgeBudget), workBudget_(workBudget), cacheBudget_(cacheBudget)
 {}
 size_t HappensBeforeGraph::AddNode()
 {
@@ -69,26 +69,26 @@ std::optional<bool> HappensBeforeGraph::PrecedesDuringBuild(size_t from, size_t 
     }
     return false;
 }
-bool HappensBeforeGraph::Seal(bool complete)
+bool HappensBeforeGraph::Seal(bool coverageComplete)
 {
     if (sealed_) {
-        valid_ &= complete;
+        valid_ = valid_ && coverageComplete;
         return valid_;
     }
     sealed_ = true;
-    valid_ &= complete;
+    valid_ = valid_ && coverageComplete;
     std::vector<size_t> degree(edges_.size());
     for (const auto& list : edges_)
         for (auto e : list)
             ++degree[e.target];
     for (size_t i = 0; i < degree.size(); ++i)
-        if (!degree[i])
+        if (degree[i] == 0)
             order_.push_back(i);
     for (size_t i = 0; i < order_.size(); ++i)
         for (auto e : edges_[order_[i]])
-            if (!--degree[e.target])
+            if (--degree[e.target] == 0)
                 order_.push_back(e.target);
-    valid_ &= order_.size() == edges_.size();
+    valid_ = valid_ && order_.size() == edges_.size();
     rank_.resize(edges_.size());
     for (size_t i = 0; i < order_.size(); ++i)
         rank_[order_[i]] = i;

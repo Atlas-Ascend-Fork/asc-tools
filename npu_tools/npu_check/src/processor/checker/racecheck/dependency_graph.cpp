@@ -91,16 +91,16 @@ bool CrossParticipant(uint32_t mode, const Domain& sender, const Domain& receive
     if (std::get<0>(sender) != std::get<0>(receiver))
         return false;
     const auto st = std::get<1>(sender), rt = std::get<1>(receiver);
-    if (mode == 0)
+    if (mode == ACLSAN_DEVICE_SYNC_MODE_GLOBAL)
         return st == rt;
     const auto sp = Position3510(sender), rp = Position3510(receiver);
     if (!sp || !rp || sp->die != rp->die || sp->group != rp->group)
         return false;
-    if (mode == 1)
+    if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV)
         return st == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR && st == rt;
-    if (mode == 2)
+    if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV)
         return st != rt;
-    if (mode == 4)
+    if (mode == ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV)
         return st != rt &&
                (rt == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR || sp->subblock == ((receiverFlag >> 4U) & 1U));
     return false;
@@ -242,7 +242,8 @@ private:
                 a.memorySpace >= ACLSAN_DEVICE_MEMORY_SPACE_L1) {
                 reasons.insert("owner_mapping_unknown");
             }
-            if (a.accessMode < 1 || a.accessMode > 3 || !IsSupportedMemorySpace(a.memorySpace)) {
+            if (a.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
+                a.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD || !IsSupportedMemorySpace(a.memorySpace)) {
                 reasons.insert("access_coverage_unknown");
             } else if (!Normalize(a, limits_.segments - segments, access.ranges)) {
                 reasons.insert("invalid_or_excessive_layout");
@@ -327,7 +328,7 @@ private:
         // protocol histories. Partition at every observed unit boundary, retaining
         // byte-precise footprints while avoiding one node per 512 bytes of a tile.
         for (const auto& access : accesses) {
-            if (!access.data.unitFlag || access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C)
+            if (access.data.unitFlag == 0 || access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C)
                 continue;
             auto& boundaries = partition.boundaries[DomainOf(access.data.header)];
             for (const auto& range : access.ranges) {
@@ -370,11 +371,12 @@ private:
     {
         for (const auto& access : accesses) {
             const auto& a = access.data;
-            if (!a.unitFlag) {
+            if (a.unitFlag == 0) {
                 partition.expanded.push_back(access);
                 continue;
             }
-            if ((a.unitFlag != 2 && a.unitFlag != 3) || a.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
+            if ((a.unitFlag != UNIT_FLAG_MODE_START && a.unitFlag != UNIT_FLAG_MODE_END) ||
+                a.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
                 (a.header.pipeline != ACLSAN_DEVICE_PIPE_MATRIX && a.header.pipeline != ACLSAN_DEVICE_PIPE_FIXPIPE)) {
                 reasons.insert("invalid_unit_flag");
                 partition.expanded.push_back(access);
@@ -427,7 +429,7 @@ private:
                     const auto current = q.writes[w++];
                     if (released)
                         AddEdge(*released, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                    if (current.mode == 3) {
+                    if (current.mode == UNIT_FLAG_MODE_END) {
                         published = current.node;
                         break;
                     }
@@ -447,7 +449,7 @@ private:
                     if (previousRead)
                         AddEdge(*previousRead, current.node, HappensBeforeGraph::Reason::UnitFlag);
                     previousRead = current.node;
-                    if (current.mode == 3) {
+                    if (current.mode == UNIT_FLAG_MODE_END) {
                         released = current.node;
                         break;
                     }
@@ -490,11 +492,13 @@ private:
             if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK)
                 continue;
             const auto sender = DomainOf(s.header);
-            const bool intra = s.mode == 4;
+            const bool intra = s.mode == ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
             const bool cube = s.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
             const auto flag = s.objectId & (intra && cube ? 31U : 15U);
             if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE ||
-                (s.mode != 0 && s.mode != 1 && s.mode != 2 && s.mode != 4) || (s.mode != 0 && !Position3510(sender))) {
+                (s.mode != ACLSAN_DEVICE_SYNC_MODE_GLOBAL && s.mode != ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV &&
+                 s.mode != ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV && s.mode != ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV) ||
+                (s.mode != ACLSAN_DEVICE_SYNC_MODE_GLOBAL && !Position3510(sender))) {
                 reasons.insert("unsupported_cross_core_topology_or_mode");
                 continue;
             }
@@ -580,7 +584,8 @@ private:
             const Domain domain = std::get<0>(pair.first);
             const auto& e = pair.second;
             if (!e.sync) {
-                const size_t begin = instructionStarts.count(pair.first) ? instructionStarts.at(pair.first) : e.node;
+                const size_t begin =
+                    instructionStarts.count(pair.first) != 0 ? instructionStarts.at(pair.first) : e.node;
                 if (e.pipe == ACLSAN_DEVICE_PIPE_VECTOR || e.pipe == ACLSAN_DEVICE_PIPE_SCALAR ||
                     e.pipe == ACLSAN_DEVICE_PIPE_MATRIX) {
                     const auto previous = lastOrdered.find({domain, e.pipe});
@@ -617,9 +622,9 @@ private:
                 continue;
             }
             if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || !ValidPipe(s.srcPipe) || !ValidPipe(s.dstPipe) ||
-                (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != 0) ||
+                (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != ACLSAN_DEVICE_SYNC_MODE_GLOBAL) ||
                 (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE && s.srcPipe == s.dstPipe) ||
-                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > 4)) {
+                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV)) {
                 reasons.insert("sync_coverage_unknown");
                 continue;
             }
@@ -648,7 +653,7 @@ private:
                 continue;
             }
             const Flag key{domain, s.scope, s.srcPipe, s.dstPipe, s.objectId};
-            if (invalidFlags.count(key)) {
+            if (invalidFlags.count(key) != 0) {
                 if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
                     flags.erase(key);
                     invalidFlags.erase(key);
@@ -656,7 +661,7 @@ private:
                 continue;
             }
             if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
-                if (flags.count(key)) {
+                if (flags.count(key) != 0) {
                     invalidFlags.insert(key);
                     reasons.insert("duplicate_set");
                     continue;
@@ -666,7 +671,7 @@ private:
                 flags[key] = e.node;
             } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
                 auto f = flags.find(key);
-                if (f == flags.end() || invalidFlags.count(key)) {
+                if (f == flags.end() || invalidFlags.count(key) != 0) {
                     reasons.insert("unmatched_wait");
                     continue;
                 }

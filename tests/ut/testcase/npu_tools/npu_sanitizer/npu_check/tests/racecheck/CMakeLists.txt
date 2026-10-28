@@ -19,7 +19,7 @@ endif()
 
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../../../../.." ABSOLUTE)
 add_executable(racecheck_memstate_tests
-  ../gtest_main.cpp
+  ../gtest_main.cpp ../log_capture.cpp
   ../mem_state_tracker_test.cpp
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/mem_state_tracker.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck_reports.cpp"
@@ -30,11 +30,11 @@ target_compile_options(racecheck_memstate_tests PRIVATE -Wall -Wextra -Werror)
 target_include_directories(racecheck_memstate_tests PRIVATE
   "${REPO_ROOT}/npu_tools/npu_check/src/processor"
   "${REPO_ROOT}/npu_tools/npu_check/include")
-target_link_libraries(racecheck_memstate_tests PRIVATE GTest::gtest Threads::Threads)
+target_link_libraries(racecheck_memstate_tests PRIVATE GTest::gtest Threads::Threads npu_sanitizer_plog plog_test_library)
 add_test(NAME racecheck_memstate_tests COMMAND racecheck_memstate_tests)
 
 add_executable(racecheck_memstate_allocation_tests
-  ../gtest_main.cpp
+  ../gtest_main.cpp ../log_capture.cpp
   ../mem_state_tracker_allocation_test.cpp
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/mem_state_tracker.cpp"
@@ -47,11 +47,11 @@ target_include_directories(racecheck_memstate_allocation_tests PRIVATE
   "${REPO_ROOT}/npu_tools/npu_check/src/shared"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor"
   "${REPO_ROOT}/npu_tools/npu_check/include")
-target_link_libraries(racecheck_memstate_allocation_tests PRIVATE GTest::gtest Threads::Threads npu_sanitizer_plog)
+target_link_libraries(racecheck_memstate_allocation_tests PRIVATE GTest::gtest Threads::Threads npu_sanitizer_plog plog_test_library)
 add_test(NAME racecheck_memstate_allocation_tests COMMAND racecheck_memstate_allocation_tests)
 
 add_executable(racecheck_report_tests
-  ../gtest_main.cpp
+  ../gtest_main.cpp ../log_capture.cpp
   ../racecheck_report_test.cpp
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/mem_state_tracker.cpp"
@@ -64,7 +64,7 @@ target_include_directories(racecheck_report_tests PRIVATE
   "${REPO_ROOT}/npu_tools/npu_check/src/processor"
   "${REPO_ROOT}/npu_tools/npu_check/src/shared"
   "${REPO_ROOT}/npu_tools/npu_check/include")
-target_link_libraries(racecheck_report_tests PRIVATE GTest::gtest Threads::Threads npu_sanitizer_plog)
+target_link_libraries(racecheck_report_tests PRIVATE GTest::gtest Threads::Threads npu_sanitizer_plog plog_test_library)
 add_test(NAME racecheck_report_tests COMMAND racecheck_report_tests)
 
 set(REPORT_DIR "${REPO_ROOT}/npu_tools/npu_check/src/processor/diagnostic")
@@ -88,6 +88,7 @@ target_include_directories(racecheck_render_tests PRIVATE
   "${REPO_ROOT}/npu_tools/npu_check/src/processor"
   "${REPO_ROOT}/npu_tools/npu_check/src/shared"
   "${REPO_ROOT}/npu_tools/npu_check/include")
+target_link_libraries(racecheck_render_tests PRIVATE npu_sanitizer_plog)
 add_test(NAME racecheck_render_tests COMMAND racecheck_render_tests)
 
 # Exercise the production synchronization graph together with the memstate checker.

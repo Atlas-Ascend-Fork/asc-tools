@@ -20,6 +20,9 @@
 #include <vector>
 
 namespace npucheck::race {
+// L0C unit ownership: retain ownership or hand it to the other pipeline.
+inline constexpr uint32_t UNIT_FLAG_MODE_START = 2;
+inline constexpr uint32_t UNIT_FLAG_MODE_END = 3;
 using Domain = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
 inline Domain DomainOf(const AclsanDeviceEventHeader& h) { return {h.deviceId, h.blockType, h.blockId, h.phyCoreId}; }
 using Instruction = std::tuple<Domain, uint64_t>;

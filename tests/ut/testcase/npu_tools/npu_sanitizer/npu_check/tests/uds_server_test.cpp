@@ -100,6 +100,60 @@ TEST(UdsServerTest, SendFailureMarksTransportIncomplete)
     server.Shutdown();
 }
 
+TEST(UdsServerTest, RejectsMalformedAndOutOfRangeNumericEnvironment)
+{
+    ScopedEnvironmentVariable udsName(UDS_NAME_ENV, "@npu_check_invalid_numeric_environment");
+    ScopedEnvironmentVariable session(SESSION_ID_ENV, "1");
+    ScopedEnvironmentVariable pid(CLI_PID_ENV, std::to_string(getpid()));
+    ScopedEnvironmentVariable timeout(HANDSHAKE_TIMEOUT_ENV, "5000");
+    const auto expectRejected = [](const char* name, const char* value) {
+        SCOPED_TRACE(std::string(name) + "=" + value);
+        ScopedEnvironmentVariable invalid(name, value);
+        UdsServer server;
+        ConfigureRequest configure;
+        std::string error;
+        EXPECT_FALSE(server.StartAndHandshake(configure, error));
+        EXPECT_EQ(
+            error, name == HANDSHAKE_TIMEOUT_ENV ? "invalid handshake timeout environment" :
+                                                   "invalid UDS session or CLI PID environment");
+    };
+    for (const char* name : {SESSION_ID_ENV, CLI_PID_ENV, HANDSHAKE_TIMEOUT_ENV}) {
+        for (const char* value :
+             {"", "-1", "+1", " 1", "\t1", "1 ", "1x", "18446744073709551616", "-18446744073709551615"}) {
+            expectRejected(name, value);
+        }
+    }
+    expectRejected(SESSION_ID_ENV, "0");
+    expectRejected(CLI_PID_ENV, "0");
+    expectRejected(CLI_PID_ENV, "4294967296");
+    expectRejected(HANDSHAKE_TIMEOUT_ENV, "99");
+    expectRejected(HANDSHAKE_TIMEOUT_ENV, "120001");
+}
+
+TEST(UdsServerTest, AcceptsNumericEnvironmentBoundariesAndLeadingZeros)
+{
+    // 在地址校验处停止，验证数值范围时不建立 socket 或等待客户端。
+    ScopedEnvironmentVariable udsName(UDS_NAME_ENV, "invalid-address");
+    struct NumericEnvironment {
+        const char* session;
+        const char* pid;
+        const char* timeout;
+    };
+    for (const auto& values :
+         {NumericEnvironment{"18446744073709551615", "4294967295", "120000"}, NumericEnvironment{"1", "1", "100"},
+          NumericEnvironment{"0001", "0001", "00100"}}) {
+        SCOPED_TRACE(std::string(values.session) + "," + values.pid + "," + values.timeout);
+        ScopedEnvironmentVariable session(SESSION_ID_ENV, values.session);
+        ScopedEnvironmentVariable pid(CLI_PID_ENV, values.pid);
+        ScopedEnvironmentVariable timeout(HANDSHAKE_TIMEOUT_ENV, values.timeout);
+        UdsServer server;
+        ConfigureRequest configure;
+        std::string error;
+        EXPECT_FALSE(server.StartAndHandshake(configure, error));
+        EXPECT_EQ(error, "UDS address must start with '@' to denote the abstract namespace");
+    }
+}
+
 bool SendClientFrame(
     int fd, MessageType type, uint64_t sessionId, uint64_t sequence, std::vector<uint8_t> payload, std::string& error)
 {

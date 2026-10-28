@@ -453,10 +453,11 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
             appendAccess(data.address, data.layout.range.bytes);
             break;
         case ACLSAN_MEM_LAYOUT_BLOCK_REPEAT: {
+            constexpr uint32_t BLOCK_REPEAT_RANK = 2;
             const auto& layout = data.layout.blockRepeat;
             AffineLayout affine{};
             affine.base = data.address;
-            affine.rank = 2;
+            affine.rank = BLOCK_REPEAT_RANK;
             affine.elementBytes = layout.blockSize;
             affine.dimensions[0] = layout.blockNum;
             affine.dimensions[1] = layout.repeatTimes;

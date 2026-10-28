@@ -26,7 +26,7 @@ public:
     // Callback headers must have passed Initcheck::OnDeviceSync version/size checks.
     void Sync(const AclsanDeviceSyncData& data);
     void Barrier(const AclsanDeviceBarrierData& data);
-    void Collect(void* stream, CheckerReportList& reports);
+    void Collect(const void* stream, CheckerReportList& reports);
     void Finalize();
     void Invalidate()
     {
@@ -41,7 +41,7 @@ private:
     using CoreKey = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t>;
     using Event = std::variant<AclsanDeviceMemoryAccessData, AclsanDeviceSyncData, AclsanDeviceBarrierData>;
     void Queue(const AclsanDeviceEventHeader& header, Event event);
-    void Replay(const std::vector<Event>& events, CheckerReportList& reports);
+    void Replay(const std::vector<Event>& records, CheckerReportList& reports);
     std::map<CoreKey, std::vector<Event>> pending_;
     std::map<uint64_t, void*> streams_;
     size_t queued_ = 0;

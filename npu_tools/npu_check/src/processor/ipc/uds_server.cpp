@@ -20,6 +20,7 @@
 #include <limits>
 #include <optional>
 #include <sstream>
+#include <string_view>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -32,13 +33,20 @@ std::optional<uint64_t> ParseUnsigned(const char* text, uint64_t maximum)
     if (text == nullptr || text[0] == '\0') {
         return std::nullopt;
     }
-    char* end = nullptr;
-    errno = 0;
-    const unsigned long long parsed = std::strtoull(text, &end, 10);
-    if (errno != 0 || end == text || *end != '\0' || parsed > maximum) {
-        return std::nullopt;
+    // CLI 使用 std::to_string 下发，拒绝符号、空白和未消费的后缀。
+    constexpr uint64_t DECIMAL_BASE = 10;
+    uint64_t parsed = 0;
+    for (const char character : std::string_view(text)) {
+        if (character < '0' || character > '9') {
+            return std::nullopt;
+        }
+        const uint64_t digit = static_cast<uint64_t>(character - '0');
+        if (parsed > maximum / DECIMAL_BASE || (parsed == maximum / DECIMAL_BASE && digit > maximum % DECIMAL_BASE)) {
+            return std::nullopt;
+        }
+        parsed = parsed * DECIMAL_BASE + digit;
     }
-    return static_cast<uint64_t>(parsed);
+    return parsed;
 }
 
 std::string ErrnoMessage(const char* operation) { return std::string(operation) + ": " + std::strerror(errno); }
@@ -50,19 +58,19 @@ UdsServer::~UdsServer() { Shutdown(); }
 bool UdsServer::LoadEnvironment(std::string& error)
 {
     const char* udsName = std::getenv(npucheck::ipc::UDS_NAME_ENV);
-    const char* session = std::getenv(npucheck::ipc::SESSION_ID_ENV);
-    const char* cliPid = std::getenv(npucheck::ipc::CLI_PID_ENV);
     if (udsName == nullptr || udsName[0] == '\0') {
         error = "missing UDS address environment";
         return false;
     }
-    const auto parsedSession = ParseUnsigned(session, std::numeric_limits<uint64_t>::max());
-    const auto parsedPid = ParseUnsigned(cliPid, std::numeric_limits<uint32_t>::max());
+    const std::string address = udsName;
+    const auto parsedSession =
+        ParseUnsigned(std::getenv(npucheck::ipc::SESSION_ID_ENV), std::numeric_limits<uint64_t>::max());
+    const auto parsedPid = ParseUnsigned(std::getenv(npucheck::ipc::CLI_PID_ENV), std::numeric_limits<uint32_t>::max());
     if (!parsedSession || *parsedSession == 0 || !parsedPid || *parsedPid == 0) {
         error = "invalid UDS session or CLI PID environment";
         return false;
     }
-    udsName_ = udsName;
+    udsName_ = address;
     sessionId_ = *parsedSession;
     expectedCliPid_ = static_cast<uint32_t>(*parsedPid);
 

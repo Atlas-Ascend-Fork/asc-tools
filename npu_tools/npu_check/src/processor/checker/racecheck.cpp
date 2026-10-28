@@ -12,22 +12,12 @@
 #include "checker/racecheck.h"
 #include "checker/racecheck_reports.h"
 #include "npu_tool_log.h"
-#include <cstdio>
 #include <exception>
 #include <limits>
 #include <sstream>
 
 namespace npucheck {
-Racecheck::Racecheck(RacecheckOrdering* ordering, RacecheckDiagnostics diagnostics)
-    : ordering_(ordering), diagnostics_(diagnostics)
-{
-    if (!diagnostics_.emit) {
-        diagnostics_.emit = [](void*, const char* message) { ASCTOOL_DEBUG("%s", message); };
-        if (!diagnostics_.emitError) {
-            diagnostics_.emitError = [](void*, const char* message) { ASCTOOL_ERROR("%s", message); };
-        }
-    }
-}
+Racecheck::Racecheck(RacecheckOrdering* ordering) : ordering_(ordering) {}
 
 const std::vector<CallbackSpec>& Racecheck::GetSubscribedID() const
 {
@@ -42,22 +32,29 @@ const std::vector<CallbackSpec>& Racecheck::GetSubscribedID() const
 void Racecheck::Log(
     const char* event, const AclsanDeviceEventHeader* header, const char* detail, bool error) const noexcept
 {
-    char message[1536];
-    std::snprintf(
-        message, sizeof(message),
-        "racecheck event=%s level=%s device=%u launch=%llu instr=%llu pc=0x%llx accesses=%llu committed=%llu "
-        "candidates=%llu reports=%llu failures=%llu detail=%s\n",
-        event, error ? "ERROR" : "DEBUG", header ? header->deviceId : 0,
-        static_cast<unsigned long long>(header ? header->launchId : 0),
-        static_cast<unsigned long long>(header ? header->instrExecId : 0),
-        static_cast<unsigned long long>(header ? header->pc : 0), static_cast<unsigned long long>(accesses_),
-        static_cast<unsigned long long>(committed_), static_cast<unsigned long long>(candidates_),
-        static_cast<unsigned long long>(reportCount_), static_cast<unsigned long long>(failures_), detail);
-    try {
-        const auto sink = error && diagnostics_.emitError ? diagnostics_.emitError : diagnostics_.emit;
-        sink(diagnostics_.context, message);
-    } catch (...) {
-        // 诊断不能回滚已提交的报告，也不能逃逸出回调。
+    if (!error && !ASCTOOL_DEBUG_ENABLED()) {
+        return;
+    }
+    if (error) {
+        ASCTOOL_ERROR(
+            "racecheck event=%s level=%s device=%u launch=%llu instr=%llu pc=0x%llx accesses=%llu committed=%llu "
+            "candidates=%llu reports=%llu failures=%llu detail=%s",
+            event, "ERROR", header ? header->deviceId : 0U,
+            static_cast<unsigned long long>(header ? header->launchId : 0),
+            static_cast<unsigned long long>(header ? header->instrExecId : 0),
+            static_cast<unsigned long long>(header ? header->pc : 0), static_cast<unsigned long long>(accesses_),
+            static_cast<unsigned long long>(committed_), static_cast<unsigned long long>(candidates_),
+            static_cast<unsigned long long>(reportCount_), static_cast<unsigned long long>(failures_), detail);
+    } else {
+        ASCTOOL_DEBUG(
+            "racecheck event=%s level=%s device=%u launch=%llu instr=%llu pc=0x%llx accesses=%llu committed=%llu "
+            "candidates=%llu reports=%llu failures=%llu detail=%s",
+            event, "DEBUG", header ? header->deviceId : 0U,
+            static_cast<unsigned long long>(header ? header->launchId : 0),
+            static_cast<unsigned long long>(header ? header->instrExecId : 0),
+            static_cast<unsigned long long>(header ? header->pc : 0), static_cast<unsigned long long>(accesses_),
+            static_cast<unsigned long long>(committed_), static_cast<unsigned long long>(candidates_),
+            static_cast<unsigned long long>(reportCount_), static_cast<unsigned long long>(failures_), detail);
     }
 }
 
@@ -72,14 +69,17 @@ void Racecheck::StopLaunch(
         stopped_ = true;
     }
     ++failures_;
-    char message[768];
-    std::snprintf(
-        message, sizeof(message),
-        "stage=%s reason=%s detail=%.320s; launch analysis stopped, state discarded, results incomplete; %s", stage,
-        reason, detail,
+    ASCTOOL_ERROR(
+        "racecheck event=launch.stopped level=ERROR device=%u launch=%llu instr=%llu pc=0x%llx "
+        "accesses=%llu committed=%llu candidates=%llu reports=%llu failures=%llu "
+        "stage=%s reason=%s detail=%.320s; launch analysis stopped, state discarded, results incomplete; %s",
+        header.deviceId, static_cast<unsigned long long>(header.launchId),
+        static_cast<unsigned long long>(header.instrExecId), static_cast<unsigned long long>(header.pc),
+        static_cast<unsigned long long>(accesses_), static_cast<unsigned long long>(committed_),
+        static_cast<unsigned long long>(candidates_), static_cast<unsigned long long>(reportCount_),
+        static_cast<unsigned long long>(failures_), stage, reason, detail,
         stopped_ ? "unable to retain launch stop marker; all subsequent memory accesses will be skipped" :
                    "subsequent accesses for this launch will be skipped");
-    Log("launch.stopped", &header, message, true);
 }
 
 // 收到一条设备内存访问记录后，检查竞争并更新该 launch 的内存状态。
@@ -103,7 +103,7 @@ bool Racecheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
             found = launches_.try_emplace(key).first;
         }
         if (!found->second) {
-            found->second = std::make_unique<LaunchState>(diagnostics_);
+            found->second = std::make_unique<LaunchState>();
         }
         auto& launch = *found->second;
         stage = "callback_validation";
@@ -167,18 +167,17 @@ bool Racecheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
             // 用已提交报告数加上本次已准备的报告数，生成从 1 开始的连续编号。
             diagnostic.reportId = reportCount_ + (pending.size() - reports.size()) + 1;
             const auto& previousHeader = launch.records[evidence.prevIndex].header;
-            char detail[384];
-            // 记录竞争双方的位置、历史访问所属核/流水线，以及重叠地址区间 [begin, end)。
-            // 此处日志仅表示报告已准备好，尚未正式发布。
-            std::snprintf(
-                detail, sizeof(detail),
+            // 此处仅记录已准备的竞争证据，报告尚未发布。
+            ASCTOOL_DEBUG(
+                "racecheck event=report.evidence level=DEBUG device=%u launch=%llu instr=%llu pc=0x%llx "
                 "report_id=%llu prev_index=%llu cur_index=%llu previous_pc=0x%llx "
                 "previous_core=%u previous_pipe=%u overlap=[0x%llx,0x%llx) status=prepared",
-                static_cast<unsigned long long>(diagnostic.reportId),
+                data.header.deviceId, static_cast<unsigned long long>(data.header.launchId),
+                static_cast<unsigned long long>(data.header.instrExecId),
+                static_cast<unsigned long long>(data.header.pc), static_cast<unsigned long long>(diagnostic.reportId),
                 static_cast<unsigned long long>(evidence.prevIndex), static_cast<unsigned long long>(evidence.curIndex),
                 static_cast<unsigned long long>(previousHeader.pc), previousHeader.phyCoreId, previousHeader.pipeline,
                 static_cast<unsigned long long>(evidence.begin), static_cast<unsigned long long>(evidence.end));
-            Log("report.evidence", &data.header, detail);
             pending.emplace_back(std::move(diagnostic));
         }
         if (!diagnostics.empty()) {

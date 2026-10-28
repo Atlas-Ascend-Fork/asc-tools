@@ -12,26 +12,39 @@
 
 #include "tool_manager/tool_manager.h"
 
-#include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <utility>
 
 namespace npucheck {
 namespace {
 
 std::mutex g_serviceMutex;
-std::unique_ptr<npucheck::ToolManager> g_service;
+// The function-local ServiceOwner owns the service; access is protected by g_serviceMutex.
+npucheck::ToolManager* g_service = nullptr;
 
-void FinalizeService() noexcept
-{
-    try {
-        std::lock_guard<std::mutex> lock(g_serviceMutex);
-        g_service.reset();
-    } catch (...) {
-        // Process-exit cleanup cannot propagate through std::atexit.
-        return;
+class ServiceOwner {
+public:
+    explicit ServiceOwner(std::unique_ptr<npucheck::ToolManager> service) noexcept : service_(std::move(service)) {}
+    ~ServiceOwner() noexcept
+    {
+        try {
+            std::lock_guard<std::mutex> lock(g_serviceMutex);
+            g_service = nullptr;
+            service_.reset();
+        } catch (...) {
+            // Process-exit cleanup must not propagate exceptions.
+            return;
+        }
     }
-}
+    ServiceOwner(const ServiceOwner&) = delete;
+    ServiceOwner& operator=(const ServiceOwner&) = delete;
+
+    npucheck::ToolManager* Get() const noexcept { return service_.get(); }
+
+private:
+    std::unique_ptr<npucheck::ToolManager> service_;
+};
 
 } // namespace
 
@@ -47,10 +60,9 @@ extern "C" NPU_CHECK_API int acltoolInitialize(void)
         if (result != 0) {
             return result;
         }
-        if (std::atexit(FinalizeService) != 0) {
-            return 1;
-        }
-        g_service = std::move(service);
+        // Establish exit cleanup only after initialization, preserving dependency teardown order.
+        static ServiceOwner serviceOwner(std::move(service));
+        g_service = serviceOwner.Get();
         return 0;
     } catch (...) {
         return 1;

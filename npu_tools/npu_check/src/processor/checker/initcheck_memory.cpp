@@ -19,6 +19,7 @@
 #include <bitset>
 #include <cassert>
 #include <limits>
+#include <iterator>
 #include <set>
 
 namespace npucheck {
@@ -64,9 +65,11 @@ bool HasMatchingInstructionContext(const AclsanDeviceMemoryAccessData& data, con
 bool HasSupportedMemoryAccess(const AclsanDeviceMemoryAccessData& data)
 {
     return data.memorySpace > ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN && data.memorySpace <= ACLSAN_DEVICE_MEMORY_SPACE_FB &&
-           data.header.blockType <= ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE && data.accessMode >= 1 &&
-           data.accessMode <= 3 && data.unitFlag == 0 && data.memoryFlags == 0 && data.vectorMask0 == 0 &&
-           data.vectorMask1 == 0 && data.predicateMask0 == 0 && data.predicateMask1 == 0;
+           data.header.blockType <= ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE &&
+           data.accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
+           data.accessMode <= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD && data.unitFlag == 0 &&
+           data.memoryFlags == 0 && data.vectorMask0 == 0 && data.vectorMask1 == 0 && data.predicateMask0 == 0 &&
+           data.predicateMask1 == 0;
 }
 
 // Validate the entire affine descriptor before committing any of its bytes. Signed
@@ -96,7 +99,7 @@ bool DecodeFootprint(const AclsanDeviceMemoryAccessData& data, Footprint& bytes)
         }
         case ACLSAN_MEM_LAYOUT_ND_AFFINE: {
             const auto& d = data.layout.ndAffine;
-            if (d.rank == 0 || d.rank > 5) {
+            if (d.rank == 0 || d.rank > std::size(d.dims)) {
                 return false;
             }
             width = d.elementBytes;
@@ -227,13 +230,13 @@ void InitcheckMemory::Launch(const AclsanLaunchData& data)
         streams_[data.launchId] = data.stream;
     }
 }
-void InitcheckMemory::Queue(const AclsanDeviceEventHeader& h, Event event)
+void InitcheckMemory::Queue(const AclsanDeviceEventHeader& header, Event event)
 {
     if (queued_ >= kMaxPendingEvents) {
         Invalidate();
         return;
     }
-    pending_[{h.deviceId, h.launchId, h.blockType, h.blockId}].push_back(std::move(event));
+    pending_[{header.deviceId, header.launchId, header.blockType, header.blockId}].push_back(std::move(event));
     ++queued_;
 }
 void InitcheckMemory::Access(const AclsanDeviceMemoryAccessData& data)
@@ -258,7 +261,7 @@ void InitcheckMemory::Finalize()
     streams_.clear();
     queued_ = 0;
 }
-void InitcheckMemory::Collect(void* stream, CheckerReportList& reports)
+void InitcheckMemory::Collect(const void* stream, CheckerReportList& reports)
 {
     for (auto it = pending_.begin(); it != pending_.end();) {
         const auto launch = std::get<1>(it->first);
@@ -378,7 +381,8 @@ void InitcheckMemory::Replay(const std::vector<Event>& records, CheckerReportLis
             }
             operands.push_back({data, {}, instruction.node});
             instruction.operands.push_back(operands.size() - 1);
-            valid &= race::ValidPipe(data->header.pipeline) && data->accessMode >= 1 && data->accessMode <= 3 &&
+            valid &= race::ValidPipe(data->header.pipeline) && data->accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
+                     data->accessMode <= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD &&
                      data->header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR &&
                      DecodeFootprint(*data, operands.back().bytes);
         }
@@ -396,8 +400,11 @@ void InitcheckMemory::Replay(const std::vector<Event>& records, CheckerReportLis
     std::map<uint32_t, std::optional<size_t>> prefix, acquired, ordered;
     std::map<FlagKey, size_t> flags;
     bool valid = true;
-    const auto edge = [&](size_t from, size_t to, Graph::Reason reason) { valid &= graph.AddEdge(from, to, reason); };
-    const auto merge = [&](std::optional<size_t>& aggregate, size_t node) {
+    const auto edge = [&valid, &graph](size_t from, size_t to, Graph::Reason reason) {
+        const bool added = graph.AddEdge(from, to, reason);
+        valid = valid && added;
+    };
+    const auto merge = [&valid, &graph, &edge](std::optional<size_t>& aggregate, size_t node) {
         if (!aggregate) {
             aggregate = node;
         } else if (*aggregate != node && valid) {
@@ -501,7 +508,8 @@ void InitcheckMemory::Replay(const std::vector<Event>& records, CheckerReportLis
     }
     // memory[0] tracks L0A and memory[1] tracks L0B; LocalMemoryIndex keeps
     // this mapping explicit instead of relying on enum values.
-    std::array<MemStatus, 2> memory;
+    constexpr size_t LOCAL_MEMORY_SPACE_COUNT = 2;
+    std::array<MemStatus, LOCAL_MEMORY_SPACE_COUNT> memory;
     // Indices into operands: accepted writes and writes with uncertain validity.
     std::set<size_t> committed, uncertainWrites;
     size_t comparisons = 0;
@@ -532,7 +540,7 @@ void InitcheckMemory::Replay(const std::vector<Event>& records, CheckerReportLis
                     continue;
                 }
                 const auto relation = graph.Compare(write.node, node);
-                if (relation == Graph::Relation::Before && committed.count(w)) {
+                if (relation == Graph::Relation::Before && committed.count(w) != 0) {
                     defined |= write.bytes;
                 } else if (relation == Graph::Relation::Before && uncertainWrites.count(w)) {
                     uncertain |= write.bytes;
@@ -559,7 +567,7 @@ void InitcheckMemory::Replay(const std::vector<Event>& records, CheckerReportLis
                     firstMissing = std::min(firstMissing, i);
                 }
             }
-            if (missingCount) {
+            if (missingCount != 0) {
                 reports.emplace_back(BuildL0ReadReport(data, read.bytes, firstMissing, missingCount));
                 passed = false;
             }

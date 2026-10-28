@@ -54,26 +54,18 @@ struct AccessPair {
     uint64_t end;
 };
 struct MemState {
+    static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = 3;
+
     uint64_t begin;
     uint64_t end;
     MemOpState state;
     std::optional<CbIndex> writer; // 最近一次普通 WRITE；原子写不替换它。
     std::vector<CbIndex> readers;
     // 分别保存 ADD、MIN、MAX，兼容原子操作可直接跳过对应分组。
-    std::array<std::vector<CbIndex>, 3> atomicWriters{};
+    std::array<std::vector<CbIndex>, ATOMIC_WRITER_GROUP_COUNT> atomicWriters{};
 };
 using SegmentTable = std::map<uint64_t, MemState>;
 using PhysicalSpaceTables = std::map<PhysicalSpaceKey, SegmentTable>;
-
-// 详细事件默认关闭。未安装接收器时，错误写入 stderr。
-// 接收器异常会被隔离，不能改变检查/更新结果。接收器
-// 不得重入 tracker 或修改记录；message 仅在本次调用期间有效。
-struct RacecheckDiagnostics {
-    void (*emit)(void* context, const char* message) = nullptr;
-    void* context = nullptr;
-    // 未提供时错误交给 emit；两者均未提供时写 stderr。
-    void (*emitError)(void* context, const char* message) = nullptr;
-};
 
 // tracker 和报告准备阶段共用的字节区间算法。
 namespace racecheck {
@@ -116,8 +108,7 @@ public:
     // records 的生命周期必须长于 tracker。已发布条目不可变，
     // 不能删除或重排。追加和调用必须串行；由于只保存下标和容器，
     // vector 扩容是安全的。
-    explicit MemStateTracker(
-        const std::vector<AclsanDeviceMemoryAccessData>& records, RacecheckDiagnostics diagnostics = {});
+    explicit MemStateTracker(const std::vector<AclsanDeviceMemoryAccessData>& records);
     // 第一次成功处理非空更新时，将此 tracker 绑定到一个 launch。
     // 集成层必须将每个 launch 路由到独立的 tracker。
     // 同一动态指令的源 READ 后接普通目标 WRITE 属于指令内在行为，
@@ -145,7 +136,6 @@ private:
 
     const std::vector<AclsanDeviceMemoryAccessData>& records_;
     PhysicalSpaceTables tables_;
-    RacecheckDiagnostics diagnostics_;
     std::optional<uint64_t> launchId_;
     std::optional<CbIndex> largestUpdatedIndex_;
     bool failed_ = false;

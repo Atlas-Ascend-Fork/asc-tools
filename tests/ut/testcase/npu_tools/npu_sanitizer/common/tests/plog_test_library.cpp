@@ -20,10 +20,12 @@ plog_test::Api GetApi()
 }
 } // namespace
 namespace plog_test {
-void SetApi(Api value)
+Api SetApi(Api value)
 {
     std::lock_guard<std::mutex> lock(apiMutex);
+    const Api previous = api;
     api = value;
+    return previous;
 }
 void ResetApi() { SetApi({nullptr, nullptr}); }
 } // namespace plog_test

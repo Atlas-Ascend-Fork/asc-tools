@@ -74,7 +74,7 @@ bool MemoryAccessState::Apply(const std::vector<Update>& updates)
     };
     std::map<Storage, Patch> patches;
     size_t staging = 0, removedBytes = 0, removedCount = 0;
-    const auto charge = [&](size_t amount) {
+    const auto charge = [this, &staging](size_t amount) {
         if (bytes_ > byteBudget_ || staging > byteBudget_ - bytes_ || amount > byteBudget_ - bytes_ - staging)
             return false;
         staging += amount;
@@ -86,8 +86,8 @@ bool MemoryAccessState::Apply(const std::vector<Update>& updates)
             const auto& u = updates[i];
             if (!u.state || u.range.begin >= u.range.end)
                 return false;
-            if (i && (u.storage < updates[i - 1].storage ||
-                      (u.storage == updates[i - 1].storage && u.range.begin < updates[i - 1].range.end)))
+            if (i != 0 && (u.storage < updates[i - 1].storage ||
+                           (u.storage == updates[i - 1].storage && u.range.begin < updates[i - 1].range.end)))
                 return false;
             // Reserve a conservative bound for new endpoints, split survivors and bookkeeping.
             if (!charge(PATCH_COST_MULTIPLIER * Cost(u.state) + PATCH_BOOKKEEPING_ALLOWANCE))

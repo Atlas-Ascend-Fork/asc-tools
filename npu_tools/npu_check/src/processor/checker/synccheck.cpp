@@ -19,6 +19,7 @@
 
 namespace npucheck {
 namespace {
+constexpr uint32_t MIX_1_2_AIV_COUNT = 2;
 
 enum class AclKernelType : uint32_t {
     AICORE = 0,
@@ -259,10 +260,10 @@ LaunchTopology Synccheck::NormalizeTopology(const LaunchTopology& input)
             topology.mixType = KernelMixType::MIX_1_1;
             topology.aicPerGroup = 1;
             topology.aivPerGroup = 1;
-        } else if (topology.aicRatio == 1 && topology.aivRatio == 2) {
+        } else if (topology.aicRatio == 1 && topology.aivRatio == MIX_1_2_AIV_COUNT) {
             topology.mixType = KernelMixType::MIX_1_2;
             topology.aicPerGroup = 1;
-            topology.aivPerGroup = 2;
+            topology.aivPerGroup = MIX_1_2_AIV_COUNT;
         } else if (topology.aicRatio == 1 && topology.aivRatio == 0) {
             topology.mixType = KernelMixType::AIC_ONLY;
             topology.aicPerGroup = 1;
@@ -312,8 +313,9 @@ bool Synccheck::ResolveParticipant(
         return false;
     }
     participant.groupId = data.header.blockId / topology.aivPerGroup;
-    participant.role =
-        topology.aivPerGroup == 2 && data.header.blockId % 2 != 0 ? ParticipantRole::AIV1 : ParticipantRole::AIV0;
+    participant.role = topology.aivPerGroup == MIX_1_2_AIV_COUNT && data.header.blockId % topology.aivPerGroup != 0 ?
+                           ParticipantRole::AIV1 :
+                           ParticipantRole::AIV0;
     return true;
 }
 
@@ -381,7 +383,7 @@ bool Synccheck::BuildCounterContributions(
         contributions.push_back(std::move(contribution));
     };
     const uint32_t groupId = participant.groupId;
-    if (mode == 0) {
+    if (mode == ACLSAN_DEVICE_SYNC_MODE_GLOBAL) {
         ParticipantSet required;
         if (participant.role == ParticipantRole::AIC && topology.aicPerGroup != 0) {
             for (uint32_t group = 0; group < topology.groupCount; ++group) {
@@ -405,7 +407,8 @@ bool Synccheck::BuildCounterContributions(
         error = "cross-core groupId is outside launch topology";
         return false;
     } else if (
-        mode == 1 && (topology.mixType == KernelMixType::MIX_1_1 || topology.mixType == KernelMixType::MIX_1_2) &&
+        mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV &&
+        (topology.mixType == KernelMixType::MIX_1_1 || topology.mixType == KernelMixType::MIX_1_2) &&
         participant.role != ParticipantRole::AIC) {
         ParticipantSet required;
         addGroupAivs(required, groupId);
@@ -413,7 +416,8 @@ bool Synccheck::BuildCounterContributions(
             append(target, required, groupId, CrossDirection::AIV_TO_AIV);
         }
     } else if (
-        mode == 2 && (topology.mixType == KernelMixType::MIX_1_1 || topology.mixType == KernelMixType::MIX_1_2)) {
+        mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV &&
+        (topology.mixType == KernelMixType::MIX_1_1 || topology.mixType == KernelMixType::MIX_1_2)) {
         ParticipantSet required;
         if (participant.role == ParticipantRole::AIC) {
             required.insert(participant);
@@ -426,7 +430,9 @@ bool Synccheck::BuildCounterContributions(
             addGroupAivs(required, groupId);
             append({groupId, ParticipantRole::AIC}, required, groupId, CrossDirection::AIV_TO_AIC);
         }
-    } else if (mode == 4 && topology.mixType == KernelMixType::MIX_1_2 && aivIndex < 2U) {
+    } else if (
+        mode == ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV && topology.mixType == KernelMixType::MIX_1_2 &&
+        aivIndex < MIX_1_2_AIV_COUNT) {
         const ParticipantKey aiv{groupId, aivIndex == 0 ? ParticipantRole::AIV0 : ParticipantRole::AIV1};
         const ParticipantKey aic{groupId, ParticipantRole::AIC};
         ParticipantSet required;
@@ -440,20 +446,20 @@ bool Synccheck::BuildCounterContributions(
             error = "mode4 flag selects a different AIV participant";
             return false;
         }
-    } else if (mode == 1) {
+    } else if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV) {
         std::ostringstream reason;
         reason << "cross-core mode1 only synchronizes AIV participants within a MIX1:1 or MIX1:2 group; observed "
                << "topology=" << KernelMixTypeName(topology.mixType)
                << " and source=" << ParticipantSetText(ParticipantSet{participant});
         error = reason.str();
         return false;
-    } else if (mode == 2) {
+    } else if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV) {
         std::ostringstream reason;
         reason << "cross-core mode2 requires MIX1:1 or MIX1:2 topology for AIC-to-all-AIV synchronization; observed "
                << "topology=" << KernelMixTypeName(topology.mixType);
         error = reason.str();
         return false;
-    } else if (mode == 4) {
+    } else if (mode == ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV) {
         std::ostringstream reason;
         reason << "cross-core mode4 only supports MIX1:2 topology (__mix__(1, 2) / KERNEL_TYPE_MIX_AIC_1_2) "
                << "for synchronization between one AIC and one selected AIV; observed topology="

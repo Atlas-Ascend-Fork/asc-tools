@@ -10,14 +10,15 @@
 
 #include "acl_san/aclsan_api.h"
 #include "checker/mem_state_tracker.h"
+#include "npu_tool_log.h"
 #include <algorithm>
 #include <array>
 #include <limits>
 #include <iterator>
 #include <new>
 #include <set>
-#include <cstdio>
 #include <cinttypes>
+#include <type_traits>
 
 namespace npucheck::racecheck {
 namespace {
@@ -118,7 +119,7 @@ std::vector<ByteRange> ExpandRanges(const AclsanDeviceMemoryAccessData& data)
 
     uint64_t elementBytes = 0;
     uint32_t rank = 0;
-    std::array<Axis, 5> axes{};
+    std::array<Axis, std::extent_v<decltype(data.layout.ndAffine.dims)>> axes{};
     switch (data.layoutKind) {
         case ACLSAN_MEM_LAYOUT_SCALAR:
             elementBytes = data.layout.scalar.bytes;
@@ -126,12 +127,14 @@ std::vector<ByteRange> ExpandRanges(const AclsanDeviceMemoryAccessData& data)
         case ACLSAN_MEM_LAYOUT_RANGE:
             elementBytes = data.layout.range.bytes;
             break;
-        case ACLSAN_MEM_LAYOUT_BLOCK_REPEAT:
+        case ACLSAN_MEM_LAYOUT_BLOCK_REPEAT: {
+            constexpr uint32_t BLOCK_REPEAT_RANK = 2;
             elementBytes = data.layout.blockRepeat.blockSize;
-            rank = 2;
+            rank = BLOCK_REPEAT_RANK;
             axes[0] = {data.layout.blockRepeat.blockNum, data.layout.blockRepeat.blockStride};
             axes[1] = {data.layout.blockRepeat.repeatTimes, data.layout.blockRepeat.repeatStride};
             break;
+        }
         case ACLSAN_MEM_LAYOUT_ND_AFFINE:
             elementBytes = data.layout.ndAffine.elementBytes;
             rank = data.layout.ndAffine.rank;
@@ -457,50 +460,52 @@ void Apply(MemState& segment, AclsanDeviceMemoryAccessMode mode, CbIndex index, 
 
 } // namespace
 
-MemStateTracker::MemStateTracker(
-    const std::vector<AclsanDeviceMemoryAccessData>& records, RacecheckDiagnostics diagnostics)
-    : records_(records), diagnostics_(diagnostics)
-{}
+MemStateTracker::MemStateTracker(const std::vector<AclsanDeviceMemoryAccessData>& records) : records_(records) {}
 
 void MemStateTracker::Trace(
     CbIndex index, const char* event, uint64_t begin, uint64_t end, CbIndex previous, const char* detail,
     bool error) const noexcept
 {
-    if (!diagnostics_.emit && !error) {
+    if (!error && !ASCTOOL_DEBUG_ENABLED()) {
         return;
     }
-    char message[1536];
     if (index < records_.size()) {
         const auto& d = records_[index];
-        std::snprintf(
-            message, sizeof(message),
-            "racecheck event=%s level=%s phase=%s launch=%" PRIu64 " tracker_launch=%" PRIu64
-            " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u"
-            " pc=0x%" PRIx64 " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64 ",%" PRIu64
-            ") prev=%zu tables=%zu detail=%s\n",
-            event, error ? "ERROR" : "DEBUG", error ? "failed" : "trace", d.header.launchId,
-            launchId_.value_or(d.header.launchId), index, d.header.deviceId, d.memorySpace,
-            d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : d.header.phyCoreId, d.header.phyCoreId,
-            d.header.blockId, d.header.blockType, d.header.pipeline, d.header.pc, d.header.instrExecId, d.accessMode,
-            d.layoutKind, d.address, begin, end, previous, tables_.size(), detail);
-    } else {
-        std::snprintf(
-            message, sizeof(message),
-            "racecheck event=%s level=%s cb=%zu tracker_bound=%u tracker_launch=%" PRIu64
-            " records=%zu tables=%zu detail=%s\n",
-            event, error ? "ERROR" : "DEBUG", index, launchId_.has_value() ? 1u : 0u, launchId_.value_or(0),
-            records_.size(), tables_.size(), detail);
-    }
-    try {
-        if (error && diagnostics_.emitError) {
-            diagnostics_.emitError(diagnostics_.context, message);
-        } else if (diagnostics_.emit) {
-            diagnostics_.emit(diagnostics_.context, message);
+        if (error) {
+            ASCTOOL_ERROR(
+                "racecheck event=%s level=ERROR phase=failed launch=%" PRIu64 " tracker_launch=%" PRIu64
+                " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u"
+                " pc=0x%" PRIx64 " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64
+                ",%" PRIu64 ") prev=%zu tables=%zu detail=%s",
+                event, d.header.launchId, launchId_.value_or(d.header.launchId), index, d.header.deviceId,
+                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : d.header.phyCoreId,
+                d.header.phyCoreId, d.header.blockId, d.header.blockType, d.header.pipeline, d.header.pc,
+                d.header.instrExecId, d.accessMode, d.layoutKind, d.address, begin, end, previous, tables_.size(),
+                detail);
         } else {
-            std::fputs(message, stderr);
+            ASCTOOL_DEBUG(
+                "racecheck event=%s level=DEBUG phase=trace launch=%" PRIu64 " tracker_launch=%" PRIu64
+                " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u"
+                " pc=0x%" PRIx64 " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64
+                ",%" PRIu64 ") prev=%zu tables=%zu detail=%s",
+                event, d.header.launchId, launchId_.value_or(d.header.launchId), index, d.header.deviceId,
+                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : d.header.phyCoreId,
+                d.header.phyCoreId, d.header.blockId, d.header.blockType, d.header.pipeline, d.header.pc,
+                d.header.instrExecId, d.accessMode, d.layoutKind, d.address, begin, end, previous, tables_.size(),
+                detail);
         }
-    } catch (...) {
-        // 诊断只用于观察，包括不会抛异常的提交完成之后。
+    } else if (error) {
+        ASCTOOL_ERROR(
+            "racecheck event=%s level=ERROR cb=%zu tracker_bound=%u tracker_launch=%" PRIu64
+            " records=%zu tables=%zu detail=%s",
+            event, index, launchId_.has_value() ? 1u : 0u, launchId_.value_or(0), records_.size(), tables_.size(),
+            detail);
+    } else {
+        ASCTOOL_DEBUG(
+            "racecheck event=%s level=DEBUG cb=%zu tracker_bound=%u tracker_launch=%" PRIu64
+            " records=%zu tables=%zu detail=%s",
+            event, index, launchId_.has_value() ? 1u : 0u, launchId_.value_or(0), records_.size(), tables_.size(),
+            detail);
     }
 }
 
@@ -508,10 +513,9 @@ void MemStateTracker::TraceState(
     CbIndex index, const char* event, const MemState& state, const char* writerEvent,
     const char* readerEvent) const noexcept
 {
-    if (!diagnostics_.emit) {
+    if (!ASCTOOL_DEBUG_ENABLED()) {
         return;
     }
-    char detail[128];
     const char* name = state.state == MemOpState::Write       ? "Write" :
                        state.state == MemOpState::Read        ? "Read" :
                        state.state == MemOpState::AtomicWrite ? "AtomicWrite" :
@@ -519,11 +523,17 @@ void MemStateTracker::TraceState(
     const size_t ordinaryCount = state.writer.has_value() ? 1 : 0;
     const size_t writerCount =
         ordinaryCount + state.atomicWriters[0].size() + state.atomicWriters[1].size() + state.atomicWriters[2].size();
-    std::snprintf(
-        detail, sizeof(detail), "state=%s writers=%zu readers=%zu ordinary=%zu add=%zu min=%zu max=%zu", name,
-        writerCount, state.readers.size(), ordinaryCount, state.atomicWriters[0].size(), state.atomicWriters[1].size(),
-        state.atomicWriters[2].size());
-    Trace(index, event, state.begin, state.end, static_cast<CbIndex>(-1), detail);
+    const auto& data = records_[index];
+    ASCTOOL_DEBUG(
+        "racecheck event=%s level=DEBUG launch=%" PRIu64 " tracker_launch=%" PRIu64
+        " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
+        " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64 ",%" PRIu64
+        ") state=%s writers=%zu readers=%zu ordinary=%zu add=%zu min=%zu max=%zu",
+        event, data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, data.memorySpace,
+        data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.header.phyCoreId, data.header.phyCoreId,
+        data.header.blockId, data.header.blockType, data.header.pipeline, data.header.pc, data.header.instrExecId,
+        data.accessMode, data.layoutKind, data.address, state.begin, state.end, name, writerCount, state.readers.size(),
+        ordinaryCount, state.atomicWriters[0].size(), state.atomicWriters[1].size(), state.atomicWriters[2].size());
     if (state.writer) {
         Trace(index, writerEvent, state.begin, state.end, *state.writer);
     }
@@ -539,19 +549,32 @@ void MemStateTracker::TraceState(
 
 void MemStateTracker::TraceTable(CbIndex index, const SegmentTable& table) const noexcept
 {
-    if (!diagnostics_.emit) {
+    if (!ASCTOOL_DEBUG_ENABLED()) {
         return;
     }
-    const auto space = records_[index].memorySpace;
+    const auto& data = records_[index];
+    const auto space = data.memorySpace;
     constexpr std::array<const char*, 9> names = {"UNKNOWN", "GM", "UB", "L1", "L0A", "L0B", "L0C", "BT", "FB"};
     const char* name = space < names.size() ? names[space] : "UNKNOWN";
-    char detail[128];
-    std::snprintf(detail, sizeof(detail), "memory=%s table_segments=%zu", name, table.size());
-    Trace(index, "memstate.begin", 0, 0, static_cast<CbIndex>(-1), detail);
+    ASCTOOL_DEBUG(
+        "racecheck event=memstate.begin level=DEBUG launch=%" PRIu64 " tracker_launch=%" PRIu64
+        " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
+        " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " memory=%s table_segments=%zu",
+        data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, space,
+        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.header.phyCoreId, data.header.phyCoreId, data.header.blockId,
+        data.header.blockType, data.header.pipeline, data.header.pc, data.header.instrExecId, data.accessMode,
+        data.layoutKind, data.address, name, table.size());
     for (const auto& entry : table) {
         TraceState(index, "memstate.segment", entry.second, "memstate.writer", "memstate.reader");
     }
-    Trace(index, "memstate.end", 0, 0, static_cast<CbIndex>(-1), detail);
+    ASCTOOL_DEBUG(
+        "racecheck event=memstate.end level=DEBUG launch=%" PRIu64 " tracker_launch=%" PRIu64
+        " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
+        " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " memory=%s table_segments=%zu",
+        data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, space,
+        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.header.phyCoreId, data.header.phyCoreId, data.header.blockId,
+        data.header.blockType, data.header.pipeline, data.header.pc, data.header.instrExecId, data.accessMode,
+        data.layoutKind, data.address, name, table.size());
 }
 
 const AclsanDeviceMemoryAccessData& MemStateTracker::Record(CbIndex index) const
@@ -645,25 +668,29 @@ std::vector<AccessPair> MemStateTracker::CheckPotentialRaceImpl(
                     candidates.push_back(
                         {previous, cbIndex, key.memorySpace, std::max(range.begin, segment->begin),
                          std::min(range.end, segment->end)});
-                    if (diagnostics_.emit) {
-                        char detail[96];
-                        std::snprintf(
-                            detail, sizeof(detail), "same_instruction=%u ordering=external",
-                            racecheck::SameInstruction(records_[previous], current) ? 1u : 0u);
+                    if (ASCTOOL_DEBUG_ENABLED()) {
                         Trace(
                             cbIndex, "check.candidate", candidates.back().begin, candidates.back().end, previous,
-                            detail);
+                            racecheck::SameInstruction(records_[previous], current) ?
+                                "same_instruction=1 ordering=external" :
+                                "same_instruction=0 ordering=external");
+                        Trace(previous, "check.previous", candidates.back().begin, candidates.back().end, cbIndex);
                     }
-                    Trace(previous, "check.previous", candidates.back().begin, candidates.back().end, cbIndex);
                 });
             }
             if (cursor < range.end) {
                 Trace(cbIndex, "check.hole", cursor, range.end);
             }
         }
-        char summary[64];
-        std::snprintf(summary, sizeof(summary), "candidates=%zu ranges=%zu", candidates.size(), ranges.size());
-        Trace(cbIndex, "check.end", 0, 0, static_cast<CbIndex>(-1), summary);
+        ASCTOOL_DEBUG(
+            "racecheck event=check.end level=DEBUG launch=%" PRIu64 " tracker_launch=%" PRIu64
+            " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
+            " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " candidates=%zu ranges=%zu",
+            current.header.launchId, launchId_.value_or(current.header.launchId), cbIndex, current.header.deviceId,
+            current.memorySpace, current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : current.header.phyCoreId,
+            current.header.phyCoreId, current.header.blockId, current.header.blockType, current.header.pipeline,
+            current.header.pc, current.header.instrExecId, current.accessMode, current.layoutKind, current.address,
+            candidates.size(), ranges.size());
         return candidates;
     } catch (const RacecheckError& error) {
         Trace(cbIndex, "check.failed", 0, 0, static_cast<CbIndex>(-1), error.what(), true);
@@ -699,18 +726,21 @@ void MemStateTracker::UpdateMemStateImpl(
 {
     Trace(cbIndex, "update.begin");
     bool mutationStarted = false;
-    auto fail = [&](const char* reason, bool discard) {
+    auto fail = [this, cbIndex](const char* reason, bool discard) {
         if (discard) {
             tables_.clear();
             launchId_.reset();
             largestUpdatedIndex_.reset();
             failed_ = true;
         }
-        char detail[512];
-        std::snprintf(
-            detail, sizeof(detail), "%s; %s", reason,
+        const auto* header = cbIndex < records_.size() ? &records_[cbIndex].header : nullptr;
+        ASCTOOL_ERROR(
+            "racecheck event=update.failed level=ERROR cb=%zu device=%u launch=%" PRIu64 " tracker_launch=%" PRIu64
+            " pc=0x%" PRIx64 " instr=%" PRIu64 " tables=%zu detail=%s; %s",
+            cbIndex, header ? header->deviceId : 0U, header ? header->launchId : 0,
+            launchId_.value_or(header ? header->launchId : 0), header ? header->pc : 0,
+            header ? header->instrExecId : 0, tables_.size(), reason,
             failed_ ? "state discarded; tracker stopped; discard this launch analysis state" : "table unchanged");
-        Trace(cbIndex, "update.failed", 0, 0, static_cast<CbIndex>(-1), detail, true);
     };
     try {
         const auto& current = Record(cbIndex);
@@ -798,9 +828,18 @@ void MemStateTracker::UpdateMemStateImpl(
                         cursor < failures[failureIndex].end) {
                         segment.state = MemOpState::Race;
                         const auto& evidence = conflicts[failures[failureIndex].evidence];
-                        char detail[96];
-                        std::snprintf(detail, sizeof(detail), "evidence_order=%zu", failures[failureIndex].evidence);
-                        Trace(cbIndex, "race.first", segment.begin, segment.end, evidence.prevIndex, detail);
+                        ASCTOOL_DEBUG(
+                            "racecheck event=race.first level=DEBUG launch=%" PRIu64 " tracker_launch=%" PRIu64
+                            " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u"
+                            " pc=0x%" PRIx64 " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64
+                            " range=[%" PRIu64 ",%" PRIu64 ") prev=%zu evidence_order=%zu",
+                            current.header.launchId, launchId_.value_or(current.header.launchId), cbIndex,
+                            current.header.deviceId, current.memorySpace,
+                            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : current.header.phyCoreId,
+                            current.header.phyCoreId, current.header.blockId, current.header.blockType,
+                            current.header.pipeline, current.header.pc, current.header.instrExecId, current.accessMode,
+                            current.layoutKind, current.address, segment.begin, segment.end, evidence.prevIndex,
+                            failures[failureIndex].evidence);
                         TraceState(cbIndex, "race.frozen", segment);
                     } else {
                         if (mode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) {

@@ -11,6 +11,7 @@
 #include "checker/racecheck/types.h"
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <limits>
 
 namespace npucheck::race {
@@ -28,7 +29,7 @@ AclsanDeviceSyncData NormalizeSync(const AclsanDeviceSyncData& data)
         sync.srcPipe = pipe;
         sync.dstPipe = pipe;
         if (intraBlock)
-            sync.mode = 4;
+            sync.mode = ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
         else if (sync.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT)
             sync.objectId &= 0x1FU;
     }
@@ -40,43 +41,44 @@ void MergeIntervals(std::vector<Interval>& ranges)
     std::sort(ranges.begin(), ranges.end(), [](auto a, auto b) { return a.begin < b.begin; });
     size_t n = 0;
     for (auto r : ranges) {
-        if (n && r.begin <= ranges[n - 1].end)
+        if (n != 0 && r.begin <= ranges[n - 1].end)
             ranges[n - 1].end = std::max(ranges[n - 1].end, r.end);
         else
             ranges[n++] = r;
     }
     ranges.resize(n);
 }
-bool Normalize(const AclsanDeviceMemoryAccessData& a, size_t budget, std::vector<Interval>& result)
+bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::vector<Interval>& result)
 {
     result.clear();
     __extension__ using Wide = __int128;
     std::vector<std::pair<uint64_t, int64_t>> axes;
     uint64_t bytes = 0;
-    switch (a.layoutKind) {
+    switch (access.layoutKind) {
         case ACLSAN_MEM_LAYOUT_SCALAR:
-            bytes = a.layout.scalar.bytes;
+            bytes = access.layout.scalar.bytes;
             break;
         case ACLSAN_MEM_LAYOUT_RANGE:
-            bytes = a.layout.range.bytes;
+            bytes = access.layout.range.bytes;
             break;
         case ACLSAN_MEM_LAYOUT_BLOCK_REPEAT:
-            bytes = a.layout.blockRepeat.blockSize;
+            bytes = access.layout.blockRepeat.blockSize;
             axes = {
-                {a.layout.blockRepeat.repeatTimes, a.layout.blockRepeat.repeatStride},
-                {a.layout.blockRepeat.blockNum, a.layout.blockRepeat.blockStride}};
+                {access.layout.blockRepeat.repeatTimes, access.layout.blockRepeat.repeatStride},
+                {access.layout.blockRepeat.blockNum, access.layout.blockRepeat.blockStride}};
             break;
         case ACLSAN_MEM_LAYOUT_ND_AFFINE:
-            if (!a.layout.ndAffine.rank || a.layout.ndAffine.rank > 5)
+            if (access.layout.ndAffine.rank == 0 ||
+                access.layout.ndAffine.rank > std::size(access.layout.ndAffine.dims))
                 return false;
-            bytes = a.layout.ndAffine.elementBytes;
-            for (uint32_t i = 0; i < a.layout.ndAffine.rank; ++i)
-                axes.emplace_back(a.layout.ndAffine.dims[i], a.layout.ndAffine.strides[i]);
+            bytes = access.layout.ndAffine.elementBytes;
+            for (uint32_t i = 0; i < access.layout.ndAffine.rank; ++i)
+                axes.emplace_back(access.layout.ndAffine.dims[i], access.layout.ndAffine.strides[i]);
             break;
         default:
             return false;
     }
-    if (!bytes || std::any_of(axes.begin(), axes.end(), [](auto axis) { return axis.first == 0; }))
+    if (bytes == 0 || std::any_of(axes.begin(), axes.end(), [](auto axis) { return axis.first == 0; }))
         return true;
     size_t count = 1;
     for (auto axis : axes) {
@@ -90,7 +92,7 @@ bool Normalize(const AclsanDeviceMemoryAccessData& a, size_t budget, std::vector
     // Validate the full Cartesian footprint before coalescing. Checking each
     // signed extremum independently avoids cancellation hiding an invalid
     // address, and keeps the running bounds within uint64_t even for INT64_MIN.
-    Wide lower = a.address, upper = a.address;
+    Wide lower = access.address, upper = access.address;
     std::vector<std::pair<uint64_t, uint64_t>> forwardAxes;
     for (const auto& axis : axes) {
         const Wide extent = static_cast<Wide>(axis.first - 1) * axis.second;
@@ -146,10 +148,11 @@ bool Normalize(const AclsanDeviceMemoryAccessData& a, size_t budget, std::vector
     MergeIntervals(result);
     return true;
 }
-Storage StorageOf(const AclsanDeviceMemoryAccessData& a)
+Storage StorageOf(const AclsanDeviceMemoryAccessData& access)
 {
     return {
-        a.memorySpace,
-        a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? Domain{a.header.deviceId, 0, 0, 0} : DomainOf(a.header)};
+        access.memorySpace, access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
+                                Domain{access.header.deviceId, 0, 0, 0} :
+                                DomainOf(access.header)};
 }
 } // namespace npucheck::race

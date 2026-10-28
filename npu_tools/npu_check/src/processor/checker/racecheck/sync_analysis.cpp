@@ -34,8 +34,6 @@ constexpr uint32_t CROSS_CORE_MODE_CROSS_TYPE = 2U;
 constexpr uint32_t CROSS_CORE_MODE_RECEIVER_FLAG = 4U;
 constexpr uint32_t RECEIVER_FLAG_SELECTOR_SHIFT = 4U;
 constexpr uint32_t RECEIVER_FLAG_SELECTOR_MASK = 1U;
-constexpr uint32_t UNIT_FLAG_MODE_START = 2U;
-constexpr uint32_t UNIT_FLAG_MODE_END = 3U;
 bool IsSupportedMemorySpace(AclsanDeviceMemorySpace space)
 {
     switch (space) {
@@ -156,24 +154,24 @@ const std::vector<CallbackSpec>& Racechecker::GetSubscribedID() const
     return ids;
 }
 bool Racechecker::OnCallback(
-    AclsanCallbackDomain domain, AclsanCallbackId id, const void* data, CheckerReportList& reports)
+    AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
 {
-    const auto malformed = [&] {
+    const auto malformed = [this] {
         incomplete_ = true;
         ++reasons_["malformed_callback"];
         for (auto& launch : launches_)
             launch.second.reasons.insert("malformed_callback");
         return false;
     };
-    const auto acceptLaunch = [&](uint64_t launchId) {
-        if (launches_.count(launchId) || launches_.size() + finished_.size() < limits_.events)
+    const auto acceptLaunch = [this](uint64_t launchId) {
+        if (launches_.count(launchId) != 0 || launches_.size() + finished_.size() < limits_.events)
             return true;
         incomplete_ = true;
         ++reasons_["launch_budget"];
         return false;
     };
     const auto& subscriptions = GetSubscribedID();
-    if (std::find(subscriptions.begin(), subscriptions.end(), CallbackSpec{domain, id}) == subscriptions.end())
+    if (std::find(subscriptions.begin(), subscriptions.end(), CallbackSpec{domain, cbid}) == subscriptions.end())
         return true;
     if (!data)
         return malformed();
@@ -197,7 +195,7 @@ bool Racechecker::OnCallback(
             return malformed();
         if (l.common.result != 0)
             return true;
-        if (!l.launchId || finished_.count(l.launchId))
+        if (l.launchId == 0 || finished_.count(l.launchId) != 0)
             return malformed();
         if (!acceptLaunch(l.launchId))
             return true;
@@ -211,15 +209,15 @@ bool Racechecker::OnCallback(
         return true;
     }
     const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
-    const size_t size = id == ACLSAN_CBID_DEVICE_SYNC         ? sizeof(AclsanDeviceSyncData) :
-                        id == ACLSAN_CBID_DEVICE_PIPE_BARRIER ? sizeof(AclsanDeviceBarrierData) :
-                                                                sizeof(AclsanDeviceMemoryAccessData);
-    if (h.version != ACLSAN_API_VERSION || h.size < size || !h.launchId || !h.instrExecId ||
-        finished_.count(h.launchId))
+    const size_t size = cbid == ACLSAN_CBID_DEVICE_SYNC         ? sizeof(AclsanDeviceSyncData) :
+                        cbid == ACLSAN_CBID_DEVICE_PIPE_BARRIER ? sizeof(AclsanDeviceBarrierData) :
+                                                                  sizeof(AclsanDeviceMemoryAccessData);
+    if (h.version != ACLSAN_API_VERSION || h.size < size || h.launchId == 0 || h.instrExecId == 0 ||
+        finished_.count(h.launchId) != 0)
         return malformed();
     if (!acceptLaunch(h.launchId))
         return true;
-    return StoreDeviceEvent(domain, id, data);
+    return StoreDeviceEvent(domain, cbid, data);
 }
 
 bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId id, const void* data)
@@ -231,7 +229,7 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
         const auto& a = *static_cast<const AclsanDeviceMemoryAccessData*>(data);
         const bool exact = h.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT && !a.vectorMask0 && !a.vectorMask1 &&
                            !a.predicateMask0 && !a.predicateMask1 && !a.memoryFlags;
-        if (h.flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN)
+        if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN) != 0)
             state.reasons.insert("atomic_configuration_unknown");
         if (!exact) {
             // A synthetic conversion-failure marker denotes a missing footprint.
@@ -239,7 +237,7 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
                 state.reasons.insert("incomplete_memory_observation");
             ++skippedMemoryEvents_;
             ++state.skippedMemory;
-            if (a.accessCount && a.accessIndex < a.accessCount && state.skippedMemory <= limits_.events)
+            if (a.accessCount != 0 && a.accessIndex < a.accessCount && state.skippedMemory <= limits_.events)
                 state.skippedFragments[race::Key(h)].insert(a.accessIndex);
             return true;
         }
@@ -453,7 +451,7 @@ private:
                 continue;
             }
             auto& count = counts[key];
-            if (count.first && count.first != a.accessCount)
+            if (count.first != 0 && count.first != a.accessCount)
                 launch.reasons.insert("access_count_mismatch");
             count.first = a.accessCount;
             count.second.insert(a.accessIndex);
@@ -568,7 +566,7 @@ private:
         // protocol histories. Partition at every observed unit boundary, retaining
         // byte-precise footprints while avoiding one node per 512 bytes of a tile.
         for (const auto& access : accesses) {
-            if (!access.data.unitFlag || access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C)
+            if (access.data.unitFlag == 0 || access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C)
                 continue;
             auto& boundaries = partition.boundaries[DomainOf(access.data.header)];
             for (const auto& range : access.ranges) {
@@ -631,11 +629,12 @@ private:
     {
         for (const auto& access : accesses) {
             const auto& a = access.data;
-            if (!a.unitFlag) {
+            if (a.unitFlag == 0) {
                 partition.expanded.push_back(access);
                 continue;
             }
-            if ((a.unitFlag != 2 && a.unitFlag != 3) || a.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
+            if ((a.unitFlag != UNIT_FLAG_MODE_START && a.unitFlag != UNIT_FLAG_MODE_END) ||
+                a.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
                 (a.header.pipeline != ACLSAN_DEVICE_PIPE_MATRIX && a.header.pipeline != ACLSAN_DEVICE_PIPE_FIXPIPE)) {
                 launch.reasons.insert("invalid_unit_flag");
                 partition.expanded.push_back(access);
@@ -669,7 +668,7 @@ private:
                 const auto current = q.writes[w++];
                 if (released)
                     AddEdge(*released, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                if (current.mode == 3) {
+                if (current.mode == UNIT_FLAG_MODE_END) {
                     published = current.node;
                     break;
                 }
@@ -689,7 +688,7 @@ private:
                 if (previousRead)
                     AddEdge(*previousRead, current.node, HappensBeforeGraph::Reason::UnitFlag);
                 previousRead = current.node;
-                if (current.mode == 3) {
+                if (current.mode == UNIT_FLAG_MODE_END) {
                     released = current.node;
                     break;
                 }
@@ -727,7 +726,7 @@ private:
         const AclsanDeviceSyncData& s, const Domain& receiver, uint64_t receiverFlag, size_t node,
         const std::set<Domain>& domains)
     {
-        auto& counter = crossCounters[{receiver, s.mode == 4, receiverFlag}];
+        auto& counter = crossCounters[{receiver, s.mode == CROSS_CORE_MODE_RECEIVER_FLAG, receiverFlag}];
         auto [streamIt, inserted] = counter.modes.try_emplace(s.mode);
         auto& stream = streamIt->second;
         if (inserted) {
@@ -757,11 +756,13 @@ private:
             if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK)
                 continue;
             const auto sender = DomainOf(s.header);
-            const bool intra = s.mode == 4;
+            const bool intra = s.mode == CROSS_CORE_MODE_RECEIVER_FLAG;
             const bool cube = s.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
             const auto flag = s.objectId & (intra && cube ? 31U : 15U);
             if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE ||
-                (s.mode != 0 && s.mode != 1 && s.mode != 2 && s.mode != 4) || (s.mode != 0 && !Position3510(sender))) {
+                (s.mode != CROSS_CORE_MODE_SAME_PIPE && s.mode != CROSS_CORE_MODE_VECTOR &&
+                 s.mode != CROSS_CORE_MODE_CROSS_TYPE && s.mode != CROSS_CORE_MODE_RECEIVER_FLAG) ||
+                (s.mode != CROSS_CORE_MODE_SAME_PIPE && !Position3510(sender))) {
                 launch.reasons.insert("unsupported_cross_core_topology_or_mode");
                 continue;
             }
@@ -839,7 +840,8 @@ private:
             const Domain domain = std::get<0>(pair.first);
             const auto& e = pair.second;
             if (!e.sync) {
-                const size_t begin = instructionStarts.count(pair.first) ? instructionStarts.at(pair.first) : e.node;
+                const size_t begin =
+                    instructionStarts.count(pair.first) != 0 ? instructionStarts.at(pair.first) : e.node;
                 if (e.pipe == ACLSAN_DEVICE_PIPE_VECTOR || e.pipe == ACLSAN_DEVICE_PIPE_SCALAR ||
                     e.pipe == ACLSAN_DEVICE_PIPE_MATRIX) {
                     const auto previous = lastOrdered.find({domain, e.pipe});
@@ -880,9 +882,9 @@ private:
                 continue;
             }
             if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || !ValidPipe(s.srcPipe) || !ValidPipe(s.dstPipe) ||
-                (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != 0) ||
+                (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != CROSS_CORE_MODE_SAME_PIPE) ||
                 (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE && s.srcPipe == s.dstPipe) ||
-                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > 4)) {
+                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > CROSS_CORE_MODE_RECEIVER_FLAG)) {
                 launch.reasons.insert("sync_coverage_unknown");
                 continue;
             }
@@ -911,7 +913,7 @@ private:
                 continue;
             }
             const Flag key{domain, s.scope, s.srcPipe, s.dstPipe, s.objectId};
-            if (invalidFlags.count(key)) {
+            if (invalidFlags.count(key) != 0) {
                 if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
                     flags.erase(key);
                     invalidFlags.erase(key);
@@ -919,7 +921,7 @@ private:
                 continue;
             }
             if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
-                if (flags.count(key)) {
+                if (flags.count(key) != 0) {
                     invalidFlags.insert(key);
                     launch.reasons.insert("duplicate_set");
                     continue;
@@ -929,7 +931,7 @@ private:
                 flags[key] = e.node;
             } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
                 auto f = flags.find(key);
-                if (f == flags.end() || invalidFlags.count(key)) {
+                if (f == flags.end() || invalidFlags.count(key) != 0) {
                     launch.reasons.insert("unmatched_wait");
                     continue;
                 }
@@ -1122,6 +1124,8 @@ private:
     // Checker-owned replay state. The graph is already sealed; this stage
     // queries ordering and drives memstate without changing either module's role.
     struct MemoryReplay {
+        // Conservative allowance for a segment map node and allocator bookkeeping.
+        static constexpr size_t SEGMENT_NODE_ALLOWANCE = 4 * sizeof(void*);
         LaunchProcessor& processor;
         const std::vector<AclsanDeviceMemoryAccessData>& records;
         MemStateTracker& memory;
@@ -1149,7 +1153,7 @@ private:
             size_t history = state.readers.capacity();
             for (const auto& writers : state.atomicWriters)
                 history += writers.capacity();
-            return sizeof(MemState) + 4 * sizeof(void*) + history * sizeof(CbIndex);
+            return sizeof(MemState) + SEGMENT_NODE_ALLOWANCE + history * sizeof(CbIndex);
         }
 
         // Account only touched intervals and their merge neighbours. This avoids a
@@ -1264,7 +1268,7 @@ private:
             const auto prepared = PrepareAccess(current);
             if (prepared.ranges.empty())
                 return true;
-            if (processor.limits_.stateBytes < sizeof(MemState) + 4 * sizeof(void*)) {
+            if (processor.limits_.stateBytes < sizeof(MemState) + SEGMENT_NODE_ALLOWANCE) {
                 processor.launch.reasons.insert("state_plan_budget");
                 return false;
             }
@@ -1288,9 +1292,9 @@ private:
             // Source reads commit before ordinary destination writes. This retains
             // the destination writer when an in-place instruction has both operands.
             auto updates = indices;
-            std::stable_sort(updates.begin(), updates.end(), [&](size_t a, size_t b) {
-                return (records[a].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ) >
-                       (records[b].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+            std::stable_sort(updates.begin(), updates.end(), [this](size_t a, size_t b) {
+                return records[a].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
+                       records[b].accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ;
             });
             for (auto current : updates)
                 if (!UpdateAccess(current))
@@ -1312,11 +1316,7 @@ private:
             records.push_back(accesses[i].data);
             instructions[accesses[i].node].push_back(i);
         }
-        RacecheckDiagnostics diagnostics;
-        if (ASCTOOL_DEBUG_ENABLED())
-            diagnostics.emit = [](void*, const char* message) { ASCTOOL_DEBUG("%s", message); };
-        diagnostics.emitError = [](void*, const char* message) { ASCTOOL_ERROR("%s", message); };
-        MemStateTracker memory(records, diagnostics);
+        MemStateTracker memory(records);
         MemoryReplay replay{*this, records, memory};
         for (auto node : graph.Order()) {
             auto instruction = instructions.find(node);
@@ -1336,7 +1336,7 @@ void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerR
     processor.Run();
 }
 
-bool Racechecker::HasErrors() const { return raw_ || war_ || waw_ || atomic_; }
+bool Racechecker::HasErrors() const { return raw_ != 0 || war_ != 0 || waw_ != 0 || atomic_ != 0; }
 bool Racechecker::AnalysisComplete() const { return !incomplete_ && launches_.empty() && launchesCount_ != 0; }
 std::string Racechecker::Summary() const
 {

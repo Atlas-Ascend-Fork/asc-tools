@@ -28,7 +28,7 @@ if(NOT TARGET GTest::gtest)
 endif()
 
 add_executable(npu_check_unit_tests
-  gtest_main.cpp
+  gtest_main.cpp log_capture.cpp
   allocation_registry_test.cpp
   memcheck_test.cpp
   mem_state_tracker_test.cpp
@@ -57,12 +57,12 @@ target_include_directories(npu_check_unit_tests PRIVATE
   "${INJECTION_ACL_INCLUDE_DIR}"
 )
 target_link_libraries(npu_check_unit_tests PRIVATE
-  npu_check_core acl_san npu_sanitizer_plog Threads::Threads GTest::gtest Boost::filesystem)
+  npu_check_core acl_san npu_sanitizer_plog plog_test_library Threads::Threads GTest::gtest Boost::filesystem)
 add_test(NAME npu_check_unit_tests COMMAND npu_check_unit_tests)
 
 # Keep global allocator fault injection out of the main unit/LLT executables.
 add_executable(npu_check_memstate_allocation_tests
-  gtest_main.cpp mem_state_tracker_allocation_test.cpp
+  gtest_main.cpp log_capture.cpp mem_state_tracker_allocation_test.cpp
   "${NPU_CHECK_SOURCE_DIR}/checker/racecheck.cpp"
   "${NPU_CHECK_SOURCE_DIR}/checker/mem_state_tracker.cpp"
   "${NPU_CHECK_SOURCE_DIR}/checker/racecheck_reports.cpp"
@@ -72,7 +72,7 @@ target_compile_definitions(npu_check_memstate_allocation_tests PRIVATE _GLIBCXX_
 target_compile_options(npu_check_memstate_allocation_tests PRIVATE -Wall -Wextra -Werror)
 target_include_directories(npu_check_memstate_allocation_tests PRIVATE
   "${NPU_CHECK_SOURCE_DIR}" "${NPU_CHECK_DBI_ROOT}/../../include")
-target_link_libraries(npu_check_memstate_allocation_tests PRIVATE npu_sanitizer_plog GTest::gtest)
+target_link_libraries(npu_check_memstate_allocation_tests PRIVATE npu_sanitizer_plog plog_test_library GTest::gtest)
 add_test(NAME npu_check_memstate_allocation_tests COMMAND npu_check_memstate_allocation_tests)
 
 add_executable(npu_check_cube_memory_tests
@@ -144,7 +144,7 @@ target_include_directories(npu_check_report_renderer_smoke PRIVATE
   "${NPU_CHECK_SOURCE_DIR}"
   "${NPU_CHECK_DBI_INCLUDE_DIR}"
 )
-target_link_libraries(npu_check_report_renderer_smoke PRIVATE Threads::Threads GTest::gtest)
+target_link_libraries(npu_check_report_renderer_smoke PRIVATE Threads::Threads GTest::gtest npu_sanitizer_plog)
 add_test(NAME npu_check_report_renderer_smoke COMMAND npu_check_report_renderer_smoke)
 
 add_executable(npu_check_racecheck_render_tests
@@ -159,6 +159,7 @@ target_compile_definitions(npu_check_racecheck_render_tests PRIVATE _GLIBCXX_USE
 target_compile_options(npu_check_racecheck_render_tests PRIVATE -Wall -Wextra -Werror)
 target_include_directories(npu_check_racecheck_render_tests PRIVATE
   "${NPU_CHECK_SOURCE_DIR}" "${NPU_CHECK_SOURCE_DIR}/../shared" "${NPU_CHECK_SOURCE_DIR}/../../include")
+target_link_libraries(npu_check_racecheck_render_tests PRIVATE npu_sanitizer_plog)
 add_test(NAME npu_check_racecheck_render_tests COMMAND npu_check_racecheck_render_tests)
 
 add_executable(npu_check_dbi_pipeline_tests

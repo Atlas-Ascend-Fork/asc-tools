@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "log_capture.h"
 #include "checker/mem_state_tracker.h"
 #include "acl_san/aclsan_api.h"
 #include "checker/racecheck_reports.h"
@@ -1637,12 +1638,11 @@ TEST_F(MemStateTrackerTest, ReportPreparationAndUpdateFailureLeaveCallerReportsU
     ExpectSegment(limited.Tables().begin()->second, 0, 16, MemOpState::Write, {w}, {});
 }
 
-void CollectDiagnostic(void* context, const char* message) { static_cast<std::string*>(context)->append(message); }
-
 TEST_F(MemStateTrackerTest, CommittedSnapshotIncludesWholeAffectedUbTableAndHistory)
 {
     std::string log;
-    MemStateTracker observed{records, {CollectDiagnostic, &log}};
+    test::ScopedLogCapture capture(log);
+    MemStateTracker observed{records};
     auto write = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16, 10, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     auto untouched = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 32, 48, 10, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     auto otherCore = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 64, 80, 11, ACLSAN_DEVICE_MEMORY_SPACE_UB);
@@ -1690,7 +1690,8 @@ TEST_F(MemStateTrackerTest, CommittedSnapshotIncludesWholeAffectedUbTableAndHist
 TEST_F(MemStateTrackerTest, CommittedSnapshotShowsMergedTableAndFrozenRace)
 {
     std::string log;
-    MemStateTracker observed{records, {CollectDiagnostic, &log}};
+    test::ScopedLogCapture capture(log);
+    MemStateTracker observed{records};
     auto write = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16);
     observed.UpdateMemState(write, {});
     auto read = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 4, 12);
@@ -1722,12 +1723,13 @@ TEST_F(MemStateTrackerTest, CommittedSnapshotsNameEverySupportedMemorySpace)
 {
     const std::array<const char*, 8> names = {"GM", "UB", "L1", "L0A", "L0B", "L0C", "BT", "FB"};
     std::string log;
-    MemStateTracker observed{records, {CollectDiagnostic, &log}};
+    test::ScopedLogCapture capture(log);
+    MemStateTracker observed{records};
     for (uint32_t space = ACLSAN_DEVICE_MEMORY_SPACE_GM; space <= ACLSAN_DEVICE_MEMORY_SPACE_FB; ++space) {
         log.clear();
         const auto write = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16, 10 + space, space);
         observed.UpdateMemState(write, {});
-        EXPECT_NE(log.find(std::string("detail=memory=") + names[space - 1] + " table_segments=1"), std::string::npos)
+        EXPECT_NE(log.find(std::string("memory=") + names[space - 1] + " table_segments=1"), std::string::npos)
             << "space=" << space;
     }
 }
@@ -1735,7 +1737,8 @@ TEST_F(MemStateTrackerTest, CommittedSnapshotsNameEverySupportedMemorySpace)
 TEST_F(MemStateTrackerTest, DiagnosticsCorrelateHistoryCandidatesAndUpdateOutcomes)
 {
     std::string log;
-    MemStateTracker observed{records, {CollectDiagnostic, &log}};
+    test::ScopedLogCapture capture(log);
+    MemStateTracker observed{records};
     auto w = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16);
     records[w].header.launchId = 99;
     records[w].header.pc = 0xabcd;
@@ -1782,11 +1785,13 @@ TEST_F(MemStateTrackerTest, DiagnosticsCorrelateHistoryCandidatesAndUpdateOutcom
     EXPECT_NE(log.find("record belongs to another launch"), std::string::npos);
 }
 
-TEST_F(MemStateTrackerTest, ThrowingDiagnosticSinkCannotAffectCheckOrCommit)
+TEST_F(MemStateTrackerTest, DisabledDebugLoggingDoesNotAffectCheckOrCommit)
 {
-    RacecheckDiagnostics diagnostics;
-    diagnostics.emit = [](void*, const char*) { throw 42; };
-    MemStateTracker observed{records, diagnostics};
+    std::string log;
+    test::ScopedLogCapture capture(
+        [](void* context, int32_t, const char* message) { static_cast<std::string*>(context)->append(message); }, &log,
+        DLOG_ERROR);
+    MemStateTracker observed{records};
     auto w = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16);
     EXPECT_NO_THROW(observed.UpdateMemState(w, {}));
     auto r = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 4, 8);
@@ -1795,6 +1800,8 @@ TEST_F(MemStateTrackerTest, ThrowingDiagnosticSinkCannotAffectCheckOrCommit)
     EXPECT_NO_THROW(observed.UpdateMemState(r, pairs));
     ExpectSegment(observed.Tables().begin()->second, 4, 8, MemOpState::Race, {w}, {});
     EXPECT_THROW(observed.UpdateMemState(records.size(), {}), RacecheckError);
+    EXPECT_EQ(log.find("level=DEBUG"), std::string::npos);
+    EXPECT_NE(log.find("event=update.failed"), std::string::npos);
 }
 
 TEST_F(MemStateTrackerTest, FailedFirstUpdateDoesNotBindLaunchOrCreateTable)
@@ -1863,7 +1870,8 @@ TEST_F(MemStateTrackerTest, SparseRangesCrossAndRevisitOneFrozenRaceWithoutSplit
 TEST_F(MemStateTrackerTest, DiagnosticsExplainSkippedSourceReadAndRetainedExternalCandidate)
 {
     std::string log;
-    MemStateTracker observed{records, {CollectDiagnostic, &log}};
+    test::ScopedLogCapture capture(log);
+    MemStateTracker observed{records};
     auto read = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 16);
     auto write = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16);
     auto other = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 16, 11);

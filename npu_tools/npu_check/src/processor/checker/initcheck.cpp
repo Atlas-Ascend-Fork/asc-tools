@@ -28,6 +28,7 @@
 namespace npucheck {
 
 namespace {
+constexpr uint8_t MAX_WRITER_PIPELINE = 0x0f; // State-byte bits [3:0].
 constexpr uint64_t kMask = InitStateTable::kPageBytes - 1;
 } // namespace
 
@@ -100,7 +101,7 @@ InitStateQuery GmInitStateTable::Query(uint64_t address, uint64_t bytes) const
 void GmInitStateTable::Write(uint64_t address, uint64_t bytes, uint8_t pipe)
 {
     ValidateRange(address, bytes);
-    if (pipe > 15)
+    if (pipe > MAX_WRITER_PIPELINE)
         throw std::invalid_argument("GM initialization pipeline exceeds four bits");
     // 先完成全部页的分配，分配失败时不留下只更新一半的 WRITE 状态。
     for (uint64_t current = address, remaining = bytes; remaining != 0;) {
@@ -222,7 +223,7 @@ InitStateQuery LocalInitStateTable::Query(uint64_t address, uint64_t bytes) cons
 void LocalInitStateTable::Write(uint64_t address, uint64_t bytes, uint8_t pipe)
 {
     ValidateRange(address, bytes);
-    if (pipe > 15)
+    if (pipe > MAX_WRITER_PIPELINE)
         throw std::invalid_argument("Local initialization pipeline exceeds four bits");
     // 先完成全部页的分配，分配失败时不留下只更新一半的 WRITE 状态。
     for (uint64_t current = address, remaining = bytes; remaining != 0;) {
@@ -364,8 +365,9 @@ bool ExpandRanges(const AclsanDeviceMemoryAccessData& data, std::vector<Range>& 
         case ACLSAN_MEM_LAYOUT_RANGE:
             append(data.address, data.layout.range.bytes);
             break;
-        case ACLSAN_MEM_LAYOUT_BLOCK_REPEAT:
-            layout.rank = 2;
+        case ACLSAN_MEM_LAYOUT_BLOCK_REPEAT: {
+            constexpr uint32_t BLOCK_REPEAT_RANK = 2;
+            layout.rank = BLOCK_REPEAT_RANK;
             layout.elementBytes = data.layout.blockRepeat.blockSize;
             layout.dimensions[0] = data.layout.blockRepeat.blockNum;
             layout.dimensions[1] = data.layout.blockRepeat.repeatTimes;
@@ -374,6 +376,7 @@ bool ExpandRanges(const AclsanDeviceMemoryAccessData& data, std::vector<Range>& 
             if (!VisitAffineSegments(layout, append))
                 return false;
             break;
+        }
         case ACLSAN_MEM_LAYOUT_ND_AFFINE:
             layout.rank = data.layout.ndAffine.rank;
             layout.elementBytes = data.layout.ndAffine.elementBytes;
@@ -493,7 +496,8 @@ AllocationUpdateStatus MemoryInitcheck::ReleaseAllocation(InitStateKey scope, ui
 
 InitCheckStatus MemoryInitcheck::MarkInitialized(InitStateKey scope, uint64_t address, uint64_t bytes, uint8_t pipe)
 {
-    if (!InitStateTableIndex::ValidKey(scope) || !GmInitStateTable::ValidRange(address, bytes) || pipe > 15)
+    if (!InitStateTableIndex::ValidKey(scope) || !GmInitStateTable::ValidRange(address, bytes) ||
+        pipe > MAX_WRITER_PIPELINE)
         return InitCheckStatus::INVALID_RECORD;
     if (bytes == 0)
         return InitCheckStatus::OK;
@@ -520,7 +524,7 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
     const InitializedRanges& precedingWrites, bool commitWrites, bool restrictToPrecedingWrites)
 {
     InitCheckResult result;
-    auto fail = [&](InitCheckStatus status) { return InitCheckResult{status, {}}; };
+    auto fail = [](InitCheckStatus status) { return InitCheckResult{status, {}}; };
     if (!InitStateTableIndex::ValidKey(scope))
         return fail(InitCheckStatus::INVALID_RECORD);
     if (accesses.empty())
@@ -537,14 +541,15 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
             const auto& h = access.header;
             if (h.version != ACLSAN_API_VERSION || h.size < sizeof(access) || h.deviceId != scope.deviceId ||
                 h.launchId != first.launchId || h.instrExecId != first.instrExecId || h.blockType != first.blockType ||
-                h.blockId != first.blockId || h.pipeline > 15 || access.accessIndex >= accesses.size() ||
-                seen[access.accessIndex] || access.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
+                h.blockId != first.blockId || h.pipeline > MAX_WRITER_PIPELINE ||
+                access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
+                access.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
                 access.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
                 return fail(InitCheckStatus::INVALID_RECORD);
             }
-            if (access.accessCount != accesses.size() || !(h.flags & ACLSAN_DEVICE_EVENT_FLAG_EXACT) ||
+            if (access.accessCount != accesses.size() || (h.flags & ACLSAN_DEVICE_EVENT_FLAG_EXACT) == 0 ||
                 (h.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED |
-                            ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR))) {
+                            ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR)) != 0) {
                 return fail(InitCheckStatus::INCOMPLETE_RECORD);
             }
             seen[access.accessIndex] = true;
@@ -559,7 +564,7 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
             operands.push_back(std::move(operand));
         }
         const auto found = gmAllocations_.find(scope);
-        const auto classify = [&](uint64_t address, uint64_t bytes) -> RangeResult {
+        const auto classify = [this, scope, found](uint64_t address, uint64_t bytes) -> RangeResult {
             if (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM) {
                 const auto capacity = InitStateTableIndex::LocalCapacity(scope.space);
                 if (address > capacity || bytes > capacity - address)
@@ -590,19 +595,20 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
         // GM combines its launch baseline with proven preceding writes. Local
         // replay queries actual state bytes only where a preceding write proves
         // visibility; topologically earlier but unordered writes cannot leak in.
-        const auto queryInitialized = [&](uint64_t address, uint64_t bytes) {
+        const auto queryInitialized = [&table, &precedingWrites, restrictToPrecedingWrites](
+                                          uint64_t address, uint64_t bytes) {
             InitStateQuery result;
-            const auto append = [&](uint64_t begin, uint64_t end) {
+            const auto append = [&table, &result](uint64_t begin, uint64_t end) {
                 const auto q = table.Query(begin, end - begin);
-                if (!result.uninitializedBytes && q.uninitializedBytes)
+                if (result.uninitializedBytes == 0 && q.uninitializedBytes != 0)
                     result.firstUninitializedAddress = q.firstUninitializedAddress;
                 result.uninitializedBytes += q.uninitializedBytes;
             };
-            const auto appendGap = [&](uint64_t begin, uint64_t end) {
+            const auto appendGap = [&append, &result, restrictToPrecedingWrites](uint64_t begin, uint64_t end) {
                 if (!restrictToPrecedingWrites) {
                     append(begin, end);
                 } else if (begin < end) {
-                    if (!result.uninitializedBytes)
+                    if (result.uninitializedBytes == 0)
                         result.firstUninitializedAddress = begin;
                     result.uninitializedBytes += end - begin;
                 }
@@ -628,7 +634,7 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
         const uint64_t group = nextGroupId_++;
         // 每个读操作按分配汇总；同一条指令的全部读端先检查，随后才写入。
         for (const auto& operand : operands) {
-            if (!(operand.access->accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_READ))
+            if ((operand.access->accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_READ) == 0)
                 continue;
             std::map<uint64_t, NpuCheckInitcheckReport> reports;
             for (const auto& range : operand.ranges) {
@@ -642,7 +648,7 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
                 report.access.rangeEnd = range.address + range.bytes;
                 report.access.accessBytes += static_cast<uint32_t>(range.bytes);
                 const auto query = queryInitialized(range.address, range.bytes);
-                if (query.uninitializedBytes && report.uninitBytes == 0) {
+                if (query.uninitializedBytes != 0 && report.uninitBytes == 0) {
                     report.firstUninitAddress = query.firstUninitializedAddress;
                     report.firstUninitOffset = query.firstUninitializedAddress - allocation.base;
                 }
@@ -665,7 +671,7 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
             }
         }
         for (const auto& operand : operands) {
-            if (!commitWrites || !(operand.access->accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE))
+            if (!commitWrites || (operand.access->accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) == 0)
                 continue;
             for (const auto& range : operand.ranges) {
                 table.Write(range.address, range.bytes, static_cast<uint8_t>(operand.access->header.pipeline));
@@ -756,24 +762,25 @@ void Initcheck::FlushMemoryAccesses(void* stream, CheckerReportList& reports)
     for (const auto& launch : launchStreams_)
         if (selected(launch.first))
             batches[launch.first];
-    const auto memoryEnd =
-        std::remove_if(pendingMemoryAccesses_.begin(), pendingMemoryAccesses_.end(), [&](const auto& a) {
+    const auto memoryEnd = std::remove_if(
+        pendingMemoryAccesses_.begin(), pendingMemoryAccesses_.end(), [&selected, &batches](const auto& a) {
             if (!selected(a.header.launchId))
                 return false;
             // Dependency-only legacy records still drive the register checker.
-            if (a.accessCount || a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN)
+            if (a.accessCount != 0 || a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN)
                 batches[a.header.launchId].memory.push_back(a);
             else
                 batches[a.header.launchId];
             return true;
         });
     pendingMemoryAccesses_.erase(memoryEnd, pendingMemoryAccesses_.end());
-    const auto syncEnd = std::remove_if(pendingSyncEvents_.begin(), pendingSyncEvents_.end(), [&](const auto& s) {
-        if (!selected(s.header.launchId))
-            return false;
-        batches[s.header.launchId].sync.push_back(s);
-        return true;
-    });
+    const auto syncEnd =
+        std::remove_if(pendingSyncEvents_.begin(), pendingSyncEvents_.end(), [&selected, &batches](const auto& s) {
+            if (!selected(s.header.launchId))
+                return false;
+            batches[s.header.launchId].sync.push_back(s);
+            return true;
+        });
     pendingSyncEvents_.erase(syncEnd, pendingSyncEvents_.end());
     for (const auto& entry : replayReasons_)
         if (selected(entry.first))
@@ -841,21 +848,21 @@ void Initcheck::ReplayLaunch(
             }
         }
     std::optional<uint32_t> device;
-    const auto checkDevice = [&](const AclsanDeviceEventHeader& h) {
+    const auto checkDevice = [&device, &reasons](const AclsanDeviceEventHeader& h) {
         if (device && *device != h.deviceId)
             reasons.insert("device_mismatch");
         device = h.deviceId;
     };
     for (const auto& a : memory) {
         checkDevice(a.header);
-        if (a.header.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT || a.vectorMask0 || a.vectorMask1 || a.predicateMask0 ||
-            a.predicateMask1 || a.memoryFlags)
+        if (a.header.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT || a.vectorMask0 != 0 || a.vectorMask1 != 0 ||
+            a.predicateMask0 != 0 || a.predicateMask1 != 0 || a.memoryFlags != 0)
             reasons.insert("memory_coverage_unknown");
         // Fragment handshakes require per-fragment initialization transactions;
         // never promote their partial completion to a whole-instruction write.
-        if (a.unitFlag)
+        if (a.unitFlag != 0)
             reasons.insert("unit_flag_initialization_unsupported");
-        if (uncertainDevices_.count(a.header.deviceId))
+        if (uncertainDevices_.count(a.header.deviceId) != 0)
             reasons.insert("prior_initialization_state_unknown");
     }
     for (const auto& s : sync)
@@ -898,7 +905,7 @@ void Initcheck::ReplayLaunch(
         const auto& h = a.header;
         if (invalidInstructions.count(
                 {h.deviceId, h.launchId, h.blockType, h.blockId, h.phyCoreId, h.instrExecId, h.pipeline, h.pc,
-                 h.siteId})) {
+                 h.siteId}) != 0) {
             // An invalid GM write has unknown effects; it must never establish
             // initialized bytes for this launch or a subsequent one.
             if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && (a.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE))
@@ -906,7 +913,7 @@ void Initcheck::ReplayLaunch(
             continue;
         }
         instructions[accesses[i].node].push_back(i);
-        if (accesses[i].data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE)
+        if ((accesses[i].data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) != 0)
             writers[StorageOf(accesses[i].data)].push_back(i);
     }
     CheckerReportList staged;
@@ -927,11 +934,11 @@ void Initcheck::ReplayLaunch(
             const auto space = std::get<0>(storage.first);
             if (space == ACLSAN_DEVICE_MEMORY_SPACE_L0A || space == ACLSAN_DEVICE_MEMORY_SPACE_L0B)
                 continue;
-            if (space != ACLSAN_DEVICE_MEMORY_SPACE_GM && !InitStateTableIndex::LocalCapacity(space))
+            if (space != ACLSAN_DEVICE_MEMORY_SPACE_GM && InitStateTableIndex::LocalCapacity(space) == 0)
                 continue;
             std::vector<Interval> preceding;
-            const bool hasRead = std::any_of(storage.second.begin(), storage.second.end(), [&](size_t i) {
-                return accesses[i].data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+            const bool hasRead = std::any_of(storage.second.begin(), storage.second.end(), [&accesses](size_t i) {
+                return (accesses[i].data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_READ) != 0;
             });
             if (hasRead)
                 for (auto w : writers[storage.first]) {
@@ -954,7 +961,7 @@ void Initcheck::ReplayLaunch(
                         preceding.insert(preceding.end(), accesses[w].ranges.begin(), accesses[w].ranges.end());
                     } else if (relation == HappensBeforeGraph::Relation::Unordered) {
                         for (auto r : storage.second)
-                            if ((accesses[r].data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_READ) &&
+                            if ((accesses[r].data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_READ) != 0 &&
                                 Overlap(accesses[w].ranges, accesses[r].ranges))
                                 reasons.insert("unordered_initialization");
                     }
@@ -993,8 +1000,8 @@ void Initcheck::ReplayLaunch(
             for (auto i : instruction->second) {
                 const auto& access = accesses[i];
                 const auto space = access.data.memorySpace;
-                if (!InitStateTableIndex::LocalCapacity(space) ||
-                    !(access.data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE))
+                if (InitStateTableIndex::LocalCapacity(space) == 0 ||
+                    (access.data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) == 0)
                     continue;
                 const auto& h = access.data.header;
                 const auto key = InitStateKey::Local(h.deviceId, h.launchId, h.blockType, h.blockId, space);
@@ -1010,7 +1017,7 @@ void Initcheck::ReplayLaunch(
     if (reasons.empty()) {
         for (const auto& access : accesses) {
             if (access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM ||
-                !(access.data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE))
+                (access.data.accessMode & ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) == 0)
                 continue;
             // A stream completion does not establish an edge into kernels
             // already submitted on another stream. Invalidate their baseline.
@@ -1236,7 +1243,7 @@ void Initcheck::OnFree(const AclsanResourceData& data)
 bool Initcheck::OnRegisterState(const AclsanDeviceRegisterStateData& data)
 {
     if (data.header.version != ACLSAN_API_VERSION || data.header.size < sizeof(data) ||
-        data.regId >= ACLSAN_DEVICE_REGISTER_COUNT || data.regId >= 64) {
+        data.regId >= ACLSAN_DEVICE_REGISTER_COUNT || data.regId >= std::numeric_limits<uint64_t>::digits) {
         ++stats_.malformedEvents;
         memory_.Invalidate();
         return false;
@@ -1293,8 +1300,9 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     const bool missingRegisterPlaceholder =
         (nddma || gmToL1) && missing != 0 && data.header.flags == ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED &&
         data.accessCount == 1 && data.accessIndex == 0 && data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN &&
-        data.layoutKind == 0 && data.accessMode == 0 && data.address == 0 && !data.vectorMask0 && !data.vectorMask1 &&
-        !data.predicateMask0 && !data.predicateMask1 && !data.memoryFlags && !data.unitFlag;
+        data.layoutKind == 0 && data.accessMode == 0 && data.address == 0 && data.vectorMask0 == 0 &&
+        data.vectorMask1 == 0 && data.predicateMask0 == 0 && data.predicateMask1 == 0 && data.memoryFlags == 0 &&
+        data.unitFlag == 0;
     if (missingRegisterPlaceholder) {
         // Retain a dependency-only marker so synchronization also closes this
         // launch's register state when no address or sync records were emitted.
@@ -1302,8 +1310,8 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
         registerOnly.accessCount = 0;
         pendingMemoryAccesses_.push_back(registerOnly);
     } else {
-        if (data.header.flags & (ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED | ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR |
-                                 ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) {
+        if ((data.header.flags & (ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED | ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR |
+                                  ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0) {
             replayReasons_[data.header.launchId].insert("memory_coverage_unknown");
         }
         // Keep all operands until synchronization so a GM instruction with multiple

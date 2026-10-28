@@ -37,8 +37,7 @@ public:
 
 class Racecheck final : public Checker {
 public:
-    // 默认详细追踪使用 ASCTOOL_DEBUG，失败使用 ASCTOOL_ERROR；可注入日志接收器。
-    explicit Racecheck(RacecheckOrdering* ordering = nullptr, RacecheckDiagnostics diagnostics = {});
+    explicit Racecheck(RacecheckOrdering* ordering = nullptr);
     const std::vector<CallbackSpec>& GetSubscribedID() const override;
     bool OnCallback(
         AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports) override;
@@ -50,7 +49,7 @@ private:
     struct LaunchState {
         std::vector<AclsanDeviceMemoryAccessData> records;
         MemStateTracker tracker;
-        explicit LaunchState(RacecheckDiagnostics diagnostics) : tracker(records, diagnostics) {}
+        LaunchState() : tracker(records) {}
     };
     bool OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports);
     void Log(const char* event, const AclsanDeviceEventHeader* header, const char* detail, bool error = false)
@@ -59,7 +58,6 @@ private:
         const AclsanDeviceEventHeader& header, const char* stage, const char* reason, const char* detail) noexcept;
 
     RacecheckOrdering* ordering_;
-    RacecheckDiagnostics diagnostics_;
     // 空指针是已停止 launch 的标记，后续访问不得重新创建状态。
     std::map<std::pair<uint32_t, uint64_t>, std::unique_ptr<LaunchState>> launches_;
     // 连停止标记都无法创建时，停止会话后续访存分析。

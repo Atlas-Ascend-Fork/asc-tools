@@ -14,7 +14,8 @@ struct Api {
     int32_t (*check)(int32_t, int32_t);
     void (*record)(int32_t, int32_t, const char*, ...);
 };
-void SetApi(Api api);
+// Return the previous hooks so scoped captures can restore the shared test boundary.
+Api SetApi(Api api);
 void ResetApi();
 } // namespace plog_test
 #endif

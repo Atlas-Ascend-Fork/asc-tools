@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "log_capture.h"
 #include "acl_san/aclsan_api.h"
 #include "checker/racecheck_reports.h"
 #include "checker/racecheck.h"
@@ -358,9 +359,8 @@ TEST(RacecheckCheckerTest, HostAllocationFailureStopsLaunchWithClearError)
         bool AnalysisComplete() const override { return true; }
     } ordering;
     std::string log;
-    Racecheck checker(
-        &ordering,
-        {[](void* context, const char* message) { static_cast<std::string*>(context)->append(message); }, &log});
+    test::ScopedLogCapture capture(log);
+    Racecheck checker(&ordering);
     CheckerReportList reports;
     auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
     auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
@@ -391,9 +391,8 @@ TEST(RacecheckCheckerTest, ContainerMaximumCapacityIsNotReportedAsHostMemoryFail
 {
     Ordering ordering;
     std::string log;
-    Racecheck checker(
-        &ordering,
-        {[](void* context, const char* message) { static_cast<std::string*>(context)->append(message); }, &log});
+    test::ScopedLogCapture capture(log);
+    Racecheck checker(&ordering);
     auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 1);
     write.layoutKind = ACLSAN_MEM_LAYOUT_ND_AFFINE;
     write.layout.ndAffine.elementBytes = 1;

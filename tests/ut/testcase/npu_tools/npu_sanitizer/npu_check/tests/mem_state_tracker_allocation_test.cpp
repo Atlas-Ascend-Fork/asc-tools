@@ -7,6 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // 隔离的可执行文件：分配器覆盖实现不会链接进 LLT 二进制。
+#include "log_capture.h"
+#include <algorithm>
+#include <cstring>
 #include "acl_san/aclsan_api.h"
 #include "checker/mem_state_tracker.h"
 #include "checker/racecheck_reports.h"
@@ -106,16 +109,16 @@ public:
 struct FailureLog {
     char message[4096]{};
     size_t errors = 0;
-    RacecheckDiagnostics Diagnostics()
-    {
-        return {
-            [](void*, const char*) {}, this,
-            [](void* context, const char* text) {
-                auto& log = *static_cast<FailureLog*>(context);
-                ++log.errors;
-                std::snprintf(log.message, sizeof(log.message), "%s", text);
-            }};
-    }
+    test::ScopedLogCapture capture{
+        [](void* context, int32_t, const char* text) {
+            auto& log = *static_cast<FailureLog*>(context);
+            ++log.errors;
+            // The fixed buffer also works while the test rejects every C++ allocation.
+            const size_t length = std::min(std::strlen(text), sizeof(log.message) - 1);
+            std::copy_n(text, length, log.message);
+            log.message[length] = '\0';
+        },
+        this, DLOG_ERROR};
 };
 
 TEST(RacecheckAllocationTest, EveryCallbackAllocationFailureStopsOnlyAffectedLaunch)
@@ -126,7 +129,7 @@ TEST(RacecheckAllocationTest, EveryCallbackAllocationFailureStopsOnlyAffectedLau
     for (int failurePoint = 0; failurePoint < 200; ++failurePoint) {
         UnorderedAccesses ordering;
         FailureLog log;
-        Racecheck checker(&ordering, log.Diagnostics());
+        Racecheck checker(&ordering);
         CheckerReportList reports;
         auto write = Access(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16, 1);
         auto read = Access(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 4, 32, 2);
@@ -164,7 +167,7 @@ TEST(RacecheckAllocationTest, PersistentAllocationFailureCanStillLogAndDiscardLa
 {
     UnorderedAccesses ordering;
     FailureLog log;
-    Racecheck checker(&ordering, log.Diagnostics());
+    Racecheck checker(&ordering);
     CheckerReportList reports;
     auto write = Access(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16, 1);
     auto read = Access(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 4, 32, 2);
@@ -189,7 +192,7 @@ TEST(RacecheckAllocationTest, FailureToAllocateStopMarkerStopsSession)
 {
     UnorderedAccesses ordering;
     FailureLog log;
-    Racecheck checker(&ordering, log.Diagnostics());
+    Racecheck checker(&ordering);
     CheckerReportList reports;
     auto write = Access(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16, 1);
     failAllAllocations = true;
@@ -213,7 +216,7 @@ TEST(RacecheckAllocationTest, CurrentSparseLayoutIsExpandedOnceAcrossCheckReport
         SCOPED_TRACE(withConflict);
         UnorderedAccesses ordering;
         FailureLog log;
-        Racecheck checker(&ordering, log.Diagnostics());
+        Racecheck checker(&ordering);
         CheckerReportList reports;
         if (withConflict) {
             auto write = Access(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 2048, 1);
@@ -626,7 +629,7 @@ TEST(MemStateTrackerAllocationTest, AllocationFailureAfterBatchedEraseDiscardsAn
         Access(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, 4, 8, 2),
         Access(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 8, 3)};
     FailureLog log;
-    MemStateTracker tracker{records, log.Diagnostics()};
+    MemStateTracker tracker{records};
     tracker.UpdateMemState(0, {});
     tracker.UpdateMemState(1, {});
     records[2].layoutKind = ACLSAN_MEM_LAYOUT_BLOCK_REPEAT;
@@ -664,7 +667,7 @@ TEST(MemStateTrackerAllocationTest, EveryReadAndAtomicUpdateAllocationFailureDis
                 std::vector<AclsanDeviceMemoryAccessData> records{
                     Access(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16, 1), Access(mode, 4, 32, 2)};
                 FailureLog log;
-                MemStateTracker tracker{records, log.Diagnostics()};
+                MemStateTracker tracker{records};
                 if (existingTable) {
                     tracker.UpdateMemState(0, {});
                 }
@@ -734,7 +737,7 @@ TEST(RacecheckAllocationTest, PublishedReportsSurviveFailedInPlaceUpdate)
     for (int failurePoint = 0; failurePoint < 300; ++failurePoint) {
         UnorderedAccesses ordering;
         FailureLog log;
-        Racecheck checker(&ordering, log.Diagnostics());
+        Racecheck checker(&ordering);
         CheckerReportList reports;
         auto write = Access(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 8, 1);
         auto first = Access(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 4, 2);
