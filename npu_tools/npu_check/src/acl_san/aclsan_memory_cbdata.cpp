@@ -842,7 +842,7 @@ public:
             {resolved.address, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, dataBits, RangeDescriptor{dataBits / 8U}});
         auto result = std::move(builder).Build();
         for (auto& access : result.data) {
-            access.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
+            access.header.flags |= static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
         }
         return result;
     }
@@ -1437,8 +1437,8 @@ public:
         }
         uint64_t dstBlocks = f.mStep, dstRepeats = f.kStep;
         if (f.transpose) {
-            if ((bits == FOUR_BIT_DATA && f.mStep % 4) || (bits == BITS_PER_BYTE && f.mStep % 2) ||
-                (bits == THIRTY_TWO_BIT_DATA && f.kStep % 2)) {
+            if ((bits == FOUR_BIT_DATA && f.mStep % 4U != 0U) || (bits == BITS_PER_BYTE && f.mStep % 2U != 0U) ||
+                (bits == THIRTY_TWO_BIT_DATA && f.kStep % 2U != 0U)) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
             dstBlocks = uint64_t(f.kStep) * CUBE_M_DIMENSION / bits;
@@ -1508,13 +1508,13 @@ public:
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         const size_t bank = f.fMatrixControl ? REGISTER_BANK_B : REGISTER_BANK_A;
-        if (!state_.fmatrix[bank]) {
+        if (!state_.fmatrix[bank].has_value()) {
             return {
                 MemoryCbdataStatus::MISSING_REGISTER_STATE,
                 {},
                 static_cast<uint64_t>(InstructionId::SetFmatrix) + bank};
         }
-        if (!state_.l3dRpt[bank]) {
+        if (!state_.l3dRpt[bank].has_value()) {
             return {
                 MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, static_cast<uint64_t>(InstructionId::SetL3dRpt) + bank};
         }
@@ -1523,9 +1523,9 @@ public:
         const auto& rpt = *state_.l3dRpt[bank];
         // For one full C0, NC1HWC0 and NHWC share the same byte layout. Other
         // channel packing and repeated-window modes need separate validation.
-        if (f.channelSize != c0 || rpt.repeatTimes != SINGLE_ACCESS_COUNT || f.mExtension % CUBE_M_DIMENSION ||
-            f.kExtension % c0 || f.kStartPoint % c0 ||
-            (f.transpose && (f.mExtension % c0 || f.kExtension % CUBE_M_DIMENSION))) {
+        if (f.channelSize != c0 || rpt.repeatTimes != SINGLE_ACCESS_COUNT || f.mExtension % CUBE_M_DIMENSION != 0U ||
+            f.kExtension % c0 != 0U || f.kStartPoint % c0 != 0U ||
+            (f.transpose && (f.mExtension % c0 != 0U || f.kExtension % CUBE_M_DIMENSION != 0U))) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         const auto& fm = *state_.fmatrix[bank];
@@ -1618,7 +1618,8 @@ public:
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         const auto& loops = state_.dmaLoopSizes[static_cast<size_t>(DmaLoopDirection::GM_TO_CBUF)];
-        if (padding && loops && (loops->loop1Size > SINGLE_ACCESS_COUNT || loops->loop2Size > SINGLE_ACCESS_COUNT)) {
+        if (padding != 0U && loops.has_value() &&
+            (loops->loop1Size > SINGLE_ACCESS_COUNT || loops->loop2Size > SINGLE_ACCESS_COUNT)) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         const bool compact = f.burstDstStride == f.burstLen;
@@ -1644,7 +1645,7 @@ public:
     template <NdNzConversionMode Mode>
     MemoryCbdataResult operator()(const CopyGmToCbufMultiParamField<Mode>& f) const noexcept
     {
-        if (!state_.mte2Nz) {
+        if (!state_.mte2Nz.has_value()) {
             return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, uint64_t(InstructionId::SetMte2NzPara)};
         }
         if (f.smallC0Enable) {
@@ -1704,7 +1705,7 @@ public:
                 return {MemoryCbdataStatus::NO_ACCESS, {}};
             }
             const auto l1Context = ContextForL1(context_);
-            if (!l1Context) {
+            if (!l1Context.has_value()) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
             return LinearInContext(
@@ -1724,7 +1725,7 @@ public:
         raw.args[2] = f.config0;
         raw.args[3] = f.config1 & ~(uint64_t(QUANT_PRE_FIELD_MASK) << FIXPIPE_CONFIG_LENGTH_SHIFT);
         const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw);
-        if (!decoded) {
+        if (!decoded.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const auto& fix = std::get<FixL0cToOutParamField>(decoded->params);
@@ -1776,7 +1777,7 @@ public:
             first.status = MemoryCbdataStatus::MISSING_REGISTER_STATE;
         } else if (!ok(first.status) || !ok(second.status)) {
             first.status = MemoryCbdataStatus::PARTIAL_COVERAGE;
-            if (second.requiredRegisterInstructionId) {
+            if (second.requiredRegisterInstructionId != 0) {
                 first.requiredRegisterInstructionId = second.requiredRegisterInstructionId;
             }
         } else {
@@ -1786,7 +1787,10 @@ public:
     }
 
 private:
-    static uint64_t CeilDiv(uint64_t n, uint64_t d) noexcept { return n / d + (n % d != 0); }
+    static uint64_t CeilDiv(uint64_t n, uint64_t d) noexcept
+    {
+        return n / d + (n % d != 0U ? uint64_t{1} : uint64_t{0});
+    }
 
     static bool Add(
         MemoryCbdataBuilder& builder, uint64_t address, uint32_t space, uint32_t mode, uint64_t count, uint64_t bytes,
@@ -1847,14 +1851,14 @@ private:
         const size_t direction = static_cast<size_t>(DmaLoopDirection::GM_TO_CBUF);
         const auto& size = state_.dmaLoopSizes[direction];
         const std::array<uint64_t, DMA_DESCRIPTOR_DIMENSION_COUNT> counts{
-            count, size ? size->loop1Size : 1, size ? size->loop2Size : 1};
+            count, size.has_value() ? size->loop1Size : 1U, size.has_value() ? size->loop2Size : 1U};
         if (counts[1] == NO_ACCESS_COUNT || counts[2] == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         std::array<uint64_t, DMA_DESCRIPTOR_DIMENSION_COUNT> strides{stride, 0, 0};
         for (size_t i = 0; i < LOOP_DIMENSION_COUNT; ++i) {
             if (counts[i + 1] > SINGLE_ACCESS_COUNT) {
-                if (!state_.dmaLoopStrides[direction][i]) {
+                if (!state_.dmaLoopStrides[direction][i].has_value()) {
                     return {
                         MemoryCbdataStatus::MISSING_REGISTER_STATE,
                         {},
@@ -1878,12 +1882,13 @@ private:
         if (f.nSize == NO_ACCESS_COUNT || f.mSize == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        if ((f.nz2ndEnable || f.nz2dnEnable) && state_.loop3 && state_.loop3->loopCount == NO_ACCESS_COUNT) {
+        if ((f.nz2ndEnable || f.nz2dnEnable) && state_.loop3.has_value() &&
+            state_.loop3->loopCount == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         // NZ2DN additionally needs CHANNEL_PARA, which is not captured yet.
-        if (f.nz2dnEnable || f.quantPost || f.reluPost || f.clipReluPost || f.loopEnhanceEnable ||
-            f.loopEnhanceMergeEnable || f.eltwiseOp || f.eltwiseAntqEnable || f.winoPostEnable || f.brcbEnable ||
+        if (f.nz2dnEnable || f.quantPost != 0U || f.reluPost != 0U || f.clipReluPost || f.loopEnhanceEnable ||
+            f.loopEnhanceMergeEnable || f.eltwiseOp != 0U || f.eltwiseAntqEnable || f.winoPostEnable || f.brcbEnable ||
             f.c0PadEnable) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
@@ -1893,12 +1898,14 @@ private:
                 CeilDiv(f.nSize, CUBE_N_ALIGNMENT), uint64_t(f.mSize) * rowBytes, uint64_t(f.loopSrtStride) * rowBytes,
                 CUBE_L1_BLOCK_BYTES);
         }
-        if (!state_.loop3) {
+        if (!state_.loop3.has_value()) {
             return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, uint64_t(InstructionId::Loop3Param)};
         }
         if (state_.loop3->loopCount == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
+        const uint64_t fullRows = static_cast<uint64_t>(f.nSize) / CUBE_N_ALIGNMENT;
+        const uint64_t tailRows = static_cast<uint64_t>(f.nSize) % CUBE_N_ALIGNMENT;
         MemoryCbdataBuilder builder(context_, {CUBE_L1_BLOCK_BYTES, ACLSAN_DEVICE_SOURCE_FIXPIPE, BLOCK_TYPE_AIC});
         for (uint64_t matrix = 0; matrix < state_.loop3->loopCount; ++matrix) {
             const uint64_t offset = matrix * state_.loop3->srcStride * rowBytes;
@@ -1906,22 +1913,20 @@ private:
                 return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
             }
             const uint64_t base = f.srcAddr + offset;
-            if (f.nSize / CUBE_N_ALIGNMENT &&
+            if (fullRows != 0U &&
                 !Add(
-                    builder, base, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ,
-                    f.nSize / CUBE_N_ALIGNMENT, uint64_t(f.mSize) * rowBytes, uint64_t(f.loopSrtStride) * rowBytes,
-                    CUBE_L1_BLOCK_BYTES)) {
+                    builder, base, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ, fullRows,
+                    uint64_t(f.mSize) * rowBytes, uint64_t(f.loopSrtStride) * rowBytes, CUBE_L1_BLOCK_BYTES)) {
                 return std::move(builder).Build();
             }
-            if (f.nSize % CUBE_N_ALIGNMENT) {
-                const uint64_t tailOffset = uint64_t(f.nSize / CUBE_N_ALIGNMENT) * f.loopSrtStride * rowBytes;
+            if (tailRows != 0U) {
+                const uint64_t tailOffset = fullRows * f.loopSrtStride * rowBytes;
                 if (base > UINT64_MAX - tailOffset) {
                     return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
                 }
                 if (!Add(
                         builder, base + tailOffset, ACLSAN_DEVICE_MEMORY_SPACE_L0C, ACLSAN_DEVICE_MEMORY_ACCESS_READ,
-                        f.mSize, uint64_t(f.nSize % CUBE_N_ALIGNMENT) * FOUR_BIT_DATA, CUBE_ROW_BYTES,
-                        CUBE_L1_BLOCK_BYTES)) {
+                        f.mSize, tailRows * FOUR_BIT_DATA, CUBE_ROW_BYTES, CUBE_L1_BLOCK_BYTES)) {
                     return std::move(builder).Build();
                 }
             }
@@ -1953,7 +1958,7 @@ public:
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         const auto profile = MemoryInstructionProfileFactory::Create(f);
-        if (!profile) {
+        if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const uint64_t padding = uint64_t(f.leftPaddingCount + f.rightPaddingCount) * f.dataBits / BITS_PER_BYTE;
@@ -1977,7 +1982,7 @@ public:
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         const auto profile = MemoryInstructionProfileFactory::Create(f);
-        if (!profile) {
+        if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const bool compact = f.srcStride == f.burstLen;
@@ -1997,7 +2002,7 @@ public:
     MemoryCbdataResult operator()(const NdDmaOutToUbufParamField& f) const noexcept
     {
         const auto profile = MemoryInstructionProfileFactory::Create(f);
-        if (!profile) {
+        if (!profile.has_value()) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         NdAffineDescriptor layout{
@@ -2008,7 +2013,7 @@ public:
         if (std::any_of(layout.counts.begin(), layout.counts.end(), [](uint64_t n) { return n == NO_ACCESS_COUNT; })) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        if (!state_.ndDmaPadCount) {
+        if (!state_.ndDmaPadCount.has_value()) {
             return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, uint64_t(InstructionId::NdDmaPadCount)};
         }
         // paddingMode selects constant/nearest padding values, not whether
@@ -2022,7 +2027,7 @@ public:
             if (layout.counts[i] <= SINGLE_ACCESS_COUNT) {
                 continue;
             }
-            if (!state_.ndDmaLoopStrides[i]) {
+            if (!state_.ndDmaLoopStrides[i].has_value()) {
                 return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, uint64_t(InstructionId::NdDmaLoop0Stride) + i};
             }
             layout.strideBytes[i] = uint64_t(state_.ndDmaLoopStrides[i]->dstStride) * layout.bytes;
@@ -2063,7 +2068,7 @@ public:
                 return {MemoryCbdataStatus::NO_ACCESS, {}};
             }
             const auto ubContext = ContextForUbuf(context_, write && f.subBlockId ? 1U : 0U);
-            if (!ubContext) {
+            if (!ubContext.has_value()) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
             return LinearInContext(
@@ -2084,7 +2089,7 @@ public:
         raw.args[2] = f.config0;
         raw.args[3] = f.config1 & ~(uint64_t(QUANT_PRE_FIELD_MASK) << FIXPIPE_CONFIG_LENGTH_SHIFT);
         const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw);
-        if (!decoded || !std::holds_alternative<FixL0cToOutParamField>(decoded->params)) {
+        if (!decoded.has_value() || !std::holds_alternative<FixL0cToOutParamField>(decoded->params)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         const auto& fix = std::get<FixL0cToOutParamField>(decoded->params);
@@ -2102,13 +2107,13 @@ public:
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         if (f.dualDstCtl != DUAL_DST_MODE_NONE &&
-            (fix.quantPre || fix.reluPre || fix.clipReluPre || fix.splitEnable || fix.nz2dnEnable)) {
+            (fix.quantPre != 0U || fix.reluPre != 0U || fix.clipReluPre != 0U || fix.splitEnable || fix.nz2dnEnable)) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
 
         const auto emit = [&](uint32_t subBlockId, FixL0cToOutParamField target) noexcept {
             const auto ubContext = ContextForUbuf(context_, subBlockId);
-            if (!ubContext) {
+            if (!ubContext.has_value()) {
                 return MemoryCbdataResult{MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
             return MemoryFieldVisitor(*ubContext, state_, ACLSAN_DEVICE_MEMORY_SPACE_UB)(target);
@@ -2161,7 +2166,7 @@ private:
         uint64_t bytes, uint64_t stride) const noexcept
     {
         const size_t d = static_cast<size_t>(direction);
-        if (!state_.dmaLoopSizes[d]) {
+        if (!state_.dmaLoopSizes[d].has_value()) {
             return {
                 MemoryCbdataStatus::MISSING_REGISTER_STATE,
                 {},
@@ -2177,7 +2182,7 @@ private:
             if (counts[i + 1] <= SINGLE_ACCESS_COUNT) {
                 continue;
             }
-            if (!state_.dmaLoopStrides[d][i]) {
+            if (!state_.dmaLoopStrides[d][i].has_value()) {
                 return {
                     MemoryCbdataStatus::MISSING_REGISTER_STATE,
                     {},
@@ -2234,7 +2239,7 @@ void ApplyAtomicConfiguration(MemoryCbdataResult& output, const MemoryRegisterSt
     if (!hasGmWrite) {
         return;
     }
-    if (!state.ctrl) {
+    if (!state.ctrl.has_value()) {
         // 未配置 CTRL 时按普通写检测，保留已还原的精确访存范围。
         // 寄存器依赖仍由翻译层提供给 Initcheck。
         return;

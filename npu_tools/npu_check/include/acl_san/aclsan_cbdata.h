@@ -20,7 +20,7 @@
 // Completed synchronous host-to-device writes only.
 typedef struct AclsanMemoryWriteData {
     AclsanCallbackCommonData common; // Callback metadata and result.
-    void* destination;               // Device destination address.
+    const void* destination;         // Device destination address, recorded without modifying its contents.
     uint64_t bytes;                  // Number of bytes written.
     uint32_t deviceId;               // Target device ID.
     uint32_t reserved;               // Reserved for future use.

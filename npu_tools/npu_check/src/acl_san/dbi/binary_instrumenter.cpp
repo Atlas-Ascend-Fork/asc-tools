@@ -215,10 +215,8 @@ bool BuildRuntimeInstrumentationConfig(
         diagnostic = "unsupported Runtime SoC";
         return false;
     }
-    switch (*version) {
-        case SocVersion::DAV_3510:
-            config.arch = "dav-3510";
-            break;
+    if (*version == SocVersion::DAV_3510) {
+        config.arch = "dav-3510";
     }
     config.toolchainRoot = CannRootFromRuntimeLibrary(runtimeLibrary == nullptr ? "" : runtimeLibrary);
     if (config.toolchainRoot.empty()) {
@@ -379,7 +377,8 @@ RuntimeBinaryInstrumentationResult InstrumentRuntimeBinaryForEntry(
     InstrumentedBinaryConsumer consumer, void* consumerData, const uint64_t* entry, uint32_t traceOffset,
     bool appendParamInfo, bool useCompleteProbeSet) noexcept
 {
-    const auto selectedRunner = [](const DbiRequest& input, void* opaque) {
+    // NOLINTNEXTLINE(readability-non-const-parameter): void* is required by the DbiPipelineRunner callback type.
+    const DbiPipelineRunner selectedRunner = [](const DbiRequest& input, void* opaque) {
         DbiRequest request = input;
         if (opaque != nullptr) {
             request.tilingKey = *static_cast<const uint64_t*>(opaque);

@@ -96,7 +96,7 @@ aclError PrepareTraceLaunch(
     const aclrtPlaceHolderInfo* placeholders, size_t placeholderCount, TraceArgumentMode argumentMode,
     PreparedTraceLaunch& prepared) noexcept;
 void CompleteTraceLaunch(
-    PreparedTraceLaunch&& prepared, aclrtFuncHandle function, aclrtStream stream, aclError launchResult) noexcept;
+    PreparedTraceLaunch&& prepared, const void* function, const void* stream, aclError launchResult) noexcept;
 aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept;
 TraceCollectionResult CollectTraceStream(aclrtStream stream, bool executionComplete = true) noexcept;
 void ResetTraceRuntimeState() noexcept;

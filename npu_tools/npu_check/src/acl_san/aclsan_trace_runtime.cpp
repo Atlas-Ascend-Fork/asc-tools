@@ -42,8 +42,8 @@ namespace {
 
 struct PendingTrace {
     uint64_t launchId = 0;
-    aclrtFuncHandle function = nullptr;
-    aclrtStream stream = nullptr;
+    const void* function = nullptr;
+    const void* stream = nullptr;
     void* deviceBuffer = nullptr;
     uint32_t blockCount = 0;
     uint32_t physicalCoreCount = 0;
@@ -370,6 +370,7 @@ aclError ResolveLaunchContext(PreparedTraceLaunch& prepared) noexcept
 void DispatchTraceRecords(
     const std::vector<ParsedTraceRecord>& records, const aclsan::DeviceInstructionDecoder& decoder,
     const std::vector<PreparedTraceLaunch::HostInput>* internalInputs,
+    // NOLINTNEXTLINE(readability-non-const-parameter): registerState aliases and updates the retained state.
     dav3510::Dav3510RegisterStateManager* retainedRegisterState,
     const std::vector<InternalMemoryRange>* readOnlyBinaryRanges) noexcept
 {
@@ -703,7 +704,7 @@ aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept
 }
 
 void CompleteTraceLaunch(
-    PreparedTraceLaunch&& prepared, aclrtFuncHandle function, aclrtStream stream, aclError launchResult) noexcept
+    PreparedTraceLaunch&& prepared, const void* function, const void* stream, aclError launchResult) noexcept
 {
     if (!prepared.instrumented || prepared.deviceBuffer == nullptr) {
         return;

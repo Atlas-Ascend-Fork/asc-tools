@@ -176,7 +176,7 @@ struct DeferredFunction {
 
 std::mutex g_deferredMutex;
 std::map<aclrtBinHandle, std::shared_ptr<DeferredBinary>> g_deferredBinaries;
-std::map<aclrtFuncHandle, DeferredFunction> g_deferredFunctions;
+std::map<const void*, DeferredFunction> g_deferredFunctions;
 std::list<std::shared_ptr<DeferredBinary>> g_retiredBinaries;
 
 bool IsDeferredLoad(const aclrtBinaryLoadOptions* options)
@@ -212,8 +212,7 @@ std::shared_ptr<DeferredBinary> CopyDeferredBinary(
     return source;
 }
 
-void RecordDeferredFunction(
-    aclrtBinHandle binary, aclrtFuncHandle function, bool byEntry, uint64_t entry, const char* name)
+void RecordDeferredFunction(aclrtBinHandle binary, const void* function, bool byEntry, uint64_t entry, const char* name)
 {
     std::lock_guard<std::mutex> lock(g_deferredMutex);
     const auto it = g_deferredBinaries.find(binary);
@@ -305,7 +304,7 @@ AclsanLaunchData MakeLaunchData(
     uint64_t launchId, aclrtFuncHandle function, aclrtStream stream, const std::string& functionName,
     uint32_t numBlocks, aclError launchResult, const char* apiName) noexcept
 {
-    const char* name = functionName.empty() ? nullptr : functionName.c_str();
+    const char* name = functionName.empty() ? nullptr : functionName.data();
     return {
         MakeCallbackCommonData(apiName, launchResult, static_cast<uint32_t>(sizeof(AclsanLaunchData))),
         launchId,
@@ -421,7 +420,8 @@ aclError aclrtMallocWithCfgHook(void** ptr, size_t bytes, aclrtMemMallocPolicy p
 }
 
 void ReportHostWrite(
-    const char* apiName, aclError result, void* destination, uint64_t bytes, bool hasDevice, uint32_t deviceId) noexcept
+    const char* apiName, aclError result, const void* destination, uint64_t bytes, bool hasDevice,
+    uint32_t deviceId) noexcept
 {
     // Missing device identity must reach the checker as an incomplete operation,
     // rather than making a completed write look like uninitialized memory.
