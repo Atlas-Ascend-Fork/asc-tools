@@ -31,7 +31,6 @@ std::string ErrnoMessage(const char* operation) { return std::string(operation) 
 constexpr int REQUIRED_SOCKET_BUFFER = static_cast<int>(MAX_FRAME_SIZE);
 
 // 校验并尽量抬高收发缓冲。
-//
 // setsockopt 的返回值在这里不可靠：内核会把请求值静默截断到 net.core.wmem_max /
 // rmem_max，同时仍然返回成功。因此真正的判据是随后的回读。另外内核存的是请求值的
 // 两倍（含记账开销），所以只校验下界，不做相等比较。
@@ -228,7 +227,7 @@ IoStatus ReceiveFrame(int fd, Frame& frame, DeadlineMs deadline, std::string& er
             // 将来若新增任何零长消息（例如心跳空包），这条判定立即失效。
             return IoStatus::CLOSED;
         }
-        if ((message.msg_flags & MSG_TRUNC) != 0) {
+        if ((static_cast<unsigned int>(message.msg_flags) & static_cast<unsigned int>(MSG_TRUNC)) != 0U) {
             // SOCK_SEQPACKET 在接收缓冲小于数据报时会静默丢弃超出部分，返回值看起来
             // 就是一个合法的短帧。不检查这个标志，截断的帧会被当成正常帧解码。
             error = "truncated frame";

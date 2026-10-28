@@ -274,8 +274,14 @@ AclsanStatus AclsanSubscriber::UpdateCallbackConfiguration(const CallbackKey& ke
 AclsanStatus AclsanSubscriber::Subscribe(
     AclsanSubscriberHandle* subscriber, AclsanCallbackFunc callback, void* userdata)
 {
-    ACLSAN_CHECK_NULLPTR("aclsanSubscribe", subscriber);
-    ACLSAN_CHECK_NULLPTR("aclsanSubscribe", callback);
+    if (subscriber == nullptr) {
+        ASCTOOL_ERROR("%s: %s is nullptr", "aclsanSubscribe", "subscriber");
+        return ACLSAN_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    if (callback == nullptr) {
+        ASCTOOL_ERROR("%s: %s is nullptr", "aclsanSubscribe", "callback");
+        return ACLSAN_STATUS_ERROR_INVALID_PARAMETER;
+    }
 
     if (activeHandle_ != nullptr) {
         ASCTOOL_ERROR("aclsanSubscribe: subscriber already exists");
@@ -362,7 +368,10 @@ AclsanStatus AclsanSubscriber::EnableDomain(
 AclsanStatus AclsanSubscriber::GetCallbackState(
     AclsanSubscriberHandle subscriber, AclsanCallbackDomain domain, uint32_t cbid, uint32_t* enabled) const noexcept
 {
-    ACLSAN_CHECK_NULLPTR("aclsanGetCallbackState", enabled);
+    if (enabled == nullptr) {
+        ASCTOOL_ERROR("%s: %s is nullptr", "aclsanGetCallbackState", "enabled");
+        return ACLSAN_STATUS_ERROR_INVALID_PARAMETER;
+    }
     ACLSAN_CHECK_ACTIVE_SUBSCRIBER("aclsanGetCallbackState", subscriber);
 
     const AclsanCallbackId id = static_cast<AclsanCallbackId>(cbid);
@@ -444,7 +453,10 @@ extern "C" AclsanStatus aclsanGetCallbackState(
 
 extern "C" AclsanStatus aclsanGetDeviceCallStack(uint64_t pc, AclsanDeviceCallStack* result)
 {
-    ACLSAN_CHECK_NULLPTR("aclsanGetDeviceCallStack", result);
+    if (result == nullptr) {
+        ASCTOOL_ERROR("%s: %s is nullptr", "aclsanGetDeviceCallStack", "result");
+        return ACLSAN_STATUS_ERROR_INVALID_PARAMETER;
+    }
     *result = {};
     result->pc = pc;
 

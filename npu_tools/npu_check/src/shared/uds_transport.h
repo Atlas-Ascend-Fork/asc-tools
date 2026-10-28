@@ -15,8 +15,6 @@
 
 #include <cstdint>
 #include <limits>
-// 调用方需要 POLLIN / POLLOUT 来填 WaitFor 的 events 参数。
-#include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <sys/un.h>

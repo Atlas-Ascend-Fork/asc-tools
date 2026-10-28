@@ -44,7 +44,10 @@ void DlogRecordStub(int32_t, int32_t level, const char* format, ...)
 
 AclsanStatus ValidatePointer(const void* value)
 {
-    ACLSAN_CHECK_NULLPTR("TestApi", value);
+    if (value == nullptr) {
+        ASCTOOL_ERROR("%s: %s is nullptr", "TestApi", "value");
+        return ACLSAN_STATUS_ERROR_INVALID_PARAMETER;
+    }
     return ACLSAN_STATUS_SUCCESS;
 }
 

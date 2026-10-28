@@ -1247,7 +1247,10 @@ namespace aclsan {
 
 AclsanStatus ResolveActiveDeviceCallStack(uint64_t pc, device_runtime::CallStackResult* result) noexcept
 {
-    ACLSAN_CHECK_NULLPTR("ResolveActiveDeviceCallStack", result);
+    if (result == nullptr) {
+        ASCTOOL_ERROR("%s: %s is nullptr", "ResolveActiveDeviceCallStack", "result");
+        return ACLSAN_STATUS_ERROR_INVALID_PARAMETER;
+    }
     *result = ResolveTraceDeviceCallStack(pc);
     return ACLSAN_STATUS_SUCCESS;
 }

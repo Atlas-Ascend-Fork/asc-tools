@@ -68,12 +68,4 @@ inline constexpr int NPU_CHECK_LOG_LEVEL_ENABLED = 1;
         }                                                            \
     } while (false)
 
-#define ACLSAN_CHECK_NULLPTR(apiName, argument)                       \
-    do {                                                              \
-        if ((argument) == nullptr) {                                  \
-            ASCTOOL_ERROR("%s: %s is nullptr", (apiName), #argument); \
-            return ACLSAN_STATUS_ERROR_INVALID_PARAMETER;             \
-        }                                                             \
-    } while (false)
-
 #endif // NPU_TOOLS_NPU_CHECK_SRC_SHARED_NPU_TOOL_LOG_H

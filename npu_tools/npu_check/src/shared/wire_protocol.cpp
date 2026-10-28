@@ -120,7 +120,7 @@ public:
         if (!GetU32(length) || length > maxSize || !Need(length)) {
             return false;
         }
-        value.assign(reinterpret_cast<const char*>(data_ + offset_), length);
+        value.assign(data_ + offset_, data_ + offset_ + length);
         offset_ += length;
         return true;
     }
@@ -580,14 +580,9 @@ const OptionRegistryEntry* LookupOptionById(OptionId optionId)
 
 bool IsKnownTool(uint16_t toolId)
 {
-    switch (static_cast<ToolId>(toolId)) {
-        case ToolId::MEMCHECK:
-        case ToolId::SYNCCHECK:
-        case ToolId::INITCHECK:
-        case ToolId::RACECHECK:
-            return true;
-    }
-    return false;
+    const auto tool = static_cast<ToolId>(toolId);
+    return tool == ToolId::MEMCHECK || tool == ToolId::SYNCCHECK || tool == ToolId::INITCHECK ||
+           tool == ToolId::RACECHECK;
 }
 
 } // namespace npucheck::ipc

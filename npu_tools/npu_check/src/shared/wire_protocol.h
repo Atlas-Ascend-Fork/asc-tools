@@ -31,7 +31,6 @@ constexpr size_t MAX_FRAME_SIZE = WIRE_HEADER_SIZE + MAX_PAYLOAD_SIZE; // 65572
 constexpr size_t MAX_RESULT_BYTES = 64u * 1024u * 1024u;
 
 // 帧头 flags 的位定义。
-//
 // bit 0-2 是 must-understand 的语义位，bit 3-7 保留且必须为 0（接收端发现非零即协议
 // 错误），bit 8-15 保留给未来 minor 新增的 must-ignore 标志（接收端必须忽略无法识别
 // 的置位）。按位区分这两类，使得 minor 版本可以在不破坏旧实现的前提下新增标志。
@@ -88,7 +87,6 @@ struct Frame {
 };
 
 // 协商 minor 取双方较小值。
-//
 // 注意这里"不拒绝"比"取较小值"更重要：同一 major 下 Hello 的基础格式保持稳定，因此
 // 收到比自己高的 minor 绝不能判为错误。一旦拒绝，新版本就永远无法与旧版本互通，minor
 // 这个字段也就失去了存在意义 —— 它的全部用途就是让两端在不同版本下仍能谈拢一个共同
@@ -217,7 +215,6 @@ std::vector<uint8_t> EncodeHello(const HelloPayload& hello);
 bool DecodeHello(const std::vector<uint8_t>& payload, HelloPayload& hello, std::string& error);
 
 // 校验请求里的每个选项都落在 negotiatedMinor 的覆盖范围内。
-//
 // 两端都要查，因为任何一端都可能是较旧的实现：CLI 在**发送 Configure 之前**查，
 // 避免把对端无法理解的选项送上线路；Server 解码后再查一遍，因为它不能假设对端守规矩。
 bool ValidateConfigureMinor(const ConfigureRequest& request, uint16_t negotiatedMinor, std::string& error);
