@@ -30,7 +30,7 @@ namespace npucompute::cli {
 namespace {
 constexpr std::string_view kHexPrefix = "0x";
 constexpr unsigned kHexBase = 16;
-constexpr int kDecimalBase = 10;
+constexpr unsigned kDecimalBase = 10;
 constexpr int kAddressColumn = sqlite::kFirstResultColumn;
 void Require(bool condition, const char* message)
 {
@@ -46,15 +46,15 @@ bool ParsePc(const std::string& text, std::uint64_t& pc)
     pc = 0;
     for (std::size_t index = kHexPrefix.size(); index < text.size(); ++index) {
         const auto c = text[index];
-        const auto digit = c >= '0' && c <= '9' ? c - '0' :
-                           c >= 'a' && c <= 'f' ? c - 'a' + kDecimalBase :
-                           c >= 'A' && c <= 'F' ? c - 'A' + kDecimalBase :
-                                                  -1;
-        if (digit < 0 ||
-            pc > (std::numeric_limits<std::uint64_t>::max() - static_cast<std::uint64_t>(digit)) / kHexBase) {
+        const unsigned digit =
+            c >= '0' && c <= '9' ? static_cast<unsigned>(c) - static_cast<unsigned>('0') :
+            c >= 'a' && c <= 'f' ? static_cast<unsigned>(c) - static_cast<unsigned>('a') + kDecimalBase :
+            c >= 'A' && c <= 'F' ? static_cast<unsigned>(c) - static_cast<unsigned>('A') + kDecimalBase :
+                                   kHexBase;
+        if (digit >= kHexBase || pc > (std::numeric_limits<std::uint64_t>::max() - digit) / kHexBase) {
             return false;
         }
-        pc = pc * kHexBase + static_cast<std::uint64_t>(digit);
+        pc = pc * kHexBase + digit;
     }
     return true;
 }

@@ -74,6 +74,8 @@ private:
     };
     template <typename Function, typename Key>
     aclptiResult ResolveBinaryFunction(aclrtApiId id, aclrtBinHandle binary, Key key, aclrtFuncHandle function);
+    static bool BuildInstrumentedImage(const void* data, std::size_t size, bool pmSampling, Binary& state);
+    aclptiResult EnsureSamplingBinary(aclrtBinHandle binary);
     aclptiResult RegisterInstrumentedBinary(
         const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary,
         bool pmSampling = false);

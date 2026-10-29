@@ -29,6 +29,7 @@
 #include <iterator>
 #include <locale>
 #include <new>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -101,6 +102,102 @@ bool RecordInvalidItem(
     return true;
 }
 
+std::optional<bool> ProcessInternalItem(
+    const boost::filesystem::path& path, const std::string& name, const boost::filesystem::file_status& status,
+    ProcessingContext& context, std::string* error)
+{
+    if (name == kHardwareInfoLockName) {
+        if (!boost::filesystem::is_regular_file(status)) {
+            return RecordInvalidItem("HardwareInfo lock path is not a regular file", path, context, error);
+        } else if (context.mode == CollectionDirectoryMode::Retain) {
+            context.discarded.push_back(path);
+        }
+        return true;
+    }
+    if (name == kStagingDirectoryName) {
+        if (context.mode == CollectionDirectoryMode::Retain) {
+            context.discarded.push_back(path);
+            AddIssue(context, "unfinished internal collection item removed: " + path.string());
+        }
+        return true;
+    }
+    if (name == kHardwareInfoName && !boost::filesystem::is_regular_file(status)) {
+        return RecordInvalidItem("HardwareInfo path is not a regular file", path, context, error);
+    }
+    if (IsTemporaryName(name)) {
+        if (context.mode == CollectionDirectoryMode::Retain) {
+            context.discarded.push_back(path);
+            AddIssue(context, "unfinished internal collection item removed: " + path.string());
+        } else {
+            AddIssue(context, "temporary collection item remains: " + path.string());
+        }
+        return true;
+    }
+
+    return std::nullopt;
+}
+
+bool CollectDirectoryItem(
+    const boost::filesystem::path& path, std::vector<DirectoryItem>* items, ProcessingContext& context,
+    std::string* error)
+{
+    const std::string name = path.filename().string();
+    boost::system::error_code status_error;
+    const boost::filesystem::file_status status = boost::filesystem::symlink_status(path, status_error);
+    if (status_error) {
+        return RecordInvalidItem("inspect collection item failed: " + status_error.message(), path, context, error);
+    }
+    if (boost::filesystem::is_symlink(status)) {
+        return RecordInvalidItem("symbolic link is not allowed in collection directory", path, context, error);
+    }
+    const auto internal = ProcessInternalItem(path, name, status, context, error);
+    if (internal) {
+        return *internal;
+    }
+
+    DirectoryItem item;
+    item.path = path;
+    if (boost::filesystem::is_directory(status)) {
+        item.is_directory = true;
+        item.stored_name = name + ".npu.rep";
+    } else if (boost::filesystem::is_regular_file(status)) {
+        item.stored_name = name;
+    } else {
+        return RecordInvalidItem("unsupported collection directory item", path, context, error);
+    }
+
+    // Names are constrained by the rep format only while packing. Raw
+    // output keeps the original names and therefore does not need this
+    // encoding-specific conflict check.
+    if (context.mode == CollectionDirectoryMode::Pack &&
+        (item.stored_name.size() >= NPU_REP_FILE_NAME_SIZE || item.stored_name.find('\\') != std::string::npos ||
+         name == kCollectionStatusName)) {
+        AddIssue(context, "invalid or reserved collection name: " + path.string());
+        return true;
+    }
+    items->push_back(std::move(item));
+    return true;
+}
+
+void RemoveStoredNameConflicts(std::vector<DirectoryItem>* items, ProcessingContext& context)
+{
+    std::unordered_set<std::string> stored_names;
+    stored_names.reserve(items->size());
+    std::unordered_set<std::string> conflicts;
+    for (const DirectoryItem& item : *items) {
+        if (!stored_names.insert(item.stored_name).second) {
+            conflicts.insert(item.stored_name);
+            AddIssue(context, "collection stored name conflict: " + item.stored_name);
+        }
+    }
+    items->erase(
+        std::remove_if(
+            items->begin(), items->end(),
+            [&conflicts](const DirectoryItem& item) { return conflicts.count(item.stored_name) != 0; }),
+        items->end());
+    std::sort(items->begin(), items->end(), StoredNameLess);
+}
+
 bool CollectDirectoryItems(
     const boost::filesystem::path& directory, std::vector<DirectoryItem>* items, ProcessingContext& context,
     std::string* error)
@@ -116,79 +213,9 @@ bool CollectDirectoryItems(
         if (iterator_error) {
             break;
         }
-        const boost::filesystem::path path = iterator->path();
-        const std::string name = path.filename().string();
-        boost::system::error_code status_error;
-        const boost::filesystem::file_status status = boost::filesystem::symlink_status(path, status_error);
-        if (status_error) {
-            if (!RecordInvalidItem("inspect collection item failed: " + status_error.message(), path, context, error)) {
-                return false;
-            }
-            continue;
+        if (!CollectDirectoryItem(iterator->path(), items, context, error)) {
+            return false;
         }
-        if (boost::filesystem::is_symlink(status)) {
-            if (!RecordInvalidItem("symbolic link is not allowed in collection directory", path, context, error)) {
-                return false;
-            }
-            continue;
-        }
-        if (name == kHardwareInfoLockName) {
-            if (!boost::filesystem::is_regular_file(status)) {
-                if (!RecordInvalidItem("HardwareInfo lock path is not a regular file", path, context, error)) {
-                    return false;
-                }
-            } else if (context.mode == CollectionDirectoryMode::Retain) {
-                context.discarded.push_back(path);
-            }
-            continue;
-        }
-        if (name == kStagingDirectoryName) {
-            if (context.mode == CollectionDirectoryMode::Retain) {
-                context.discarded.push_back(path);
-                AddIssue(context, "unfinished internal collection item removed: " + path.string());
-            }
-            continue;
-        }
-        if (name == kHardwareInfoName && !boost::filesystem::is_regular_file(status)) {
-            if (!RecordInvalidItem("HardwareInfo path is not a regular file", path, context, error)) {
-                return false;
-            }
-            continue;
-        }
-        if (IsTemporaryName(name)) {
-            if (context.mode == CollectionDirectoryMode::Retain) {
-                context.discarded.push_back(path);
-                AddIssue(context, "unfinished internal collection item removed: " + path.string());
-            } else {
-                AddIssue(context, "temporary collection item remains: " + path.string());
-            }
-            continue;
-        }
-
-        DirectoryItem item;
-        item.path = path;
-        if (boost::filesystem::is_directory(status)) {
-            item.is_directory = true;
-            item.stored_name = name + ".npu.rep";
-        } else if (boost::filesystem::is_regular_file(status)) {
-            item.stored_name = name;
-        } else {
-            if (!RecordInvalidItem("unsupported collection directory item", path, context, error)) {
-                return false;
-            }
-            continue;
-        }
-
-        // Names are constrained by the rep format only while packing. Raw
-        // output keeps the original names and therefore does not need this
-        // encoding-specific conflict check.
-        if (context.mode == CollectionDirectoryMode::Pack &&
-            (item.stored_name.size() >= NPU_REP_FILE_NAME_SIZE || item.stored_name.find('\\') != std::string::npos ||
-             name == kCollectionStatusName)) {
-            AddIssue(context, "invalid or reserved collection name: " + path.string());
-            continue;
-        }
-        items->push_back(std::move(item));
     }
     if (iterator_error) {
         if (context.mode == CollectionDirectoryMode::Retain) {
@@ -199,21 +226,7 @@ bool CollectDirectoryItems(
     }
 
     if (context.mode == CollectionDirectoryMode::Pack) {
-        std::unordered_set<std::string> stored_names;
-        stored_names.reserve(items->size());
-        std::unordered_set<std::string> conflicts;
-        for (const DirectoryItem& item : *items) {
-            if (!stored_names.insert(item.stored_name).second) {
-                conflicts.insert(item.stored_name);
-                AddIssue(context, "collection stored name conflict: " + item.stored_name);
-            }
-        }
-        items->erase(
-            std::remove_if(
-                items->begin(), items->end(),
-                [&](const DirectoryItem& item) { return conflicts.count(item.stored_name) != 0; }),
-            items->end());
-        std::sort(items->begin(), items->end(), StoredNameLess);
+        RemoveStoredNameConflicts(items, context);
     }
     return true;
 }
@@ -244,6 +257,50 @@ bool AddCollectionStatus(const std::vector<std::string>& issues, std::vector<Rep
 
 bool ProcessDirectoryInternal(
     const boost::filesystem::path& directory, ProcessingContext& context, std::vector<uint8_t>* encoded,
+    std::string* error, bool root, std::size_t depth);
+
+bool ProcessDirectoryItem(
+    const DirectoryItem& item, ProcessingContext& context, std::vector<RepEntry>& entries, std::string* error,
+    std::size_t depth)
+{
+    if (item.is_directory) {
+        if (context.mode == CollectionDirectoryMode::Retain) {
+            return ProcessDirectoryInternal(item.path, context, nullptr, error, false, depth + 1U);
+        }
+
+        RepEntry entry;
+        entry.file_name = item.stored_name;
+        entry.file_type = NpuRepFileType::NpuRep;
+        if (!ProcessDirectoryInternal(item.path, context, &entry.payload, error, false, depth + 1U)) {
+            return false;
+        }
+        if (entry.payload.empty()) {
+            return true;
+        }
+        entries.push_back(std::move(entry));
+        return true;
+    }
+
+    NpuRepFileType type;
+    std::vector<uint8_t> payload;
+    std::string item_error;
+    if (!ProcessCollectionFile(
+            item.path, &type, context.mode == CollectionDirectoryMode::Pack ? &payload : nullptr, &item_error)) {
+        if (context.mode == CollectionDirectoryMode::Retain) {
+            context.discarded.push_back(item.path);
+        }
+        AddIssue(context, item_error);
+        return true;
+    }
+    ++context.file_count;
+    if (context.mode == CollectionDirectoryMode::Pack) {
+        entries.push_back({item.stored_name, type, std::move(payload)});
+    }
+    return true;
+}
+
+bool ProcessDirectoryInternal(
+    const boost::filesystem::path& directory, ProcessingContext& context, std::vector<uint8_t>* encoded,
     std::string* error, bool root, std::size_t depth)
 {
     if (context.mode == CollectionDirectoryMode::Pack && depth > NPU_REP_MAX_DEPTH) {
@@ -263,40 +320,8 @@ bool ProcessDirectoryInternal(
     std::vector<RepEntry> entries;
     entries.reserve(items.size());
     for (const DirectoryItem& item : items) {
-        if (item.is_directory) {
-            if (context.mode == CollectionDirectoryMode::Retain) {
-                if (!ProcessDirectoryInternal(item.path, context, nullptr, error, false, depth + 1U)) {
-                    return false;
-                }
-                continue;
-            }
-
-            RepEntry entry;
-            entry.file_name = item.stored_name;
-            entry.file_type = NpuRepFileType::NpuRep;
-            if (!ProcessDirectoryInternal(item.path, context, &entry.payload, error, false, depth + 1U)) {
-                return false;
-            }
-            if (entry.payload.empty()) {
-                continue;
-            }
-            entries.push_back(std::move(entry));
-            continue;
-        }
-
-        NpuRepFileType type;
-        std::vector<uint8_t> payload;
-        if (!ProcessCollectionFile(
-                item.path, &type, context.mode == CollectionDirectoryMode::Pack ? &payload : nullptr, &item_error)) {
-            if (context.mode == CollectionDirectoryMode::Retain) {
-                context.discarded.push_back(item.path);
-            }
-            AddIssue(context, item_error);
-            continue;
-        }
-        ++context.file_count;
-        if (context.mode == CollectionDirectoryMode::Pack) {
-            entries.push_back({item.stored_name, type, std::move(payload)});
+        if (!ProcessDirectoryItem(item, context, entries, error, depth)) {
+            return false;
         }
     }
 

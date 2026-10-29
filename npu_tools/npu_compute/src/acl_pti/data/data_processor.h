@@ -109,6 +109,9 @@ private:
 
     aclptiResult CheckActive(uint64_t replayId) const;
     aclptiResult FinishActive(aclptiResult status);
+    aclptiResult ReportRawDataFailure(const MsprofRawData* raw, size_t recordSize, aclptiResult status, bool primary);
+    aclptiResult ValidateRawData(const MsprofRawData* raw, size_t recordSize, bool& primary);
+    aclptiResult ReceiveFixedRecords(const MsprofRawData& raw, size_t recordSize, bool primary);
     aclptiResult ReceiveDataChunk(const MsprofRawData& raw, std::optional<aclptiBiuCoreKind> core);
     bool Submit(DataItem item);
     void Run();

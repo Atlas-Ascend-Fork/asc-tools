@@ -33,6 +33,7 @@
 namespace npucompute {
 
 class ArtifactSink;
+class DynamicHardwareDeviceApi;
 
 inline constexpr int kInitializeFailed = -1;
 
@@ -60,6 +61,11 @@ private:
 
     void DisableHardwareCallbacks() noexcept;
     aclptiResult ProcessPmuData(std::shared_ptr<const aclptiProfilingDataResult> result);
+    KernelMetadata CollectReportMetadata(const ReportConfig& csvConfig, bool frequencyOverride);
+    void UpdateCollectionStats(const aclptiProfilingDataResult& result);
+    aclptiResult ProcessPipelineReplay(
+        std::uint64_t replayId, const aclptiPipelineData& replay, DynamicHardwareDeviceApi& deviceApi);
+    aclptiResult ProcessPipelineData(const aclptiProfilingDataResult& result, const ReportConfig& config);
     aclptiResult PublishPipelineArtifacts();
     aclptiResult ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix);
 

@@ -98,7 +98,7 @@ int CollectionSession::Run(
     bool terminated = false;
     auto killDeadline = ipc::Deadline::max();
     while (!child.Poll(&appResult, &appError)) {
-        if (child.PendingSignal() != 0 && !signal) {
+        if (child.PendingSignal() != 0 && signal == 0) {
             signal = child.PendingSignal();
             cancelled = true;
             // Wait for the communication owner to attempt INTERRUPT. A stuck
@@ -125,14 +125,14 @@ int CollectionSession::Run(
     // Reaping the child does not end the session: retain signal handling while
     // the receiver finishes committing artifacts and checking the final close.
     while (!done) {
-        if (child.PendingSignal() != 0 && !signal) {
+        if (child.PendingSignal() != 0 && signal == 0) {
             signal = child.PendingSignal();
             cancelled = true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(RECEIVER_DRAIN_INTERVAL_MS));
     }
     receiver.join();
-    if (!signal) {
+    if (signal == 0) {
         signal = child.PendingSignal();
     }
     outcome_.artifacts = client.ArtifactCount();
@@ -140,7 +140,7 @@ int CollectionSession::Run(
     outcome_.childExit = child.ExitDescription();
     outcome_.outcome =
         (failureDomain == "BOOTSTRAP" || failureDomain == "INTERNAL") ? "infra_failed" : "collection_failed";
-    if (signal) {
+    if (signal != 0) {
         outcome_.outcome = "app_failed";
         outcome_.childExit = "signal:" + std::to_string(signal);
         *error = "collection interrupted by signal " + std::to_string(signal);

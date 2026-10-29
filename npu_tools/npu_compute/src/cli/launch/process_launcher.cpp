@@ -206,16 +206,18 @@ bool WaitForChild(pid_t child_pid, int* status, std::string* error)
     }
 }
 
-int ExitCodeFromStatus(int status, std::string* error)
+int TerminationSignal(unsigned status) { return WIFSIGNALED(status) != 0 ? static_cast<int>(WTERMSIG(status)) : 0; }
+
+int ExitCodeFromStatus(unsigned status, std::string* error)
 {
-    if (WIFEXITED(status)) {
+    if (WIFEXITED(status) != 0) {
         const int exit_code = WEXITSTATUS(status);
         if (exit_code != 0) {
             SetError("APP exited with status " + std::to_string(exit_code), error);
         }
         return exit_code;
     }
-    if (WIFSIGNALED(status)) {
+    if (WIFSIGNALED(status) != 0) {
         const int signal_number = WTERMSIG(status);
         const char* description = ::strsignal(signal_number);
         SetError(
@@ -415,8 +417,8 @@ bool ProcessHandle::Poll(int* exitCode, std::string* error)
             impl_->exitCode = kInternalErrorExitCode;
             impl_->exitError = ErrnoMessage("waitpid", errno);
         } else if (impl_->exitError.empty()) {
-            impl_->termSignal = WIFSIGNALED(status) ? WTERMSIG(status) : 0;
-            impl_->exitCode = ExitCodeFromStatus(status, &impl_->exitError);
+            impl_->termSignal = TerminationSignal(static_cast<unsigned>(status));
+            impl_->exitCode = ExitCodeFromStatus(static_cast<unsigned>(status), &impl_->exitError);
         }
         impl_->reaped = true;
         g_appProcessGroup = 0;
@@ -435,8 +437,8 @@ int ProcessHandle::Wait(std::string* error)
             return kInternalErrorExitCode;
         }
         if (impl_->exitError.empty()) {
-            impl_->termSignal = WIFSIGNALED(status) ? WTERMSIG(status) : 0;
-            impl_->exitCode = ExitCodeFromStatus(status, &impl_->exitError);
+            impl_->termSignal = TerminationSignal(static_cast<unsigned>(status));
+            impl_->exitCode = ExitCodeFromStatus(static_cast<unsigned>(status), &impl_->exitError);
         }
         impl_->reaped = true;
         g_appProcessGroup = 0;

@@ -146,6 +146,38 @@ struct IdentityHash {
     }
 };
 
+std::optional<double> ImbalanceCycles(
+    const aclptiBlockKey& key, const aclptiPmuDataRow& row, const ReportConfig& config)
+{
+    std::optional<double> cycles;
+    bool invalid = false;
+    const auto add = [&cycles, &invalid](const auto& data) {
+        if (data.overflow || !std::isfinite(data.totalCycles) || data.totalCycles <= 0 ||
+            (cycles && *cycles != data.totalCycles)) {
+            invalid = true;
+        } else {
+            cycles = data.totalCycles;
+        }
+    };
+    if (row.coreData.empty()) {
+        if (row.coreType == key.coreType) {
+            add(row);
+        }
+    } else {
+        for (const auto& core : row.coreData) {
+            if (core.coreType == key.coreType) {
+                add(core);
+            }
+        }
+    }
+    const double frequency = key.coreType == ACLPTI_CORE_TYPE_AIC ? config.aicFrequencyMhz : config.aivFrequencyMhz;
+    std::optional<double> validCycles;
+    if (!invalid && cycles && std::isfinite(frequency) && frequency > 0) {
+        validCycles = cycles;
+    }
+    return validCycles;
+}
+
 std::map<aclptiCoreType, double> Ph06Imbalance(const aclptiProfilingDataResult& result, const ReportConfig& config)
 {
     // The logical identity excludes the physical core: replay may have moved an instance.
@@ -154,32 +186,7 @@ std::map<aclptiCoreType, double> Ph06Imbalance(const aclptiProfilingDataResult& 
         if (key.coreType != ACLPTI_CORE_TYPE_AIC && key.coreType != ACLPTI_CORE_TYPE_AIV) {
             continue;
         }
-        std::optional<double> cycles;
-        bool invalid = false;
-        const auto add = [&](const auto& data) {
-            if (data.overflow || !std::isfinite(data.totalCycles) || data.totalCycles <= 0 ||
-                (cycles && *cycles != data.totalCycles)) {
-                invalid = true;
-            } else {
-                cycles = data.totalCycles;
-            }
-        };
-        if (row.coreData.empty()) {
-            if (row.coreType == key.coreType) {
-                add(row);
-            }
-        } else {
-            for (const auto& core : row.coreData) {
-                if (core.coreType == key.coreType) {
-                    add(core);
-                }
-            }
-        }
-        const double frequency = key.coreType == ACLPTI_CORE_TYPE_AIC ? config.aicFrequencyMhz : config.aivFrequencyMhz;
-        std::optional<double> validCycles;
-        if (!invalid && cycles && std::isfinite(frequency) && frequency > 0) {
-            validCycles = cycles;
-        }
+        const auto validCycles = ImbalanceCycles(key, row, config);
         if (!validCycles) {
             ASCTOOL_DEBUG(
                 "[npu-compute] PH06 %s block=%u role=%u invalid_duration_or_frequency", CoreName(key.coreType).c_str(),

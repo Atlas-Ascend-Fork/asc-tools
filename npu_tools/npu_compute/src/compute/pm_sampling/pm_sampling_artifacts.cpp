@@ -164,10 +164,11 @@ std::uint64_t Address(const json::value& value)
     std::uint64_t pc = 0;
     for (std::size_t index = kHexPrefix.size(); index < text.size(); ++index) {
         const auto c = text[index];
-        const unsigned digit = c >= '0' && c <= '9' ? c - '0' :
-                               c >= 'a' && c <= 'f' ? c - 'a' + kDecimalBase :
-                               c >= 'A' && c <= 'F' ? c - 'A' + kDecimalBase :
-                                                      kHexBase;
+        const unsigned digit =
+            c >= '0' && c <= '9' ? static_cast<unsigned>(c) - static_cast<unsigned>('0') :
+            c >= 'a' && c <= 'f' ? static_cast<unsigned>(c) - static_cast<unsigned>('a') + kDecimalBase :
+            c >= 'A' && c <= 'F' ? static_cast<unsigned>(c) - static_cast<unsigned>('A') + kDecimalBase :
+                                   kHexBase;
         Require(
             digit < kHexBase && pc <= (std::numeric_limits<std::uint64_t>::max() - digit) / kHexBase,
             "invalid LLVM Address");
@@ -198,7 +199,7 @@ json::array Normalize(const std::string& text)
             Require(records.empty(), "unexpected LLVM JSON array in object stream");
             records = std::move(value.as_array());
             offset += consumed;
-            while (offset < text.size() && std::isspace(static_cast<unsigned char>(text[offset]))) {
+            while (offset < text.size() && std::isspace(static_cast<unsigned char>(text[offset])) != 0) {
                 ++offset;
             }
             Require(offset == text.size(), "trailing LLVM JSON after array");

@@ -33,7 +33,7 @@ constexpr uint64_t BYTES_PER_MB = 1024ULL * 1024ULL;
 constexpr uint64_t BYTES_PER_GB = BYTES_PER_MB * 1024ULL;
 constexpr uint32_t MAXIMUM_CPU_ID = 1024U * 1024U;
 
-void Diagnose(DiagnosticSink* diagnostics, const std::string& message)
+void Diagnose(const DiagnosticSink* diagnostics, const std::string& message)
 {
     if (diagnostics != nullptr && *diagnostics) {
         (*diagnostics)(message);
@@ -71,7 +71,7 @@ bool ParseInteger(std::string_view text, Integer* value)
         if (character < '0' || character > '9') {
             return false;
         }
-        const uint64_t digit = static_cast<uint64_t>(character - '0');
+        const uint64_t digit = static_cast<uint64_t>(static_cast<unsigned>(character) - static_cast<unsigned>('0'));
         if (parsedValue > (maximum - digit) / DECIMAL_RADIX) {
             return false;
         }

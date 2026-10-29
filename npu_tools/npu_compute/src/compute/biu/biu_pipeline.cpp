@@ -205,7 +205,8 @@ aclptiResult ParseChannel(
 
     const auto appendEvent = [&events](const BiuTraceEvent& event) { events.push_back(event); };
 
-    const auto processDfx = [&](BiuPipe pipe, uint16_t regionId, double now) {
+    const auto processDfx = [&cycles, &anchor, origin, &clocks, coreFrequency, &appendEvent, &channel, &blockId,
+                             &regionStarts](BiuPipe pipe, uint16_t regionId, double now) {
         const uint64_t markEndCycles = cycles + 1U;
         const double markEndUs = CurrentTimeUs(anchor, origin, markEndCycles, clocks.syscntFrequencyHz, coreFrequency);
         appendEvent(BiuTraceEvent{
@@ -221,7 +222,8 @@ aclptiResult ParseChannel(
         regionStarts[key] = RegionStart{now};
     };
 
-    const auto processDfxStop = [&](BiuPipe pipe, uint16_t regionId, double now) {
+    const auto processDfxStop = [&regionStarts, &appendEvent, &channel, &blockId](
+                                    BiuPipe pipe, uint16_t regionId, double now) {
         if ((regionId & 0xc00U) != 0xc00U) {
             return;
         }
@@ -238,7 +240,7 @@ aclptiResult ParseChannel(
         regionStarts.erase(start);
     };
 
-    const auto updateEndMarks = [&](uint16_t regionId) {
+    const auto updateEndMarks = [&endMark, &events](uint16_t regionId) {
         const auto marker = std::find(END_MARK_SEQUENCE.begin(), END_MARK_SEQUENCE.end(), regionId);
         if (marker == END_MARK_SEQUENCE.end()) {
             endMark.reset();
@@ -277,7 +279,7 @@ aclptiResult ParseChannel(
         return false;
     };
 
-    const auto resetSegment = [&]() {
+    const auto resetSegment = [&states, stats, &hasAnchor, &cycles, &stamp]() {
         for (PipeState& state : states) {
             if (state == PipeState::Busy) {
                 ++stats->incompleteIntervalCount;

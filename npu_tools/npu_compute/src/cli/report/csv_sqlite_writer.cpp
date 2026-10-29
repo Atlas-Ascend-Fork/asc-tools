@@ -70,14 +70,14 @@ public:
     Statement& operator=(const Statement&) = delete;
 
     sqlite3_stmt* Get() const { return statement_; }
-    void BindText(int index, const std::string& text)
+    void BindText(int index, const std::string& text) const
     {
         if (text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
             throw std::runtime_error("text exceeds SQLite's supported binding length");
         }
         Check(database_, sqlite::GetApi().bindText(statement_, index, text.data(), static_cast<int>(text.size())));
     }
-    void Reset()
+    void Reset() const
     {
         Check(database_, sqlite::GetApi().reset(statement_));
         Check(database_, sqlite::GetApi().clearBindings(statement_));
@@ -176,7 +176,7 @@ std::string InsertSql(const CsvSchema& schema)
 {
     std::string sql = "INSERT INTO " + QuoteIdentifier(schema.tableName) + " VALUES(";
     for (std::size_t index = 0; index < schema.columns.size(); ++index) {
-        sql += index ? ",?" : "?";
+        sql += index != 0 ? ",?" : "?";
     }
     return sql + ')';
 }

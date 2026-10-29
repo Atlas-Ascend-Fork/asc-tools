@@ -128,7 +128,7 @@ void OpInfo(
            << (hasAic ? (hasAiv ? "\"mix\"" : "\"cube\"") :
                hasAiv ? "\"vector\"" :
                         "\"NA\"");
-    const auto field = [&](std::string_view name, Metric value, bool integer = false, int precision = 6) {
+    const auto field = [&output](std::string_view name, Metric value, bool integer = false, int precision = 6) {
         output << ',' << Quote(name) << ':' << Number(value, integer, precision);
     };
     field("Task Duration(us)", PmuMetricBuilder::TaskDuration(result));

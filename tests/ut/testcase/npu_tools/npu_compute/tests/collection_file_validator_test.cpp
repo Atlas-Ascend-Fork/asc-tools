@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/collection_file_validator.h"
+#include "report/pm_sampling_file_validator.h"
 
 #include <gtest/gtest.h>
 
@@ -221,4 +222,24 @@ static int RunSuiteMain()
 TEST(NpuComputeCollectionFileValidator, Main)
 {
     ASSERT_EQ(RunSuiteMain(), 0) << "NpuComputeCollectionFileValidator reported failure";
+}
+
+TEST(NpuComputeCollectionFileValidator, PmSamplingPcAddressValidation)
+{
+    TempDirectory temporary;
+    ASSERT_FALSE(temporary.Path().empty());
+    const auto path = temporary.Path() / "symbolizer.json";
+    for (const auto* address : {"0x0", "0x100", "0xAbCd", "0xffffffffffffffff"}) {
+        SCOPED_TRACE(address);
+        ASSERT_TRUE(WriteFile(path, std::string("[{\"Address\":\"") + address + "\",\"Symbol\":[]}]"));
+        std::string error;
+        EXPECT_TRUE(npucompute::cli::ValidatePmSamplingFile(path, &error)) << error;
+    }
+    for (const auto* address : {"0x", "0xg", "0x1z", "0x-1", "0x/", "0x:", "0x10000000000000000"}) {
+        SCOPED_TRACE(address);
+        ASSERT_TRUE(WriteFile(path, std::string("[{\"Address\":\"") + address + "\",\"Symbol\":[]}]"));
+        std::string error;
+        EXPECT_FALSE(npucompute::cli::ValidatePmSamplingFile(path, &error));
+        EXPECT_FALSE(error.empty());
+    }
 }

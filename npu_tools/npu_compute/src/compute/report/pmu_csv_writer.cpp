@@ -38,6 +38,14 @@ struct CsvSectionStats {
     std::map<std::string, std::size_t> missingColumnReasons;
 };
 
+struct CsvWriteContext {
+    const ReportConfig& config;
+    ArtifactSink& sink;
+    std::string_view artifactPrefix;
+    bool* degraded = nullptr;
+    bool artifactStarted = false;
+};
+
 double AicFrequencyMhz(const ReportConfig& config)
 {
     return config.aicFrequencyMhz > 0.0 ? config.aicFrequencyMhz : config.frequencyMhz;
@@ -145,6 +153,117 @@ bool IsEmptySuccessfulResult(const aclptiProfilingDataResult& result)
            result.errorStats.failedRecordCount == 0;
 }
 
+void LogSectionStats(const std::string& section, const CsvSectionStats& stats)
+{
+    const std::string missingColumns = FormatMissingColumns(stats.missingColumns);
+    const std::string missingReasons = FormatMissingReasons(stats.missingReasons);
+    const std::string missingColumnReasons = FormatMissingReasons(stats.missingColumnReasons);
+    ASCTOOL_DEBUG(
+        "[npu-compute] CSV section data availability: section=%s rows=%zu fields=%zu missingFields=%zu "
+        "missingRows=%zu "
+        "mismatchedRows=%zu missingColumns=%s missingReasons=%s missingColumnReasons=%s",
+        section.c_str(), stats.rows, stats.totalFields, stats.missingFields, stats.missingRows, stats.mismatchedRows,
+        missingColumns.c_str(), missingReasons.c_str(), missingColumnReasons.c_str());
+    ASCTOOL_DEBUG("[npu-compute] CSV section write complete: section=%s", section.c_str());
+}
+
+aclptiResult WriteCsvSection(
+    const aclptiProfilingDataResult& result, const std::string& section, CsvWriteContext& context,
+    Metric operationDurationUs)
+{
+    ASCTOOL_DEBUG("[npu-compute] CSV section write start: section=%s rows=%zu", section.c_str(), result.pmuLogs.size());
+    context.sink.Begin(std::string(context.artifactPrefix) + section + ".csv");
+    context.artifactStarted = true;
+    ArtifactStreamBuffer sinkBuffer(context.sink);
+    std::ostream output(&sinkBuffer);
+    const std::vector<std::string> header = PmuMetricBuilder::Header(section);
+    CsvSectionStats stats;
+    WriteCsvLine(output, header);
+    for (const auto& [key, row] : result.pmuLogs) {
+        const auto values = PmuMetricBuilder::BuildBlock(section, key, row, context.config, operationDurationUs);
+        UpdateMissingStats(header, values, &stats);
+        WriteCsvLine(output, values);
+    }
+
+    output.flush();
+    if (!output.good()) {
+        context.sink.Abort();
+        context.artifactStarted = false;
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV section write failed: flush section=%s code=%u", section.c_str(),
+            static_cast<unsigned>(ACLPTI_ERROR_CSV_WRITE));
+        return ACLPTI_ERROR_CSV_WRITE;
+    }
+    context.sink.Commit(stats.rows);
+    context.artifactStarted = false;
+    if (context.degraded != nullptr && (stats.missingFields != 0 || stats.mismatchedRows != 0)) {
+        *context.degraded = true;
+    }
+    LogSectionStats(section, stats);
+    return ACLPTI_SUCCESS;
+}
+
+Metric CsvOperationDuration(const aclptiProfilingDataResult& result)
+{
+    bool hasAic = false;
+    bool hasAiv = false;
+    for (const auto& [key, row] : result.pmuLogs) {
+        hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
+        hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
+    }
+
+    const bool isMixedKernel = hasAic && hasAiv;
+    const Metric operationDurationUs = isMixedKernel ? PmuMetricBuilder::TaskDuration(result) : std::nullopt;
+    const char* kernelType = isMixedKernel ? "mix" : (hasAic ? "aic" : "aiv");
+    ASCTOOL_DEBUG(
+        "[npu-compute] CSV operation duration: kernelType=%s valueUs=%f source=%s", kernelType,
+        operationDurationUs.value_or(0.0), operationDurationUs.has_value() ? "task-log-median" : "pmu-cycles");
+    return operationDurationUs;
+}
+
+aclptiResult WriteCsvSections(
+    const aclptiProfilingDataResult& result, const std::vector<std::string>& sections, CsvWriteContext& context)
+{
+    const auto operationDurationUs = CsvOperationDuration(result);
+    try {
+        for (const auto& section : sections) {
+            if (PmuMetricBuilder::Header(section).empty()) {
+                ASCTOOL_ERROR(
+                    "[npu-compute] CSV write rejected: unsupported section=%s"
+                    " code=%u",
+                    section.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+                return ACLPTI_ERROR_NOT_SUPPORTED;
+            }
+        }
+        for (const auto& section : sections) {
+            const auto status = WriteCsvSection(result, section, context, operationDurationUs);
+            if (status != ACLPTI_SUCCESS) {
+                return status;
+            }
+        }
+    } catch (const std::bad_alloc&) {
+        if (context.artifactStarted) {
+            context.sink.Abort();
+        }
+        ASCTOOL_ERROR(
+            "[npu-compute] CSV write failed: out of memory"
+            " code=%u",
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_INTERNAL;
+    } catch (const std::exception& error) {
+        if (context.artifactStarted) {
+            context.sink.Abort();
+        }
+        ASCTOOL_ERROR(
+            "[npu-compute] artifact write failed: %s"
+            " code=%u",
+            error.what(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_CSV_WRITE;
+    }
+    ASCTOOL_DEBUG("[npu-compute] CSV write complete");
+    return ACLPTI_SUCCESS;
+}
+
 } // namespace
 
 aclptiResult WritePmuCsv(
@@ -178,94 +297,8 @@ aclptiResult WritePmuCsv(
             config.frequencyMhz, config.aicFrequencyMhz, config.aivFrequencyMhz, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
-    bool hasAic = false;
-    bool hasAiv = false;
-    for (const auto& [key, row] : pmuLogs) {
-        hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
-        hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
-    }
-
-    const bool isMixedKernel = hasAic && hasAiv;
-    const Metric operationDurationUs = isMixedKernel ? PmuMetricBuilder::TaskDuration(result) : std::nullopt;
-    const char* kernelType = isMixedKernel ? "mix" : (hasAic ? "aic" : "aiv");
-    ASCTOOL_DEBUG(
-        "[npu-compute] CSV operation duration: kernelType=%s valueUs=%f source=%s", kernelType,
-        operationDurationUs.value_or(0.0), operationDurationUs.has_value() ? "task-log-median" : "pmu-cycles");
-    bool artifactStarted = false;
-    try {
-        for (const auto& section : sections) {
-            if (PmuMetricBuilder::Header(section).empty()) {
-                ASCTOOL_ERROR(
-                    "[npu-compute] CSV write rejected: unsupported section=%s"
-                    " code=%u",
-                    section.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-                return ACLPTI_ERROR_NOT_SUPPORTED;
-            }
-        }
-        for (const auto& section : sections) {
-            ASCTOOL_DEBUG("[npu-compute] CSV section write start: section=%s rows=%zu", section.c_str(), rowCount);
-            sink.Begin(std::string(artifactPrefix) + section + ".csv");
-            artifactStarted = true;
-            ArtifactStreamBuffer sinkBuffer(sink);
-            std::ostream output(&sinkBuffer);
-            const std::vector<std::string> header = PmuMetricBuilder::Header(section);
-            CsvSectionStats stats;
-            WriteCsvLine(output, header);
-            const auto writeRow = [&](const CsvRow& values) {
-                UpdateMissingStats(header, values, &stats);
-                WriteCsvLine(output, values);
-            };
-
-            for (const auto& [key, row] : pmuLogs) {
-                writeRow(PmuMetricBuilder::BuildBlock(section, key, row, config, operationDurationUs));
-            }
-
-            output.flush();
-            if (!output.good()) {
-                sink.Abort();
-                artifactStarted = false;
-                ASCTOOL_ERROR(
-                    "[npu-compute] CSV section write failed: flush section=%s code=%u", section.c_str(),
-                    static_cast<unsigned>(ACLPTI_ERROR_CSV_WRITE));
-                return ACLPTI_ERROR_CSV_WRITE;
-            }
-            sink.Commit(stats.rows);
-            artifactStarted = false;
-            if (degraded != nullptr && (stats.missingFields != 0 || stats.mismatchedRows != 0)) {
-                *degraded = true;
-            }
-            const std::string missingColumns = FormatMissingColumns(stats.missingColumns);
-            const std::string missingReasons = FormatMissingReasons(stats.missingReasons);
-            const std::string missingColumnReasons = FormatMissingReasons(stats.missingColumnReasons);
-            ASCTOOL_DEBUG(
-                "[npu-compute] CSV section data availability: section=%s rows=%zu fields=%zu missingFields=%zu "
-                "missingRows=%zu "
-                "mismatchedRows=%zu missingColumns=%s missingReasons=%s missingColumnReasons=%s",
-                section.c_str(), stats.rows, stats.totalFields, stats.missingFields, stats.missingRows,
-                stats.mismatchedRows, missingColumns.c_str(), missingReasons.c_str(), missingColumnReasons.c_str());
-            ASCTOOL_DEBUG("[npu-compute] CSV section write complete: section=%s", section.c_str());
-        }
-    } catch (const std::bad_alloc&) {
-        if (artifactStarted) {
-            sink.Abort();
-        }
-        ASCTOOL_ERROR(
-            "[npu-compute] CSV write failed: out of memory"
-            " code=%u",
-            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-        return ACLPTI_ERROR_INTERNAL;
-    } catch (const std::exception& error) {
-        if (artifactStarted) {
-            sink.Abort();
-        }
-        ASCTOOL_ERROR(
-            "[npu-compute] artifact write failed: %s"
-            " code=%u",
-            error.what(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-        return ACLPTI_ERROR_CSV_WRITE;
-    }
-    ASCTOOL_DEBUG("[npu-compute] CSV write complete");
-    return ACLPTI_SUCCESS;
+    CsvWriteContext context{config, sink, artifactPrefix, degraded};
+    return WriteCsvSections(result, sections, context);
 }
 
 } // namespace npucompute

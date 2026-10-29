@@ -41,13 +41,56 @@ SummaryMetric Cycles(const aclptiBlockKey& key, const aclptiPmuDataRow& row)
         if (core.coreType != key.coreType) {
             continue;
         }
-        if (!Nonnegative(core.totalCycles) || (cycles && *cycles != core.totalCycles)) {
+        if (!Nonnegative(core.totalCycles) || (cycles && (*cycles < core.totalCycles || *cycles > core.totalCycles))) {
             return std::nullopt;
         }
         cycles = core.totalCycles;
     }
     return cycles;
 }
+std::optional<uint64_t> VectorRatio(const KernelMetadata& metadata)
+{
+    if (*metadata.kind == KernelKind::Mix) {
+        if (!metadata.mixBlockDim || *metadata.mixBlockDim == 0 || *metadata.mixBlockDim % *metadata.blockDim != 0) {
+            return {};
+        }
+        const uint64_t vectorRatio = *metadata.mixBlockDim / *metadata.blockDim;
+        if (vectorRatio != 1 && vectorRatio != 2) {
+            return {};
+        }
+        return vectorRatio;
+    }
+    return 1;
+}
+
+using ParallelIdentity = std::tuple<uint16_t, uint16_t, aclptiCoreType>;
+using ParallelObjects = std::map<ParallelIdentity, double>;
+
+bool CollectParallelObjects(
+    const aclptiProfilingDataResult& result, const KernelMetadata& metadata, uint64_t vectorRatio,
+    ParallelObjects& objects)
+{
+    const bool hasAic = *metadata.kind != KernelKind::Vector;
+    const bool hasAiv = *metadata.kind != KernelKind::Cube;
+    for (const auto& [key, row] : result.pmuLogs) {
+        const bool aic = key.coreType == ACLPTI_CORE_TYPE_AIC;
+        if ((!aic && key.coreType != ACLPTI_CORE_TYPE_AIV) || (aic && !hasAic) || (!aic && !hasAiv) ||
+            key.blockId >= *metadata.blockDim || key.subBlockId >= (aic ? 1 : vectorRatio)) {
+            return false;
+        }
+        const auto cycles = Cycles(key, row);
+        if (!cycles) {
+            return false;
+        }
+        const auto [position, inserted] =
+            objects.emplace(ParallelIdentity{key.blockId, key.subBlockId, key.coreType}, *cycles);
+        if (!inserted && (position->second < *cycles || position->second > *cycles)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::pair<SummaryMetric, SummaryMetric> Parallel(
     const aclptiProfilingDataResult& result, const ReportConfig& config, const KernelMetadata& metadata)
 {
@@ -56,15 +99,9 @@ std::pair<SummaryMetric, SummaryMetric> Parallel(
     }
     const bool hasAic = *metadata.kind != KernelKind::Vector;
     const bool hasAiv = *metadata.kind != KernelKind::Cube;
-    uint64_t vectorRatio = 1;
-    if (*metadata.kind == KernelKind::Mix) {
-        if (!metadata.mixBlockDim || *metadata.mixBlockDim == 0 || *metadata.mixBlockDim % *metadata.blockDim != 0) {
-            return {};
-        }
-        vectorRatio = *metadata.mixBlockDim / *metadata.blockDim;
-        if (vectorRatio != 1 && vectorRatio != 2) {
-            return {};
-        }
+    const auto vectorRatio = VectorRatio(metadata);
+    if (!vectorRatio) {
+        return {};
     }
     const uint64_t aicCount = hasAic ? *metadata.blockDim : 0;
     const uint64_t aivCount =
@@ -73,22 +110,9 @@ std::pair<SummaryMetric, SummaryMetric> Parallel(
         return {};
     }
     const uint64_t expected = aicCount + aivCount;
-    using Identity = std::tuple<uint16_t, uint16_t, aclptiCoreType>;
-    std::map<Identity, double> objects;
-    for (const auto& [key, row] : result.pmuLogs) {
-        const bool aic = key.coreType == ACLPTI_CORE_TYPE_AIC;
-        if ((!aic && key.coreType != ACLPTI_CORE_TYPE_AIV) || (aic && !hasAic) || (!aic && !hasAiv) ||
-            key.blockId >= *metadata.blockDim || key.subBlockId >= (aic ? 1 : vectorRatio)) {
-            return {};
-        }
-        const auto cycles = Cycles(key, row);
-        if (!cycles) {
-            return {};
-        }
-        const auto [position, inserted] = objects.emplace(Identity{key.blockId, key.subBlockId, key.coreType}, *cycles);
-        if (!inserted && position->second != *cycles) {
-            return {};
-        }
+    ParallelObjects objects;
+    if (!CollectParallelObjects(result, metadata, *vectorRatio, objects)) {
+        return {};
     }
     // Count plus the legal identity bounds proves every launch object is present.
     if (objects.size() != expected) {

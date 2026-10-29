@@ -23,7 +23,7 @@ namespace aclpti::profiling {
 // A PmSampling mapping failure is returned in pmSamplingMap->error; it does not
 // discard a successfully rewritten companion or fail binary registration.
 bool InstrumentKernelEnd(
-    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* traceArgumentOffset = nullptr,
+    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* outputTraceArgumentOffset = nullptr,
     PmSamplingInstructionMap* pmSamplingMap = nullptr);
 
 } // namespace aclpti::profiling

@@ -514,9 +514,10 @@ bool WriteProbeFiles(const fs::path& directory)
 
 bool Run(std::initializer_list<std::string> arguments, const fs::path& stdoutFile = {})
 {
+    std::vector<std::string> argumentStorage(arguments);
     std::vector<char*> argv;
-    for (const auto& argument : arguments) {
-        argv.push_back(const_cast<char*>(argument.c_str()));
+    for (auto& argument : argumentStorage) {
+        argv.push_back(argument.data());
     }
     argv.push_back(nullptr);
     pid_t child = -1;

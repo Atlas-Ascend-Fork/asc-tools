@@ -183,7 +183,7 @@ aclptiResult ReplayMemory::MirrorMemcpy(
     return ACLPTI_SUCCESS;
 }
 
-aclptiResult ReplayMemory::MirrorMemset(void* devPtr, std::size_t maxCount, std::int32_t value, std::size_t count)
+aclptiResult ReplayMemory::MirrorMemset(void* devPtr, std::size_t maxCount, std::int32_t value, std::size_t count) const
 {
     if (count > maxCount) {
         return ACLPTI_ERROR_INVALID_PARAMETER;

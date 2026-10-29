@@ -83,6 +83,35 @@ std::optional<aclptiBiuCoreKind> BiuCoreKind(RawDataType type)
     return std::nullopt;
 }
 
+size_t RawRecordSize(const MsprofRawData* raw, std::optional<aclptiBiuCoreKind> core)
+{
+    if (raw == nullptr) {
+        return 0;
+    }
+    switch (raw->type) {
+        case LOG_DATA_TYPE:
+            return TASK_LOG_BYTES;
+        case PMU_DATA_TYPE:
+            return PMU_RECORD_BYTES;
+        default:
+            return core ? sizeof(uint32_t) : 1;
+    }
+}
+
+bool IsPrimaryPayload(ReplayKind kind, RawDataType type, bool biu)
+{
+    switch (kind) {
+        case ReplayKind::Pipeline:
+            return biu;
+        case ReplayKind::Pmu:
+            return type == PMU_DATA_TYPE;
+        case ReplayKind::PcSampling:
+            return type == PC_SAMPLING_DATA_TYPE;
+        default:
+            return false;
+    }
+}
+
 } // namespace
 
 bool DataProcessor::ActiveReplay::HasOpenPacket() const
@@ -145,6 +174,75 @@ aclptiResult DataProcessor::ReceiveDataChunk(const MsprofRawData& raw, std::opti
     return ACLPTI_SUCCESS;
 }
 
+aclptiResult DataProcessor::ReportRawDataFailure(
+    const MsprofRawData* raw, size_t recordSize, aclptiResult status, bool primary)
+{
+    auto& replay = *active_;
+    ++replay.stats.failedRecordCount;
+    if (primary) {
+        ++replay.stats.rejectedChunkCount;
+    }
+    ASCTOOL_ERROR(
+        "[aclpti-data] raw callback invalid chunk: replay=%llu kind=%d status=%d primary=%d type=%d device=%d "
+        "module=%d offset=%zu chunk_size=%zu last=%d expected_record_size=%zu expected_device=%d"
+        " code=%u",
+        static_cast<unsigned long long>(replay.info.replayId), static_cast<int>(replay.info.kind),
+        static_cast<int>(status), static_cast<int>(primary), raw == nullptr ? -1 : static_cast<int>(raw->type),
+        raw == nullptr ? -1 : raw->deviceId, raw == nullptr ? -1 : raw->chunkModule, raw == nullptr ? 0 : raw->offset,
+        raw == nullptr ? 0 : raw->chunkSize, static_cast<int>(raw != nullptr && raw->isLastChunk), recordSize,
+        replay.deviceId, static_cast<unsigned>(static_cast<uint32_t>(status)));
+    return status;
+}
+
+aclptiResult DataProcessor::ValidateRawData(const MsprofRawData* raw, size_t recordSize, bool& primary)
+{
+    if (raw == nullptr) {
+        return ACLPTI_ERROR_INVALID_RAW_DATA;
+    }
+    auto& replay = *active_;
+    const bool log = raw->type == LOG_DATA_TYPE;
+    if (!primary && !log) {
+        primary = true;
+        return ACLPTI_ERROR_INVALID_RAW_DATA;
+    }
+    if (raw->chunkSize == 0 || raw->chunkSize > sizeof(raw->chunk) || raw->chunkSize % recordSize != 0) {
+        return ACLPTI_ERROR_INVALID_RAW_DATA;
+    }
+    if (primary) {
+        replay.stats.receivedBytes += raw->chunkSize;
+    }
+    if (raw->deviceId < 0 || (replay.deviceId >= 0 && replay.deviceId != raw->deviceId)) {
+        return ACLPTI_ERROR_INVALID_RAW_DATA;
+    }
+    return ACLPTI_SUCCESS;
+}
+
+aclptiResult DataProcessor::ReceiveFixedRecords(const MsprofRawData& raw, size_t recordSize, bool primary)
+{
+    auto& replay = *active_;
+    // Each complete fixed-size record is independent; partial acceptance remains in stats.
+    for (size_t offset = 0; offset < raw.chunkSize; offset += recordSize) {
+        RawRecord record;
+        record.size = recordSize;
+        record.recordIndex = replay.nextRecordIndex;
+        record.events = replay.info.pmuEventIds;
+        if (memcpy_s(record.bytes.data(), record.bytes.size(), raw.chunk + offset, recordSize) != EOK) {
+            return ACLPTI_ERROR_INVALID_RAW_DATA;
+        }
+        if (!Submit(DataItem{replay.info.replayId, std::move(record)})) {
+            return ACLPTI_ERROR_INVALID_STATE;
+        }
+        replay.deviceId = raw.deviceId;
+        ++replay.nextRecordIndex;
+        ++replay.callbackStats.copiedRecordCount;
+        replay.callbackStats.copiedBytes += recordSize;
+        if (primary) {
+            replay.stats.acceptedBytes += recordSize;
+        }
+    }
+    return ACLPTI_SUCCESS;
+}
+
 aclptiResult DataProcessor::ReceiveRawData(const MsprofRawData* raw)
 {
     if (!active_) {
@@ -155,87 +253,24 @@ aclptiResult DataProcessor::ReceiveRawData(const MsprofRawData* raw)
     }
     auto& replay = *active_;
     const auto core = raw == nullptr ? std::nullopt : BiuCoreKind(raw->type);
-    const size_t recordSize = raw == nullptr             ? 0 :
-                              raw->type == LOG_DATA_TYPE ? TASK_LOG_BYTES :
-                              raw->type == PMU_DATA_TYPE ? PMU_RECORD_BYTES :
-                              core                       ? sizeof(uint32_t) :
-                                                           1;
-    const auto fail = [&](aclptiResult status, bool primary) {
-        ++replay.stats.failedRecordCount;
-        if (primary) {
-            ++replay.stats.rejectedChunkCount;
-        }
-        ASCTOOL_ERROR(
-            "[aclpti-data] raw callback invalid chunk: replay=%llu kind=%d status=%d primary=%d type=%d device=%d "
-            "module=%d offset=%zu chunk_size=%zu last=%d expected_record_size=%zu expected_device=%d"
-            " code=%u",
-            static_cast<unsigned long long>(replay.info.replayId), static_cast<int>(replay.info.kind),
-            static_cast<int>(status), static_cast<int>(primary), raw == nullptr ? -1 : static_cast<int>(raw->type),
-            raw == nullptr ? -1 : raw->deviceId, raw == nullptr ? -1 : raw->chunkModule,
-            raw == nullptr ? 0 : raw->offset, raw == nullptr ? 0 : raw->chunkSize,
-            static_cast<int>(raw != nullptr && raw->isLastChunk), recordSize, replay.deviceId,
-            static_cast<unsigned>(static_cast<uint32_t>(status)));
-        return status;
-    };
-    if (raw == nullptr) {
-        return fail(ACLPTI_ERROR_INVALID_RAW_DATA, false);
-    }
-    // Task logs may accompany every replay kind, but primary payloads must match that kind.
-    const bool primary = (replay.info.kind == ReplayKind::Pipeline && core.has_value()) ||
-                         (replay.info.kind == ReplayKind::Pmu && raw->type == PMU_DATA_TYPE) ||
-                         (replay.info.kind == ReplayKind::PcSampling && raw->type == PC_SAMPLING_DATA_TYPE);
-    const bool log = raw->type == LOG_DATA_TYPE;
-    if (!primary && !log) {
-        return fail(ACLPTI_ERROR_INVALID_RAW_DATA, true);
-    }
-    if (raw->chunkSize == 0 || raw->chunkSize > sizeof(raw->chunk)) {
-        return fail(ACLPTI_ERROR_INVALID_RAW_DATA, primary);
-    }
-    if (raw->chunkSize % recordSize != 0) {
-        return fail(ACLPTI_ERROR_INVALID_RAW_DATA, primary);
-    }
-    if (primary) {
-        replay.stats.receivedBytes += raw->chunkSize;
-    }
-    if (raw->deviceId < 0) {
-        return fail(ACLPTI_ERROR_INVALID_RAW_DATA, primary);
-    }
-    if (replay.deviceId >= 0 && replay.deviceId != raw->deviceId) {
-        return fail(ACLPTI_ERROR_INVALID_RAW_DATA, primary);
+    const size_t recordSize = RawRecordSize(raw, core);
+    bool primary = raw != nullptr && IsPrimaryPayload(replay.info.kind, raw->type, core.has_value());
+    const auto validationStatus = ValidateRawData(raw, recordSize, primary);
+    if (validationStatus != ACLPTI_SUCCESS) {
+        return ReportRawDataFailure(raw, recordSize, validationStatus, primary);
     }
     try {
-        if (core || raw->type == PC_SAMPLING_DATA_TYPE) {
-            const auto status = ReceiveDataChunk(*raw, core);
-            if (status != ACLPTI_SUCCESS) {
-                return fail(status, primary);
-            }
-        } else {
-            // Each complete fixed-size record is independent; partial acceptance remains in stats.
-            for (size_t offset = 0; offset < raw->chunkSize; offset += recordSize) {
-                RawRecord record;
-                record.size = recordSize;
-                record.recordIndex = replay.nextRecordIndex;
-                record.events = replay.info.pmuEventIds;
-                if (memcpy_s(record.bytes.data(), record.bytes.size(), raw->chunk + offset, recordSize) != EOK) {
-                    return fail(ACLPTI_ERROR_INVALID_RAW_DATA, primary);
-                }
-                if (!Submit(DataItem{replay.info.replayId, std::move(record)})) {
-                    return fail(ACLPTI_ERROR_INVALID_STATE, primary);
-                }
-                replay.deviceId = raw->deviceId;
-                ++replay.nextRecordIndex;
-                ++replay.callbackStats.copiedRecordCount;
-                replay.callbackStats.copiedBytes += recordSize;
-                if (primary) {
-                    replay.stats.acceptedBytes += recordSize;
-                }
-            }
+        const auto status = core || raw->type == PC_SAMPLING_DATA_TYPE ? ReceiveDataChunk(*raw, core) :
+                                                                         ReceiveFixedRecords(*raw, recordSize, primary);
+        if (status != ACLPTI_SUCCESS) {
+            return ReportRawDataFailure(raw, recordSize, status, primary);
         }
     } catch (const std::bad_alloc&) {
-        return fail(ACLPTI_ERROR_OUT_OF_MEMORY, primary);
+        return ReportRawDataFailure(raw, recordSize, ACLPTI_ERROR_OUT_OF_MEMORY, primary);
     }
     replay.callbackStats.receivedBytes += raw->chunkSize;
     LogRawData(replay.info.replayId, *raw, core.has_value(), replay.stats.acceptedBytes);
     return ACLPTI_SUCCESS;
 }
+
 } // namespace aclpti::data

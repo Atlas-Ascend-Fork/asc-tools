@@ -277,7 +277,7 @@ RowMetrics MakeRowMetrics(aclptiBlockKey key, const aclptiPmuDataRow& row)
 
 std::optional<double> Ratio(double numerator, double denominator)
 {
-    if (denominator == 0.0) {
+    if (std::fpclassify(denominator) == FP_ZERO) {
         return std::nullopt;
     }
     return numerator / denominator;
@@ -890,12 +890,12 @@ std::vector<std::string> PipeHeader()
     };
 }
 
-CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
+void SetPipeTimes(CsvFields& fields, const RowMetrics& row, const ReportConfig& config)
 {
-    CsvFields fields = CommonFields(row, config);
     const double aicFrequencyMhz = AicFrequencyMhz(config);
     const double aivFrequencyMhz = AivFrequencyMhz(config);
-    const auto setPipePair = [&](const char* timeName, const char* ratioName, const TypeMetrics& metrics,
+    const auto setPipePair = [&fields](
+                                 const char* timeName, const char* ratioName, const TypeMetrics& metrics,
                                  uint32_t eventId, double frequencyMhz) {
         SetMetric(
             fields, timeName, EventTime(metrics, eventId, frequencyMhz),
@@ -919,7 +919,30 @@ CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
     SetMetric(
         fields, "aiv_icache_miss_rate", IcacheMissRate(row.aiv),
         EventReason(row.aiv, {pmu::ICACHE_ACCESS_EVENT, pmu::ICACHE_MISS_EVENT}));
+}
 
+void SetAicReadBandwidths(CsvFields& fields, const TypeMetrics& metrics, double frequencyMhz)
+{
+    SetMetric(
+        fields, "aic_mte1_active_bw(GB/s)",
+        ActiveBandwidthMetric(
+            Scale(metrics.Value(pmu::L1_READ_EVENT), L1_READ_BYTES_PER_EVENT),
+            metrics.Value(pmu::MTE1_ACTIVE_CYCLES_EVENT), frequencyMhz),
+        EventBandwidthReason(metrics, {pmu::L1_READ_EVENT, pmu::MTE1_ACTIVE_CYCLES_EVENT}, frequencyMhz));
+    SetMetric(
+        fields, "aic_mte2_active_bw(GB/s)",
+        ActiveBandwidthMetric(
+            Scale(metrics.Value(pmu::GM_TO_L1_EVENT), MEMORY_EVENT_UNIT_BYTES),
+            metrics.Value(pmu::MTE2_ACTIVE_CYCLES_EVENT), frequencyMhz),
+        EventBandwidthReason(metrics, {pmu::GM_TO_L1_EVENT, pmu::MTE2_ACTIVE_CYCLES_EVENT}, frequencyMhz));
+}
+
+CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
+{
+    CsvFields fields = CommonFields(row, config);
+    const double aicFrequencyMhz = AicFrequencyMhz(config);
+    const double aivFrequencyMhz = AivFrequencyMhz(config);
+    SetPipeTimes(fields, row, config);
     const auto xgu =
         NonNegativeDifference(row.aiv, pmu::GM_TO_L1_EVENT, {pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT});
     const auto xulBase = NonNegativeDifference(row.aic, pmu::L1_WRITE_EVENT, {pmu::L0C_TO_L1_EVENT});
@@ -955,18 +978,7 @@ CsvRow PipeRow(const RowMetrics& row, const ReportConfig& config)
         EventBandwidthReason(
             row.aiv, {pmu::GM_TO_L1_EVENT, pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT, pmu::MTE2_ACTIVE_CYCLES_EVENT},
             aivFrequencyMhz));
-    SetMetric(
-        fields, "aic_mte1_active_bw(GB/s)",
-        ActiveBandwidthMetric(
-            Scale(row.aic.Value(pmu::L1_READ_EVENT), L1_READ_BYTES_PER_EVENT),
-            row.aic.Value(pmu::MTE1_ACTIVE_CYCLES_EVENT), aicFrequencyMhz),
-        EventBandwidthReason(row.aic, {pmu::L1_READ_EVENT, pmu::MTE1_ACTIVE_CYCLES_EVENT}, aicFrequencyMhz));
-    SetMetric(
-        fields, "aic_mte2_active_bw(GB/s)",
-        ActiveBandwidthMetric(
-            Scale(row.aic.Value(pmu::GM_TO_L1_EVENT), MEMORY_EVENT_UNIT_BYTES),
-            row.aic.Value(pmu::MTE2_ACTIVE_CYCLES_EVENT), aicFrequencyMhz),
-        EventBandwidthReason(row.aic, {pmu::GM_TO_L1_EVENT, pmu::MTE2_ACTIVE_CYCLES_EVENT}, aicFrequencyMhz));
+    SetAicReadBandwidths(fields, row.aic, aicFrequencyMhz);
     return BuildRow(PipeHeader(), fields);
 }
 

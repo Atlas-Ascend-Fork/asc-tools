@@ -34,7 +34,7 @@ struct Database {
             sqlite::GetApi().closeV2(handle);
         }
     }
-    void Check(int status)
+    void Check(int status) const
     {
         if (status != SQLITE_OK) {
             throw std::runtime_error(sqlite::GetApi().errmsg(handle));

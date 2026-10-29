@@ -21,7 +21,7 @@ class ArtifactPublisher final : public ArtifactSink {
 public:
     explicit ArtifactPublisher(ipc::Channel channel);
     ArtifactPublisher(ipc::Channel channel, ipc::Deadline readyDeadline);
-    ~ArtifactPublisher();
+    ~ArtifactPublisher() override;
     void Begin(const std::string& name) override;
     void Write(std::string_view bytes) override;
     void Commit(uint64_t records) override;

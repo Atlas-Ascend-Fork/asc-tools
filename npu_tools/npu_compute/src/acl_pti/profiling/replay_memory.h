@@ -37,7 +37,7 @@ public:
         void* destination, std::size_t destinationSize, const void* source, std::size_t count, aclrtMemcpyKind kind);
 
     /// Mirrors a device memset into the corresponding shadow buffer.
-    aclptiResult MirrorMemset(void* devPtr, std::size_t maxCount, std::int32_t value, std::size_t count);
+    aclptiResult MirrorMemset(void* devPtr, std::size_t maxCount, std::int32_t value, std::size_t count) const;
 
     /// Restores all tracked device allocations from their shadow buffers.
     aclptiResult Restore() const;

@@ -714,61 +714,75 @@ aclError AclrtBinaryUnLoadHandler(aclrtBinHandle binHandle)
         });
 }
 
+bool RegisterExecutionHandlers()
+{
+    return RegisterRuntimeHandler(
+               ACL_RT_API_aclrtLaunchKernelWithHostArgs, acltoolRegisterAclrtLaunchKernelWithHostArgsCallbacks,
+               &AclrtLaunchKernelWithHostArgsHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtLaunchSIMTKernelWithHostArgs, acltoolRegisterAclrtLaunchSIMTKernelWithHostArgsCallbacks,
+               &AclrtLaunchSIMTKernelWithHostArgsHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtLaunchKernelWithArgsArray, acltoolRegisterAclrtLaunchKernelWithArgsArrayCallbacks,
+               &AclrtLaunchKernelWithArgsArrayHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray,
+               acltoolRegisterAclrtLaunchSIMTKernelWithArgsArrayCallbacks,
+               &AclrtLaunchSIMTKernelWithArgsArrayHandler) &&
+           RegisterRuntimeHandler(ACL_RT_API_aclrtMemcpy, acltoolRegisterAclrtMemcpyCallbacks, &AclrtMemcpyHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtBinaryLoadFromData, acltoolRegisterAclrtBinaryLoadFromDataCallbacks,
+               &AclrtBinaryLoadFromDataHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtBinaryLoadFromFile, acltoolRegisterAclrtBinaryLoadFromFileCallbacks,
+               &AclrtBinaryLoadFromFileHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtBinaryGetFunction, acltoolRegisterAclrtBinaryGetFunctionCallbacks,
+               &AclrtBinaryGetFunctionHandler);
+}
+
+bool RegisterMemoryAndDeviceHandlers()
+{
+    return RegisterRuntimeHandler(ACL_RT_API_aclrtMalloc, acltoolRegisterAclrtMallocCallbacks, &AclrtMallocHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtMallocAlign32, acltoolRegisterAclrtMallocAlign32Callbacks, &AclrtMallocAlign32Handler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtMallocWithCfg, acltoolRegisterAclrtMallocWithCfgCallbacks, &AclrtMallocWithCfgHandler) &&
+           RegisterRuntimeHandler(ACL_RT_API_aclrtMemset, acltoolRegisterAclrtMemsetCallbacks, &AclrtMemsetHandler) &&
+           RegisterRuntimeHandler(ACL_RT_API_aclrtFree, acltoolRegisterAclrtFreeCallbacks, &AclrtFreeHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtCreateStream, acltoolRegisterAclrtCreateStreamCallbacks, &AclrtCreateStreamHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtDestroyStream, acltoolRegisterAclrtDestroyStreamCallbacks, &AclrtDestroyStreamHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtSetDevice, acltoolRegisterAclrtSetDeviceCallbacks, &AclrtSetDeviceHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtResetDevice, acltoolRegisterAclrtResetDeviceCallbacks, &AclrtResetDeviceHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtSynchronizeStream, acltoolRegisterAclrtSynchronizeStreamCallbacks,
+               &AclrtSynchronizeStreamHandler);
+}
+
+bool RegisterFunctionHandlers()
+{
+    return RegisterRuntimeHandler(
+               ACL_RT_API_aclrtBinaryGetFunctionByEntry, acltoolRegisterAclrtBinaryGetFunctionByEntryCallbacks,
+               &AclrtBinaryGetFunctionByEntryHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtLaunchKernel, acltoolRegisterAclrtLaunchKernelCallbacks, &AclrtLaunchKernelHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtGetFuncBySymbol, acltoolRegisterAclrtGetFuncBySymbolCallbacks,
+               &AclrtGetFuncBySymbolHandler) &&
+           RegisterRuntimeHandler(
+               ACL_RT_API_aclrtBinaryUnLoad, acltoolRegisterAclrtBinaryUnLoadCallbacks, &AclrtBinaryUnLoadHandler);
+}
+
 } // namespace
 
 bool RegisterRuntimeApiHandlers()
 {
     const bool registered =
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtLaunchKernelWithHostArgs, acltoolRegisterAclrtLaunchKernelWithHostArgsCallbacks,
-            &AclrtLaunchKernelWithHostArgsHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtLaunchSIMTKernelWithHostArgs, acltoolRegisterAclrtLaunchSIMTKernelWithHostArgsCallbacks,
-            &AclrtLaunchSIMTKernelWithHostArgsHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtLaunchKernelWithArgsArray, acltoolRegisterAclrtLaunchKernelWithArgsArrayCallbacks,
-            &AclrtLaunchKernelWithArgsArrayHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray, acltoolRegisterAclrtLaunchSIMTKernelWithArgsArrayCallbacks,
-            &AclrtLaunchSIMTKernelWithArgsArrayHandler) &&
-        RegisterRuntimeHandler(ACL_RT_API_aclrtMemcpy, acltoolRegisterAclrtMemcpyCallbacks, &AclrtMemcpyHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtBinaryLoadFromData, acltoolRegisterAclrtBinaryLoadFromDataCallbacks,
-            &AclrtBinaryLoadFromDataHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtBinaryLoadFromFile, acltoolRegisterAclrtBinaryLoadFromFileCallbacks,
-            &AclrtBinaryLoadFromFileHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtBinaryGetFunction, acltoolRegisterAclrtBinaryGetFunctionCallbacks,
-            &AclrtBinaryGetFunctionHandler) &&
-        RegisterRuntimeHandler(ACL_RT_API_aclrtMalloc, acltoolRegisterAclrtMallocCallbacks, &AclrtMallocHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtMallocAlign32, acltoolRegisterAclrtMallocAlign32Callbacks, &AclrtMallocAlign32Handler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtMallocWithCfg, acltoolRegisterAclrtMallocWithCfgCallbacks, &AclrtMallocWithCfgHandler) &&
-        RegisterRuntimeHandler(ACL_RT_API_aclrtMemset, acltoolRegisterAclrtMemsetCallbacks, &AclrtMemsetHandler) &&
-        RegisterRuntimeHandler(ACL_RT_API_aclrtFree, acltoolRegisterAclrtFreeCallbacks, &AclrtFreeHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtCreateStream, acltoolRegisterAclrtCreateStreamCallbacks, &AclrtCreateStreamHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtDestroyStream, acltoolRegisterAclrtDestroyStreamCallbacks, &AclrtDestroyStreamHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtSetDevice, acltoolRegisterAclrtSetDeviceCallbacks, &AclrtSetDeviceHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtResetDevice, acltoolRegisterAclrtResetDeviceCallbacks, &AclrtResetDeviceHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtSynchronizeStream, acltoolRegisterAclrtSynchronizeStreamCallbacks,
-            &AclrtSynchronizeStreamHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtBinaryGetFunctionByEntry, acltoolRegisterAclrtBinaryGetFunctionByEntryCallbacks,
-            &AclrtBinaryGetFunctionByEntryHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtLaunchKernel, acltoolRegisterAclrtLaunchKernelCallbacks, &AclrtLaunchKernelHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtGetFuncBySymbol, acltoolRegisterAclrtGetFuncBySymbolCallbacks,
-            &AclrtGetFuncBySymbolHandler) &&
-        RegisterRuntimeHandler(
-            ACL_RT_API_aclrtBinaryUnLoad, acltoolRegisterAclrtBinaryUnLoadCallbacks, &AclrtBinaryUnLoadHandler);
+        RegisterExecutionHandlers() && RegisterMemoryAndDeviceHandlers() && RegisterFunctionHandlers();
     if (!registered) {
         ASCTOOL_ERROR(
             "[aclpti] runtime handler registration failed"

@@ -32,8 +32,20 @@ bool IsLower(char value) { return value >= 'a' && value <= 'z'; }
 bool IsUpper(char value) { return value >= 'A' && value <= 'Z'; }
 bool IsDigit(char value) { return value >= '0' && value <= '9'; }
 bool IsAlphanumeric(char value) { return IsLower(value) || IsUpper(value) || IsDigit(value); }
-char Lower(char value) { return IsUpper(value) ? static_cast<char>(value - 'A' + 'a') : value; }
-char Upper(char value) { return IsLower(value) ? static_cast<char>(value - 'a' + 'A') : value; }
+char Lower(char value)
+{
+    return IsUpper(value) ?
+               static_cast<char>(
+                   static_cast<unsigned>(value) - static_cast<unsigned>('A') + static_cast<unsigned>('a')) :
+               value;
+}
+char Upper(char value)
+{
+    return IsLower(value) ?
+               static_cast<char>(
+                   static_cast<unsigned>(value) - static_cast<unsigned>('a') + static_cast<unsigned>('A')) :
+               value;
+}
 
 std::string Lowercase(std::string_view value)
 {
@@ -371,20 +383,10 @@ bool ParseCsvInteger(std::string_view value, std::int64_t& integer)
     return true;
 }
 
-bool ParseCsvReal(std::string_view value, double& real)
+namespace {
+bool HasReliableRealDigits(std::string_view value, std::size_t start, std::size_t dot, std::size_t& first)
 {
-    if (value.empty()) {
-        return false;
-    }
-    const std::size_t start = value.front() == '-' ? 1 : 0;
-    const auto dot = value.find('.');
-    if (dot == std::string_view::npos || dot <= start || dot + 1 == value.size()) {
-        return false;
-    }
-    if (value[start] == '0' && dot != start + 1) {
-        return false;
-    }
-    std::size_t first = value.size();
+    first = value.size();
     std::size_t last = 0;
     for (std::size_t i = start; i < value.size(); ++i) {
         if (i == dot) {
@@ -401,7 +403,26 @@ bool ParseCsvReal(std::string_view value, double& real)
         }
     }
     const auto digits = first == value.size() ? 0 : last - first + 1 - (first < dot && dot < last ? 1 : 0);
-    if (digits > kReliableDecimalDigits) {
+    return digits <= kReliableDecimalDigits;
+}
+
+} // namespace
+
+bool ParseCsvReal(std::string_view value, double& real)
+{
+    if (value.empty()) {
+        return false;
+    }
+    const std::size_t start = value.front() == '-' ? 1 : 0;
+    const auto dot = value.find('.');
+    if (dot == std::string_view::npos || dot <= start || dot + 1 == value.size()) {
+        return false;
+    }
+    if (value[start] == '0' && dot != start + 1) {
+        return false;
+    }
+    std::size_t first = value.size();
+    if (!HasReliableRealDigits(value, start, dot, first)) {
         return false;
     }
     std::size_t consumed = 0;

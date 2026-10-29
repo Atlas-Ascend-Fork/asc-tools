@@ -135,6 +135,31 @@ aclptiResult BinaryRegistry::RegisterBinaryFromFile(
     }
 }
 
+bool BinaryRegistry::BuildInstrumentedImage(const void* data, std::size_t size, bool pmSampling, Binary& state)
+{
+    std::vector<char> patched;
+    auto image = pmSampling ? std::make_shared<PmSamplingBinaryImage>() : nullptr;
+    std::uint32_t traceArgumentOffset = 0;
+    if (!InstrumentKernelEnd(data, size, patched, &traceArgumentOffset, image ? &image->instructions : nullptr) ||
+        patched.empty() || traceArgumentOffset == 0 || traceArgumentOffset % sizeof(void*) != 0) {
+        return false;
+    }
+    state.traceArgumentOffset = traceArgumentOffset;
+    if (image) {
+        if (image->instructions.error.empty() &&
+            (image->instructions.business.empty() || image->instructions.functionEntries.empty())) {
+            image->instructions.error = "PmSampling instruction mapping is incomplete";
+        }
+        image->originalElf.assign(static_cast<const char*>(data), static_cast<const char*>(data) + size);
+        image->companionElf = std::move(patched);
+        state.pmSamplingImage = image;
+        state.instrumentedImage = std::shared_ptr<const std::vector<char>>(image, &image->companionElf);
+    } else {
+        state.instrumentedImage = std::make_shared<const std::vector<char>>(std::move(patched));
+    }
+    return true;
+}
+
 aclptiResult BinaryRegistry::RegisterInstrumentedBinary(
     const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling)
 {
@@ -152,26 +177,9 @@ aclptiResult BinaryRegistry::RegisterInstrumentedBinary(
                        ACLPTI_SUCCESS :
                        ACLPTI_ERROR_PROFILING_FAILED;
         }
-        std::vector<char> patched;
-        auto image = pmSampling ? std::make_shared<PmSamplingBinaryImage>() : nullptr;
-        std::uint32_t traceArgumentOffset = 0;
-        if (!InstrumentKernelEnd(data, size, patched, &traceArgumentOffset, image ? &image->instructions : nullptr) ||
-            patched.empty() || traceArgumentOffset == 0 || traceArgumentOffset % sizeof(void*) != 0) {
-            return ACLPTI_ERROR_PROFILING_FAILED;
-        }
         Binary state;
-        state.traceArgumentOffset = traceArgumentOffset;
-        if (image) {
-            if (image->instructions.error.empty() &&
-                (image->instructions.business.empty() || image->instructions.functionEntries.empty())) {
-                image->instructions.error = "PmSampling instruction mapping is incomplete";
-            }
-            image->originalElf.assign(static_cast<const char*>(data), static_cast<const char*>(data) + size);
-            image->companionElf = std::move(patched);
-            state.pmSamplingImage = image;
-            state.instrumentedImage = std::shared_ptr<const std::vector<char>>(image, &image->companionElf);
-        } else {
-            state.instrumentedImage = std::make_shared<const std::vector<char>>(std::move(patched));
+        if (!BuildInstrumentedImage(data, size, pmSampling, state)) {
+            return ACLPTI_ERROR_PROFILING_FAILED;
         }
         const auto inserted = binaries_.emplace(binary, std::move(state));
         if (!inserted.second) {
@@ -207,6 +215,38 @@ aclptiResult BinaryRegistry::RegisterBinaryFunction(
         ACL_RT_API_aclrtBinaryGetFunctionByEntry, binary, entry, function);
 }
 
+aclptiResult BinaryRegistry::EnsureSamplingBinary(aclrtBinHandle binary)
+{
+    bool registered = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        registered = binaries_.count(binary) != 0;
+    }
+    if (!registered) {
+        // Some binaries are loaded before hooks are enabled. Only accept a complete, copied ELF.
+        using GetBinaryAddress = aclError (*)(aclrtBinHandle, void**, std::size_t*);
+        const auto getAddress = reinterpret_cast<GetBinaryAddress>(dlsym(RTLD_DEFAULT, "aclrtBinaryGetDevAddress"));
+        const auto copy = reinterpret_cast<aclrtMemcpyFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMemcpy));
+        void* address = nullptr;
+        std::size_t size = 0;
+        if (!getAddress || !copy || getAddress(binary, &address, &size) != ACL_SUCCESS || address == nullptr ||
+            size < sizeof(Elf64_Ehdr)) {
+            return ACLPTI_ERROR_PROFILING_FAILED;
+        }
+        std::vector<char> image(size);
+        if (copy(image.data(), image.size(), address, size, ACL_MEMCPY_DEVICE_TO_HOST) != ACL_SUCCESS ||
+            std::memcmp(image.data(), ELFMAG, SELFMAG) != 0) {
+            ASCTOOL_DEBUG("PmSampling preloaded binary has no recoverable ELF: binary=%p size=%zu", binary, size);
+            return ACLPTI_ERROR_PROFILING_FAILED;
+        }
+        const auto status = RegisterBinary(image.data(), image.size(), nullptr, binary, true);
+        if (status != ACLPTI_SUCCESS) {
+            return status;
+        }
+    }
+    return ACLPTI_SUCCESS;
+}
+
 aclptiResult BinaryRegistry::RegisterSymbolFunction(aclrtFuncHandle function, bool pmSampling)
 {
     // Symbol lookup returns a Runtime handle, not a name/entry in the companion.
@@ -232,35 +272,9 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(aclrtFuncHandle function, bo
     }
     try {
         if (pmSampling) {
-            bool registered = false;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                registered = binaries_.count(binary) != 0;
-            }
-            if (!registered) {
-                // Some binaries are loaded before hooks are enabled. Only accept a complete, copied ELF.
-                using GetBinaryAddress = aclError (*)(aclrtBinHandle, void**, std::size_t*);
-                const auto getAddress =
-                    reinterpret_cast<GetBinaryAddress>(dlsym(RTLD_DEFAULT, "aclrtBinaryGetDevAddress"));
-                const auto copy =
-                    reinterpret_cast<aclrtMemcpyFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMemcpy));
-                void* address = nullptr;
-                std::size_t size = 0;
-                if (!getAddress || !copy || getAddress(binary, &address, &size) != ACL_SUCCESS || address == nullptr ||
-                    size < sizeof(Elf64_Ehdr)) {
-                    return ACLPTI_ERROR_PROFILING_FAILED;
-                }
-                std::vector<char> image(size);
-                if (copy(image.data(), image.size(), address, size, ACL_MEMCPY_DEVICE_TO_HOST) != ACL_SUCCESS ||
-                    std::memcmp(image.data(), ELFMAG, SELFMAG) != 0) {
-                    ASCTOOL_DEBUG(
-                        "PmSampling preloaded binary has no recoverable ELF: binary=%p size=%zu", binary, size);
-                    return ACLPTI_ERROR_PROFILING_FAILED;
-                }
-                const auto status = RegisterBinary(image.data(), image.size(), nullptr, binary, true);
-                if (status != ACLPTI_SUCCESS) {
-                    return status;
-                }
+            const auto status = EnsureSamplingBinary(binary);
+            if (status != ACLPTI_SUCCESS) {
+                return status;
             }
         }
         return RegisterBinaryFunction(binary, name, function);

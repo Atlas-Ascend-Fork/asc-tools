@@ -324,7 +324,7 @@ void FindExpandedBranches(
         Require(
             std::none_of(
                 original.begin(), original.end(),
-                [&](const Instruction& instruction) {
+                [&restore, &save](const Instruction& instruction) {
                     return instruction.operation == restore || instruction.operation == save;
                 }),
             "rewritten branch scratch slot overlaps original instructions");
@@ -337,7 +337,7 @@ void FindExpandedBranches(
     // Taken and fallthrough paths both restore the scratch register. Some target
     // blocks share one restore, so identify it by the verified, newly allocated slot.
     for (const auto& instruction : input) {
-        if (restores.count(instruction.operation)) {
+        if (restores.count(instruction.operation) != 0) {
             output.helpers.insert(instruction.address);
         }
     }
@@ -388,7 +388,7 @@ NormalizedInstructions NormalizeInstructions(
     for (std::size_t index = 0; index < input.size(); ++index) {
         NormalizeVectorEntry(input, index, output);
         const auto& instruction = input[index];
-        if (output.helpers.count(instruction.address)) {
+        if (output.helpers.count(instruction.address) != 0) {
             continue;
         }
         Instruction normalized = instruction;
@@ -428,13 +428,13 @@ void ValidateReferences(
         Require(
             rewritten != companion.end() && rewritten->second.kind == reference.second.kind,
             "branch target or vector entry reference changed during rewrite");
-        auto target = std::find_if(instructions.begin(), instructions.end(), [&](const Instruction& instruction) {
-            return instruction.address == rewritten->second.target;
-        });
+        auto target = std::find_if(
+            instructions.begin(), instructions.end(),
+            [&rewritten](const Instruction& instruction) { return instruction.address == rewritten->second.target; });
         // A rewritten branch can land on a scratch restore or alignment NOP.
         // Only verified helpers may precede its first mapped business instruction.
         while (target != instructions.end() && mapping.business.count(target->address) == 0 &&
-               (helpers.count(target->address) || target->operation == "NOP")) {
+               (helpers.count(target->address) != 0 || target->operation == "NOP")) {
             const auto nextAddress = target->address + target->bits.size() / kHexDigitsPerByte;
             const auto section = target->section;
             ++target;
@@ -609,7 +609,7 @@ bool BuildPmSamplingInstructionMap(
             std::vector<Instruction> surviving;
             std::vector<std::uint64_t> retired;
             for (const auto& instruction : old) {
-                if (original.simtAddressRelocations.count(instruction.address) &&
+                if (original.simtAddressRelocations.count(instruction.address) != 0 &&
                     instruction.operation.compare(0, kMovKeepPrefix.size(), kMovKeepPrefix) == 0) {
                     retired.push_back(instruction.address);
                 } else {

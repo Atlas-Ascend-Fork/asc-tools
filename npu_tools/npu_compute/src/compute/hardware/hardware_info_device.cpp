@@ -25,7 +25,7 @@ constexpr std::int32_t DEVICE_ID = 0;
 constexpr std::uint32_t AI_CORE_FREQUENCY_FALLBACK_MHZ = 1650;
 constexpr double BYTES_PER_MB = 1024.0 * 1024.0;
 
-void Diagnose(DiagnosticSink* diagnostics, const std::string& message)
+void Diagnose(const DiagnosticSink* diagnostics, const std::string& message)
 {
     if (diagnostics != nullptr && *diagnostics) {
         (*diagnostics)(message);
@@ -56,7 +56,7 @@ bool ParseUnsigned(std::string_view text, Integer* value)
         if (character < '0' || character > '9') {
             return false;
         }
-        const Integer digit = static_cast<Integer>(character - '0');
+        const Integer digit = static_cast<Integer>(static_cast<unsigned>(character) - static_cast<unsigned>('0'));
         if (parsedValue > (maximum - digit) / DECIMAL_RADIX) {
             return false;
         }

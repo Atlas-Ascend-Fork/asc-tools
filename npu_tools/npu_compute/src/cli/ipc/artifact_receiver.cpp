@@ -89,6 +89,89 @@ bool HasOnlySimdVectorCode(const boost::filesystem::path& disassembly)
     }
     return input.eof() && simd;
 }
+using ArtifactGroups = std::map<std::string, std::set<std::string>>;
+struct ManifestGroups {
+    ArtifactGroups pmuGroups;
+    ArtifactGroups samplingGroups;
+    bool hardwareFound = false;
+    bool pipelineManifestFound = false;
+    std::size_t pipelineFragments = 0;
+};
+
+ManifestGroups CollectManifestGroups(
+    const ipc::Result& result, const std::vector<ipc::ManifestEntry>& manifest,
+    const std::set<std::string>& expectedPmu, bool pipelineExpected, bool samplingExpected)
+{
+    std::set<uint64_t> ids;
+    ManifestGroups groups;
+    for (const auto& entry : result.manifest) {
+        Require(ids.insert(entry.id).second, "ARTIFACT: duplicate manifest entry");
+        const auto found = std::find_if(manifest.begin(), manifest.end(), [&entry](const auto& value) {
+            return value.id == entry.id && value.name == entry.name && value.bytes == entry.bytes;
+        });
+        Require(found != manifest.end(), "ARTIFACT: manifest length mismatch");
+        const auto separator = entry.name.find_last_of('/');
+        const std::string parent = separator == std::string::npos ? "" : entry.name.substr(0, separator);
+        const std::string base = separator == std::string::npos ? entry.name : entry.name.substr(separator + 1);
+        if (entry.name == "HardwareInfo.jsonl") {
+            Require(!groups.hardwareFound, "ARTIFACT: duplicate hardware information");
+            groups.hardwareFound = true;
+        } else if (parent == ".biu-staging/process-uds") {
+            Require(pipelineExpected, "ARTIFACT: unexpected Pipeline data");
+            if (base == "manifest.json") {
+                groups.pipelineManifestFound = true;
+            } else {
+                ++groups.pipelineFragments;
+            }
+        } else if (ipc::KindForName(entry.name) == ipc::DataKind::PmSampling) {
+            Require(samplingExpected, "ARTIFACT: unexpected PmSampling artifact");
+            Require(groups.samplingGroups[parent].insert(base).second, "ARTIFACT: duplicate PmSampling artifact");
+        } else {
+            Require(expectedPmu.count(base) == 1, "ARTIFACT: unexpected PMU artifact");
+            Require(groups.pmuGroups[parent].insert(base).second, "ARTIFACT: duplicate PMU artifact");
+        }
+    }
+    return groups;
+}
+
+template <typename Check>
+void ValidateSamplingGroup(
+    const boost::filesystem::path& directory, const std::string& parent, const std::set<std::string>& files,
+    const ArtifactGroups& pmuGroups, const Check& CheckCollection)
+{
+    bool emptySampling = false;
+    if (files.size() == 1 && files.count("summary.db") != 0) {
+        std::string databaseError;
+        const bool inspected =
+            IsEmptyPmSamplingDatabase(directory / parent / "summary.db", &emptySampling, &databaseError);
+        CheckCollection(inspected, databaseError);
+    }
+    const std::set<std::string> expected = emptySampling ?
+                                               std::set<std::string>{"summary.db"} :
+                                               std::set<std::string>{"summary.db", "objdump.txt", "symbolizer.json"};
+    const auto pmu = pmuGroups.find(parent);
+    CheckCollection(
+        pmu != pmuGroups.end() && pmu->second.count("summary.jsonl") != 0,
+        (directory / parent / "summary.jsonl").string() + ": required summary artifact missing");
+    if (files.count("summary.db") == 0 && files.count("objdump.txt") != 0 &&
+        HasOnlySimdVectorCode(directory / parent / "objdump.txt")) {
+        CheckCollection(
+            false, (directory / parent / "objdump.txt").string() +
+                       ": PmSampling requires SIMT instructions (VF_SIMT); only SIMD VF instructions were found. "
+                       "PC/state samples are unavailable; other valid results are retained");
+    }
+    for (const auto& name : expected) {
+        CheckCollection(
+            files.count(name) != 0,
+            (directory / parent / name).string() + ": PmSampling result missing; other valid results are retained");
+    }
+    for (const auto& name : files) {
+        std::string error;
+        const bool valid = ValidatePmSamplingFile(directory / parent / name, &error);
+        CheckCollection(valid, error);
+    }
+}
+
 } // namespace
 ArtifactReceiver::ArtifactReceiver(const std::string& directory)
     : directory_path_(boost::filesystem::absolute(directory))
@@ -121,114 +204,153 @@ void ArtifactReceiver::Abort() noexcept
     }
     active_name_.clear();
 }
+void ArtifactReceiver::OpenArtifactDirectory()
+{
+    const auto separator = active_.name.find_last_of('/');
+    active_name_ = separator == std::string::npos ? active_.name : active_.name.substr(separator + 1);
+    active_directory_path_ = directory_path_;
+    active_directory_ = dup(directory_);
+    if (active_directory_ < 0) {
+        FileError("duplicate staging descriptor");
+    }
+    if (separator != std::string::npos) {
+        const std::string parent = active_.name.substr(0, separator);
+        if (parent.rfind("collection-p", 0) == 0) {
+            active_directory_path_ /= parent;
+            const int next = OpenOrCreateDirectoryAt(directory_, parent);
+            close(active_directory_);
+            active_directory_ = next;
+        } else {
+            active_directory_path_ /= ".biu-staging/process-uds";
+            const int staging = OpenOrCreateDirectoryAt(directory_, ".biu-staging");
+            try {
+                const int process = OpenOrCreateDirectoryAt(staging, "process-uds");
+                close(staging);
+                close(active_directory_);
+                active_directory_ = process;
+            } catch (...) {
+                close(staging);
+                throw;
+            }
+        }
+    }
+}
+void ArtifactReceiver::BeginArtifact(const ipc::Frame& frame)
+{
+    Require(file_ < 0, "ARTIFACT: interleaved begin");
+    auto begin = ipc::DecodeArtifactBegin(frame.payload);
+    Require(
+        begin.id != 0 && begin.kind == ipc::KindForName(begin.name) &&
+            begin.artifactType == ipc::ArtifactTypeForName(begin.name),
+        "ARTIFACT: invalid name or kind");
+    for (const auto& entry : manifest_) {
+        Require(entry.id != begin.id && entry.name != begin.name, "ARTIFACT: duplicate artifact");
+    }
+    Require(manifest_.size() < MAX_ARTIFACT_COUNT, "ARTIFACT: too many artifacts");
+    active_ = std::move(begin);
+    OpenArtifactDirectory();
+    temporary_ = "." + active_name_ + "." + std::to_string(active_.id) + ".tmp";
+    file_ = openat(
+        active_directory_, temporary_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+        (S_IRUSR | S_IWUSR));
+    if (file_ < 0) {
+        temporary_.clear();
+        FileError("create artifact");
+    }
+    offset_ = 0;
+}
+void ArtifactReceiver::ReceiveChunk(const ipc::Frame& frame)
+{
+    Require(frame.type == ipc::TypeForKind(active_.kind), "ARTIFACT: data kind mismatch");
+    auto chunk = ipc::DecodeArtifactChunk(frame.payload);
+    Require(chunk.id == active_.id && chunk.offset == offset_, "ARTIFACT: invalid offset or id");
+    size_t done = 0;
+    while (done < chunk.data.size()) {
+        const ssize_t count = write(file_, chunk.data.data() + done, chunk.data.size() - done);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            FileError("write artifact");
+        }
+        done += static_cast<size_t>(count);
+    }
+    offset_ += done;
+}
+void ArtifactReceiver::EndArtifact(const ipc::Frame& frame)
+{
+    auto end = ipc::DecodeArtifactEnd(frame.payload);
+    Require(end.id == active_.id && end.bytes == offset_, "ARTIFACT: invalid end length");
+    if (fsync(file_) != 0) {
+        FileError("fsync artifact");
+    }
+    if (close(file_) != 0) {
+        file_ = -1;
+        FileError("close artifact");
+    }
+    file_ = -1;
+    RenameNoReplace(active_directory_path_, temporary_, active_name_);
+    temporary_.clear();
+    if (fsync(active_directory_) != 0) {
+        FileError("commit staging");
+    }
+    manifest_.push_back({active_.id, active_.name, offset_});
+    close(active_directory_);
+    active_directory_ = -1;
+    active_name_.clear();
+}
 void ArtifactReceiver::Receive(const ipc::Frame& frame)
 {
     try {
         if (frame.type == ipc::Type::DataBegin) {
-            Require(file_ < 0, "ARTIFACT: interleaved begin");
-            auto begin = ipc::DecodeArtifactBegin(frame.payload);
-            Require(
-                begin.id != 0 && begin.kind == ipc::KindForName(begin.name) &&
-                    begin.artifactType == ipc::ArtifactTypeForName(begin.name),
-                "ARTIFACT: invalid name or kind");
-            for (const auto& entry : manifest_) {
-                Require(entry.id != begin.id && entry.name != begin.name, "ARTIFACT: duplicate artifact");
-            }
-            Require(manifest_.size() < MAX_ARTIFACT_COUNT, "ARTIFACT: too many artifacts");
-            active_ = std::move(begin);
-            const auto separator = active_.name.find_last_of('/');
-            active_name_ = separator == std::string::npos ? active_.name : active_.name.substr(separator + 1);
-            active_directory_path_ = directory_path_;
-            active_directory_ = dup(directory_);
-            if (active_directory_ < 0) {
-                FileError("duplicate staging descriptor");
-            }
-            if (separator != std::string::npos) {
-                const std::string parent = active_.name.substr(0, separator);
-                if (parent.rfind("collection-p", 0) == 0) {
-                    active_directory_path_ /= parent;
-                    const int next = OpenOrCreateDirectoryAt(directory_, parent);
-                    close(active_directory_);
-                    active_directory_ = next;
-                } else {
-                    active_directory_path_ /= ".biu-staging/process-uds";
-                    const int staging = OpenOrCreateDirectoryAt(directory_, ".biu-staging");
-                    try {
-                        const int process = OpenOrCreateDirectoryAt(staging, "process-uds");
-                        close(staging);
-                        close(active_directory_);
-                        active_directory_ = process;
-                    } catch (...) {
-                        close(staging);
-                        throw;
-                    }
-                }
-            }
-            temporary_ = "." + active_name_ + "." + std::to_string(active_.id) + ".tmp";
-            file_ = openat(
-                active_directory_, temporary_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-                (S_IRUSR | S_IWUSR));
-            if (file_ < 0) {
-                temporary_.clear();
-                FileError("create artifact");
-            }
-            offset_ = 0;
+            BeginArtifact(frame);
             return;
         }
         Require(file_ >= 0, "ARTIFACT: data without begin");
-        if (frame.type == ipc::Type::Pmu || frame.type == ipc::Type::Pipeline || frame.type == ipc::Type::Hardware ||
-            frame.type == ipc::Type::PmSampling) {
-            Require(frame.type == ipc::TypeForKind(active_.kind), "ARTIFACT: data kind mismatch");
-            auto chunk = ipc::DecodeArtifactChunk(frame.payload);
-            Require(chunk.id == active_.id && chunk.offset == offset_, "ARTIFACT: invalid offset or id");
-            size_t done = 0;
-            while (done < chunk.data.size()) {
-                const ssize_t count = write(file_, chunk.data.data() + done, chunk.data.size() - done);
-                if (count < 0 && errno == EINTR) {
-                    continue;
-                }
-                if (count <= 0) {
-                    FileError("write artifact");
-                }
-                done += static_cast<size_t>(count);
-            }
-            offset_ += done;
-        } else if (frame.type == ipc::Type::DataEnd) {
-            auto end = ipc::DecodeArtifactEnd(frame.payload);
-            Require(end.id == active_.id && end.bytes == offset_, "ARTIFACT: invalid end length");
-            if (fsync(file_) != 0) {
-                FileError("fsync artifact");
-            }
-            if (close(file_) != 0) {
-                file_ = -1;
-                FileError("close artifact");
-            }
-            file_ = -1;
-            RenameNoReplace(active_directory_path_, temporary_, active_name_);
-            temporary_.clear();
-            if (fsync(active_directory_) != 0) {
-                FileError("commit staging");
-            }
-            manifest_.push_back({active_.id, active_.name, offset_});
-            close(active_directory_);
-            active_directory_ = -1;
-            active_name_.clear();
-            return;
-        } else {
-            throw std::runtime_error("ARTIFACT: unexpected message");
+        switch (frame.type) {
+            case ipc::Type::Pmu:
+            case ipc::Type::Pipeline:
+            case ipc::Type::Hardware:
+            case ipc::Type::PmSampling:
+                ReceiveChunk(frame);
+                break;
+            case ipc::Type::DataEnd:
+                EndArtifact(frame);
+                break;
+            default:
+                throw std::runtime_error("ARTIFACT: unexpected message");
         }
-        return;
     } catch (...) {
         Abort();
         throw;
     }
 }
+namespace {
+std::set<std::string> ExpectedPmuFiles(const ipc::Config& config, bool& pipelineExpected, bool& samplingExpected)
+{
+    std::set<std::string> expectedPmu;
+    for (const auto& section : config.sections) {
+        if (section == "Pipeline") {
+            pipelineExpected = true;
+        } else if (section == "PmSampling") {
+            samplingExpected = true;
+        } else {
+            expectedPmu.insert(section + ".csv");
+        }
+    }
+    if (!expectedPmu.empty() || pipelineExpected || samplingExpected) {
+        expectedPmu.insert("summary.jsonl");
+    }
+    return expectedPmu;
+}
+} // namespace
+
 bool ArtifactReceiver::Validate(
     const ipc::Result& result, const ipc::Config& config, std::vector<std::string>* issues) const
 {
     Require(file_ < 0, "ARTIFACT: unfinished artifact");
     bool complete = true;
-    const auto CheckCollection = [&](bool condition, const std::string& message) {
+    const auto CheckCollection = [&complete, issues](bool condition, const std::string& message) {
         if (!condition) {
             complete = false;
             if (issues != nullptr) {
@@ -242,104 +364,29 @@ bool ArtifactReceiver::Validate(
     Require(
         result.sections == config.sections && result.manifest.size() == manifest_.size(),
         "ARTIFACT: manifest mismatch");
-    std::set<std::string> expectedPmu;
     bool pipelineExpected = false;
     bool samplingExpected = false;
-    for (const auto& section : config.sections) {
-        if (section == "Pipeline") {
-            pipelineExpected = true;
-        } else if (section == "PmSampling") {
-            samplingExpected = true;
-        } else {
-            expectedPmu.insert(section + ".csv");
-        }
-    }
-    if (!expectedPmu.empty() || pipelineExpected || samplingExpected) {
-        expectedPmu.insert("summary.jsonl");
-    }
-    std::set<uint64_t> ids;
-    std::map<std::string, std::set<std::string>> pmuGroups;
-    std::map<std::string, std::set<std::string>> samplingGroups;
-    bool hardwareFound = false;
-    bool pipelineManifestFound = false;
-    std::size_t pipelineFragments = 0;
-    for (const auto& entry : result.manifest) {
-        Require(ids.insert(entry.id).second, "ARTIFACT: duplicate manifest entry");
-        const auto found = std::find_if(manifest_.begin(), manifest_.end(), [&](const auto& value) {
-            return value.id == entry.id && value.name == entry.name && value.bytes == entry.bytes;
-        });
-        Require(found != manifest_.end(), "ARTIFACT: manifest length mismatch");
-        const auto separator = entry.name.find_last_of('/');
-        const std::string parent = separator == std::string::npos ? "" : entry.name.substr(0, separator);
-        const std::string base = separator == std::string::npos ? entry.name : entry.name.substr(separator + 1);
-        if (entry.name == "HardwareInfo.jsonl") {
-            Require(!hardwareFound, "ARTIFACT: duplicate hardware information");
-            hardwareFound = true;
-        } else if (parent == ".biu-staging/process-uds") {
-            Require(pipelineExpected, "ARTIFACT: unexpected Pipeline data");
-            if (base == "manifest.json") {
-                pipelineManifestFound = true;
-            } else {
-                ++pipelineFragments;
-            }
-        } else if (ipc::KindForName(entry.name) == ipc::DataKind::PmSampling) {
-            Require(samplingExpected, "ARTIFACT: unexpected PmSampling artifact");
-            Require(samplingGroups[parent].insert(base).second, "ARTIFACT: duplicate PmSampling artifact");
-        } else {
-            Require(expectedPmu.count(base) == 1, "ARTIFACT: unexpected PMU artifact");
-            Require(pmuGroups[parent].insert(base).second, "ARTIFACT: duplicate PMU artifact");
-        }
-    }
-    CheckCollection(hardwareFound, "HardwareInfo.jsonl: required artifact missing");
+    const auto expectedPmu = ExpectedPmuFiles(config, pipelineExpected, samplingExpected);
+    const auto groups = CollectManifestGroups(result, manifest_, expectedPmu, pipelineExpected, samplingExpected);
+    CheckCollection(groups.hardwareFound, "HardwareInfo.jsonl: required artifact missing");
     CheckCollection(
-        pipelineExpected == (pipelineManifestFound && pipelineFragments > 0),
+        pipelineExpected == (groups.pipelineManifestFound && groups.pipelineFragments > 0),
         "ARTIFACT: required Pipeline artifact missing");
     if (samplingExpected) {
-        CheckCollection(!samplingGroups.empty(), "PmSampling collection: no result files received");
-        for (const auto& [parent, files] : samplingGroups) {
-            bool emptySampling = false;
-            if (files.size() == 1 && files.count("summary.db") != 0) {
-                std::string databaseError;
-                const bool inspected =
-                    IsEmptyPmSamplingDatabase(directory_path_ / parent / "summary.db", &emptySampling, &databaseError);
-                CheckCollection(inspected, databaseError);
-            }
-            const std::set<std::string> expected =
-                emptySampling ? std::set<std::string>{"summary.db"} :
-                                std::set<std::string>{"summary.db", "objdump.txt", "symbolizer.json"};
-            const auto pmu = pmuGroups.find(parent);
-            CheckCollection(
-                pmu != pmuGroups.end() && pmu->second.count("summary.jsonl") != 0,
-                (directory_path_ / parent / "summary.jsonl").string() + ": required summary artifact missing");
-            if (!files.count("summary.db") && files.count("objdump.txt") &&
-                HasOnlySimdVectorCode(directory_path_ / parent / "objdump.txt")) {
-                CheckCollection(
-                    false,
-                    (directory_path_ / parent / "objdump.txt").string() +
-                        ": PmSampling requires SIMT instructions (VF_SIMT); only SIMD VF instructions were found. "
-                        "PC/state samples are unavailable; other valid results are retained");
-            }
-            for (const auto& name : expected) {
-                CheckCollection(
-                    files.count(name) != 0, (directory_path_ / parent / name).string() +
-                                                ": PmSampling result missing; other valid results are retained");
-            }
-            for (const auto& name : files) {
-                std::string error;
-                const bool valid = ValidatePmSamplingFile(directory_path_ / parent / name, &error);
-                CheckCollection(valid, error);
-            }
+        CheckCollection(!groups.samplingGroups.empty(), "PmSampling collection: no result files received");
+        for (const auto& [parent, files] : groups.samplingGroups) {
+            ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, CheckCollection);
         }
     }
     if (!expectedPmu.empty()) {
-        CheckCollection(!pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
-        for (const auto& [parent, files] : pmuGroups) {
+        CheckCollection(!groups.pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
+        for (const auto& [parent, files] : groups.pmuGroups) {
             for (const auto& name : expectedPmu) {
                 CheckCollection(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
             }
         }
     } else {
-        Require(pmuGroups.empty(), "ARTIFACT: unexpected PMU artifact");
+        Require(groups.pmuGroups.empty(), "ARTIFACT: unexpected PMU artifact");
     }
     return complete;
 }

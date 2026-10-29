@@ -213,7 +213,7 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
         return kInternalErrorExitCode;
     }
     const std::string& collection_path = config.no_pack ? disk_data.Path() : collection_data.Path();
-    const auto finishCollection = [&](int result) {
+    const auto finishCollection = [&config, &disk_data, &collection_data, error](int result) {
         std::string cleanup_error;
         const bool removed = config.no_pack ? disk_data.Remove(&cleanup_error) : collection_data.Remove(&cleanup_error);
         if (!removed) {

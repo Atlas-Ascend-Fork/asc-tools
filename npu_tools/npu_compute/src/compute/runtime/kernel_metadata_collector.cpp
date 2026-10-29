@@ -45,6 +45,62 @@ bool ReadElfValue(std::ifstream& input, uint64_t offset, uint64_t fileSize, Valu
     return static_cast<bool>(input.read(reinterpret_cast<char*>(&value), sizeof(value)));
 }
 
+bool ValidSymbolElf(const Elf64_Ehdr& header, uint64_t fileSize)
+{
+    return std::memcmp(header.e_ident, ELFMAG, SELFMAG) == 0 && header.e_ident[EI_CLASS] == ELFCLASS64 &&
+           header.e_ident[EI_DATA] == ELFDATA2LSB && header.e_shentsize == sizeof(Elf64_Shdr) &&
+           (header.e_type == ET_DYN || header.e_type == ET_EXEC) && header.e_shoff <= fileSize &&
+           header.e_shnum <= (fileSize - header.e_shoff) / sizeof(Elf64_Shdr);
+}
+
+std::optional<std::string> ReadSymbolName(std::ifstream& input, uint64_t offset, uint64_t remaining)
+{
+    input.seekg(static_cast<std::streamoff>(offset));
+    std::string name;
+    for (; remaining > 0; --remaining) {
+        char character = 0;
+        if (!input.get(character)) {
+            break;
+        }
+        if (character == '\0') {
+            return name;
+        }
+        name += character;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> FindSectionSymbol(
+    std::ifstream& input, const Elf64_Ehdr& header, uint16_t sectionIndex, uint64_t address, uint64_t fileSize)
+{
+    Elf64_Shdr section{};
+    Elf64_Shdr strings{};
+    if (!ReadElfValue(input, header.e_shoff + sectionIndex * sizeof(section), fileSize, section) ||
+        (section.sh_type != SHT_SYMTAB && section.sh_type != SHT_DYNSYM) || section.sh_entsize != sizeof(Elf64_Sym) ||
+        section.sh_link >= header.e_shnum || section.sh_offset > fileSize ||
+        section.sh_size > fileSize - section.sh_offset) {
+        return std::nullopt;
+    }
+    if (!ReadElfValue(input, header.e_shoff + section.sh_link * sizeof(strings), fileSize, strings) ||
+        strings.sh_type != SHT_STRTAB || strings.sh_offset > fileSize ||
+        strings.sh_size > fileSize - strings.sh_offset) {
+        return std::nullopt;
+    }
+    for (uint64_t index = 0; index < section.sh_size / sizeof(Elf64_Sym); ++index) {
+        Elf64_Sym entry{};
+        if (!ReadElfValue(input, section.sh_offset + index * sizeof(entry), fileSize, entry) ||
+            entry.st_value != address || ELF64_ST_TYPE(entry.st_info) != STT_FUNC || entry.st_shndx == SHN_UNDEF ||
+            entry.st_name >= strings.sh_size) {
+            continue;
+        }
+        const auto name = ReadSymbolName(input, strings.sh_offset + entry.st_name, strings.sh_size - entry.st_name);
+        if (name) {
+            return name;
+        }
+    }
+    return std::nullopt;
+}
+
 std::string ResolveSymbolName(const void* symbol)
 {
     Dl_info info{};
@@ -63,47 +119,15 @@ std::string ResolveSymbolName(const void* symbol)
     }
     const auto fileSize = static_cast<uint64_t>(input.tellg());
     Elf64_Ehdr header{};
-    if (!ReadElfValue(input, 0, fileSize, header) || std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0 ||
-        header.e_ident[EI_CLASS] != ELFCLASS64 || header.e_ident[EI_DATA] != ELFDATA2LSB ||
-        header.e_shentsize != sizeof(Elf64_Shdr) || (header.e_type != ET_DYN && header.e_type != ET_EXEC) ||
-        header.e_shoff > fileSize || header.e_shnum > (fileSize - header.e_shoff) / sizeof(Elf64_Shdr)) {
+    if (!ReadElfValue(input, 0, fileSize, header) || !ValidSymbolElf(header, fileSize)) {
         return {};
     }
     const uint64_t address = reinterpret_cast<uintptr_t>(symbol) -
                              (header.e_type == ET_DYN ? reinterpret_cast<uintptr_t>(info.dli_fbase) : 0);
     for (uint16_t sectionIndex = 0; sectionIndex < header.e_shnum; ++sectionIndex) {
-        Elf64_Shdr section{};
-        if (!ReadElfValue(input, header.e_shoff + sectionIndex * sizeof(section), fileSize, section) ||
-            (section.sh_type != SHT_SYMTAB && section.sh_type != SHT_DYNSYM) ||
-            section.sh_entsize != sizeof(Elf64_Sym) || section.sh_link >= header.e_shnum ||
-            section.sh_offset > fileSize || section.sh_size > fileSize - section.sh_offset) {
-            continue;
-        }
-        Elf64_Shdr strings{};
-        if (!ReadElfValue(input, header.e_shoff + section.sh_link * sizeof(strings), fileSize, strings) ||
-            strings.sh_type != SHT_STRTAB || strings.sh_offset > fileSize ||
-            strings.sh_size > fileSize - strings.sh_offset) {
-            continue;
-        }
-        for (uint64_t index = 0; index < section.sh_size / sizeof(Elf64_Sym); ++index) {
-            Elf64_Sym entry{};
-            if (!ReadElfValue(input, section.sh_offset + index * sizeof(entry), fileSize, entry) ||
-                entry.st_value != address || ELF64_ST_TYPE(entry.st_info) != STT_FUNC || entry.st_shndx == SHN_UNDEF ||
-                entry.st_name >= strings.sh_size) {
-                continue;
-            }
-            input.seekg(static_cast<std::streamoff>(strings.sh_offset + entry.st_name));
-            std::string name;
-            for (uint64_t remaining = strings.sh_size - entry.st_name; remaining > 0; --remaining) {
-                char character = 0;
-                if (!input.get(character)) {
-                    break;
-                }
-                if (character == '\0') {
-                    return name;
-                }
-                name += character;
-            }
+        const auto name = FindSectionSymbol(input, header, sectionIndex, address, fileSize);
+        if (name) {
+            return *name;
         }
     }
     return {};
@@ -172,6 +196,55 @@ std::optional<uint64_t> MixDimension(uint64_t blocks, uint16_t aivRatio)
     return blocks * aivRatio;
 }
 
+std::optional<KernelKind> RuntimeKernelKind(int64_t type)
+{
+    switch (type) {
+        case ACL_KERNEL_TYPE_CUBE:
+            return KernelKind::Cube;
+        case ACL_KERNEL_TYPE_VECTOR:
+            return KernelKind::Vector;
+        case ACL_KERNEL_TYPE_MIX:
+            return KernelKind::Mix;
+        default:
+            return std::nullopt;
+    }
+}
+
+std::optional<KernelKind> MetadataKernelKind(uint32_t type)
+{
+    switch (type) {
+        case CUBE_KERNEL_TYPE:
+        case CUBE_ROLLBACK_KERNEL_TYPE:
+            return KernelKind::Cube;
+        case VECTOR_KERNEL_TYPE:
+        case VECTOR_ROLLBACK_KERNEL_TYPE:
+            return KernelKind::Vector;
+        case MIX_CUBE_MAIN_KERNEL_TYPE:
+        case MIX_VECTOR_MAIN_KERNEL_TYPE:
+            return KernelKind::Mix;
+        default:
+            return std::nullopt;
+    }
+}
+
+void ApplyKernelRatio(const std::array<uint16_t, MIX_RATIO_COUNT>& ratio, KernelMetadata& metadata)
+{
+    const uint16_t aicRatio = ratio[0];
+    const uint16_t aivRatio = ratio[1];
+    // The supported 950 ratios are {1,0}, {0,1}, {1,1} and {1,2}.
+    // Pure kernels keep their launch Block Dim; only MIX has an additional AIV dimension.
+    if (aicRatio == PURE_KERNEL_RATIO && aivRatio == DISABLED_KERNEL_RATIO) {
+        metadata.kind = KernelKind::Cube;
+    } else if (aicRatio == DISABLED_KERNEL_RATIO && aivRatio == PURE_KERNEL_RATIO) {
+        metadata.kind = KernelKind::Vector;
+    } else if (aicRatio == PURE_KERNEL_RATIO && (aivRatio == PURE_KERNEL_RATIO || aivRatio == MIX_VECTOR_RATIO)) {
+        metadata.kind = KernelKind::Mix;
+        if (metadata.blockDim) {
+            metadata.mixBlockDim = MixDimension(*metadata.blockDim, aivRatio);
+        }
+    }
+}
+
 void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata)
 {
     if (function == nullptr) {
@@ -181,30 +254,19 @@ void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata
     const auto getAttribute = OriginalRuntimeFunction<GetAttribute>("aclrtGetFunctionAttribute");
     int64_t type = -1;
     if (getAttribute != nullptr && getAttribute(function, ACL_FUNC_ATTR_KERNEL_TYPE, &type) == ACL_SUCCESS) {
-        if (type == ACL_KERNEL_TYPE_CUBE) {
-            metadata.kind = KernelKind::Cube;
-        } else if (type == ACL_KERNEL_TYPE_VECTOR) {
-            metadata.kind = KernelKind::Vector;
-        } else if (type == ACL_KERNEL_TYPE_MIX) {
-            metadata.kind = KernelKind::Mix;
+        const auto kind = RuntimeKernelKind(type);
+        if (kind) {
+            metadata.kind = kind;
         }
     }
     const auto rawType = FunctionMetadata<uint32_t>(function, KERNEL_TYPE_METADATA_TAG);
+    const auto rawKind = rawType ? MetadataKernelKind(*rawType) : std::nullopt;
     if (!metadata.kind) {
-        if (rawType) {
-            if (*rawType == CUBE_KERNEL_TYPE || *rawType == CUBE_ROLLBACK_KERNEL_TYPE) {
-                metadata.kind = KernelKind::Cube;
-            } else if (*rawType == VECTOR_KERNEL_TYPE || *rawType == VECTOR_ROLLBACK_KERNEL_TYPE) {
-                metadata.kind = KernelKind::Vector;
-            } else if (*rawType == MIX_CUBE_MAIN_KERNEL_TYPE || *rawType == MIX_VECTOR_MAIN_KERNEL_TYPE) {
-                metadata.kind = KernelKind::Mix;
-            }
-        }
+        metadata.kind = rawKind;
     }
     // Pure kernels need not contain MIX_TASK_RATION. Querying this absent tag
     // produces an EE1014 runtime error even though the kernel itself is valid.
-    if (rawType && (*rawType == CUBE_KERNEL_TYPE || *rawType == VECTOR_KERNEL_TYPE ||
-                    *rawType == CUBE_ROLLBACK_KERNEL_TYPE || *rawType == VECTOR_ROLLBACK_KERNEL_TYPE)) {
+    if (rawKind && *rawKind != KernelKind::Mix) {
         return;
     }
     using GetSoc = const char* (*)();
@@ -218,20 +280,7 @@ void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata
     if (!rawRatio) {
         return;
     }
-    const uint16_t aicRatio = (*rawRatio)[0];
-    const uint16_t aivRatio = (*rawRatio)[1];
-    // The supported 950 ratios are {1,0}, {0,1}, {1,1} and {1,2}.
-    // Pure kernels keep their launch Block Dim; only MIX has an additional AIV dimension.
-    if (aicRatio == PURE_KERNEL_RATIO && aivRatio == DISABLED_KERNEL_RATIO) {
-        metadata.kind = KernelKind::Cube;
-    } else if (aicRatio == DISABLED_KERNEL_RATIO && aivRatio == PURE_KERNEL_RATIO) {
-        metadata.kind = KernelKind::Vector;
-    } else if (aicRatio == PURE_KERNEL_RATIO && (aivRatio == PURE_KERNEL_RATIO || aivRatio == MIX_VECTOR_RATIO)) {
-        metadata.kind = KernelKind::Mix;
-        if (metadata.blockDim) {
-            metadata.mixBlockDim = MixDimension(*metadata.blockDim, aivRatio);
-        }
-    }
+    ApplyKernelRatio(*rawRatio, metadata);
 }
 
 } // namespace

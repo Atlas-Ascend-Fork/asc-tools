@@ -26,6 +26,10 @@ public:
 
 private:
     void Abort() noexcept;
+    void OpenArtifactDirectory();
+    void BeginArtifact(const ipc::Frame& frame);
+    void ReceiveChunk(const ipc::Frame& frame);
+    void EndArtifact(const ipc::Frame& frame);
     boost::filesystem::path directory_path_;
     boost::filesystem::path active_directory_path_;
     int directory_ = -1;
