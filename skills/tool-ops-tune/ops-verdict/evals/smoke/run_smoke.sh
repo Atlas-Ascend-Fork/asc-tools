@@ -18,7 +18,7 @@
 # 用法：bash evals/smoke/run_smoke.sh   （在仓库根执行）
 # 退出码：0 全绿 / 1 有失败（CI 门禁语义，与 evals/run_evals.py 同级）。
 
-set -uo pipefail
+set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"  # skills/tool-ops-tune/
 FAILURES=0
 
