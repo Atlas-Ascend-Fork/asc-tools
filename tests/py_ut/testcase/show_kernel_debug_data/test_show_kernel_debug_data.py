@@ -1038,12 +1038,12 @@ class TestAscendump(unittest.TestCase):
             tensor_offset,
             len(data),
         )
-        return self._build_fifo_tlv(11, value + aligned_data)
+        return self._build_fifo_tlv(12, value + aligned_data)
 
     def _build_super_tensor_body(self, data, tensor_length, tensor_offset):
         aligned_data = data + b"\x00" * ((-len(data)) % 32)
         value = struct.pack("<IIQQI4x", 0, 0, tensor_length, tensor_offset, len(data))
-        return self._build_fifo_tlv(12, value + aligned_data)
+        return self._build_fifo_tlv(13, value + aligned_data)
 
     def test_parse_super_tensor_assembles_one_logical_tensor(self):
         tensor_data = struct.pack("10i", *range(10))
