@@ -73,6 +73,26 @@ TEST(WireProtocolTest, RoundTripsHelloAndToolConfiguration)
     EXPECT_EQ(EncodeConfigure(request).size(), 4U + 3U * 4U + 2U * 5U);
 }
 
+TEST(WireProtocolTest, RoundTripsOperatorExecutionTimeoutInSeconds)
+{
+    ConfigureRequest request = SampleConfigure();
+    request.opExecuteTimeoutSec = 5;
+    ConfigureRequest decoded{};
+    std::string error;
+    ASSERT_TRUE(DecodeConfigure(EncodeConfigure(request), decoded, error)) << error;
+    ASSERT_TRUE(decoded.opExecuteTimeoutSec.has_value());
+    EXPECT_EQ(*decoded.opExecuteTimeoutSec, 5U);
+}
+
+TEST(WireProtocolTest, RejectsZeroOperatorExecutionTimeout)
+{
+    ConfigureRequest request = SampleConfigure();
+    request.opExecuteTimeoutSec = 0;
+    ConfigureRequest decoded{};
+    std::string error;
+    EXPECT_FALSE(DecodeConfigure(EncodeConfigure(request), decoded, error));
+}
+
 TEST(WireProtocolTest, ResolvesInitcheckToolNameWithoutChangingExistingIds)
 {
     EXPECT_EQ(static_cast<uint16_t>(ToolId::MEMCHECK), 1U);

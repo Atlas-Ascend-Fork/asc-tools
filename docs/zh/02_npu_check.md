@@ -47,7 +47,7 @@ source ${INSTALL_DIR}/set_env.sh
 ## 命令格式
 
 ```text
-npu-check [--tool <checktype>]... [--log-file <filepath>] [--] <application> [args...]
+npu-check [--tool <checktype>]... [--log-file <filepath>] [--deadlock-timeout <seconds>] [--] <application> [args...]
 ```
 
 ### 选项
@@ -56,6 +56,7 @@ npu-check [--tool <checktype>]... [--log-file <filepath>] [--] <application> [ar
 | --- | --- | --- | --- |
 | `--tool <checktype>` | `memcheck`、`synccheck`、`initcheck`、`racecheck` | 未指定时启用`memcheck` | 可多次指定，用于同时启用多个工具；重复指定同一工具不会重复检查 |
 | `--log-file <filepath>` | 文件路径 | 报告显示在终端 | 保存检查诊断信息 |
+| `--deadlock-timeout <seconds>` | 正整数秒数 | 使用 Runtime 默认算子超时策略 | 设置算子执行超时时间 |
 | `-h`、`--help` | 无 | 不显示帮助 | 显示命令帮助 |
 | `--` | 无 | 可选添加 | 用于分隔工具参数和应用参数 |
 
@@ -89,6 +90,16 @@ npu-check --tool memcheck --log-file reports/memcheck.log ./my_app
 ```
 
 指定`--log-file`后，检查报告写入文件，不再在终端重复显示。应用程序的打屏行为不受影响。
+
+### 设置算子执行超时
+
+指定超时时间（单位：秒）：
+
+```bash
+npu-check --deadlock-timeout 5 ./my_app
+```
+
+上述命令将算子执行超时时间设置为5秒，可用于排查算子执行卡住的问题。算子执行超时时，Runtime 返回错误，应用按原有错误处理流程处理。
 
 ## 约束说明
 

@@ -112,6 +112,8 @@ const std::map<CallbackKey, std::vector<aclrtApiId>> CALLBACK_ROUTES = {
       ACL_RT_API_aclrtGetFuncBySymbol, ACL_RT_API_aclrtLaunchKernelWithHostArgs,
       ACL_RT_API_aclrtLaunchKernelWithArgsArray, ACL_RT_API_aclrtBinaryUnLoad, ACL_RT_API_aclrtResetDevice,
       ACL_RT_API_aclrtBinaryLoadFromFile}},
+    {{ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL_BEFORE},
+     {ACL_RT_API_aclrtLaunchKernelWithHostArgs, ACL_RT_API_aclrtLaunchKernelWithArgsArray}},
 };
 
 } // namespace
@@ -176,7 +178,7 @@ bool AclsanSubscriber::IsValidCallbackId(AclsanCallbackDomain domain, AclsanCall
         case ACLSAN_CB_DOMAIN_SYNCHRONIZE:
             return callbackId == ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END;
         case ACLSAN_CB_DOMAIN_LAUNCH:
-            return callbackId == ACLSAN_CBID_LAUNCH_KERNEL;
+            return callbackId == ACLSAN_CBID_LAUNCH_KERNEL || callbackId == ACLSAN_CBID_LAUNCH_KERNEL_BEFORE;
         default:
             return false;
     }

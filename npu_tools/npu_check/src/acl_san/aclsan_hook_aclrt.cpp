@@ -994,6 +994,10 @@ aclError aclrtLaunchKernelWithHostArgsHook(
                                 placeHolderArray;
     const size_t launchPlaceholderCount = prepared.instrumented ? prepared.placeholders.size() : placeHolderNum;
     const uint64_t launchId = prepared.launchId;
+    AclsanLaunchData beforeCallback = MakeLaunchData(
+        launchId, funcHandle, stream, "aclrtLaunchKernelWithHostArgs", numBlocks, ACL_SUCCESS,
+        "aclrtLaunchKernelWithHostArgs");
+    aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(beforeCallback);
     ASCTOOL_DEBUG(
         "aclrtLaunchKernelWithHostArgs: launch=%llu function=%p blocks=%u originalArgs=%zu traceOffset=%u "
         "originalPlaceholders=%zu materializedInputs=%zu launchArgs=%zu launchPlaceholders=%zu",
@@ -1054,6 +1058,10 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
             }
         }
         if (result == ACL_SUCCESS) {
+            AclsanLaunchData beforeCallback = MakeLaunchData(
+                prepared.launchId, func, stream, "aclrtLaunchKernelWithArgsArray", numBlocks, ACL_SUCCESS,
+                "aclrtLaunchKernelWithArgsArray");
+            aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(beforeCallback);
             const auto original = GetOriginalRuntimeFunction<aclrtLaunchKernelWithArgsArrayFunc>(
                 ACL_RT_API_aclrtLaunchKernelWithArgsArray, "aclrtLaunchKernelWithArgsArray");
             result = original(func, numBlocks, stream, config, prepared.instrumented ? launchArgs.data() : args);

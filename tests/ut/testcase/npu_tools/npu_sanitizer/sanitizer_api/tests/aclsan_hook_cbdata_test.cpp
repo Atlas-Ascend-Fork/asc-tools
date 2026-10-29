@@ -1036,7 +1036,7 @@ void TestLaunchCallbackData()
     aclsan::RecordTraceBinaryFunctionLookup(binary, function, "mix_kernel");
 
     assert(aclrtLaunchKernelWithHostArgsHook(function, 8, stream, nullptr, nullptr, 0, nullptr, 0) == ACL_SUCCESS);
-    assert(g_callbackCapture.calls == 1);
+    assert(g_callbackCapture.calls == 2);
     assert(g_callbackCapture.domain == ACLSAN_CB_DOMAIN_LAUNCH);
     assert(g_callbackCapture.callbackId == ACLSAN_CBID_LAUNCH_KERNEL);
     CheckCommonData(g_callbackCapture.launch.common, sizeof(AclsanLaunchData), "aclrtLaunchKernelWithHostArgs");
@@ -1330,6 +1330,74 @@ void TestParameterAccessStaysInternal()
     ASSERT_EQ(g_deviceMemoryCallbackCount, 2U);
     EXPECT_EQ(g_deviceMemoryCallbacks[1].address, 0x4018U);
 }
+
+TEST(AclsanHookCbdata, LaunchBeforeDispatchFailureLeavesCallbackDataUnchanged)
+{
+    aclsan_test::Boundary boundary;
+    boundary.invokeCallback = [](AclsanCallbackDomain, AclsanCallbackId, const void*) { return false; };
+    const aclsan_test::BoundaryGuard boundaryGuard{boundary};
+    const AclsanLaunchData launch = [] {
+        AclsanLaunchData data{};
+        data.common.apiName = "aclrtLaunchKernelWithHostArgs";
+        data.common.result = ACL_SUCCESS;
+        return data;
+    }();
+
+    aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(launch);
+    EXPECT_EQ(launch.common.result, ACL_SUCCESS);
+}
+
+class AclsanLaunchBeforeFailure : public testing::TestWithParam<aclrtApiId> {};
+
+TEST_P(AclsanLaunchBeforeFailure, CallbackResultDoesNotBlockLaunch)
+{
+    static uint32_t originalCalls = 0;
+    originalCalls = 0;
+    ResetCapture();
+    aclsan_test::Boundary boundary;
+    boundary.getOriginalRuntimeApi = [](aclrtApiId id) -> void* {
+        if (id == ACL_RT_API_aclrtLaunchKernelWithHostArgs) {
+            return reinterpret_cast<void*>(
+                +[](aclrtFuncHandle, uint32_t, aclrtStream, aclrtLaunchKernelCfg*, void*, size_t, aclrtPlaceHolderInfo*,
+                    size_t) -> aclError {
+                    ++originalCalls;
+                    return ACL_SUCCESS;
+                });
+        }
+        if (id == ACL_RT_API_aclrtLaunchKernelWithArgsArray) {
+            return reinterpret_cast<void*>(
+                +[](void*, uint32_t, aclrtStream, aclrtLaunchKernelCfg*, void**) -> aclError {
+                    ++originalCalls;
+                    return ACL_SUCCESS;
+                });
+        }
+        return CaptureGetOriginalRuntimeApi(id);
+    };
+    boundary.invokeCallback = [](AclsanCallbackDomain domain, AclsanCallbackId id, const void* data) {
+        if (domain == ACLSAN_CB_DOMAIN_LAUNCH && id == ACLSAN_CBID_LAUNCH_KERNEL_BEFORE) {
+            auto* launch = const_cast<AclsanLaunchData*>(static_cast<const AclsanLaunchData*>(data));
+            launch->common.result = ACL_ERROR_RT_FEATURE_NOT_SUPPORT;
+            return true;
+        }
+        return aclsan::CaptureInvokeCallback(domain, id, data);
+    };
+    const aclsan_test::BoundaryGuard boundaryGuard{boundary};
+    const auto function = Address(0xface0000U);
+    const aclError result =
+        GetParam() == ACL_RT_API_aclrtLaunchKernelWithHostArgs ?
+            aclrtLaunchKernelWithHostArgsHook(function, 1, nullptr, nullptr, nullptr, 0, nullptr, 0) :
+            aclrtLaunchKernelWithArgsArrayHook(function, 1, nullptr, nullptr, nullptr);
+
+    EXPECT_EQ(result, ACL_SUCCESS);
+    EXPECT_EQ(originalCalls, 1U);
+    ASSERT_EQ(g_callbackCapture.calls, 1U);
+    EXPECT_EQ(g_callbackCapture.callbackId, ACLSAN_CBID_LAUNCH_KERNEL);
+    EXPECT_EQ(g_callbackCapture.launch.common.result, ACL_SUCCESS);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    LaunchHooks, AclsanLaunchBeforeFailure,
+    testing::Values(ACL_RT_API_aclrtLaunchKernelWithHostArgs, ACL_RT_API_aclrtLaunchKernelWithArgsArray));
 
 TEST(AclsanHookCbdata, Main)
 {

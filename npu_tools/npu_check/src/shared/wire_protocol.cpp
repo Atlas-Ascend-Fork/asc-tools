@@ -333,6 +333,11 @@ std::vector<uint8_t> EncodeConfigure(const ConfigureRequest& request)
             encoder.PutBytes(option.value);
         }
     }
+    // 兼容未配置超时的旧 Configure 布局；启用超时时追加 presence byte 和秒值。
+    if (request.opExecuteTimeoutSec.has_value()) {
+        encoder.PutU8(1);
+        encoder.PutU32(*request.opExecuteTimeoutSec);
+    }
     auto payload = encoder.Take();
     return payload.size() <= MAX_PAYLOAD_SIZE ? payload : std::vector<uint8_t>{};
 }
@@ -348,6 +353,7 @@ bool DecodeConfigure(const std::vector<uint8_t>& payload, ConfigureRequest& requ
         return Fail(error, "unsupported configure global flags");
     }
     request.tools.clear();
+    request.opExecuteTimeoutSec.reset();
     request.tools.reserve(toolCount);
 
     // 严格递增即同时覆盖"已排序"与"不重复"两条约束，因此不需要额外的集合去重。
@@ -413,7 +419,15 @@ bool DecodeConfigure(const std::vector<uint8_t>& payload, ConfigureRequest& requ
         request.tools.push_back(std::move(tool));
     }
     if (!decoder.Done()) {
-        return Fail(error, "trailing configure data");
+        uint8_t timeoutPresent = 0;
+        uint32_t timeoutSec = 0;
+        if (!decoder.GetU8(timeoutPresent) || timeoutPresent != 1 || !decoder.GetU32(timeoutSec) || !decoder.Done()) {
+            return Fail(error, "malformed op execute timeout");
+        }
+        if (timeoutSec == 0) {
+            return Fail(error, "op execute timeout must be greater than zero");
+        }
+        request.opExecuteTimeoutSec = timeoutSec;
     }
     return true;
 }

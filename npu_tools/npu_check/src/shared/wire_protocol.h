@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace npucheck::ipc {
@@ -179,6 +180,8 @@ struct ToolRequest {
 struct ConfigureRequest {
     uint16_t globalFlags = 0; // V1 必须为 0
     std::vector<ToolRequest> tools;
+    // 算子执行超时，单位为秒；未设置表示沿用 Runtime 默认策略。
+    std::optional<uint32_t> opExecuteTimeoutSec;
 };
 
 // 工具子选项的注册项。名称在 CLI 中全局唯一，因此子选项可以出现在所属 --tool 之前或

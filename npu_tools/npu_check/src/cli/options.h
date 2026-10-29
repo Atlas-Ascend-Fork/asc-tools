@@ -14,6 +14,7 @@
 #include "wire_protocol.h"
 
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace npucheck {
@@ -26,6 +27,8 @@ struct Options {
     // 临时会话目录。两者的差别不只是路径 —— 临时目录由 CLI 创建也由 CLI 删除，用户
     // 指定的目录只创建。
     std::string workDir;
+    // 算子执行超时时间，单位为秒；未设置时不覆盖 Runtime 默认值。
+    std::optional<uint32_t> opExecuteTimeoutSec;
     int handshakeTimeoutMs = 10000; // [内部] 建连 + 握手 + Configure + Ready 的总超时
     int errorExitCode = 0;          // [内部] 0 表示不覆盖应用退出码
     bool showHelp = false;

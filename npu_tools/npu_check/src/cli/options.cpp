@@ -249,6 +249,18 @@ bool ParseOptions(int argc, char** argv, Options& options, std::string& error)
             options.errorExitCode = *parsed;
             continue;
         }
+        if (argument == "--deadlock-timeout") {
+            if (!NeedValue(argc, argv, i, value, error)) {
+                return false;
+            }
+            const auto parsed = ParseBoundedInt(value, 1, INT_MAX);
+            if (!parsed) {
+                error = "--deadlock-timeout must be a positive number of seconds";
+                return false;
+            }
+            options.opExecuteTimeoutSec = static_cast<uint32_t>(*parsed);
+            continue;
+        }
         // 工具子选项：名称在 CLI 中全局唯一，归属由共享注册表决定，因此可以出现在
         // 所属 --tool 之前或之后，这里不依赖"当前工具"状态，也不按参数相邻关系推断。
         if (argument.compare(0, LONG_OPTION_PREFIX.size(), LONG_OPTION_PREFIX) == 0 &&
@@ -382,7 +394,7 @@ bool ResolveLibraryPath(const std::string& requested, std::string& resolved, std
 
 std::string Usage()
 {
-    return "Usage: npu-check [--tool <name>]... [--log-file <filepath>]\n"
+    return "Usage: npu-check [--tool <name>]... [--log-file <filepath>] [--deadlock-timeout <seconds>]\n"
            "                 [--] <application> [args...]\n"
            "\n"
            "Options:\n"
@@ -394,6 +406,8 @@ std::string Usage()
            "        racecheck : The memory access race detection tool.\n"
            "  --log-file <filepath>\n"
            "      Save the check report to the file instead of printing output to stdout.\n"
+           "  --deadlock-timeout <seconds>\n"
+           "      Set the maximum execution time for each operator, in seconds.\n"
            "  -h, --help\n"
            "      Produce this help message.\n"
            "  --\n"

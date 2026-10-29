@@ -71,6 +71,11 @@ void AclsanCallbackDispatcher::DispatchLaunch(const AclsanLaunchData& cbData) no
     Dispatch(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &cbData, cbData.common.apiName);
 }
 
+void AclsanCallbackDispatcher::DispatchLaunchBefore(const AclsanLaunchData& cbData) noexcept
+{
+    Dispatch(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL_BEFORE, &cbData, cbData.common.apiName);
+}
+
 void AclsanCallbackDispatcher::DispatchDeviceBarrier(const AclsanDeviceBarrierData& cbData) noexcept
 {
     Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER, &cbData, "DEVICE_PIPE_BARRIER");

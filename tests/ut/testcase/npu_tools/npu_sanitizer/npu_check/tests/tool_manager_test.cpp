@@ -10,9 +10,11 @@
 #include "tool_manager/tool_manager.h"
 #include "options.h"
 #include "uds_client.h"
+#include "acl/acl_rt.h"
 
 #include <gtest/gtest.h>
 #include <cstdlib>
+#include <functional>
 #include <set>
 #include <thread>
 #include <unistd.h>
@@ -22,11 +24,48 @@ AclsanCallbackFunc callback = nullptr;
 void* userdata = nullptr;
 std::set<std::pair<AclsanCallbackDomain, AclsanCallbackId>> enabled;
 size_t enableCalls = 0;
+std::vector<uint32_t> timeoutValues;
+aclError timeoutLookupStatus = ACL_SUCCESS;
+aclError timeoutSetStatus = ACL_SUCCESS;
+bool timeoutApiAvailable = true;
+
+aclError SetOpExecuteTimeout(uint32_t seconds)
+{
+    timeoutValues.push_back(seconds);
+    return timeoutSetStatus;
+}
 
 void Emit(AclsanCallbackDomain domain, AclsanCallbackId id, const void* data)
 {
     if (enabled.count({domain, id}) != 0)
         callback(userdata, domain, id, data);
+}
+
+TEST(NpuCheckOptionsTest, ParsesOperatorExecutionTimeoutInSeconds)
+{
+    std::vector<std::string> args = {"npu-check", "--deadlock-timeout", "5", "/bin/true"};
+    std::vector<char*> argv;
+    for (auto& arg : args) {
+        argv.push_back(arg.data());
+    }
+    npucheck::Options options;
+    std::string error;
+    ASSERT_TRUE(npucheck::ParseOptions(static_cast<int>(argv.size()), argv.data(), options, error)) << error;
+    ASSERT_TRUE(options.opExecuteTimeoutSec.has_value());
+    EXPECT_EQ(*options.opExecuteTimeoutSec, 5U);
+}
+
+TEST(NpuCheckOptionsTest, RejectsZeroOperatorExecutionTimeout)
+{
+    std::vector<std::string> args = {"npu-check", "--deadlock-timeout", "0", "/bin/true"};
+    std::vector<char*> argv;
+    for (auto& arg : args) {
+        argv.push_back(arg.data());
+    }
+    npucheck::Options options;
+    std::string error;
+    EXPECT_FALSE(npucheck::ParseOptions(static_cast<int>(argv.size()), argv.data(), options, error));
+    EXPECT_NE(error.find("positive"), std::string::npos);
 }
 
 struct Session {
@@ -38,7 +77,7 @@ struct Session {
 
 Session RunSession(
     std::vector<std::string> args, bool memoryError, bool syncError, bool failSync = false, bool nullCallback = false,
-    bool initError = false, bool race = false)
+    bool initError = false, bool race = false, const std::function<void()>& onReady = {})
 {
     enabled.clear();
     enableCalls = 0;
@@ -57,6 +96,7 @@ Session RunSession(
     setenv(npucheck::ipc::HANDSHAKE_TIMEOUT_ENV, "5000", 1);
     npucheck::ipc::ConfigureRequest config;
     config.tools = options.tools;
+    config.opExecuteTimeoutSec = options.opExecuteTimeoutSec;
     std::thread client([&] {
         npucheck::ipc::UdsClient transport;
         if (!transport.ConnectAndConfigure(
@@ -80,6 +120,9 @@ Session RunSession(
     npucheck::ToolManager manager;
     result.initialized = manager.Initialize();
     if (result.initialized == 0) {
+        if (onReady) {
+            onReady();
+        }
         if (nullCallback) {
             Emit(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, nullptr);
         }
@@ -156,6 +199,15 @@ Session RunSession(
     return result;
 }
 } // namespace
+
+extern "C" aclError aclrtApiInjectionGetFunc(const char* name, aclrtApiFunc* origin, aclrtApiFunc*)
+{
+    if (std::string(name) != "aclrtSetOpExecuteTimeOut") {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    *origin = timeoutApiAvailable ? reinterpret_cast<aclrtApiFunc>(&SetOpExecuteTimeout) : nullptr;
+    return timeoutLookupStatus;
+}
 
 // Mock only the public sanitizer boundary; the CLI parser, UDS exchange,
 // ToolManager, checkers and reporter all run their production implementations.
@@ -302,4 +354,66 @@ TEST(ToolManagerTest, NullCallbackIsCountedOnceAndDoesNotReachCheckers)
     EXPECT_NE(session.text.find("status=incomplete"), std::string::npos);
     EXPECT_NE(session.text.find("pending_device_operations=0"), std::string::npos);
     EXPECT_EQ(session.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
+}
+
+TEST(ToolManagerTest, AppliesConfiguredTimeoutBeforeEveryLaunch)
+{
+    timeoutValues.clear();
+    timeoutLookupStatus = ACL_SUCCESS;
+    timeoutSetStatus = ACL_SUCCESS;
+    timeoutApiAvailable = true;
+    const auto session =
+        RunSession({"npu-check", "--deadlock-timeout", "5", "/bin/true"}, false, false, false, false, false, false, [] {
+            for (uint64_t id : {1U, 2U}) {
+                AclsanLaunchData launch{};
+                launch.common.version = ACLSAN_API_VERSION;
+                launch.common.size = sizeof(launch);
+                launch.launchId = id;
+                Emit(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL_BEFORE, &launch);
+                EXPECT_EQ(launch.common.result, ACL_SUCCESS);
+            }
+        });
+    ASSERT_EQ(session.initialized, 0);
+    ASSERT_TRUE(session.error.empty()) << session.error;
+    EXPECT_EQ(timeoutValues, (std::vector<uint32_t>{5, 5}));
+}
+
+TEST(ToolManagerTest, TimeoutSetupAndLookupFailuresLeaveLaunchResultUnchanged)
+{
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        timeoutValues.clear();
+        timeoutLookupStatus = scenario == 0 ? ACL_ERROR_INVALID_PARAM : ACL_SUCCESS;
+        timeoutApiAvailable = scenario != 1;
+        timeoutSetStatus = ACL_ERROR_RT_FEATURE_NOT_SUPPORT;
+        const auto session = RunSession(
+            {"npu-check", "--deadlock-timeout", "5", "/bin/true"}, false, false, false, false, false, false, [&] {
+                AclsanLaunchData launch{};
+                launch.common.version = ACLSAN_API_VERSION;
+                launch.common.size = sizeof(launch);
+                Emit(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL_BEFORE, &launch);
+                EXPECT_EQ(launch.common.result, ACL_SUCCESS);
+            });
+        ASSERT_EQ(session.initialized, 0);
+        ASSERT_TRUE(session.error.empty()) << session.error;
+        EXPECT_EQ(timeoutValues.size(), scenario == 2 ? 1U : 0U);
+    }
+}
+
+TEST(ToolManagerTest, StreamSyncTimeoutStillAllowsFinalResult)
+{
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_EXIT(
+        {
+            const auto session = RunSession(
+                {"npu-check", "--tool", "synccheck", "--deadlock-timeout", "5", "/bin/true"}, false, false, false,
+                false, false, false, [] {
+                    AclsanSynchronizeData sync{};
+                    sync.common.version = ACLSAN_API_VERSION;
+                    sync.common.size = sizeof(sync);
+                    sync.common.result = ACL_ERROR_RT_STREAM_SYNC_TIMEOUT;
+                    Emit(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync);
+                });
+            _exit(session.initialized == 0 && session.error.empty() && !session.text.empty() ? 0 : 1);
+        },
+        testing::ExitedWithCode(0), "");
 }

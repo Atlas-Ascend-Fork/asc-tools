@@ -27,6 +27,7 @@ public:
     static void DispatchDeviceSync(const AclsanDeviceSyncData& cbData) noexcept;
     static void DispatchDeviceBarrier(const AclsanDeviceBarrierData& cbData) noexcept;
     static void DispatchLaunch(const AclsanLaunchData& cbData) noexcept;
+    static void DispatchLaunchBefore(const AclsanLaunchData& cbData) noexcept;
 
 private:
     static bool IsSupportedResourceCallback(AclsanCallbackId cbId) noexcept;

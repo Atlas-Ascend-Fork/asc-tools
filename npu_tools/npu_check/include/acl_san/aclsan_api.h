@@ -112,6 +112,8 @@ typedef enum AclsanCallbackIdMemory {
 
 typedef enum AclsanCallbackIdLaunch {
     ACLSAN_CBID_LAUNCH_KERNEL = 1,
+    // 在调用原始 kernel launch 接口前同步执行订阅回调，回调数据为 AclsanLaunchData。
+    ACLSAN_CBID_LAUNCH_KERNEL_BEFORE = 2,
     ACLSAN_CBID_LAUNCH_INVALID = 0x7fffffff
 } AclsanCallbackIdLaunch;
 

@@ -469,6 +469,7 @@ npucheck::ipc::ConfigureRequest BuildConfigureRequest(const Options& options)
     npucheck::ipc::ConfigureRequest request;
     request.globalFlags = 0;
     request.tools = options.tools;
+    request.opExecuteTimeoutSec = options.opExecuteTimeoutSec;
     return request;
 }
 

@@ -110,7 +110,7 @@ target_include_directories(npu_check_tool_manager_test PRIVATE
   "${NPU_CHECK_DBI_INCLUDE_DIR}"
 )
 target_link_libraries(npu_check_tool_manager_test PRIVATE
-  npu_check_core acl_san npu_sanitizer_plog Threads::Threads GTest::gtest Boost::filesystem)
+  npu_check_core acl_san injection_headers npu_sanitizer_plog Threads::Threads GTest::gtest Boost::filesystem)
 add_test(NAME npu_check_tool_manager_test COMMAND npu_check_tool_manager_test)
 set_tests_properties(npu_check_tool_manager_test PROPERTIES TIMEOUT 45)
 

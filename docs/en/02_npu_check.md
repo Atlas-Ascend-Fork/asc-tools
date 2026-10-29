@@ -47,7 +47,7 @@ To locate source files and line numbers directly from a report, preserve line in
 ## Command Format
 
 ```text
-npu-check [--tool <checktype>]... [--log-file <filepath>] [--] <application> [args...]
+npu-check [--tool <checktype>]... [--log-file <filepath>] [--deadlock-timeout <seconds>] [--] <application> [args...]
 ```
 
 ### Options
@@ -56,6 +56,7 @@ npu-check [--tool <checktype>]... [--log-file <filepath>] [--] <application> [ar
 | --- | --- | --- | --- |
 | `--tool <checktype>` | `memcheck`, `synccheck`, `initcheck`, `racecheck` | Enables `memcheck` when omitted | Can be specified multiple times to enable multiple tools; repeating the same tool does not repeat the check |
 | `--log-file <filepath>` | A file path | Displays the report in the terminal | Saves diagnostic information |
+| `--deadlock-timeout <seconds>` | Positive integer seconds | Uses the Runtime default operator timeout policy | Sets the operator execution timeout |
 | `-h`, `--help` | None | Does not display help | Displays command help |
 | `--` | None | Optional | Separates tool options from application arguments |
 
@@ -89,6 +90,16 @@ npu-check --tool memcheck --log-file reports/memcheck.log ./my_app
 ```
 
 When `--log-file` is specified, the report is written to the file and is not also displayed in the terminal. The application's console output is not affected.
+
+### Setting the operator execution timeout
+
+Specify the timeout in seconds:
+
+```bash
+npu-check --deadlock-timeout 5 ./my_app
+```
+
+This command sets the operator execution timeout to 5 seconds to help investigate operators that appear to hang. If an operator times out, Runtime returns an error that the application handles through its existing error handling flow.
 
 ## Constraints
 

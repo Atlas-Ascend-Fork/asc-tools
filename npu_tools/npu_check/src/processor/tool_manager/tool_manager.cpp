@@ -18,6 +18,7 @@
 #include "npu_tool_log.h"
 #include <memory>
 #include <sstream>
+#include "acl/acl_rt.h"
 
 namespace npucheck {
 namespace {
@@ -129,7 +130,10 @@ bool ToolManager::ConfigureSanitizer(std::string& error)
 
 bool ToolManager::EnableCallbacks(std::string& error)
 {
-    const auto required = RequiredCallbacks(checkers_);
+    auto required = RequiredCallbacks(checkers_);
+    if (configure_.opExecuteTimeoutSec.has_value()) {
+        required.emplace_back(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL_BEFORE);
+    }
 
     for (const auto& [domain, cbid] : required) {
         const AclsanStatus status = aclsanEnableCallback(1, subscriber_, domain, cbid);
@@ -326,6 +330,24 @@ void ToolManager::OnCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid,
         {
             std::lock_guard<std::mutex> stateLock(stateMutex_);
             ++malformedCallbacks_;
+        }
+        return;
+    }
+    if (domain == ACLSAN_CB_DOMAIN_LAUNCH && cbid == ACLSAN_CBID_LAUNCH_KERNEL_BEFORE &&
+        configure_.opExecuteTimeoutSec.has_value()) {
+        using SetOpExecuteTimeout = aclError (*)(uint32_t);
+        aclrtApiFunc original = nullptr;
+        aclError status = aclrtApiInjectionGetFunc("aclrtSetOpExecuteTimeOut", &original, nullptr);
+        if (status == ACL_SUCCESS) {
+            const auto setTimeout = reinterpret_cast<SetOpExecuteTimeout>(original);
+            status = setTimeout != nullptr ? setTimeout(*configure_.opExecuteTimeoutSec) : ACL_ERROR_UNINITIALIZE;
+        }
+        if (status != ACL_SUCCESS) {
+            ASCTOOL_ERROR(
+                "operator execution timeout setup failed: timeout_sec=%u result=%d", *configure_.opExecuteTimeoutSec,
+                status);
+        } else {
+            ASCTOOL_DEBUG("operator execution timeout set: timeout_sec=%u", *configure_.opExecuteTimeoutSec);
         }
         return;
     }
