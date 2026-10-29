@@ -388,7 +388,7 @@ std::string Usage()
            "Options:\n"
            "  --tool <name> (=memcheck)\n"
            "      Set the tool to use. Can be specified multiple times to run several tools.\n"
-           "        memcheck  : The memory access error and leak detection tool.\n"
+           "        memcheck  : The memory access error detection tool.\n"
            "        synccheck : The thread synchronization hazard detection tool.\n"
            "        initcheck : The persistent register and GM/L1/L0A/L0B/L0C initialization check tool.\n"
            "        racecheck : The memory access race detection tool.\n"

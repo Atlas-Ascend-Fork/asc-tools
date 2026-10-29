@@ -108,3 +108,16 @@ npu-check --tool memcheck --log-file reports/memcheck.log ./my_app
 - 在使用`simt vf`和`simd vf`的场景下，`memcheck`只支持检测非`vf`代码产生的读写越界异常
 - 算子使用非`inline`子函数时不支持检测
 - `initcheck`内存初始化问题若属于竞争问题（例如写后读场景），则只能保证不误报；若存在竞争问题，工具会按预期报错。
+- `synccheck`同步配对检查，以及`initcheck`、`racecheck`这种依赖同步关系的诊断，仅支持硬同步场景。若通过软件逻辑实现同步，则相关诊断结果不可靠。Ascend 950PR&950DT系列产品上支持检测的硬同步接口及范围如下：
+
+  | 同步范围 | Ascend C基础API | 对应C API |
+  | --- | --- | --- |
+  | 核内流水间事件同步 | `SetFlag/WaitFlag`、`TQueSync::SetFlag/WaitFlag` | `asc_sync_notify/asc_sync_wait` |
+  | 核内流水锁同步 | `Mutex::Lock/Unlock` | `asc_lock/asc_unlock` |
+  | 核间模式0：全部AIC或全部AIV同步 | `CrossCoreSetFlag<0, pipe>/CrossCoreWaitFlag<0, pipe>` | `asc_sync_inter_arrive/asc_sync_inter_wait` |
+  | 核间模式1：同一group内全部AIV同步 | `CrossCoreSetFlag<1, pipe>/CrossCoreWaitFlag<1, pipe>` | `asc_sync_subblock_arrive/asc_sync_subblock_wait` |
+  | 核间模式2：同一group内AIC与全部AIV同步 | `CrossCoreSetFlag<2, pipe>/CrossCoreWaitFlag<2, pipe>` | `asc_sync_block_arrive/asc_sync_block_wait` |
+  | 核间模式4：同一group内AIC与单个AIV同步 | `CrossCoreSetFlag<4, pipe>/CrossCoreWaitFlag<4, pipe>` | `asc_sync_intra_arrive/asc_sync_intra_wait` |
+  | 全核硬同步 | 无workspace参数的`SyncAll<isAIVOnly>()`、`SyncAll<isAIVOnly, config>()` | 无 |
+
+  若诊断信息显示高阶API内部存在同步不配对、初始化问题或竞争问题，则本次检出的诊断结果不可靠。
