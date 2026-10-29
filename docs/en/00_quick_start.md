@@ -201,10 +201,11 @@ source /usr/local/Ascend/cann/set_env.sh
   git clone https://gitcode.com/cann/asc-tools.git
   ```
 
-  **Note: To switch to another tag version, e.g., v0.5.0, run the following command.**
+  **Note: To switch to another tag version, e.g., v9.1.0, run the following commands.**
 
   ```bash
-  git checkout v0.5.0
+  cd asc-tools
+  git checkout v9.1.0
   ```
 
 - If your build environment does not have network access, you can download via a ZIP package (shorter download time, but slightly more complex steps).

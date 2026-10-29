@@ -200,9 +200,10 @@ source /usr/local/Ascend/cann/set_env.sh
   cd ${git_clone_path}
   git clone https://gitcode.com/cann/asc-tools.git
   ```
-  **注：如果需要切换到其它tag版本，以v0.5.0为例，可执行以下命令。**
+  **注：如果需要切换到其它tag版本，以v9.1.0为例，可执行以下命令。**
   ```bash
-  git checkout v0.5.0
+  cd asc-tools
+  git checkout v9.1.0
   ```
 - 若您的编译环境无法访问网络，可以通过压缩包方式下载（下载时间较短，但步骤稍微复杂）。
 
