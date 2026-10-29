@@ -14,9 +14,8 @@
 namespace aclsan {
 const DeviceInstructionDecoder* FindDeviceInstructionDecoder(SocVersion version) noexcept
 {
-    switch (version) {
-        case SocVersion::DAV_3510:
-            return &dav3510::GetDeviceInstructionDecoder();
+    if (version == SocVersion::DAV_3510) {
+        return &dav3510::GetDeviceInstructionDecoder();
     }
     return nullptr;
 }

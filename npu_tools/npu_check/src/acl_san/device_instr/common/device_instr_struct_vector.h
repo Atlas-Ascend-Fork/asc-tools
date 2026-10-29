@@ -12,12 +12,15 @@
 #define ACLSAN_DEVICE_INSTR_STRUCT_VECTOR_H
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace aclsan {
 
+inline constexpr std::size_t PUSH_PB_VALUE_COUNT = 4;
+
 struct PushPbParamField {
-    std::array<uint64_t, 4> values{};
+    std::array<uint64_t, PUSH_PB_VALUE_COUNT> values{};
 };
 
 struct VfParamField {

@@ -37,7 +37,6 @@ constexpr size_t PARAM_TYPE_OFFSET = PARAM_ALIGNMENT_OFFSET + sizeof(uint16_t);
 constexpr size_t SUMMARY_ARGUMENT_BYTES_OFFSET = sizeof(uint32_t);
 constexpr uint16_t POINTER_PARAMETER_TYPE = 2;
 
-// TODO: 后续统一整理成一个公共函数
 void Require(bool condition, const char* message)
 {
     if (!condition) {

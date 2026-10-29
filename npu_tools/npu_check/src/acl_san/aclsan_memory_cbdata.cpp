@@ -82,6 +82,7 @@ constexpr uint32_t REGISTER_BANK_B = 1U;
 constexpr uint32_t DMA_DESCRIPTOR_DIMENSION_COUNT = 3U;
 constexpr uint32_t UNSPECIFIED_DATA_BITS = 0U;
 constexpr uint32_t SCALAR_SYSTEM_WINDOW_MASK_BITS = 24U;
+constexpr uint32_t SCALAR_ADDRESS_SPACE_FLAG_SHIFT = 24U;
 constexpr uint32_t TRANSPOSE_B4_M_STEP_ALIGNMENT = 4U;
 constexpr uint32_t TRANSPOSE_B8_M_STEP_ALIGNMENT = 2U;
 constexpr uint32_t TRANSPOSE_B32_K_STEP_ALIGNMENT = 2U;
@@ -716,7 +717,7 @@ ScalarGmAddressResult ResolveScalarGmAddress(
     const uint64_t effective = static_cast<uint64_t>(address);
     constexpr uint64_t windowMask = (UINT64_C(1) << SCALAR_SYSTEM_WINDOW_MASK_BITS) - 1;
     const bool systemWindow = ((effective >> 25) & windowMask) == ((field.sysVaBase >> 25) & windowMask);
-    if (systemWindow && ((effective >> 24) & 1U) == NO_ACCESS_COUNT) {
+    if (systemWindow && ((effective >> SCALAR_ADDRESS_SPACE_FLAG_SHIFT) & 1U) == NO_ACCESS_COUNT) {
         const bool ub = ((effective >> 20) & 0x1fU) == 0 && ((effective >> 19) & 1U) != 0;
         const bool stack = ((effective >> 20) & 0xfU) != 0;
         return {

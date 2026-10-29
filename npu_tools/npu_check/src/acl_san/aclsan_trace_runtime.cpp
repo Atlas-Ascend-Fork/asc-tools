@@ -226,7 +226,7 @@ void StoreHiddenPointer(PreparedTraceLaunch& prepared, TraceArgumentMode argumen
         if (memcpy_s(
                 prepared.arguments.data() + prepared.traceArgumentOffset,
                 prepared.arguments.size() - prepared.traceArgumentOffset, &prepared.deviceBuffer,
-                sizeof(prepared.deviceBuffer)) != EOK) {
+                sizeof(void*)) != EOK) {
             throw std::runtime_error("cannot store trace buffer pointer");
         }
     }
@@ -688,7 +688,7 @@ aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept
             }
             if (memcpy_s(
                     prepared.arguments.data() + placeholder.addrOffset,
-                    prepared.arguments.size() - placeholder.addrOffset, &address, sizeof(address)) != EOK) {
+                    prepared.arguments.size() - placeholder.addrOffset, &address, sizeof(void*)) != EOK) {
                 return fail(ACL_ERROR_INVALID_PARAM);
             }
         }

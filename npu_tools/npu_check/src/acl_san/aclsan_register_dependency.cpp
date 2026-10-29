@@ -203,10 +203,10 @@ std::optional<AclsanDeviceRegisterStateData> MakeRegisterStateData(
     return data;
 }
 
-std::array<AclsanDeviceRegisterStateData, 2> MakeRegisterStateDataForVecMask(
+std::array<AclsanDeviceRegisterStateData, VECTOR_MASK_REGISTER_COUNT> MakeRegisterStateDataForVecMask(
     const ParsedTraceRecord& parsed, const VectorMaskParamField& mask) noexcept
 {
-    std::array<AclsanDeviceRegisterStateData, 2> data{};
+    std::array<AclsanDeviceRegisterStateData, VECTOR_MASK_REGISTER_COUNT> data{};
     for (uint32_t index = 0; index < data.size(); ++index) {
         data[index].header = MakeHeader(parsed);
         data[index].regId = ACLSAN_DEVICE_REGISTER_VECTOR_MASK;

@@ -469,16 +469,16 @@ void LogParamField(const aclsan::DeviceInstructionParamField& params) noexcept
         params);
 }
 
-void LogCallbackData(const AclsanDeviceRegisterStateData& state) noexcept
+void LogCallbackData(const AclsanDeviceRegisterStateData& cbData) noexcept
 {
-    const auto& h = state.header;
+    const auto& h = cbData.header;
     ASCTOOL_DEBUG(
         "[cbdata] type=AclsanDeviceRegisterStateData deviceId=%u phyCoreId=%u blockId=%u blockType=%s "
         "instrExecId=%llu launchId=%llu pc=0x%llx serialNo=%llu pipeline=%u regId=%u regIndex=%u value=0x%llx",
         h.deviceId, h.phyCoreId, h.blockId, BlockTypeName(h.blockType), static_cast<unsigned long long>(h.instrExecId),
         static_cast<unsigned long long>(h.launchId), static_cast<unsigned long long>(h.pc),
-        static_cast<unsigned long long>(h.serialNo), h.pipeline, state.regId, state.regIndex,
-        static_cast<unsigned long long>(state.value));
+        static_cast<unsigned long long>(h.serialNo), h.pipeline, cbData.regId, cbData.regIndex,
+        static_cast<unsigned long long>(cbData.value));
 }
 
 void LogCallbackData(const AclsanDeviceBarrierData& barrier) noexcept

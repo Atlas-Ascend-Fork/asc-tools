@@ -11,6 +11,12 @@ set(SANITIZER_API_SOURCE_DIR "${CMAKE_SOURCE_DIR}/npu_tools/npu_check/src/acl_sa
 set(SANITIZER_API_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
 if(ENABLE_TEST)
+  add_executable(aclsan_child_exit_status_test "${SANITIZER_API_TEST_DIR}/child_exit_status_test.cpp")
+  target_compile_features(aclsan_child_exit_status_test PRIVATE cxx_std_17)
+  target_compile_options(aclsan_child_exit_status_test PRIVATE -Wall -Wextra -Werror)
+  target_include_directories(aclsan_child_exit_status_test PRIVATE "${SANITIZER_API_SOURCE_DIR}")
+  add_test(NAME aclsan.child_exit_status COMMAND aclsan_child_exit_status_test)
+
   add_test(NAME aclsan.public_headers
     COMMAND bash "${SANITIZER_API_TEST_DIR}/check_public_headers.sh"
       "${SANITIZER_API_SOURCE_DIR}/../../include"

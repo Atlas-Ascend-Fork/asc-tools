@@ -17,6 +17,7 @@
 
 namespace aclsan {
 inline constexpr std::size_t MATRIX_REGISTER_BANK_COUNT = 2; // Normal and _B banks.
+inline constexpr std::size_t VECTOR_MASK_REGISTER_COUNT = 2;
 inline constexpr std::size_t NDDMA_LOOP_COUNT = 5;
 inline constexpr std::size_t NDDMA_PADDING_LOOP_COUNT = NDDMA_LOOP_COUNT - 1;
 inline constexpr std::size_t DMA_DIRECTION_COUNT = 3;   // UBUF->GM, GM->UBUF, GM->CBUF.

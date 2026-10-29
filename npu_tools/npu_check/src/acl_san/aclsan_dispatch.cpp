@@ -15,65 +15,65 @@
 
 namespace aclsan {
 
-bool AclsanCallbackDispatcher::IsSupportedResourceCallback(AclsanCallbackId cbid) noexcept
+bool AclsanCallbackDispatcher::IsSupportedResourceCallback(AclsanCallbackId cbId) noexcept
 {
-    return cbid == ACLSAN_CBID_RESOURCE_MEMORY_ALLOC || cbid == ACLSAN_CBID_RESOURCE_MEMORY_FREE;
+    return cbId == ACLSAN_CBID_RESOURCE_MEMORY_ALLOC || cbId == ACLSAN_CBID_RESOURCE_MEMORY_FREE;
 }
 
-// 对着指定domain + id 发送cbdata
+// 对着指定domain + id 发送cbData
 void AclsanCallbackDispatcher::Dispatch(
-    AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata, const char* eventName) noexcept
+    AclsanCallbackDomain domain, AclsanCallbackId cbId, const void* cbData, const char* eventName) noexcept
 {
-    if (!InvokeCallback(domain, cbid, cbdata)) {
+    if (!InvokeCallback(domain, cbId, cbData)) {
         ASCTOOL_ERROR(
             "InvokeCallback in AclsanCallbackDispatcher Dispatch failed: event=%s domain=%u id=%u", eventName,
-            static_cast<uint32_t>(domain), static_cast<uint32_t>(cbid));
+            static_cast<uint32_t>(domain), static_cast<uint32_t>(cbId));
     }
 }
 
-void AclsanCallbackDispatcher::DispatchResource(AclsanCallbackId cbid, const AclsanResourceData& cbdata) noexcept
+void AclsanCallbackDispatcher::DispatchResource(AclsanCallbackId cbId, const AclsanResourceData& cbData) noexcept
 {
-    if (!IsSupportedResourceCallback(cbid)) {
+    if (!IsSupportedResourceCallback(cbId)) {
         ASCTOOL_ERROR(
-            "AclsanCallbackDispatcher DispatchResource failed due to invalid cbid=%u", static_cast<uint32_t>(cbid));
+            "AclsanCallbackDispatcher DispatchResource failed due to invalid cbid=%u", static_cast<uint32_t>(cbId));
         return;
     }
-    Dispatch(ACLSAN_CB_DOMAIN_RESOURCE, cbid, &cbdata, cbdata.common.apiName);
+    Dispatch(ACLSAN_CB_DOMAIN_RESOURCE, cbId, &cbData, cbData.common.apiName);
 }
 
-void AclsanCallbackDispatcher::DispatchMemoryWrite(const AclsanMemoryWriteData& cbdata) noexcept
+void AclsanCallbackDispatcher::DispatchMemoryWrite(const AclsanMemoryWriteData& cbData) noexcept
 {
-    Dispatch(ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END, &cbdata, cbdata.common.apiName);
+    Dispatch(ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END, &cbData, cbData.common.apiName);
 }
 
-void AclsanCallbackDispatcher::DispatchSynchronizeEnd(const AclsanSynchronizeData& cbdata) noexcept
+void AclsanCallbackDispatcher::DispatchSynchronizeEnd(const AclsanSynchronizeData& cbData) noexcept
 {
-    Dispatch(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &cbdata, cbdata.common.apiName);
+    Dispatch(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &cbData, cbData.common.apiName);
 }
 
-void AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& cbdata) noexcept
+void AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& cbData) noexcept
 {
-    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &cbdata, "DEVICE_MEMORY_ACCESS");
+    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &cbData, "DEVICE_MEMORY_ACCESS");
 }
 
-void AclsanCallbackDispatcher::DispatchDeviceState(const AclsanDeviceRegisterStateData& cbdata) noexcept
+void AclsanCallbackDispatcher::DispatchDeviceState(const AclsanDeviceRegisterStateData& cbData) noexcept
 {
-    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &cbdata, "DEVICE_STATE");
+    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &cbData, "DEVICE_STATE");
 }
 
-void AclsanCallbackDispatcher::DispatchDeviceSync(const AclsanDeviceSyncData& cbdata) noexcept
+void AclsanCallbackDispatcher::DispatchDeviceSync(const AclsanDeviceSyncData& cbData) noexcept
 {
-    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &cbdata, "DEVICE_SYNC");
+    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &cbData, "DEVICE_SYNC");
 }
 
-void AclsanCallbackDispatcher::DispatchLaunch(const AclsanLaunchData& cbdata) noexcept
+void AclsanCallbackDispatcher::DispatchLaunch(const AclsanLaunchData& cbData) noexcept
 {
-    Dispatch(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &cbdata, cbdata.common.apiName);
+    Dispatch(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &cbData, cbData.common.apiName);
 }
 
-void AclsanCallbackDispatcher::DispatchDeviceBarrier(const AclsanDeviceBarrierData& cbdata) noexcept
+void AclsanCallbackDispatcher::DispatchDeviceBarrier(const AclsanDeviceBarrierData& cbData) noexcept
 {
-    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER, &cbdata, "DEVICE_PIPE_BARRIER");
+    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER, &cbData, "DEVICE_PIPE_BARRIER");
 }
 
 } // namespace aclsan

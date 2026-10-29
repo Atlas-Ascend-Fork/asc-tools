@@ -17,7 +17,7 @@ namespace aclsan {
 
 void LogRawRecord(const ParsedTraceRecord& parsed) noexcept;
 void LogParamField(const aclsan::DeviceInstructionParamField& params) noexcept;
-void LogCallbackData(const AclsanDeviceRegisterStateData& callbackData) noexcept;
+void LogCallbackData(const AclsanDeviceRegisterStateData& cbData) noexcept;
 void LogCallbackData(const DeviceCallbackData& callbackData) noexcept;
 
 } // namespace aclsan

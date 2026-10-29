@@ -129,7 +129,7 @@ ACLSAN_EXPORT AclsanStatus aclsanUnsubscribe(AclsanSubscriberHandle subscriber);
 
 // 以下相关函数不能被多个线程并发调用
 ACLSAN_EXPORT AclsanStatus aclsanEnableCallback(
-    uint32_t enable, AclsanSubscriberHandle subscriber, AclsanCallbackDomain domain, AclsanCallbackId cbid);
+    uint32_t enable, AclsanSubscriberHandle subscriber, AclsanCallbackDomain domain, AclsanCallbackId cbId);
 ACLSAN_EXPORT AclsanStatus
 aclsanEnableDomain(AclsanSubscriberHandle subscriber, AclsanCallbackDomain domain, uint32_t enable);
 ACLSAN_EXPORT AclsanStatus aclsanGetCallbackState(

@@ -9,6 +9,7 @@
  */
 
 #include "device_instr/arch/dav_3510/register_state_manager.h"
+#include "device_instr/common/instruction_id.h"
 #include "npu_tool_log.h"
 
 #include <functional>
@@ -30,7 +31,8 @@ void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const CtrlRe
 
 void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const FmatrixParamField& params) noexcept
 {
-    if (params.instrId != 386 && params.instrId != 387) {
+    if (params.instrId != static_cast<uint32_t>(InstructionId::SetFmatrix) &&
+        params.instrId != static_cast<uint32_t>(InstructionId::SetFmatrixB)) {
         return;
     }
     states_[key].fmatrix[params.instrId - 386] = params;
@@ -41,7 +43,8 @@ void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const Fmatri
 
 void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const L3dRptParamField& params) noexcept
 {
-    if (params.instrId != 390 && params.instrId != 391) {
+    if (params.instrId != static_cast<uint32_t>(InstructionId::SetL3dRpt) &&
+        params.instrId != static_cast<uint32_t>(InstructionId::SetL3dRptB)) {
         return;
     }
     states_[key].l3dRpt[params.instrId - 390] = params;
@@ -62,7 +65,7 @@ void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const Vector
 
 void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const VectorMaskWriteParamField& params) noexcept
 {
-    if (params.index >= 2) {
+    if (params.index >= VECTOR_MASK_REGISTER_COUNT) {
         return;
     }
     // AscendC starts with a full vector mask; subsequent writes replace only the selected half.
@@ -155,7 +158,7 @@ void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const DmaLoo
 void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const DmaLoopStrideParamField& params) noexcept
 {
     const auto direction = static_cast<std::size_t>(params.direction);
-    if (direction >= states_[key].dmaLoopStrides.size() || params.loopIndex >= 2) {
+    if (direction >= states_[key].dmaLoopStrides.size() || params.loopIndex >= DMA_STRIDE_LOOP_COUNT) {
         return;
     }
     states_[key].dmaLoopStrides[direction][params.loopIndex] = params;

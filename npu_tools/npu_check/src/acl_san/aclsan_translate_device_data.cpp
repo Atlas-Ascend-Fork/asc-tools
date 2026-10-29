@@ -25,6 +25,9 @@ namespace aclsan {
 
 namespace {
 
+constexpr uint32_t LOCAL_TRANSFER_UNIT_FLAG_SHIFT = 32U;
+constexpr uint64_t LOCAL_TRANSFER_UNIT_FLAG_MASK = 0x3U;
+
 const char* MemoryCbdataStatusName(MemoryCbdataStatus status) noexcept
 {
     switch (status) {
@@ -184,9 +187,11 @@ private:
                     case aclsan::LocalMemoryTransferKind::FixL0cToUbufS32:
                         // The unit flag belongs to the Cube-side handshake.
                         // UB endpoints carry the destination Vector owner.
-                        access.unitFlag = access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB ?
-                                              0 :
-                                              static_cast<uint32_t>((params.config1 >> 32) & 3);
+                        access.unitFlag =
+                            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB ?
+                                0 :
+                                static_cast<uint32_t>(
+                                    (params.config1 >> LOCAL_TRANSFER_UNIT_FLAG_SHIFT) & LOCAL_TRANSFER_UNIT_FLAG_MASK);
                         break;
                     default:
                         break;
@@ -208,7 +213,8 @@ private:
             // unsupported L0 write disappear from initialization analysis.
             AclsanDeviceMemoryAccessData marker{};
             marker.header = MakeDeviceEventHeader(parsed, pipeline, 0, sizeof(marker));
-            marker.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED;
+            marker.header.flags = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
+                                  static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED);
             marker.instructionId = parsed.record.instrId;
             marker.regDependencyMask0 = dependencies.mask0;
             marker.regDependencyMask1 = dependencies.mask1;
@@ -386,13 +392,21 @@ std::optional<DeviceCallbackData> TranslateDecodedTraceToCallbackData(
         if (AccessesL0Operands(parsed.record.instrId)) {
             AclsanDeviceMemoryAccessData marker{};
             marker.header = {
-                ACLSAN_API_VERSION,     sizeof(marker),
-                parsed.launchId,        parsed.record.pc,
-                parsed.record.siteId,   ACLSAN_DEVICE_SOURCE_UNKNOWN,
-                parsed.instrExecId,     0,
-                parsed.deviceId,        parsed.phyCoreId,
-                parsed.blockId,         parsed.blockType,
-                parsed.record.pipeline, ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED};
+                ACLSAN_API_VERSION,
+                sizeof(marker),
+                parsed.launchId,
+                parsed.record.pc,
+                parsed.record.siteId,
+                ACLSAN_DEVICE_SOURCE_UNKNOWN,
+                parsed.instrExecId,
+                0,
+                parsed.deviceId,
+                parsed.phyCoreId,
+                parsed.blockId,
+                parsed.blockType,
+                parsed.record.pipeline,
+                static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
+                    static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED)};
             marker.instructionId = parsed.record.instrId;
             marker.accessCount = 1;
             return DeviceCallbackData{DeviceMemoryAccessDataList{marker}};

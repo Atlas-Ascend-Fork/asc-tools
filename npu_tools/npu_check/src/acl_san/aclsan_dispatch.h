@@ -15,24 +15,23 @@
 
 namespace aclsan {
 
-bool InvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId callbackId, const void* callbackData) noexcept;
+bool InvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId cbId, const void* cbData) noexcept;
 
 class AclsanCallbackDispatcher final {
 public:
-    static void DispatchResource(AclsanCallbackId callbackId, const AclsanResourceData& callbackData) noexcept;
-    static void DispatchMemoryWrite(const AclsanMemoryWriteData& callbackData) noexcept;
-    static void DispatchSynchronizeEnd(const AclsanSynchronizeData& callbackData) noexcept;
-    static void DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& callbackData) noexcept;
-    static void DispatchDeviceState(const AclsanDeviceRegisterStateData& callbackData) noexcept;
-    static void DispatchDeviceSync(const AclsanDeviceSyncData& callbackData) noexcept;
-    static void DispatchDeviceBarrier(const AclsanDeviceBarrierData& callbackData) noexcept;
-    static void DispatchLaunch(const AclsanLaunchData& callbackData) noexcept;
+    static void DispatchResource(AclsanCallbackId cbId, const AclsanResourceData& cbData) noexcept;
+    static void DispatchMemoryWrite(const AclsanMemoryWriteData& cbData) noexcept;
+    static void DispatchSynchronizeEnd(const AclsanSynchronizeData& cbData) noexcept;
+    static void DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& cbData) noexcept;
+    static void DispatchDeviceState(const AclsanDeviceRegisterStateData& cbData) noexcept;
+    static void DispatchDeviceSync(const AclsanDeviceSyncData& cbData) noexcept;
+    static void DispatchDeviceBarrier(const AclsanDeviceBarrierData& cbData) noexcept;
+    static void DispatchLaunch(const AclsanLaunchData& cbData) noexcept;
 
 private:
-    static bool IsSupportedResourceCallback(AclsanCallbackId callbackId) noexcept;
+    static bool IsSupportedResourceCallback(AclsanCallbackId cbId) noexcept;
     static void Dispatch(
-        AclsanCallbackDomain domain, AclsanCallbackId callbackId, const void* callbackData,
-        const char* eventName) noexcept;
+        AclsanCallbackDomain domain, AclsanCallbackId cbId, const void* cbData, const char* eventName) noexcept;
 };
 
 } // namespace aclsan

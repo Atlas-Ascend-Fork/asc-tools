@@ -16,6 +16,27 @@
 
 namespace aclsan {
 
+struct ChildExitStatus {
+    bool exited;
+    bool signaled;
+    int exitCode;
+    int signalNumber;
+};
+
+inline ChildExitStatus DecodeChildExitStatus(int status) noexcept
+{
+    // Linux stores the exit code in bits 8..15 and the terminating signal in bits 0..6.
+    constexpr unsigned int SIGNAL_MASK = 0x7fU;
+    constexpr unsigned int EXIT_CODE_MASK = 0xff00U;
+    constexpr unsigned int EXIT_CODE_SHIFT = 8U;
+    constexpr unsigned int STOPPED_SIGNAL = 0x7fU;
+    const auto bits = static_cast<unsigned int>(status);
+    const unsigned int signalNumber = bits & SIGNAL_MASK;
+    return {
+        signalNumber == 0U, signalNumber != 0U && signalNumber != STOPPED_SIGNAL,
+        static_cast<int>((bits & EXIT_CODE_MASK) >> EXIT_CODE_SHIFT), static_cast<int>(signalNumber)};
+}
+
 struct ToolResult {
     int exitCode = -1;
     std::string standardOutput;

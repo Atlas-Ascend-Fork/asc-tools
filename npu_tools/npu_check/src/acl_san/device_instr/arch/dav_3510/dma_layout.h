@@ -15,8 +15,6 @@
 
 namespace aclsan::dav3510 {
 
-// TODO: 解码部分可能得放私仓
-// TODO: 看A5和A6什么区别
 // CopyGmToCbufAlignV2 + CopyGmToUbufAlignV2
 struct MovAlignV2Layout {
     static constexpr BitRange SID{0, 3};

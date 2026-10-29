@@ -11,7 +11,6 @@
 #ifndef NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_RUNTIME_DEVICE_SYMBOLIZER_H
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_RUNTIME_DEVICE_SYMBOLIZER_H
 
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>

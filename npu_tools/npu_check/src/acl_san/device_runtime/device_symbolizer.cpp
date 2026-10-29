@@ -9,10 +9,12 @@
  */
 
 #include "device_symbolizer.h"
+#include "dbi/tool_runner.h"
 
 #include <sys/stat.h>
 #include <cerrno>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <fcntl.h>
@@ -30,6 +32,9 @@ extern char** environ;
 
 namespace aclsan::device_runtime {
 namespace {
+
+constexpr uint32_t DECIMAL_BASE = 10U;
+constexpr std::size_t SYMBOLIZER_LINES_PER_FRAME = 2; // Function name and source location.
 
 std::string HexPc(uint64_t pc)
 {
@@ -94,7 +99,8 @@ bool RunCommand(const std::vector<std::string>& command, const std::string& logP
             return false;
         }
     }
-    if (!WIFEXITED(processStatus) || WEXITSTATUS(processStatus) != 0) {
+    const auto childStatus = DecodeChildExitStatus(processStatus);
+    if (!childStatus.exited || childStatus.exitCode != 0) {
         error = "command failed: " + CommandText(command) + ", log=" + logPath;
         return false;
     }
@@ -122,7 +128,7 @@ bool ParseUint32(const std::string& text, uint32_t& value)
         if (character < '0' || character > '9') {
             return false;
         }
-        parsed = parsed * 10 + static_cast<uint32_t>(character - '0');
+        parsed = parsed * DECIMAL_BASE + static_cast<uint32_t>(character - '0');
         if (parsed > std::numeric_limits<uint32_t>::max()) {
             return false;
         }
@@ -166,13 +172,13 @@ bool ReadFrames(const std::string& logPath, std::vector<CallStackFrame>& frames)
             lines.push_back(line);
         }
     }
-    if (lines.empty() || lines.size() % 2 != 0) {
+    if (lines.empty() || lines.size() % SYMBOLIZER_LINES_PER_FRAME != 0) {
         return false;
     }
 
     frames.clear();
-    frames.reserve(lines.size() / 2);
-    for (size_t index = 0; index < lines.size(); index += 2) {
+    frames.reserve(lines.size() / SYMBOLIZER_LINES_PER_FRAME);
+    for (size_t index = 0; index < lines.size(); index += SYMBOLIZER_LINES_PER_FRAME) {
         if (lines[index] == "??" || lines[index + 1].find("??") == 0) {
             frames.clear();
             return false;

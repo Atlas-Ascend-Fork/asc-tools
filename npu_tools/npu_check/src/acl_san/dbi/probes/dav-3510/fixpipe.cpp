@@ -10,8 +10,6 @@
 
 #include "trace_record.h"
 
-// TODO 这里维护一个公共头文件 apiid别重复
-
 // MOV_L1_TO_FB, API ID 167.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_cbuf_to_fbuf(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __fbuf__ void* dst, __cbuf__ void* src, uint64_t config)

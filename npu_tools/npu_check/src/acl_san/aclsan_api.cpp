@@ -129,7 +129,7 @@ public:
         AclsanSubscriberHandle subscriber, AclsanCallbackDomain domain, uint32_t cbid,
         uint32_t* enabled) const noexcept;
     bool IsCallbackEnabled(AclsanCallbackDomain domain, AclsanCallbackId id) const noexcept;
-    bool InvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId id, const void* callbackData) noexcept;
+    bool InvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId id, const void* callbackData) const noexcept;
 
 private:
     AclsanSubscriber() = default;
@@ -270,7 +270,6 @@ AclsanStatus AclsanSubscriber::UpdateCallbackConfiguration(const CallbackKey& ke
     }
 }
 
-// TODO: 看下英伟达要不要调用unsubscribe，如何销毁
 AclsanStatus AclsanSubscriber::Subscribe(
     AclsanSubscriberHandle* subscriber, AclsanCallbackFunc callback, void* userdata)
 {
@@ -391,7 +390,7 @@ bool AclsanSubscriber::IsCallbackEnabled(AclsanCallbackDomain domain, AclsanCall
 }
 
 bool AclsanSubscriber::InvokeCallback(
-    AclsanCallbackDomain domain, AclsanCallbackId id, const void* callbackData) noexcept
+    AclsanCallbackDomain domain, AclsanCallbackId id, const void* callbackData) const noexcept
 {
     if (callbackData == nullptr) {
         ASCTOOL_ERROR("InvokeCallback: callback data is nullptr");
@@ -429,9 +428,9 @@ extern "C" AclsanStatus aclsanSubscribe(AclsanSubscriberHandle* subscriber, Acls
 
 // 更新显式callback route，并开启/关闭相关aclrt接口的hook
 extern "C" AclsanStatus aclsanEnableCallback(
-    uint32_t enable, AclsanSubscriberHandle subscriber, AclsanCallbackDomain domain, AclsanCallbackId id)
+    uint32_t enable, AclsanSubscriberHandle subscriber, AclsanCallbackDomain domain, AclsanCallbackId cbId)
 {
-    return AclsanSubscriber::Instance().EnableCallback(enable, subscriber, domain, id);
+    return AclsanSubscriber::Instance().EnableCallback(enable, subscriber, domain, cbId);
 }
 
 extern "C" AclsanStatus aclsanUnsubscribe(AclsanSubscriberHandle subscriber)
@@ -492,9 +491,9 @@ extern "C" AclsanStatus aclsanGetDeviceCallStack(uint64_t pc, AclsanDeviceCallSt
 namespace aclsan {
 
 // 在 libsanitizer_api 内部通过 subscriber 保存的 callback 和 userdata 派发已启用键。
-bool InvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId id, const void* callbackData) noexcept
+bool InvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId cbId, const void* cbData) noexcept
 {
-    return AclsanSubscriber::Instance().InvokeCallback(domain, id, callbackData);
+    return AclsanSubscriber::Instance().InvokeCallback(domain, cbId, cbData);
 }
 
 } // namespace aclsan

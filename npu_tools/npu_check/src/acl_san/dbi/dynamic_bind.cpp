@@ -769,6 +769,7 @@ std::vector<std::string> BindingSymbols(const std::vector<ProbeGroup>& groups)
 
 std::string CtrlBinGeneratorIdentity()
 {
+    constexpr int BINDING_HASH_HEX_WIDTH = 16;
     uint64_t hash = 1469598103934665603ULL;
     constexpr uint64_t prime = 1099511628211ULL;
     const auto append = [&](const std::string& value) {
@@ -788,7 +789,7 @@ std::string CtrlBinGeneratorIdentity()
         }
     }
     std::ostringstream output;
-    output << std::hex << std::setfill('0') << std::setw(16) << hash;
+    output << std::hex << std::setfill('0') << std::setw(BINDING_HASH_HEX_WIDTH) << hash;
     return output.str();
 }
 

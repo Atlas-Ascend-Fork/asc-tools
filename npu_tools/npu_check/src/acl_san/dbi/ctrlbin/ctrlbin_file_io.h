@@ -15,7 +15,7 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DBI_CTRLBIN_CTRLBIN_FILE_IO_H
 
 #include <string>
-#include <sys/stat.h>
+#include <sys/types.h>
 
 const mode_t SAVE_DATA_FILE_AUTHORITY = 0640;
 

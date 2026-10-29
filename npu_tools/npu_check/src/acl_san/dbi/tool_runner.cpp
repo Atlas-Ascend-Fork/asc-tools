@@ -140,10 +140,11 @@ ToolResult RunTool(const std::vector<std::string>& commandArguments)
         }
         result.standardError += std::string("waitpid failed: ") + std::strerror(errno);
     } else {
-        if (WIFEXITED(status)) {
-            result.exitCode = WEXITSTATUS(status);
-        } else if (WIFSIGNALED(status)) {
-            result.exitCode = SIGNAL_EXIT_CODE_BASE + WTERMSIG(status);
+        const auto childStatus = DecodeChildExitStatus(status);
+        if (childStatus.exited) {
+            result.exitCode = childStatus.exitCode;
+        } else if (childStatus.signaled) {
+            result.exitCode = SIGNAL_EXIT_CODE_BASE + childStatus.signalNumber;
         }
     }
     return result;

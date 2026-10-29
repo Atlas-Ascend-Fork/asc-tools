@@ -30,8 +30,6 @@ constexpr uint64_t BOOLEAN_MAX_VALUE = 1U;
 
 constexpr uint32_t RawId(InstructionId instructionId) noexcept { return static_cast<uint32_t>(instructionId); }
 
-// TODO: 待确认这个文件中的比特位场景，bool与uint8_t的映射是否符合预期
-
 template <typename ParamField>
 ParamField DecodeMovAlignV2Params(const aclsan::AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
 {

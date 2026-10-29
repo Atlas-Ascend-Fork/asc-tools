@@ -45,7 +45,7 @@ RegisterDependencyMask ResolveRegisterDependencies(
 std::optional<AclsanDeviceRegisterStateData> MakeRegisterStateData(
     const ParsedTraceRecord& parsed, const DecodedInstruction& decoded) noexcept;
 
-std::array<AclsanDeviceRegisterStateData, 2> MakeRegisterStateDataForVecMask(
+std::array<AclsanDeviceRegisterStateData, VECTOR_MASK_REGISTER_COUNT> MakeRegisterStateDataForVecMask(
     const ParsedTraceRecord& parsed, const VectorMaskParamField& mask) noexcept;
 
 } // namespace aclsan
