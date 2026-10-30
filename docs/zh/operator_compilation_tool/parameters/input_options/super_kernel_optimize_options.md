@@ -27,7 +27,7 @@
 --super_kernel_optimize_options="{'early_start':1,'dcci_after_kernel_end':['.*']}"
 ```
 
-可输入option请参见《[TorchAir使用指南](https://www.hiascend.com/document/detail/zh/Pytorch/latest/devguide/TorchAir/docs/zh/overview.md)》。
+可输入option请参见《[TorchAir使用指南](https://gitcode.com/ascend/torchair/blob/master/docs/zh/overview.md)》。
 
 ## 推荐配置及收益
 

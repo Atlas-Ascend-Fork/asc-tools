@@ -1,7 +1,7 @@
 # 算子编译生成Kernel包
 
 1. 准备Dump的算子信息统计文件。目前支持两种方式Dump算子json文件，请根据实际情况选择合适的方式。
-    - **使用PyTorch的Python接口编程时**，可通过Ascend PyTorch Profiler接口dump算子json文件，具体请参考《[Ascend Pytorch调优工具](https://www.hiascend.com/document/detail/zh/mindstudio/latest/msTT_msIT/ascend_pytorch_profiler/docs/zh/developer_notes/ascend_pytorch_profiler_user_guide.md)》。
+    - **使用PyTorch的Python接口编程时**，可通过Ascend PyTorch Profiler接口dump算子json文件，具体请参考《[Ascend Pytorch调优工具](https://gitcode.com/ascend/pytorch/blob/master/docs/zh/developer_notes/ascend_pytorch_profiler_user_guide.md)》。
         1. 使用Ascend PyTorch Profiler接口开启PyTorch训练时的性能数据采集。
 
             在训练前，开启扩展参数experimental\_config中“算子信息统计功能”，即参数**record\_op\_args**置为True。

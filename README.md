@@ -1,5 +1,7 @@
 # Ascend C Tools
 
+简体中文 | [English](./README_en.md)
+
 ## 🚀概述
 
 Ascend C Tools是[CANN](https://hiascend.com/software/cann) （Compute Architecture for Neural Networks）基于[Ascend C](https://gitcode.com/cann/asc-devkit)编程语言推出的配套调试工具。借助Ascend C Tools，开发者可以进行CPU域孪生调试、解析算子调测信息以及文件信息，从而快速定位算子实现中可能存在的问题。

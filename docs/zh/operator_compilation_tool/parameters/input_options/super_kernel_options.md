@@ -16,7 +16,7 @@
 --super_kernel_options="key1=value1:key2=value2:key3=value3"
 ```
 
-可输入option请参见《[TorchAir使用指南](https://www.hiascend.com/document/detail/zh/Pytorch/latest/devguide/TorchAir/docs/zh/overview.md)》。
+可输入option请参见《[TorchAir使用指南](https://gitcode.com/ascend/torchair/blob/master/docs/zh/overview.md)》。
 
 ## 推荐配置及收益
 

@@ -1,5 +1,7 @@
 # Ascend C Tools
 
+English | [简体中文](./README.md)
+
 ## 🚀 Overview
 
 Ascend C Tools is a debugging toolkit provided by [CANN](https://hiascend.com/software/cann) (Compute Architecture for Neural Networks) based on the [Ascend C](https://gitcode.com/cann/asc-devkit) programming language. With Ascend C Tools, developers can perform CPU-domain twin debugging, parse operator debugging information and file information, thereby quickly locating potential issues in operator implementations.
