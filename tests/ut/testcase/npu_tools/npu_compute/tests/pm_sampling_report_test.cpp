@@ -184,7 +184,7 @@ void RoundTrip(const std::string& mode = "success")
         config.sections = {"PmSampling"};
         std::atomic<bool> exited{false}, cancelled{false};
         client.Run(bootstrap, child, config, received.path.string(), exited, cancelled);
-        CHECK(client.Complete() == (mode == "success"));
+        CHECK(client.Complete() == (mode == "success" || mode == "missing-file"));
         CHECK(client.ArtifactCount() == (mode == "missing-file" || mode == "missing-summary" ? 4 : 5));
         int status = 0;
         CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
@@ -244,8 +244,8 @@ void MissingAndInvalid()
             }
         }
         std::vector<std::string> issues;
-        CHECK(!receiver.Validate(result, config, &issues) && !issues.empty());
-        CHECK(issues.back().find(omitted) != std::string::npos);
+        CHECK(receiver.Validate(result, config, &issues));
+        CHECK(issues.empty());
         protocol::Bytes encoded;
         std::string error;
         CHECK(cli::PackDirectoryToRep(output.path, &encoded, &error));
@@ -256,6 +256,19 @@ void MissingAndInvalid()
             CHECK(entry.file_name != omitted);
         }
     }
+    Directory noSamplingFiles;
+    cli::ArtifactReceiver noSamplingReceiver(noSamplingFiles.path.string());
+    protocol::Config noSamplingConfig;
+    noSamplingConfig.sections = {"PmSampling"};
+    protocol::Result noSamplingResult;
+    noSamplingResult.sections = noSamplingConfig.sections;
+    noSamplingResult.complete = true;
+    Send(noSamplingReceiver, noSamplingResult, "HardwareInfo.jsonl", hardware);
+    Send(noSamplingReceiver, noSamplingResult, "summary.jsonl", summary);
+    std::vector<std::string> noSamplingIssues;
+    CHECK(noSamplingReceiver.Validate(noSamplingResult, noSamplingConfig, &noSamplingIssues));
+    CHECK(noSamplingIssues.empty());
+
     const std::vector<std::pair<std::string, std::string>> invalid = {
         {names[0], "not sqlite"},
         {names[0], std::string("SQLite format 3\0", 16)},
@@ -263,7 +276,6 @@ void MissingAndInvalid()
         {names[1], ""},
         {names[2], "{}"},
         {names[2], "["},
-        {names[2], "[]"},
         {names[2],
          "[{\"Address\":\"0x0000000000010458\",\"Symbol\":[]},{\"Address\":\"0x0000000000010458\",\"Symbol\":[]}]"},
         {names[2], "[{\"Address\":\"0x0000000000010458\",\"Symbol\":[1]}]"}};
@@ -414,11 +426,97 @@ void EmptySimdDatabase()
     result.sections = config.sections;
     result.complete = true;
     Send(receiver, result, "HardwareInfo.jsonl", hardware);
-    Send(receiver, result, names[0], Read(source.path / names[0]));
+    Write(source.path / names[1], "Disassembly of section .text:\n 10458:\t12345678\tVF ADD\n");
+    Write(source.path / names[2], "[]");
+    for (const auto& name : names) {
+        Send(receiver, result, name, Read(source.path / name));
+    }
     Send(receiver, result, "summary.jsonl", summary);
     std::vector<std::string> issues;
     CHECK(receiver.Validate(result, config, &issues));
     CHECK(issues.empty());
+
+    protocol::Bytes encoded;
+    CHECK(cli::PackDirectoryToRep(output.path, &encoded, &error));
+    Directory report, restored;
+    Write(report.path / "empty.npu-rep", std::string(encoded.begin(), encoded.end()));
+    std::vector<cli::ImportedProfileEntry> imported;
+    CHECK(cli::ReadImportedProfileResults(report.path / "empty.npu-rep", &imported, &error));
+    CHECK(cli::UnpackImportedProfileResults(imported, restored.path, &error));
+    for (const auto& name : names) {
+        CHECK(Read(output.path / name) == Read(restored.path / name));
+    }
+}
+void EmptySimtArtifacts()
+{
+    Directory source, output;
+    npucompute::PmSamplingResult data;
+    std::string error;
+    CHECK(npucompute::WritePmSamplingSqlite((source.path / names[0]).string(), data, error));
+    Write(source.path / names[1], "Disassembly of section .text:\n 10458:\t12345678\tVF_SIMT ADD\n");
+    Write(source.path / names[2], "[]");
+    CHECK(cli::ValidatePmSamplingFile(source.path / names[2], &error));
+
+    cli::ArtifactReceiver receiver(output.path.string());
+    protocol::Config config;
+    config.sections = {"PmSampling"};
+    protocol::Result result;
+    result.sections = config.sections;
+    result.complete = true;
+    Send(receiver, result, "HardwareInfo.jsonl", hardware);
+    Send(receiver, result, "summary.jsonl", summary);
+    for (const auto& name : names) {
+        Send(receiver, result, name, Read(source.path / name));
+    }
+    std::vector<std::string> issues;
+    CHECK(receiver.Validate(result, config, &issues));
+    CHECK(issues.empty());
+}
+void EmptySamplingWithoutElfContext()
+{
+    Directory source, output;
+    npucompute::PmSamplingResult data;
+    std::string error;
+    CHECK(npucompute::WritePmSamplingSqlite((source.path / names[0]).string(), data, error));
+    Write(source.path / names[2], "[]");
+    CHECK(cli::ValidatePmSamplingFile(source.path / names[2], &error));
+
+    cli::ArtifactReceiver receiver(output.path.string());
+    protocol::Config config;
+    config.sections = {"PmSampling"};
+    protocol::Result result;
+    result.sections = config.sections;
+    result.complete = true;
+    Send(receiver, result, "HardwareInfo.jsonl", hardware);
+    Send(receiver, result, "summary.jsonl", summary);
+    Send(receiver, result, names[0], Read(source.path / names[0]));
+    Send(receiver, result, names[2], Read(source.path / names[2]));
+    std::vector<std::string> issues;
+    CHECK(receiver.Validate(result, config, &issues));
+    CHECK(issues.empty());
+}
+void PmSamplingArtifactsValidateIndependently()
+{
+    Directory source, output;
+    Fixture(source.path);
+    Write(source.path / names[2], "[]");
+    std::string error;
+    CHECK(cli::ValidatePmSamplingFile(source.path / names[2], &error));
+
+    cli::ArtifactReceiver receiver(output.path.string());
+    protocol::Config config;
+    config.sections = {"PmSampling"};
+    protocol::Result result;
+    result.sections = config.sections;
+    result.complete = true;
+    Send(receiver, result, "HardwareInfo.jsonl", hardware);
+    Send(receiver, result, "summary.jsonl", summary);
+    Send(receiver, result, names[0], Read(source.path / names[0]));
+    Send(receiver, result, names[2], Read(source.path / names[2]));
+    CHECK(receiver.Validate(result, config));
+
+    Write(source.path / names[1], "");
+    CHECK(!cli::ValidatePmSamplingFile(source.path / names[1], &error));
 }
 void VersionsAndNested()
 {
@@ -504,6 +602,9 @@ int main()
         MissingAndInvalid();
         SharedDatabaseRoundTrip();
         EmptySimdDatabase();
+        EmptySimtArtifacts();
+        EmptySamplingWithoutElfContext();
+        PmSamplingArtifactsValidateIndependently();
         VersionsAndNested();
         ProtocolRejections();
         std::puts("PmSampling UDS/report roundtrip and rejection checks passed");

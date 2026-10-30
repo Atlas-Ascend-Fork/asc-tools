@@ -33,6 +33,8 @@ namespace {
 int original, companion, binary, companionBinary;
 int shadowValue = 0;
 bool addressFails = false, syncFails = false, stopFails = false;
+bool collecting = false;
+bool warmupSyncFails = false;
 std::string calls;
 std::vector<unsigned> modes;
 int Device(int* id)
@@ -43,7 +45,7 @@ int Device(int* id)
 int Sync(aclrtStream)
 {
     calls += 'S';
-    return syncFails && calls.size() > 1 ? -1 : 0;
+    return (syncFails && collecting) || (warmupSyncFails && calls.find('L') != std::string::npos) ? -1 : 0;
 }
 int Load(const void*, size_t, const aclrtBinaryLoadOptions*, aclrtBinHandle* h)
 {
@@ -77,6 +79,7 @@ extern "C" __attribute__((visibility("default"))) aclError SamplingGetAddress(co
 }
 extern "C" int32_t MsprofStart(uint32_t, const void* config, uint32_t)
 {
+    collecting = true;
     calls += 'B';
     const auto& attr = static_cast<const MsprofConfig*>(config)->configInfo.attrs[0];
     modes.push_back(attr.id == PROF_CONFIG_ATTR_INSTR ? attr.value.instrMode : 0);
@@ -84,6 +87,7 @@ extern "C" int32_t MsprofStart(uint32_t, const void* config, uint32_t)
 }
 extern "C" int32_t MsprofStop(uint32_t, const void*, uint32_t)
 {
+    collecting = false;
     calls += 'E';
     return stopFails ? -1 : 0;
 }
@@ -104,11 +108,17 @@ int main()
     // Every case starts a fresh data-manager collection and must drain it on failure too.
     constexpr int kMappingFailureScenario = 8;
     constexpr int kSamplingOnlyMappingFailureScenario = kMappingFailureScenario + 1;
-    for (int scenario = 0; scenario <= kSamplingOnlyMappingFailureScenario; ++scenario) {
+    for (int scenario = 0; scenario <= kSamplingOnlyMappingFailureScenario + 3; ++scenario) {
         RangeProfiler profiler;
         BinaryRegistry registry;
         ReplayMemory memory;
         calls.clear();
+        collecting = false;
+        const bool offsetReadFailure = scenario == kSamplingOnlyMappingFailureScenario + 3;
+        const bool warmupLaunchFailure = scenario == kSamplingOnlyMappingFailureScenario + 1;
+        warmupSyncFails = scenario == kSamplingOnlyMappingFailureScenario + 2;
+        const bool warmupFailure = warmupLaunchFailure || warmupSyncFails;
+        unsigned warmups = 0;
         modes.clear();
         addressFails = scenario == 4;
         syncFails = scenario == 6;
@@ -116,11 +126,16 @@ int main()
         aclptiRangeProfilerSetConfigParams config{};
         const char* section = "Memory";
         config.collectPcSampling = true;
-        const bool mapFailure = scenario >= kMappingFailureScenario;
+        const bool unavailableSnapshot = scenario == 3 || scenario == 4;
+        const bool mapFailure = scenario == kMappingFailureScenario || scenario == kSamplingOnlyMappingFailureScenario;
+        const bool samplingFailure = mapFailure || unavailableSnapshot;
+        const bool shadowMemory =
+            scenario == 0 || scenario == kMappingFailureScenario || scenario == kSamplingOnlyMappingFailureScenario;
         constexpr int kKernelOutput = 42;
         int deviceOutput = kKernelOutput;
         void* deviceAddress = &deviceOutput;
-        if (mapFailure) {
+        if (shadowMemory) {
+            shadowValue = kKernelOutput;
             CHECK(
                 memory.MirrorMalloc(
                     &deviceAddress, sizeof(deviceOutput), ACL_MEM_MALLOC_NORMAL_ONLY, ACL_RT_API_aclrtMalloc) ==
@@ -153,8 +168,22 @@ int main()
             memory, registry, &original,
             [&](aclrtFuncHandle h, bool instrumented) {
                 calls += 'L';
-                deviceOutput = kKernelOutput;
+                if (!collecting) {
+                    if (!instrumented || h != &companion || (scenario == 0 && deviceOutput != kKernelOutput)) {
+                        return ACL_ERROR_INVALID_PARAM;
+                    }
+                    ++warmups;
+                    deviceOutput = kKernelOutput + 1;
+                    return warmupLaunchFailure ? ACL_ERROR_RT_FAILURE : ACL_SUCCESS;
+                }
+                if (scenario == 0 && deviceOutput != kKernelOutput) {
+                    return ACL_ERROR_INVALID_PARAM;
+                }
+                deviceOutput = kKernelOutput + (scenario == 0 ? 1 : 0);
                 if (h != (instrumented ? &companion : &original)) {
+                    return ACL_ERROR_INVALID_PARAM;
+                }
+                if (modes.back() == PROF_COMPUTE_PC_SAMPLING && scenario != 3 && !instrumented) {
                     return ACL_ERROR_INVALID_PARAM;
                 }
                 if (modes.back() == PROF_COMPUTE_PC_SAMPLING) {
@@ -173,23 +202,35 @@ int main()
                 }
                 return ACL_SUCCESS;
             },
-            nullptr);
-        CHECK((status == ACLPTI_SUCCESS) == (scenario < 3 || mapFailure));
-        if (mapFailure) {
+            nullptr,
+            [&](aclrtFuncHandle, std::uint64_t& offset) {
+                if (offsetReadFailure) {
+                    return ACLPTI_ERROR_PROFILING_FAILED;
+                }
+                offset = 0x80;
+                return ACLPTI_SUCCESS;
+            });
+        CHECK((status == ACLPTI_SUCCESS) == (scenario < 5 || mapFailure));
+        if (samplingFailure) {
             // Skipping sampling must preserve the last launch's output, including
             // when only PmSampling was selected and no replay was performed.
             CHECK(deviceOutput == kKernelOutput);
-            CHECK(memory.MirrorFree(deviceAddress) == ACLPTI_SUCCESS);
+            if (shadowMemory) {
+                CHECK(memory.MirrorFree(deviceAddress) == ACLPTI_SUCCESS);
+            }
         }
         CHECK(calls.front() == 'S');
-        if (scenario != kSamplingOnlyMappingFailureScenario) {
+        if (!unavailableSnapshot && scenario != kSamplingOnlyMappingFailureScenario && !warmupFailure) {
             CHECK(calls.back() == 'E');
         }
-        if (!mapFailure) {
+        if (!samplingFailure && !warmupFailure) {
             CHECK(modes.back() == PROF_COMPUTE_PC_SAMPLING);
         }
         if (scenario == 0) {
-            CHECK(calls == "SBLSE");
+            CHECK(warmups == 5);
+            CHECK(calls == "SLSLSLSLSLSBLSE");
+            CHECK(deviceOutput == kKernelOutput + 1);
+            CHECK(memory.MirrorFree(deviceAddress) == ACLPTI_SUCCESS);
         }
         if (scenario == 1) {
             CHECK(modes.front() == 0 && modes.size() > 1);
@@ -204,13 +245,21 @@ int main()
         if (scenario == kSamplingOnlyMappingFailureScenario) {
             CHECK(calls == "S" && modes.empty());
         }
-        if (scenario == 3 || scenario == 4) {
-            CHECK(calls == "SBSE");
+        if (unavailableSnapshot) {
+            CHECK(calls == "S");
         }
         CHECK(profiler.Shutdown() == ACLPTI_SUCCESS);
         CHECK(result != nullptr);
         CHECK((result->status == ACLPTI_SUCCESS) == (scenario < 3));
-        CHECK(result->pmSamplingContexts.size() == ((scenario == 3 || scenario == 4) ? 0U : 1U));
+        if (warmupFailure) {
+            CHECK(warmups == 1 && modes.empty());
+            CHECK(result->status != ACLPTI_SUCCESS);
+            CHECK(result->pcSamplingData.empty());
+            continue;
+        }
+        CHECK(warmups == (samplingFailure ? 0U : 5U));
+        CHECK(result->pcSamplingData.empty() == samplingFailure);
+        CHECK(result->pmSamplingContexts.size() == (unavailableSnapshot ? 0U : 1U));
         if (!result->pmSamplingContexts.empty()) {
             const auto& context = *result->pmSamplingContexts.begin()->second;
             if (mapFailure) {
@@ -222,11 +271,15 @@ int main()
             CHECK(result->pcSamplingData.size() == 1);
             CHECK(result->pcSamplingData[0].replayId == result->pmSamplingContexts.begin()->first);
             CHECK(result->pcSamplingData[0].bytes == std::vector<uint8_t>({0x5a}));
-            CHECK(context.elfEntry == 0x100 && context.aivRuntimeEntry == 0x100100);
+            CHECK(context.elfEntry == 0x180 && context.aivRuntimeEntry == 0x100100);
             CHECK(context.originalElf && context.companionElf);
             CHECK(context.originalElf.get() != context.companionElf.get());
+            CHECK(context.pcOffset == ((scenario == 5 || scenario == 6 || offsetReadFailure) ? 0U : 0x80U));
+            CHECK(context.companionElf->back() == 'S');
             CHECK(context.businessInstructions->count(0x100) == 1);
-            CHECK(context.excludedInstructions->count(0x104) == 1);
+            CHECK(context.businessInstructions->at(0x100) == 0);
+            CHECK(context.businessInstructions->count(0x180) == 0);
+            CHECK(context.simtInstructions->count(0x100) == 1);
         }
     }
     CHECK(unsetenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") == 0);

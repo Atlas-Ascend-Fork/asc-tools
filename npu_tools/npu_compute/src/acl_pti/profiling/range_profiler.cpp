@@ -19,6 +19,7 @@
 #include <array>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <new>
 #include <string_view>
 #include <unordered_set>
@@ -26,7 +27,6 @@
 
 namespace aclpti::profiling {
 namespace {
-
 void TryFlushL2Cache(std::int32_t device, std::size_t round)
 {
     using FlushFunction = aclError (*)(void*);
@@ -110,6 +110,7 @@ struct RangeProfiler::ProfilingRoundConfig {
     MsprofConfig msprof{};
     std::array<MsprofConfigAttr, 2> attrs{};
     data::ReplayPrepareInfo prepareInfo{};
+    std::shared_ptr<aclptiPmSamplingContext> samplingContext;
 };
 
 void LogMsprofConfig(const MsprofConfig& config, std::size_t roundId)
@@ -419,6 +420,29 @@ aclptiResult RangeProfiler::ResolveProfilingRoundStatus(
     return ACLPTI_SUCCESS;
 }
 
+aclptiResult RangeProfiler::WarmupSamplingCompanion(
+    const ReplayMemory& replayMemory, aclrtFuncHandle function, const ReplayLaunchFunction& launchFunction,
+    aclrtSynchronizeStreamFunc synchronizeFunction, aclrtStream stream) const
+{
+    constexpr unsigned kWarmupCount = 5;
+    for (unsigned iteration = 0; iteration < kWarmupCount; ++iteration) {
+        const auto restoreStatus = replayMemory.Restore();
+        if (restoreStatus != ACLPTI_SUCCESS) {
+            return restoreStatus;
+        }
+        const auto launchStatus = launchFunction(function, true);
+        // Drain the stream even after a failed launch, as in a profiled replay.
+        const auto syncStatus = synchronizeFunction(stream);
+        if (launchStatus != ACL_SUCCESS || syncStatus != ACL_SUCCESS) {
+            ASCTOOL_ERROR(
+                "[aclpti] PmSampling warmup failed iteration=%u launch=%d sync=%d", iteration, launchStatus,
+                syncStatus);
+            return ACLPTI_ERROR_RESULT_UNRELIABLE;
+        }
+    }
+    return ACLPTI_SUCCESS;
+}
+
 aclptiResult RangeProfiler::StartProfilingRound(
     const ReplayRound& round, std::size_t roundId, std::int32_t deviceId, ProfilingRoundConfig* config)
 {
@@ -451,19 +475,24 @@ aclptiResult RangeProfiler::StartProfilingRound(
 
 aclptiResult RangeProfiler::FinishProfilingRound(
     std::size_t round, const ProfilingRoundConfig& config, aclError launchStatus,
-    aclrtSynchronizeStreamFunc synchronizeFunction, aclrtStream stream)
+    aclrtSynchronizeStreamFunc synchronizeFunction, aclrtStream stream,
+    const std::function<aclptiResult()>& readSamplingOffset)
 {
     ASCTOOL_DEBUG("[aclpti] synchronize replay kernel round=%zu", round);
     const aclError syncResult = synchronizeFunction(stream);
+    const auto offsetStatus = launchStatus == ACL_SUCCESS && syncResult == ACL_SUCCESS && readSamplingOffset ?
+                                  readSamplingOffset() :
+                                  ACLPTI_SUCCESS;
     ASCTOOL_DEBUG("[aclpti] synchronize replay kernel result round=%zu result=%d", round, syncResult);
     ASCTOOL_DEBUG("[aclpti] stop profiling replay round=%zu", round);
     const int stopResult = MsprofStop(kMsprofCollectionType, &config.msprof, sizeof(config.msprof));
     ASCTOOL_DEBUG("[aclpti] stop profiling replay result round=%zu result=%d", round, stopResult);
 
-    const aclptiResult roundStatus = launchStatus != ACL_SUCCESS || syncResult != ACL_SUCCESS ?
-                                         ACLPTI_ERROR_RESULT_UNRELIABLE :
-                                     stopResult != 0 ? ACLPTI_ERROR_PROFILING_FAILED :
-                                                       ACLPTI_SUCCESS;
+    const aclptiResult roundStatus =
+        launchStatus != ACL_SUCCESS || syncResult != ACL_SUCCESS || offsetStatus != ACLPTI_SUCCESS ?
+            ACLPTI_ERROR_RESULT_UNRELIABLE :
+        stopResult != 0 ? ACLPTI_ERROR_PROFILING_FAILED :
+                          ACLPTI_SUCCESS;
     const data::ReplayStopInfo stopInfo{round, roundStatus};
     ASCTOOL_DEBUG("[aclpti] record replay status round=%zu", round);
     const data::ReplayResult replayResult = dataManager_.RecordReplayStatus(stopInfo);
@@ -484,9 +513,20 @@ aclptiResult RangeProfiler::FinishProfilingRound(
     return status;
 }
 
+struct RangeProfiler::ReplayInvocation {
+    const ReplayMemory& replayMemory;
+    BinaryRegistry& binaryRegistry;
+    aclrtFuncHandle originalFunction;
+    const ReplayLaunchFunction& launchFunction;
+    aclrtStream stream;
+    const SamplingOffsetReader& readSamplingOffset;
+    std::int32_t deviceId;
+    aclrtSynchronizeStreamFunc synchronizeFunction;
+};
+
 aclptiResult RangeProfiler::ReplayKernel(
     const ReplayMemory& replayMemory, BinaryRegistry& binaryRegistry, aclrtFuncHandle originalFunction,
-    const ReplayLaunchFunction& launchFunction, aclrtStream stream)
+    const ReplayLaunchFunction& launchFunction, aclrtStream stream, const SamplingOffsetReader& readSamplingOffset)
 {
     try {
         std::int32_t deviceId = -1;
@@ -499,92 +539,10 @@ aclptiResult RangeProfiler::ReplayKernel(
         const std::vector<ReplayRound> rounds = BuildReplayRounds();
         ASCTOOL_DEBUG("[aclpti] replay rounds=%zu events=%zu", rounds.size(), pmuEvents_.size());
 
+        const ReplayInvocation invocation{replayMemory, binaryRegistry,     originalFunction, launchFunction,
+                                          stream,       readSamplingOffset, deviceId,         synchronizeFunction};
         for (std::size_t round = 0; round < rounds.size(); ++round) {
-            ProfilingRoundConfig config{};
-            ConfigureProfilingRound(rounds[round], round, deviceId, &config);
-            const bool pcSampling = rounds[round].kind == data::ReplayKind::PcSampling;
-            bool snapshotReady = true;
-            bool pmSamplingMapFailed = false;
-            if (pcSampling) {
-                PmSamplingBinarySnapshot snapshot;
-                snapshotReady = binaryRegistry.GetPmSamplingSnapshot(originalFunction, snapshot);
-                if (snapshotReady) {
-                    auto context = std::make_shared<aclptiPmSamplingContext>();
-                    context->originalElf = {snapshot.image, &snapshot.image->originalElf};
-                    context->companionElf = {snapshot.image, &snapshot.image->companionElf};
-                    context->businessInstructions = {snapshot.image, &snapshot.image->instructions.business};
-                    context->excludedInstructions = {snapshot.image, &snapshot.image->instructions.excluded};
-                    context->instructionMapError = snapshot.error;
-                    pmSamplingMapFailed = !snapshot.error.empty();
-                    context->elfEntry = snapshot.elfEntry;
-                    context->aicRuntimeEntry = snapshot.aicRuntimeEntry;
-                    context->aivRuntimeEntry = snapshot.aivRuntimeEntry;
-                    ASCTOOL_DEBUG(
-                        "PmSampling context replay=%llu elfEntry=0x%llx aicEntry=0x%llx aivEntry=0x%llx",
-                        static_cast<unsigned long long>(config.prepareInfo.replayId),
-                        static_cast<unsigned long long>(context->elfEntry),
-                        static_cast<unsigned long long>(context->aicRuntimeEntry),
-                        static_cast<unsigned long long>(context->aivRuntimeEntry));
-                    config.prepareInfo.pmSamplingContext = std::move(context);
-                }
-            }
-            if (pmSamplingMapFailed) {
-                // Do not restore device buffers for a round that will not launch:
-                // the preceding successful launch must remain visible to the APP.
-                status = dataManager_.PrepareReplay(config.prepareInfo);
-                if (status != ACLPTI_SUCCESS) {
-                    return status;
-                }
-                const auto failed = dataManager_.RecordReplayStatus({round, ACLPTI_ERROR_PROFILING_FAILED});
-                const auto released = dataManager_.ReleaseReplay(round);
-                if (failed.status != ACLPTI_ERROR_PROFILING_FAILED) {
-                    return failed.status;
-                }
-                // The published result carries the collection failure. The original
-                // kernel succeeded, so a mapping error must not fail its launch API.
-                return released;
-            }
-            status = replayMemory.Restore();
-            if (status != ACLPTI_SUCCESS) {
-                ASCTOOL_ERROR(
-                    "[aclpti] error operation=replay_restore_result status=%d round=%zu"
-                    " code=%u",
-                    static_cast<int>(status), round, static_cast<unsigned>(static_cast<uint32_t>(status)));
-                return status;
-            }
-            if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
-                TryFlushL2Cache(deviceId, round);
-            }
-            status = StartProfilingRound(rounds[round], round, deviceId, &config);
-            if (status != ACLPTI_SUCCESS) {
-                return status;
-            }
-
-            ASCTOOL_DEBUG("[aclpti] launch replay kernel round=%zu", round);
-            const bool pipeline = rounds[round].kind == data::ReplayKind::Pipeline;
-            const bool instrumented = pipeline || pcSampling;
-            const auto function =
-                instrumented ? binaryRegistry.FindInstrumentedFunction(originalFunction) : originalFunction;
-            ASCTOOL_DEBUG(
-                "[aclpti] replay function round=%zu kind=%s replay_id=%llu original=%p selected=%p device=%d", round,
-                pcSampling ? "PmSampling" : (pipeline ? "pipeline" : "pmu"),
-                static_cast<unsigned long long>(config.prepareInfo.replayId), originalFunction, function, deviceId);
-            aclError launchStatus;
-            if (instrumented && (function == nullptr || !snapshotReady)) {
-                // The original launch validated originalFunction, but does not guarantee an
-                // instrumented companion exists. Skip launch and let FinishProfilingRound
-                // below stop and release the profiling round already started above.
-                ASCTOOL_ERROR(
-                    "[aclpti] error operation=instrumented_function_lookup status=%d round=%zu originalFunction=%p; "
-                    "enable Pipeline/PmSampling before binary load and obtain the function by name or entry code=%u",
-                    ACL_ERROR_PROFILING_FAILURE, round, originalFunction,
-                    static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_PROFILING_FAILURE)));
-                launchStatus = ACL_ERROR_PROFILING_FAILURE;
-            } else {
-                launchStatus = launchFunction(function, instrumented);
-            }
-            ASCTOOL_DEBUG("[aclpti] launch replay kernel result round=%zu result=%d", round, launchStatus);
-            status = FinishProfilingRound(round, config, launchStatus, synchronizeFunction, stream);
+            status = ReplayProfilingRound(invocation, rounds[round], round);
             if (status != ACLPTI_SUCCESS) {
                 return status;
             }
@@ -598,6 +556,155 @@ aclptiResult RangeProfiler::ReplayKernel(
             ACLPTI_ERROR_OUT_OF_MEMORY, static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_OUT_OF_MEMORY)));
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     }
+}
+
+bool RangeProfiler::PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config)
+{
+    PmSamplingBinarySnapshot snapshot;
+    if (!invocation.binaryRegistry.GetPmSamplingSnapshot(invocation.originalFunction, snapshot)) {
+        return false;
+    }
+    if (!snapshot.companionError.empty()) {
+        ASCTOOL_WARNING(
+            "[aclpti] PmSampling will use original kernel because the SIMT companion is unavailable: "
+            "%s",
+            snapshot.companionError.c_str());
+    }
+    auto context = std::make_shared<aclptiPmSamplingContext>();
+    context->originalElf = {snapshot.image, &snapshot.image->originalElf};
+    context->companionElf = {snapshot.image, &snapshot.image->companionElf};
+    context->businessInstructions = {snapshot.image, &snapshot.image->instructions.business};
+    context->simtInstructions = {snapshot.image, &snapshot.image->instructions.simt};
+    context->instructionMapError = snapshot.error;
+    context->kernelName = snapshot.kernelName;
+    context->deviceId = invocation.deviceId;
+
+    context->elfEntry = snapshot.elfEntry;
+    context->originalEntry = snapshot.originalEntry;
+    context->aicRuntimeEntry = snapshot.aicRuntimeEntry;
+    context->aivRuntimeEntry = snapshot.aivRuntimeEntry;
+    ASCTOOL_DEBUG(
+        "PmSampling context replay=%llu elfEntry=0x%llx aicEntry=0x%llx aivEntry=0x%llx",
+        static_cast<unsigned long long>(config.prepareInfo.replayId),
+        static_cast<unsigned long long>(context->elfEntry), static_cast<unsigned long long>(context->aicRuntimeEntry),
+        static_cast<unsigned long long>(context->aivRuntimeEntry));
+    config.samplingContext = context;
+    config.prepareInfo.pmSamplingContext = std::move(context);
+    return snapshot.error.empty();
+}
+
+aclptiResult RangeProfiler::SkipUnmappedSamplingRound(std::size_t round, const ProfilingRoundConfig& config)
+{
+    const auto status = dataManager_.PrepareReplay(config.prepareInfo);
+    if (status != ACLPTI_SUCCESS) {
+        return status;
+    }
+    const auto failed = dataManager_.RecordReplayStatus({round, ACLPTI_ERROR_PROFILING_FAILED});
+    const auto released = dataManager_.ReleaseReplay(round);
+    if (failed.status != ACLPTI_ERROR_PROFILING_FAILED) {
+        return failed.status;
+    }
+    // The published result carries the collection failure. The original
+    // launch already succeeded, so do not fail its launch API.
+    return released;
+}
+
+aclptiResult RangeProfiler::RecordWarmupFailure(
+    std::size_t round, const ProfilingRoundConfig& config, aclptiResult status)
+{
+    const auto prepareStatus = dataManager_.PrepareReplay(config.prepareInfo);
+    if (prepareStatus != ACLPTI_SUCCESS) {
+        return prepareStatus;
+    }
+    dataManager_.RecordReplayStatus({round, status});
+    dataManager_.ReleaseReplay(round);
+    return status;
+}
+
+aclptiResult RangeProfiler::ReplayProfilingRound(
+    const ReplayInvocation& invocation, const ReplayRound& replayRound, std::size_t round)
+{
+    ProfilingRoundConfig config{};
+    ConfigureProfilingRound(replayRound, round, invocation.deviceId, &config);
+    const bool pcSampling = replayRound.kind == data::ReplayKind::PcSampling;
+    if (pcSampling && !PrepareSamplingContext(invocation, config)) {
+        // Publish collection failure without replaying an unsymbolizable kernel.
+        return SkipUnmappedSamplingRound(round, config);
+    }
+    aclptiResult status;
+    const bool pipeline = replayRound.kind == data::ReplayKind::Pipeline;
+    const auto samplingFunction =
+        pcSampling ? invocation.binaryRegistry.FindPmSamplingFunction(invocation.originalFunction) : nullptr;
+    const bool samplingInstrumented =
+        pcSampling && invocation.binaryRegistry.NeedsPmSamplingProbeBuffer(samplingFunction);
+    const auto function = pipeline ? invocation.binaryRegistry.FindInstrumentedFunction(invocation.originalFunction) :
+                                     (pcSampling ? samplingFunction : invocation.originalFunction);
+    if (samplingInstrumented) {
+        // Warm the same code that will be sampled, without recording warmup samples.
+        // Restoring below also prevents the warmups from changing replay inputs.
+        status = WarmupSamplingCompanion(
+            invocation.replayMemory, function, invocation.launchFunction, invocation.synchronizeFunction,
+            invocation.stream);
+        if (status != ACLPTI_SUCCESS) {
+            return RecordWarmupFailure(round, config, status);
+        }
+    }
+    status = invocation.replayMemory.Restore();
+    if (status != ACLPTI_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=replay_restore_result status=%d round=%zu"
+            " code=%u",
+            static_cast<int>(status), round, static_cast<unsigned>(static_cast<uint32_t>(status)));
+        return status;
+    }
+    if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
+        TryFlushL2Cache(invocation.deviceId, round);
+    }
+    status = StartProfilingRound(replayRound, round, invocation.deviceId, &config);
+    if (status != ACLPTI_SUCCESS) {
+        return status;
+    }
+
+    return LaunchProfilingRound(invocation, round, config, function, pcSampling, pipeline, samplingInstrumented);
+}
+
+aclptiResult RangeProfiler::LaunchProfilingRound(
+    const ReplayInvocation& invocation, std::size_t round, const ProfilingRoundConfig& config, aclrtFuncHandle function,
+    bool pcSampling, bool pipeline, bool samplingInstrumented)
+{
+    const bool instrumented = pipeline || samplingInstrumented;
+    ASCTOOL_DEBUG("[aclpti] launch replay kernel round=%zu", round);
+    ASCTOOL_DEBUG(
+        "[aclpti] replay function round=%zu kind=%s replay_id=%llu original=%p selected=%p device=%d", round,
+        pcSampling ? "PmSampling" : (pipeline ? "pipeline" : "pmu"),
+        static_cast<unsigned long long>(config.prepareInfo.replayId), invocation.originalFunction, function,
+        invocation.deviceId);
+    aclError launchStatus = ACL_SUCCESS;
+    if (instrumented && function == nullptr) {
+        // The original launch validated originalFunction, but does not guarantee an
+        // instrumented companion exists. Skip launch and let FinishProfilingRound
+        // below stop and release the profiling round already started above.
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=instrumented_function_lookup status=%d round=%zu originalFunction=%p; "
+            "enable the requested profiling mode before binary load and obtain the function by name or entry "
+            "code=%u",
+            ACL_ERROR_PROFILING_FAILURE, round, invocation.originalFunction,
+            static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_PROFILING_FAILURE)));
+        launchStatus = ACL_ERROR_PROFILING_FAILURE;
+    } else {
+        launchStatus = invocation.launchFunction(function, instrumented);
+    }
+    ASCTOOL_DEBUG("[aclpti] launch replay kernel result round=%zu result=%d", round, launchStatus);
+    std::function<aclptiResult()> readOffset;
+    if (samplingInstrumented) {
+        readOffset = [&] {
+            return invocation.readSamplingOffset ?
+                       invocation.readSamplingOffset(function, config.samplingContext->pcOffset) :
+                       ACLPTI_ERROR_PROFILING_FAILED;
+        };
+    }
+    return FinishProfilingRound(
+        round, config, launchStatus, invocation.synchronizeFunction, invocation.stream, readOffset);
 }
 
 } // namespace aclpti::profiling

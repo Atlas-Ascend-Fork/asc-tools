@@ -155,17 +155,21 @@ struct aclptiPipelineData {
     std::map<aclptiPipelineKey, std::vector<uint32_t>> channels;
 };
 
-// Immutable per-replay context. Aliasing shared pointers keep both images and instruction
-// classification alive after Runtime binary unload, without copying ELF bytes.
+// The probe displacement is filled after stream synchronization, before result delivery.
+// Aliasing shared pointers retain ELF bytes and original instruction tables after binary unload.
 struct aclptiPmSamplingContext {
     std::shared_ptr<const std::vector<char>> originalElf;
     std::shared_ptr<const std::vector<char>> companionElf;
     std::shared_ptr<const std::map<uint64_t, uint64_t>> businessInstructions;
-    std::shared_ptr<const std::set<uint64_t>> excludedInstructions;
+    std::shared_ptr<const std::set<uint64_t>> simtInstructions;
     std::string instructionMapError;
+    std::string kernelName;
+    int32_t deviceId = -1;
     uint64_t elfEntry = 0; // Companion ELF address of the launched function.
     uint64_t aicRuntimeEntry = 0;
     uint64_t aivRuntimeEntry = 0;
+    uint64_t originalEntry = 0;
+    uint64_t pcOffset = 0; // Probe-reported displacement from sampled code to the original kernel.
 };
 
 // Complete collection for one original launch, including all of its profiling replays.

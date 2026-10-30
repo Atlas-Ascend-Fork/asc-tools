@@ -155,7 +155,7 @@ TEST(NpuComputeBiuPipeline, DfxEventsAndChip6Fixp)
     // DFX trace start/end for region 7 on VECTOR.
     words.push_back(DfxWord(1, 0x407, 10));
     words.push_back(DfxWord(1, 0xc07, 15));
-    // msopprof encodes FIXP DFX events with ctrl=10 (not Chip6 state bit 6).
+    // The profiler encodes FIXP DFX events with ctrl=10 (not Chip6 state bit 6).
     words.push_back(DfxWord(10, 0x40b, 10));
     words.push_back(DfxWord(10, 0xc0b, 15));
     words.push_back(0xefffffffU);

@@ -16,6 +16,7 @@
 #include <cerrno>
 #include <climits>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <elf.h>
@@ -28,6 +29,7 @@
 #include <map>
 #include <mutex>
 #include <spawn.h>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/wait.h>
@@ -65,26 +67,56 @@ constexpr char KERNEL_END_PROBE_SOURCE[] =
 }
 )PROBE";
 
+constexpr char SIMT_START_PROBE_SOURCE[] = R"PROBE(#include "__clang_cce_defines.h"
+#define NPU_COMPUTE_SIMT_PROBE_BLOCK_COUNT 2048
+#define NPU_COMPUTE_SIMT_PROBE_NOP_GROUP_COUNT 18
+#define NPU_COMPUTE_SIMT_PROBE_NOP_COUNT_PER_GROUP 10
+#define NPU_COMPUTE_SIMT_PROBE_STALL_CYCLES 15
+#define NPU_COMPUTE_STRINGIFY_VALUE(value) #value
+#define NPU_COMPUTE_STRINGIFY(value) NPU_COMPUTE_STRINGIFY_VALUE(value)
+inline __attribute__((weak)) __simt_vf__ LAUNCH_BOUND(NPU_COMPUTE_SIMT_PROBE_BLOCK_COUNT)[aicore]
+void __npu_compute_simt_start(__gm__ unsigned char*)
+{
+    #pragma unroll
+    for (unsigned int group = 0; group < NPU_COMPUTE_SIMT_PROBE_NOP_GROUP_COUNT; ++group) {
+        #pragma unroll
+        for (unsigned int i = 0; i < NPU_COMPUTE_SIMT_PROBE_NOP_COUNT_PER_GROUP; ++i) {
+            asm volatile("NOP wait:0b0000000 stall:" NPU_COMPUTE_STRINGIFY(NPU_COMPUTE_SIMT_PROBE_STALL_CYCLES));
+        }
+    }
+}
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_compute_after_kernel_stack_frame(
+    __gm__ unsigned char* memory, unsigned long long pc, unsigned int blockId, unsigned long long pcOffset)
+{
+    (void)pc;
+    (void)blockId;
+    cce::async_invoke<__npu_compute_simt_start>(cce::dim3{NPU_COMPUTE_SIMT_PROBE_BLOCK_COUNT, 1, 1}, memory);
+    __gm__ unsigned long long* pcOffsetAddr = reinterpret_cast<__gm__ unsigned long long*>(memory);
+    *pcOffsetAddr = pcOffset;
+    using namespace __cce_scalar;
+    dcci((__gm__ unsigned long long*)memory, ENTIRE_DATA_CACHE, CACHELINE_ALL);
+}
+)PROBE";
+
 // Keep this name in sync with the symbol in KERNEL_END_PROBE_SOURCE.
 constexpr char KERNEL_END_PROBE_SYMBOL[] = "__npu_compute_before_kernel_end";
+constexpr char SIMT_START_PROBE_SYMBOL[] = "__npu_compute_after_kernel_stack_frame";
 
 // Semantic fields for npu_compute's fixed probe record; its instruction ID is not shared with npu_check.
 constexpr std::uint16_t CONTROL_RECORD_VERSION = 0;
 constexpr std::uint16_t KERNEL_END_INSTRUCTION_ID = 397; // before kernel end
+constexpr std::uint16_t SIMT_START_INSTRUCTION_ID = 398; // before kernel stack frame
 constexpr std::uint16_t KERNEL_END_PROBE_FUNCTION_INDEX = 0;
 constexpr std::uint16_t KERNEL_END_PROBE_PARAMETER_COUNT = 0;
+constexpr std::uint16_t KERNEL_END_PROBE_BINDING_COUNT = 1;
+constexpr std::uint16_t SIMT_START_PROBE_FUNCTION_INDEX = 0;
+constexpr std::uint16_t SIMT_START_PROBE_PARAMETER_COUNT = 1;
+constexpr std::uint16_t SIMT_START_PROBE_PARAMETER_INDEX = 0;
 constexpr std::uint16_t CONTROL_RECORD_RESERVED_VALUE = 0;
-constexpr std::size_t KERNEL_END_PROBE_SYMBOL_SIZE = sizeof(KERNEL_END_PROBE_SYMBOL) - 1;
 constexpr std::size_t FUNCTION_NAME_LIST_PADDING_SIZE = sizeof(std::uint32_t);
 constexpr char FUNCTION_NAME_LIST_PADDING[FUNCTION_NAME_LIST_PADDING_SIZE] = {};
-
 constexpr std::size_t CONTROL_RECORD_HEADER_SIZE = sizeof(std::uint32_t) + 4 * sizeof(std::uint16_t);
 constexpr std::size_t PROBE_BINDING_SIZE = 3 * sizeof(std::uint16_t);
-constexpr std::uint32_t KERNEL_END_FUNCTION_NAME_LIST_SIZE =
-    static_cast<std::uint32_t>(sizeof(std::uint32_t) + KERNEL_END_PROBE_SYMBOL_SIZE);
-constexpr std::uint32_t KERNEL_END_CONTROL_SIZE = static_cast<std::uint32_t>(
-    CONTROL_RECORD_HEADER_SIZE + PROBE_BINDING_SIZE + KERNEL_END_FUNCTION_NAME_LIST_SIZE +
-    FUNCTION_NAME_LIST_PADDING_SIZE);
 
 constexpr const char* PROBE_SOURCE_NAME = "probe.cpp";
 constexpr const char* PROBE_OBJECT_NAME = "kernel_end.o";
@@ -483,24 +515,55 @@ bool WriteKernelEndControl(const fs::path& directory)
         return false;
     }
 
-    if (!WriteLittleEndian(file, KERNEL_END_CONTROL_SIZE) || !WriteLittleEndian(file, CONTROL_RECORD_VERSION) ||
-        !WriteLittleEndian(file, static_cast<std::uint16_t>(PROBE_BINDING_SIZE)) ||
-        !WriteLittleEndian(file, CONTROL_RECORD_RESERVED_VALUE) ||
+    const std::string symbols(KERNEL_END_PROBE_SYMBOL);
+    const auto bindingCount = KERNEL_END_PROBE_BINDING_COUNT;
+    const auto bindingsSize = static_cast<std::uint16_t>(PROBE_BINDING_SIZE * bindingCount);
+    const auto nameListSize = static_cast<std::uint32_t>(sizeof(std::uint32_t) + symbols.size());
+    const auto controlSize = static_cast<std::uint32_t>(
+        CONTROL_RECORD_HEADER_SIZE + bindingsSize + nameListSize + FUNCTION_NAME_LIST_PADDING_SIZE);
+    if (!WriteLittleEndian(file, controlSize) || !WriteLittleEndian(file, CONTROL_RECORD_VERSION) ||
+        !WriteLittleEndian(file, bindingsSize) || !WriteLittleEndian(file, CONTROL_RECORD_RESERVED_VALUE) ||
         !WriteLittleEndian(file, CONTROL_RECORD_RESERVED_VALUE) ||
         !WriteLittleEndian(file, KERNEL_END_INSTRUCTION_ID) ||
         !WriteLittleEndian(file, KERNEL_END_PROBE_FUNCTION_INDEX) ||
-        !WriteLittleEndian(file, KERNEL_END_PROBE_PARAMETER_COUNT) ||
-        !WriteLittleEndian(file, KERNEL_END_FUNCTION_NAME_LIST_SIZE)) {
+        !WriteLittleEndian(file, KERNEL_END_PROBE_PARAMETER_COUNT)) {
         return false;
     }
-
-    file.write(KERNEL_END_PROBE_SYMBOL, static_cast<std::streamsize>(KERNEL_END_PROBE_SYMBOL_SIZE));
+    if (!WriteLittleEndian(file, nameListSize)) {
+        return false;
+    }
+    file.write(symbols.data(), static_cast<std::streamsize>(symbols.size()));
     file.write(FUNCTION_NAME_LIST_PADDING, sizeof(FUNCTION_NAME_LIST_PADDING));
     file.close();
     return static_cast<bool>(file);
 }
 
-bool WriteProbeFiles(const fs::path& directory)
+bool WriteSimtStartControl(const fs::path& directory)
+{
+    std::ofstream file((directory / CONTROL_RECORD_NAME).string(), std::ios::binary);
+    if (!file) {
+        return false;
+    }
+    const auto bindingsSize = static_cast<std::uint16_t>(4 * sizeof(std::uint16_t));
+    const auto nameListSize = static_cast<std::uint32_t>(sizeof(std::uint32_t) + std::strlen(SIMT_START_PROBE_SYMBOL));
+    const auto controlSize = static_cast<std::uint32_t>(
+        CONTROL_RECORD_HEADER_SIZE + bindingsSize + nameListSize + FUNCTION_NAME_LIST_PADDING_SIZE);
+    if (!WriteLittleEndian(file, controlSize) || !WriteLittleEndian(file, CONTROL_RECORD_VERSION) ||
+        !WriteLittleEndian(file, bindingsSize) || !WriteLittleEndian(file, CONTROL_RECORD_RESERVED_VALUE) ||
+        !WriteLittleEndian(file, CONTROL_RECORD_RESERVED_VALUE) ||
+        !WriteLittleEndian(file, SIMT_START_INSTRUCTION_ID) ||
+        !WriteLittleEndian(file, SIMT_START_PROBE_FUNCTION_INDEX) ||
+        !WriteLittleEndian(file, SIMT_START_PROBE_PARAMETER_COUNT) ||
+        !WriteLittleEndian(file, SIMT_START_PROBE_PARAMETER_INDEX) || !WriteLittleEndian(file, nameListSize)) {
+        return false;
+    }
+    file.write(SIMT_START_PROBE_SYMBOL, static_cast<std::streamsize>(std::strlen(SIMT_START_PROBE_SYMBOL)));
+    file.write(FUNCTION_NAME_LIST_PADDING, sizeof(FUNCTION_NAME_LIST_PADDING));
+    file.close();
+    return static_cast<bool>(file);
+}
+
+bool WriteProbeFiles(const fs::path& directory, bool simtStart)
 {
     const auto write = [&](const char* name, const void* bytes, std::size_t size) {
         std::ofstream file((directory / name).string(), std::ios::binary);
@@ -508,11 +571,12 @@ bool WriteProbeFiles(const fs::path& directory)
         file.close();
         return static_cast<bool>(file);
     };
-    return write(PROBE_SOURCE_NAME, KERNEL_END_PROBE_SOURCE, sizeof(KERNEL_END_PROBE_SOURCE) - 1) &&
-           WriteKernelEndControl(directory);
+    const std::string source(simtStart ? SIMT_START_PROBE_SOURCE : KERNEL_END_PROBE_SOURCE);
+    return write(PROBE_SOURCE_NAME, source.data(), source.size()) &&
+           (simtStart ? WriteSimtStartControl(directory) : WriteKernelEndControl(directory));
 }
 
-bool Run(std::initializer_list<std::string> arguments, const fs::path& stdoutFile = {})
+bool Run(const std::vector<std::string>& arguments, const fs::path& stdoutFile = {}, bool captureStderr = false)
 {
     std::vector<std::string> argumentStorage(arguments);
     std::vector<char*> argv;
@@ -525,11 +589,13 @@ bool Run(std::initializer_list<std::string> arguments, const fs::path& stdoutFil
     if (posix_spawn_file_actions_init(&actions) != 0) {
         return false;
     }
-    if (!stdoutFile.empty() &&
-        posix_spawn_file_actions_addopen(
-            &actions, STDOUT_FILENO, stdoutFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR) != 0) {
-        posix_spawn_file_actions_destroy(&actions);
-        return false;
+    if (!stdoutFile.empty()) {
+        if (posix_spawn_file_actions_addopen(
+                &actions, STDOUT_FILENO, stdoutFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR) != 0 ||
+            (captureStderr && posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO) != 0)) {
+            posix_spawn_file_actions_destroy(&actions);
+            return false;
+        }
     }
     const int error = posix_spawnp(&child, argv[0], &actions, nullptr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -539,6 +605,11 @@ bool Run(std::initializer_list<std::string> arguments, const fs::path& stdoutFil
         do {
             waited = waitpid(child, &status, 0);
         } while (waited < 0 && errno == EINTR);
+    }
+    if (captureStderr && !stdoutFile.empty()) {
+        std::ifstream log(stdoutFile.string(), std::ios::binary);
+        const std::string output{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
+        std::fwrite(output.data(), 1, output.size(), stderr);
     }
     if (error != 0 || waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         ASCTOOL_ERROR(
@@ -551,10 +622,63 @@ bool Run(std::initializer_list<std::string> arguments, const fs::path& stdoutFil
     return true;
 }
 
-bool CompileProbe(const fs::path& directory, const fs::path& compiler)
+bool ParseUnsignedField(
+    const std::string& text, std::size_t start, std::size_t end, const std::string& field, std::uint64_t& value)
+{
+    const auto fieldPosition = text.find(field, start);
+    if (fieldPosition == std::string::npos || fieldPosition >= end) {
+        return false;
+    }
+    auto first = fieldPosition + field.size();
+    while (first < end && (text[first] == ' ' || text[first] == '\t')) {
+        ++first;
+    }
+    try {
+        std::size_t parsedLength = 0;
+        const auto parsedValue = std::stoull(text.substr(first), &parsedLength, 10);
+        if (first + parsedLength > end) {
+            return false;
+        }
+        value = parsedValue;
+        return true;
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::out_of_range&) {
+        return false;
+    }
+}
+
+bool HasSimtStartProbeInsertion(const std::string& tunerOutput)
+{
+    const std::string probeReport = std::string("probeFunc: ") + SIMT_START_PROBE_SYMBOL + ", ManglingName:";
+    const auto probePosition = tunerOutput.find(probeReport);
+    if (probePosition == std::string::npos) {
+        return false;
+    }
+    const auto apiPosition = tunerOutput.find("ApiId:", probePosition + probeReport.size());
+    const auto nextProbePosition = tunerOutput.find("probeFunc:", probePosition + probeReport.size());
+    if (apiPosition == std::string::npos ||
+        (nextProbePosition != std::string::npos && apiPosition > nextProbePosition)) {
+        return false;
+    }
+    auto lineEnd = tunerOutput.find_first_of("\r\n", apiPosition);
+    if (lineEnd == std::string::npos) {
+        lineEnd = tunerOutput.size();
+    }
+    std::uint64_t apiId = 0;
+    std::uint64_t stubTimes = 0;
+    return ParseUnsignedField(tunerOutput, apiPosition, lineEnd, "ApiId:", apiId) &&
+           ParseUnsignedField(tunerOutput, apiPosition, lineEnd, "StubTimes:", stubTimes) &&
+           apiId == SIMT_START_INSTRUCTION_ID && stubTimes > 0;
+}
+
+bool CompileProbe(const fs::path& directory, const fs::path& compiler, bool simtStart)
 {
     return Run(
-        {compiler.string(), "-x", "cce", "--cce-aicore-only", "--npu-arch=dav-3510", "-O2", "-g", "-c",
+        // SIMT sampling requires a vector-only callback. A general NPU target also emits
+        // a cube callback without async_invoke, which the tuner can silently bind instead.
+        {compiler.string(), "-std=c++17", "-x", "cce", "--cce-aicore-only",
+         simtStart ? "--cce-aicore-arch=dav-c310-vec" : "--npu-arch=dav-3510", "-O2", "-g", "-c",
          (directory / PROBE_SOURCE_NAME).string(), "-o", (directory / PROBE_OBJECT_NAME).string()});
 }
 
@@ -603,21 +727,21 @@ struct TemporaryDirectory {
     }
 };
 
-bool PrepareProbe(const KernelEndTools& tools, fs::path& assets)
+bool PrepareProbe(const KernelEndTools& tools, fs::path& assets, bool simtStart)
 {
     static std::mutex mutex;
-    static TemporaryDirectory cache;
+    static TemporaryDirectory caches[2];
+    auto& cache = caches[simtStart ? 1 : 0];
     std::lock_guard<std::mutex> lock(mutex);
     if (cache.path.empty()) {
-        char pattern[] = "/tmp/npu-compute-kernel-end-probe-XXXXXX";
+        char pattern[] = "/tmp/npu-compute-probe-XXXXXX";
         if (mkdtemp(pattern) == nullptr) {
             return false;
         }
         TemporaryDirectory temporary{pattern};
-        if (!WriteProbeFiles(temporary.path) || !CompileProbe(temporary.path, tools.compiler)) {
+        if (!WriteProbeFiles(temporary.path, simtStart) || !CompileProbe(temporary.path, tools.compiler, simtStart)) {
             ASCTOOL_ERROR(
-                "[aclpti] probe_compile failed for the kernel-end probe"
-                " code=%u",
+                "[aclpti] probe_compile failed for the %s probe code=%u", simtStart ? "SIMT start" : "kernel-end",
                 NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return false;
         }
@@ -682,64 +806,112 @@ bool PatchKernelParamMetadata(
 
 } // namespace
 
-bool InstrumentKernelEnd(
-    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* outputTraceArgumentOffset,
-    PmSamplingInstructionMap* pmSamplingMap)
+static bool WriteSamplingSymbolOrdering(
+    const fs::path& toolDirectory, const fs::path& kernel, const fs::path& probe, const fs::path& orderingFile)
 {
-    output.clear();
-    if (pmSamplingMap != nullptr) {
-        *pmSamplingMap = {};
-    }
-    if (outputTraceArgumentOffset != nullptr) {
-        *outputTraceArgumentOffset = 0;
-    }
-    KernelEndTools tools;
-    if (!ResolveTools(tools)) {
+    fs::path objdump;
+    if (!FindTool(toolDirectory, "llvm-objdump", objdump)) {
+        ASCTOOL_ERROR("llvm-objdump is unavailable for PmSampling symbol ordering");
         return false;
     }
-    std::uint32_t traceArgumentOffset = 0;
-    KernelMetadata metadata;
-    std::string diagnostic;
-    if (!ResolveTraceArgumentOffset(data, size, metadata, traceArgumentOffset, diagnostic)) {
-        ASCTOOL_ERROR(
-            "[aclpti] kernel-end argument metadata is invalid: %s"
-            " code=%u",
-            diagnostic.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+    std::string ordering;
+    for (const auto& object : {std::make_pair(kernel, std::string("g")), std::make_pair(probe, std::string("w"))}) {
+        const auto symbolsFile = orderingFile.parent_path() / "symbols.txt";
+        if (!Run({objdump.string(), "--syms", object.first.string()}, symbolsFile)) {
+            return false;
+        }
+        std::ifstream symbols(symbolsFile.string());
+        std::string line, symbol;
+        while (std::getline(symbols, line)) {
+            std::istringstream fields(line);
+            std::string address, binding, type, section, bytes, name;
+            if ((fields >> address >> binding >> type >> section >> bytes >> name) && binding == object.second &&
+                type == "F" && section == ".text") {
+                symbol = name;
+                break;
+            }
+        }
+        if (symbol.empty()) {
+            ASCTOOL_ERROR("PmSampling linker ordering symbol is missing: %s", object.first.c_str());
+            return false;
+        }
+        ordering += symbol + "\n";
+    }
+    std::ofstream file(orderingFile.string());
+    file << ordering;
+    file.close();
+    if (!file) {
         return false;
     }
-    fs::path assets;
-    if (!PrepareProbe(tools, assets)) {
-        ASCTOOL_ERROR(
-            "[aclpti] failed to generate kernel-end assets"
-            " code=%u",
-            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+    return true;
+}
+
+static bool LinkProbeImage(
+    const KernelEndTools& tools, const fs::path& assets, const fs::path& directory, bool simtStart)
+{
+    const auto input = directory / "input.o";
+    const auto linked = directory / "linked.o";
+    std::vector<std::string> linkArguments{tools.linker.string(), "-m", "aicorelinux", "-Ttext=0"};
+    if (simtStart) {
+        const auto orderingFile = directory / "symbol_ordering.txt";
+        if (!WriteSamplingSymbolOrdering(tools.tuner.parent_path(), input, assets / PROBE_OBJECT_NAME, orderingFile)) {
+            return false;
+        }
+        linkArguments.insert(linkArguments.end(), {"--symbol-ordering-file", orderingFile.string()});
+    }
+    linkArguments.insert(
+        linkArguments.end(), {"-execute-probe", (assets / PROBE_OBJECT_NAME).string(), input.string(), "-static", "-q",
+                              "-o", linked.string()});
+    return Run(linkArguments);
+}
+
+static bool TuneProbeImage(
+    const KernelEndTools& tools, const fs::path& assets, const fs::path& directory, std::uint32_t traceArgumentOffset,
+    bool simtStart, PmSamplingInstructionMap* pmSamplingMap)
+{
+    const auto linked = directory / "linked.o";
+    const auto patched = directory / "patched.o";
+    // A successful tuner exit alone does not guarantee an entry hook was inserted.
+    // Capture its binding report for verification; the temporary log is cleaned up below.
+    const auto tuneLog = directory / "tune.log";
+    std::vector<std::string> tuneArguments{
+        tools.tuner.string(),
+        "--action=instru-probe",
+        "--tune-argsize=" + std::to_string(traceArgumentOffset),
+        "--instru-memprobe",
+        linked.string(),
+        "--dbi-config=" + (assets / CONTROL_RECORD_NAME).string(),
+        "-o=" + patched.string(),
+        "--append-hbmout-paraminfo"};
+    if (simtStart) {
+        // Keep business SIMT scheduling intact; generic instrumentation rewrites
+        // stack initialization and introduces artificial entry stall samples.
+        tuneArguments.emplace_back("--kernel-bounded-pcstb-mode");
+        tuneArguments.emplace_back("--probe-verb=2");
+    }
+    if (!Run(tuneArguments, simtStart ? tuneLog : fs::path{}, simtStart)) {
         return false;
     }
-    char pattern[] = "/tmp/npu-compute-kernel-end-XXXXXX";
-    if (mkdtemp(pattern) == nullptr) {
-        return false;
-    }
-    TemporaryDirectory temporary{pattern};
-    const auto input = temporary.path / "input.o";
-    const auto linked = temporary.path / "linked.o";
-    const auto patched = temporary.path / "patched.o";
-    {
-        std::ofstream file(input.string(), std::ios::binary);
-        file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-        file.close();
-        if (!file) {
+    if (simtStart) {
+        std::ifstream log(tuneLog.string(), std::ios::binary);
+        const std::string tunerOutput{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
+        if (!log.is_open() || log.bad() || !HasSimtStartProbeInsertion(tunerOutput)) {
+            const std::string failure = "bisheng-tune did not report an inserted SIMT stack-frame probe (ApiId 398)";
+            if (pmSamplingMap != nullptr) {
+                pmSamplingMap->error = failure;
+            }
+            ASCTOOL_ERROR("[aclpti] %s code=%u", failure.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return false;
         }
     }
-    if (!Run(
-            {tools.linker.string(), "-m", "aicorelinux", "-Ttext=0", "-execute-probe",
-             (assets / PROBE_OBJECT_NAME).string(), input.string(), "-static", "-q", "-o", linked.string()}) ||
-        !Run(
-            {tools.tuner.string(), "--action=instru-probe", "--tune-argsize=" + std::to_string(traceArgumentOffset),
-             "--instru-memprobe", linked.string(), "--dbi-config=" + (assets / CONTROL_RECORD_NAME).string(),
-             "-o=" + patched.string(), "--append-hbmout-paraminfo"})) {
-        return false;
-    }
+    return true;
+}
+
+static bool ReadPatchedProbeImage(
+    const fs::path& patched, const KernelMetadata& metadata, std::uint32_t traceArgumentOffset,
+    std::vector<char>& result)
+{
+    std::string diagnostic;
     std::ifstream file(patched.string(), std::ios::binary);
     if (!file) {
         return false;
@@ -755,43 +927,166 @@ bool InstrumentKernelEnd(
             diagnostic.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return false;
     }
-    std::vector<char> result(patchedImage.begin(), patchedImage.end());
+    result.assign(patchedImage.begin(), patchedImage.end());
+    return true;
+}
+
+static void MapCompanionFunctions(
+    const void* data, std::size_t size, const std::vector<char>& result, PmSamplingInstructionMap* pmSamplingMap)
+{
+    std::string diagnostic;
     if (pmSamplingMap != nullptr) {
         try {
             const std::vector<char> original(static_cast<const char*>(data), static_cast<const char*>(data) + size);
             if (!BuildPmSamplingFunctionMap(original, result, *pmSamplingMap, diagnostic)) {
                 throw std::runtime_error(diagnostic);
             }
-            fs::path objdump;
-            Require(
-                FindTool(tools.tuner.parent_path(), "llvm-objdump", objdump),
-                "cannot find llvm-objdump for PmSampling instruction mapping");
-            const auto oldDisasm = temporary.path / "original.txt";
-            const auto newDisasm = temporary.path / "companion.txt";
-            Require(
-                Run({objdump.string(), "-d", input.string()}, oldDisasm) &&
-                    Run({objdump.string(), "-d", patched.string()}, newDisasm),
-                "llvm-objdump failed during PmSampling instruction mapping");
-            const auto read = [](const fs::path& path) {
-                std::ifstream stream(path.string(), std::ios::binary);
-                std::string text{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
-                Require(!stream.bad(), "cannot read disassembly");
-                return text;
-            };
-            if (!BuildPmSamplingInstructionMap(
-                    original, result, read(oldDisasm), read(newDisasm), *pmSamplingMap, diagnostic)) {
-                ASCTOOL_DEBUG("PmSampling instruction map failed: %s", diagnostic.c_str());
-            }
         } catch (const std::exception& error) {
             pmSamplingMap->business.clear();
-            pmSamplingMap->excluded.clear();
             pmSamplingMap->error = error.what();
             ASCTOOL_DEBUG("PmSampling disassembly failed: %s", error.what());
         }
     }
+}
+
+static bool WriteProbeInput(const fs::path& input, const void* data, std::size_t size)
+{
+    std::ofstream file(input.string(), std::ios::binary);
+    file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    file.close();
+    if (!file) {
+        return false;
+    }
+    return true;
+}
+
+static bool PrepareProbeBuild(
+    const void* data, std::size_t size, bool simtStart, KernelEndTools& tools, KernelMetadata& metadata,
+    std::uint32_t& traceArgumentOffset, fs::path& assets)
+{
+    if (!ResolveTools(tools)) {
+        return false;
+    }
+    std::string diagnostic;
+    if (!ResolveTraceArgumentOffset(data, size, metadata, traceArgumentOffset, diagnostic)) {
+        ASCTOOL_ERROR(
+            "[aclpti] kernel-end argument metadata is invalid: %s"
+            " code=%u",
+            diagnostic.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return false;
+    }
+    if (!PrepareProbe(tools, assets, simtStart)) {
+        ASCTOOL_ERROR(
+            "[aclpti] failed to generate the %s probe assets code=%u", simtStart ? "SIMT start" : "kernel-end",
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return false;
+    }
+    return true;
+}
+
+static bool InstrumentProbe(
+    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* outputTraceArgumentOffset,
+    PmSamplingInstructionMap* pmSamplingMap, bool simtStart)
+{
+    output.clear();
+    if (pmSamplingMap != nullptr) {
+        *pmSamplingMap = {};
+    }
+    if (outputTraceArgumentOffset != nullptr) {
+        *outputTraceArgumentOffset = 0;
+    }
+    KernelEndTools tools;
+    KernelMetadata metadata;
+    std::uint32_t traceArgumentOffset = 0;
+    fs::path assets;
+    if (!PrepareProbeBuild(data, size, simtStart, tools, metadata, traceArgumentOffset, assets)) {
+        return false;
+    }
+    char pattern[] = "/tmp/npu-compute-kernel-end-XXXXXX";
+    if (mkdtemp(pattern) == nullptr) {
+        return false;
+    }
+    TemporaryDirectory temporary{pattern};
+    const auto input = temporary.path / "input.o";
+    const auto patched = temporary.path / "patched.o";
+    if (!WriteProbeInput(input, data, size) || !LinkProbeImage(tools, assets, temporary.path, simtStart) ||
+        !TuneProbeImage(tools, assets, temporary.path, traceArgumentOffset, simtStart, pmSamplingMap)) {
+        return false;
+    }
+    std::vector<char> result;
+    if (!ReadPatchedProbeImage(patched, metadata, traceArgumentOffset, result)) {
+        return false;
+    }
+    MapCompanionFunctions(data, size, result, pmSamplingMap);
     output.swap(result);
     if (outputTraceArgumentOffset != nullptr) {
         *outputTraceArgumentOffset = traceArgumentOffset;
+    }
+    return true;
+}
+
+bool InstrumentKernelEnd(
+    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* outputTraceArgumentOffset,
+    PmSamplingInstructionMap* pmSamplingMap)
+{
+    return InstrumentProbe(data, size, output, outputTraceArgumentOffset, pmSamplingMap, false);
+}
+
+bool InstrumentSimtSampling(
+    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* probeArgumentOffset,
+    PmSamplingInstructionMap* pmSamplingMap)
+{
+    return InstrumentProbe(data, size, output, probeArgumentOffset, pmSamplingMap, true);
+}
+
+bool BuildOriginalPmSamplingInstructionMap(const void* data, std::size_t size, PmSamplingInstructionMap& output)
+{
+    output = {};
+    if (data == nullptr || size == 0) {
+        output.error = "empty device ELF";
+        return false;
+    }
+    const char* cann = std::getenv("ASCEND_HOME_PATH");
+    if (cann == nullptr || cann[0] == '\0') {
+        output.error = "ASCEND_HOME_PATH is unavailable";
+        return false;
+    }
+    fs::path objdump;
+    if (!FindTool(fs::path(cann) / "tools/bisheng_compiler/bin", "llvm-objdump", objdump)) {
+        output.error = "cannot find llvm-objdump for PmSampling instruction mapping";
+        return false;
+    }
+    char pattern[] = "/tmp/npu-compute-pm-sampling-map-XXXXXX";
+    if (mkdtemp(pattern) == nullptr) {
+        output.error = "cannot create PmSampling mapping directory";
+        return false;
+    }
+    TemporaryDirectory temporary{pattern};
+    const auto input = temporary.path / "input.o";
+    {
+        std::ofstream file(input.string(), std::ios::binary);
+        file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+        if (!file) {
+            output.error = "cannot write device ELF for PmSampling mapping";
+            return false;
+        }
+    }
+    const auto disassembly = temporary.path / "original.txt";
+    if (!Run({objdump.string(), "-d", input.string()}, disassembly)) {
+        output.error = "llvm-objdump failed during PmSampling instruction mapping";
+        return false;
+    }
+    std::ifstream file(disassembly.string(), std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    if (file.bad()) {
+        output.error = "cannot read PmSampling disassembly";
+        return false;
+    }
+    std::vector<char> image(static_cast<const char*>(data), static_cast<const char*>(data) + size);
+    std::string diagnostic;
+    if (!BuildPmSamplingOriginalInstructionMap(image, text, output, diagnostic)) {
+        output.error = diagnostic;
+        return false;
     }
     return true;
 }

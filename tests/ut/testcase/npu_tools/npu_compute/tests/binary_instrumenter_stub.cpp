@@ -19,12 +19,10 @@ bool InstrumentKernelEnd(
 {
     if (pmSamplingMap != nullptr) {
         pmSamplingMap->business = {{0x100, 0}};
-        pmSamplingMap->excluded = {0x104};
         pmSamplingMap->functionEntries = {{"kernel", 0x100}, {"sample", 0x100}};
         pmSamplingMap->relocatedEntries = {{0, 0x100}, {42, 42}};
         if (std::getenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") != nullptr) {
             pmSamplingMap->business.clear();
-            pmSamplingMap->excluded.clear();
             pmSamplingMap->error = "ambiguous business instruction alignment in kernel";
         }
     }
@@ -32,6 +30,38 @@ bool InstrumentKernelEnd(
         *traceArgumentOffset = 56;
     }
     output.assign(static_cast<const char*>(data), static_cast<const char*>(data) + size);
+    return true;
+}
+
+bool InstrumentSimtSampling(
+    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* probeArgumentOffset,
+    PmSamplingInstructionMap* pmSamplingMap)
+{
+    if (probeArgumentOffset != nullptr) {
+        *probeArgumentOffset = 56;
+    }
+    if (pmSamplingMap != nullptr) {
+        pmSamplingMap->business = {{0x180, 0x100}};
+        pmSamplingMap->simt = {0x180};
+        pmSamplingMap->functionEntries = {{"kernel", 0x180}, {"sample", 0x180}};
+        pmSamplingMap->relocatedEntries = {{0x100, 0x180}, {42, 42}};
+    }
+    output.assign(static_cast<const char*>(data), static_cast<const char*>(data) + size);
+    output.push_back('S');
+    return true;
+}
+
+bool BuildOriginalPmSamplingInstructionMap(const void*, std::size_t, PmSamplingInstructionMap& output)
+{
+    output = {};
+    output.business = {{0x100, 0}};
+    output.simt = {0x100};
+    output.functionEntries = {{"kernel", 0x100}, {"sample", 0x100}};
+    output.relocatedEntries = {{0, 0x100}, {42, 42}};
+    if (std::getenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") != nullptr) {
+        output.business.clear();
+        output.error = "ambiguous business instruction alignment in kernel";
+    }
     return true;
 }
 } // namespace aclpti::profiling

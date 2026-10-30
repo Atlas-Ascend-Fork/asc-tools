@@ -60,7 +60,8 @@ int RealFlush(void* reserved)
         return ACL_ERROR_INVALID_PARAM;
     }
     ++g_flush_calls;
-    if (g_restore_calls != g_flush_calls) {
+    // The final sampling round restores inputs for five unprofiled warmups too.
+    if (g_restore_calls != g_flush_calls + (g_flush_calls == 5 ? 5U : 0U)) {
         return ACL_ERROR_INVALID_PARAM;
     }
     return g_flush_failure || (g_partial_flush_failure && g_flush_calls % 2 == 1) ? ACL_ERROR_RT_FAILURE : ACL_SUCCESS;
@@ -71,6 +72,8 @@ std::size_t g_free_calls = 0;
 std::size_t g_memcpy_calls = 0;
 std::size_t g_launch_calls = 0;
 std::size_t g_launch_with_host_args_calls = 0;
+bool g_extended_host_args = false;
+bool g_host_placeholders = false;
 std::size_t g_sync_calls = 0;
 std::size_t g_set_device_calls = 0;
 std::size_t g_reset_device_calls = 0;
@@ -86,8 +89,8 @@ std::vector<uint8_t> g_kernel_inputs;
 std::vector<void*> g_launch_handles;
 std::size_t g_binary_loads = 0;
 std::vector<void*> g_unloaded_binaries;
-int g_binary_tokens[4];
-int g_function_tokens[4];
+int g_binary_tokens[8];
+int g_function_tokens[8];
 
 int RealBinaryLoad(const void*, std::size_t, const aclrtBinaryLoadOptions*, aclrtBinHandle* binary)
 {
@@ -187,7 +190,8 @@ int RealLaunch(void* function, uint32_t, const void* args_data, std::size_t args
     if (args_data == nullptr) {
         return -1;
     }
-    const bool instrumented = function == &g_function_tokens[1] || function == &g_function_tokens[3];
+    const bool instrumented = function == &g_function_tokens[1] || function == &g_function_tokens[2] ||
+                              function == &g_function_tokens[4] || function == &g_function_tokens[5];
     if (instrumented) {
         // The instrumentation stub places the hidden pointer at byte 56, independent of argsSize.
         if (args_size != 56 + sizeof(void*) || args_data == g_expected_args_data ||
@@ -202,7 +206,8 @@ int RealLaunch(void* function, uint32_t, const void* args_data, std::size_t args
         std::copy_n(
             reinterpret_cast<const unsigned char*>(bytes + 56), sizeof(hidden),
             reinterpret_cast<unsigned char*>(&hidden));
-        if (hidden != nullptr) {
+        const bool sampling = function == &g_function_tokens[1] || function == &g_function_tokens[4];
+        if ((hidden != nullptr) != sampling) {
             return -1;
         }
         ++g_instrumented_launch_calls;
@@ -219,10 +224,28 @@ int RealLaunch(void* function, uint32_t, const void* args_data, std::size_t args
 
 int RealLaunchWithHostArgs(
     aclrtFuncHandle function, uint32_t blocks, aclrtStream stream, aclrtLaunchKernelCfg*, void* args, std::size_t size,
-    aclrtPlaceHolderInfo*, std::size_t)
+    aclrtPlaceHolderInfo* placeholders, std::size_t placeholderCount)
 {
     ++g_launch_with_host_args_calls;
     if (args != nullptr) {
+        if (g_extended_host_args) {
+            const bool instrumented = function == &g_function_tokens[1] || function == &g_function_tokens[2] ||
+                                      function == &g_function_tokens[4] || function == &g_function_tokens[5];
+            const auto* bytes = static_cast<const unsigned char*>(args);
+            const auto* original = static_cast<const unsigned char*>(g_expected_args_data);
+            if (size != (instrumented ? 112U : 104U) ||
+                std::memcmp(bytes + (instrumented ? 64 : 56), original + 56, 48) != 0) {
+                return -1;
+            }
+            if (g_host_placeholders &&
+                (placeholderCount != 2 || placeholders == nullptr || placeholders[0].addrOffset != 0 ||
+                 placeholders[0].dataOffset != 8 || placeholders[1].addrOffset != (instrumented ? 88U : 80U) ||
+                 placeholders[1].dataOffset != (instrumented ? 104U : 96U))) {
+                return -1;
+            }
+            // Validate the hidden slot and exercise replay using the original kernel arguments.
+            return RealLaunch(function, blocks, args, instrumented ? 64 : sizeof(KernelArgs), stream);
+        }
         return RealLaunch(function, blocks, args, size, stream);
     }
     return 0;
@@ -387,7 +410,9 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     const auto& mode = GetParam();
     const bool useShrinkBlock = mode == "shrink";
     const bool useDebugLog = mode == "debug";
-    const bool useHostArgs = mode == "host";
+    const bool useHostArgs = mode == "host" || mode == "host_tail" || mode == "host_placeholders";
+    g_host_placeholders = mode == "host_placeholders";
+    g_extended_host_args = mode == "host_tail" || g_host_placeholders;
     const bool useSymbol = mode == "symbol";
     g_flush_failure = mode == "flush_failure";
     g_partial_flush_failure = mode == "partial_flush_failure";
@@ -476,7 +501,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     aclrtBinHandle binary = nullptr;
     ASSERT_TRUE(aclrtBinaryLoadFromData(binaryImage, sizeof(binaryImage), nullptr, &binary) == ACL_SUCCESS);
     ASSERT_TRUE(binary == &g_binary_tokens[0]);
-    ASSERT_TRUE(g_binary_loads == 2);
+    ASSERT_TRUE(g_binary_loads == 3);
     aclrtFuncHandle namedFunction = nullptr;
     if (useSymbol) {
         // Like Bisheng's generated host stub: symbol lookup is the only function query.
@@ -490,7 +515,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(aclrtBinaryLoadFromData(binaryImage, sizeof(binaryImage), nullptr, &entryBinary) == ACL_SUCCESS);
     aclrtFuncHandle entryFunction = nullptr;
     ASSERT_TRUE(aclrtBinaryGetFunctionByEntry(entryBinary, 42, &entryFunction) == ACL_SUCCESS);
-    ASSERT_TRUE(entryFunction == &g_function_tokens[2]);
+    ASSERT_TRUE(entryFunction == &g_function_tokens[3]);
 
     void* alignedAllocation = nullptr;
     ASSERT_TRUE(aclrtMallocAlign32(&alignedAllocation, 1, ACL_MEM_MALLOC_HUGE_FIRST) == 0);
@@ -505,7 +530,15 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(aclrtMemcpy(allocation, 1, &initial_value, 1, ACL_MEMCPY_HOST_TO_DEVICE) == 0);
 
     KernelArgs args{static_cast<uint8_t*>(allocation)};
-    g_expected_args_data = &args;
+    std::array<unsigned char, 104> hostArgs{};
+    std::memcpy(hostArgs.data(), &args, sizeof(args));
+    std::fill(hostArgs.begin() + 56, hostArgs.end(), 0xa5);
+    aclrtPlaceHolderInfo placeholders[2]{};
+    placeholders[0].addrOffset = 0;
+    placeholders[0].dataOffset = 8;
+    placeholders[1].addrOffset = 80;
+    placeholders[1].dataOffset = 96;
+    g_expected_args_data = g_extended_host_args ? static_cast<void*>(hostArgs.data()) : &args;
 
     ASSERT_TRUE(aclrtSetDevice(7) == 0);
     ASSERT_TRUE(g_set_device_calls == 1);
@@ -514,11 +547,18 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(CapturePlog(
         [&] {
             auto function = useShrinkBlock ? entryFunction : namedFunction;
-            firstLaunchStatus = useHostArgs ? aclrtLaunchKernelWithHostArgs(
-                                                  function, 1, nullptr, nullptr, &args, sizeof(args), nullptr, 0) :
-                                              aclrtLaunchKernel(function, 1, &args, sizeof(args), nullptr);
+            firstLaunchStatus = useHostArgs ?
+                                    aclrtLaunchKernelWithHostArgs(
+                                        function, 1, nullptr, nullptr,
+                                        g_extended_host_args ? static_cast<void*>(hostArgs.data()) : &args,
+                                        g_extended_host_args ? hostArgs.size() : sizeof(args),
+                                        g_host_placeholders ? placeholders : nullptr, g_host_placeholders ? 2 : 0) :
+                                    aclrtLaunchKernel(function, 1, &args, sizeof(args), nullptr);
         },
         &profilingLog, useDebugLog ? DLOG_DEBUG : DLOG_WARN));
+    g_expected_args_data = &args;
+    g_extended_host_args = false;
+    g_host_placeholders = false;
     ASSERT_TRUE(profilingLog.find("[INFO] cache-control") == std::string::npos);
     if (g_start_failure) {
         ASSERT_TRUE(firstLaunchStatus != ACL_SUCCESS);
@@ -529,7 +569,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     }
     ASSERT_TRUE(firstLaunchStatus == ACL_SUCCESS);
     ASSERT_TRUE(g_parameter_query_calls == 0);
-    ASSERT_TRUE(g_instrumented_launch_calls == 2);
+    ASSERT_TRUE(g_instrumented_launch_calls == 7);
     ASSERT_TRUE(g_flush_calls == (g_none || g_missing_flush ? 0U : 5U));
     if (g_none) {
         ASSERT_TRUE(profilingLog.find("cache-control") == std::string::npos);
@@ -547,21 +587,23 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(g_stop_calls == 5);
     ASSERT_TRUE(g_start_data_type == 8);
     ASSERT_TRUE(g_stop_data_type == 8);
-    ASSERT_TRUE(g_launch_calls == 6);
-    void* expectedOriginal = useShrinkBlock ? &g_function_tokens[2] : &g_function_tokens[0];
-    void* expectedPatched = useShrinkBlock ? &g_function_tokens[3] : &g_function_tokens[1];
+    ASSERT_TRUE(g_launch_calls == 11);
+    void* expectedOriginal = useShrinkBlock ? &g_function_tokens[3] : &g_function_tokens[0];
+    void* expectedSampling = useShrinkBlock ? &g_function_tokens[4] : &g_function_tokens[1];
+    void* expectedPipeline = useShrinkBlock ? &g_function_tokens[5] : &g_function_tokens[2];
     ASSERT_TRUE(
         (g_launch_handles == std::vector<void*>{
                                  expectedOriginal, expectedOriginal, expectedOriginal, expectedOriginal,
-                                 expectedPatched, expectedPatched}));
+                                 expectedPipeline, expectedSampling, expectedSampling, expectedSampling,
+                                 expectedSampling, expectedSampling, expectedSampling}));
     ASSERT_TRUE(aclrtBinaryGetFunctionByEntry(entryBinary, 43, &entryFunction) == ACL_ERROR_INVALID_PARAM);
     ASSERT_TRUE(aclrtBinaryUnLoad(binary) == ACL_SUCCESS);
     ASSERT_TRUE(aclrtBinaryUnLoad(entryBinary) == ACL_SUCCESS);
-    ASSERT_TRUE(g_unloaded_binaries.size() == 4);
-    ASSERT_TRUE(g_sync_calls == 6);
+    ASSERT_TRUE(g_unloaded_binaries.size() == 6);
+    ASSERT_TRUE(g_sync_calls == 11);
     ASSERT_TRUE(g_get_device_calls == 1);
     ASSERT_TRUE(g_soc_name_calls == 0);
-    ASSERT_TRUE((g_kernel_inputs == std::vector<std::uint8_t>{5, 5, 5, 5, 5, 5}));
+    ASSERT_TRUE((g_kernel_inputs == std::vector<std::uint8_t>(11, 5)));
     ASSERT_TRUE(*static_cast<std::uint8_t*>(allocation) == 6);
 
     ASSERT_TRUE(g_configs.size() == 5);
@@ -629,7 +671,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, &args, sizeof(args), nullptr) == ACL_ERROR_PROFILING_FAILURE);
     ASSERT_TRUE(g_start_calls == starts_after_first_launch);
     ASSERT_TRUE(g_sync_calls == syncs_after_first_launch);
-    ASSERT_TRUE(g_launch_calls == 7);
+    ASSERT_TRUE(g_launch_calls == 12);
     ASSERT_TRUE(g_get_device_calls == 1);
     ASSERT_TRUE(g_kernel_inputs.back() == 10);
     ASSERT_TRUE(*static_cast<std::uint8_t*>(allocation) == 11);
@@ -639,7 +681,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(
         aclrtLaunchKernelWithHostArgs(nullptr, 1, nullptr, nullptr, nullptr, 0, nullptr, 0) ==
         ACL_ERROR_PROFILING_FAILURE);
-    ASSERT_TRUE(g_launch_with_host_args_calls == (useHostArgs ? 7U : 1U));
+    ASSERT_TRUE(g_launch_with_host_args_calls == (useHostArgs ? 12U : 1U));
     ASSERT_TRUE(g_get_device_calls == 1);
     ASSERT_TRUE(g_start_calls == starts_before_host_args);
     ASSERT_TRUE(g_sync_calls == syncs_before_host_args);
@@ -651,13 +693,13 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(g_start_calls == starts_before_host_args);
     ASSERT_TRUE(g_sync_calls == syncs_before_host_args);
     ASSERT_TRUE(aclrtFree(allocation) == 0);
-    ASSERT_TRUE(g_malloc_calls == 4);
-    ASSERT_TRUE(g_free_calls == 4);
+    ASSERT_TRUE(g_malloc_calls == (g_start_failure ? 4U : 10U));
+    ASSERT_TRUE(g_free_calls == (g_start_failure ? 4U : 10U));
 }
 
 INSTANTIATE_TEST_SUITE_P(
     Modes, NpuComputeReplay,
     testing::Values(
-        "Default", "symbol", "debug", "shrink", "host", "flush_failure", "partial_flush_failure", "missing_flush",
-        "none", "start_failure"),
+        "Default", "symbol", "debug", "shrink", "host", "host_tail", "host_placeholders", "flush_failure",
+        "partial_flush_failure", "missing_flush", "none", "start_failure"),
     [](const testing::TestParamInfo<std::string>& info) { return info.param; });

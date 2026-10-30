@@ -10,61 +10,19 @@
 #include "npu_compute_log.h"
 #include "data_processor.h"
 #include "securec.h"
-#include <array>
 #include "data_types.h"
 #include "raw_data_decoder.h"
-#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <optional>
 
 namespace aclpti::data {
 namespace {
-constexpr size_t HEX_DUMP_BYTES_PER_LINE = 16;
-constexpr size_t HEX_DUMP_CHARS_PER_BYTE = 3; // Two hexadecimal digits followed by a space.
 constexpr int MAX_BIU_GROUP_ID = 5;
 
-// Temporary SDK compatibility values; remove when the build SDK provides these enumerators.
+// SDK compatibility values; remove when the build SDK provides these enumerators.
 constexpr int BIU_PERF_AIV0_DATA_TYPE = 10;
 constexpr int BIU_PERF_AIV1_DATA_TYPE = 11;
-constexpr char HEX_ALPHABET[] = "0123456789abcdef";
-constexpr unsigned HEX_DIGIT_BITS = 4;
-constexpr unsigned HEX_DIGIT_MASK = (1U << HEX_DIGIT_BITS) - 1;
-
-void LogRawData(uint64_t replayId, const MsprofRawData& raw, bool biu, uint64_t acceptedBytes)
-{
-    if (!ASCTOOL_DEBUG_ENABLED()) {
-        return;
-    }
-    ASCTOOL_DEBUG(
-        "[aclpti-data] [DEBUG-rawdata] replay=%llu type=%d device=%d module=%d offset=%zu last=%d "
-        "validBytes=%zu validWords=%zu acceptedBytes=%llu",
-        static_cast<unsigned long long>(replayId), static_cast<int>(raw.type), raw.deviceId, raw.chunkModule,
-        raw.offset, static_cast<int>(raw.isLastChunk), raw.chunkSize, raw.chunkSize / sizeof(uint32_t),
-        static_cast<unsigned long long>(acceptedBytes));
-    const auto* bytes = reinterpret_cast<const uint8_t*>(raw.chunk);
-    // Print every BIU word, including timestamp headers, to diagnose framing without filtering.
-    if (biu) {
-        for (size_t offset = 0; offset < raw.chunkSize; offset += sizeof(uint32_t)) {
-            ASCTOOL_DEBUG(
-                "[aclpti-data] [DEBUG-rawdata] BIU replay=%llu offset=%zu word=0x%08x",
-                static_cast<unsigned long long>(replayId), raw.offset + offset, ReadLittleEndianWord(bytes + offset));
-        }
-        return;
-    }
-    for (size_t offset = 0; offset < raw.chunkSize; offset += HEX_DUMP_BYTES_PER_LINE) {
-        std::array<char, HEX_DUMP_BYTES_PER_LINE * HEX_DUMP_CHARS_PER_BYTE + 1> hex{};
-        size_t position = 0;
-        for (size_t index = offset; index < raw.chunkSize && index < offset + HEX_DUMP_BYTES_PER_LINE; ++index) {
-            hex[position++] = HEX_ALPHABET[bytes[index] >> HEX_DIGIT_BITS];
-            hex[position++] = HEX_ALPHABET[bytes[index] & HEX_DIGIT_MASK];
-            hex[position++] = ' ';
-        }
-        ASCTOOL_DEBUG(
-            "[aclpti-data] [DEBUG-rawdata] payload replay=%llu offset=%zu bytes=%s",
-            static_cast<unsigned long long>(replayId), offset, hex.data());
-    }
-}
 
 constexpr size_t MAX_BIU_REPLAY_BYTES = 64U * 1024U * 1024U;
 
@@ -269,7 +227,6 @@ aclptiResult DataProcessor::ReceiveRawData(const MsprofRawData* raw)
         return ReportRawDataFailure(raw, recordSize, ACLPTI_ERROR_OUT_OF_MEMORY, primary);
     }
     replay.callbackStats.receivedBytes += raw->chunkSize;
-    LogRawData(replay.info.replayId, *raw, core.has_value(), replay.stats.acceptedBytes);
     return ACLPTI_SUCCESS;
 }
 

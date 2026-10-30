@@ -17,10 +17,6 @@ namespace npucompute::cli {
 // Validate one result independently. A missing or invalid sibling does not
 // invalidate this file. CSV-only databases do not require a PcSampling table.
 bool ValidatePmSamplingFile(const boost::filesystem::path& path, std::string* error);
-
-// Return whether a validated database contains the empty PcSampling table.
-// A database with other CSV tables but no PcSampling table returns false.
-bool IsEmptyPmSamplingDatabase(const boost::filesystem::path& path, bool* empty, std::string* error);
 } // namespace npucompute::cli
 
 #endif // NPU_TOOLS_NPU_COMPUTE_SRC_CLI_REPORT_PM_SAMPLING_FILE_VALIDATOR_H

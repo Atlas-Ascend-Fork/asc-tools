@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <mutex>
 #include <memory>
+#include <string>
 #include "pm_sampling_instruction_map.h"
 #include <unordered_map>
 #include <vector>
@@ -26,14 +27,18 @@ struct PmSamplingBinaryImage {
     std::vector<char> originalElf;
     std::vector<char> companionElf;
     PmSamplingInstructionMap instructions;
+    std::string companionError;
 };
 
 struct PmSamplingBinarySnapshot {
     std::shared_ptr<const PmSamplingBinaryImage> image;
     std::uint64_t elfEntry = 0;
+    std::uint64_t originalEntry = 0;
     std::uint64_t aicRuntimeEntry = 0;
     std::uint64_t aivRuntimeEntry = 0;
+    std::string kernelName;
     std::string error;
+    std::string companionError;
 };
 
 class BinaryRegistry {
@@ -47,23 +52,28 @@ public:
     };
     aclptiResult RegisterBinary(
         const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary,
-        bool pmSampling = false);
+        bool pmSampling = false, bool pipeline = true);
     aclptiResult RegisterBinaryFromFile(
-        const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling = false);
+        const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling = false,
+        bool pipeline = true);
     aclptiResult RegisterBinaryFunction(aclrtBinHandle binary, const char* name, aclrtFuncHandle function);
     aclptiResult RegisterBinaryFunction(aclrtBinHandle binary, std::uint64_t entry, aclrtFuncHandle function);
-    aclptiResult RegisterSymbolFunction(aclrtFuncHandle function, bool pmSampling = false);
+    aclptiResult RegisterSymbolFunction(aclrtFuncHandle function, bool pmSampling = false, bool pipeline = true);
     aclptiResult PrepareBinaryUnload(aclrtBinHandle binary, UnloadContext& context);
     aclptiResult CompleteBinaryUnload(UnloadContext& context);
     // Capture while Runtime handles are valid. Shared immutable images outlive binary unload.
     bool GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot);
     // Null means the function was not loaded with instrumentation enabled.
     aclrtFuncHandle FindInstrumentedFunction(aclrtFuncHandle original);
+    // Returns the independent sampling companion, or the original for a non-SIMT kernel.
+    aclrtFuncHandle FindPmSamplingFunction(aclrtFuncHandle original);
+    bool NeedsPmSamplingProbeBuffer(aclrtFuncHandle function);
     // Lookup by companion function; valid only while its instrumented binary is registered.
     bool GetInstrumentedTraceArgumentOffset(aclrtFuncHandle function, std::uint32_t& offset);
 
 private:
     struct Binary {
+        std::unique_ptr<Binary> pipeline;
         aclrtBinHandle companion = nullptr;
         std::unordered_map<aclrtFuncHandle, aclrtFuncHandle> functions;
         // Runtime may retain the image pointer; keep it alive through companion unload.
@@ -74,11 +84,28 @@ private:
     };
     template <typename Function, typename Key>
     aclptiResult ResolveBinaryFunction(aclrtApiId id, aclrtBinHandle binary, Key key, aclrtFuncHandle function);
-    static bool BuildInstrumentedImage(const void* data, std::size_t size, bool pmSampling, Binary& state);
-    aclptiResult EnsureSamplingBinary(aclrtBinHandle binary);
+    template <typename Function, typename Key>
+    aclptiResult ResolveFunctionState(
+        aclrtApiId id, aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function);
+    aclptiResult EnsureSamplingBinary(aclrtBinHandle binary, bool pipeline);
     aclptiResult RegisterInstrumentedBinary(
         const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary,
-        bool pmSampling = false);
+        bool pmSampling = false, bool pipeline = false);
+    bool BuildInstrumentedBinaryState(
+        Binary& state, const void* data, std::size_t size, bool pmSampling, bool pipeline);
+    template <typename Key>
+    aclptiResult ResolveCompanionKey(
+        Binary& state, Key key, aclrtFuncHandle function, Key& companionKey, std::uint64_t& companionElfEntry,
+        bool& unavailable);
+    template <typename Key>
+    aclptiResult RecordCompanionFunction(
+        aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function, aclrtFuncHandle companion,
+        std::uint64_t companionElfEntry, std::string mixedAlias);
+    aclptiResult LoadCompanions(Binary& state, const aclrtBinaryLoadOptions* options, aclrtBinaryLoadFromDataFunc load);
+    void BuildSamplingBinaryState(Binary& state, const void* data, std::size_t size);
+    void BuildSamplingCompanion(
+        Binary& state, const std::shared_ptr<PmSamplingBinaryImage>& image, const void* data, std::size_t size);
+    bool BuildPipelineBinaryState(Binary& state, const void* data, std::size_t size, bool pmSampling);
     std::mutex mutex_;
     std::unordered_map<aclrtBinHandle, Binary> binaries_;
 };

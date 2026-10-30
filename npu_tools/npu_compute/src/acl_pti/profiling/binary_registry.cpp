@@ -36,66 +36,218 @@ aclptiResult BinaryRegistry::ResolveBinaryFunction(
         ASCTOOL_DEBUG("[aclpti] function mapping skipped: binary=%p function=%p is not registered", binary, function);
         return ACLPTI_SUCCESS;
     }
-    const auto resolve = reinterpret_cast<Function>(acltoolGetOriginalRuntimeApi(id));
-    if (resolve == nullptr || found->second.companion == nullptr || function == nullptr) {
-        return ACLPTI_ERROR_PROFILING_FAILED;
+    auto status = ResolveFunctionState<Function>(id, binary, found->second, key, function);
+    if (status == ACLPTI_SUCCESS && found->second.pipeline) {
+        status = ResolveFunctionState<Function>(id, binary, *found->second.pipeline, key, function);
     }
-    found->second.functions.erase(function);
-    found->second.elfEntries.erase(function);
-    aclrtFuncHandle companion = nullptr;
-    Key companionKey = key;
-    if constexpr (!std::is_convertible<Key, const char*>::value) {
-        if (found->second.pmSamplingImage) {
-            const auto& map = found->second.pmSamplingImage->instructions.relocatedEntries;
-            const auto entry = map.find(key);
-            if (entry == map.end()) {
-                if (!found->second.pmSamplingImage->instructions.error.empty()) {
-                    ASCTOOL_DEBUG("companion function entry unavailable after PmSampling mapping failure");
-                    found->second.functions[function] = nullptr;
-                    return ACLPTI_SUCCESS;
-                }
-                return ACLPTI_ERROR_PROFILING_FAILED;
-            }
-            companionKey = entry->second;
+    return status;
+}
+
+namespace {
+bool FindNamedFunctionEntry(
+    const std::map<std::string, std::uint64_t>& entries, const std::string& name, std::uint64_t& entry,
+    std::string& alias)
+{
+    const auto named = entries.find(name);
+    if (named != entries.end()) {
+        entry = named->second;
+        return true;
+    }
+    for (const auto* suffix : {"_mix_aic", "_aic"}) {
+        const auto candidate = name + suffix;
+        const auto found = entries.find(candidate);
+        if (found != entries.end()) {
+            alias = candidate;
+            entry = found->second;
+            return true;
         }
     }
-    const aclError status = resolve(found->second.companion, companionKey, &companion);
+    return false;
+}
+
+bool ReadRuntimeFunctionName(aclrtFuncHandle function, std::string& name)
+{
+    char buffer[4096]{};
+    if (aclrtGetFunctionName(function, sizeof(buffer), buffer) != ACL_SUCCESS || buffer[0] == '\0' ||
+        buffer[sizeof(buffer) - 1] != '\0') {
+        return false;
+    }
+    name = buffer;
+    return true;
+}
+
+template <typename Key>
+bool ResolveOriginalEntry(
+    const PmSamplingInstructionMap& instructions, Key key, aclrtFuncHandle function, std::uint64_t& entry)
+{
+    const auto& entries = instructions.functionEntries;
+    bool resolved = false;
+    std::string alias;
+    if constexpr (std::is_convertible<Key, const char*>::value) {
+        if (key == nullptr) {
+            return false;
+        }
+        resolved = FindNamedFunctionEntry(entries, key, entry, alias);
+    } else {
+        const auto found = instructions.relocatedEntries.find(key);
+        if (found != instructions.relocatedEntries.end()) {
+            entry = found->second;
+            resolved = true;
+        } else {
+            std::string name;
+            if (!ReadRuntimeFunctionName(function, name)) {
+                return false;
+            }
+            resolved = FindNamedFunctionEntry(entries, name, entry, alias);
+        }
+    }
+    if (!resolved && entries.count("kernel") != 0) {
+        entry = entries.at("kernel");
+        resolved = true;
+    }
+    if (!resolved && !entries.empty()) {
+        entry = entries.begin()->second;
+        resolved = true;
+    }
+    return resolved;
+}
+
+template <typename Function, typename Key>
+aclError ResolveCompanionHandle(
+    Function resolve, aclrtBinHandle binary, Key key, aclrtFuncHandle& companion, std::string& mixedAlias)
+{
+    auto status = resolve(binary, key, &companion);
+    if constexpr (std::is_convertible<Key, const char*>::value) {
+        if ((status != ACL_SUCCESS || companion == nullptr) && key != nullptr) {
+            // Mixed kernels launch through the AIC half, which carries dispatch metadata.
+            const std::string logicalName(key);
+            for (const auto* suffix : {"_mix_aic", "_aic"}) {
+                mixedAlias = logicalName + suffix;
+                companion = nullptr;
+                status = resolve(binary, mixedAlias.c_str(), &companion);
+                if (status == ACL_SUCCESS && companion != nullptr) {
+                    break;
+                }
+            }
+        }
+    }
+    return status;
+}
+} // namespace
+
+template <typename Function, typename Key>
+aclptiResult BinaryRegistry::ResolveFunctionState(
+    aclrtApiId id, aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function)
+{
+    const auto resolve = reinterpret_cast<Function>(acltoolGetOriginalRuntimeApi(id));
+    if (function == nullptr) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    if (state.pmSamplingImage && state.companion == nullptr) {
+        std::uint64_t entry = 0;
+        if (!ResolveOriginalEntry(state.pmSamplingImage->instructions, key, function, entry)) {
+            return ACLPTI_ERROR_PROFILING_FAILED;
+        }
+        state.functions[function] = function;
+        state.elfEntries[function] = entry;
+        return ACLPTI_SUCCESS;
+    }
+    if (resolve == nullptr || state.companion == nullptr) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    state.functions.erase(function);
+    state.elfEntries.erase(function);
+    Key companionKey = key;
+    std::uint64_t companionElfEntry = 0;
+    bool unavailable = false;
+    const auto keyStatus = ResolveCompanionKey(state, key, function, companionKey, companionElfEntry, unavailable);
+    if (keyStatus != ACLPTI_SUCCESS || unavailable) {
+        return keyStatus;
+    }
+    aclrtFuncHandle companion = nullptr;
+    std::string mixedAlias;
+    const auto status = ResolveCompanionHandle(resolve, state.companion, companionKey, companion, mixedAlias);
     if (status != ACL_SUCCESS || companion == nullptr) {
-        found->second.functions.erase(function);
+        state.functions.erase(function);
         ASCTOOL_ERROR(
             "[aclpti] error operation=companion_function status=%d"
             " code=%u",
             status, static_cast<unsigned>(static_cast<uint32_t>(status)));
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
+    return RecordCompanionFunction(binary, state, key, function, companion, companionElfEntry, std::move(mixedAlias));
+}
+
+template <typename Key>
+aclptiResult BinaryRegistry::ResolveCompanionKey(
+    Binary& state, Key key, aclrtFuncHandle function, Key& companionKey, std::uint64_t& companionElfEntry,
+    bool& unavailable)
+{
+    if constexpr (!std::is_convertible<Key, const char*>::value) {
+        if (state.pmSamplingImage) {
+            const auto& map = state.pmSamplingImage->instructions.relocatedEntries;
+            const auto entry = map.find(key);
+            if (entry == map.end()) {
+                if (!state.pmSamplingImage->instructions.error.empty()) {
+                    ASCTOOL_DEBUG("companion function entry unavailable after PmSampling mapping failure");
+                    state.functions[function] = nullptr;
+                    unavailable = true;
+                    return ACLPTI_SUCCESS;
+                }
+                // ACLNN all-kernel binaries use a metadata functionEntry
+                // (tiling key), rather than an ELF byte address, in this API.
+                // Keep that Runtime key and recover the sampling PC from the
+                // function Runtime actually selected in the original binary.
+                std::string name;
+                const auto& entries = state.pmSamplingImage->instructions.functionEntries;
+                if (!ReadRuntimeFunctionName(function, name)) {
+                    return ACLPTI_ERROR_PROFILING_FAILED;
+                }
+                const auto named = entries.find(name);
+                if (named == entries.end()) {
+                    return ACLPTI_ERROR_PROFILING_FAILED;
+                }
+                companionElfEntry = named->second;
+            } else {
+                companionKey = entry->second;
+                companionElfEntry = entry->second;
+            }
+        }
+    }
+    return ACLPTI_SUCCESS;
+}
+
+template <typename Key>
+aclptiResult BinaryRegistry::RecordCompanionFunction(
+    aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function, aclrtFuncHandle companion,
+    std::uint64_t companionElfEntry, std::string mixedAlias)
+{
     try {
-        if (found->second.pmSamplingImage) {
-            const auto& entries = found->second.pmSamplingImage->instructions.functionEntries;
+        if (state.pmSamplingImage) {
+            const auto& entries = state.pmSamplingImage->instructions.functionEntries;
             std::uint64_t entry = 0;
             if constexpr (std::is_convertible<Key, const char*>::value) {
                 const auto named = key == nullptr ? entries.end() : entries.find(key);
-                if (named == entries.end()) {
+                if (named == entries.end() && mixedAlias.empty() && key != nullptr) {
+                    FindNamedFunctionEntry(entries, key, entry, mixedAlias);
+                }
+                const auto aliased = mixedAlias.empty() ? entries.end() : entries.find(mixedAlias);
+                if (named == entries.end() && aliased == entries.end()) {
                     // A named Runtime lookup remains valid for Pipeline even when
                     // PmSampling could not recover the ELF function entry.
-                    if (found->second.pmSamplingImage->instructions.error.empty()) {
+                    if (state.pmSamplingImage->instructions.error.empty()) {
                         return ACLPTI_ERROR_PROFILING_FAILED;
                     }
                 } else {
-                    entry = named->second;
-                    found->second.elfEntries[function] = entry;
+                    entry = named != entries.end() ? named->second : aliased->second;
+                    state.elfEntries[function] = entry;
                 }
             } else {
-                // GetFunctionByEntry uses an original ELF entry; use the verified original/companion mapping.
-                const auto& map = found->second.pmSamplingImage->instructions.relocatedEntries;
-                const auto translated = map.find(key);
-                if (translated == map.end()) {
-                    return ACLPTI_ERROR_PROFILING_FAILED;
-                }
-                entry = translated->second;
-                found->second.elfEntries[function] = entry;
+                entry = companionElfEntry;
+                state.elfEntries[function] = entry;
             }
         }
-        found->second.functions[function] = companion;
+        state.functions[function] = companion;
         ASCTOOL_DEBUG(
             "[aclpti] function mapping registered: binary=%p original=%p companion=%p", binary, function, companion);
     } catch (const std::bad_alloc&) {
@@ -105,13 +257,14 @@ aclptiResult BinaryRegistry::ResolveBinaryFunction(
 }
 
 aclptiResult BinaryRegistry::RegisterBinary(
-    const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling)
+    const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling,
+    bool pipeline)
 {
-    return RegisterInstrumentedBinary(data, size, options, binary, pmSampling);
+    return RegisterInstrumentedBinary(data, size, options, binary, pmSampling, pipeline);
 }
 
 aclptiResult BinaryRegistry::RegisterBinaryFromFile(
-    const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling)
+    const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling, bool pipeline)
 {
     if (path == nullptr || path[0] == '\0' || binary == nullptr) {
         return ACLPTI_ERROR_PROFILING_FAILED;
@@ -127,7 +280,7 @@ aclptiResult BinaryRegistry::RegisterBinaryFromFile(
         if (!input.read(data.data(), static_cast<std::streamsize>(data.size()))) {
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
-        return RegisterInstrumentedBinary(data.data(), data.size(), options, binary, pmSampling);
+        return RegisterInstrumentedBinary(data.data(), data.size(), options, binary, pmSampling, pipeline);
     } catch (const std::bad_alloc&) {
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     } catch (...) {
@@ -135,33 +288,41 @@ aclptiResult BinaryRegistry::RegisterBinaryFromFile(
     }
 }
 
-bool BinaryRegistry::BuildInstrumentedImage(const void* data, std::size_t size, bool pmSampling, Binary& state)
+aclptiResult BinaryRegistry::LoadCompanions(
+    Binary& state, const aclrtBinaryLoadOptions* options, aclrtBinaryLoadFromDataFunc load)
 {
-    std::vector<char> patched;
-    auto image = pmSampling ? std::make_shared<PmSamplingBinaryImage>() : nullptr;
-    std::uint32_t traceArgumentOffset = 0;
-    if (!InstrumentKernelEnd(data, size, patched, &traceArgumentOffset, image ? &image->instructions : nullptr) ||
-        patched.empty() || traceArgumentOffset == 0 || traceArgumentOffset % sizeof(void*) != 0) {
-        return false;
+    const aclError status =
+        state.instrumentedImage ?
+            load(state.instrumentedImage->data(), state.instrumentedImage->size(), options, &state.companion) :
+            ACL_SUCCESS;
+    if (status != ACL_SUCCESS || (state.instrumentedImage && state.companion == nullptr)) {
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=companion_load status=%d code=%u", status,
+            static_cast<unsigned>(static_cast<uint32_t>(status)));
+        return ACLPTI_ERROR_PROFILING_FAILED;
     }
-    state.traceArgumentOffset = traceArgumentOffset;
-    if (image) {
-        if (image->instructions.error.empty() &&
-            (image->instructions.business.empty() || image->instructions.functionEntries.empty())) {
-            image->instructions.error = "PmSampling instruction mapping is incomplete";
+    if (state.pipeline) {
+        auto& pipeline = *state.pipeline;
+        const aclError pipelineStatus =
+            load(pipeline.instrumentedImage->data(), pipeline.instrumentedImage->size(), options, &pipeline.companion);
+        if (pipelineStatus != ACL_SUCCESS || pipeline.companion == nullptr) {
+            ASCTOOL_ERROR(
+                "[aclpti] error operation=pipeline_companion_load status=%d code=%u", pipelineStatus,
+                static_cast<unsigned>(static_cast<uint32_t>(pipelineStatus)));
+            const auto unload =
+                reinterpret_cast<aclrtBinaryUnLoadFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtBinaryUnLoad));
+            if (unload != nullptr && state.companion != nullptr) {
+                unload(state.companion);
+            }
+            return ACLPTI_ERROR_PROFILING_FAILED;
         }
-        image->originalElf.assign(static_cast<const char*>(data), static_cast<const char*>(data) + size);
-        image->companionElf = std::move(patched);
-        state.pmSamplingImage = image;
-        state.instrumentedImage = std::shared_ptr<const std::vector<char>>(image, &image->companionElf);
-    } else {
-        state.instrumentedImage = std::make_shared<const std::vector<char>>(std::move(patched));
     }
-    return true;
+    return ACLPTI_SUCCESS;
 }
 
 aclptiResult BinaryRegistry::RegisterInstrumentedBinary(
-    const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling)
+    const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling,
+    bool pipeline)
 {
     const auto load =
         reinterpret_cast<aclrtBinaryLoadFromDataFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtBinaryLoadFromData));
@@ -173,12 +334,15 @@ aclptiResult BinaryRegistry::RegisterInstrumentedBinary(
         std::lock_guard<std::mutex> lock(mutex_);
         const auto existing = binaries_.find(binary);
         if (existing != binaries_.end()) {
-            return existing->second.companion != nullptr && (!pmSampling || existing->second.pmSamplingImage) ?
+            const bool pipelineReady = existing->second.pipeline ? existing->second.pipeline->companion != nullptr :
+                                                                   existing->second.companion != nullptr;
+            return (existing->second.companion != nullptr || existing->second.pmSamplingImage) &&
+                           (!pmSampling || existing->second.pmSamplingImage) && (!pipeline || pipelineReady) ?
                        ACLPTI_SUCCESS :
                        ACLPTI_ERROR_PROFILING_FAILED;
         }
         Binary state;
-        if (!BuildInstrumentedImage(data, size, pmSampling, state)) {
+        if (!BuildInstrumentedBinaryState(state, data, size, pmSampling, pipeline)) {
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
         const auto inserted = binaries_.emplace(binary, std::move(state));
@@ -186,21 +350,107 @@ aclptiResult BinaryRegistry::RegisterInstrumentedBinary(
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
         auto& registered = inserted.first->second;
-        const aclError status = load(
-            registered.instrumentedImage->data(), registered.instrumentedImage->size(), options, &registered.companion);
-        if (status != ACL_SUCCESS || registered.companion == nullptr) {
-            ASCTOOL_ERROR(
-                "[aclpti] error operation=companion_load status=%d code=%u", status,
-                static_cast<unsigned>(static_cast<uint32_t>(status)));
+        const auto status = LoadCompanions(registered, options, load);
+        if (status != ACLPTI_SUCCESS) {
             binaries_.erase(inserted.first);
-            return ACLPTI_ERROR_PROFILING_FAILED;
         }
-        return ACLPTI_SUCCESS;
+        return status;
     } catch (const std::bad_alloc&) {
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     } catch (...) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
+}
+
+bool BinaryRegistry::BuildInstrumentedBinaryState(
+    Binary& state, const void* data, std::size_t size, bool pmSampling, bool pipeline)
+{
+    if (pmSampling) {
+        BuildSamplingBinaryState(state, data, size);
+    }
+    if (!pmSampling && !pipeline) {
+        return false;
+    }
+    return !pipeline || BuildPipelineBinaryState(state, data, size, pmSampling);
+}
+
+void BinaryRegistry::BuildSamplingBinaryState(Binary& state, const void* data, std::size_t size)
+{
+    auto image = std::make_shared<PmSamplingBinaryImage>();
+    image->originalElf.assign(static_cast<const char*>(data), static_cast<const char*>(data) + size);
+    image->companionElf = image->originalElf;
+    if (!BuildOriginalPmSamplingInstructionMap(data, size, image->instructions) && image->instructions.error.empty()) {
+        image->instructions.error = "failed to map original PmSampling instructions";
+    }
+    if (image->instructions.error.empty() &&
+        (image->instructions.business.empty() || image->instructions.functionEntries.empty())) {
+        image->instructions.error = "PmSampling instruction mapping is incomplete";
+    }
+    BuildSamplingCompanion(state, image, data, size);
+    state.pmSamplingImage = image;
+}
+
+void BinaryRegistry::BuildSamplingCompanion(
+    Binary& state, const std::shared_ptr<PmSamplingBinaryImage>& image, const void* data, std::size_t size)
+{
+    if (image->instructions.error.empty() && !image->instructions.simt.empty()) {
+        std::vector<char> samplingImage;
+        std::uint32_t probeArgumentOffset = 0;
+        PmSamplingInstructionMap samplingMap;
+        if (InstrumentSimtSampling(data, size, samplingImage, &probeArgumentOffset, &samplingMap) &&
+            !samplingImage.empty() && probeArgumentOffset != 0 && probeArgumentOffset % sizeof(void*) == 0) {
+            if (samplingMap.error.empty() && samplingMap.functionEntries.empty()) {
+                samplingMap.error = "PmSampling companion function entries are missing";
+            }
+            if (samplingMap.error.empty()) {
+                image->instructions.functionEntries = std::move(samplingMap.functionEntries);
+                image->instructions.relocatedEntries = std::move(samplingMap.relocatedEntries);
+                image->companionElf = std::move(samplingImage);
+                state.traceArgumentOffset = probeArgumentOffset;
+                state.instrumentedImage = std::shared_ptr<const std::vector<char>>(image, &image->companionElf);
+            } else {
+                image->companionError = samplingMap.error;
+            }
+        } else {
+            image->companionError =
+                samplingMap.error.empty() ? "failed to build SIMT PmSampling companion" : samplingMap.error;
+        }
+        if (!image->companionError.empty()) {
+            ASCTOOL_WARNING(
+                "[aclpti] PmSampling companion unavailable; replaying original kernel: %s",
+                image->companionError.c_str());
+        }
+    }
+}
+
+bool BinaryRegistry::BuildPipelineBinaryState(Binary& state, const void* data, std::size_t size, bool pmSampling)
+{
+    Binary* pipelineState = &state;
+    if (pmSampling) {
+        state.pipeline = std::make_unique<Binary>();
+        pipelineState = state.pipeline.get();
+    }
+    std::shared_ptr<PmSamplingBinaryImage> pipelineMap;
+    if (pmSampling) {
+        pipelineMap = std::make_shared<PmSamplingBinaryImage>();
+        pipelineMap->originalElf.assign(static_cast<const char*>(data), static_cast<const char*>(data) + size);
+    }
+    std::vector<char> patched;
+    std::uint32_t traceArgumentOffset = 0;
+    if (!InstrumentKernelEnd(
+            data, size, patched, &traceArgumentOffset, pipelineMap == nullptr ? nullptr : &pipelineMap->instructions) ||
+        patched.empty() || traceArgumentOffset == 0 || traceArgumentOffset % sizeof(void*) != 0) {
+        return false;
+    }
+    if (pmSampling) {
+        pipelineMap->companionElf = patched;
+        if (!pipelineMap->instructions.error.empty() || !pipelineMap->instructions.functionEntries.empty()) {
+            pipelineState->pmSamplingImage = std::move(pipelineMap);
+        }
+    }
+    pipelineState->traceArgumentOffset = traceArgumentOffset;
+    pipelineState->instrumentedImage = std::make_shared<const std::vector<char>>(std::move(patched));
+    return true;
 }
 
 aclptiResult BinaryRegistry::RegisterBinaryFunction(aclrtBinHandle binary, const char* name, aclrtFuncHandle function)
@@ -215,7 +465,7 @@ aclptiResult BinaryRegistry::RegisterBinaryFunction(
         ACL_RT_API_aclrtBinaryGetFunctionByEntry, binary, entry, function);
 }
 
-aclptiResult BinaryRegistry::EnsureSamplingBinary(aclrtBinHandle binary)
+aclptiResult BinaryRegistry::EnsureSamplingBinary(aclrtBinHandle binary, bool pipeline)
 {
     bool registered = false;
     {
@@ -239,7 +489,7 @@ aclptiResult BinaryRegistry::EnsureSamplingBinary(aclrtBinHandle binary)
             ASCTOOL_DEBUG("PmSampling preloaded binary has no recoverable ELF: binary=%p size=%zu", binary, size);
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
-        const auto status = RegisterBinary(image.data(), image.size(), nullptr, binary, true);
+        const auto status = RegisterBinary(image.data(), image.size(), nullptr, binary, true, pipeline);
         if (status != ACLPTI_SUCCESS) {
             return status;
         }
@@ -247,7 +497,7 @@ aclptiResult BinaryRegistry::EnsureSamplingBinary(aclrtBinHandle binary)
     return ACLPTI_SUCCESS;
 }
 
-aclptiResult BinaryRegistry::RegisterSymbolFunction(aclrtFuncHandle function, bool pmSampling)
+aclptiResult BinaryRegistry::RegisterSymbolFunction(aclrtFuncHandle function, bool pmSampling, bool pipeline)
 {
     // Symbol lookup returns a Runtime handle, not a name/entry in the companion.
     // Ask Runtime for ownership to avoid matching a same-named kernel in another binary.
@@ -272,7 +522,7 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(aclrtFuncHandle function, bo
     }
     try {
         if (pmSampling) {
-            const auto status = EnsureSamplingBinary(binary);
+            const auto status = EnsureSamplingBinary(binary, pipeline);
             if (status != ACLPTI_SUCCESS) {
                 return status;
             }
@@ -287,8 +537,12 @@ aclrtFuncHandle BinaryRegistry::FindInstrumentedFunction(aclrtFuncHandle origina
 {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& binary : binaries_) {
-        const auto found = binary.second.functions.find(original);
-        if (found != binary.second.functions.end()) {
+        if (binary.second.pmSamplingImage && !binary.second.pipeline) {
+            continue;
+        }
+        const auto& state = binary.second.pipeline ? *binary.second.pipeline : binary.second;
+        const auto found = state.functions.find(original);
+        if (found != state.functions.end()) {
             ASCTOOL_DEBUG(
                 "[aclpti] instrumented function mapping selected: binary=%p original=%p companion=%p", binary.first,
                 original, found->second);
@@ -301,6 +555,42 @@ aclrtFuncHandle BinaryRegistry::FindInstrumentedFunction(aclrtFuncHandle origina
         original, ACLPTI_ERROR_PROFILING_FAILED,
         static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_PROFILING_FAILED)));
     return nullptr;
+}
+
+aclrtFuncHandle BinaryRegistry::FindPmSamplingFunction(aclrtFuncHandle original)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& binary : binaries_) {
+        const auto& state = binary.second;
+        if (!state.pmSamplingImage) {
+            continue;
+        }
+        const auto found = state.functions.find(original);
+        if (found != state.functions.end()) {
+            return found->second;
+        }
+    }
+    return nullptr;
+}
+
+bool BinaryRegistry::NeedsPmSamplingProbeBuffer(aclrtFuncHandle function)
+{
+    if (function == nullptr) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& binary : binaries_) {
+        const auto& state = binary.second;
+        if (!state.companion || !state.pmSamplingImage || state.pmSamplingImage->instructions.simt.empty()) {
+            continue;
+        }
+        for (const auto& mapping : state.functions) {
+            if (mapping.second == function) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool BinaryRegistry::GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot)
@@ -316,6 +606,12 @@ bool BinaryRegistry::GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingB
             continue;
         }
         snapshot.image = binary.second.pmSamplingImage;
+        snapshot.companionError = snapshot.image->companionError;
+        char kernelName[4096]{};
+        if (aclrtGetFunctionName(original, sizeof(kernelName), kernelName) == ACL_SUCCESS && kernelName[0] != '\0' &&
+            kernelName[sizeof(kernelName) - 1] == '\0') {
+            snapshot.kernelName = kernelName;
+        }
         snapshot.error = snapshot.image->instructions.error;
         if (entry == binary.second.elfEntries.end()) {
             if (snapshot.error.empty()) {
@@ -325,6 +621,12 @@ bool BinaryRegistry::GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingB
             return true;
         }
         snapshot.elfEntry = entry->second;
+        for (const auto& relocation : snapshot.image->instructions.relocatedEntries) {
+            if (relocation.second == snapshot.elfEntry) {
+                snapshot.originalEntry = relocation.first;
+                break;
+            }
+        }
         if (!snapshot.error.empty()) {
             return true;
         }
@@ -349,10 +651,16 @@ bool BinaryRegistry::GetInstrumentedTraceArgumentOffset(aclrtFuncHandle function
     }
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& binary : binaries_) {
-        for (const auto& mapping : binary.second.functions) {
-            if (mapping.second == function) {
-                offset = binary.second.traceArgumentOffset;
-                return offset != 0;
+        for (const Binary* state :
+             {static_cast<const Binary*>(&binary.second), static_cast<const Binary*>(binary.second.pipeline.get())}) {
+            if (state == nullptr) {
+                continue;
+            }
+            for (const auto& mapping : state->functions) {
+                if (mapping.second == function) {
+                    offset = state->traceArgumentOffset;
+                    return offset != 0;
+                }
             }
         }
     }
@@ -364,22 +672,27 @@ aclptiResult BinaryRegistry::PrepareBinaryUnload(aclrtBinHandle binary, UnloadCo
     context.lock_ = std::unique_lock<std::mutex>(mutex_);
     context.binary_ = binary;
     const auto found = binaries_.find(binary);
-    if (found == binaries_.end() || found->second.companion == nullptr) {
+    if (found == binaries_.end()) {
         return ACLPTI_SUCCESS;
     }
-    const auto unload =
-        reinterpret_cast<aclrtBinaryUnLoadFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtBinaryUnLoad));
-    const aclError status = unload == nullptr ? ACL_ERROR_INTERNAL_ERROR : unload(found->second.companion);
-    if (status != ACL_SUCCESS) {
-        ASCTOOL_ERROR(
-            "[aclpti] error operation=companion_unload status=%d"
-            " code=%u",
-            status, static_cast<unsigned>(static_cast<uint32_t>(status)));
-        context.lock_.unlock();
-        return ACLPTI_ERROR_PROFILING_FAILED;
+    for (Binary* state : {&found->second, found->second.pipeline.get()}) {
+        if (state == nullptr || state->companion == nullptr) {
+            continue;
+        }
+        const auto unload =
+            reinterpret_cast<aclrtBinaryUnLoadFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtBinaryUnLoad));
+        const aclError status = unload == nullptr ? ACL_ERROR_INTERNAL_ERROR : unload(state->companion);
+        if (status != ACL_SUCCESS) {
+            ASCTOOL_ERROR(
+                "[aclpti] error operation=companion_unload status=%d code=%u", status,
+                static_cast<unsigned>(static_cast<uint32_t>(status)));
+            context.lock_.unlock();
+            return ACLPTI_ERROR_PROFILING_FAILED;
+        }
+        state->companion = nullptr;
+        state->functions.clear();
+        state->elfEntries.clear();
     }
-    found->second.companion = nullptr;
-    found->second.functions.clear();
     // Keep the lock across the handler's original unload and registry removal:
     // another load may receive the same Runtime handle as soon as unload succeeds.
     return ACLPTI_SUCCESS;

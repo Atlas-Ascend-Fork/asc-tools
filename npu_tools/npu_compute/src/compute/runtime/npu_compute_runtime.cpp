@@ -28,7 +28,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <iomanip>
 #include <memory>
 #include <sstream>
@@ -54,7 +53,7 @@ constexpr std::array<aclptiCallbackId, 9> HARDWARE_INFO_TRIGGER_CALLBACK_IDS = {
     ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad,
     ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol,
 };
-constexpr double MSOPPROF_A5_FALLBACK_FREQUENCY_MHZ = 1650.0;
+constexpr double A5_FALLBACK_FREQUENCY_MHZ = 1650.0;
 constexpr int REPORT_SEQUENCE_WIDTH = 4;
 constexpr double HZ_PER_MHZ = 1000000.0;
 
@@ -297,7 +296,7 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
     }
     csv_frequency_override_ = false;
     csv_device_info_loaded_ = false;
-    csv_config_.frequencyMhz = MSOPPROF_A5_FALLBACK_FREQUENCY_MHZ;
+    csv_config_.frequencyMhz = A5_FALLBACK_FREQUENCY_MHZ;
     csv_config_.aicFrequencyMhz = 0.0;
     csv_config_.aivFrequencyMhz = 0.0;
     if (const char* frequency = std::getenv("NPU_COMPUTE_FREQUENCY_MHZ");
@@ -716,66 +715,67 @@ aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResul
         }
     } staging;
     try {
-        // SIMD kernels can provide an ELF context without producing PC/state
+        // Kernels can provide an ELF context without producing PC/state
         // records. An empty record set still publishes an empty table so other
         // sections can be consumed. A reported mapping error remains a real
         // PmSampling failure even when no records were received.
         const bool mappingFailed = std::any_of(
             result.pmSamplingContexts.begin(), result.pmSamplingContexts.end(),
             [](const auto& entry) { return entry.second != nullptr && !entry.second->instructionMapError.empty(); });
-        const bool emptySampling = result.pcSamplingData.empty() && !mappingFailed;
-        std::uint64_t contextReplayId = 0;
-        std::shared_ptr<const aclptiPmSamplingContext> context;
-        if (!emptySampling) {
-            // Current replay configuration creates exactly one PmSampling replay
-            // for each original launch. Never merge PC keys from unrelated ELF
-            // contexts.
-            if (result.pmSamplingContexts.size() != 1 || !result.pmSamplingContexts.begin()->second) {
-                throw std::runtime_error("missing or ambiguous PmSampling ELF context");
-            }
-            contextReplayId = result.pmSamplingContexts.begin()->first;
-            context = result.pmSamplingContexts.begin()->second;
-        }
-        PmSamplingResult sampling;
+        const bool emptySampling = result.pcSamplingData.empty() && result.pmSamplingContexts.empty() && !mappingFailed;
         bool complete = true;
         const auto failed = [&](const std::string& file, const std::string& stage, const std::string& reason) {
             complete = false;
             std::fprintf(
                 stderr,
-                "[libnpu-compute] %s%s: PmSampling %s failed: %s; "
-                "excluded this file; other valid results are retained\n",
+                "[libnpu-compute] %s%s: PmSampling %s failed: %s; empty or independently generated artifacts "
+                "are retained where possible\n",
                 prefix.c_str(), file.c_str(), stage.c_str(), reason.c_str());
         };
-        try {
-            if (!emptySampling && !context->instructionMapError.empty()) {
-                throw std::runtime_error("instruction mapping failed: " + context->instructionMapError);
+        std::uint64_t contextReplayId = 0;
+        std::shared_ptr<const aclptiPmSamplingContext> context;
+        std::string contextError;
+        if (!emptySampling) {
+            // Current replay configuration creates exactly one PmSampling replay
+            // for each original launch. Never merge PC keys from unrelated ELF
+            // contexts.
+            if (result.pmSamplingContexts.size() != 1 || !result.pmSamplingContexts.begin()->second) {
+                contextError = "missing or ambiguous PmSampling ELF context";
+            } else {
+                contextReplayId = result.pmSamplingContexts.begin()->first;
+                context = result.pmSamplingContexts.begin()->second;
             }
-            if (!emptySampling) {
-                const auto failedReplay = result.errorStats.failedRecordCountByReplay.find(contextReplayId);
-                if (failedReplay != result.errorStats.failedRecordCountByReplay.end() && failedReplay->second != 0) {
-                    throw std::runtime_error(
-                        "sampling replay " + std::to_string(contextReplayId) + " contains " +
-                        std::to_string(failedReplay->second) + " failed records");
+        }
+        PmSamplingResult sampling;
+        if (!contextError.empty()) {
+            failed("summary.db", "sample decoding", contextError);
+        } else {
+            try {
+                if (!emptySampling && !context->instructionMapError.empty()) {
+                    throw std::runtime_error("instruction mapping failed: " + context->instructionMapError);
                 }
-                PmSamplingDecoder decoder(contextReplayId, context);
-                for (const auto& chunk : result.pcSamplingData) {
-                    if (!decoder.Consume(chunk)) {
+                if (!emptySampling) {
+                    const auto failedReplay = result.errorStats.failedRecordCountByReplay.find(contextReplayId);
+                    if (failedReplay != result.errorStats.failedRecordCountByReplay.end() &&
+                        failedReplay->second != 0) {
+                        throw std::runtime_error(
+                            "sampling replay " + std::to_string(contextReplayId) + " contains " +
+                            std::to_string(failedReplay->second) + " failed records");
+                    }
+                    PmSamplingDecoder decoder(contextReplayId, context);
+                    for (const auto& chunk : result.pcSamplingData) {
+                        if (!decoder.Consume(chunk)) {
+                            throw std::runtime_error(decoder.Error());
+                        }
+                    }
+                    if (!decoder.Finish(sampling)) {
                         throw std::runtime_error(decoder.Error());
                     }
                 }
-                if (!decoder.Finish(sampling)) {
-                    throw std::runtime_error(decoder.Error());
-                }
-                if (sampling.rows.empty()) {
-                    throw std::runtime_error(
-                        result.pcSamplingData.empty() ?
-                            "Msprof returned no PC sampling records; PC/state sampling requires SIMT instructions" :
-                            "no business samples received after excluding instrumentation instructions");
-                }
+            } catch (const std::exception& error) {
+                sampling = {};
+                failed("summary.db", "sample decoding", error.what());
             }
-        } catch (const std::exception& error) {
-            sampling = {};
-            failed("summary.db", "sample decoding", error.what());
         }
 
         const boost::filesystem::path parent("/tmp");
@@ -788,23 +788,19 @@ aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResul
         const auto database = staging.directory / "summary.db";
         std::vector<boost::filesystem::path> files;
         bool databaseReady = false;
-        if (emptySampling || !sampling.rows.empty()) {
-            databaseReady = WritePmSamplingSqlite(database.string(), sampling, error);
-            if (databaseReady) {
-                files.push_back(database);
-            } else {
-                failed("summary.db", "database writing", error);
-            }
+        databaseReady = WritePmSamplingSqlite(database.string(), sampling, error);
+        if (databaseReady) {
+            files.push_back(database);
+        } else {
+            failed("summary.db", "database writing", error);
         }
         PmSamplingArtifacts artifacts;
         // Both LLVM inputs default to the original ELF, matching the normalized
-        // sampling addresses. Each output can succeed independently.
-        if (!emptySampling) {
-            if (!GeneratePmSamplingArtifacts(
-                    staging.directory.string(), *context, sampling, PmSamplingArtifactOptions{}, artifacts, error)) {
-                complete = false;
-                std::fprintf(stderr, "[libnpu-compute] PmSampling LLVM generation: %s\n", error.c_str());
-            }
+        // sampling addresses. Empty captures still publish an empty symbolizer result.
+        if (!GeneratePmSamplingArtifacts(
+                staging.directory.string(), context.get(), sampling, PmSamplingArtifactOptions{}, artifacts, error)) {
+            complete = false;
+            std::fprintf(stderr, "[libnpu-compute] PmSampling LLVM generation: %s\n", error.c_str());
         }
         if (!artifacts.disassemblyPath.empty()) {
             files.emplace_back(artifacts.disassemblyPath);
@@ -852,9 +848,6 @@ aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResul
         if (complete) {
             ++pm_sampling_completed_;
         }
-        ASCTOOL_DEBUG(
-            "PmSampling completed: rows=%llu unresolvedPCs=%llu", static_cast<unsigned long long>(sampling.rows.size()),
-            static_cast<unsigned long long>(artifacts.unresolvedPcCount));
         return complete ? ACLPTI_SUCCESS : ACLPTI_ERROR_TRACE_INCOMPLETE;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[libnpu-compute] PmSampling processing failed: %s\n", error.what());

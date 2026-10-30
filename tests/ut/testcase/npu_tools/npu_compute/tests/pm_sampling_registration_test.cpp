@@ -49,11 +49,16 @@ int main()
         int binary;
         const char image[] = "ELF";
         const auto before = companionLoads;
-        if (runtime.RegisterBinary(image, sizeof(image), nullptr, &binary) != ACLPTI_SUCCESS ||
-            runtime.RegisterBinary(image, sizeof(image), nullptr, &binary) != ACLPTI_SUCCESS) {
+        const int expectedLoads = mode == 0 ? 0 : (mode == 3 ? 2 : 1);
+        const auto firstRegistration = runtime.RegisterBinary(image, sizeof(image), nullptr, &binary);
+        const auto secondRegistration = runtime.RegisterBinary(image, sizeof(image), nullptr, &binary);
+        if (firstRegistration != ACLPTI_SUCCESS || secondRegistration != ACLPTI_SUCCESS) {
+            std::fprintf(
+                stderr, "mode=%d register status=%d/%d loads=%d expected=%d\n", mode, firstRegistration,
+                secondRegistration, companionLoads - before, expectedLoads);
             return 3;
         }
-        if (companionLoads - before != (mode == 0 ? 0 : 1)) {
+        if (companionLoads - before != expectedLoads) {
             return 4;
         }
         if (mode != 0 && runtime.RegisterBinaryFunction(&binary, "kernel", &token) != ACLPTI_SUCCESS) {
@@ -77,17 +82,17 @@ int main()
         if (runtime.RegisterBinary(image, sizeof(image), nullptr, &firstBinary) != ACLPTI_SUCCESS ||
             runtime.RegisterBinaryFunction(&firstBinary, "kernel", &token) != ACLPTI_SUCCESS ||
             runtime.RegisterBinary(image, sizeof(image), nullptr, &secondBinary) != ACLPTI_SUCCESS ||
-            companionLoads != before + 2) {
+            companionLoads != before + (pipeline ? 2 : 0)) {
             return 8;
         }
         aclpti::profiling::PmSamplingBinarySnapshot snapshot;
         if (!runtime.GetPmSamplingSnapshot(&token, snapshot) || snapshot.error.empty() || !snapshot.image ||
-            snapshot.image->companionElf.empty()) {
+            snapshot.image->originalElf.empty()) {
             return 9;
         }
     }
     if (unsetenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") != 0) {
         return 10;
     }
-    std::puts("PASS: registration gates, one companion per binary, mapping failure keeps profiling available");
+    std::puts("PASS: registration gates, Pipeline companions, mapping failure keeps profiling available");
 }

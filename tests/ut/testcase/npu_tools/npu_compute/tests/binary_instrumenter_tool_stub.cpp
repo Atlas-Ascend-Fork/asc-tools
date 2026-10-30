@@ -91,14 +91,62 @@ std::string ExpectedControlRecord()
     return bytes;
 }
 
+std::string ExpectedSimtStartControlRecord()
+{
+    const std::string symbol = "__npu_compute_after_kernel_stack_frame";
+    std::string bytes;
+    AppendLittleEndian(bytes, 12 + 8 + 4 + symbol.size() + 4, 4);
+    for (const auto value : {0U, 8U, 0U, 0U, 398U, 0U, 1U, 0U}) {
+        AppendLittleEndian(bytes, value, 2);
+    }
+    AppendLittleEndian(bytes, symbol.size() + 4, 4);
+    bytes += symbol;
+    bytes.append(4, '\0');
+    return bytes;
+}
+
 void CompileProbe(const boost::filesystem::path& root, const std::vector<std::string>& args)
 {
-    Require(std::find(args.begin(), args.end(), "--npu-arch=dav-3510") != args.end(), "Wrong probe architecture");
+    Require(std::find(args.begin(), args.end(), "-std=c++17") != args.end(), "Probe requires C++17");
     const boost::filesystem::path source = ArgumentAfter(args, "-c");
     Require(source.filename() == "probe.cpp", "Wrong probe source name");
-    Require(
-        ReadFile(source).find("__npu_compute_before_kernel_end") != std::string::npos,
-        "Embedded probe source is missing its entry point");
+    const std::string probeSource = ReadFile(source);
+    const bool simtStart = probeSource.find("__npu_compute_after_kernel_stack_frame") != std::string::npos;
+    if (simtStart) {
+        Require(probeSource.find("__clang_cce_defines.h") != std::string::npos, "SIMT probe header is missing");
+        Require(
+            std::find(args.begin(), args.end(), "--cce-aicore-arch=dav-c310-vec") != args.end(),
+            "SIMT probe must compile vector-only: a cube stub silently omits async_invoke");
+        Require(
+            probeSource.find("__simt_vf__ LAUNCH_BOUND(NPU_COMPUTE_SIMT_PROBE_BLOCK_COUNT)[aicore]") !=
+                std::string::npos,
+            "SIMT probe entry must execute as a SIMT VF");
+        Require(
+            probeSource.find("unsigned long long pc, unsigned int blockId, unsigned long long pcOffset") !=
+                std::string::npos,
+            "SIMT probe must declare three implicit ABI parameters before its bound PC offset");
+        Require(
+            probeSource.find("cce::async_invoke<__npu_compute_simt_start>") != std::string::npos,
+            "SIMT probe launch is missing");
+        Require(
+            probeSource.find("NPU_COMPUTE_SIMT_PROBE_NOP_GROUP_COUNT") != std::string::npos,
+            "SIMT probe must contain its delay in the instrumented SIMT entry");
+        Require(probeSource.find("pcOffsetAddr") != std::string::npos, "SIMT probe must publish the PC offset");
+        Require(probeSource.find("dcci(") != std::string::npos, "SIMT probe must flush its GM metadata");
+        Require(
+            probeSource.find("__npu_compute_before_kernel_end") == std::string::npos,
+            "Sampling companion must not contain the Pipeline end probe");
+    } else {
+        Require(
+            std::find(args.begin(), args.end(), "--npu-arch=dav-3510") != args.end(),
+            "Pipeline probe architecture must remain unchanged");
+        Require(
+            probeSource.find("__npu_compute_before_kernel_end") != std::string::npos,
+            "Embedded Pipeline probe source is missing its entry point");
+        Require(
+            probeSource.find("cce::async_invoke") == std::string::npos,
+            "Pipeline probe must not launch the SIMT probe");
+    }
     AppendLine(root / "probe_sources", source.parent_path().string());
     std::ofstream output(ArgumentAfter(args, "-o"), std::ios::binary);
     const char elf[8] = {'\x7f', 'E', 'L', 'F', 0, 0, 0, 0};
@@ -117,6 +165,10 @@ int LinkProbe(const boost::filesystem::path& root, const std::vector<std::string
             4)) == 0,
         "Probe object has no ELF magic");
     Require(boost::filesystem::exists(probe.parent_path() / "probe.cpp"), "Probe source disappeared");
+    if (std::find(args.begin(), args.end(), "--symbol-ordering-file") != args.end()) {
+        Require(ReadFile(ArgumentAfter(args, "--symbol-ordering-file")) == "kernel\nprobe\n", "Wrong linker ordering");
+        Require(std::find(args.begin(), args.end(), "-z") == args.end(), "Unsupported segment option passed to linker");
+    }
     AppendLine(root / "caches", probe.parent_path().string());
     const boost::filesystem::path source = ArgumentAfter(args, "-execute-probe", 2);
     AppendLine(root / "workdirs", source.parent_path().string());
@@ -136,7 +188,29 @@ void TuneProbe(const std::vector<std::string>& args)
         std::find(args.begin(), args.end(), "--tune-argsize=232") != args.end() ||
             std::find(args.begin(), args.end(), "--tune-argsize=48") != args.end(),
         "Wrong trace argument offset");
-    Require(ReadFile(ArgumentValue(args, "--dbi-config=")) == ExpectedControlRecord(), "Wrong DBI control record");
+    const boost::filesystem::path control(ArgumentValue(args, "--dbi-config="));
+    const auto bytes = ReadFile(control);
+    const bool simtStart = bytes == ExpectedSimtStartControlRecord();
+    Require(bytes == ExpectedControlRecord() || simtStart, "Wrong DBI control record");
+    if (simtStart) {
+        Require(
+            std::find(args.begin(), args.end(), "--probe-verb=2") != args.end(),
+            "SIMT probe insertion must report the bound hook and insertion count");
+    }
+    Require(
+        (std::find(args.begin(), args.end(), "--kernel-bounded-pcstb-mode") != args.end()) == simtStart,
+        "Only SIMT sampling must preserve business instruction scheduling");
+    const char* skipSimtInsertion = std::getenv("NPU_COMPUTE_TEST_SIMT_PROBE_NOT_INSERTED");
+    if (simtStart) {
+        const bool inserted = skipSimtInsertion == nullptr || skipSimtInsertion[0] == '\0';
+        std::puts(
+            inserted ? "TUNE-INFO: probeFunc: __npu_compute_after_kernel_stack_frame, ManglingName: "
+                       "_Z38__npu_compute_after_kernel_stack_framePU3AS1hyjy\n           ApiId: 398  Pc: 0x00000040  "
+                       "StubTimes: 1CurFuncName: test_kernel" :
+                       "TUNE-INFO: probeFunc: __npu_compute_after_kernel_stack_frame, ManglingName: "
+                       "_Z38__npu_compute_after_kernel_stack_framePU3AS1hyjy\n           ApiId: 398  Pc: 0x00000040  "
+                       "StubTimes: 0CurFuncName: test_kernel");
+    }
     boost::filesystem::copy_file(ArgumentAfter(args, "--instru-memprobe"), ArgumentValue(args, "-o="));
 }
 
@@ -155,6 +229,9 @@ int main(int argc, char** argv)
             CompileProbe(root, args);
         } else if (tool == "ld.lld") {
             return LinkProbe(root, args);
+        } else if (tool == "llvm-objdump") {
+            const bool probe = boost::filesystem::path(args.back()).filename() == "kernel_end.o";
+            std::puts(probe ? "00000000 w F .text 00000008 probe" : "00000000 g F .text 00000008 kernel");
         } else {
             Require(tool == "bisheng-tune", "Unknown tool: " + tool);
             TuneProbe(args);

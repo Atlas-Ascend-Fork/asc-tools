@@ -18,26 +18,23 @@
 
 namespace aclpti::profiling {
 
-// Keys are companion ELF addresses; business values are original ELF addresses.
+// Business and SIMT tables contain original ELF addresses; function entries locate the launch image.
 struct PmSamplingInstructionMap {
-    std::map<std::uint64_t, std::uint64_t> business; // companion -> original
-    std::set<std::uint64_t> excluded;                // probe, added ABI instructions and non-business padding/old text
+    std::map<std::uint64_t, std::uint64_t> business; // original instruction address -> same address
+    std::set<std::uint64_t> simt;                    // original business PCs in VF_SIMT functions
     std::map<std::string, std::uint64_t> functionEntries;
     std::map<std::uint64_t, std::uint64_t> relocatedEntries; // original function entry -> companion entry
     std::string error; // Mapping failure does not invalidate a successfully instrumented ELF.
 };
 
-// Function entry mapping is independent of per-instruction classification so
-// Pipeline can still use a companion when PmSampling instruction matching fails.
+// Pipeline and PmSampling resolve companion launch entries independently of PC decoding.
 bool BuildPmSamplingFunctionMap(
     const std::vector<char>& original, const std::vector<char>& companion, PmSamplingInstructionMap& output,
     std::string& diagnostic);
 
-// Accepts only a unique, order-preserving match of all surviving original instructions.
-// Unsupported rewrites, missing symbols, overlapping address domains and ambiguous matches fail closed.
-bool BuildPmSamplingInstructionMap(
-    const std::vector<char>& original, const std::vector<char>& companion, const std::string& originalDisassembly,
-    const std::string& companionDisassembly, PmSamplingInstructionMap& output, std::string& diagnostic);
+bool BuildPmSamplingOriginalInstructionMap(
+    const std::vector<char>& original, const std::string& disassembly, PmSamplingInstructionMap& output,
+    std::string& diagnostic);
 
 } // namespace aclpti::profiling
 

@@ -36,9 +36,6 @@ using PmSamplingStateCounts = std::array<std::uint64_t, kPmSamplingStateCount>;
 struct PmSamplingResult {
     std::map<std::uint64_t, PmSamplingStateCounts> rows;
     std::uint64_t receivedBytes = 0;
-    std::uint64_t decodedRecords = 0;
-    std::uint64_t businessRecords = 0;
-    std::uint64_t excludedRecords = 0;
 };
 
 // Overflow leaves the destination unchanged.

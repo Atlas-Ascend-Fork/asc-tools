@@ -32,6 +32,7 @@ namespace aclpti::profiling {
 class BinaryRegistry;
 
 using ReplayLaunchFunction = std::function<aclError(aclrtFuncHandle, bool)>;
+using SamplingOffsetReader = std::function<aclptiResult(aclrtFuncHandle, std::uint64_t&)>;
 
 class RangeProfiler {
 public:
@@ -49,7 +50,8 @@ public:
     /// Replays a kernel and distinguishes profiling-only failures from unreliable device results.
     aclptiResult ReplayKernel(
         const ReplayMemory& replayMemory, BinaryRegistry& binaryRegistry, aclrtFuncHandle originalFunction,
-        const ReplayLaunchFunction& launchFunction, aclrtStream stream);
+        const ReplayLaunchFunction& launchFunction, aclrtStream stream,
+        const SamplingOffsetReader& readSamplingOffset = {});
 
     /// Drains raw profiling data and stops the data module.
     aclptiResult Shutdown();
@@ -70,6 +72,11 @@ private:
     void ConfigureProfilingRound(
         const ReplayRound& round, std::size_t roundId, std::int32_t deviceId, ProfilingRoundConfig* config) const;
 
+    /// Warms the sampling companion outside the profiling session, restoring inputs before each launch.
+    aclptiResult WarmupSamplingCompanion(
+        const ReplayMemory& replayMemory, aclrtFuncHandle function, const ReplayLaunchFunction& launchFunction,
+        aclrtSynchronizeStreamFunc synchronizeFunction, aclrtStream stream) const;
+
     /// Prepares raw-data collection and starts Msprof for one profiling round.
     aclptiResult StartProfilingRound(
         const ReplayRound& round, std::size_t roundId, std::int32_t deviceId, ProfilingRoundConfig* config);
@@ -77,12 +84,23 @@ private:
     /// Synchronizes the replayed kernel, stops Msprof, records its data, and releases the round.
     aclptiResult FinishProfilingRound(
         std::size_t round, const ProfilingRoundConfig& config, aclError launchStatus,
-        aclrtSynchronizeStreamFunc synchronizeFunction, aclrtStream stream);
+        aclrtSynchronizeStreamFunc synchronizeFunction, aclrtStream stream,
+        const std::function<aclptiResult()>& readSamplingOffset = {});
 
     /// Maps launch, synchronization, collection, recording, and release results to an ACL PTI status.
     aclptiResult ResolveProfilingRoundStatus(
         std::size_t round, aclError launchStatus, aclError synchronizeStatus, std::int32_t stopStatus,
         const data::ReplayResult& replayResult, aclptiResult releaseStatus) const;
+
+    struct ReplayInvocation;
+    bool PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config);
+    aclptiResult SkipUnmappedSamplingRound(std::size_t round, const ProfilingRoundConfig& config);
+    aclptiResult RecordWarmupFailure(std::size_t round, const ProfilingRoundConfig& config, aclptiResult status);
+    aclptiResult ReplayProfilingRound(
+        const ReplayInvocation& invocation, const ReplayRound& replayRound, std::size_t round);
+    aclptiResult LaunchProfilingRound(
+        const ReplayInvocation& invocation, std::size_t round, const ProfilingRoundConfig& config,
+        aclrtFuncHandle function, bool pcSampling, bool pipeline, bool samplingInstrumented);
 
     aclptiCacheControl cacheControl_ = ACLPTI_CACHE_CONTROL_NONE;
     std::vector<uint32_t> pmuEvents_;

@@ -102,6 +102,52 @@ Metric Frequency(bool hasAic, bool hasAiv, Metric aic, Metric aiv)
     return hasAic ? aic : hasAiv ? aiv : std::nullopt;
 }
 
+void WriteSamplingContexts(std::ostream& output, const aclptiProfilingDataResult& result)
+{
+    if (!result.pmSamplingContexts.empty()) {
+        output << ",\"PmSamplingContexts\":[";
+        bool first = true;
+        for (const auto& entry : result.pmSamplingContexts) {
+            if (!entry.second) {
+                continue;
+            }
+            const auto& context = *entry.second;
+            output << (first ? "" : ",") << "{\"replay_id\":" << Quote(std::to_string(entry.first))
+                   << ",\"original_entry\":" << Quote(std::to_string(context.originalEntry))
+                   << ",\"companion_entry\":" << Quote(std::to_string(context.elfEntry))
+                   << ",\"pc_offset\":" << Quote(std::to_string(context.pcOffset)) << '}';
+            first = false;
+        }
+        output << ']';
+    }
+}
+
+void WriteOpPerformance(
+    std::ostream& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
+    const ReportConfig& config, const KernelMetadata& metadata, Fields memory)
+{
+    const auto selected = [&](std::string_view section) {
+        return std::find(sections.begin(), sections.end(), section) != sections.end();
+    };
+    const auto metrics = BuildSummaryMetrics(result, config, metadata);
+    const Metric read = Sum(memory["aic_main_mem_read_bw(GB/s)"].value, memory["aiv_main_mem_read_bw(GB/s)"].value);
+    const Metric write = Sum(memory["aic_main_mem_write_bw(GB/s)"].value, memory["aiv_main_mem_write_bw(GB/s)"].value);
+    const Metric usage = read && write ? Metric((*read + *write) / 1600.0 * 100.0) : std::nullopt;
+    const auto field = [&output](std::string_view name, Metric value, bool integer = false, int precision = 6) {
+        output << ',' << Quote(name) << ':' << Number(value, integer, precision);
+    };
+    field("aic_flops_theoretical", metrics.aicFlopsTheoretical, false, 2);
+    field("aiv_flops_theoretical", metrics.aivFlopsTheoretical, false, 2);
+    field("aic_flops", metrics.aicFlops);
+    field("aiv_flops", metrics.aivFlops);
+    field("aicore_parallel_utilization", metrics.parallelUtilization);
+    field("aicore_parallel_balance", metrics.parallelBalance);
+    field("aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(1600) : std::nullopt, true);
+    field("aicore_gm_read_bw(GB/s)", read);
+    field("aicore_gm_write_bw(GB/s)", write);
+    field("aicore_gm_bw_usage_rate(%)", usage);
+}
+
 void OpInfo(
     std::ostream& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
     const ReportConfig& config, const KernelMetadata& metadata, Fields memory)
@@ -116,13 +162,6 @@ void OpInfo(
     const Metric ratedAiv = SummaryRatedFrequency(metadata, false);
     const Metric currentAic = SummaryEffectiveFrequency(metadata, config, true);
     const Metric currentAiv = SummaryEffectiveFrequency(metadata, config, false);
-    const auto selected = [&](std::string_view section) {
-        return std::find(sections.begin(), sections.end(), section) != sections.end();
-    };
-    const auto metrics = BuildSummaryMetrics(result, config, metadata);
-    const Metric read = Sum(memory["aic_main_mem_read_bw(GB/s)"].value, memory["aiv_main_mem_read_bw(GB/s)"].value);
-    const Metric write = Sum(memory["aic_main_mem_write_bw(GB/s)"].value, memory["aiv_main_mem_write_bw(GB/s)"].value);
-    const Metric usage = read && write ? Metric((*read + *write) / 1600.0 * 100.0) : std::nullopt;
     output << "{\"category\":\"OpInfoSummary\",\"Op Name\":"
            << (metadata.name ? Quote(DemangleName(*metadata.name)) : "\"NA\"") << ",\"Op Type\":"
            << (hasAic ? (hasAiv ? "\"mix\"" : "\"cube\"") :
@@ -139,16 +178,8 @@ void OpInfo(
     field("Pid", ::getpid(), true);
     field("Current Freq", Frequency(hasAic, hasAiv, currentAic, currentAiv));
     field("Rated Freq", Frequency(hasAic, hasAiv, ratedAic, ratedAiv));
-    field("aic_flops_theoretical", metrics.aicFlopsTheoretical, false, 2);
-    field("aiv_flops_theoretical", metrics.aivFlopsTheoretical, false, 2);
-    field("aic_flops", metrics.aicFlops);
-    field("aiv_flops", metrics.aivFlops);
-    field("aicore_parallel_utilization", metrics.parallelUtilization);
-    field("aicore_parallel_balance", metrics.parallelBalance);
-    field("aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(1600) : std::nullopt, true);
-    field("aicore_gm_read_bw(GB/s)", read);
-    field("aicore_gm_write_bw(GB/s)", write);
-    field("aicore_gm_bw_usage_rate(%)", usage);
+    WriteOpPerformance(output, result, sections, config, metadata, std::move(memory));
+    WriteSamplingContexts(output, result);
     output << "}\n";
 }
 

@@ -31,7 +31,11 @@ bool failBinary = false;
 bool failName = false;
 bool failAddress = false;
 bool invalidFallbackElf = false;
+bool mixedSymbols = false;
+bool simtBinary = false;
+bool requirePhysicalName = false;
 int instrumentationCalls = 0;
+int samplingInstrumentationCalls = 0;
 int snapshotAddressCalls = 0;
 std::uint64_t lastEntry = 0;
 std::vector<char> fallbackElf(64, 0);
@@ -67,12 +71,15 @@ aclError Unload(aclrtBinHandle binary)
     unloaded.push_back(binary);
     return ACL_SUCCESS;
 }
-aclError Lookup(aclrtBinHandle binary, const char*, aclrtFuncHandle* result)
+aclError Lookup(aclrtBinHandle binary, const char* name, aclrtFuncHandle* result)
 {
     if (!ValidImage(binary)) {
         return ACL_ERROR_INVALID_PARAM;
     }
     if (binary == failLookup) {
+        return ACL_ERROR_RT_FAILURE;
+    }
+    if (requirePhysicalName && std::strcmp(name, "kernel_mix_aic") != 0) {
         return ACL_ERROR_RT_FAILURE;
     }
     *result = &functionTokens[static_cast<int*>(binary) - binaryTokens];
@@ -166,8 +173,12 @@ bool InstrumentKernelEnd(
     ++instrumentationCalls;
     if (pmSamplingMap != nullptr) {
         pmSamplingMap->business = {{0x100, 0}};
-        pmSamplingMap->excluded = {0x104};
-        pmSamplingMap->functionEntries = {{"kernel", 0x100}};
+        if (simtBinary) {
+            pmSamplingMap->simt = {0x100};
+        }
+        pmSamplingMap->functionEntries =
+            mixedSymbols ? std::map<std::string, std::uint64_t>{{"kernel_mix_aic", 0x100}, {"kernel_mix_aiv", 0x200}} :
+                           std::map<std::string, std::uint64_t>{{"kernel", 0x100}};
         pmSamplingMap->relocatedEntries = {{0, 0x100}};
     }
     if (traceArgumentOffset != nullptr) {
@@ -175,6 +186,40 @@ bool InstrumentKernelEnd(
     }
     output = {'E', 'L', 'F'};
     return !failTools;
+}
+
+bool InstrumentSimtSampling(
+    const void*, std::size_t, std::vector<char>& output, std::uint32_t* probeArgumentOffset,
+    PmSamplingInstructionMap* pmSamplingMap)
+{
+    ++samplingInstrumentationCalls;
+    if (probeArgumentOffset != nullptr) {
+        *probeArgumentOffset = 64;
+    }
+    if (pmSamplingMap != nullptr) {
+        pmSamplingMap->business = {{0x180, 0x100}};
+        pmSamplingMap->simt = {0x180};
+        pmSamplingMap->functionEntries =
+            mixedSymbols ? std::map<std::string, std::uint64_t>{{"kernel_mix_aic", 0x180}, {"kernel_mix_aiv", 0x280}} :
+                           std::map<std::string, std::uint64_t>{{"kernel", 0x180}};
+        pmSamplingMap->relocatedEntries = {{0x100, 0x180}};
+    }
+    output = {'E', 'L', 'F', 'S', 'I', 'M', 'T'};
+    return !failTools;
+}
+
+bool BuildOriginalPmSamplingInstructionMap(const void*, std::size_t, PmSamplingInstructionMap& output)
+{
+    output = {};
+    output.business = {{0x100, 0}};
+    output.functionEntries =
+        mixedSymbols ? std::map<std::string, std::uint64_t>{{"kernel_mix_aic", 0x100}, {"kernel_mix_aiv", 0x200}} :
+                       std::map<std::string, std::uint64_t>{{"kernel", 0x100}};
+    output.relocatedEntries = {{0, 0x100}};
+    if (simtBinary) {
+        output.simt = {0x100};
+    }
+    return true;
 }
 } // namespace aclpti::profiling
 
@@ -285,10 +330,11 @@ TEST(NpuComputeBinaryRegistry, RegistersCompanionsAndPreservesOriginalsOnFailure
     aclrtFuncHandle samplingFunction = nullptr;
     ASSERT_TRUE(Load(input, sizeof(input), nullptr, &samplingBinary) == ACL_SUCCESS);
     const auto toolsBefore = instrumentationCalls;
-    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, true) == ACLPTI_SUCCESS);
-    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, true) == ACLPTI_SUCCESS);
-    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, false) == ACLPTI_SUCCESS);
-    ASSERT_TRUE(instrumentationCalls == toolsBefore + 1); // Pipeline + PmSampling share a companion.
+    lastEntry = 0;
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, true, true) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, true, true) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinary(input, sizeof(input), nullptr, samplingBinary, false, true) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(instrumentationCalls == toolsBefore + 1); // Only the Pipeline companion is instrumented.
     ASSERT_TRUE(Lookup(samplingBinary, "kernel", &samplingFunction) == ACL_SUCCESS);
     ASSERT_TRUE(registry.RegisterBinaryFunction(samplingBinary, "kernel", samplingFunction) == ACLPTI_SUCCESS);
     ASSERT_TRUE(registry.RegisterBinaryFunction(samplingBinary, std::uint64_t(0), samplingFunction) == ACLPTI_SUCCESS);
@@ -303,7 +349,19 @@ TEST(NpuComputeBinaryRegistry, RegistersCompanionsAndPreservesOriginalsOnFailure
         snapshot.image && snapshot.elfEntry == 0x100 && snapshot.aicRuntimeEntry == 0 &&
         snapshot.aivRuntimeEntry == 0x12000000100ULL);
     ASSERT_TRUE(snapshot.image->instructions.business.at(0x100) == 0);
-    ASSERT_TRUE(snapshot.image->instructions.excluded.count(0x104) == 1);
+    ASSERT_TRUE(snapshot.image->instructions.business.count(0x104) == 0);
+    // Runtime's ACLNN all-kernel entry is a tiling key; the original function name
+    // supplies the ELF entry used to map the Pipeline companion.
+    ASSERT_EQ(registry.RegisterBinaryFunction(samplingBinary, std::uint64_t(1), samplingFunction), ACLPTI_SUCCESS);
+    ASSERT_EQ(lastEntry, 1U);
+    ASSERT_TRUE(registry.GetPmSamplingSnapshot(samplingFunction, snapshot));
+    ASSERT_EQ(snapshot.elfEntry, 0x100U);
+    failName = true;
+    ASSERT_EQ(
+        registry.RegisterBinaryFunction(samplingBinary, std::uint64_t(2), samplingFunction),
+        ACLPTI_ERROR_PROFILING_FAILED);
+    failName = false;
+    ASSERT_EQ(registry.RegisterBinaryFunction(samplingBinary, std::uint64_t(1), samplingFunction), ACLPTI_SUCCESS);
     ASSERT_TRUE(std::memcmp(snapshot.image->originalElf.data(), input, sizeof(input)) == 0);
     {
         BinaryRegistry::UnloadContext context;
@@ -313,7 +371,7 @@ TEST(NpuComputeBinaryRegistry, RegistersCompanionsAndPreservesOriginalsOnFailure
     }
     const auto addressCalls = snapshotAddressCalls;
     ASSERT_TRUE(snapshot.image->instructions.business.at(0x100) == 0);
-    ASSERT_TRUE(snapshot.image->companionElf == std::vector<char>({'E', 'L', 'F'}));
+    ASSERT_TRUE(std::memcmp(snapshot.image->originalElf.data(), input, sizeof(input)) == 0);
     ASSERT_TRUE(snapshotAddressCalls == addressCalls); // Workers read snapshots without a Runtime call.
     PmSamplingBinarySnapshot missing;
     ASSERT_TRUE(!registry.GetPmSamplingSnapshot(samplingFunction, missing));
@@ -324,8 +382,151 @@ TEST(NpuComputeBinaryRegistry, RegistersCompanionsAndPreservesOriginalsOnFailure
     ASSERT_TRUE(Load(input, sizeof(input), nullptr, &preloaded) == ACL_SUCCESS);
     ASSERT_TRUE(Lookup(preloaded, "kernel", &preloadedFunction) == ACL_SUCCESS);
     invalidFallbackElf = true;
-    ASSERT_TRUE(registry.RegisterSymbolFunction(preloadedFunction, true) == ACLPTI_ERROR_PROFILING_FAILED);
+    ASSERT_TRUE(registry.RegisterSymbolFunction(preloadedFunction, true, false) == ACLPTI_ERROR_PROFILING_FAILED);
     invalidFallbackElf = false;
-    ASSERT_TRUE(registry.RegisterSymbolFunction(preloadedFunction, true) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(registry.RegisterSymbolFunction(preloadedFunction, true, false) == ACLPTI_SUCCESS);
     ASSERT_TRUE(registry.GetPmSamplingSnapshot(preloadedFunction, missing));
+}
+
+TEST(NpuComputeBinaryRegistry, ResolvesMixedLogicalNamesAndPhysicalCompanions)
+{
+    loads = 0;
+    failLoad = -1;
+    failLookup = nullptr;
+    failUnload = nullptr;
+    failTools = false;
+    failBinary = false;
+    failName = false;
+    failAddress = false;
+    mixedSymbols = true;
+    for (bool physicalNameRequired : {false, true}) {
+        requirePhysicalName = false;
+        BinaryRegistry registry;
+        const char input[] = "ELF";
+        aclrtBinHandle binary = nullptr;
+        aclrtFuncHandle function = nullptr;
+        ASSERT_EQ(Load(input, sizeof(input), nullptr, &binary), ACL_SUCCESS);
+        ASSERT_EQ(registry.RegisterBinary(input, sizeof(input), nullptr, binary, true, true), ACLPTI_SUCCESS);
+        ASSERT_EQ(Lookup(binary, "kernel", &function), ACL_SUCCESS);
+        requirePhysicalName = physicalNameRequired;
+        ASSERT_EQ(registry.RegisterBinaryFunction(binary, "kernel", function), ACLPTI_SUCCESS);
+        ASSERT_NE(registry.FindInstrumentedFunction(function), nullptr);
+        PmSamplingBinarySnapshot snapshot;
+        ASSERT_TRUE(registry.GetPmSamplingSnapshot(function, snapshot));
+        ASSERT_EQ(snapshot.elfEntry, 0x100U);
+    }
+    mixedSymbols = false;
+    requirePhysicalName = false;
+}
+
+TEST(NpuComputeBinaryRegistry, RegistersIndependentPmSamplingCompanion)
+{
+    BinaryRegistry registry;
+    simtBinary = true;
+    const char input[] = "ELF";
+    aclrtBinHandle binary = nullptr;
+    aclrtFuncHandle original = nullptr;
+    ASSERT_EQ(Load(input, sizeof(input), nullptr, &binary), ACL_SUCCESS);
+    const auto toolsBefore = instrumentationCalls;
+    const auto samplingToolsBefore = samplingInstrumentationCalls;
+    const auto loadsBefore = loads;
+    ASSERT_EQ(registry.RegisterBinary(input, sizeof(input), nullptr, binary, true, false), ACLPTI_SUCCESS);
+    EXPECT_EQ(instrumentationCalls, toolsBefore);
+    EXPECT_EQ(samplingInstrumentationCalls, samplingToolsBefore + 1);
+    EXPECT_EQ(loads, loadsBefore + 1);
+    ASSERT_EQ(Lookup(binary, "kernel", &original), ACL_SUCCESS);
+    ASSERT_EQ(registry.RegisterBinaryFunction(binary, "kernel", original), ACLPTI_SUCCESS);
+    const auto sampling = registry.FindPmSamplingFunction(original);
+    ASSERT_NE(sampling, nullptr);
+    ASSERT_NE(sampling, original);
+    ASSERT_TRUE(registry.NeedsPmSamplingProbeBuffer(sampling));
+    ASSERT_EQ(registry.FindInstrumentedFunction(original), nullptr);
+    PmSamplingBinarySnapshot snapshot;
+    ASSERT_TRUE(registry.GetPmSamplingSnapshot(original, snapshot));
+    ASSERT_EQ(snapshot.image->instructions.simt, std::set<std::uint64_t>{0x100});
+    ASSERT_EQ(snapshot.image->instructions.business.count(0x184), 0U);
+    ASSERT_EQ(snapshot.image->companionElf, (std::vector<char>{'E', 'L', 'F', 'S', 'I', 'M', 'T'}));
+    const auto unloadsBefore = unloaded.size();
+    {
+        BinaryRegistry::UnloadContext context;
+        ASSERT_EQ(registry.PrepareBinaryUnload(binary, context), ACLPTI_SUCCESS);
+        ASSERT_EQ(Unload(binary), ACL_SUCCESS);
+        ASSERT_EQ(registry.CompleteBinaryUnload(context), ACLPTI_SUCCESS);
+    }
+    ASSERT_EQ(unloaded.size(), unloadsBefore + 2);
+    simtBinary = false;
+}
+
+TEST(NpuComputeBinaryRegistry, FallsBackToOriginalSamplingWhenSimtProbeInsertionFails)
+{
+    loads = 0;
+    failLoad = -1;
+    failLookup = nullptr;
+    failTools = true;
+    failBinary = false;
+    failName = false;
+    failAddress = false;
+    mixedSymbols = false;
+    simtBinary = true;
+    BinaryRegistry registry;
+    const char input[] = "ELF";
+    aclrtBinHandle binary = nullptr;
+    aclrtFuncHandle original = nullptr;
+    ASSERT_EQ(Load(input, sizeof(input), nullptr, &binary), ACL_SUCCESS);
+    ASSERT_EQ(registry.RegisterBinary(input, sizeof(input), nullptr, binary, true, false), ACLPTI_SUCCESS);
+    ASSERT_EQ(Lookup(binary, "kernel", &original), ACL_SUCCESS);
+    ASSERT_EQ(registry.RegisterBinaryFunction(binary, "kernel", original), ACLPTI_SUCCESS);
+    EXPECT_EQ(registry.FindPmSamplingFunction(original), original);
+    EXPECT_FALSE(registry.NeedsPmSamplingProbeBuffer(original));
+    PmSamplingBinarySnapshot snapshot;
+    ASSERT_TRUE(registry.GetPmSamplingSnapshot(original, snapshot));
+    EXPECT_TRUE(snapshot.error.empty());
+    EXPECT_FALSE(snapshot.companionError.empty());
+    EXPECT_EQ(snapshot.elfEntry, 0x100U);
+    EXPECT_EQ(snapshot.image->companionElf, snapshot.image->originalElf);
+    failTools = false;
+    simtBinary = false;
+}
+
+TEST(NpuComputeBinaryRegistry, KeepsSamplingAndPipelineCompanionsIndependent)
+{
+    BinaryRegistry registry;
+    simtBinary = true;
+    mixedSymbols = false;
+    const char input[] = "ELF";
+    aclrtBinHandle binary = nullptr;
+    aclrtFuncHandle original = nullptr;
+    ASSERT_EQ(Load(input, sizeof(input), nullptr, &binary), ACL_SUCCESS);
+    const auto pipelineToolsBefore = instrumentationCalls;
+    const auto samplingToolsBefore = samplingInstrumentationCalls;
+    const auto loadsBefore = loads;
+    ASSERT_EQ(registry.RegisterBinary(input, sizeof(input), nullptr, binary, true, true), ACLPTI_SUCCESS);
+    EXPECT_EQ(instrumentationCalls, pipelineToolsBefore + 1);
+    EXPECT_EQ(samplingInstrumentationCalls, samplingToolsBefore + 1);
+    EXPECT_EQ(loads, loadsBefore + 2);
+    ASSERT_EQ(Lookup(binary, "kernel", &original), ACL_SUCCESS);
+    ASSERT_EQ(registry.RegisterBinaryFunction(binary, "kernel", original), ACLPTI_SUCCESS);
+    const auto sampling = registry.FindPmSamplingFunction(original);
+    const auto pipeline = registry.FindInstrumentedFunction(original);
+    ASSERT_NE(sampling, nullptr);
+    ASSERT_NE(pipeline, nullptr);
+    EXPECT_NE(sampling, pipeline);
+    EXPECT_TRUE(registry.NeedsPmSamplingProbeBuffer(sampling));
+    EXPECT_FALSE(registry.NeedsPmSamplingProbeBuffer(pipeline));
+    std::uint32_t offset = 0;
+    ASSERT_TRUE(registry.GetInstrumentedTraceArgumentOffset(sampling, offset));
+    EXPECT_EQ(offset, 64U);
+    ASSERT_TRUE(registry.GetInstrumentedTraceArgumentOffset(pipeline, offset));
+    EXPECT_EQ(offset, 56U);
+    PmSamplingBinarySnapshot snapshot;
+    ASSERT_TRUE(registry.GetPmSamplingSnapshot(original, snapshot));
+    EXPECT_EQ(snapshot.elfEntry, 0x180U);
+    EXPECT_EQ(snapshot.image->instructions.business.at(0x100), 0U);
+    {
+        BinaryRegistry::UnloadContext context;
+        ASSERT_EQ(registry.PrepareBinaryUnload(binary, context), ACLPTI_SUCCESS);
+        ASSERT_EQ(Unload(binary), ACL_SUCCESS);
+        ASSERT_EQ(registry.CompleteBinaryUnload(context), ACLPTI_SUCCESS);
+    }
+    simtBinary = false;
 }

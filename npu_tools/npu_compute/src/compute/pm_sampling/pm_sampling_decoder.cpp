@@ -45,7 +45,7 @@ PmSamplingDecoder::PmSamplingDecoder(std::uint64_t replayId, std::shared_ptr<con
         return;
     }
     if (!context_ || !context_->companionElf || context_->companionElf->empty() || !context_->businessInstructions ||
-        context_->businessInstructions->empty() || !context_->excludedInstructions ||
+        context_->businessInstructions->empty() || !context_->simtInstructions ||
         context_->elfEntry > kPmSamplingPcMask || (!context_->aicRuntimeEntry && !context_->aivRuntimeEntry) ||
         (context_->aicRuntimeEntry && context_->aicRuntimeEntry < context_->elfEntry) ||
         (context_->aivRuntimeEntry && context_->aivRuntimeEntry < context_->elfEntry)) {
@@ -53,14 +53,14 @@ PmSamplingDecoder::PmSamplingDecoder(std::uint64_t replayId, std::shared_ptr<con
         return;
     }
     for (const auto& item : *context_->businessInstructions) {
-        if (item.first > kPmSamplingPcMask || context_->excludedInstructions->count(item.first)) {
-            Fail("overlapping or unsupported PmSampling instruction address");
+        if (item.first > kPmSamplingPcMask) {
+            Fail("unsupported PmSampling instruction address");
             return;
         }
     }
-    for (const auto pc : *context_->excludedInstructions) {
-        if (pc > kPmSamplingPcMask) {
-            Fail("unsupported PmSampling instruction address");
+    for (const auto pc : *context_->simtInstructions) {
+        if (pc > kPmSamplingPcMask || !context_->businessInstructions->count(pc)) {
+            Fail("invalid SIMT PmSampling instruction address");
             return;
         }
     }
@@ -78,7 +78,7 @@ bool PmSamplingDecoder::Fail(const char* message)
 bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordBytes>& record)
 {
     // Encoded bits [23:0] represent runtime address bits [26:3]. Subtract the
-    // image load base modulo 2^27, then verify the candidate against known instructions.
+    // runtime kernel entry and probe displacement modulo 2^27 to recover an original ELF PC.
     std::uint64_t encodedPc = 0;
     for (std::size_t byte = 0; byte < kPmSamplingEncodedPcBytes; ++byte) {
         encodedPc |= std::uint64_t(record[byte]) << (kPmSamplingByteBits * byte);
@@ -89,8 +89,8 @@ bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordB
         if (!entry) {
             continue;
         }
-        const auto pc = (rawPc - ((entry - context_->elfEntry) & kPmSamplingPcMask)) & kPmSamplingPcMask;
-        if (!context_->businessInstructions->count(pc) && !context_->excludedInstructions->count(pc)) {
+        const auto pc = (rawPc - entry - context_->pcOffset + context_->originalEntry) & kPmSamplingPcMask;
+        if (!context_->businessInstructions->count(pc)) {
             continue;
         }
         if (selected && *selected != pc) {
@@ -99,11 +99,10 @@ bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordB
         selected = pc;
     }
     if (!selected) {
-        return Fail("unknown sampling PC");
+        // Runtime/probe PCs outside the verified business image are not reportable.
+        return true;
     }
-    ++result_.decodedRecords;
-    if (context_->excludedInstructions->count(*selected)) {
-        ++result_.excludedRecords;
+    if (!context_->simtInstructions->count(*selected)) {
         return true;
     }
     PmSamplingStateCounts counts{};
@@ -116,7 +115,6 @@ bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordB
     if (!AddPmSamplingStates(result_.rows[originalPc], counts)) {
         return Fail("PmSampling state count overflow");
     }
-    ++result_.businessRecords;
     // Bytes 12..15 are reserved; do not infer a Core ID or reject future nonzero flags.
     return true;
 }

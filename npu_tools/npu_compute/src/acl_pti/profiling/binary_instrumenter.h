@@ -18,13 +18,22 @@
 
 namespace aclpti::profiling {
 
-// Runs the fixed kernel-end toolchain and returns a complete instrumented ELF image.
+// Runs the kernel-end (Pipeline) toolchain and returns a complete instrumented ELF image.
 // If requested, returns the exact --tune-argsize offset on success, or zero on failure.
 // A PmSampling mapping failure is returned in pmSamplingMap->error; it does not
 // discard a successfully rewritten companion or fail binary registration.
 bool InstrumentKernelEnd(
     const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* outputTraceArgumentOffset = nullptr,
     PmSamplingInstructionMap* pmSamplingMap = nullptr);
+
+// Builds an independent SIMT sampling companion with a start probe.
+bool InstrumentSimtSampling(
+    const void* data, std::size_t size, std::vector<char>& output, std::uint32_t* probeArgumentOffset = nullptr,
+    PmSamplingInstructionMap* pmSamplingMap = nullptr);
+
+// Builds the mapping for a replay that launches the original ELF. No probe or
+// replacement kernel is generated; the map still classifies SIMT business PCs.
+bool BuildOriginalPmSamplingInstructionMap(const void* data, std::size_t size, PmSamplingInstructionMap& output);
 
 } // namespace aclpti::profiling
 

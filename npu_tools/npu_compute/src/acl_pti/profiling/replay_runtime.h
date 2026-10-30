@@ -19,6 +19,9 @@
 #include "binary_registry.h"
 
 #include <atomic>
+#include <mutex>
+#include <vector>
+#include <utility>
 
 namespace aclpti::profiling {
 
@@ -40,7 +43,8 @@ public:
     {
         return binaryRegistry_.GetInstrumentedTraceArgumentOffset(function, offset);
     }
-
+    /// Allocates the hidden GM buffer required by a SIMT PmSampling start probe.
+    aclptiResult PreparePmSamplingProbeBuffer(aclrtFuncHandle function, void** buffer);
     aclptiResult RegisterBinary(
         const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary);
     aclptiResult RegisterBinaryFromFile(const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary);
@@ -81,11 +85,18 @@ private:
     /// Stops profiling after a failed optional operation and preserves its root status.
     aclptiResult HandleProfilingResult(aclptiResult status);
 
+    /// Frees launch-owned SIMT probe buffers after replay has completed.
+    aclptiResult ReleasePmSamplingProbeBuffers();
+
+    aclptiResult ReadPmSamplingOffset(aclrtFuncHandle function, std::uint64_t& offset);
+
     bool initialized_ = false;
     std::atomic<bool> profilingAvailable_{true};
     ReplayMemory replayMemory_;
     BinaryRegistry binaryRegistry_;
     RangeProfiler rangeProfiler_;
+    std::mutex probeBufferMutex_;
+    std::vector<std::pair<aclrtFuncHandle, void*>> probeBuffers_;
 };
 
 /// Returns the process-wide replay runtime.

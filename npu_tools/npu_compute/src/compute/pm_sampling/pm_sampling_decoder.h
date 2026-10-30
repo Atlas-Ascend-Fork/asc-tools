@@ -20,8 +20,7 @@
 #include <string>
 
 namespace npucompute {
-// Decodes the 16-byte callback format verified on Ascend950. This is not the
-// msopprof on-disk format with an InstrProfHeadInfo and a 2MiB data buffer.
+// Decodes the 16-byte callback format verified on Ascend950.
 class PmSamplingDecoder {
 public:
     explicit PmSamplingDecoder(std::uint64_t replayId, std::shared_ptr<const aclptiPmSamplingContext> context);

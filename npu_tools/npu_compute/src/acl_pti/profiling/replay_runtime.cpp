@@ -10,9 +10,14 @@
 #include "npu_compute_log.h"
 #include "replay_runtime.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <new>
 
 namespace aclpti::profiling {
+namespace {
+constexpr std::size_t kPmSamplingProbeBufferBytes = 32;
+}
 
 aclptiResult ReplayRuntime::Initialize()
 {
@@ -53,7 +58,8 @@ aclptiResult ReplayRuntime::RegisterBinary(
     if ((!CollectPipeline() && !CollectPcSampling()) || !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(binaryRegistry_.RegisterBinary(data, size, options, binary, CollectPcSampling()));
+    return HandleProfilingResult(
+        binaryRegistry_.RegisterBinary(data, size, options, binary, CollectPcSampling(), CollectPipeline()));
 }
 
 aclptiResult ReplayRuntime::RegisterBinaryFromFile(
@@ -62,7 +68,8 @@ aclptiResult ReplayRuntime::RegisterBinaryFromFile(
     if ((!CollectPipeline() && !CollectPcSampling()) || !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(binaryRegistry_.RegisterBinaryFromFile(path, options, binary, CollectPcSampling()));
+    return HandleProfilingResult(
+        binaryRegistry_.RegisterBinaryFromFile(path, options, binary, CollectPcSampling(), CollectPipeline()));
 }
 
 aclptiResult ReplayRuntime::RegisterBinaryFunction(aclrtBinHandle binary, const char* name, aclrtFuncHandle function)
@@ -86,7 +93,8 @@ aclptiResult ReplayRuntime::RegisterSymbolFunction(aclrtFuncHandle function)
     if ((!CollectPipeline() && !CollectPcSampling()) || !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(binaryRegistry_.RegisterSymbolFunction(function, CollectPcSampling()));
+    return HandleProfilingResult(
+        binaryRegistry_.RegisterSymbolFunction(function, CollectPcSampling(), CollectPipeline()));
 }
 
 aclptiResult ReplayRuntime::PrepareBinaryUnload(aclrtBinHandle binary, BinaryRegistry::UnloadContext& context)
@@ -140,8 +148,9 @@ aclptiResult ReplayRuntime::ReplayKernel(
     if (!ProfilingAvailable()) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
-    const aclptiResult status =
-        rangeProfiler_.ReplayKernel(replayMemory_, binaryRegistry_, originalFunction, launchFunction, stream);
+    const aclptiResult status = rangeProfiler_.ReplayKernel(
+        replayMemory_, binaryRegistry_, originalFunction, launchFunction, stream,
+        [this](aclrtFuncHandle function, std::uint64_t& offset) { return ReadPmSamplingOffset(function, offset); });
     // One original launch owns all rounds above and exactly one complete result publication.
     const aclptiResult shutdownStatus = StopProfiling();
     ASCTOOL_DEBUG(
@@ -163,6 +172,88 @@ aclptiResult ReplayRuntime::HandleProfilingResult(aclptiResult status)
     return status;
 }
 
+aclptiResult ReplayRuntime::PreparePmSamplingProbeBuffer(aclrtFuncHandle function, void** buffer)
+{
+    if (buffer == nullptr) {
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    *buffer = nullptr;
+    if (!binaryRegistry_.NeedsPmSamplingProbeBuffer(function)) {
+        return ACLPTI_SUCCESS;
+    }
+    const auto allocate = reinterpret_cast<aclrtMallocFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMalloc));
+    if (allocate == nullptr) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    void* deviceBuffer = nullptr;
+    if (allocate(&deviceBuffer, kPmSamplingProbeBufferBytes, ACL_MEM_MALLOC_NORMAL_ONLY) != ACL_SUCCESS ||
+        deviceBuffer == nullptr) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    const auto initialize = reinterpret_cast<aclrtMemsetFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMemset));
+    if (initialize == nullptr ||
+        initialize(deviceBuffer, kPmSamplingProbeBufferBytes, 0, kPmSamplingProbeBufferBytes) != ACL_SUCCESS) {
+        const auto release = reinterpret_cast<aclrtFreeFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtFree));
+        if (release != nullptr) {
+            (void)release(deviceBuffer);
+        }
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(probeBufferMutex_);
+        probeBuffers_.emplace_back(function, deviceBuffer);
+    } catch (const std::bad_alloc&) {
+        const auto release = reinterpret_cast<aclrtFreeFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtFree));
+        if (release != nullptr) {
+            (void)release(deviceBuffer);
+        }
+        return ACLPTI_ERROR_OUT_OF_MEMORY;
+    }
+    *buffer = deviceBuffer;
+    return ACLPTI_SUCCESS;
+}
+
+aclptiResult ReplayRuntime::ReadPmSamplingOffset(aclrtFuncHandle function, std::uint64_t& offset)
+{
+    const auto copy = reinterpret_cast<aclrtMemcpyFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtMemcpy));
+    if (copy == nullptr) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    std::lock_guard<std::mutex> lock(probeBufferMutex_);
+    for (auto it = probeBuffers_.rbegin(); it != probeBuffers_.rend(); ++it) {
+        if (it->first == function) {
+            if (copy(&offset, sizeof(offset), it->second, sizeof(offset), ACL_MEMCPY_DEVICE_TO_HOST) != ACL_SUCCESS) {
+                return ACLPTI_ERROR_PROFILING_FAILED;
+            }
+            ASCTOOL_DEBUG(
+                "PmSampling probe offset function=%p pcOffset=0x%llx", function,
+                static_cast<unsigned long long>(offset));
+            return ACLPTI_SUCCESS;
+        }
+    }
+    return ACLPTI_ERROR_PROFILING_FAILED;
+}
+
+aclptiResult ReplayRuntime::ReleasePmSamplingProbeBuffers()
+{
+    const auto release = reinterpret_cast<aclrtFreeFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtFree));
+    if (release == nullptr) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    std::vector<std::pair<aclrtFuncHandle, void*>> buffers;
+    {
+        std::lock_guard<std::mutex> lock(probeBufferMutex_);
+        buffers.swap(probeBuffers_);
+    }
+    aclptiResult result = ACLPTI_SUCCESS;
+    for (const auto& buffer : buffers) {
+        if (release(buffer.second) != ACL_SUCCESS && result == ACLPTI_SUCCESS) {
+            result = ACLPTI_ERROR_PROFILING_FAILED;
+        }
+    }
+    return result;
+}
+
 aclptiResult ReplayRuntime::StopProfiling()
 {
     bool expected = true;
@@ -171,7 +262,9 @@ aclptiResult ReplayRuntime::StopProfiling()
         return ACLPTI_SUCCESS;
     }
     try {
-        return rangeProfiler_.Shutdown();
+        const aclptiResult shutdownStatus = rangeProfiler_.Shutdown();
+        const aclptiResult bufferStatus = ReleasePmSamplingProbeBuffers();
+        return shutdownStatus != ACLPTI_SUCCESS ? shutdownStatus : bufferStatus;
     } catch (const std::bad_alloc&) {
         ASCTOOL_ERROR(
             "[aclpti] error operation=profiling_shutdown status=%d"

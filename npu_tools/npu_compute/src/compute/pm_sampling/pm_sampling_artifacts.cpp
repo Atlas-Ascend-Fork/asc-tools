@@ -211,10 +211,164 @@ json::array Normalize(const std::string& text)
     }
     return records;
 }
+template <typename Generate>
+bool AttemptArtifact(const fs::path& path, const Generate& generate, std::string& error)
+{
+    try {
+        generate();
+        return true;
+    } catch (const std::exception& failure) {
+        if (!error.empty()) {
+            error += "\n";
+        }
+        error += path.filename().string() + ": LLVM artifact generation failed: " + failure.what();
+        boost::system::error_code cleanupError;
+        fs::remove(path, cleanupError);
+        if (cleanupError) {
+            error += "; partial output cleanup failed: " + cleanupError.message();
+        } else {
+            error += "; file was not retained";
+        }
+        return false;
+    }
+}
+
+std::string ResolveToolDirectory(const PmSamplingArtifactOptions& options)
+{
+    auto tools = options.toolDirectory;
+    if (tools.empty()) {
+        const char* home = std::getenv("ASCEND_HOME_PATH");
+        Require(home && *home, "ASCEND_HOME_PATH is not set");
+        tools = (fs::path(home) / "tools/bisheng_compiler/bin").string();
+    }
+    Require(tools.find('\0') == std::string::npos, "invalid LLVM tool directory");
+    return tools;
+}
+
+void GenerateDisassembly(
+    const fs::path& temporary, const aclptiPmSamplingContext& context, const PmSamplingArtifactOptions& options,
+    const fs::path& disassembly, PmSamplingArtifacts& artifacts)
+{
+    Require(options.timeoutMs > 0, "invalid LLVM execution timeout");
+    const auto elf = temporary / "objdump.o";
+    const auto& image = Elf(context, options.disassemblySource);
+    Write(elf, image.data(), image.size());
+    Run({(fs::path(ResolveToolDirectory(options)) / "llvm-objdump").string(), "-d", "-l", "-S", elf.string()},
+        "/dev/null", disassembly, temporary / "objdump.stderr", options);
+    Require(fs::file_size(disassembly) != 0, "empty LLVM disassembly");
+    artifacts.disassemblyPath = disassembly.string();
+}
+
+struct SymbolizerResult {
+    json::array records;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> addresses;
+};
+SymbolizerResult QuerySymbolizer(
+    const fs::path& temporary, const aclptiPmSamplingContext& context, const PmSamplingResult& sampling,
+    const PmSamplingArtifactOptions& options)
+{
+    const auto stackElf = temporary / "symbolizer.o";
+    const auto& stackImage = Elf(context, options.pcStackSource);
+    Write(stackElf, stackImage.data(), stackImage.size());
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> addresses;
+    std::string input;
+    for (const auto& row : sampling.rows) {
+        Require(
+            context.businessInstructions->count(row.first) != 0, "non-business PC passed to LLVM artifact generator");
+        const auto query = options.pcStackSource == PmSamplingElfSource::Original ?
+                               row.first :
+                               row.first - context.originalEntry + context.elfEntry + context.pcOffset;
+        addresses.emplace_back(row.first, query);
+        input += Hex(query) + "\n";
+    }
+    const auto stdinFile = temporary / "pcs.txt";
+    Write(stdinFile, input.data(), input.size());
+    const auto stderrFile = temporary / "tool.stderr";
+    const auto rawStack = temporary / "symbolizer.json";
+    Run({(fs::path(ResolveToolDirectory(options)) / "llvm-symbolizer").string(), "--obj=" + stackElf.string(),
+         "--inlining=true", "--output-style=JSON"},
+        stdinFile, rawStack, stderrFile, options);
+    return {Normalize(Read(rawStack)), std::move(addresses)};
+}
+
+bool HasSourceLocation(const json::array& frames)
+{
+    bool resolved = false;
+    for (const auto& frame : frames) {
+        Require(frame.is_object(), "LLVM JSON frame is not an object");
+        const auto* line = frame.as_object().if_contains("Line");
+        const auto* file = frame.as_object().if_contains("FileName");
+        resolved |= file && file->is_string() && !file->as_string().empty() && line &&
+                    ((line->is_int64() && line->as_int64() > 0) || (line->is_uint64() && line->as_uint64() > 0));
+    }
+    return resolved;
+}
+
+std::uint64_t NormalizeSymbolizerRecords(SymbolizerResult& result, const PmSamplingArtifactOptions& options)
+{
+    auto& records = result.records;
+    const auto& addresses = result.addresses;
+    Require(records.size() == addresses.size(), "LLVM JSON address count mismatch");
+    std::uint64_t unresolved = 0;
+    for (std::size_t index = 0; index < records.size(); ++index) {
+        Require(records[index].is_object(), "LLVM JSON entry is not an object");
+        auto& object = records[index].as_object();
+        Require(
+            object.contains("Address") && Address(object.at("Address")) == addresses[index].second &&
+                object.contains("Symbol") && object.at("Symbol").is_array(),
+            "LLVM JSON record does not match requested PC");
+        const bool resolved = HasSourceLocation(object.at("Symbol").as_array());
+        if (!resolved) {
+            ++unresolved;
+        }
+        if (options.pcStackSource == PmSamplingElfSource::Companion) {
+            object["SymbolizerAddress"] = Hex(addresses[index].second);
+        }
+        object["Address"] = Hex(addresses[index].first); // Same numeric value as SQLite Address.
+        // ModuleName describes the selected ELF, without exposing a deleted temporary path.
+        object["ModuleName"] =
+            options.pcStackSource == PmSamplingElfSource::Original ? "PmSamplingOriginal.o" : "PmSamplingCompanion.o";
+    }
+    return unresolved;
+}
+
+void WriteEmptyPcStack(const fs::path& path, PmSamplingArtifacts& artifacts)
+{
+    constexpr std::string_view emptyStack = "[]";
+    Write(path, emptyStack.data(), emptyStack.size());
+    artifacts.pcStackPath = path.string();
+}
+
+void GeneratePcStack(
+    const fs::path& temporary, const aclptiPmSamplingContext* context, const PmSamplingResult& sampling,
+    const PmSamplingArtifactOptions& options, const fs::path& stackPath, PmSamplingArtifacts& artifacts)
+{
+    if (sampling.rows.empty()) {
+        WriteEmptyPcStack(stackPath, artifacts);
+        return;
+    }
+    Require(context != nullptr, "missing PmSampling ELF context");
+    Require(context->businessInstructions != nullptr, "missing PmSampling business instruction map for symbolization");
+    Require(options.timeoutMs > 0, "invalid LLVM execution timeout");
+    auto result = QuerySymbolizer(temporary, *context, sampling, options);
+    const auto unresolved = NormalizeSymbolizerRecords(result, options);
+    const auto serialized = json::serialize(result.records);
+    Write(stackPath, serialized.data(), serialized.size());
+    artifacts.pcStackPath = stackPath.string();
+    artifacts.unresolvedPcCount = unresolved;
+}
+
 } // namespace
 
 bool GeneratePmSamplingArtifacts(
     const std::string& stagingDirectory, const aclptiPmSamplingContext& context, const PmSamplingResult& sampling,
+    const PmSamplingArtifactOptions& options, PmSamplingArtifacts& artifacts, std::string& error)
+{
+    return GeneratePmSamplingArtifacts(stagingDirectory, &context, sampling, options, artifacts, error);
+}
+
+bool GeneratePmSamplingArtifacts(
+    const std::string& stagingDirectory, const aclptiPmSamplingContext* context, const PmSamplingResult& sampling,
     const PmSamplingArtifactOptions& options, PmSamplingArtifacts& artifacts, std::string& error)
 {
     artifacts = {};
@@ -224,113 +378,27 @@ bool GeneratePmSamplingArtifacts(
             !stagingDirectory.empty() && stagingDirectory.find('\0') == std::string::npos &&
                 fs::is_directory(stagingDirectory),
             "missing PmSampling staging directory");
-        Require(options.timeoutMs > 0, "invalid LLVM execution timeout");
-        auto tools = options.toolDirectory;
-        if (tools.empty()) {
-            const char* home = std::getenv("ASCEND_HOME_PATH");
-            Require(home && *home, "ASCEND_HOME_PATH is not set");
-            tools = (fs::path(home) / "tools/bisheng_compiler/bin").string();
+        const auto disassembly = fs::path(stagingDirectory) / "objdump.txt";
+        const auto stackPath = fs::path(stagingDirectory) / "symbolizer.json";
+        if (!context && sampling.rows.empty()) {
+            return AttemptArtifact(stackPath, [&] { WriteEmptyPcStack(stackPath, artifacts); }, error);
         }
-        Require(tools.find('\0') == std::string::npos, "invalid LLVM tool directory");
         std::string pattern = (fs::path(stagingDirectory) / ".PmSampling-XXXXXX").string();
         Require(::mkdtemp(pattern.data()) != nullptr, "cannot create LLVM temporary directory");
         TemporaryDirectory temporary{pattern};
-        const auto disassembly = fs::path(stagingDirectory) / "objdump.txt";
-        const auto stackPath = fs::path(stagingDirectory) / "symbolizer.json";
-        const auto attempt = [&](const fs::path& path, const auto& generate) {
-            try {
-                generate();
-                return true;
-            } catch (const std::exception& failure) {
-                boost::system::error_code ignored;
-                fs::remove(path, ignored);
-                if (!error.empty()) {
-                    error += "\n";
-                }
-                error += path.filename().string() + ": LLVM result generation failed: " + failure.what() +
-                         "; excluded this file; other valid results are retained";
-                return false;
-            }
-        };
-        const bool disassemblyOk = attempt(disassembly, [&] {
-            const auto elf = temporary.path / "objdump.o";
-            const auto& image = Elf(context, options.disassemblySource);
-            Write(elf, image.data(), image.size());
-            Run({(fs::path(tools) / "llvm-objdump").string(), "-d", "-l", "-S", elf.string()}, "/dev/null", disassembly,
-                temporary.path / "objdump.stderr", options);
-            Require(fs::file_size(disassembly) != 0, "empty LLVM disassembly");
-            artifacts.disassemblyPath = disassembly.string();
-        });
-        const bool stackOk = attempt(stackPath, [&] {
-            Require(
-                !sampling.rows.empty() && context.businessInstructions && context.excludedInstructions,
-                "missing PmSampling business samples for symbolization");
-            const auto stackElf = temporary.path / "symbolizer.o";
-            const auto& stackImage = Elf(context, options.pcStackSource);
-            Write(stackElf, stackImage.data(), stackImage.size());
-            std::vector<std::pair<std::uint64_t, std::uint64_t>> addresses;
-            std::string input;
-            std::map<std::uint64_t, std::uint64_t> originalToCompanion;
-            for (const auto& mapping : *context.businessInstructions) {
-                const bool unique = originalToCompanion.emplace(mapping.second, mapping.first).second;
-                Require(
-                    unique || options.pcStackSource == PmSamplingElfSource::Original,
-                    "ambiguous original-to-companion instruction mapping");
-            }
-            for (const auto& row : sampling.rows) {
-                const auto found = originalToCompanion.find(row.first);
-                Require(
-                    found != originalToCompanion.end() && !context.excludedInstructions->count(found->second),
-                    "non-business PC passed to LLVM artifact generator");
-                const auto query = options.pcStackSource == PmSamplingElfSource::Original ? row.first : found->second;
-                addresses.emplace_back(row.first, query);
-                input += Hex(query) + "\n";
-            }
-            const auto stdinFile = temporary.path / "pcs.txt";
-            Write(stdinFile, input.data(), input.size());
-            const auto stderrFile = temporary.path / "tool.stderr";
-            const auto rawStack = temporary.path / "symbolizer.json";
-            Run({(fs::path(tools) / "llvm-symbolizer").string(), "--obj=" + stackElf.string(), "--inlining=true",
-                 "--output-style=JSON"},
-                stdinFile, rawStack, stderrFile, options);
-            auto records = Normalize(Read(rawStack));
-            Require(records.size() == addresses.size(), "LLVM JSON address count mismatch");
-            std::uint64_t unresolved = 0;
-            for (std::size_t index = 0; index < records.size(); ++index) {
-                Require(records[index].is_object(), "LLVM JSON entry is not an object");
-                auto& object = records[index].as_object();
-                Require(
-                    object.contains("Address") && Address(object.at("Address")) == addresses[index].second &&
-                        object.contains("Symbol") && object.at("Symbol").is_array(),
-                    "LLVM JSON record does not match requested PC");
-                bool resolved = false;
-                for (const auto& frame : object.at("Symbol").as_array()) {
-                    Require(frame.is_object(), "LLVM JSON frame is not an object");
-                    const auto* line = frame.as_object().if_contains("Line");
-                    const auto* file = frame.as_object().if_contains("FileName");
-                    resolved |=
-                        file && file->is_string() && !file->as_string().empty() && line &&
-                        ((line->is_int64() && line->as_int64() > 0) || (line->is_uint64() && line->as_uint64() > 0));
-                }
-                if (!resolved) {
-                    ++unresolved;
-                }
-                if (options.pcStackSource == PmSamplingElfSource::Companion) {
-                    object["SymbolizerAddress"] = Hex(addresses[index].second);
-                }
-                object["Address"] = Hex(addresses[index].first); // Same numeric value as SQLite Address.
-                // ModuleName describes the selected ELF, without exposing a deleted temporary path.
-                object["ModuleName"] = options.pcStackSource == PmSamplingElfSource::Original ? "PmSamplingOriginal.o" :
-                                                                                                "PmSamplingCompanion.o";
-            }
-            const auto serialized = json::serialize(records);
-            Write(stackPath, serialized.data(), serialized.size());
-            artifacts.pcStackPath = stackPath.string();
-            artifacts.unresolvedPcCount = unresolved;
-        });
+        const bool disassemblyOk = AttemptArtifact(
+            disassembly,
+            [&] {
+                Require(context != nullptr, "missing PmSampling ELF context");
+                GenerateDisassembly(temporary.path, *context, options, disassembly, artifacts);
+            },
+            error);
+        const bool stackOk = AttemptArtifact(
+            stackPath, [&] { GeneratePcStack(temporary.path, context, sampling, options, stackPath, artifacts); },
+            error);
         return disassemblyOk && stackOk;
     } catch (const std::exception& failure) {
-        error = failure.what();
+        error = "PmSampling LLVM artifact setup failed: " + std::string(failure.what());
         return false;
     }
 }

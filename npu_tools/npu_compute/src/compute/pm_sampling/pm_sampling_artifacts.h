@@ -43,6 +43,10 @@ struct PmSamplingArtifacts {
 bool GeneratePmSamplingArtifacts(
     const std::string& stagingDirectory, const aclptiPmSamplingContext& context, const PmSamplingResult& sampling,
     const PmSamplingArtifactOptions& options, PmSamplingArtifacts& artifacts, std::string& error);
+// A null context writes an unavailable-disassembly marker and an empty symbolizer array.
+bool GeneratePmSamplingArtifacts(
+    const std::string& stagingDirectory, const aclptiPmSamplingContext* context, const PmSamplingResult& sampling,
+    const PmSamplingArtifactOptions& options, PmSamplingArtifacts& artifacts, std::string& error);
 } // namespace npucompute
 
 #endif // NPU_TOOLS_NPU_COMPUTE_SRC_COMPUTE_PM_SAMPLING_PM_SAMPLING_ARTIFACTS_H

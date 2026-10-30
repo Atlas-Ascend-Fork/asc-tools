@@ -58,11 +58,8 @@ bool ParsePc(const std::string& text, std::uint64_t& pc)
     }
     return true;
 }
-std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path, bool* hasTable)
+std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path)
 {
-    if (hasTable != nullptr) {
-        *hasTable = false;
-    }
     std::ifstream input(path.string(), std::ios::binary);
     std::array<char, sizeof(sqlite::kDatabaseHeader)> magic{};
     input.read(magic.data(), magic.size());
@@ -87,9 +84,6 @@ std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path, bool* h
     Require(tableStatus == SQLITE_ROW || tableStatus == SQLITE_DONE, "cannot read database tables");
     if (tableStatus == SQLITE_DONE) {
         return {};
-    }
-    if (hasTable != nullptr) {
-        *hasTable = true;
     }
     sqlite3_stmt* statement = nullptr;
     const auto prepared = sqlite::GetApi().prepareV2(
@@ -148,7 +142,6 @@ void ValidateStack(const boost::filesystem::path& path)
             Require(symbol.is_object(), "invalid PmSampling inline frame");
         }
     }
-    Require(!addresses.empty(), "PmSampling PC stack contains no addresses");
 }
 } // namespace
 
@@ -166,7 +159,7 @@ bool ValidatePmSamplingFile(const boost::filesystem::path& path, std::string* er
             boost::filesystem::is_regular_file(boost::filesystem::symlink_status(path)), "not a regular result file");
         Require(boost::filesystem::file_size(path) > 0, "empty result file");
         if (name == "summary.db") {
-            DatabasePcs(path, nullptr);
+            DatabasePcs(path);
         } else if (name == "objdump.txt") {
             ValidateDisassembly(path);
         } else {
@@ -182,29 +175,4 @@ bool ValidatePmSamplingFile(const boost::filesystem::path& path, std::string* er
     }
 }
 
-bool IsEmptyPmSamplingDatabase(const boost::filesystem::path& path, bool* empty, std::string* error)
-{
-    if (empty != nullptr) {
-        *empty = false;
-    }
-    if (error != nullptr) {
-        error->clear();
-    }
-    try {
-        Require(
-            boost::filesystem::is_regular_file(boost::filesystem::symlink_status(path)), "not a regular result file");
-        Require(boost::filesystem::file_size(path) > 0, "empty result file");
-        bool hasTable = false;
-        const auto pcs = DatabasePcs(path, &hasTable);
-        if (empty != nullptr) {
-            *empty = hasTable && pcs.empty();
-        }
-        return true;
-    } catch (const std::exception& failure) {
-        if (error != nullptr) {
-            *error = "PmSampling database inspection failed: " + path.string() + ": " + failure.what();
-        }
-        return false;
-    }
-}
 } // namespace npucompute::cli

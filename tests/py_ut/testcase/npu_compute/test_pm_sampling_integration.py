@@ -300,8 +300,20 @@ def test_partial_sampling_report(tmp_path, failure):
         capture_output=True,
         timeout=30,
     )
-    assert result.returncode == 3, result.stdout + result.stderr
-    assert "collection incomplete" in result.stderr
+    missing_sampling_file = failure in {
+        "missing-db",
+        "missing-objdump",
+        "missing-symbolizer",
+        "missing-all",
+    }
+    assert result.returncode == (0 if missing_sampling_file else 3), (
+        result.stdout + result.stderr
+    )
+    if missing_sampling_file:
+        assert "WARNING" in result.stderr
+        assert "collection incomplete" not in result.stderr
+    else:
+        assert "collection incomplete" in result.stderr
     files = report_files((tmp_path / "partial.npu-rep").read_bytes())
     assert {"HardwareInfo.jsonl", "Memory.csv"} <= files.keys()
     if failure == "missing-summary":
@@ -334,11 +346,14 @@ def test_partial_sampling_report(tmp_path, failure):
             }
             assert tables == {"Memory", "FieldUnitMap"}
     assert set(NAMES) & files.keys() == expected
-    if failure != "missing-all":
+    if failure == "missing-all":
+        for name in ("summary.db", "objdump.txt", "symbolizer.json"):
+            assert name in result.stderr
+    else:
         assert omitted[failure.split("-")[1]] in result.stderr
 
 
-def test_simd_sampling_reports_reason_and_retains_csv_database(tmp_path):
+def test_simd_sampling_succeeds_without_pc_data_and_retains_csv_database(tmp_path):
     result = subprocess.run(
         [
             os.environ["NPU_COMPUTE_TEST_CLI"],
@@ -357,8 +372,10 @@ def test_simd_sampling_reports_reason_and_retains_csv_database(tmp_path):
         capture_output=True,
         timeout=30,
     )
-    assert result.returncode == 3, result.stdout + result.stderr
-    assert "SIMD VF" in result.stderr and "requires SIMT" in result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "requires SIMT" not in result.stderr
+    assert "collection incomplete" not in result.stderr
+    assert "[ERROR]" not in result.stderr
     files = report_files((tmp_path / "simd.npu-rep").read_bytes())
     assert {"Memory.csv", "summary.db", "objdump.txt"} <= files.keys()
     path = tmp_path / "simd.db"

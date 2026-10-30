@@ -12,9 +12,8 @@
 #include <algorithm>
 #include <boost/filesystem.hpp>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <regex>
 #include <stdexcept>
 #include <map>
 #include <set>
@@ -69,26 +68,6 @@ void RenameNoReplace(const boost::filesystem::path& directory, const std::string
         FileError("publish artifact");
     }
 }
-bool HasOnlySimdVectorCode(const boost::filesystem::path& disassembly)
-{
-    std::ifstream input(disassembly.string());
-    // Inspect instruction lines only: source text and symbol names are not evidence
-    // that a kernel contains a SIMT launch.
-    const std::regex vectorInstruction(R"(^\s*[0-9a-fA-F]+:\s+[0-9a-fA-F]+\s+(VF_SIMT|VF)\s)");
-    bool simd = false;
-    std::string line;
-    while (std::getline(input, line)) {
-        std::smatch match;
-        if (!std::regex_search(line, match, vectorInstruction)) {
-            continue;
-        }
-        if (match[1] == "VF_SIMT") {
-            return false;
-        }
-        simd = true;
-    }
-    return input.eof() && simd;
-}
 using ArtifactGroups = std::map<std::string, std::set<std::string>>;
 struct ManifestGroups {
     ArtifactGroups pmuGroups;
@@ -139,32 +118,10 @@ void ValidateSamplingGroup(
     const boost::filesystem::path& directory, const std::string& parent, const std::set<std::string>& files,
     const ArtifactGroups& pmuGroups, const Check& CheckCollection)
 {
-    bool emptySampling = false;
-    if (files.size() == 1 && files.count("summary.db") != 0) {
-        std::string databaseError;
-        const bool inspected =
-            IsEmptyPmSamplingDatabase(directory / parent / "summary.db", &emptySampling, &databaseError);
-        CheckCollection(inspected, databaseError);
-    }
-    const std::set<std::string> expected = emptySampling ?
-                                               std::set<std::string>{"summary.db"} :
-                                               std::set<std::string>{"summary.db", "objdump.txt", "symbolizer.json"};
     const auto pmu = pmuGroups.find(parent);
     CheckCollection(
         pmu != pmuGroups.end() && pmu->second.count("summary.jsonl") != 0,
         (directory / parent / "summary.jsonl").string() + ": required summary artifact missing");
-    if (files.count("summary.db") == 0 && files.count("objdump.txt") != 0 &&
-        HasOnlySimdVectorCode(directory / parent / "objdump.txt")) {
-        CheckCollection(
-            false, (directory / parent / "objdump.txt").string() +
-                       ": PmSampling requires SIMT instructions (VF_SIMT); only SIMD VF instructions were found. "
-                       "PC/state samples are unavailable; other valid results are retained");
-    }
-    for (const auto& name : expected) {
-        CheckCollection(
-            files.count(name) != 0,
-            (directory / parent / name).string() + ": PmSampling result missing; other valid results are retained");
-    }
     for (const auto& name : files) {
         std::string error;
         const bool valid = ValidatePmSamplingFile(directory / parent / name, &error);
@@ -343,6 +300,37 @@ std::set<std::string> ExpectedPmuFiles(const ipc::Config& config, bool& pipeline
     }
     return expectedPmu;
 }
+void WarnMissingSamplingFiles(const boost::filesystem::path& directory, const ManifestGroups& groups)
+{
+    // Missing sampling files can also mean that a SIMD kernel produced no PC data.
+    for (const auto& group : groups.pmuGroups) {
+        const auto sampling = groups.samplingGroups.find(group.first);
+        for (const auto* name : {"summary.db", "objdump.txt", "symbolizer.json"}) {
+            if (sampling == groups.samplingGroups.end() || sampling->second.count(name) == 0) {
+                std::fprintf(
+                    stderr, "[WARNING] npu-compute: PmSampling result file was not produced: %s\n",
+                    (directory / group.first / name).c_str());
+            }
+        }
+    }
+}
+
+template <typename Check>
+void ValidatePmuGroups(
+    const ManifestGroups& groups, const std::set<std::string>& expectedPmu, const Check& CheckCollection)
+{
+    if (!expectedPmu.empty()) {
+        CheckCollection(!groups.pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
+        for (const auto& [parent, files] : groups.pmuGroups) {
+            for (const auto& name : expectedPmu) {
+                CheckCollection(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
+            }
+        }
+    } else {
+        Require(groups.pmuGroups.empty(), "ARTIFACT: unexpected PMU artifact");
+    }
+}
+
 } // namespace
 
 bool ArtifactReceiver::Validate(
@@ -373,21 +361,12 @@ bool ArtifactReceiver::Validate(
         pipelineExpected == (groups.pipelineManifestFound && groups.pipelineFragments > 0),
         "ARTIFACT: required Pipeline artifact missing");
     if (samplingExpected) {
-        CheckCollection(!groups.samplingGroups.empty(), "PmSampling collection: no result files received");
+        WarnMissingSamplingFiles(directory_path_, groups);
         for (const auto& [parent, files] : groups.samplingGroups) {
             ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, CheckCollection);
         }
     }
-    if (!expectedPmu.empty()) {
-        CheckCollection(!groups.pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
-        for (const auto& [parent, files] : groups.pmuGroups) {
-            for (const auto& name : expectedPmu) {
-                CheckCollection(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
-            }
-        }
-    } else {
-        Require(groups.pmuGroups.empty(), "ARTIFACT: unexpected PMU artifact");
-    }
+    ValidatePmuGroups(groups, expectedPmu, CheckCollection);
     return complete;
 }
 } // namespace npucompute::cli

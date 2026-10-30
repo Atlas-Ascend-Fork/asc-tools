@@ -50,8 +50,8 @@ aclError MapProfilingResult(aclptiResult status)
 }
 
 struct ReplayLaunchArguments {
-    // Kernel-end probe does not consume a trace buffer. The hidden argument must still
-    // exist in the ABI introduced by bisheng-tune, so its value is deliberately null.
+    // Pipeline probes leave this pointer null. SIMT PmSampling probes receive a device GM
+    // buffer allocated for the duration of the replay launch.
     void* hiddenArgument = nullptr;
     std::vector<std::uint8_t> hostArguments;
     std::vector<void*> argumentPointers;
@@ -147,6 +147,11 @@ aclError BuildInstrumentedReplayArgsArray(
             function, hiddenOffset, traceArgumentOffset, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACL_ERROR_FEATURE_UNSUPPORTED;
     }
+    const aclptiResult probeStatus =
+        profiling::GetReplayRuntime().PreparePmSamplingProbeBuffer(function, &prepared.hiddenArgument);
+    if (probeStatus != ACLPTI_SUCCESS) {
+        return MapProfilingResult(probeStatus);
+    }
     const std::size_t originalCount = parameterCount - 1;
     if (originalCount != 0 && originalArgs == nullptr) {
         ASCTOOL_ERROR(
@@ -165,9 +170,20 @@ aclError BuildInstrumentedReplayArgsArray(
     return ACL_SUCCESS;
 }
 
-aclError BuildInstrumentedReplayHostArgs(
+aclError ResolveHostArgumentLayout(
+    aclrtFuncHandle function, std::size_t argsSize, const aclrtPlaceHolderInfo* originalPlaceholders,
+    std::size_t placeholderCount, std::size_t hiddenOffset, std::size_t& insertionOffset, std::size_t& paddingBytes,
+    std::size_t& prefixSize);
+aclError CopyHostArgumentPayload(
+    const void* originalArgs, std::size_t argsSize, std::size_t insertionOffset, std::size_t hiddenOffset,
+    std::size_t paddingBytes, std::size_t prefixSize, ReplayLaunchArguments& prepared);
+aclError RelocateHostArgumentPlaceholders(
+    aclrtFuncHandle function, const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount,
+    std::size_t insertionOffset, std::size_t paddingBytes, ReplayLaunchArguments& prepared);
+
+aclError ValidateHostArguments(
     aclrtFuncHandle function, const void* originalArgs, std::size_t argsSize,
-    const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount, ReplayLaunchArguments& prepared)
+    const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount)
 {
     if ((argsSize != 0 && originalArgs == nullptr) || (placeholderCount != 0 && originalPlaceholders == nullptr)) {
         ASCTOOL_ERROR(
@@ -178,6 +194,12 @@ aclError BuildInstrumentedReplayHostArgs(
             static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_INVALID_PARAM)));
         return ACL_ERROR_INVALID_PARAM;
     }
+    return ACL_SUCCESS;
+}
+
+aclError PrepareReplayHostProbe(
+    aclrtFuncHandle function, std::size_t argsSize, ReplayLaunchArguments& prepared, std::size_t& hiddenOffset)
+{
     std::uint32_t traceArgumentOffset = 0;
     if (!profiling::GetReplayRuntime().GetInstrumentedTraceArgumentOffset(function, traceArgumentOffset)) {
         ASCTOOL_ERROR(
@@ -186,13 +208,63 @@ aclError BuildInstrumentedReplayHostArgs(
             function, argsSize, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACL_ERROR_PROFILING_FAILURE;
     }
-    const std::size_t hiddenOffset = traceArgumentOffset;
-    constexpr std::size_t hiddenSize = sizeof(void*);
+    const aclptiResult probeStatus =
+        profiling::GetReplayRuntime().PreparePmSamplingProbeBuffer(function, &prepared.hiddenArgument);
+    if (probeStatus != ACLPTI_SUCCESS) {
+        return MapProfilingResult(probeStatus);
+    }
+    hiddenOffset = traceArgumentOffset;
     ASCTOOL_DEBUG(
         "[aclpti] instrumented host args function=%p source=binary_registry trace_offset=%u args_size=%zu", function,
         traceArgumentOffset, argsSize);
+    return ACL_SUCCESS;
+}
 
+aclError BuildInstrumentedReplayHostArgs(
+    aclrtFuncHandle function, const void* originalArgs, std::size_t argsSize,
+    const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount, ReplayLaunchArguments& prepared)
+{
+    const auto inputStatus =
+        ValidateHostArguments(function, originalArgs, argsSize, originalPlaceholders, placeholderCount);
+    if (inputStatus != ACL_SUCCESS) {
+        return inputStatus;
+    }
+    std::size_t hiddenOffset = 0;
+    const auto probeStatus = PrepareReplayHostProbe(function, argsSize, prepared, hiddenOffset);
+    if (probeStatus != ACL_SUCCESS) {
+        return probeStatus;
+    }
+    constexpr std::size_t hiddenSize = sizeof(void*);
     std::size_t insertionOffset = 0;
+    std::size_t paddingBytes = 0;
+    std::size_t prefixSize = 0;
+    auto status = ResolveHostArgumentLayout(
+        function, argsSize, originalPlaceholders, placeholderCount, hiddenOffset, insertionOffset, paddingBytes,
+        prefixSize);
+    if (status != ACL_SUCCESS) {
+        return status;
+    }
+    status = CopyHostArgumentPayload(
+        originalArgs, argsSize, insertionOffset, hiddenOffset, paddingBytes, prefixSize, prepared);
+    if (status != ACL_SUCCESS) {
+        return status;
+    }
+    status = RelocateHostArgumentPlaceholders(
+        function, originalPlaceholders, placeholderCount, insertionOffset, paddingBytes, prepared);
+    if (status != ACL_SUCCESS) {
+        return status;
+    }
+    if (memcpy_s(
+            prepared.hostArguments.data() + hiddenOffset, prepared.hostArguments.size() - hiddenOffset,
+            &prepared.hiddenArgument, hiddenSize) != EOK) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    return ACL_SUCCESS;
+}
+aclError ResolveHostArgumentInsertion(
+    aclrtFuncHandle function, std::size_t argsSize, const aclrtPlaceHolderInfo* originalPlaceholders,
+    std::size_t placeholderCount, std::size_t& insertionOffset)
+{
     if (placeholderCount != 0) {
         std::uint32_t lastAddressOffset = 0;
         for (std::size_t index = 0; index < placeholderCount; ++index) {
@@ -233,7 +305,25 @@ aclError BuildInstrumentedReplayHostArgs(
         }
         insertionOffset = (argsSize + kHostArgumentAlignmentMask) & ~kHostArgumentAlignmentMask;
     }
-    if (insertionOffset > hiddenOffset || hiddenOffset > std::numeric_limits<std::size_t>::max() - hiddenSize) {
+    return ACL_SUCCESS;
+}
+
+aclError ResolveHostArgumentLayout(
+    aclrtFuncHandle function, std::size_t argsSize, const aclrtPlaceHolderInfo* originalPlaceholders,
+    std::size_t placeholderCount, std::size_t hiddenOffset, std::size_t& insertionOffset, std::size_t& paddingBytes,
+    std::size_t& prefixSize)
+{
+    constexpr std::size_t hiddenSize = sizeof(void*);
+    const auto status =
+        ResolveHostArgumentInsertion(function, argsSize, originalPlaceholders, placeholderCount, insertionOffset);
+    if (status != ACL_SUCCESS) {
+        return status;
+    }
+    // HostArgs may include tiling and host-memory payload after the device
+    // kernel argument area. The hidden trace pointer belongs at the instrumented
+    // device offset; move the tail instead of rejecting a larger HostArgs block.
+    insertionOffset = std::min(insertionOffset, hiddenOffset);
+    if (hiddenOffset > std::numeric_limits<std::size_t>::max() - hiddenSize) {
         ASCTOOL_ERROR(
             "[aclpti] error operation=instrumented_replay_host_args status=%d function=%p reason=hidden_offset_invalid "
             "insertion_offset=%zu hidden_offset=%zu hidden_size=%zu args_size=%zu"
@@ -242,8 +332,8 @@ aclError BuildInstrumentedReplayHostArgs(
             static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_INVALID_PARAM)));
         return ACL_ERROR_INVALID_PARAM;
     }
-    const std::size_t paddingBytes = hiddenOffset - insertionOffset;
-    const std::size_t prefixSize = std::max(argsSize, insertionOffset);
+    paddingBytes = hiddenOffset - insertionOffset;
+    prefixSize = std::max(argsSize, insertionOffset);
     if (prefixSize > std::numeric_limits<std::size_t>::max() - paddingBytes ||
         prefixSize + paddingBytes > std::numeric_limits<std::size_t>::max() - hiddenSize) {
         ASCTOOL_ERROR(
@@ -255,6 +345,14 @@ aclError BuildInstrumentedReplayHostArgs(
             static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_INVALID_PARAM)));
         return ACL_ERROR_INVALID_PARAM;
     }
+    return ACL_SUCCESS;
+}
+
+aclError CopyHostArgumentPayload(
+    const void* originalArgs, std::size_t argsSize, std::size_t insertionOffset, std::size_t hiddenOffset,
+    std::size_t paddingBytes, std::size_t prefixSize, ReplayLaunchArguments& prepared)
+{
+    constexpr std::size_t hiddenSize = sizeof(void*);
     const std::size_t expandedSize = prefixSize + paddingBytes + hiddenSize;
     prepared.hostArguments.assign(expandedSize, 0);
     if (insertionOffset != 0 && argsSize != 0) {
@@ -272,28 +370,34 @@ aclError BuildInstrumentedReplayHostArgs(
             return ACL_ERROR_INVALID_PARAM;
         }
     }
+    return ACL_SUCCESS;
+}
+
+aclError RelocateHostArgumentPlaceholders(
+    aclrtFuncHandle function, const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount,
+    std::size_t insertionOffset, std::size_t paddingBytes, ReplayLaunchArguments& prepared)
+{
+    constexpr std::size_t hiddenSize = sizeof(void*);
     if (placeholderCount != 0) {
         prepared.placeholders.assign(originalPlaceholders, originalPlaceholders + placeholderCount);
         for (aclrtPlaceHolderInfo& placeholder : prepared.placeholders) {
-            if (placeholder.dataOffset >= insertionOffset) {
+            for (auto* offset : {&placeholder.addrOffset, &placeholder.dataOffset}) {
+                if (*offset < insertionOffset) {
+                    continue;
+                }
                 if (paddingBytes > std::numeric_limits<std::uint32_t>::max() - hiddenSize ||
-                    placeholder.dataOffset > std::numeric_limits<std::uint32_t>::max() - (paddingBytes + hiddenSize)) {
+                    *offset > std::numeric_limits<std::uint32_t>::max() - (paddingBytes + hiddenSize)) {
                     ASCTOOL_ERROR(
                         "[aclpti] error operation=instrumented_replay_host_args status=%d function=%p "
-                        "reason=placeholder_data_offset_overflow data_offset=%u padding_bytes=%zu hidden_size=%zu"
+                        "reason=placeholder_offset_overflow offset=%u padding_bytes=%zu hidden_size=%zu"
                         " code=%u",
-                        ACL_ERROR_INVALID_PARAM, function, placeholder.dataOffset, paddingBytes, hiddenSize,
+                        ACL_ERROR_INVALID_PARAM, function, *offset, paddingBytes, hiddenSize,
                         static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_INVALID_PARAM)));
                     return ACL_ERROR_INVALID_PARAM;
                 }
-                placeholder.dataOffset += static_cast<std::uint32_t>(paddingBytes + hiddenSize);
+                *offset += static_cast<std::uint32_t>(paddingBytes + hiddenSize);
             }
         }
-    }
-    if (memcpy_s(
-            prepared.hostArguments.data() + hiddenOffset, prepared.hostArguments.size() - hiddenOffset,
-            &prepared.hiddenArgument, hiddenSize) != EOK) {
-        return ACL_ERROR_INVALID_PARAM;
     }
     return ACL_SUCCESS;
 }

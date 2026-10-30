@@ -44,10 +44,11 @@ std::shared_ptr<aclptiPmSamplingContext> Context()
     auto context = std::make_shared<aclptiPmSamplingContext>();
     context->companionElf = std::make_shared<const std::vector<char>>(1, 'E');
     context->businessInstructions = std::make_shared<const std::map<uint64_t, uint64_t>>(
-        std::map<uint64_t, uint64_t>{{0x80, 0}, {0x100, 0x10}, {0x108, 0x18}});
-    context->excludedInstructions = std::make_shared<const std::set<uint64_t>>(std::set<uint64_t>{0x110, 0x118});
+        std::map<uint64_t, uint64_t>{{0, 0}, {0x10, 0x10}, {0x18, 0x18}});
+    context->simtInstructions = std::make_shared<const std::set<uint64_t>>(std::set<uint64_t>{0, 0x10, 0x18});
     context->elfEntry = 0x100;
-    context->aivRuntimeEntry = 0x120000100100;
+    context->aivRuntimeEntry = 0x120000100000;
+    context->pcOffset = 0xf0;
     return context;
 }
 std::vector<uint8_t> Record(uint64_t pc, const PmSamplingStateCounts& states = {}, uint8_t active = 0)
@@ -72,8 +73,9 @@ int Aggregation()
     PmSamplingDecoder decoder(7, Context());
     CHECK(decoder.Consume(Chunk(Record(0x100, {1, 0, 4, 0, 0, 0, 0, 0}, 5))));
     CHECK(decoder.Consume(Chunk(Record(0x100, {44, 47, 123, 0, 21, 0, 0, 0}, 10), 4)));
-    CHECK(decoder.Consume(Chunk(Record(0x80, {2, 0, 0, 0, 0, 0, 0, 0}, 1)))); // Business helper before entry.
+    CHECK(decoder.Consume(Chunk(Record(0xf0, {2, 0, 0, 0, 0, 0, 0, 0}, 1)))); // Original PC zero.
     CHECK(decoder.Consume(Chunk(Record(0x108))));                             // All-zero business row survives.
+    CHECK(decoder.Consume(Chunk(Record(0x120, {255, 255, 255}))));            // Unmapped runtime PC.
     CHECK(decoder.Consume(Chunk(Record(0x110, {255, 255, 255}))));            // Probe.
     CHECK(decoder.Consume(Chunk(Record(0x118, {255, 255, 255}))));            // Added ABI instruction.
     PmSamplingResult result;
@@ -82,9 +84,8 @@ int Aggregation()
     CHECK(result.rows.at(0x10) == PmSamplingStateCounts({45, 47, 127, 0, 21, 0, 0, 0}));
     CHECK(result.rows.at(0x18) == PmSamplingStateCounts{});
     CHECK(result.rows.count(0) == 1 && result.rows.count(0x100) == 0);
-    CHECK(result.decodedRecords == 6 && result.businessRecords == 4 && result.excludedRecords == 2);
-    CHECK(result.receivedBytes == result.decodedRecords * kPmSamplingRecordBytes);
-    std::puts("synthetic: states=[45,47,127,0,21,0,0,0], Active ignored, probe/ABI rows excluded");
+    CHECK(result.receivedBytes == 7 * kPmSamplingRecordBytes);
+    std::puts("synthetic: states=[45,47,127,0,21,0,0,0], Active ignored, unmapped PCs skipped");
     return 0;
 }
 int Fragments()
@@ -131,7 +132,7 @@ int Failures()
         if (scenario == 7) {
             bad.isLastChunk = false;
         }
-        if (scenario == 5 || scenario == 6) {
+        if (scenario == 4 || scenario == 5 || scenario == 6) {
             CHECK(decoder.Consume(bad));
             PmSamplingResult result;
             CHECK(decoder.Finish(result)); // Repeated packets and identical AIC/AIV bases are allowed.
@@ -164,7 +165,7 @@ int AddressesAndLimits()
     PmSamplingResult result;
     CHECK(unique.Finish(result));
     context = Context();
-    context->aivRuntimeEntry = 0x120008000000; // Entry sits just after a 27-bit wrap.
+    context->aivRuntimeEntry = 0x120007ffff00; // Sampling crosses the 27-bit address wrap.
     PmSamplingDecoder wrap(7, context);
     auto bytes = Record(0x100);
     bytes[0] = bytes[1] = bytes[2] = 0;
@@ -172,9 +173,23 @@ int AddressesAndLimits()
     CHECK(wrap.Finish(result));
     CHECK(result.rows.count(0x10));
     context = Context();
-    context->excludedInstructions = std::make_shared<const std::set<uint64_t>>(std::set<uint64_t>{0x100});
-    PmSamplingDecoder overlap(7, context);
-    CHECK(!overlap.Consume(Chunk(Record(0x100))));
+    context->originalEntry = 0x10;
+    context->pcOffset = 0x100;
+    PmSamplingDecoder nonzeroEntry(7, context);
+    CHECK(nonzeroEntry.Consume(Chunk(Record(0x100, {7}))));
+    CHECK(nonzeroEntry.Finish(result));
+    CHECK(result.rows.at(0x10)[0] == 7);
+    context = Context();
+    context->aivRuntimeEntry += 0xf0;
+    context->pcOffset = 0;
+    PmSamplingDecoder zeroOffset(7, context);
+    CHECK(zeroOffset.Consume(Chunk(Record(0x100, {9}))));
+    CHECK(zeroOffset.Finish(result));
+    CHECK(result.rows.at(0x10)[0] == 9);
+    context = Context();
+    context->simtInstructions = std::make_shared<const std::set<uint64_t>>(std::set<uint64_t>{0x200});
+    PmSamplingDecoder invalidSimtMap(7, context);
+    CHECK(!invalidSimtMap.Consume(Chunk(Record(0x100))));
     PmSamplingDecoder invalid(7, nullptr);
     CHECK(!invalid.Finish(result));
     context = Context();
@@ -188,7 +203,7 @@ int AddressesAndLimits()
     PmSamplingDecoder probes(7, Context());
     CHECK(probes.Consume(Chunk(Record(0x110, {255}))));
     CHECK(probes.Finish(result));
-    CHECK(result.rows.empty() && result.excludedRecords == 1);
+    CHECK(result.rows.empty());
     for (int scenario = 0; scenario < 3; ++scenario) {
         PmSamplingDecoder badIdentity(7, Context());
         auto chunk = Chunk(Record(0x100));
@@ -220,7 +235,6 @@ int AddressesAndLimits()
         CHECK(channels.Consume(Chunk(Record(0x100, {1}), module)));
     }
     CHECK(channels.Finish(result));
-    CHECK(result.businessRecords == kChannelCount);
     CHECK(result.rows.at(0x10)[0] == kChannelCount);
     context = Context();
     context->instructionMapError = "ambiguous business instruction alignment in kernel";
@@ -228,14 +242,11 @@ int AddressesAndLimits()
     CHECK(!mapFailure.Finish(result));
     CHECK(mapFailure.Error() == context->instructionMapError && result.rows.empty());
     context = Context();
-    constexpr std::uint64_t kLargeOriginalPc = kPmSamplingPcMask + 1;
-    context->businessInstructions = std::make_shared<const std::map<uint64_t, uint64_t>>(
-        std::map<uint64_t, uint64_t>{{0x100, kLargeOriginalPc}, {0x108, kLargeOriginalPc}});
-    PmSamplingDecoder merged(7, context);
-    CHECK(merged.Consume(Chunk(Record(0x100, {1}))));
-    CHECK(merged.Consume(Chunk(Record(0x108, {2}))));
-    CHECK(merged.Finish(result));
-    CHECK(result.rows.size() == 1 && result.rows.at(kLargeOriginalPc)[0] == 3);
+    context->simtInstructions = std::make_shared<const std::set<uint64_t>>(std::set<uint64_t>{0x10});
+    PmSamplingDecoder simd(7, context);
+    CHECK(simd.Consume(Chunk(Record(0x108, {99}))));
+    CHECK(simd.Finish(result));
+    CHECK(result.rows.empty());
     return 0;
 }
 int RealGatherCallback()
@@ -281,21 +292,23 @@ int RealGatherCallback()
     auto context = Context();
     context->elfEntry = 0xff40;
     context->aivRuntimeEntry = 0x12004fe0ff40;
+    context->pcOffset = 0x2b0;
     context->businessInstructions =
-        std::make_shared<const std::map<uint64_t, uint64_t>>(std::map<uint64_t, uint64_t>{{0x10458, 0x268}});
-    context->excludedInstructions = std::make_shared<const std::set<uint64_t>>();
+        std::make_shared<const std::map<uint64_t, uint64_t>>(std::map<uint64_t, uint64_t>{{0x268, 0x268}});
+    context->simtInstructions = std::make_shared<const std::set<uint64_t>>(std::set<uint64_t>{0x268});
     PmSamplingDecoder decoder(7, context);
     for (size_t begin = 0; begin < bytes.size(); begin += 128) {
         CHECK(decoder.Consume(Chunk({bytes.begin() + begin, bytes.begin() + begin + 128})));
     }
     PmSamplingResult result;
     CHECK(decoder.Finish(result));
-    CHECK(result.decodedRecords == 64 && result.rows.size() == 1);
+    CHECK(result.rows.size() == 1);
     CHECK(result.rows.at(0x268) == PmSamplingStateCounts({0, 215, 16320, 0, 0, 0, 0, 0}));
-    std::puts("real gather: companion PC=0x10458 -> original PC=0x268 records=64 states=[0,215,16320,0,0,0,0,0], "
+    std::puts("real gather: companion PC=0x10458 -> original PC=0x268 states=[0,215,16320,0,0,0,0,0], "
               "Active ignored");
     return 0;
 }
+
 } // namespace
 int main()
 {

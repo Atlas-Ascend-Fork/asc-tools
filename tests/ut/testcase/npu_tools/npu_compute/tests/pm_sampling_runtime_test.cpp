@@ -40,11 +40,62 @@ namespace sqlite = npucompute::sqlite;
 namespace fs = std::filesystem;
 namespace {
 aclptiProfilingDataCallback callback;
+constexpr std::uint64_t kRuntimeEntryPc = 0x100000;
+constexpr std::uint64_t kBusinessInstructionOffset = 0x100;
+constexpr std::uint64_t kOriginalBusinessInstructionPc = 0x20;
+constexpr std::uint64_t kUnmappedInstructionOffset = 0xff00;
+
 #define CHECK(x)                                                                                 \
     do {                                                                                         \
         if (!(x))                                                                                \
             throw std::runtime_error(std::string("line ") + std::to_string(__LINE__) + ": " #x); \
     } while (false)
+
+bool HasSimtInstructions(const std::string& mode)
+{
+    return mode != "simd-records" && mode != "simd-context" && mode != "empty";
+}
+
+bool IsEmptySamplingScenario(const std::string& mode)
+{
+    return mode == "simd" || mode == "simd-context" || mode == "simd-records" || mode == "empty" ||
+           mode == "simt-empty" || mode == "probes" || mode == "unknown";
+}
+
+bool IsSuccessfulScenario(const std::string& mode)
+{
+    return mode == "success" || mode == "zero" || mode == "repeat" || mode == "combo" || IsEmptySamplingScenario(mode);
+}
+
+bool HasDisassemblyForFailure(const std::string& mode, bool databaseAvailable)
+{
+    return (databaseAvailable && mode != "tool-failure") || mode == "symbolizer-failure" || mode == "sink-commit" ||
+           mode == "sqlite-failure" || mode == "sqlite-unavailable";
+}
+
+std::uint64_t SamplingPcOffset(const std::string& mode, unsigned index)
+{
+    if (mode == "unknown") {
+        return kUnmappedInstructionOffset;
+    }
+    if (mode == "probes" || index == 2) {
+        return kUnmappedInstructionOffset;
+    }
+    return kBusinessInstructionOffset;
+}
+
+std::size_t ExpectedReplayCount(const std::string& mode)
+{
+    if (mode == "no-callback" || mode == "simd") {
+        return 0;
+    }
+    if (mode == "repeat" || mode == "mixed-results" || mode == "identity" || mode == "multiple-contexts" ||
+        mode == "combo" || mode == "combo-failure" || mode == "map-failure") {
+        return 2;
+    }
+    return 1;
+}
+
 struct Directory {
     fs::path path;
     ~Directory()
@@ -68,7 +119,7 @@ std::string Read(const fs::path& path)
     std::ifstream input(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
-void CheckSummary(const fs::path& path, bool samplingOnly)
+void CheckSummary(const fs::path& path, bool samplingOnly, bool hasContext = true)
 {
     std::istringstream input(Read(path));
     std::vector<boost::property_tree::ptree> records;
@@ -86,6 +137,17 @@ void CheckSummary(const fs::path& path, bool samplingOnly)
     CHECK(records.back().get<std::string>("category") == "OpInfoSummary");
     // No kernel metadata callback was delivered: the result must still be published.
     CHECK(records.back().get<std::string>("Op Name") == "NA");
+    const auto contexts = records.back().get_child_optional("PmSamplingContexts");
+    CHECK(static_cast<bool>(contexts) == hasContext);
+    if (contexts) {
+        for (const auto& context : *contexts) {
+            CHECK(context.second.get<std::uint64_t>("original_entry") == 0);
+            CHECK(context.second.get<std::uint64_t>("companion_entry") == 0);
+            CHECK(
+                context.second.get<std::uint64_t>("pc_offset") ==
+                kBusinessInstructionOffset - kOriginalBusinessInstructionPc);
+        }
+    }
 }
 void CheckDatabase(const fs::path& path, bool zero, bool empty = false)
 {
@@ -177,17 +239,19 @@ std::shared_ptr<aclptiProfilingDataResult> Result(const std::string& mode)
     context->originalElf = std::make_shared<const std::vector<char>>(std::vector<char>{0x7f, 'E', 'L', 'F', 'o'});
     context->companionElf = std::make_shared<const std::vector<char>>(std::vector<char>{0x7f, 'E', 'L', 'F', 'a'});
     context->businessInstructions = std::make_shared<const std::map<std::uint64_t, std::uint64_t>>(
-        std::map<std::uint64_t, std::uint64_t>{{0x100, 0x20}});
-    context->excludedInstructions = std::make_shared<const std::set<std::uint64_t>>(std::set<std::uint64_t>{0x200});
-    context->aicRuntimeEntry = 0x100000;
+        std::map<std::uint64_t, std::uint64_t>{{kOriginalBusinessInstructionPc, kOriginalBusinessInstructionPc}});
+    context->simtInstructions = std::make_shared<const std::set<std::uint64_t>>(
+        HasSimtInstructions(mode) ? std::set<std::uint64_t>{kOriginalBusinessInstructionPc} :
+                                    std::set<std::uint64_t>{});
+    context->aicRuntimeEntry = kRuntimeEntryPc;
+    context->pcOffset = kBusinessInstructionOffset - kOriginalBusinessInstructionPc;
     if (mode != "simd") {
         result->pmSamplingContexts.emplace(7, context);
     }
     aclptiRawDataChunk chunk{7, 3, 1, 0, true, {}};
     for (unsigned index = 0; index < 3; ++index) {
         std::array<std::uint8_t, npucompute::kPmSamplingRecordBytes> record{};
-        const auto pc =
-            (0x100000 + (index == 2 || mode == "probes" ? 0x200 : 0x100)) / npucompute::kPmSamplingAddressScale;
+        const auto pc = (kRuntimeEntryPc + SamplingPcOffset(mode, index)) / npucompute::kPmSamplingAddressScale;
         for (unsigned byte = 0; byte < npucompute::kPmSamplingEncodedPcBytes; ++byte) {
             record[byte] = (pc >> (byte * npucompute::kPmSamplingByteBits)) & std::numeric_limits<std::uint8_t>::max();
         }
@@ -209,9 +273,6 @@ std::shared_ptr<aclptiProfilingDataResult> Result(const std::string& mode)
     if (mode == "identity") {
         chunk.replayId = 8;
     }
-    if (mode == "unknown") {
-        chunk.bytes[0] = 0xff;
-    }
     if (mode != "simd" && mode != "simd-context") {
         result->pcSamplingData.push_back(std::move(chunk));
     }
@@ -224,7 +285,7 @@ std::shared_ptr<aclptiProfilingDataResult> Result(const std::string& mode)
     if (mode == "multiple-contexts") {
         result->pmSamplingContexts[8] = context;
     }
-    if (mode == "empty") {
+    if (mode == "empty" || mode == "simt-empty") {
         result->pcSamplingData.clear();
     }
     if (mode == "source-failure") {
@@ -277,7 +338,7 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     CHECK(unsetenv("NPU_COMPUTE_SYSCNT_FREQUENCY_MHZ") == 0);
     npucompute::test::ResetAclPtiCallbackStub();
     npucompute::RuntimeConfig config{{"PmSampling"}};
-    if (mode == "simd") {
+    if (mode == "simd" || mode == "simd-records") {
         config.sections = {"Memory", "PmSampling"};
     }
     if (mode == "combo" || mode == "combo-failure" || mode == "map-failure") {
@@ -286,7 +347,7 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     Sink sink;
     sink.output = root / "received";
     sink.failure = mode;
-    sink.emptySampling = mode == "simd" || mode == "simd-context" || mode == "empty";
+    sink.emptySampling = IsEmptySamplingScenario(mode);
     const auto initialStaging = StagingDirectories("/tmp");
     auto& runtime = npucompute::NpuComputeRuntime::Instance();
     int finalizedStatus = 99;
@@ -306,8 +367,7 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     }
     runtime.Stop();
     const auto status = runtime.ShutdownAfterPtiDrain();
-    const bool success = mode == "success" || mode == "zero" || mode == "repeat" || mode == "combo" || mode == "simd" ||
-                         mode == "simd-context" || mode == "empty";
+    const bool success = IsSuccessfulScenario(mode);
     CHECK((status == 0) == success);
     CHECK((runtime.ErrorCount() == 0) == success);
     CHECK(runtime.PmSamplingComplete() == (success || mode == "source-failure" || mode == "record-failure"));
@@ -318,19 +378,24 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     if (mode == "no-callback") {
         CHECK(!fs::exists(sink.output / "summary.jsonl"));
     } else {
-        CheckSummary(sink.output / "summary.jsonl", config.sections == std::vector<std::string>{"PmSampling"});
+        CheckSummary(
+            sink.output / "summary.jsonl", config.sections == std::vector<std::string>{"PmSampling"},
+            mode != "simd" && mode != "missing");
     }
     const bool partial = mode == "mixed-results";
     if (success || partial) {
         const auto output = sink.output;
-        const bool emptySampling = mode == "simd" || mode == "simd-context" || mode == "empty";
+        const bool emptySampling = IsEmptySamplingScenario(mode);
         CheckDatabase(output / "summary.db", mode == "zero", emptySampling);
-        if (!emptySampling) {
+        if (emptySampling) {
+            CHECK(fs::exists(output / "objdump.txt") == (mode != "simd"));
+            if (mode != "simd") {
+                CHECK(Read(output / "objdump.txt").find("original") != std::string::npos);
+            }
+            CHECK(Read(output / "symbolizer.json") == "[]");
+        } else {
             CHECK(Read(output / "objdump.txt").find("original") != std::string::npos);
             CHECK(Read(output / "symbolizer.json").find("0x0000000000000020") != std::string::npos);
-        } else {
-            CHECK(!fs::exists(output / "objdump.txt"));
-            CHECK(!fs::exists(output / "symbolizer.json"));
         }
         std::uint64_t expectedRows = 1;
         if (emptySampling) {
@@ -355,13 +420,16 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
         CHECK(
             runtime.RowCount() == ((mode == "combo-failure" || mode == "map-failure" || databaseAvailable) ? 1U : 0U));
         CHECK(fs::exists(sink.output / "summary.db") == (databaseAvailable || mode == "sink-commit"));
-        const bool disassemblyAvailable = mode != "no-callback" && mode != "missing" && mode != "null-context" &&
-                                          mode != "multiple-contexts" && mode != "sink-begin" && mode != "sink-write" &&
-                                          mode != "tool-failure";
+        const bool disassemblyAvailable = HasDisassemblyForFailure(mode, databaseAvailable);
         CHECK(fs::exists(sink.output / "objdump.txt") == disassemblyAvailable);
-        const bool stackAvailable = mode == "source-failure" || mode == "record-failure" || mode == "sqlite-failure" ||
+        const bool stackAvailable = (databaseAvailable && mode != "tool-failure" && mode != "json-failure") ||
+                                    mode == "symbolizer-failure" || mode == "sqlite-failure" ||
                                     mode == "sqlite-unavailable";
         CHECK(fs::exists(sink.output / "symbolizer.json") == stackAvailable);
+        if (mode == "tool-failure") {
+            CHECK(!fs::exists(sink.output / "objdump.txt"));
+            CHECK(!fs::exists(sink.output / "symbolizer.json"));
+        }
         if (databaseAvailable) {
             CheckDatabase(sink.output / "summary.db", false);
         }
@@ -393,15 +461,7 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     if (mode == "sink-write" || mode == "sink-commit") {
         CHECK(sink.aborts == 1);
     }
-    const auto expectedReplayCount = mode == "no-callback" ? 0U :
-                                     mode == "repeat" || mode == "mixed-results" || mode == "identity" ||
-                                             mode == "multiple-contexts" || mode == "combo" ||
-                                             mode == "combo-failure" || mode == "map-failure" ?
-                                                             2U :
-                                     mode == "simd"         ? 0U :
-                                     mode == "simd-context" ? 1U :
-                                                              1U;
-    CHECK(runtime.ReplayCount() == expectedReplayCount);
+    CHECK(runtime.ReplayCount() == ExpectedReplayCount(mode));
 }
 int Tool(int argc, char** argv)
 {
@@ -465,11 +525,13 @@ int main(int argc, char** argv)
             "zero",
             "repeat",
             "simd-context",
+            "simd-records",
             "combo",
             "combo-failure",
             "map-failure",
             "no-callback",
             "empty",
+            "simt-empty",
             "missing",
             "null-context",
             "multiple-contexts",

@@ -151,7 +151,6 @@ int Reference(int argc, char** argv)
     context.originalElf = context.companionElf = Image(argv[2]);
     context.businessInstructions =
         std::make_shared<const std::map<uint64_t, uint64_t>>(std::map<uint64_t, uint64_t>{{0, 0}, {0x450, 0x450}});
-    context.excludedInstructions = std::make_shared<const std::set<uint64_t>>();
     PmSamplingResult sampling;
     sampling.rows[0] = {};
     sampling.rows[0x450] = {};
@@ -179,9 +178,10 @@ int Real(int argc, char** argv)
     context.originalElf = Image(argv[2]);
     context.companionElf = Image(argv[3]);
     context.businessInstructions =
-        std::make_shared<const std::map<uint64_t, uint64_t>>(std::map<uint64_t, uint64_t>{{0x10458, 0x268}});
-    context.excludedInstructions = std::make_shared<const std::set<uint64_t>>(std::set<uint64_t>{0x900c});
+        std::make_shared<const std::map<uint64_t, uint64_t>>(std::map<uint64_t, uint64_t>{{0x268, 0x268}});
     PmSamplingResult sampling;
+    context.elfEntry = 0xff40;
+    context.pcOffset = 0x2b0;
     sampling.rows[0x268] = {};
     PmSamplingArtifacts artifacts;
     std::string error;
@@ -227,10 +227,10 @@ int main(int argc, char** argv)
     aclptiPmSamplingContext context;
     context.originalElf = std::make_shared<const std::vector<char>>(std::vector<char>{'\x7f', 'E', 'L', 'F', 'O'});
     context.companionElf = std::make_shared<const std::vector<char>>(std::vector<char>{'\x7f', 'E', 'L', 'F', 'C'});
-    context.businessInstructions = std::make_shared<const std::map<uint64_t, uint64_t>>(
-        std::map<uint64_t, uint64_t>{{0x100, 0x10}, {0x108, 0x18}});
-    context.excludedInstructions = std::make_shared<const std::set<uint64_t>>(std::set<uint64_t>{0x900c});
+    context.businessInstructions =
+        std::make_shared<const std::map<uint64_t, uint64_t>>(std::map<uint64_t, uint64_t>{{0x10, 0x10}, {0x18, 0x18}});
     PmSamplingResult sampling;
+    context.pcOffset = 0xf0;
     sampling.rows[0x10] = {};
     sampling.rows[0x18] = {};
     PmSamplingArtifactOptions options;
@@ -256,14 +256,23 @@ int main(int argc, char** argv)
             std::cerr << "mode=" << mode << " error=" << error << "\n";
         }
         CHECK(ok == expected);
+        const bool disasmFailure =
+            std::string(mode) == "exit" || std::string(mode) == "empty" || std::string(mode) == "timeout";
+        const bool stackFailure = std::string(mode) == "symbol-exit" || std::string(mode) == "invalid" ||
+                                  std::string(mode) == "truncated" || std::string(mode) == "missing" ||
+                                  std::string(mode) == "wrong" || std::string(mode) == "bad-frames";
+        CHECK(artifacts.disassemblyPath.empty() == disasmFailure);
+        CHECK(artifacts.pcStackPath.empty() == stackFailure);
+        CHECK(fs::exists(staging / "objdump.txt") == !disasmFailure);
+        CHECK(fs::exists(staging / "symbolizer.json") == !stackFailure);
         if (!ok) {
             CHECK(!error.empty());
-            const bool disasmFailure =
-                std::string(mode) == "exit" || std::string(mode) == "empty" || std::string(mode) == "timeout";
-            CHECK(artifacts.disassemblyPath.empty() == disasmFailure);
-            CHECK(artifacts.pcStackPath.empty() != disasmFailure);
-            CHECK(fs::exists(staging / "objdump.txt") != disasmFailure);
-            CHECK(fs::exists(staging / "symbolizer.json") == disasmFailure);
+            if (disasmFailure) {
+                CHECK(error.find("objdump.txt") != std::string::npos);
+            }
+            if (stackFailure) {
+                CHECK(error.find("symbolizer.json") != std::string::npos);
+            }
         } else {
             const auto records = json::parse(Read(artifacts.pcStackPath)).as_array();
             CHECK(records.size() == 2);
@@ -284,6 +293,16 @@ int main(int argc, char** argv)
             CHECK(!fs::is_directory(entry)); // Temporary ELF gone.
         }
     }
+    CHECK(::setenv("PM_SAMPLING_TOOL_TEST_MODE", "symbol-exit", 1) == 0);
+    PmSamplingResult emptySampling;
+    PmSamplingArtifacts emptyArtifacts;
+    std::string emptyError;
+    const auto emptyStaging = directory.path / "empty-sampling";
+    fs::create_directory(emptyStaging);
+    CHECK(GeneratePmSamplingArtifacts(
+        emptyStaging.string(), context, emptySampling, options, emptyArtifacts, emptyError));
+    CHECK(!emptyArtifacts.disassemblyPath.empty() && fs::exists(emptyStaging / "objdump.txt"));
+    CHECK(fs::exists(emptyStaging / "symbolizer.json") && Read(emptyStaging / "symbolizer.json") == "[]");
     CHECK(::setenv("PM_SAMPLING_TOOL_TEST_MODE", "array", 1) == 0);
     // Independently choose original disassembly and companion symbolization, then vice versa.
     for (int source = 0; source < 2; ++source) {
@@ -313,6 +332,8 @@ int main(int argc, char** argv)
     auto missing = options;
     missing.toolDirectory = (directory.path / "missing").string();
     CHECK(!GeneratePmSamplingArtifacts(directory.path.string(), context, sampling, missing, artifacts, error));
+    CHECK(artifacts.disassemblyPath.empty() && artifacts.pcStackPath.empty());
+    CHECK(error.find("objdump.txt") != std::string::npos && error.find("symbolizer.json") != std::string::npos);
     CHECK(::unsetenv("PM_SAMPLING_TOOL_TEST_MODE") == 0);
     std::cout
         << "PASS: LLVM arguments, source policies, PC mapping, typed JSON, nine frames, limits and failure cleanup\n";

@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <array>
+#include <cstdlib>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <string>

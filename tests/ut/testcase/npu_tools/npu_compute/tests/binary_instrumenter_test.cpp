@@ -24,6 +24,7 @@
 #include <cstring>
 #include <elf.h>
 #include <string>
+#include <stdexcept>
 #include <string_view>
 #include <sstream>
 #include <thread>
@@ -163,22 +164,34 @@ std::vector<char> MakeElfWithKernelArgumentSizes(
 
 namespace {
 
-std::vector<char> MakeCodeElf(std::uint64_t address, std::uint64_t size)
+std::vector<char> MakeCodeElf(
+    std::uint64_t address, std::uint64_t size, std::uint64_t dataAddress = 0x2000, char dataValue = 42,
+    std::uint64_t simtEntryOffset = 0)
 {
-    constexpr char kSectionNames[] = "\0.shstrtab\0.text\0.strtab\0.symtab\0";
-    constexpr char kSymbolNames[] = "\0kernel\0";
+    constexpr char kSectionNames[] = "\0.shstrtab\0.text\0.strtab\0.symtab\0.data\0";
+    constexpr char kSymbolNames[] = "\0kernel\0data\0";
     constexpr std::size_t kNamesSection = 1;
     constexpr std::size_t kCodeSection = 2;
     constexpr std::size_t kStringsSection = 3;
     constexpr std::size_t kSymbolsSection = 4;
-    constexpr std::size_t kSectionCount = kSymbolsSection + 1;
-    constexpr std::size_t kSymbolCount = 2; // Null symbol followed by the kernel symbol.
+    constexpr std::size_t kDataSection = 5;
+    constexpr std::size_t kSectionCount = kDataSection + 1;
     const std::string names(kSectionNames, sizeof(kSectionNames));
-    const std::string symbols(kSymbolNames, sizeof(kSymbolNames) - 1);
+    std::string symbols(kSymbolNames, sizeof(kSymbolNames) - 1);
+    if (simtEntryOffset != 0) {
+        if (simtEntryOffset >= size) {
+            throw std::invalid_argument("SIMT entry must split the executable function");
+        }
+        symbols += "simt_entry";
+        symbols.push_back('\0');
+    }
+    const std::size_t symbolCount = simtEntryOffset == 0 ? 3 : 4;
     const std::size_t data = sizeof(Elf64_Ehdr) + kSectionCount * sizeof(Elf64_Shdr);
     const auto strings = data + names.size() + size;
     const auto table = strings + symbols.size();
-    std::vector<char> image(table + kSymbolCount * sizeof(Elf64_Sym), 0);
+    const auto dataOffset = table + symbolCount * sizeof(Elf64_Sym);
+    std::vector<char> image(dataOffset + 1, 0);
+    image[dataOffset] = dataValue;
     Elf64_Ehdr h{};
     std::copy_n(reinterpret_cast<const unsigned char*>(ELFMAG), SELFMAG, reinterpret_cast<unsigned char*>(h.e_ident));
     h.e_ident[EI_CLASS] = ELFCLASS64;
@@ -199,6 +212,9 @@ std::vector<char> MakeCodeElf(std::uint64_t address, std::uint64_t size)
         if (index == kCodeSection) {
             entry.sh_addr = address;
         }
+        if (index == kDataSection) {
+            entry.sh_addr = dataAddress;
+        }
         if (index == kSymbolsSection) {
             entry.sh_link = kStringsSection;
         }
@@ -209,7 +225,8 @@ std::vector<char> MakeCodeElf(std::uint64_t address, std::uint64_t size)
     section(kNamesSection, ".shstrtab", SHT_STRTAB, data, names.size());
     section(kCodeSection, ".text", SHT_PROGBITS, data + names.size(), size, SHF_ALLOC | SHF_EXECINSTR);
     section(kStringsSection, ".strtab", SHT_STRTAB, strings, symbols.size());
-    section(kSymbolsSection, ".symtab", SHT_SYMTAB, table, kSymbolCount * sizeof(Elf64_Sym));
+    section(kSymbolsSection, ".symtab", SHT_SYMTAB, table, symbolCount * sizeof(Elf64_Sym));
+    section(kDataSection, ".data", SHT_PROGBITS, dataOffset, 1, SHF_ALLOC | SHF_WRITE);
     std::copy_n(
         reinterpret_cast<const unsigned char*>(names.data()), names.size(),
         reinterpret_cast<unsigned char*>(image.data() + data));
@@ -221,45 +238,25 @@ std::vector<char> MakeCodeElf(std::uint64_t address, std::uint64_t size)
     function.st_info = ELF64_ST_INFO(STB_GLOBAL, STT_FUNC);
     function.st_shndx = kCodeSection;
     function.st_value = address;
-    function.st_size = size;
+    function.st_size = simtEntryOffset == 0 ? size : simtEntryOffset;
     std::copy_n(
         reinterpret_cast<const unsigned char*>(&function), sizeof(function),
         reinterpret_cast<unsigned char*>(image.data() + table + sizeof(function)));
-    return image;
-}
-
-bool TestInstructionMap()
-{
-    using aclpti::profiling::BuildPmSamplingInstructionMap;
-    using aclpti::profiling::PmSamplingInstructionMap;
-    const auto original = MakeCodeElf(0, 8);
-    const auto companion = MakeCodeElf(0x100, 16);
-    const std::string before = "Disassembly of section .text:\n0: 00000000 MOV X0, X1\n4: 00000000 END\n";
-    const std::string after = "Disassembly of section .text:\n100: 00000000 MOV X0, X1\n"
-                              "104: 00000000 CALL probe\n108: 00000000 NOP\n10c: 00000000 END\n";
-    PmSamplingInstructionMap map;
-    std::string error;
-    if (!BuildPmSamplingInstructionMap(original, companion, before, after, map, error) ||
-        map.business != std::map<std::uint64_t, std::uint64_t>{{0x100, 0}, {0x10c, 4}} ||
-        map.excluded != std::set<std::uint64_t>{0x104, 0x108}) {
-        std::cerr << error << '\n';
-        return false;
+    Elf64_Sym object{};
+    object.st_name = symbols.find("data");
+    object.st_info = ELF64_ST_INFO(STB_GLOBAL, STT_OBJECT);
+    object.st_shndx = kDataSection;
+    object.st_value = dataAddress;
+    object.st_size = 256; // AICore pointer symbols can include alignment padding.
+    std::memcpy(image.data() + table + 2 * sizeof(object), &object, sizeof(object));
+    if (simtEntryOffset != 0) {
+        function.st_name = static_cast<Elf64_Word>(symbols.find("simt_entry"));
+        function.st_info = ELF64_ST_INFO(STB_LOCAL, STT_FUNC);
+        function.st_value = address + simtEntryOffset;
+        function.st_size = size - simtEntryOffset;
+        std::memcpy(image.data() + table + 3 * sizeof(function), &function, sizeof(function));
     }
-    auto reject = [&](std::vector<char> elf, std::string text) {
-        const bool validElf = elf == companion;
-        return !BuildPmSamplingInstructionMap(original, elf, before, text, map, error) && map.business.empty() &&
-               !error.empty() && map.error == error && (!validElf || map.relocatedEntries.at(0) == 0x100);
-    };
-    auto ambiguous = after;
-    ambiguous.replace(ambiguous.find("CALL probe"), std::string_view("CALL probe").size(), "MOV X0, X1");
-    auto deleted = after;
-    deleted.replace(deleted.find("MOV X0, X1"), std::string_view("MOV X0, X1").size(), "SUB X0, X1");
-    auto wrongBytes = after;
-    wrongBytes.replace(wrongBytes.find("00000000"), std::string_view("00000000").size(), "00000001");
-    auto gap = after;
-    gap.replace(gap.find("104:"), std::string_view("104:").size(), "106:");
-    return reject(companion, ambiguous) && reject(companion, deleted) && reject(companion, wrongBytes) &&
-           reject(companion, gap) && reject(std::vector<char>(10), after);
+    return image;
 }
 
 std::vector<std::string> ReadLines(const boost::filesystem::path& path)
@@ -273,24 +270,26 @@ std::vector<std::string> ReadLines(const boost::filesystem::path& path)
     return lines;
 }
 
-void CheckToolCallsAndCleanup(const boost::filesystem::path& root, bool toolsUsed)
+void CheckToolCallsAndCleanup(const boost::filesystem::path& root, bool toolsUsed, bool simtStart)
 {
+    const std::size_t linkAttempts = toolsUsed ? (simtStart ? 2U : 7U) : 0U;
+    const std::size_t tuneAttempts = toolsUsed ? linkAttempts - 1 : 0U;
     const auto calls = ReadLines(root / "calls");
     EXPECT_EQ(std::count(calls.begin(), calls.end(), "bisheng"), toolsUsed ? 1 : 0);
-    EXPECT_EQ(std::count(calls.begin(), calls.end(), "ld.lld"), toolsUsed ? 7 : 0);
-    EXPECT_EQ(std::count(calls.begin(), calls.end(), "bisheng-tune"), toolsUsed ? 6 : 0);
-    EXPECT_EQ(calls.size(), toolsUsed ? 14U : 0U);
+    EXPECT_EQ(std::count(calls.begin(), calls.end(), "ld.lld"), linkAttempts);
+    EXPECT_EQ(std::count(calls.begin(), calls.end(), "bisheng-tune"), tuneAttempts);
+    EXPECT_EQ(calls.size(), toolsUsed ? 1 + linkAttempts + tuneAttempts + (simtStart ? 2 * linkAttempts : 0U) : 0U);
     const auto caches = ReadLines(root / "caches");
     const auto workdirs = ReadLines(root / "workdirs");
     const auto sources = ReadLines(root / "probe_sources");
     const std::set<std::string> uniqueCaches(caches.begin(), caches.end());
     const std::set<std::string> uniqueWorkdirs(workdirs.begin(), workdirs.end());
     const std::set<std::string> uniqueSources(sources.begin(), sources.end());
-    EXPECT_EQ(caches.size(), toolsUsed ? 7U : 0U);
-    EXPECT_EQ(workdirs.size(), toolsUsed ? 7U : 0U);
+    EXPECT_EQ(caches.size(), linkAttempts);
+    EXPECT_EQ(workdirs.size(), linkAttempts);
     EXPECT_EQ(sources.size(), toolsUsed ? 1U : 0U);
     EXPECT_EQ(uniqueCaches.size(), toolsUsed ? 1U : 0U);
-    EXPECT_EQ(uniqueWorkdirs.size(), toolsUsed ? 7U : 0U);
+    EXPECT_EQ(uniqueWorkdirs.size(), linkAttempts);
     EXPECT_EQ(uniqueSources, uniqueCaches);
     for (const auto& paths : {caches, workdirs, sources}) {
         for (const auto& path : paths) {
@@ -300,7 +299,8 @@ void CheckToolCallsAndCleanup(const boost::filesystem::path& root, bool toolsUse
     EXPECT_FALSE(boost::filesystem::exists(root / "kernel_end"));
 }
 
-void RunIsolatedScenario(bool toolsUsed, const std::function<void()>& assertions)
+void RunIsolatedScenario(
+    bool toolsUsed, const std::function<void()>& assertions, bool simtStart = false, bool simtProbeInserted = true)
 {
     if (npucompute::test::IsIsolatedTestChild()) {
         std::string plog;
@@ -312,7 +312,7 @@ void RunIsolatedScenario(bool toolsUsed, const std::function<void()>& assertions
     const boost::filesystem::path root(temporary.Path());
     const auto tools = root / "tools/bisheng_compiler/bin";
     ASSERT_TRUE(boost::filesystem::create_directories(tools));
-    for (const auto* name : {"bisheng", "ld.lld", "bisheng-tune"}) {
+    for (const auto* name : {"bisheng", "ld.lld", "bisheng-tune", "llvm-objdump"}) {
         boost::filesystem::create_symlink(NPU_COMPUTE_INSTRUMENTER_TOOL_STUB_PATH, tools / name);
     }
     const auto name = npucompute::test::CurrentTestName();
@@ -323,12 +323,19 @@ void RunIsolatedScenario(bool toolsUsed, const std::function<void()>& assertions
     options.environment["ASCEND_HOME_PATH"] = root.string();
     options.environment["PATH"] = tools.string();
     options.environment["NPU_COMPUTE_BISHENG"] = std::nullopt;
+    if (!simtProbeInserted) {
+        options.environment["NPU_COMPUTE_TEST_SIMT_PROBE_NOT_INSERTED"] = "1";
+    }
     const auto result = npucompute::test::RunProcess(options);
     ASSERT_EQ(result.launchError, 0);
     ASSERT_FALSE(result.timedOut);
     ASSERT_EQ(result.signal, 0) << result.standardOutput << result.standardError;
     ASSERT_EQ(result.exitCode, 0) << result.standardOutput << result.standardError;
-    CheckToolCallsAndCleanup(root, toolsUsed);
+    if (toolsUsed && simtStart) {
+        EXPECT_NE(result.standardError.find("TUNE-INFO: probeFunc:"), std::string::npos);
+        EXPECT_NE(result.standardError.find(simtProbeInserted ? "StubTimes: 1" : "StubTimes: 0"), std::string::npos);
+    }
+    CheckToolCallsAndCleanup(root, toolsUsed, simtStart);
 }
 
 } // namespace
@@ -378,15 +385,57 @@ TEST(NpuComputeBinaryInstrumenter, ReusesProbeAcrossLinkFailureAndConcurrentInst
     });
 }
 
-TEST(NpuComputeBinaryInstrumenter, MapsBusinessInstructionsAndExcludesProbes) { EXPECT_TRUE(TestInstructionMap()); }
+TEST(NpuComputeBinaryInstrumenter, BuildsIndependentSimtStartProbe)
+{
+    RunIsolatedScenario(
+        true,
+        [] {
+            const auto input = MakeElfWithKernelArgumentSizes({40, 31, 16}, {{0, 232}});
+            std::vector<char> output;
+            std::uint32_t probeArgumentOffset = 123;
+            ASSERT_FALSE(
+                aclpti::profiling::InstrumentSimtSampling(input.data(), input.size(), output, &probeArgumentOffset));
+            EXPECT_TRUE(output.empty());
+            EXPECT_EQ(probeArgumentOffset, 0U);
+            ASSERT_TRUE(
+                aclpti::profiling::InstrumentSimtSampling(input.data(), input.size(), output, &probeArgumentOffset));
+            EXPECT_GT(output.size(), input.size());
+            EXPECT_EQ(probeArgumentOffset, 232U);
+        },
+        true);
+}
+
+TEST(NpuComputeBinaryInstrumenter, RejectsSimtProbeWhenTunerDidNotInsertEntryHook)
+{
+    RunIsolatedScenario(
+        true,
+        [] {
+            const auto input = MakeElfWithKernelArgumentSizes({40, 31, 16}, {{0, 232}});
+            std::vector<char> output;
+            std::uint32_t probeArgumentOffset = 123;
+            aclpti::profiling::PmSamplingInstructionMap map;
+            ASSERT_FALSE(aclpti::profiling::InstrumentSimtSampling(
+                input.data(), input.size(), output, &probeArgumentOffset, &map));
+            EXPECT_TRUE(output.empty());
+            EXPECT_EQ(probeArgumentOffset, 0U);
+            map = {};
+            probeArgumentOffset = 123;
+            ASSERT_FALSE(aclpti::profiling::InstrumentSimtSampling(
+                input.data(), input.size(), output, &probeArgumentOffset, &map));
+            EXPECT_TRUE(output.empty());
+            EXPECT_EQ(probeArgumentOffset, 0U);
+            EXPECT_NE(map.error.find("ApiId 398"), std::string::npos);
+        },
+        true, false);
+}
 
 namespace {
 struct InstructionMapInput {
     std::vector<char> image;
     std::string disassembly;
 };
-
-InstructionMapInput ScalarInstructions(std::uint64_t entry, const std::vector<std::string>& operations)
+InstructionMapInput ScalarInstructions(
+    std::uint64_t entry, const std::vector<std::string>& operations, std::uint64_t simtEntryOffset = 0)
 {
     constexpr std::size_t kInstructionBytes = sizeof(std::uint32_t);
     std::ostringstream text;
@@ -394,78 +443,41 @@ InstructionMapInput ScalarInstructions(std::uint64_t entry, const std::vector<st
     for (std::size_t index = 0; index < operations.size(); ++index) {
         text << std::hex << entry + index * kInstructionBytes << ": 00000000 " << operations[index] << '\n';
     }
-    return {MakeCodeElf(entry, operations.size() * kInstructionBytes), text.str()};
+    return {MakeCodeElf(entry, operations.size() * kInstructionBytes, 0x2000, 42, simtEntryOffset), text.str()};
 }
 } // namespace
 
-TEST(NpuComputeBinaryInstrumenter, MapsExpandedForwardAndBackwardBranches)
+TEST(NpuComputeBinaryInstrumenter, ClassifiesOriginalSimtInstructionsWithoutCompanionMatching)
 {
-    const auto original = ScalarInstructions(0, {"MOV X2, X3", "JUMPCI #16", "MOV X4, X5", "JUMPI #0", "END"});
-    const auto companion = ScalarInstructions(
-        0x100, {"MOV X2, X3", "ST_IO.b64 X0, [X30], #-1960, #0", "MOVI X0, #8", "MOVK X0, #0, #1", "MOVK X0, #0, #2",
-                "JUMPC X0", "LD_IO.b64 X0, [X30], #-1960, #0", "MOV X4, X5", "ST_IO.b64 X0, [X30], #-1960, #0",
-                "MOVI X0, #65524", "MOVK X0, #65535, #1", "MOVK X0, #65535, #2", "JUMP X0",
-                "LD_IO.b64 X0, [X30], #-1960, #0", "NOP", "END"});
-    aclpti::profiling::PmSamplingInstructionMap map;
-    std::string error;
-    ASSERT_TRUE(aclpti::profiling::BuildPmSamplingInstructionMap(
-        original.image, companion.image, original.disassembly, companion.disassembly, map, error))
-        << error;
-    const std::map<std::uint64_t, std::uint64_t> expected{{0x100, 0}, {0x114, 4}, {0x11c, 8}, {0x130, 12}, {0x13c, 16}};
-    EXPECT_EQ(map.business, expected);
-    EXPECT_EQ(map.excluded.size(), 11U);
-    // Malformed expansions and altered targets must not become plausible PC maps.
-    for (const auto& replacement : std::vector<std::pair<std::string, std::string>>{
-             {"MOVI X0, #8", "MOVI X0, #7"},
-             {"MOVK X0, #0, #1", "MOVK X0, #0, #2"},
-             {"JUMPC X0", "JUMP X0"},
-             {"ST_IO.b64 X0, [X30], #-1960, #0", "ST_IO.b64 X0, [X30], #-1968, #0"}}) {
-        auto invalid = companion.disassembly;
-        invalid.replace(invalid.find(replacement.first), replacement.first.size(), replacement.second);
-        EXPECT_FALSE(aclpti::profiling::BuildPmSamplingInstructionMap(
-            original.image, companion.image, original.disassembly, invalid, map, error))
-            << invalid;
-        EXPECT_TRUE(map.business.empty());
-        EXPECT_FALSE(error.empty());
+    for (const auto* vf : {"VF X2, #9", "VF_SIMT X2, X3, #9, #0, #1"}) {
+        const auto input = ScalarInstructions(
+            0x100,
+            {"MOV X0, PC", "MOVI X2, #7", "MOVK X2, #0, #1", "MOVK X2, #0, #2", "SHLI.b64 X2, #2", "ADD.s64 X2, X2, X0",
+             vf, "MOV X4, X5", "END"},
+            28);
+        aclpti::profiling::PmSamplingInstructionMap table;
+        std::string error;
+        ASSERT_TRUE(
+            aclpti::profiling::BuildPmSamplingOriginalInstructionMap(input.image, input.disassembly, table, error))
+            << error;
+        EXPECT_EQ(table.business.size(), 9U);
+        EXPECT_EQ(table.business.at(0x11c), 0x11cU);
+        EXPECT_EQ(
+            table.simt, std::string_view(vf).find("VF_SIMT") == 0 ? (std::set<std::uint64_t>{0x11c, 0x120}) :
+                                                                    std::set<std::uint64_t>{});
     }
 }
 
-TEST(NpuComputeBinaryInstrumenter, ValidatesRelocatedDirectBranchTargets)
+TEST(NpuComputeBinaryInstrumenter, RejectsIncompleteOrMismatchedOriginalDisassembly)
 {
-    const auto original = ScalarInstructions(0, {"MOV X0, X1", "JUMPCI #12", "MOV X2, X3", "END"});
-    const auto companion = ScalarInstructions(0x100, {"MOV X0, X1", "JUMPCI #272", "MOV X2, X3", "NOP", "END"});
-    aclpti::profiling::PmSamplingInstructionMap map;
-    std::string error;
-    ASSERT_TRUE(aclpti::profiling::BuildPmSamplingInstructionMap(
-        original.image, companion.image, original.disassembly, companion.disassembly, map, error))
-        << error;
-    auto wrongTarget = companion.disassembly;
-    wrongTarget.replace(wrongTarget.find("#272"), std::string("#272").size(), "#264");
-    EXPECT_FALSE(aclpti::profiling::BuildPmSamplingInstructionMap(
-        original.image, companion.image, original.disassembly, wrongTarget, map, error));
-    EXPECT_TRUE(map.business.empty());
-    EXPECT_NE(error.find("branch target"), std::string::npos) << error;
-}
-
-TEST(NpuComputeBinaryInstrumenter, MapsRelocatedVectorEntryAddress)
-{
-    const std::vector<std::string> setup{"MOV X0, PC",      "MOVI X2, #7",        "NOP",      "NOP",
-                                         "SHLI.b64 X2, #2", "ADD.s64 X2, X2, X0", "VF X2, #9"};
-    auto before = setup;
-    before.insert(before.end(), {"MOV X4, X5", "END"});
-    auto after = setup;
-    after[1] = "MOVI X2, #9";
-    after.insert(after.end(), {"CALL probe", "NOP", "MOV X4, X5", "END"});
-    const auto original = ScalarInstructions(0, before);
-    const auto companion = ScalarInstructions(0x100, after);
-    aclpti::profiling::PmSamplingInstructionMap map;
-    std::string error;
-    ASSERT_TRUE(aclpti::profiling::BuildPmSamplingInstructionMap(
-        original.image, companion.image, original.disassembly, companion.disassembly, map, error))
-        << error;
-    EXPECT_EQ(map.business.at(0x104), 4U);
-    after[1] = "MOVI X2, #10";
-    const auto wrong = ScalarInstructions(0x100, after);
-    EXPECT_FALSE(aclpti::profiling::BuildPmSamplingInstructionMap(
-        original.image, wrong.image, original.disassembly, wrong.disassembly, map, error));
+    const auto input = ScalarInstructions(0, {"MOV X0, X1", "END"});
+    for (const auto* text :
+         {"Disassembly of section .text:\n0: 00000000 MOV X0, X1\n",
+          "Disassembly of section .text:\n0: 00000001 MOV X0, X1\n4: 00000000 END\n"}) {
+        aclpti::profiling::PmSamplingInstructionMap table;
+        std::string error;
+        EXPECT_FALSE(aclpti::profiling::BuildPmSamplingOriginalInstructionMap(input.image, text, table, error));
+        EXPECT_TRUE(table.business.empty());
+        EXPECT_FALSE(error.empty());
+    }
 }

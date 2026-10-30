@@ -1005,7 +1005,7 @@ TEST(NpuComputePtiDataModule, CrossReplayAggregate)
     ASSERT_TRUE(aivRow.coreInfos[0].count == 1);
 }
 
-TEST(NpuComputePtiDataModule, MsopprofA5ReplayMerge)
+TEST(NpuComputePtiDataModule, A5ReplayMerge)
 {
     ResultSink sink;
     auto& module = data::ProfilingDataManager::Instance();
