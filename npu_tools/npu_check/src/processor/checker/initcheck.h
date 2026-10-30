@@ -222,6 +222,7 @@ private:
         CheckerReportList& reports);
 
     std::map<CoreKey, uint64_t> initializedRegisters_;
+    std::map<uint64_t, std::vector<AclsanDeviceRegisterStateData>> unitFlagRegisters_;
     std::set<UsageKey> reportedUsages_;
     std::map<InstructionKey, uint64_t> reportGroups_;
     InitcheckMemory memory_;

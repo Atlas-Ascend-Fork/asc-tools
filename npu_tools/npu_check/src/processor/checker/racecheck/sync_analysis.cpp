@@ -149,6 +149,7 @@ const std::vector<CallbackSpec>& Racechecker::GetSubscribedID() const
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER},
         {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END}};
     return ids;
@@ -209,7 +210,8 @@ bool Racechecker::OnCallback(
         return true;
     }
     const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
-    const size_t size = cbid == ACLSAN_CBID_DEVICE_SYNC         ? sizeof(AclsanDeviceSyncData) :
+    const size_t size = cbid == ACLSAN_CBID_DEVICE_STATE        ? sizeof(AclsanDeviceRegisterStateData) :
+                        cbid == ACLSAN_CBID_DEVICE_SYNC         ? sizeof(AclsanDeviceSyncData) :
                         cbid == ACLSAN_CBID_DEVICE_PIPE_BARRIER ? sizeof(AclsanDeviceBarrierData) :
                                                                   sizeof(AclsanDeviceMemoryAccessData);
     if (h.version != ACLSAN_API_VERSION || h.size < size || h.launchId == 0 || h.instrExecId == 0 ||
@@ -224,6 +226,16 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
 {
     const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
     auto& state = launches_[h.launchId];
+    if (id == ACLSAN_CBID_DEVICE_STATE) {
+        const auto& reg = *static_cast<const AclsanDeviceRegisterStateData*>(data);
+        if (reg.regId != ACLSAN_DEVICE_REGISTER_FPC)
+            return true;
+        if (state.memory.size() + state.sync.size() + state.registers.size() >= limits_.events)
+            state.reasons.insert("event_budget");
+        else
+            state.registers.push_back(reg);
+        return true;
+    }
     if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
         ++memoryEvents_;
         const auto& a = *static_cast<const AclsanDeviceMemoryAccessData*>(data);
@@ -267,7 +279,7 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
             return true;
         }
     }
-    if (state.memory.size() + state.sync.size() >= limits_.events) {
+    if (state.memory.size() + state.sync.size() + state.registers.size() >= limits_.events) {
         state.reasons.insert("event_budget");
         return true;
     }
@@ -395,6 +407,8 @@ class Racechecker::LaunchProcessor {
     std::map<Instruction, Event> events;
     std::vector<Access> accesses;
     std::map<Instruction, size_t> instructionStarts;
+    std::map<Instruction, Instruction> remoteFixpipeOrigins;
+    UnitResetHistory unitResets;
     // Prefix/acquire joins do not imply completion order within a pipeline.
     std::map<Pipe, std::optional<size_t>> prefix, acquired;
     // Only S/V/M complete in issue order within one core.
@@ -415,7 +429,9 @@ public:
     void Run()
     {
         NormalizeEvents();
+        unitResets = UnitFlagResets(launch.registers, launch.reasons);
         ExpandUnitFlagAccesses();
+        LinkRemoteFixpipeEndpoints();
         RouteCrossCoreNotifications();
         BuildNotificationTokens();
         BuildLocalEdges();
@@ -554,7 +570,7 @@ private:
         std::vector<UnitAccess> reads;
     };
     struct UnitPartition {
-        std::map<std::pair<Domain, uint64_t>, UnitQueues> units;
+        std::map<std::tuple<Domain, uint64_t, uint64_t>, UnitQueues> units;
         std::map<Domain, std::set<uint64_t>> boundaries;
         std::map<std::pair<Instruction, uint64_t>, size_t> nodes;
         std::vector<Access> expanded;
@@ -599,7 +615,9 @@ private:
         }
         partition.expanded.push_back(Access{a, node, ranges});
         if (unit && fresh) {
-            auto& q = partition.units[{DomainOf(a.header), ranges.front().begin / unitBytes}];
+            auto& q =
+                partition
+                    .units[{DomainOf(a.header), ranges.front().begin / unitBytes, UnitFlagEpoch(a.header, unitResets)}];
             auto& queue = a.header.pipeline == ACLSAN_DEVICE_PIPE_MATRIX ? q.writes : q.reads;
             queue.push_back({node, a.unitFlag});
         }
@@ -722,6 +740,28 @@ private:
         MatchUnitFlags(partition);
     }
 
+    void LinkRemoteFixpipeEndpoints()
+    {
+        remoteFixpipeOrigins = RemoteFixpipeOrigins(launch.memory, launch.reasons);
+        for (const auto& endpoint : remoteFixpipeOrigins) {
+            const auto origin = events.find(endpoint.second);
+            const auto remote = events.find(endpoint.first);
+            if (origin == events.end() || remote == events.end() || origin->second.sync || remote->second.sync) {
+                launch.reasons.insert("missing_fixpipe_origin");
+                continue;
+            }
+            auto start = instructionStarts.find(endpoint.second);
+            if (start == instructionStarts.end()) {
+                start = instructionStarts.emplace(endpoint.second, graph.AddNode()).first;
+                AddEdge(start->second, origin->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
+            }
+            // Completion of FIX includes every destination, while the L0C unit
+            // release remains independent of the UB write's completion.
+            AddEdge(start->second, remote->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
+            AddEdge(remote->second.node, origin->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
+        }
+    }
+
     void RecordNotification(
         const AclsanDeviceSyncData& s, const Domain& receiver, uint64_t receiverFlag, size_t node,
         const std::set<Domain>& domains)
@@ -837,6 +877,8 @@ private:
         for (const auto& pair : events) {
             if (graphExhausted)
                 break;
+            if (remoteFixpipeOrigins.count(pair.first) != 0)
+                continue;
             const Domain domain = std::get<0>(pair.first);
             const auto& e = pair.second;
             if (!e.sync) {

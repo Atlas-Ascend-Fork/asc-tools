@@ -54,6 +54,7 @@ struct MemoryRegisterState {
     std::array<std::optional<NdDmaLoopStrideParamField>, NDDMA_LOOP_COUNT> ndDmaLoopStrides{};
     std::optional<Mte2NzParamField> mte2Nz;
     std::optional<Loop3ParamField> loop3;
+    std::optional<ChannelParaParamField> channelPara;
     std::array<std::optional<DmaLoopSizeParamField>, DMA_DIRECTION_COUNT> dmaLoopSizes{};
     std::array<std::array<std::optional<DmaLoopStrideParamField>, DMA_STRIDE_LOOP_COUNT>, DMA_DIRECTION_COUNT>
         dmaLoopStrides{};

@@ -54,7 +54,9 @@ enum class DeviceInstructionKind : uint32_t {
     LocalMemoryTransfer, // InstructionId::CopyCbufToFbuf/FixL0cTo*/CopyUbufToCbuf -> LocalMemoryTransferParamField
     SetPadding,          // InstructionId::SetPadding                    -> SetPaddingParamField
     MoveMask,            // MOVEMASK -> VectorMaskParamField; legacy MoveMask0/MoveMask1 -> VectorMaskWriteParamField
-    SetCtrl,             // InstructionId::SetCtrl                       -> CtrlRegisterParamField
+    ChannelPara,
+    SetFpc,
+    SetCtrl, // InstructionId::SetCtrl                       -> CtrlRegisterParamField
 
     ScalarGm, // InstructionId::St*/Sti*/Stp*/Ld*/Ldp* -> ScalarGmParamField
     StDev,    // InstructionId::StDevB64/B32/B16/B8 -> ScalarDevParamField
@@ -90,7 +92,7 @@ using DeviceInstructionParamField = std::variant<
     ScalarAtomicParamField, MmadParamField, LoadL1MxParamField, LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField,
     Img2ColParamField, FmatrixParamField, L3dRptParamField, ScalarGmParamField, PipeBarrierParamField,
     CrossCoreParamField, CtrlRegisterParamField, CopyUbufToUbufParamField, VectorMaskParamField,
-    VectorMaskWriteParamField, PushPbParamField, VfParamField>;
+    VectorMaskWriteParamField, PushPbParamField, VfParamField, ChannelParaParamField, FpcParamField>;
 
 struct DecodedInstruction {
     DeviceInstructionKind kind = DeviceInstructionKind::InvalidInstruction;

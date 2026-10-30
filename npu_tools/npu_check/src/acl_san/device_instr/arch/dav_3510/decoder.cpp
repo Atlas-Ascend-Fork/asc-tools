@@ -654,6 +654,10 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
             return DecodeNdDmaOutToUbuf(record, DATA_BITS_B16);
         case RawId(InstructionId::NdDmaOutToUbufB32):
             return DecodeNdDmaOutToUbuf(record, DATA_BITS_B32);
+        case RawId(InstructionId::ChannelPara):
+            return DecodedInstruction{DeviceInstructionKind::ChannelPara, ChannelParaParamField{record.args[0]}};
+        case RawId(InstructionId::SetFpc):
+            return DecodedInstruction{DeviceInstructionKind::SetFpc, FpcParamField{record.args[0]}};
         case RawId(InstructionId::Loop3Param):
             return DecodeLoop3Param(record);
 

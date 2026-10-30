@@ -16,6 +16,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <set>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -49,5 +51,12 @@ AclsanDeviceSyncData NormalizeSync(const AclsanDeviceSyncData& data);
 
 using Storage = std::tuple<uint32_t, Domain>;
 Storage StorageOf(const AclsanDeviceMemoryAccessData& access);
+// UB storage belongs to an AIV, but L0C->UB completion belongs to the issuing AIC's FIX pipe.
+std::map<Instruction, Instruction> RemoteFixpipeOrigins(
+    const std::vector<AclsanDeviceMemoryAccessData>& memory, std::set<std::string>& reasons);
+using UnitResetHistory = std::map<Domain, std::set<uint64_t>>;
+UnitResetHistory UnitFlagResets(
+    const std::vector<AclsanDeviceRegisterStateData>& registers, std::set<std::string>& reasons);
+uint64_t UnitFlagEpoch(const AclsanDeviceEventHeader& header, const UnitResetHistory& resets);
 } // namespace npucheck::race
 #endif

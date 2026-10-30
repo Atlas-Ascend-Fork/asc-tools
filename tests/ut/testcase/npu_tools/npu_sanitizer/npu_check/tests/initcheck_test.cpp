@@ -974,5 +974,21 @@ INSTANTIATE_TEST_SUITE_P(
     L1AndL0C, LocalInitcheckReplayTest,
     ::testing::Values(uint32_t{ACLSAN_DEVICE_MEMORY_SPACE_L1}, uint32_t{ACLSAN_DEVICE_MEMORY_SPACE_L0C}));
 
+TEST(InitcheckTest, FpcOnlyLaunchIsPendingUntilDrained)
+{
+    Initcheck checker;
+    CheckerReportList reports;
+    auto state = State(ACLSAN_DEVICE_REGISTER_FPC, UINT64_C(1) << 63);
+    state.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    state.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+    state.header.instrExecId = 1;
+    ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_STATE, &state, reports));
+    EXPECT_FALSE(checker.AnalysisComplete());
+    AclsanSynchronizeData sync{};
+    ASSERT_TRUE(
+        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+    EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+    EXPECT_TRUE(reports.empty());
+}
 } // namespace
 } // namespace npucheck

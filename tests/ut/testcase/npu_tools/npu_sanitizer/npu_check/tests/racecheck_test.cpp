@@ -11,6 +11,7 @@
 #include "checker/racecheck.h"
 #include "diagnostic/report_renderer.h"
 #include "checker/racecheck_reports.h"
+#include "checker/racecheck/dependency_graph.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <functional>
@@ -321,6 +322,161 @@ TEST(RacecheckTest, UnitFlagDoesNotOrderFixpipeGmOutputs)
         h.Add(read);
         h.Add(output);
     }
+    h.Sync();
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    EXPECT_FALSE(h.reports.empty());
+}
+
+// The UB address is owned by an AIV, but the issuing FIX event remains on its AIC.
+std::pair<AclsanDeviceMemoryAccessData, AclsanDeviceMemoryAccessData> FixToUb(
+    uint64_t seq, uint32_t flag, uint32_t sub = 0)
+{
+    auto source = UnitMemory(seq, false, flag);
+    source.instructionId = 170;
+    auto target = source;
+    target.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    target.header.blockId = sub;
+    target.header.phyCoreId = 18 + sub;
+    target.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    target.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+    target.unitFlag = 0;
+    return {source, target};
+}
+
+TEST(RacecheckTest, FixToUbCompletionIncludesRemoteWriteWithAndWithoutUnitFlag)
+{
+    for (uint32_t flag : {0U, 3U})
+        for (uint32_t sub : {0U, 1U})
+            for (bool synchronize : {false, true}) {
+                SCOPED_TRACE(::testing::Message() << flag << '/' << sub << '/' << synchronize);
+                Harness h;
+                const auto fix = FixToUb(2, flag, sub);
+                std::vector<AclsanDeviceMemoryAccessData> memory{fix.first, fix.second};
+                if (flag != 0)
+                    memory.push_back(UnitMemory(1, true, flag));
+                auto read = fix.second;
+                read.header.instrExecId = 5;
+                read.header.pc = 0x105;
+                read.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
+                read.instructionId = 0;
+                read.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+                memory.push_back(read);
+                std::vector<AclsanDeviceSyncData> sync;
+                if (synchronize) {
+                    auto set = Flag(3, ACLSAN_DEVICE_SYNC_ACTION_SET, ACLSAN_DEVICE_PIPE_FIXPIPE);
+                    set.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                    set.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+                    set.mode = ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
+                    set.objectId = 8 + sub * 16;
+                    auto wait = set;
+                    wait.header = read.header;
+                    wait.header.size = sizeof(wait);
+                    wait.header.instrExecId = 4;
+                    wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
+                    wait.srcPipe = wait.dstPipe = ACLSAN_DEVICE_PIPE_VECTOR;
+                    wait.objectId = 8;
+                    sync = {set, wait};
+                }
+                for (auto a : memory)
+                    h.Add(a);
+                for (auto s : sync)
+                    h.Add(s);
+                h.Sync();
+                EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+                EXPECT_EQ(h.reports.empty(), synchronize);
+                race::DependencyGraph graph;
+                std::set<std::string> reasons;
+                race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph);
+                EXPECT_TRUE(reasons.empty());
+                const auto target = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& a) {
+                    return a.data.header.instrExecId == 2 && a.data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
+                });
+                const auto consumer = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& a) {
+                    return a.data.header.instrExecId == 5;
+                });
+                ASSERT_NE(target, graph.accesses.end());
+                ASSERT_NE(consumer, graph.accesses.end());
+                EXPECT_EQ(
+                    graph.graph.Compare(target->node, consumer->node),
+                    synchronize ? race::HappensBeforeGraph::Relation::Before :
+                                  race::HappensBeforeGraph::Relation::Unordered);
+            }
+}
+
+TEST(RacecheckTest, UnitFlagCannotOrderRemoteFixToUbOutputs)
+{
+    Harness h;
+    h.Add(UnitMemory(1, true, 3));
+    for (uint64_t seq : {2U, 3U}) {
+        const auto fix = FixToUb(seq, seq == 2 ? 2 : 3);
+        h.Add(fix.first);
+        h.Add(fix.second);
+    }
+    h.Sync();
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    ASSERT_EQ(h.reports.size(), 1U);
+    EXPECT_EQ(std::get<NpuCheckRacecheckReport>(h.reports[0]).kind, ConflictKind::WAW);
+}
+
+TEST(RacecheckTest, RemoteFixToUbRequiresUnambiguousIssuingInstruction)
+{
+    for (uint32_t invalid : {0U, 1U, 2U, 3U}) {
+        Harness h;
+        auto fix = FixToUb(1, 0);
+        if (invalid != 0)
+            h.Add(fix.first);
+        if (invalid == 1) {
+            ++fix.first.header.phyCoreId;
+            h.Add(fix.first);
+        } else if (invalid == 2) {
+            ++fix.second.header.pc;
+        } else if (invalid == 3) {
+            fix.second.header.blockId += 2;
+        }
+        h.Add(fix.second);
+        h.Sync();
+        EXPECT_FALSE(h.checker.AnalysisComplete());
+        EXPECT_NE(h.checker.Summary().find("missing_fixpipe_origin"), std::string::npos);
+        EXPECT_TRUE(h.reports.empty());
+    }
+}
+
+TEST(RacecheckTest, RemoteFixOriginIsResolvedWithinItsIssuingBlock)
+{
+    Harness h;
+    for (uint32_t group : {0U, 1U}) {
+        auto fix = FixToUb(1, 0);
+        fix.first.header.blockId = group;
+        fix.first.header.phyCoreId = group;
+        fix.second.header.blockId = 2 * group;
+        fix.second.header.phyCoreId = 18 + 2 * group;
+        h.Add(fix.first);
+        h.Add(fix.second);
+    }
+    h.Sync();
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    EXPECT_TRUE(h.reports.empty());
+}
+
+TEST(RacecheckTest, AivLocalBarrierCannotCompleteAnAicIssuedRemoteFix)
+{
+    Harness h;
+    auto fix = FixToUb(1, 0);
+    h.Add(fix.first);
+    h.Add(fix.second);
+    auto barrier = Flag(2, ACLSAN_DEVICE_SYNC_ACTION_UNKNOWN);
+    barrier.header = fix.second.header;
+    barrier.header.instrExecId = 2;
+    barrier.header.size = sizeof(barrier);
+    barrier.syncKind = ACLSAN_DEVICE_SYNC_KIND_UNKNOWN;
+    barrier.dstPipe = ACLSAN_DEVICE_PIPE_ALL;
+    h.Add(barrier);
+    auto read = fix.second;
+    read.header.instrExecId = 3;
+    read.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
+    read.instructionId = 0;
+    read.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+    h.Add(read);
     h.Sync();
     EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
     EXPECT_FALSE(h.reports.empty());
@@ -1714,6 +1870,139 @@ TEST(RacecheckTest, LaunchLimitDoesNotPreventClosingExistingBatch)
     h.Add(a);
     h.Sync();
     EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+}
+
+AclsanDeviceRegisterStateData FpcReset(uint64_t seq, bool reset = true)
+{
+    AclsanDeviceRegisterStateData data{};
+    data.header = UnitMemory(seq, true, 0).header;
+    data.header.size = sizeof(data);
+    data.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+    data.regId = ACLSAN_DEVICE_REGISTER_FPC;
+    data.value = reset ? UINT64_C(1) << 63 : 0;
+    return data;
+}
+
+TEST(RacecheckTest, FpcResetStartsNewOwnershipWithoutCompletingOldReads)
+{
+    for (bool reset : {false, true})
+        for (bool synchronize : {false, true}) {
+            Harness h;
+            std::vector<AclsanDeviceMemoryAccessData> memory{
+                UnitMemory(1, true, 3), UnitMemory(2, false, 2), UnitMemory(6, true, 3)};
+            std::vector<AclsanDeviceSyncData> sync;
+            if (synchronize) {
+                auto set =
+                    Flag(3, ACLSAN_DEVICE_SYNC_ACTION_SET, ACLSAN_DEVICE_PIPE_FIXPIPE, ACLSAN_DEVICE_PIPE_MATRIX);
+                set.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                auto wait = set;
+                wait.header.instrExecId = 4;
+                wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
+                sync = {set, wait};
+            }
+            const auto fpc = FpcReset(5, reset);
+            ASSERT_TRUE(
+                h.checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &fpc, h.reports));
+            for (auto a : memory)
+                h.Add(a);
+            for (auto a : sync)
+                h.Add(a);
+            h.Sync();
+            EXPECT_EQ(h.checker.AnalysisComplete(), reset) << h.checker.Summary();
+            EXPECT_EQ(h.reports.empty(), !reset || synchronize);
+            race::DependencyGraph graph;
+            std::set<std::string> reasons;
+            race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph, {fpc});
+            EXPECT_EQ(reasons.empty(), reset);
+            if (reset) {
+                const auto read = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& a) {
+                    return a.data.header.instrExecId == 2;
+                });
+                const auto write = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& a) {
+                    return a.data.header.instrExecId == 6;
+                });
+                ASSERT_NE(read, graph.accesses.end());
+                ASSERT_NE(write, graph.accesses.end());
+                EXPECT_EQ(
+                    graph.graph.Compare(read->node, write->node), synchronize ?
+                                                                      race::HappensBeforeGraph::Relation::Before :
+                                                                      race::HappensBeforeGraph::Relation::Unordered);
+            }
+        }
+}
+
+TEST(RacecheckTest, FpcResetDoesNotPublishOldDataToLaterFixOrCrossCores)
+{
+    for (uint32_t variant : {0U, 1U, 2U}) {
+        Harness h;
+        auto fpc = FpcReset(2);
+        if (variant == 1)
+            ++fpc.header.phyCoreId;
+        if (variant == 2)
+            fpc.header.deviceId = 1;
+        ASSERT_TRUE(
+            h.checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &fpc, h.reports));
+        h.Add(UnitMemory(1, true, 3));
+        if (variant == 0) {
+            // The old published state was cleared, so FIX cannot consume it.
+            h.Add(UnitMemory(3, false, 3));
+        } else {
+            h.Add(UnitMemory(2, false, 2));
+            h.Add(UnitMemory(3, true, 3));
+        }
+        h.Sync();
+        EXPECT_FALSE(h.checker.AnalysisComplete()) << h.checker.Summary();
+        EXPECT_TRUE(h.reports.empty());
+    }
+}
+
+TEST(RacecheckTest, FpcResetKeepsUnorderedUbWritesVisibleAndCanRepeat)
+{
+    Harness h;
+    h.Add(UnitMemory(1, true, 3));
+    const auto first = FixToUb(2, 2);
+    h.Add(first.first);
+    h.Add(first.second);
+    for (uint64_t seq : {3U, 4U}) {
+        auto fpc = FpcReset(seq);
+        ASSERT_TRUE(
+            h.checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &fpc, h.reports));
+    }
+    h.Add(UnitMemory(5, true, 3));
+    const auto second = FixToUb(6, 3);
+    h.Add(second.first);
+    h.Add(second.second);
+    h.Sync();
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    EXPECT_TRUE(std::any_of(h.reports.begin(), h.reports.end(), [](const auto& data) {
+        const auto& report = std::get<NpuCheckRacecheckReport>(data);
+        return report.kind == ConflictKind::WAW && report.current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    }));
+}
+TEST(RacecheckTest, FpcResetIsIsolatedByLaunchAndRejectsConflictingRecords)
+{
+    for (bool conflicting : {false, true}) {
+        Harness h;
+        auto fpc = FpcReset(2);
+        if (!conflicting)
+            ++fpc.header.launchId;
+        ASSERT_TRUE(
+            h.checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &fpc, h.reports));
+        if (conflicting) {
+            fpc.value = 0;
+            ASSERT_TRUE(
+                h.checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &fpc, h.reports));
+        }
+        h.Add(UnitMemory(1, true, 3));
+        h.Add(UnitMemory(3, false, 2));
+        h.Add(UnitMemory(4, true, 3));
+        h.Sync();
+        EXPECT_FALSE(h.checker.AnalysisComplete()) << h.checker.Summary();
+        EXPECT_TRUE(h.reports.empty());
+        if (conflicting) {
+            EXPECT_NE(h.checker.Summary().find("invalid_unit_flag_reset"), std::string::npos);
+        }
+    }
 }
 } // namespace
 } // namespace npucheck

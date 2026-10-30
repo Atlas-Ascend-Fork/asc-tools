@@ -517,6 +517,11 @@ void TestFixpipeConversionModesConsumeIndependentLoop3State()
     field.mSize = 32;
     state.loop3 = aclsan::Loop3ParamField{3, 9, 200};
     result = GmProjectionConverter{{}, state}.Convert(aclsan::MemoryInstructionField{field});
+    assert(result.status == aclsan::MemoryCbdataStatus::MISSING_REGISTER_STATE);
+    assert(result.requiredRegisterInstructionId == RawInstructionId(InstructionId::ChannelPara));
+
+    state.channelPara = aclsan::ChannelParaParamField{1ULL << 48};
+    result = GmProjectionConverter{{}, state}.Convert(aclsan::MemoryInstructionField{field});
     assert(result.status == aclsan::MemoryCbdataStatus::SUCCESS);
     const auto& columnMajor = result.data.front();
     assert(columnMajor.layoutKind == ACLSAN_MEM_LAYOUT_BLOCK_REPEAT);
@@ -857,6 +862,7 @@ void TestFixpipeB8ChannelMergeUsesThirtyTwoChannelGroups()
 
     field.nz2ndEnable = false;
     field.nz2dnEnable = true;
+    state.channelPara = aclsan::ChannelParaParamField{1ULL << 48};
     converted = GmProjectionConverter{{}, state}.Convert(aclsan::MemoryInstructionField{field});
     assert(converted.status == aclsan::MemoryCbdataStatus::SUCCESS);
     assert(converted.data.size() == 1);
@@ -926,6 +932,7 @@ void TestFixpipePacked4ConversionModeUsesLoop3State()
 
     field.nz2ndEnable = false;
     field.nz2dnEnable = true;
+    state.channelPara = aclsan::ChannelParaParamField{1ULL << 48};
     result = GmProjectionConverter{{}, state}.Convert(aclsan::MemoryInstructionField{field});
     assert(result.status == aclsan::MemoryCbdataStatus::SUCCESS);
     assert(result.data.size() == 10);

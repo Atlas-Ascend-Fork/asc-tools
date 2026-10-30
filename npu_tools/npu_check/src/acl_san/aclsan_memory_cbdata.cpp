@@ -1895,11 +1895,13 @@ private:
             state_.loop3->loopCount == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        // NZ2DN additionally needs CHANNEL_PARA, which is not captured yet.
-        if (f.nz2dnEnable || f.quantPost != 0U || f.reluPost != 0U || f.clipReluPost || f.loopEnhanceEnable ||
+        if (f.quantPost != 0U || f.reluPost != 0U || f.clipReluPost || f.loopEnhanceEnable ||
             f.loopEnhanceMergeEnable || f.eltwiseOp != 0U || f.eltwiseAntqEnable || f.winoPostEnable || f.brcbEnable ||
             f.c0PadEnable) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
+        }
+        if (f.nz2dnEnable) {
+            return FixDnRead(f, rowBytes);
         }
         if (!f.nz2ndEnable) {
             return Linear(
@@ -1939,6 +1941,44 @@ private:
                     return std::move(builder).Build();
                 }
             }
+        }
+        return std::move(builder).Build();
+    }
+
+    MemoryCbdataResult FixDnRead(const FixL0cToOutParamField& f, uint64_t rowBytes) const noexcept
+    {
+        if (!state_.loop3.has_value()) {
+            return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, uint64_t(InstructionId::Loop3Param)};
+        }
+        if (!state_.channelPara.has_value()) {
+            return {MemoryCbdataStatus::MISSING_REGISTER_STATE, {}, uint64_t(InstructionId::ChannelPara)};
+        }
+        constexpr uint32_t CHANNEL_C0_STRIDE_SHIFT = 48;
+        const uint64_t c0Stride = state_.channelPara->value >> CHANNEL_C0_STRIDE_SHIFT;
+        if (c0Stride == 0 || (f.unitFlag != 0 && c0Stride != 1)) {
+            return {MemoryCbdataStatus::INVALID_FIELD, {}};
+        }
+        const uint64_t columns = uint64_t(f.nSize) / CUBE_N_ALIGNMENT;
+        const uint64_t tail = uint64_t(f.nSize) % CUBE_N_ALIGNMENT;
+        MemoryCbdataBuilder builder(context_, {THIRTY_TWO_BIT_DATA, ACLSAN_DEVICE_SOURCE_FIXPIPE, BLOCK_TYPE_AIC});
+        const auto add = [&](uint64_t address, uint64_t groups, uint64_t bytes) {
+            auto descriptor = MemoryAccessDescriptorFactory::NdRead(
+                address, THIRTY_TWO_BIT_DATA, bytes,
+                std::array<uint64_t, SUPPORTED_NDDMA_DIMENSION_COUNT>{f.mSize, groups, state_.loop3->loopCount, 1, 1},
+                std::array<uint64_t, SUPPORTED_NDDMA_DIMENSION_COUNT>{
+                    rowBytes * c0Stride, rowBytes * f.loopSrtStride, rowBytes * state_.loop3->srcStride, 0, 0});
+            descriptor.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L0C;
+            return builder.Add(std::move(descriptor));
+        };
+        if (columns != 0 && !add(f.srcAddr, columns, rowBytes)) {
+            return std::move(builder).Build();
+        }
+        const uint64_t tailOffset = columns * rowBytes * f.loopSrtStride;
+        if (tail != 0 && f.srcAddr > UINT64_MAX - tailOffset) {
+            return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
+        }
+        if (tail != 0 && !add(f.srcAddr + tailOffset, 1, tail * sizeof(uint32_t))) {
+            return std::move(builder).Build();
         }
         return std::move(builder).Build();
     }
@@ -2111,8 +2151,7 @@ public:
         if (f.dualDstCtl == DUAL_DST_MODE_FIRST && (fix.mSize == NO_ACCESS_COUNT || fix.mSize % 2U != 0)) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
-        if (f.dualDstCtl == DUAL_DST_MODE_SECOND &&
-            fix.nSize % (fix.nz2ndEnable ? TWO_ACCESS_COUNT : CUBE_L1_BLOCK_BYTES) != 0) {
+        if (f.dualDstCtl == DUAL_DST_MODE_SECOND && fix.nSize % (TWO_ACCESS_COUNT * CUBE_N_ALIGNMENT) != 0) {
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
         if (f.dualDstCtl != DUAL_DST_MODE_NONE &&

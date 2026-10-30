@@ -218,11 +218,37 @@ void AclsanCallbackDispatcher::DispatchDeviceBarrier(const AclsanDeviceBarrierDa
 }
 } // namespace aclsan
 
+void TestFixStateCollection()
+{
+    registerStates.clear();
+    const auto& decoder = dav3510::GetDeviceInstructionDecoder();
+    dav3510::Dav3510RegisterStateManager registers(42);
+    auto channel = Record(InstructionId::ChannelPara, 0x300);
+    channel.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    channel.phyCoreId = 0;
+    channel.record.args[0] = 3ULL << 48;
+    auto fpc = channel;
+    fpc.record.instrId = static_cast<uint32_t>(InstructionId::SetFpc);
+    fpc.instrExecId = 4;
+    fpc.record.args[0] = 1ULL << 63;
+    DispatchTraceRecords({channel}, decoder, nullptr, &registers);
+    DispatchTraceRecords({fpc}, decoder, nullptr, &registers);
+    assert(registerStates.size() == 2);
+    assert(registerStates[0].regId == ACLSAN_DEVICE_REGISTER_CHANNEL_PARA);
+    assert(registerStates[0].value == channel.record.args[0]);
+    assert(registerStates[1].regId == ACLSAN_DEVICE_REGISTER_FPC);
+    assert(registerStates[1].value == fpc.record.args[0]);
+    const dav3510::Dav3510CoreKey key{channel.blockType, channel.blockId, channel.phyCoreId, channel.deviceId};
+    assert(registers.Get(key) && registers.Get(key)->channelPara);
+    assert(registers.Get(key)->channelPara->value == channel.record.args[0]);
+}
+
 int main()
 {
     plog_test::SetApi({EnableLog, CaptureLog});
     TestPushPbAndVfCollection();
     TestVectorMaskCollection();
+    TestFixStateCollection();
     plog_test::ResetApi();
     std::cout << "PUSH_PB/VF/vector_mask collection checks passed\n";
 }

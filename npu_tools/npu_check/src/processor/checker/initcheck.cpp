@@ -782,6 +782,9 @@ void Initcheck::FlushMemoryAccesses(void* stream, CheckerReportList& reports)
             return true;
         });
     pendingSyncEvents_.erase(syncEnd, pendingSyncEvents_.end());
+    for (const auto& entry : unitFlagRegisters_)
+        if (selected(entry.first))
+            batches[entry.first];
     for (const auto& entry : replayReasons_)
         if (selected(entry.first))
             batches[entry.first];
@@ -796,6 +799,7 @@ void Initcheck::FlushMemoryAccesses(void* stream, CheckerReportList& reports)
         }
         launchStreams_.erase(entry.first);
         replayReasons_.erase(entry.first);
+        unitFlagRegisters_.erase(entry.first);
         for (auto it = initializedRegisters_.begin(); it != initializedRegisters_.end();)
             if (std::get<1>(it->first) == entry.first)
                 it = initializedRegisters_.erase(it);
@@ -821,7 +825,7 @@ void Initcheck::ReplayLaunch(
     using namespace race;
     auto& reasons = replayReasons_[launchId];
     const Limits limits;
-    if (memory.size() + sync.size() > limits.events)
+    if (memory.size() + sync.size() + unitFlagRegisters_[launchId].size() > limits.events)
         reasons.insert("event_budget");
     // A pending stream's traces may not have arrived yet. Without a stream
     // dependency, neither completion order proves which kernel initialized GM.
@@ -875,7 +879,7 @@ void Initcheck::ReplayLaunch(
     } localTablesGuard{memoryInitcheck_, device.value_or(0), launchId};
     DependencyGraph dependency(limits);
     if (reasons.empty())
-        BuildDependencyGraph(memory, sync, {}, limits, reasons, dependency);
+        BuildDependencyGraph(memory, sync, {}, limits, reasons, dependency, unitFlagRegisters_[launchId]);
     auto& graph = dependency.graph;
     auto& accesses = dependency.accesses;
     // Canonical tool ordering puts memcheck before initcheck. Bounds/lifetime
@@ -1115,6 +1119,8 @@ RegisterDescription DescribeRegister(uint32_t id)
         {"dma_loop2_stride_gm_to_cbuf", "set_loop2_stride_outtol1"},
         {"set_padding", "set_padding"},
         {"ctrl", "set_ctrl"},
+        {"channel_para", "set_channel_para"},
+        {"fpc", "set_fpc"},
     };
     static_assert(std::size(descriptions) == ACLSAN_DEVICE_REGISTER_COUNT);
     return id < std::size(descriptions) ? descriptions[id] : RegisterDescription{"unknown", "unknown"};
@@ -1250,6 +1256,14 @@ bool Initcheck::OnRegisterState(const AclsanDeviceRegisterStateData& data)
     }
     const CoreKey key{data.header.deviceId, data.header.launchId, data.header.blockType, data.header.blockId};
     initializedRegisters_[key] |= UINT64_C(1) << data.regId;
+    if (data.regId == ACLSAN_DEVICE_REGISTER_FPC) {
+        constexpr size_t MAX_UNIT_FLAG_REGISTERS = 100000;
+        auto& registers = unitFlagRegisters_[data.header.launchId];
+        if (registers.size() >= MAX_UNIT_FLAG_REGISTERS)
+            replayReasons_[data.header.launchId].insert("event_budget");
+        else
+            registers.push_back(data);
+    }
     ++stats_.registerWrites;
     return true;
 }
@@ -1451,9 +1465,9 @@ bool Initcheck::HasErrors() const { return stats_.errors != 0; }
 bool Initcheck::AnalysisComplete() const
 {
     return pendingLaunchStreams_.empty() && pendingMemoryAccesses_.empty() && pendingSyncEvents_.empty() &&
-           replayReasons_.empty() && replayFailures_.empty() && stats_.malformedEvents == 0 &&
-           stats_.failedLaunches == 0 && stats_.failedSynchronizations == 0 && stats_.failedHostWrites == 0 &&
-           memory_.Complete();
+           unitFlagRegisters_.empty() && replayReasons_.empty() && replayFailures_.empty() &&
+           stats_.malformedEvents == 0 && stats_.failedLaunches == 0 && stats_.failedSynchronizations == 0 &&
+           stats_.failedHostWrites == 0 && memory_.Complete();
 }
 
 std::string Initcheck::Summary() const

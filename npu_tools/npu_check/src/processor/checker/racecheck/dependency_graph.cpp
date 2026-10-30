@@ -157,6 +157,8 @@ class DependencyGraphBuilder {
     std::map<Instruction, Event> events;
     std::vector<Access>& accesses;
     std::map<Instruction, size_t> instructionStarts;
+    std::map<Instruction, Instruction> remoteFixpipeOrigins;
+    UnitResetHistory unitResets;
     // Prefix/acquire joins do not imply completion order within a pipeline.
     std::map<Pipe, std::optional<size_t>> prefix, acquired;
     // Only S/V/M complete in issue order within one core.
@@ -168,7 +170,7 @@ public:
     DependencyGraphBuilder(
         std::vector<AclsanDeviceMemoryAccessData>& memoryData, std::vector<AclsanDeviceSyncData>& syncData,
         const std::map<Instruction, std::set<uint32_t>>& skipped, const Limits& limits, std::set<std::string>& failures,
-        DependencyGraph& output)
+        DependencyGraph& output, const std::vector<AclsanDeviceRegisterStateData>& registers)
         : memory(memoryData),
           sync(syncData),
           skippedFragments(skipped),
@@ -176,12 +178,15 @@ public:
           limits_(limits),
           graph(output.graph),
           accesses(output.accesses)
-    {}
+    {
+        unitResets = UnitFlagResets(registers, reasons);
+    }
 
     void Run()
     {
         NormalizeEvents();
         ExpandUnitFlagAccesses();
+        LinkRemoteFixpipeEndpoints();
         RouteCrossCoreNotifications();
         BuildNotificationTokens();
         BuildLocalEdges();
@@ -316,7 +321,7 @@ private:
         std::vector<UnitAccess> reads;
     };
     struct UnitPartition {
-        std::map<std::pair<Domain, uint64_t>, UnitQueues> units;
+        std::map<std::tuple<Domain, uint64_t, uint64_t>, UnitQueues> units;
         std::map<Domain, std::set<uint64_t>> boundaries;
         std::map<std::pair<Instruction, uint64_t>, size_t> nodes;
         std::vector<Access> expanded;
@@ -361,7 +366,9 @@ private:
         }
         partition.expanded.push_back(Access{a, node, ranges});
         if (unit && fresh) {
-            auto& q = partition.units[{DomainOf(a.header), ranges.front().begin / unitBytes}];
+            auto& q =
+                partition
+                    .units[{DomainOf(a.header), ranges.front().begin / unitBytes, UnitFlagEpoch(a.header, unitResets)}];
             auto& queue = a.header.pipeline == ACLSAN_DEVICE_PIPE_MATRIX ? q.writes : q.reads;
             queue.push_back({node, a.unitFlag});
         }
@@ -475,6 +482,28 @@ private:
         MatchUnitFlags(partition);
     }
 
+    void LinkRemoteFixpipeEndpoints()
+    {
+        remoteFixpipeOrigins = RemoteFixpipeOrigins(memory, reasons);
+        for (const auto& endpoint : remoteFixpipeOrigins) {
+            const auto origin = events.find(endpoint.second);
+            const auto remote = events.find(endpoint.first);
+            if (origin == events.end() || remote == events.end() || origin->second.sync || remote->second.sync) {
+                reasons.insert("missing_fixpipe_origin");
+                continue;
+            }
+            auto start = instructionStarts.find(endpoint.second);
+            if (start == instructionStarts.end()) {
+                start = instructionStarts.emplace(endpoint.second, graph.AddNode()).first;
+                AddEdge(start->second, origin->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
+            }
+            // Completion of FIX includes every destination, while the L0C unit
+            // release remains independent of the UB write's completion.
+            AddEdge(start->second, remote->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
+            AddEdge(remote->second.node, origin->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
+        }
+    }
+
     void RouteCrossCoreNotifications()
     {
         // Route notifications to actual receiver counters before adding HB edges.
@@ -581,6 +610,11 @@ private:
         for (const auto& pair : events) {
             if (graphExhausted)
                 break;
+            // This is an AIC-issued FIX completion with AIV storage ownership,
+            // not an instruction issued in the AIV pipeline. An AIV-local barrier
+            // cannot acquire it; ordering requires the issuing AIC's notification.
+            if (remoteFixpipeOrigins.count(pair.first) != 0)
+                continue;
             const Domain domain = std::get<0>(pair.first);
             const auto& e = pair.second;
             if (!e.sync) {
@@ -765,8 +799,9 @@ private:
 void race::BuildDependencyGraph(
     std::vector<AclsanDeviceMemoryAccessData>& memory, std::vector<AclsanDeviceSyncData>& sync,
     const std::map<Instruction, std::set<uint32_t>>& skippedFragments, const Limits& limits,
-    std::set<std::string>& reasons, DependencyGraph& output)
+    std::set<std::string>& reasons, DependencyGraph& output,
+    const std::vector<AclsanDeviceRegisterStateData>& registers)
 {
-    DependencyGraphBuilder(memory, sync, skippedFragments, limits, reasons, output).Run();
+    DependencyGraphBuilder(memory, sync, skippedFragments, limits, reasons, output, registers).Run();
 } // namespace
 } // namespace npucheck

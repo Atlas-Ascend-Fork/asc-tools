@@ -386,15 +386,15 @@ TEST(UbMemory, DualTargetNz2NdPreservesRowsAndMatrixStrideOnEachUb)
     for (uint32_t dual : {1u, 2u}) {
         const auto r = ConvertRawWithContext(
             170,
-            {0x400, 0x800, (30ULL << 4) | (48ULL << 16) | (64ULL << 32), 64ULL | (uint64_t(dual) << 16) | (1ULL << 43)},
+            {0x400, 0x800, (32ULL << 4) | (48ULL << 16) | (64ULL << 32), 64ULL | (uint64_t(dual) << 16) | (1ULL << 43)},
             context, state);
         ASSERT_EQ(r.status, MemoryCbdataStatus::SUCCESS);
-        ASSERT_EQ(r.data.size(), 6u);
-        // Four L0C fragments belong to the AIC; each UB target has its own
+        ASSERT_EQ(r.data.size(), 4u);
+        // Two batched L0C footprints belong to the AIC; each UB target has its own
         // sequence, even though its result was merged before the outer merge.
         for (size_t i = 0; i < r.data.size(); ++i) {
-            EXPECT_EQ(r.data[i].accessIndex, i < 4 ? i : 0u);
-            EXPECT_EQ(r.data[i].accessCount, i < 4 ? 4u : 1u);
+            EXPECT_EQ(r.data[i].accessIndex, i < 2 ? i : 0u);
+            EXPECT_EQ(r.data[i].accessCount, i < 2 ? 2u : 1u);
         }
         size_t targets = 0;
         for (const auto& a : r.data) {
@@ -402,7 +402,7 @@ TEST(UbMemory, DualTargetNz2NdPreservesRowsAndMatrixStrideOnEachUb)
                 continue;
             }
             ASSERT_EQ(a.layoutKind, ACLSAN_MEM_LAYOUT_ND_AFFINE);
-            EXPECT_EQ(a.layout.ndAffine.elementBytes, dual == 1 ? 120u : 60u);
+            EXPECT_EQ(a.layout.ndAffine.elementBytes, dual == 1 ? 128u : 64u);
             EXPECT_EQ(a.layout.ndAffine.dims[0], dual == 1 ? 24u : 48u);
             EXPECT_EQ(a.layout.ndAffine.dims[1], 2u);
             EXPECT_EQ(a.layout.ndAffine.strides[0], 256);
@@ -441,6 +441,26 @@ TEST(UbMemory, UnknownTopologyAndReservedDualModeNeverInventUbOwners)
     EXPECT_TRUE(reserved.requiresIncompleteEvent);
     ASSERT_EQ(reserved.data.size(), 1u);
     EXPECT_EQ(reserved.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L0C);
+}
+
+TEST(UbMemory, DualTargetNz2NdRequiresWholeNzColumnsWhenSplittingN)
+{
+    MemoryCbdataContext context{};
+    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    context.physicalCoreCount = 108;
+    for (uint32_t n : {2U, 16U, 30U, 48U}) {
+        MemoryRegisterState state{};
+        state.loop3 = Loop3ParamField{1, 0, 0};
+        const auto result = ConvertRawWithContext(
+            170,
+            {0x400, 0x800, (uint64_t(n) << 4) | (48ULL << 16) | (64ULL << 32), 64ULL | (2ULL << 16) | (1ULL << 43)},
+            context, state);
+        EXPECT_TRUE(result.requiresIncompleteEvent) << n;
+        EXPECT_NE(result.status, MemoryCbdataStatus::SUCCESS) << n;
+        EXPECT_TRUE(std::none_of(result.data.begin(), result.data.end(), [](const auto& access) {
+            return access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
+        }));
+    }
 }
 
 TEST(UbMemory, CompactGmToUbPadsWholeBurstGroupOnce)
@@ -632,4 +652,5 @@ TEST(UbMemory, UbToUbUsesFullSixteenBitBurstCount)
         }
     }
 }
+
 } // namespace

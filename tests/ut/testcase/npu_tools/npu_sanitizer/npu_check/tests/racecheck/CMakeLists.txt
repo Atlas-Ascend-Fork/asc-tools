@@ -95,6 +95,7 @@ add_test(NAME racecheck_render_tests COMMAND racecheck_render_tests)
 add_executable(racecheck_integration_tests
   ../gtest_main.cpp
   ../racecheck_test.cpp ../happens_before_graph_test.cpp ../memory_access_state_test.cpp
+  "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/dependency_graph.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/sync_analysis.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/happens_before_graph.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/types.cpp"

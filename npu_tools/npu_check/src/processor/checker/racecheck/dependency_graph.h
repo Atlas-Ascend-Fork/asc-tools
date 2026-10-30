@@ -34,7 +34,8 @@ struct DependencyGraph {
 void BuildDependencyGraph(
     std::vector<AclsanDeviceMemoryAccessData>& memory, std::vector<AclsanDeviceSyncData>& sync,
     const std::map<Instruction, std::set<uint32_t>>& skippedFragments, const Limits& limits,
-    std::set<std::string>& reasons, DependencyGraph& output);
+    std::set<std::string>& reasons, DependencyGraph& output,
+    const std::vector<AclsanDeviceRegisterStateData>& registers = {});
 } // namespace npucheck::race
 
 #endif

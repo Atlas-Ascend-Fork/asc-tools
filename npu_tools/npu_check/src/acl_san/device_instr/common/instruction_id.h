@@ -149,10 +149,12 @@ enum class InstructionId : uint32_t {
     NdDmaOutToUbufB8 = 87,          // 已完成：NdDmaOutToUbufParamField
     NdDmaOutToUbufB16 = 88,         // 已完成：NdDmaOutToUbufParamField
     NdDmaOutToUbufB32 = 89,         // 已完成：NdDmaOutToUbufParamField
-    Loop3Param = 90,                // 已完成：Loop3ParamField（状态）
-    SetL12DB16 = 149,               // SET_L1_2D.b16
-    SetL12DB32 = 150,               // SET_L1_2D.b32
-    SetMte2NzPara = 399,            // 已完成：Mte2NzParamField（状态）
+    ChannelPara = 123,
+    SetFpc = 161,
+    Loop3Param = 90,     // 已完成：Loop3ParamField（状态）
+    SetL12DB16 = 149,    // SET_L1_2D.b16
+    SetL12DB32 = 150,    // SET_L1_2D.b32
+    SetMte2NzPara = 399, // 已完成：Mte2NzParamField（状态）
 
     // MTE3
     CopyUbufToGmAlignV2 = 83, // 已完成：CopyUbufToGmAlignV2ParamField
@@ -324,6 +326,8 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::NdDmaOutToUbufB8:
         case InstructionId::NdDmaOutToUbufB16:
         case InstructionId::NdDmaOutToUbufB32:
+        case InstructionId::ChannelPara:
+        case InstructionId::SetFpc:
         case InstructionId::Loop3Param:
         case InstructionId::SetL12DB16:
         case InstructionId::SetL12DB32:

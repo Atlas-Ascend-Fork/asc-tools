@@ -197,8 +197,14 @@ private:
                         break;
                 }
             }
-            access.regDependencyMask0 = dependencies.mask0;
-            access.regDependencyMask1 = dependencies.mask1;
+            // Cross-core endpoints describe the storage owner, not a second
+            // consumer of the issuing core's configuration registers. The
+            // issuing endpoint (or its conversion-failure marker) checks them.
+            const bool issuingCore = access.header.blockType == parsed.blockType &&
+                                     access.header.blockId == parsed.blockId &&
+                                     access.header.phyCoreId == parsed.phyCoreId;
+            access.regDependencyMask0 = issuingCore ? dependencies.mask0 : 0;
+            access.regDependencyMask1 = issuingCore ? dependencies.mask1 : 0;
         }
         // MX loads currently decode only their L1 source. Keep the missing L0
         // destination visible as incomplete coverage until its layout is decoded.

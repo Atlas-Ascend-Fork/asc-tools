@@ -431,6 +431,11 @@ void DispatchTraceRecords(
             registerState.Update(key, *value);
         } else if (const auto* value = std::get_if<Mte2NzParamField>(&decoded->params)) {
             registerState.Update(key, *value);
+        } else if (const auto* value = std::get_if<FpcParamField>(&decoded->params)) {
+            // FPC is published as a state event; it does not change address reconstruction.
+            (void)value;
+        } else if (const auto* value = std::get_if<ChannelParaParamField>(&decoded->params)) {
+            registerState.Update(key, *value);
         } else if (const auto* value = std::get_if<Loop3ParamField>(&decoded->params)) {
             registerState.Update(key, *value);
         } else if (const auto* value = std::get_if<DmaLoopSizeParamField>(&decoded->params)) {
@@ -468,6 +473,7 @@ void DispatchTraceRecords(
             memoryState.ndDmaLoopStrides = state->ndDmaLoopStrides;
             memoryState.mte2Nz = state->mte2Nz;
             memoryState.loop3 = state->loop3;
+            memoryState.channelPara = state->channelPara;
             memoryState.dmaLoopSizes = state->dmaLoopSizes;
             memoryState.dmaLoopStrides = state->dmaLoopStrides;
         }

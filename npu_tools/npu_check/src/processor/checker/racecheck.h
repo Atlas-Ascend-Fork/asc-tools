@@ -90,6 +90,7 @@ private:
         std::string name;
         std::vector<AclsanDeviceMemoryAccessData> memory;
         std::vector<AclsanDeviceSyncData> sync;
+        std::vector<AclsanDeviceRegisterStateData> registers;
         // Preserve fragment identity only, so an intentionally skipped fragment
         // is not mistaken for a missing callback from the same instruction.
         std::map<race::Instruction, std::set<uint32_t>> skippedFragments;

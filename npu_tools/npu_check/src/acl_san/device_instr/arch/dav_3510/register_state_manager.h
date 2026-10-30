@@ -41,6 +41,7 @@ struct Dav3510CoreRegisterState {
     std::array<std::optional<NdDmaLoopStrideParamField>, NDDMA_LOOP_COUNT> ndDmaLoopStrides{};
     std::optional<Mte2NzParamField> mte2Nz;
     std::optional<Loop3ParamField> loop3;
+    std::optional<ChannelParaParamField> channelPara;
     std::array<std::optional<DmaLoopSizeParamField>, DMA_DIRECTION_COUNT> dmaLoopSizes{};
     std::array<std::array<std::optional<DmaLoopStrideParamField>, DMA_STRIDE_LOOP_COUNT>, DMA_DIRECTION_COUNT>
         dmaLoopStrides{};
@@ -61,6 +62,7 @@ public:
     void Update(const Dav3510CoreKey& key, const NdDmaLoopStrideParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const Mte2NzParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const Loop3ParamField& params) noexcept;
+    void Update(const Dav3510CoreKey& key, const ChannelParaParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const DmaLoopSizeParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const DmaLoopStrideParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const SetPaddingParamField& params) noexcept;

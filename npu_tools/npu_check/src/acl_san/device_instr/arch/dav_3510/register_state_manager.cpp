@@ -130,6 +130,11 @@ void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const Mte2Nz
         static_cast<unsigned int>(params.matrixNum));
 }
 
+void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const ChannelParaParamField& params) noexcept
+{
+    states_[key].channelPara = params;
+}
+
 void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const Loop3ParamField& params) noexcept
 {
     states_[key].loop3 = params;

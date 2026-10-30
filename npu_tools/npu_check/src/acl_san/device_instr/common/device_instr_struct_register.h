@@ -70,6 +70,16 @@ struct CtrlRegisterParamField {
     uint64_t value = 0;
 };
 
+// CHANNEL_PARA[63:48] supplies the NZ2DN source row stride.
+struct ChannelParaParamField {
+    uint64_t value = 0;
+};
+
+// FPC[63] clears all L0C UnitFlag ownership bits when set.
+struct FpcParamField {
+    uint64_t value = 0;
+};
+
 struct Mte2SourceParamField {
     int64_t srcStride = 0;
 };

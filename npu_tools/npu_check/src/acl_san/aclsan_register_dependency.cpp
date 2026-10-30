@@ -11,6 +11,7 @@
 #include "aclsan_register_dependency.h"
 
 #include "device_instr/common/instruction_id.h"
+#include "device_instr/arch/dav_3510/dma_layout.h"
 
 #include <array>
 #include <type_traits>
@@ -43,6 +44,10 @@ std::optional<AclsanDeviceRegisterId> RegisterId(const DecodedInstruction& decod
             if constexpr (
                 std::is_same_v<Field, VectorMaskParamField> || std::is_same_v<Field, VectorMaskWriteParamField>) {
                 return ACLSAN_DEVICE_REGISTER_VECTOR_MASK;
+            } else if constexpr (std::is_same_v<Field, ChannelParaParamField>) {
+                return ACLSAN_DEVICE_REGISTER_CHANNEL_PARA;
+            } else if constexpr (std::is_same_v<Field, FpcParamField>) {
+                return ACLSAN_DEVICE_REGISTER_FPC;
             } else if constexpr (std::is_same_v<Field, CtrlRegisterParamField>) {
                 return ACLSAN_DEVICE_REGISTER_CTRL;
             } else if constexpr (std::is_same_v<Field, Mte2SourceParamField>) {
@@ -177,8 +182,26 @@ RegisterDependencyMask ResolveRegisterDependencies(
                     if (value.nz2ndEnable || value.nz2dnEnable) {
                         dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3);
                     }
+                    if (value.nz2dnEnable) {
+                        dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_CHANNEL_PARA);
+                    }
                 }
                 return dependencies;
+            } else if constexpr (std::is_same_v<Field, LocalMemoryTransferParamField>) {
+                const bool fix = value.kind == LocalMemoryTransferKind::FixL0cToCbufF32 ||
+                                 value.kind == LocalMemoryTransferKind::FixL0cToCbufS32 ||
+                                 value.kind == LocalMemoryTransferKind::FixL0cToUbufF32 ||
+                                 value.kind == LocalMemoryTransferKind::FixL0cToUbufS32;
+                using Layout = dav3510::FixL0cToOutLayout;
+                if (fix && ExtractBitRange(value.config0, Layout::N_SIZE) != NO_TRANSFER_COUNT &&
+                    ExtractBitRange(value.config0, Layout::M_SIZE) != NO_TRANSFER_COUNT &&
+                    (ExtractBitRange(value.config1, Layout::NZ2ND_ENABLE) != 0U ||
+                     ExtractBitRange(value.config1, Layout::NZ2DN_ENABLE) != 0U)) {
+                    const auto channel = ExtractBitRange(value.config1, Layout::NZ2DN_ENABLE) != 0U ?
+                                             RegisterBit(ACLSAN_DEVICE_REGISTER_CHANNEL_PARA) :
+                                             0;
+                    return {RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3) | channel, 0};
+                }
             }
             return {};
         },

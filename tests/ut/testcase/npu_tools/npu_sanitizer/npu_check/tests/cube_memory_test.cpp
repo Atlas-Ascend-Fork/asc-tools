@@ -16,6 +16,9 @@
 #include "aclsan_active_probe_plan.h"
 #include "device_instr/arch/dav_3510/register_state_manager.h"
 #include <algorithm>
+#include "checker/racecheck/types.h"
+#include "aclsan_register_dependency.h"
+#include <set>
 
 namespace {
 using namespace aclsan;
@@ -992,4 +995,91 @@ TEST(CubeMemory, L1ToBtAndFbCallbackToMemcheck)
         EXPECT_EQ(reports[0].access.memorySpace, npucheck::NpuCheckReportMemorySpace::L1);
         EXPECT_EQ(reports[0].access.address, 0x80000u);
     }
+}
+
+TEST(CubeMemory, Nz2DnMatchesDocumentedByteFootprintForAllDestinations)
+{
+    for (uint32_t id : {91U, 92U, 168U, 169U, 170U, 171U})
+        for (uint32_t n : {7U, 16U, 30U, 32U})
+            for (uint32_t c0 : {1U, 3U}) {
+                SCOPED_TRACE(::testing::Message() << id << '/' << n << '/' << c0);
+                MemoryRegisterState state{};
+                state.ctrl = CtrlRegisterParamField{0};
+                state.loop3 = Loop3ParamField{2, 240, 4096};
+                state.channelPara = ChannelParaParamField{uint64_t(c0) << 48};
+                const auto result = ConvertRaw(
+                    id, {0x400, 0x800, (uint64_t(n) << 4) | (5ULL << 16) | (80ULL << 32), 80ULL | (1ULL << 62)}, state);
+                ASSERT_EQ(result.status, MemoryCbdataStatus::SUCCESS);
+                EXPECT_FALSE(result.requiresIncompleteEvent);
+                std::set<uint64_t> actualSource, actualDestination, expectedSource, expectedDestination;
+                for (const auto& a : result.data) {
+                    std::vector<npucheck::race::Interval> ranges;
+                    ASSERT_TRUE(npucheck::race::Normalize(a, 1U << 20U, ranges));
+                    auto& bytes = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C ? actualSource : actualDestination;
+                    for (auto range : ranges)
+                        for (uint64_t byte = range.begin; byte < range.end; ++byte)
+                            bytes.insert(byte);
+                }
+                for (uint64_t h = 0; h < 2; ++h)
+                    for (uint64_t column = 0; column < n; ++column)
+                        for (uint64_t row = 0; row < 5; ++row)
+                            for (uint64_t byte = 0; byte < 4; ++byte) {
+                                expectedSource.insert(
+                                    0x800 + h * 64 * 240 + (column / 16) * 64 * 80 + (column % 16) * 4 + row * 64 * c0 +
+                                    byte);
+                                expectedDestination.insert(0x400 + h * 4 * 4096 + column * 4 * 80 + row * 4 + byte);
+                            }
+                EXPECT_EQ(actualSource, expectedSource);
+                EXPECT_EQ(actualDestination, expectedDestination);
+            }
+}
+
+TEST(CubeMemory, Nz2DnMissingOrIllegalChannelStateCannotClaimCompleteCoverage)
+{
+    for (uint32_t id : {91U, 168U, 170U})
+        for (uint32_t mode : {0U, 1U, 2U, 3U}) {
+            MemoryRegisterState state{};
+            state.ctrl = CtrlRegisterParamField{0};
+            state.loop3 = Loop3ParamField{1, 0, 0};
+            if (mode != 0)
+                state.channelPara = ChannelParaParamField{uint64_t(mode == 1 ? 0 : mode == 2 ? 2 : 1) << 48};
+            const uint64_t flag = mode == 2 ? 3ULL << 32 : 0;
+            const auto result = ConvertRaw(
+                id,
+                {0x400, mode == 3 ? UINT64_MAX - 3 : 0x800, (30ULL << 4) | (16ULL << 16) | (64ULL << 32),
+                 80ULL | (1ULL << 62) | flag},
+                state);
+            EXPECT_NE(result.status, MemoryCbdataStatus::SUCCESS);
+            EXPECT_NE(result.status, MemoryCbdataStatus::NO_ACCESS);
+        }
+}
+
+TEST(CubeMemory, ChannelAndFpcDecodeKeepValuesAndRegisterStateIsolation)
+{
+    for (const auto item :
+         {std::pair<uint32_t, uint32_t>{123, ACLSAN_DEVICE_REGISTER_CHANNEL_PARA}, {161, ACLSAN_DEVICE_REGISTER_FPC}}) {
+        ParsedTraceRecord raw{};
+        raw.record.instrId = item.first;
+        raw.record.args[0] = UINT64_C(0xabcd000000000123);
+        raw.launchId = 1;
+        raw.instrExecId = 2;
+        raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+        ASSERT_TRUE(decoded);
+        const auto callback = MakeRegisterStateData(raw, *decoded);
+        ASSERT_TRUE(callback);
+        EXPECT_EQ(callback->regId, item.second);
+        EXPECT_EQ(callback->value, raw.record.args[0]);
+    }
+    dav3510::Dav3510RegisterStateManager registers(1);
+    const dav3510::Dav3510CoreKey first{ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE, 1, 2, 0};
+    auto other = first;
+    ++other.phyCoreId;
+    registers.Update(first, ChannelParaParamField{3ULL << 48});
+    ASSERT_TRUE(registers.Get(first));
+    ASSERT_TRUE(registers.Get(first)->channelPara);
+    EXPECT_EQ(registers.Get(first)->channelPara->value, 3ULL << 48);
+    EXPECT_FALSE(registers.Get(other));
+    registers.Reset();
+    EXPECT_FALSE(registers.Get(first));
 }

@@ -9,7 +9,9 @@
  */
 
 #include "checker/racecheck.h"
+#include "checker/initcheck.h"
 #include "aclsan_device_data.h"
+#include "aclsan_register_dependency.h"
 #include "device_instr/arch/dav_3510/decoder.h"
 #include <gtest/gtest.h>
 
@@ -78,6 +80,201 @@ TEST(RacecheckTranslation, UnitFlagModesTravelWithMemoryBehavior)
                 l0c |= access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C;
             }
             EXPECT_TRUE(l0c) << id;
+        }
+    }
+}
+
+TEST(RacecheckTranslation, LocalFixLayoutDependsOnLoop3OnlyWhenActive)
+{
+    for (uint32_t id : {168U, 169U, 170U, 171U})
+        for (uint32_t layout : {0U, 43U, 62U})
+            for (bool active : {false, true}) {
+                ParsedTraceRecord raw{};
+                raw.record.instrId = id;
+                raw.record.args[2] = (32ULL << 4) | (uint64_t(active ? 16 : 0) << 16) | (64ULL << 32);
+                raw.record.args[3] = 64ULL | (layout == 0 ? 0 : 1ULL << layout);
+                auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+                ASSERT_TRUE(decoded.has_value());
+                const MemoryInstructionField field{std::get<LocalMemoryTransferParamField>(decoded->params)};
+                const auto dependency = ResolveRegisterDependencies(field, {});
+                const uint64_t expected =
+                    active && layout != 0 ? RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3) |
+                                                (layout == 62 ? RegisterBit(ACLSAN_DEVICE_REGISTER_CHANNEL_PARA) : 0) :
+                                            0;
+                EXPECT_EQ(dependency.mask0, expected);
+                EXPECT_EQ(dependency.mask1, 0U);
+            }
+}
+
+TEST(RacecheckTranslation, DecodedFixToUbUsesAicSynchronizationForEveryDestination)
+{
+    for (uint32_t id : {170U, 171U})
+        for (uint32_t flag : {0U, 3U})
+            for (uint32_t destination : {0U, 1U, 2U, 3U})
+                for (uint32_t layout : {0U, 43U, 62U})
+                    for (bool synchronize : {false, true}) {
+                        if (layout == 62 && destination >= 2)
+                            continue;
+                        SCOPED_TRACE(
+                            ::testing::Message()
+                            << id << '/' << flag << '/' << destination << '/' << layout << '/' << synchronize);
+                        npucheck::Racechecker checker;
+                        npucheck::CheckerReportList reports;
+                        AclsanLaunchData launch{};
+                        launch.launchId = 994;
+                        launch.common = {ACLSAN_API_VERSION, sizeof(launch)};
+                        ASSERT_TRUE(
+                            checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+                        ParsedTraceRecord raw{};
+                        raw.launchId = 994;
+                        raw.instrExecId = 2;
+                        raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                        raw.physicalCoreCount = 108;
+                        raw.record.instrId = id;
+                        raw.record.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
+                        raw.record.args[0] = 0x400;
+                        raw.record.args[1] = 0x800;
+                        raw.record.args[2] = (32ULL << 4) | (16ULL << 16) | (64ULL << 32);
+                        // 0/1: single selected subblock; 2/3: split M/N across both.
+                        raw.record.args[3] = 64 | (uint64_t(flag) << 32) | (destination == 1 ? 1ULL << 18 : 0) |
+                                             (uint64_t(destination >= 2 ? destination - 1 : 0) << 16) |
+                                             (layout == 0 ? 0 : 1ULL << layout);
+                        MemoryRegisterState state{};
+                        state.loop3 = Loop3ParamField{1, 0, 0};
+                        state.channelPara = ChannelParaParamField{1ULL << 48};
+                        auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+                        ASSERT_TRUE(decoded.has_value());
+                        auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded, state);
+                        ASSERT_TRUE(translated.has_value());
+                        const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*translated);
+                        ASSERT_NE(accesses, nullptr);
+                        const auto emit = [&](const auto& data, uint32_t callback) {
+                            EXPECT_TRUE(
+                                checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, callback, &data, reports));
+                        };
+                        size_t targets = 0;
+                        for (auto access : *accesses) {
+                            if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C && flag != 0) {
+                                auto publish = access;
+                                publish.header.instrExecId = 1;
+                                publish.header.pipeline = ACLSAN_DEVICE_PIPE_MATRIX;
+                                publish.instructionId = 400;
+                                publish.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+                                emit(publish, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
+                            }
+                            emit(access, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
+                            if (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UB)
+                                continue;
+                            ++targets;
+                            EXPECT_EQ(access.unitFlag, 0U);
+                            const uint32_t sub = access.header.blockId;
+                            if (synchronize) {
+                                auto syncRaw = raw;
+                                syncRaw.instrExecId = 3 + sub;
+                                syncRaw.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+                                syncRaw.record.instrId = 452;
+                                syncRaw.record.args[0] = ACLSAN_DEVICE_PIPE_FIXPIPE;
+                                syncRaw.record.args[1] = 8 + sub * 16;
+                                auto sync = dav3510::GetDeviceInstructionDecoder().decode(syncRaw.record);
+                                ASSERT_TRUE(sync.has_value());
+                                auto set = TranslateDecodedTraceToCallbackData(syncRaw, *sync);
+                                ASSERT_TRUE(set.has_value());
+                                emit(std::get<AclsanDeviceSyncData>(*set), ACLSAN_CBID_DEVICE_SYNC);
+                                syncRaw.instrExecId = 6 + sub;
+                                syncRaw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+                                syncRaw.phyCoreId = access.header.phyCoreId;
+                                syncRaw.blockId = sub;
+                                syncRaw.record.instrId = 454;
+                                syncRaw.record.args[0] = ACLSAN_DEVICE_PIPE_VECTOR;
+                                syncRaw.record.args[1] = 8;
+                                sync = dav3510::GetDeviceInstructionDecoder().decode(syncRaw.record);
+                                ASSERT_TRUE(sync.has_value());
+                                auto wait = TranslateDecodedTraceToCallbackData(syncRaw, *sync);
+                                ASSERT_TRUE(wait.has_value());
+                                emit(std::get<AclsanDeviceSyncData>(*wait), ACLSAN_CBID_DEVICE_SYNC);
+                            }
+                            access.header.instrExecId = 10 + sub;
+                            access.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
+                            access.instructionId = 0;
+                            access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+                            emit(access, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
+                        }
+                        EXPECT_EQ(targets, destination >= 2 ? 2U : 1U);
+                        AclsanSynchronizeData end{};
+                        end.common = {ACLSAN_API_VERSION, sizeof(end)};
+                        ASSERT_TRUE(checker.OnCallback(
+                            ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+                        checker.Finalize(reports);
+                        EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+                        if (synchronize) {
+                            EXPECT_TRUE(reports.empty());
+                        } else {
+                            std::set<uint32_t> reportedTargets;
+                            ASSERT_FALSE(reports.empty());
+                            for (const auto& data : reports) {
+                                const auto& report = std::get<npucheck::NpuCheckRacecheckReport>(data);
+                                EXPECT_TRUE(
+                                    report.kind == npucheck::ConflictKind::RAW ||
+                                    report.kind == npucheck::ConflictKind::WAR);
+                                EXPECT_NE(report.previous.accessMode, report.current.accessMode);
+                                EXPECT_EQ(report.current.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+                                reportedTargets.insert(report.current.header.blockId);
+                            }
+                            EXPECT_EQ(reportedTargets.size(), targets);
+                        }
+                    }
+}
+
+TEST(RacecheckTranslation, FixToUbChecksLoop3OnIssuingAicInsteadOfUbOwner)
+{
+    for (bool initialized : {false, true}) {
+        npucheck::Initcheck checker;
+        npucheck::CheckerReportList reports;
+        AclsanLaunchData launch{};
+        launch.launchId = 995;
+        launch.common = {ACLSAN_API_VERSION, sizeof(launch)};
+        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+        ParsedTraceRecord raw{};
+        raw.launchId = 995;
+        raw.instrExecId = 2;
+        raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        raw.physicalCoreCount = 108;
+        raw.record.instrId = 170;
+        raw.record.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
+        raw.record.args[0] = 0x400;
+        raw.record.args[1] = 0x800;
+        raw.record.args[2] = (32ULL << 4) | (16ULL << 16) | (64ULL << 32);
+        raw.record.args[3] = 64ULL | (1ULL << 16) | (1ULL << 43);
+        MemoryRegisterState state{};
+        state.loop3 = Loop3ParamField{2, 64, 4096};
+        const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+        ASSERT_TRUE(decoded.has_value());
+        const auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded, state);
+        ASSERT_TRUE(translated.has_value());
+        const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*translated);
+        ASSERT_NE(accesses, nullptr);
+        ASSERT_FALSE(accesses->empty());
+        if (initialized) {
+            AclsanDeviceRegisterStateData setter{};
+            setter.header = accesses->front().header;
+            setter.header.size = sizeof(setter);
+            setter.header.instrExecId = 1;
+            setter.regId = ACLSAN_DEVICE_REGISTER_LOOP3;
+            ASSERT_TRUE(
+                checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &setter, reports));
+        }
+        for (const auto& access : *accesses) {
+            EXPECT_EQ(
+                access.regDependencyMask0,
+                access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB ? 0 : RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3));
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+        }
+        ASSERT_EQ(reports.size(), initialized ? 0U : 1U);
+        if (!initialized) {
+            const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(reports[0]);
+            EXPECT_EQ(report.registerId, ACLSAN_DEVICE_REGISTER_LOOP3);
+            EXPECT_EQ(report.common.exec.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
         }
     }
 }
