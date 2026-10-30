@@ -443,25 +443,27 @@ aclError InvokeLaunch(
     aclptiCallbackId cbid, aclrtApiId apiId, const char* apiName, Params& params,
     aclrtFuncHandle Params::*functionMember, Launch launch)
 {
-    return InvokeRuntimeCallback<Function>(cbid, apiId, apiName, params, [&](Function original) -> aclError {
-        const auto function = params.*functionMember;
-        const auto invoke = [&](aclrtFuncHandle selectedFunction, bool instrumented) {
-            const aclError launchStatus = launch(original, selectedFunction, instrumented);
-            if (instrumented) {
-                ASCTOOL_DEBUG(
-                    "[aclpti] pipeline replay launch api=%s instrumented=%d original=%p selected=%p status=%d", apiName,
-                    static_cast<int>(instrumented), function, selectedFunction, launchStatus);
+    return InvokeRuntimeCallback<Function>(
+        cbid, apiId, apiName, params, [&params, functionMember, launch, apiName](Function original) -> aclError {
+            const auto function = params.*functionMember;
+            const auto invoke = [&original, &launch, apiName, function](
+                                    aclrtFuncHandle selectedFunction, bool instrumented) {
+                const aclError launchStatus = launch(original, selectedFunction, instrumented);
+                if (instrumented) {
+                    ASCTOOL_DEBUG(
+                        "[aclpti] pipeline replay launch api=%s instrumented=%d original=%p selected=%p status=%d",
+                        apiName, static_cast<int>(instrumented), function, selectedFunction, launchStatus);
+                }
+                return launchStatus;
+            };
+            const aclError result = invoke(function, false);
+            if (result != ACL_SUCCESS) {
+                return result;
             }
-            return launchStatus;
-        };
-        const aclError result = invoke(function, false);
-        if (result != ACL_SUCCESS) {
-            return result;
-        }
-        const auto status = profiling::GetReplayRuntime().ReplayKernel(function, invoke, params.stream);
-        ASCTOOL_DEBUG("[aclpti] launch replay api=%s result=%d", apiName, static_cast<int>(status));
-        return MapProfilingResult(status);
-    });
+            const auto status = profiling::GetReplayRuntime().ReplayKernel(function, invoke, params.stream);
+            ASCTOOL_DEBUG("[aclpti] launch replay api=%s result=%d", apiName, static_cast<int>(status));
+            return MapProfilingResult(status);
+        });
 }
 
 aclError AclrtLaunchKernelWithHostArgsHandler(

@@ -360,7 +360,7 @@ void Channel::Close() noexcept
         fd_ = -1;
     }
 }
-void Channel::Shutdown() noexcept
+void Channel::Shutdown() const noexcept
 {
     if (fd_ >= 0) {
         shutdown(fd_, SHUT_RDWR);

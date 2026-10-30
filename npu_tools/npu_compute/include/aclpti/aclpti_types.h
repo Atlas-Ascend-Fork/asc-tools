@@ -14,7 +14,7 @@
 
 #include <stdint.h>
 
-typedef enum aclptiResult {
+enum aclptiResult {
     ACLPTI_SUCCESS = 0,
     ACLPTI_ERROR_INVALID_PARAMETER = 1,
     ACLPTI_ERROR_INVALID_SUBSCRIBER = 2,
@@ -38,12 +38,13 @@ typedef enum aclptiResult {
     ACLPTI_ERROR_RESULT_UNRELIABLE = 20,
     ACLPTI_ERROR_TRACE_INCOMPLETE = 21,
     ACLPTI_ERROR_TRACE_WRITE = 22,
-} aclptiResult;
+};
 
-typedef struct aclptiSubscriber_st* aclptiSubscribeHandle;
+struct aclptiSubscriber_st;
+using aclptiSubscribeHandle = struct aclptiSubscriber_st*;
 
-typedef struct aclptiSubscribeParams {
+struct aclptiSubscribeParams {
     uint64_t reserved;
-} aclptiSubscribeParams;
+};
 
 #endif // NPU_TOOLS_NPU_COMPUTE_INCLUDE_ACLPTI_ACLPTI_TYPES_H

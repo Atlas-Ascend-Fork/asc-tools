@@ -574,11 +574,14 @@ CsvRow L2Row(const RowMetrics& row, const ReportConfig& config)
         }
         const auto writeHit = SumEvents(*metrics, {0x42aU, 0x42dU});
         const auto writeTotal = SumEvents(*metrics, {0x42aU, 0x42bU, 0x42cU, 0x42dU, 0x42eU, 0x42fU});
+        Metric writeHitRate = std::nullopt;
+        if (writeHit.has_value() && writeTotal.has_value()) {
+            const double writeHitCount = writeHit.value();
+            const double writeTotalCount = writeTotal.value();
+            writeHitRate = writeTotalCount == 0.0 ? 0.0 : PERCENT_SCALE * writeHitCount / writeTotalCount;
+        }
         SetMetric(
-            fields, std::string(prefix) + "write_hit_rate(%)",
-            !writeHit.has_value() || !writeTotal.has_value() ? std::nullopt :
-            *writeTotal == 0.0                               ? Metric(0.0) :
-                                                               Metric(PERCENT_SCALE * *writeHit / *writeTotal),
+            fields, std::string(prefix) + "write_hit_rate(%)", writeHitRate,
             EventReason(*metrics, {0x42aU, 0x42bU, 0x42cU, 0x42dU, 0x42eU, 0x42fU}));
     }
     return BuildRow(L2Header(), fields);

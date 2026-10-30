@@ -194,7 +194,14 @@ struct ParsedElf {
     std::map<std::string, std::size_t> metadataSections;
 };
 
-ParsedElf ReadElfSections(const std::string& data)
+struct ElfSectionTable {
+    std::uint64_t offset;
+    std::uint64_t count;
+    std::uint64_t namesOffset;
+    std::uint64_t namesSize;
+};
+
+ElfSectionTable ReadElfSectionTable(const std::string& data)
 {
     Require(data.size() >= sizeof(Elf64_Ehdr), "Device ELF header is missing");
     Require(
@@ -224,46 +231,60 @@ ParsedElf ReadElfSections(const std::string& data)
                 SHT_STRTAB &&
             InRange(data.size(), sectionNamesOffset, sectionNamesSize),
         "invalid ELF section names");
+    return {sectionTable, sectionCount, sectionNamesOffset, sectionNamesSize};
+}
 
+ElfSection ReadElfSection(const std::string& data, const ElfSectionTable& table, std::uint64_t index)
+{
+    const std::uint64_t headerOffset = table.offset + index * sizeof(Elf64_Shdr);
+    const std::uint64_t nameOffset =
+        ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_name), sizeof(Elf64_Shdr::sh_name));
+    const std::uint32_t type = static_cast<std::uint32_t>(
+        ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_type), sizeof(Elf64_Shdr::sh_type)));
+    ElfSection section{
+        static_cast<std::size_t>(headerOffset),
+        type,
+        ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_offset), sizeof(Elf64_Shdr::sh_offset)),
+        ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_size), sizeof(Elf64_Shdr::sh_size)),
+        ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_addralign), sizeof(Elf64_Shdr::sh_addralign)),
+        {},
+    };
+    Require(
+        type == SHT_NOBITS || InRange(data.size(), section.offset, section.size), "ELF section exceeds file bounds");
+    Require(nameOffset < table.namesSize, "invalid ELF section name offset");
+    const std::uint64_t nameStart = table.namesOffset + nameOffset;
+    const std::size_t nameEnd = data.find('\0', static_cast<std::size_t>(nameStart));
+    Require(
+        nameEnd != std::string::npos && static_cast<std::uint64_t>(nameEnd) < table.namesOffset + table.namesSize,
+        "unterminated ELF section name");
+    section.name = data.substr(static_cast<std::size_t>(nameStart), nameEnd - static_cast<std::size_t>(nameStart));
+    return section;
+}
+
+void AddMetadataSection(ParsedElf& elf, const ElfSection& section, const std::string& data)
+{
+    const auto flags = ReadValue(data, section.header + offsetof(Elf64_Shdr, sh_flags), sizeof(Elf64_Shdr::sh_flags));
+    if (section.name.compare(0, sizeof(KERNEL_METADATA_PREFIX) - 1, KERNEL_METADATA_PREFIX) == 0) {
+        Require(
+            section.type == SHT_NOTE && (flags & SHF_ALLOC) == 0,
+            "kernel metadata must be a non-allocated NOTE section");
+        Require(
+            section.alignment == 0 ||
+                ((section.alignment & (section.alignment - 1)) == 0 && section.alignment <= data.size()),
+            "invalid metadata alignment");
+        Require(
+            elf.metadataSections.emplace(section.name, elf.sections.size()).second,
+            "duplicate kernel metadata section");
+    }
+}
+
+ParsedElf ReadElfSections(const std::string& data)
+{
+    const ElfSectionTable table = ReadElfSectionTable(data);
     ParsedElf elf;
-    const std::uint64_t sectionNamesEnd = sectionNamesOffset + sectionNamesSize;
-    for (std::uint64_t index = 0; index < sectionCount; ++index) {
-        const std::uint64_t headerOffset = sectionTable + index * sizeof(Elf64_Shdr);
-        const std::uint64_t nameOffset =
-            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_name), sizeof(Elf64_Shdr::sh_name));
-        const std::uint32_t type = static_cast<std::uint32_t>(
-            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_type), sizeof(Elf64_Shdr::sh_type)));
-        const auto flags = ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_flags), sizeof(Elf64_Shdr::sh_flags));
-        ElfSection section{
-            static_cast<std::size_t>(headerOffset),
-            type,
-            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_offset), sizeof(Elf64_Shdr::sh_offset)),
-            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_size), sizeof(Elf64_Shdr::sh_size)),
-            ReadValue(data, headerOffset + offsetof(Elf64_Shdr, sh_addralign), sizeof(Elf64_Shdr::sh_addralign)),
-            {},
-        };
-        Require(
-            type == SHT_NOBITS || InRange(data.size(), section.offset, section.size),
-            "ELF section exceeds file bounds");
-        Require(nameOffset < sectionNamesSize, "invalid ELF section name offset");
-        const std::uint64_t nameStart = sectionNamesOffset + nameOffset;
-        const std::size_t nameEnd = data.find('\0', static_cast<std::size_t>(nameStart));
-        Require(
-            nameEnd != std::string::npos && static_cast<std::uint64_t>(nameEnd) < sectionNamesEnd,
-            "unterminated ELF section name");
-
-        section.name = data.substr(static_cast<std::size_t>(nameStart), nameEnd - static_cast<std::size_t>(nameStart));
-        if (section.name.compare(0, sizeof(KERNEL_METADATA_PREFIX) - 1, KERNEL_METADATA_PREFIX) == 0) {
-            Require(
-                type == SHT_NOTE && (flags & SHF_ALLOC) == 0, "kernel metadata must be a non-allocated NOTE section");
-            Require(
-                section.alignment == 0 ||
-                    ((section.alignment & (section.alignment - 1)) == 0 && section.alignment <= data.size()),
-                "invalid metadata alignment");
-            Require(
-                elf.metadataSections.emplace(section.name, elf.sections.size()).second,
-                "duplicate kernel metadata section");
-        }
+    for (std::uint64_t index = 0; index < table.count; ++index) {
+        ElfSection section = ReadElfSection(data, table, index);
+        AddMetadataSection(elf, section, data);
         elf.sections.push_back(std::move(section));
     }
     return elf;
@@ -565,7 +586,7 @@ bool WriteSimtStartControl(const fs::path& directory)
 
 bool WriteProbeFiles(const fs::path& directory, bool simtStart)
 {
-    const auto write = [&](const char* name, const void* bytes, std::size_t size) {
+    const auto write = [&directory](const char* name, const void* bytes, std::size_t size) {
         std::ofstream file((directory / name).string(), std::ios::binary);
         file.write(static_cast<const char*>(bytes), static_cast<std::streamsize>(size));
         file.close();

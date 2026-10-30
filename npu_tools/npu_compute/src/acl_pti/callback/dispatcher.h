@@ -51,7 +51,7 @@ public:
 
     /// Delivers one runtime API callback event when its callback ID is enabled.
     void Dispatch(
-        aclptiCallbackDomain domain, aclptiCallbackId cbid, aclptiCallbackSite site, void* functionParams,
+        aclptiCallbackDomain domain, aclptiCallbackId cbid, aclptiCallbackSite site, void* const functionParams,
         aclError retval);
 
     /// Updates activity collection state for a valid subscriber.

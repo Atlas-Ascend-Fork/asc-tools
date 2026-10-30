@@ -215,7 +215,7 @@ SummaryMetrics BuildSummaryMetrics(
     const auto parallel = Parallel(result, config, metadata);
     metrics.parallelUtilization = parallel.first;
     metrics.parallelBalance = parallel.second;
-    const auto theoretical = [&](bool aic) -> SummaryMetric {
+    const auto theoretical = [&metadata, &config](bool aic) -> SummaryMetric {
         const auto count = aic ? metadata.hardware.cubeCoreCount : metadata.hardware.vectorCoreCount;
         const auto frequency = SummaryEffectiveFrequency(metadata, config, aic);
         return count && *count > 0 && frequency ? SummaryMetric(

@@ -287,55 +287,71 @@ bool CsvReader::ReadRecord(std::vector<std::string>& fields)
     auto state = FieldState::Start;
     bool hasInput = false;
     for (;;) {
-        const int value = NextCharacter();
-        if (value == std::char_traits<char>::eof()) {
-            if (state == FieldState::Quoted) {
-                Fail("quoted field is not closed before end of file");
-            }
-            if (!hasInput) {
-                return false;
-            }
-            fields.push_back(std::move(field));
-            ++recordsRead_;
-            return true;
+        const RecordStep step = ReadNextRecordStep(fields, field, state, hasInput);
+        if (step == RecordStep::EndOfFile) {
+            return false;
         }
-        hasInput = true;
-        const char character = static_cast<char>(value);
-        if (state == FieldState::Quoted) {
-            if (character == '"') {
-                state = FieldState::AfterQuote;
-            } else {
-                field.push_back(character);
-            }
-        } else if (character == ',' || character == '\r' || character == '\n') {
-            fields.push_back(std::move(field));
-            field.clear();
-            if (character == ',') {
-                state = FieldState::Start;
-                continue;
-            }
-            if (character == '\r' && PeekCharacter() == '\n') {
-                NextCharacter();
-            }
-            ++recordsRead_;
+        if (step == RecordStep::Complete) {
             return true;
-        } else if (character == '"') {
-            if (state == FieldState::AfterQuote) {
-                field.push_back('"');
-                state = FieldState::Quoted;
-            } else if (state == FieldState::Start) {
-                state = FieldState::Quoted;
-            } else {
-                Fail("unexpected quote in an unquoted field");
-            }
-        } else {
-            if (state == FieldState::AfterQuote) {
-                Fail("unexpected character after closing quote");
-            }
-            field.push_back(character);
-            state = FieldState::Unquoted;
         }
     }
+}
+
+CsvReader::RecordStep CsvReader::ReadNextRecordStep(
+    std::vector<std::string>& fields, std::string& field, FieldState& state, bool& hasInput)
+{
+    const int value = NextCharacter();
+    if (value == std::char_traits<char>::eof()) {
+        if (state == FieldState::Quoted) {
+            Fail("quoted field is not closed before end of file");
+        }
+        if (!hasInput) {
+            return RecordStep::EndOfFile;
+        }
+        fields.push_back(std::move(field));
+        ++recordsRead_;
+        return RecordStep::Complete;
+    }
+    hasInput = true;
+    const char character = static_cast<char>(value);
+    if (state == FieldState::Quoted) {
+        if (character == '"') {
+            state = FieldState::AfterQuote;
+        } else {
+            field.push_back(character);
+        }
+        return RecordStep::Continue;
+    }
+    if (character == ',' || character == '\r' || character == '\n') {
+        fields.push_back(std::move(field));
+        field.clear();
+        if (character == ',') {
+            state = FieldState::Start;
+            return RecordStep::Continue;
+        }
+        if (character == '\r' && PeekCharacter() == '\n') {
+            NextCharacter();
+        }
+        ++recordsRead_;
+        return RecordStep::Complete;
+    }
+    if (character == '"') {
+        if (state == FieldState::AfterQuote) {
+            field.push_back('"');
+            state = FieldState::Quoted;
+        } else if (state == FieldState::Start) {
+            state = FieldState::Quoted;
+        } else {
+            Fail("unexpected quote in an unquoted field");
+        }
+        return RecordStep::Continue;
+    }
+    if (state == FieldState::AfterQuote) {
+        Fail("unexpected character after closing quote");
+    }
+    field.push_back(character);
+    state = FieldState::Unquoted;
+    return RecordStep::Continue;
 }
 
 std::string NormalizeCsvTableName(std::string_view filename)

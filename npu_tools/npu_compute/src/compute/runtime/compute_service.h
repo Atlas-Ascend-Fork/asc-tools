@@ -20,7 +20,7 @@ public:
     static ComputeService& Instance();
     int Initialize() noexcept;
     int Shutdown() noexcept;
-    void Stop() noexcept;
+    void Stop() const noexcept;
 
 private:
     int FinalizeOnce(int status);

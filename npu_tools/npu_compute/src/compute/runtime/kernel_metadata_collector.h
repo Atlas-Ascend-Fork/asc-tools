@@ -23,6 +23,10 @@ public:
     KernelMetadata Snapshot();
 
 private:
+    bool HandleFunctionLookupCallback(aclptiCallbackId cbid, const aclptiCallbackData& data);
+    void HandleCallbackExit(aclptiCallbackId cbid, const aclptiCallbackData& data);
+    void HandleKernelLaunchCallback(aclptiCallbackId cbid, const aclptiCallbackData& data);
+
     std::mutex mutex_;
     std::map<aclrtFuncHandle, std::pair<aclrtBinHandle, std::string>> names_;
     std::map<aclrtFuncHandle*, std::pair<aclrtBinHandle, std::string>> pendingNames_;

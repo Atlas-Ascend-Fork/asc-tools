@@ -255,6 +255,157 @@ bool PublishPipelineFile(const boost::filesystem::path& path, ArtifactSink& sink
     return true;
 }
 
+struct PmSamplingContextInfo {
+    bool emptySampling = false;
+    std::uint64_t replayId = 0;
+    std::shared_ptr<const aclptiPmSamplingContext> context;
+    std::string error;
+};
+
+PmSamplingContextInfo ResolvePmSamplingContext(const aclptiProfilingDataResult& result)
+{
+    const bool mappingFailed = std::any_of(
+        result.pmSamplingContexts.begin(), result.pmSamplingContexts.end(),
+        [](const auto& entry) { return entry.second != nullptr && !entry.second->instructionMapError.empty(); });
+    PmSamplingContextInfo info;
+    info.emptySampling = result.pcSamplingData.empty() && result.pmSamplingContexts.empty() && !mappingFailed;
+    if (!info.emptySampling) {
+        if (result.pmSamplingContexts.size() != 1 || !result.pmSamplingContexts.begin()->second) {
+            info.error = "missing or ambiguous PmSampling ELF context";
+            return info;
+        }
+        info.replayId = result.pmSamplingContexts.begin()->first;
+        info.context = result.pmSamplingContexts.begin()->second;
+    }
+    return info;
+}
+
+void MarkPmSamplingFailure(
+    bool& complete, const std::string& prefix, const std::string& file, const std::string& stage,
+    const std::string& reason)
+{
+    complete = false;
+    std::fprintf(
+        stderr, "[libnpu-compute] %s%s: PmSampling %s failed: %s; other valid artifacts are retained where possible\n",
+        prefix.c_str(), file.c_str(), stage.c_str(), reason.c_str());
+}
+
+void DecodePmSampling(
+    const aclptiProfilingDataResult& result, const PmSamplingContextInfo& info, PmSamplingResult& sampling,
+    const std::string& prefix, bool& complete)
+{
+    if (!info.error.empty()) {
+        MarkPmSamplingFailure(complete, prefix, "summary.db", "sample decoding", info.error);
+        return;
+    }
+    try {
+        if (!info.emptySampling && !info.context->instructionMapError.empty()) {
+            throw std::runtime_error("instruction mapping failed: " + info.context->instructionMapError);
+        }
+        if (!info.emptySampling) {
+            const auto failedReplay = result.errorStats.failedRecordCountByReplay.find(info.replayId);
+            if (failedReplay != result.errorStats.failedRecordCountByReplay.end() && failedReplay->second != 0) {
+                throw std::runtime_error(
+                    "sampling replay " + std::to_string(info.replayId) + " contains " +
+                    std::to_string(failedReplay->second) + " failed records");
+            }
+            PmSamplingDecoder decoder(info.replayId, info.context);
+            for (const auto& chunk : result.pcSamplingData) {
+                if (!decoder.Consume(chunk)) {
+                    throw std::runtime_error(decoder.Error());
+                }
+            }
+            if (!decoder.Finish(sampling)) {
+                throw std::runtime_error(decoder.Error());
+            }
+        }
+    } catch (const std::exception& exception) {
+        sampling = {};
+        MarkPmSamplingFailure(complete, prefix, "summary.db", "sample decoding", exception.what());
+    }
+}
+
+struct PmSamplingOutputs {
+    boost::filesystem::path database;
+    std::vector<boost::filesystem::path> files;
+    PmSamplingArtifacts artifacts;
+    bool databaseReady = false;
+};
+
+PmSamplingOutputs PreparePmSamplingOutputs(
+    const boost::filesystem::path& directory, const PmSamplingContextInfo& contextInfo,
+    const PmSamplingResult& sampling, const std::string& prefix, bool& complete)
+{
+    PmSamplingOutputs output;
+    output.database = directory / "summary.db";
+    std::string error;
+    output.databaseReady = WritePmSamplingSqlite(output.database.string(), sampling, error);
+    if (output.databaseReady) {
+        output.files.push_back(output.database);
+    } else {
+        MarkPmSamplingFailure(complete, prefix, "summary.db", "database writing", error);
+    }
+    if (!GeneratePmSamplingArtifacts(
+            directory.string(), contextInfo.context.get(), sampling, PmSamplingArtifactOptions{}, output.artifacts,
+            error)) {
+        complete = false;
+        std::fprintf(stderr, "[libnpu-compute] PmSampling LLVM generation: %s\n", error.c_str());
+    }
+    if (!output.artifacts.disassemblyPath.empty()) {
+        output.files.emplace_back(output.artifacts.disassemblyPath);
+    }
+    if (!output.artifacts.pcStackPath.empty()) {
+        output.files.emplace_back(output.artifacts.pcStackPath);
+    }
+    return output;
+}
+
+void PublishPmSamplingFiles(
+    ArtifactSink& sink, const std::string& prefix, const PmSamplingOutputs& output, std::uint64_t rowCount)
+{
+    // Transport errors abort collection because artifact boundaries and receiver state are then uncertain.
+    for (const auto& file : output.files) {
+        bool started = false;
+        try {
+            std::ifstream input(file.string(), std::ios::binary);
+            if (!input) {
+                throw std::runtime_error("cannot read PmSampling artifact");
+            }
+            sink.Begin(prefix + file.filename().string());
+            started = true;
+            constexpr std::size_t kArtifactTransferBufferBytes = 16 * 1024;
+            std::array<char, kArtifactTransferBufferBytes> buffer{};
+            while (input) {
+                input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                if (input.gcount() > 0) {
+                    sink.Write(std::string_view(buffer.data(), static_cast<std::size_t>(input.gcount())));
+                }
+            }
+            if (!input.eof()) {
+                throw std::runtime_error("cannot read complete PmSampling artifact");
+            }
+            sink.Commit(file == output.database ? rowCount : 0);
+            started = false;
+        } catch (...) {
+            if (started) {
+                sink.Abort();
+            }
+            throw;
+        }
+    }
+}
+
+struct PmSamplingStaging {
+    boost::filesystem::path directory;
+    ~PmSamplingStaging()
+    {
+        boost::system::error_code ignored;
+        if (!directory.empty()) {
+            boost::filesystem::remove_all(directory, ignored);
+        }
+    }
+};
+
 } // namespace
 
 namespace {
@@ -702,81 +853,14 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
 
 aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix)
 {
-    // Only this consumer worker writes sampling files. Keep both ELF images alive
-    // through symbolization, even if the application has already unloaded them.
-    struct Staging {
-        boost::filesystem::path directory;
-        ~Staging()
-        {
-            boost::system::error_code ignored;
-            if (!directory.empty()) {
-                boost::filesystem::remove_all(directory, ignored);
-            }
-        }
-    } staging;
+    // This consumer worker is the sole writer of sampling artifacts.
+    PmSamplingStaging staging;
     try {
-        // Kernels can provide an ELF context without producing PC/state
-        // records. An empty record set still publishes an empty table so other
-        // sections can be consumed. A reported mapping error remains a real
-        // PmSampling failure even when no records were received.
-        const bool mappingFailed = std::any_of(
-            result.pmSamplingContexts.begin(), result.pmSamplingContexts.end(),
-            [](const auto& entry) { return entry.second != nullptr && !entry.second->instructionMapError.empty(); });
-        const bool emptySampling = result.pcSamplingData.empty() && result.pmSamplingContexts.empty() && !mappingFailed;
-        bool complete = true;
-        const auto failed = [&](const std::string& file, const std::string& stage, const std::string& reason) {
-            complete = false;
-            std::fprintf(
-                stderr,
-                "[libnpu-compute] %s%s: PmSampling %s failed: %s; empty or independently generated artifacts "
-                "are retained where possible\n",
-                prefix.c_str(), file.c_str(), stage.c_str(), reason.c_str());
-        };
-        std::uint64_t contextReplayId = 0;
-        std::shared_ptr<const aclptiPmSamplingContext> context;
-        std::string contextError;
-        if (!emptySampling) {
-            // Current replay configuration creates exactly one PmSampling replay
-            // for each original launch. Never merge PC keys from unrelated ELF
-            // contexts.
-            if (result.pmSamplingContexts.size() != 1 || !result.pmSamplingContexts.begin()->second) {
-                contextError = "missing or ambiguous PmSampling ELF context";
-            } else {
-                contextReplayId = result.pmSamplingContexts.begin()->first;
-                context = result.pmSamplingContexts.begin()->second;
-            }
-        }
+        // Keep the shared ELF context alive through symbolization after application unload.
+        const auto contextInfo = ResolvePmSamplingContext(result);
         PmSamplingResult sampling;
-        if (!contextError.empty()) {
-            failed("summary.db", "sample decoding", contextError);
-        } else {
-            try {
-                if (!emptySampling && !context->instructionMapError.empty()) {
-                    throw std::runtime_error("instruction mapping failed: " + context->instructionMapError);
-                }
-                if (!emptySampling) {
-                    const auto failedReplay = result.errorStats.failedRecordCountByReplay.find(contextReplayId);
-                    if (failedReplay != result.errorStats.failedRecordCountByReplay.end() &&
-                        failedReplay->second != 0) {
-                        throw std::runtime_error(
-                            "sampling replay " + std::to_string(contextReplayId) + " contains " +
-                            std::to_string(failedReplay->second) + " failed records");
-                    }
-                    PmSamplingDecoder decoder(contextReplayId, context);
-                    for (const auto& chunk : result.pcSamplingData) {
-                        if (!decoder.Consume(chunk)) {
-                            throw std::runtime_error(decoder.Error());
-                        }
-                    }
-                    if (!decoder.Finish(sampling)) {
-                        throw std::runtime_error(decoder.Error());
-                    }
-                }
-            } catch (const std::exception& error) {
-                sampling = {};
-                failed("summary.db", "sample decoding", error.what());
-            }
-        }
+        bool complete = true;
+        DecodePmSampling(result, contextInfo, sampling, prefix, complete);
 
         const boost::filesystem::path parent("/tmp");
         std::string pattern = (parent / ".npu-compute-pm-sampling-XXXXXX").string();
@@ -784,70 +868,19 @@ aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResul
             throw std::runtime_error("cannot create PmSampling staging: " + std::string(std::strerror(errno)));
         }
         staging.directory = pattern;
-        std::string error;
-        const auto database = staging.directory / "summary.db";
-        std::vector<boost::filesystem::path> files;
-        bool databaseReady = false;
-        databaseReady = WritePmSamplingSqlite(database.string(), sampling, error);
-        if (databaseReady) {
-            files.push_back(database);
-        } else {
-            failed("summary.db", "database writing", error);
-        }
-        PmSamplingArtifacts artifacts;
-        // Both LLVM inputs default to the original ELF, matching the normalized
-        // sampling addresses. Empty captures still publish an empty symbolizer result.
-        if (!GeneratePmSamplingArtifacts(
-                staging.directory.string(), context.get(), sampling, PmSamplingArtifactOptions{}, artifacts, error)) {
-            complete = false;
-            std::fprintf(stderr, "[libnpu-compute] PmSampling LLVM generation: %s\n", error.c_str());
-        }
-        if (!artifacts.disassemblyPath.empty()) {
-            files.emplace_back(artifacts.disassemblyPath);
-        }
-        if (!artifacts.pcStackPath.empty()) {
-            files.emplace_back(artifacts.pcStackPath);
-        }
-        // Transport errors still abort this collection: file boundaries and the
-        // receiver state cannot be trusted after a failed Begin/Write/Commit.
-        for (const auto& file : files) {
-            bool started = false;
-            try {
-                std::ifstream input(file.string(), std::ios::binary);
-                if (!input) {
-                    throw std::runtime_error("cannot read PmSampling artifact");
-                }
-                artifact_sink_->Begin(prefix + file.filename().string());
-                started = true;
-                constexpr std::size_t kArtifactTransferBufferBytes = 16 * 1024;
-                std::array<char, kArtifactTransferBufferBytes> buffer{};
-                while (input) {
-                    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-                    if (input.gcount() > 0) {
-                        artifact_sink_->Write(
-                            std::string_view(buffer.data(), static_cast<std::size_t>(input.gcount())));
-                    }
-                }
-                if (!input.eof()) {
-                    throw std::runtime_error("cannot read complete PmSampling artifact");
-                }
-                artifact_sink_->Commit(file == database ? sampling.rows.size() : 0);
-                started = false;
-            } catch (...) {
-                if (started) {
-                    artifact_sink_->Abort();
-                }
-                throw;
-            }
-        }
+        const auto output = PreparePmSamplingOutputs(staging.directory, contextInfo, sampling, prefix, complete);
+        PublishPmSamplingFiles(*artifact_sink_, prefix, output, sampling.rows.size());
         boost::filesystem::remove_all(staging.directory);
         staging.directory.clear();
-        if (databaseReady) {
+        if (output.databaseReady) {
             row_count_ += sampling.rows.size();
         }
         if (complete) {
             ++pm_sampling_completed_;
         }
+        ASCTOOL_DEBUG(
+            "PmSampling completed: rows=%llu unresolvedPCs=%llu", static_cast<unsigned long long>(sampling.rows.size()),
+            static_cast<unsigned long long>(output.artifacts.unresolvedPcCount));
         return complete ? ACLPTI_SUCCESS : ACLPTI_ERROR_TRACE_INCOMPLETE;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[libnpu-compute] PmSampling processing failed: %s\n", error.what());

@@ -126,7 +126,7 @@ void WriteOpPerformance(
     std::ostream& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
     const ReportConfig& config, const KernelMetadata& metadata, Fields memory)
 {
-    const auto selected = [&](std::string_view section) {
+    const auto selected = [&sections](std::string_view section) {
         return std::find(sections.begin(), sections.end(), section) != sections.end();
     };
     const auto metrics = BuildSummaryMetrics(result, config, metadata);

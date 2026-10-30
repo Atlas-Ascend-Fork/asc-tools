@@ -118,7 +118,8 @@ bool ParsePositiveUintField(std::string_view line, std::string_view field, std::
     std::uint32_t parsed = 0;
     const std::uint32_t maximum = std::numeric_limits<std::uint32_t>::max();
     while (end < line.size() && line[end] >= '0' && line[end] <= '9') {
-        const std::uint32_t digit = static_cast<std::uint32_t>(line[end] - '0');
+        const char digitCharacter = line[end];
+        const std::uint32_t digit = static_cast<std::uint32_t>(digitCharacter - '0');
         if (parsed > (maximum - digit) / DECIMAL_RADIX) {
             return false;
         }

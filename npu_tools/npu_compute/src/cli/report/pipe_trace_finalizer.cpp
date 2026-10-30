@@ -288,6 +288,83 @@ bool WriteFinalTrace(
     return true;
 }
 
+bool CollectProcessDirectories(
+    const boost::filesystem::path& stagingRoot, std::vector<boost::filesystem::path>* processDirectories,
+    std::vector<std::string>* issues, std::string* error)
+{
+    boost::system::error_code statusError;
+    boost::filesystem::directory_iterator iterator(stagingRoot, statusError), end;
+    if (statusError) {
+        return Fail("open BIU staging failed: " + statusError.message(), error);
+    }
+    for (; iterator != end && !statusError; iterator.increment(statusError)) {
+        boost::system::error_code itemError;
+        const auto status = boost::filesystem::symlink_status(iterator->path(), itemError);
+        if (itemError || boost::filesystem::is_symlink(status) || !boost::filesystem::is_directory(status)) {
+            if (issues != nullptr) {
+                issues->push_back("invalid BIU staging item: " + iterator->path().string());
+            }
+            continue;
+        }
+        processDirectories->push_back(iterator->path());
+    }
+    if (statusError) {
+        return Fail("iterate BIU staging failed: " + statusError.message(), error);
+    }
+    std::sort(processDirectories->begin(), processDirectories->end());
+    return true;
+}
+
+bool ReadStagedFragments(
+    const std::vector<boost::filesystem::path>& processDirectories, std::vector<Fragment>* fragments,
+    std::vector<std::string>* issues, std::string* error)
+{
+    for (std::size_t index = 0; index < processDirectories.size(); ++index) {
+        const std::size_t start = fragments->size();
+        std::string processError;
+        const std::string processName = processDirectories[index].filename().string();
+        if (!ReadProcessManifest(processDirectories[index], processName, index, fragments, &processError, issues) ||
+            !ValidateProcessFiles(processDirectories[index], processName, *fragments, &processError, issues)) {
+            fragments->resize(start);
+            if (issues != nullptr) {
+                issues->push_back(processError);
+            }
+        }
+    }
+    std::sort(fragments->begin(), fragments->end(), [](const Fragment& left, const Fragment& right) {
+        return std::tie(left.processName, left.resultSequence, left.replayId, left.deviceId) <
+               std::tie(right.processName, right.resultSequence, right.replayId, right.deviceId);
+    });
+    return !fragments->empty() || Fail("BIU manifests contain no completed fragment", error);
+}
+
+bool ValidateStagedFragments(
+    const boost::filesystem::path& stagingRoot, std::vector<Fragment>* fragments, std::vector<std::string>* issues,
+    std::string* error)
+{
+    fragments->erase(
+        std::remove_if(
+            fragments->begin(), fragments->end(),
+            [&](Fragment& fragment) {
+                const boost::filesystem::path processDirectory = stagingRoot / fragment.processName;
+                const boost::filesystem::path fragmentPath = processDirectory / fragment.file;
+                boost::system::error_code itemError;
+                const auto status = boost::filesystem::symlink_status(fragmentPath, itemError);
+                std::string fragmentError;
+                if (itemError || boost::filesystem::is_symlink(status) || !boost::filesystem::is_regular_file(status)) {
+                    fragmentError = "invalid BIU fragment: " + fragmentPath.string();
+                } else if (ReadFragment(fragmentPath, &fragment, &fragmentError)) {
+                    return false;
+                }
+                if (issues != nullptr) {
+                    issues->push_back(fragmentError);
+                }
+                return true;
+            }),
+        fragments->end());
+    return !fragments->empty() || Fail("BIU manifests contain no valid fragment", error);
+}
+
 } // namespace
 
 bool FinalizePipeTrace(
@@ -310,76 +387,17 @@ bool FinalizePipeTrace(
     if (!stagingExists || statusError || !boost::filesystem::is_directory(stagingStatus)) {
         return Fail("BIU staging directory is missing", error);
     }
-
     std::vector<boost::filesystem::path> processDirectories;
-    boost::filesystem::directory_iterator iterator(stagingRoot, statusError), end;
-    if (statusError) {
-        return Fail("open BIU staging failed: " + statusError.message(), error);
+    if (!CollectProcessDirectories(stagingRoot, &processDirectories, issues, error)) {
+        return false;
     }
-    for (; iterator != end && !statusError; iterator.increment(statusError)) {
-        boost::system::error_code itemError;
-        const auto status = boost::filesystem::symlink_status(iterator->path(), itemError);
-        if (itemError || boost::filesystem::is_symlink(status) || !boost::filesystem::is_directory(status)) {
-            if (issues != nullptr) {
-                issues->push_back("invalid BIU staging item: " + iterator->path().string());
-            }
-            continue;
-        }
-        processDirectories.push_back(iterator->path());
-    }
-    if (statusError) {
-        return Fail("iterate BIU staging failed: " + statusError.message(), error);
-    }
-    std::sort(processDirectories.begin(), processDirectories.end());
     if (processDirectories.empty()) {
         return Fail("BIU staging contains no process result", error);
     }
-
     std::vector<Fragment> fragments;
-    for (std::size_t index = 0; index < processDirectories.size(); ++index) {
-        const std::size_t start = fragments.size();
-        std::string processError;
-        if (!ReadProcessManifest(
-                processDirectories[index], processDirectories[index].filename().string(), index, &fragments,
-                &processError, issues) ||
-            !ValidateProcessFiles(
-                processDirectories[index], processDirectories[index].filename().string(), fragments, &processError,
-                issues)) {
-            fragments.resize(start);
-            if (issues != nullptr) {
-                issues->push_back(processError);
-            }
-        }
-    }
-    std::sort(fragments.begin(), fragments.end(), [](const Fragment& left, const Fragment& right) {
-        return std::tie(left.processName, left.resultSequence, left.replayId, left.deviceId) <
-               std::tie(right.processName, right.resultSequence, right.replayId, right.deviceId);
-    });
-    if (fragments.empty()) {
-        return Fail("BIU manifests contain no completed fragment", error);
-    }
-    fragments.erase(
-        std::remove_if(
-            fragments.begin(), fragments.end(),
-            [&](Fragment& fragment) {
-                const boost::filesystem::path processDirectory = stagingRoot / fragment.processName;
-                const boost::filesystem::path fragmentPath = processDirectory / fragment.file;
-                boost::system::error_code itemError;
-                const auto status = boost::filesystem::symlink_status(fragmentPath, itemError);
-                std::string fragmentError;
-                if (itemError || boost::filesystem::is_symlink(status) || !boost::filesystem::is_regular_file(status)) {
-                    fragmentError = "invalid BIU fragment: " + fragmentPath.string();
-                } else if (ReadFragment(fragmentPath, &fragment, &fragmentError)) {
-                    return false;
-                }
-                if (issues != nullptr) {
-                    issues->push_back(fragmentError);
-                }
-                return true;
-            }),
-        fragments.end());
-    if (fragments.empty()) {
-        return Fail("BIU manifests contain no valid fragment", error);
+    if (!ReadStagedFragments(processDirectories, &fragments, issues, error) ||
+        !ValidateStagedFragments(stagingRoot, &fragments, issues, error)) {
+        return false;
     }
     if (!WriteFinalTrace(collectionDirectory, fragments, error)) {
         return false;

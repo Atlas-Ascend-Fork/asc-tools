@@ -170,7 +170,7 @@ public:
     int Fd() const { return fd_; }
     pid_t PeerPid() const;
     void Close() noexcept;
-    void Shutdown() noexcept;
+    void Shutdown() const noexcept;
 
 private:
     friend class Listener;

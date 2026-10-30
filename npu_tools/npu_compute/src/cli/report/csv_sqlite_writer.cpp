@@ -176,7 +176,7 @@ std::string InsertSql(const CsvSchema& schema)
 {
     std::string sql = "INSERT INTO " + QuoteIdentifier(schema.tableName) + " VALUES(";
     for (std::size_t index = 0; index < schema.columns.size(); ++index) {
-        sql += index != 0 ? ",?" : "?";
+        sql += index != std::size_t{0} ? ",?" : "?";
     }
     return sql + ')';
 }

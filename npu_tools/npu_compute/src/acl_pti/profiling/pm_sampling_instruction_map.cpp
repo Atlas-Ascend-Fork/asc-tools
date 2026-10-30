@@ -56,6 +56,9 @@ struct Elf {
         std::uint16_t section;
         bool local = false;
     };
+    struct SectionTable {
+        std::uint64_t offset, count, names;
+    };
     std::vector<Section> sections;
     std::map<std::string, Function> functions;
     std::map<std::string, Function> objects;
@@ -84,7 +87,7 @@ struct Elf {
         }
         throw std::runtime_error("unterminated ELF string");
     }
-    explicit Elf(const std::vector<char>& image) : bytes(image)
+    SectionTable ReadSectionTable() const
     {
         Require(
             bytes.size() >= SELFMAG && std::equal(ELFMAG, ELFMAG + SELFMAG, bytes.begin()) &&
@@ -101,8 +104,12 @@ struct Elf {
         Require(
             table <= bytes.size() && count <= (bytes.size() - table) / sizeof(Elf64_Shdr),
             "ELF section table exceeds file bounds");
-        for (std::uint64_t i = 0; i < count; ++i) {
-            const auto h = table + i * sizeof(Elf64_Shdr);
+        return {table, count, names};
+    }
+    void ReadSections(const SectionTable& table)
+    {
+        for (std::uint64_t i = 0; i < table.count; ++i) {
+            const auto h = table.offset + i * sizeof(Elf64_Shdr);
             Section section{
                 Read(h + offsetof(Elf64_Shdr, sh_addr), sizeof(Elf64_Addr)),
                 Read(h + offsetof(Elf64_Shdr, sh_offset), sizeof(Elf64_Off)),
@@ -119,13 +126,18 @@ struct Elf {
                     section.offset <= bytes.size() && section.size <= bytes.size() - section.offset,
                     "ELF section exceeds file bounds");
             }
-            sections.push_back(section);
+            sections.push_back(std::move(section));
         }
-        for (std::uint64_t i = 0; i < count; ++i) {
+        for (std::uint64_t i = 0; i < table.count; ++i) {
             sections[i].name = String(
-                sections[names],
-                Read(table + i * sizeof(Elf64_Shdr) + offsetof(Elf64_Shdr, sh_name), sizeof(Elf64_Word)));
+                sections[table.names],
+                Read(table.offset + i * sizeof(Elf64_Shdr) + offsetof(Elf64_Shdr, sh_name), sizeof(Elf64_Word)));
         }
+    }
+    explicit Elf(const std::vector<char>& image) : bytes(image)
+    {
+        const auto table = ReadSectionTable();
+        ReadSections(table);
         ReadSymbols();
         ReadSimtRelocations();
         Require(!functions.empty(), "device ELF has no function symbols");
@@ -393,13 +405,14 @@ void NormalizeVectorEntry(const std::vector<Instruction>& input, std::size_t ind
 }
 const std::map<std::string, Elf::Function>::value_type& FunctionAtEntry(const Elf& elf, std::uint64_t address)
 {
-    const auto found = std::find_if(
-        elf.functions.begin(), elf.functions.end(), [&](const auto& item) { return item.second.address == address; });
+    const auto found = std::find_if(elf.functions.begin(), elf.functions.end(), [address](const auto& item) {
+        return item.second.address == address;
+    });
     Require(found != elf.functions.end(), "SIMT entry does not match an ELF function symbol");
     Require(
         std::find_if(
-            std::next(found), elf.functions.end(), [&](const auto& item) { return item.second.address == address; }) ==
-            elf.functions.end(),
+            std::next(found), elf.functions.end(),
+            [address](const auto& item) { return item.second.address == address; }) == elf.functions.end(),
         "SIMT entry matches multiple ELF function symbols");
     return *found;
 }
@@ -419,9 +432,9 @@ void ValidateDisassembly(const std::vector<Instruction>& instructions, const Elf
         Require(cursor == code.address + code.size, "executable disassembly is incomplete");
     }
     for (const auto& instruction : instructions) {
-        const auto section = std::find_if(elf.sections.begin(), elf.sections.end(), [&](const Elf::Section& value) {
-            return value.name == instruction.section;
-        });
+        const auto section = std::find_if(
+            elf.sections.begin(), elf.sections.end(),
+            [&instruction](const Elf::Section& value) { return value.name == instruction.section; });
         Require(
             section != elf.sections.end() && (section->flags & SHF_EXECINSTR) &&
                 instruction.address >= section->address,

@@ -13,7 +13,6 @@
 #include "hardware/hardware_info_types.h"
 
 #include <boost/filesystem.hpp>
-#include <boost/system/error_code.hpp>
 
 namespace npucompute {
 

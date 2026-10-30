@@ -63,6 +63,67 @@ std::string Text(sqlite3_stmt* statement, int column)
     const auto* text = sqlite::GetApi().columnText(statement, column);
     return text ? reinterpret_cast<const char*>(text) : "";
 }
+void ValidateSamples(const PmSamplingResult& result)
+{
+    for (const auto& row : result.rows) {
+        Require(
+            row.first <= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()),
+            "PmSampling address exceeds SQLite INTEGER range");
+        for (const auto count : row.second) {
+            Require(
+                count <= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()),
+                "PmSampling count exceeds SQLite INTEGER range");
+        }
+    }
+}
+std::string CreateSchema(Database& db)
+{
+    db.Exec(("PRAGMA user_version=" + std::to_string(kSchemaVersion)).c_str());
+    const std::array<const char*, kPmSamplingStateCount + 1> columns = {
+        "address",
+        "ibuf_empty",
+        "nop_cycles",
+        "scoreboard_not_ready",
+        "register_bank_conflict",
+        "resource_conflict",
+        "warp_level_sync",
+        "divergence_stack_spill",
+        "others"};
+    std::string schema = "CREATE TABLE PcSampling(" + std::string(columns[0]) + " INTEGER NOT NULL PRIMARY KEY";
+    std::string insert = "INSERT INTO PcSampling VALUES(?";
+    for (std::size_t state = 0; state < kPmSamplingStateCount; ++state) {
+        schema += "," + std::string(columns[state + 1]) + " INTEGER NOT NULL CHECK(" + columns[state + 1] + ">=0)";
+        insert += ",?";
+    }
+    db.Exec((schema + ")").c_str());
+    return insert + ")";
+}
+void ConfigureDatabase(Database& db)
+{
+    auto journal = Prepare(db, "PRAGMA journal_mode=DELETE");
+    Require(
+        sqlite::GetApi().step(journal.get()) == SQLITE_ROW && Text(journal.get(), 0) == "delete" &&
+            sqlite::GetApi().step(journal.get()) == SQLITE_DONE,
+        "cannot use SQLite DELETE journal");
+    db.Exec("PRAGMA synchronous=FULL");
+    db.Exec("BEGIN IMMEDIATE");
+    db.transaction = true;
+}
+void WriteRows(Database& db, const std::string& insert, const PmSamplingResult& result)
+{
+    auto statement = Prepare(db, insert);
+    for (const auto& row : result.rows) {
+        db.Check(sqlite::GetApi().bindInt64(statement.get(), kAddressParameter, static_cast<sqlite3_int64>(row.first)));
+        for (std::size_t state = 0; state < row.second.size(); ++state) {
+            db.Check(sqlite::GetApi().bindInt64(
+                statement.get(), static_cast<int>(state) + kFirstStateParameter,
+                static_cast<sqlite3_int64>(row.second[state])));
+        }
+        Require(sqlite::GetApi().step(statement.get()) == SQLITE_DONE, sqlite::GetApi().errmsg(db.handle));
+        db.Check(sqlite::GetApi().reset(statement.get()));
+        db.Check(sqlite::GetApi().clearBindings(statement.get()));
+    }
+}
 } // namespace
 
 bool WritePmSamplingSqlite(const std::string& path, const PmSamplingResult& result, std::string& error)
@@ -70,64 +131,15 @@ bool WritePmSamplingSqlite(const std::string& path, const PmSamplingResult& resu
     error.clear();
     try {
         Require(!path.empty() && path.find('\0') == std::string::npos, "invalid PmSampling SQLite path");
-        for (const auto& row : result.rows) {
-            Require(
-                row.first <= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()),
-                "PmSampling address exceeds SQLite INTEGER range");
-            for (const auto count : row.second) {
-                Require(
-                    count <= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()),
-                    "PmSampling count exceeds SQLite INTEGER range");
-            }
-        }
+        ValidateSamples(result);
         // The caller owns the private staging directory and excludes failed
         // files from packaging. Leave file cleanup to that collection owner.
         Database db;
         db.Check(sqlite::GetApi().openV2(
             path.c_str(), &db.handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr));
-        {
-            auto journal = Prepare(db, "PRAGMA journal_mode=DELETE");
-            Require(
-                sqlite::GetApi().step(journal.get()) == SQLITE_ROW && Text(journal.get(), 0) == "delete" &&
-                    sqlite::GetApi().step(journal.get()) == SQLITE_DONE,
-                "cannot use SQLite DELETE journal");
-        }
-        db.Exec("PRAGMA synchronous=FULL");
-        db.Exec("BEGIN IMMEDIATE");
-        db.transaction = true;
-        db.Exec(("PRAGMA user_version=" + std::to_string(kSchemaVersion)).c_str());
-        const std::array<const char*, kPmSamplingStateCount + 1> columns = {
-            "address",
-            "ibuf_empty",
-            "nop_cycles",
-            "scoreboard_not_ready",
-            "register_bank_conflict",
-            "resource_conflict",
-            "warp_level_sync",
-            "divergence_stack_spill",
-            "others"};
-        std::string schema = "CREATE TABLE PcSampling(" + std::string(columns[0]) + " INTEGER NOT NULL PRIMARY KEY";
-        std::string insert = "INSERT INTO PcSampling VALUES(?";
-        for (std::size_t state = 0; state < kPmSamplingStateCount; ++state) {
-            schema += "," + std::string(columns[state + 1]) + " INTEGER NOT NULL CHECK(" + columns[state + 1] + ">=0)";
-            insert += ",?";
-        }
-        db.Exec((schema + ")").c_str());
-        {
-            auto statement = Prepare(db, insert + ")");
-            for (const auto& row : result.rows) {
-                db.Check(sqlite::GetApi().bindInt64(
-                    statement.get(), kAddressParameter, static_cast<sqlite3_int64>(row.first)));
-                for (std::size_t state = 0; state < row.second.size(); ++state) {
-                    db.Check(sqlite::GetApi().bindInt64(
-                        statement.get(), static_cast<int>(state) + kFirstStateParameter,
-                        static_cast<sqlite3_int64>(row.second[state])));
-                }
-                Require(sqlite::GetApi().step(statement.get()) == SQLITE_DONE, sqlite::GetApi().errmsg(db.handle));
-                db.Check(sqlite::GetApi().reset(statement.get()));
-                db.Check(sqlite::GetApi().clearBindings(statement.get()));
-            }
-        }
+        ConfigureDatabase(db);
+        const std::string insert = CreateSchema(db);
+        WriteRows(db, insert, result);
         db.Exec("COMMIT");
         db.transaction = false;
         db.Check(sqlite::GetApi().close(db.handle));

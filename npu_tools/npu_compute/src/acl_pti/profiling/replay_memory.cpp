@@ -15,7 +15,7 @@
 namespace aclpti::profiling {
 
 aclptiResult ReplayMemory::MirrorMalloc(
-    void** devPtr, std::size_t size, aclrtMemMallocPolicy policy, aclrtApiId api, aclrtMallocConfig* cfg)
+    void* const* devPtr, std::size_t size, aclrtMemMallocPolicy policy, aclrtApiId api, aclrtMallocConfig* cfg)
 {
     if (devPtr == nullptr || *devPtr == nullptr || size == 0) {
         ASCTOOL_ERROR(

@@ -50,9 +50,14 @@ public:
     const CsvRecordLocation& Location() const { return location_; }
 
 private:
+    enum class FieldState { Start, Unquoted, Quoted, AfterQuote };
+    enum class RecordStep { Continue, Complete, EndOfFile };
+
     int ReadCharacter();
     int PeekCharacter();
     int NextCharacter();
+    RecordStep ReadNextRecordStep(
+        std::vector<std::string>& fields, std::string& field, FieldState& state, bool& hasInput);
     [[noreturn]] void Fail(const std::string& reason) const;
 
     std::istream& input_;

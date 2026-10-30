@@ -133,7 +133,7 @@ int ComputeService::Shutdown() noexcept
         return -1;
     }
 }
-void ComputeService::Stop() noexcept
+void ComputeService::Stop() const noexcept
 {
     NpuComputeRuntime::Instance().Stop();
     // ACLPTI teardown invokes the shutdown callback even when no kernel ran.

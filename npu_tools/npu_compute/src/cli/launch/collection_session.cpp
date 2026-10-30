@@ -30,9 +30,148 @@ void SetEnvironment(const std::string& name, const std::string& value, std::vect
     environment.erase(
         std::remove_if(
             environment.begin(), environment.end(),
-            [&](const auto& entry) { return entry.compare(0, prefix.size(), prefix) == 0; }),
+            [&prefix](const auto& entry) { return entry.compare(0, prefix.size(), prefix) == 0; }),
         environment.end());
     environment.push_back(prefix + value);
+}
+
+struct ReceiverState {
+    std::atomic<bool> childExited{false};
+    std::atomic<bool> cancelled{false};
+    std::atomic<bool> done{false};
+    bool success = false;
+    std::string ipcError;
+    std::string failureDomain;
+    UdsClient client;
+};
+
+struct ChildResult {
+    int appResult = 0;
+    std::string appError;
+    int signal = 0;
+    bool terminated = false;
+};
+
+bool StartChild(
+    ProcessHandle& child, ProcessLaunchRequest& request, const ipc::Bootstrap& bootstrap, CollectionOutcome& outcome,
+    std::string* error, int* earlyResult)
+{
+    if (child.Start(request, error, bootstrap.handshakeDeadline)) {
+        return true;
+    }
+    const int signal = child.PendingSignal();
+    if (child.Pid() > 0) {
+        child.Signal(SIGKILL);
+        std::string reapError;
+        child.Wait(&reapError);
+        outcome.childExit = child.ExitDescription();
+    }
+    if (signal != 0) {
+        outcome.outcome = "app_failed";
+        *error = "collection interrupted during startup by signal " + std::to_string(signal);
+        *earlyResult = SIGNAL_EXIT_CODE_BASE + signal;
+    } else {
+        *earlyResult = kInternalErrorExitCode;
+    }
+    return false;
+}
+
+void ReceiveCollection(
+    const ipc::Bootstrap& bootstrap, ProcessHandle& child, const ipc::Config& config, const std::string& directory,
+    ReceiverState& state)
+{
+    try {
+        state.client.Run(bootstrap, child.Pid(), config, directory, state.childExited, state.cancelled);
+        state.success = true;
+    } catch (const ipc::Exception& exception) {
+        state.failureDomain = exception.Detail().domain;
+        state.ipcError = state.failureDomain + "/" + exception.Detail().phase +
+                         " code=" + std::to_string(exception.Detail().code) + ": " + exception.what();
+    } catch (const std::exception& exception) {
+        state.ipcError = exception.what();
+    } catch (...) {
+        state.ipcError = "unexpected UDS failure";
+    }
+    state.done = true;
+}
+
+void WaitForInterruptAttempt(ReceiverState& state)
+{
+    const auto deadline = ipc::After(std::chrono::milliseconds(INTERRUPT_GRACE_PERIOD_MS));
+    while (!state.done && !state.client.InterruptAttempted() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(RECEIVER_DRAIN_INTERVAL_MS));
+    }
+}
+
+void MonitorChild(ProcessHandle& child, ReceiverState& state, ChildResult* result)
+{
+    auto killDeadline = ipc::Deadline::max();
+    while (!child.Poll(&result->appResult, &result->appError)) {
+        if (child.PendingSignal() != 0 && !result->signal) {
+            result->signal = child.PendingSignal();
+            state.cancelled = true;
+            // Let the communication owner attempt INTERRUPT before forwarding the signal.
+            WaitForInterruptAttempt(state);
+            child.Signal(result->signal);
+            result->terminated = true;
+            killDeadline = ipc::After(std::chrono::seconds(1));
+        }
+        if (state.done && !state.success && !result->terminated) {
+            child.Signal(SIGTERM);
+            result->terminated = true;
+            killDeadline = ipc::After(std::chrono::seconds(1));
+        }
+        if (result->terminated && std::chrono::steady_clock::now() >= killDeadline) {
+            child.Signal(SIGKILL);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(CHILD_POLL_INTERVAL_MS));
+    }
+    state.childExited = true;
+    while (!state.done) {
+        if (child.PendingSignal() != 0 && !result->signal) {
+            result->signal = child.PendingSignal();
+            state.cancelled = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(RECEIVER_DRAIN_INTERVAL_MS));
+    }
+}
+
+int FinishSession(
+    ProcessHandle& child, ReceiverState& state, ChildResult& result, CollectionOutcome& outcome, std::string* error)
+{
+    if (!result.signal) {
+        result.signal = child.PendingSignal();
+    }
+    outcome.artifacts = state.client.ArtifactCount();
+    outcome.complete = state.client.Complete() ? "1" : "0";
+    outcome.childExit = child.ExitDescription();
+    outcome.outcome = (state.failureDomain == "BOOTSTRAP" || state.failureDomain == "INTERNAL") ? "infra_failed" :
+                                                                                                  "collection_failed";
+    if (result.signal) {
+        outcome.outcome = "app_failed";
+        outcome.childExit = "signal:" + std::to_string(result.signal);
+        *error = "collection interrupted by signal " + std::to_string(result.signal);
+        return SIGNAL_EXIT_CODE_BASE + result.signal;
+    }
+    if (result.appResult != 0 && !result.terminated) {
+        outcome.outcome = "app_failed";
+        *error = result.appError;
+        if (!state.ipcError.empty()) {
+            *error += "; UDS collection failed: " + state.ipcError;
+        }
+        return result.appResult;
+    }
+    if (!state.success) {
+        *error = "UDS collection failed: " + state.ipcError;
+        return kCollectionErrorExitCode;
+    }
+    if (result.appResult != 0) {
+        *error = result.appError;
+        return result.appResult;
+    }
+    outcome.issues = state.client.Issues();
+    outcome.outcome = state.client.Complete() ? "success" : "collection_failed";
+    return 0;
 }
 } // namespace
 ipc::Config LoadCollectionConfig(const CliConfig& config)
@@ -55,115 +194,17 @@ int CollectionSession::Run(
     SetEnvironment("NPU_COMPUTE_HANDSHAKE_TIMEOUT_MS", std::to_string(bootstrap.timeoutMs), request.environment);
     bootstrap.handshakeDeadline = ipc::After(std::chrono::milliseconds(bootstrap.timeoutMs));
     ProcessHandle child;
-    if (!child.Start(request, error, bootstrap.handshakeDeadline)) {
-        const int signal = child.PendingSignal();
-        if (child.Pid() > 0) {
-            child.Signal(SIGKILL);
-            std::string reapError;
-            child.Wait(&reapError);
-            outcome_.childExit = child.ExitDescription();
-        }
-        if (signal != 0) {
-            outcome_.outcome = "app_failed";
-            *error = "collection interrupted during startup by signal " + std::to_string(signal);
-            return SIGNAL_EXIT_CODE_BASE + signal;
-        }
-        return kInternalErrorExitCode;
+    int earlyResult = 0;
+    if (!StartChild(child, request, bootstrap, outcome_, error, &earlyResult)) {
+        return earlyResult;
     }
-    std::atomic<bool> childExited{false};
-    std::atomic<bool> cancelled{false};
-    std::atomic<bool> done{false};
-    bool success = false;
-    std::string ipcError;
-    UdsClient client;
-    std::string failureDomain;
-    std::thread receiver([&] {
-        try {
-            client.Run(bootstrap, child.Pid(), config, directory, childExited, cancelled);
-            success = true;
-        } catch (const ipc::Exception& exception) {
-            failureDomain = exception.Detail().domain;
-            ipcError = failureDomain + "/" + exception.Detail().phase +
-                       " code=" + std::to_string(exception.Detail().code) + ": " + exception.what();
-        } catch (const std::exception& exception) {
-            ipcError = exception.what();
-        } catch (...) {
-            ipcError = "unexpected UDS failure";
-        }
-        done = true;
+    ReceiverState state;
+    std::thread receiver([&bootstrap, &child, &config, &directory, &state] {
+        ReceiveCollection(bootstrap, child, config, directory, state);
     });
-    int appResult = 0;
-    std::string appError;
-    int signal = 0;
-    bool terminated = false;
-    auto killDeadline = ipc::Deadline::max();
-    while (!child.Poll(&appResult, &appError)) {
-        if (child.PendingSignal() != 0 && signal == 0) {
-            signal = child.PendingSignal();
-            cancelled = true;
-            // Wait for the communication owner to attempt INTERRUPT. A stuck
-            // filesystem must not indefinitely delay forwarding the signal.
-            const auto interruptDeadline = ipc::After(std::chrono::milliseconds(INTERRUPT_GRACE_PERIOD_MS));
-            while (!done && !client.InterruptAttempted() && std::chrono::steady_clock::now() < interruptDeadline) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(RECEIVER_DRAIN_INTERVAL_MS));
-            }
-            child.Signal(signal);
-            terminated = true;
-            killDeadline = ipc::After(std::chrono::seconds(1));
-        }
-        if (done && !success && !terminated) {
-            child.Signal(SIGTERM);
-            terminated = true;
-            killDeadline = ipc::After(std::chrono::seconds(1));
-        }
-        if (terminated && std::chrono::steady_clock::now() >= killDeadline) {
-            child.Signal(SIGKILL);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(CHILD_POLL_INTERVAL_MS));
-    }
-    childExited = true;
-    // Reaping the child does not end the session: retain signal handling while
-    // the receiver finishes committing artifacts and checking the final close.
-    while (!done) {
-        if (child.PendingSignal() != 0 && signal == 0) {
-            signal = child.PendingSignal();
-            cancelled = true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(RECEIVER_DRAIN_INTERVAL_MS));
-    }
+    ChildResult result;
+    MonitorChild(child, state, &result);
     receiver.join();
-    if (signal == 0) {
-        signal = child.PendingSignal();
-    }
-    outcome_.artifacts = client.ArtifactCount();
-    outcome_.complete = client.Complete() ? "1" : "0";
-    outcome_.childExit = child.ExitDescription();
-    outcome_.outcome =
-        (failureDomain == "BOOTSTRAP" || failureDomain == "INTERNAL") ? "infra_failed" : "collection_failed";
-    if (signal != 0) {
-        outcome_.outcome = "app_failed";
-        outcome_.childExit = "signal:" + std::to_string(signal);
-        *error = "collection interrupted by signal " + std::to_string(signal);
-        return SIGNAL_EXIT_CODE_BASE + signal;
-    }
-    if (appResult != 0 && !terminated) {
-        outcome_.outcome = "app_failed";
-        *error = appError;
-        if (!ipcError.empty()) {
-            *error += "; UDS collection failed: " + ipcError;
-        }
-        return appResult;
-    }
-    if (!success) {
-        *error = "UDS collection failed: " + ipcError;
-        return kCollectionErrorExitCode;
-    }
-    if (appResult != 0) {
-        *error = appError;
-        return appResult;
-    }
-    outcome_.issues = client.Issues();
-    outcome_.outcome = client.Complete() ? "success" : "collection_failed";
-    return 0;
+    return FinishSession(child, state, result, outcome_, error);
 }
 } // namespace npucompute::cli

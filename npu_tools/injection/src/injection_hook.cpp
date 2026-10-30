@@ -653,7 +653,7 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
     std::array<aclrtApiFunc, ACL_RT_API_MAX> previous{};
     auto rollback = [&previous]() {
         for (size_t i = previous.size(); i != 0; --i) {
-            if (previous[i - 1]) {
+            if (previous[i - 1] != nullptr) {
                 (void)aclrtApiInjectionSetFunc(FindRuntimeApiName(static_cast<aclrtApiId>(i - 1)), previous[i - 1]);
             }
         }

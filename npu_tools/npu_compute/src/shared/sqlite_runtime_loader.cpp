@@ -9,9 +9,10 @@
  */
 #include "shared/sqlite_runtime_loader.h"
 #include <boost/filesystem.hpp>
+#include <boost/system/error_code.hpp>
 #include <functional>
 #include <string>
-#include <system_error>
+#include <cstddef>
 #include <limits>
 
 #include <memory>
@@ -30,6 +31,7 @@
 namespace npucompute::sqlite {
 namespace {
 namespace fs = boost::filesystem;
+
 #ifdef _WIN32
 constexpr std::size_t kInitialModulePathCapacity = 256;
 constexpr std::size_t kInitialErrorMessageCapacity = 256;

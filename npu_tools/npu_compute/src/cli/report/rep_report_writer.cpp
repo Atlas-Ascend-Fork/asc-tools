@@ -290,6 +290,76 @@ bool CreateTemporaryFile(
     return Fail("unable to create a unique temporary rep after 128 attempts", error);
 }
 
+bool ValidateReportTarget(const ReportTarget& target, boost::filesystem::path* directory, std::string* error)
+{
+    if (target.path.empty() || target.path.filename().empty()) {
+        return Fail("report target path is empty", error);
+    }
+    *directory = target.path.parent_path();
+    if (directory->empty()) {
+        *directory = ".";
+    }
+    boost::filesystem::file_status directory_status;
+    if (!ReadStatus(*directory, &directory_status, error) || !boost::filesystem::is_directory(directory_status)) {
+        if (error != nullptr && error->empty()) {
+            *error = "report target parent is not a directory: " + directory->string();
+        }
+        return false;
+    }
+    boost::filesystem::file_status target_status;
+    if (!ReadStatus(target.path, &target_status, error)) {
+        return false;
+    }
+    if (!boost::filesystem::exists(target_status)) {
+        return true;
+    }
+    if (!boost::filesystem::is_regular_file(target_status)) {
+        return Fail("report target exists but is not a regular file: " + target.path.string(), error);
+    }
+    return Fail("output report '" + target.path.string() + "' already exists. Choose a different file name.", error);
+}
+
+bool WriteAndPublishReport(
+    const std::vector<uint8_t>& encoded, const ReportTarget& target, const boost::filesystem::path& directory,
+    const ReportFileOperations& operations, std::string* error)
+{
+    boost::filesystem::path temporary_path;
+    int temporary_value = -1;
+    if (!CreateTemporaryFile(directory, target.path.filename().string(), &temporary_path, &temporary_value, error)) {
+        return false;
+    }
+    FileDescriptor temporary_descriptor(temporary_value, &operations);
+    TemporaryFileCleanup temporary_cleanup(temporary_path);
+    if (!WriteAll(temporary_descriptor.Get(), encoded, operations, error) ||
+        !SyncDescriptor(
+            temporary_descriptor.Get(), "temporary report '" + temporary_path.string() + "'", operations, error) ||
+        !temporary_descriptor.Close("temporary report '" + temporary_path.string() + "'", error)) {
+        return false;
+    }
+    std::vector<uint8_t> readback;
+    if (!ReadFile(temporary_path, &readback, error) || readback != encoded) {
+        if (error != nullptr && error->empty()) {
+            *error = "temporary rep verification does not match input";
+        }
+        return false;
+    }
+    if (!ValidateRepBytes(readback, error)) {
+        return false;
+    }
+    const int directory_value = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (directory_value < 0) {
+        return FailErrno("open report output directory failed: " + directory.string(), errno, error);
+    }
+    FileDescriptor directory_descriptor(directory_value, &operations);
+    if (operations.rename(temporary_path.c_str(), target.path.c_str(), operations.context) != 0) {
+        return FailErrno("publish rep report failed: " + target.path.string(), errno, error);
+    }
+    temporary_cleanup.Release();
+    return SyncDescriptor(
+               directory_descriptor.Get(), "report output directory '" + directory.string() + "'", operations, error) &&
+           directory_descriptor.Close("report output directory '" + directory.string() + "'", error);
+}
+
 } // namespace
 
 bool PublishRepReport(const std::vector<uint8_t>& encoded, const ReportTarget& target, std::string* error)
@@ -318,75 +388,11 @@ bool PublishRepReportWithOperations(
         if (!ValidateRepBytes(encoded, error)) {
             return false;
         }
-        if (target.path.empty() || target.path.filename().empty()) {
-            return Fail("report target path is empty", error);
-        }
-        boost::filesystem::path directory = target.path.parent_path();
-        if (directory.empty()) {
-            directory = ".";
-        }
-        boost::filesystem::file_status directory_status;
-        if (!ReadStatus(directory, &directory_status, error) || !boost::filesystem::is_directory(directory_status)) {
-            if (error != nullptr && error->empty()) {
-                *error = "report target parent is not a directory: " + directory.string();
-            }
+        boost::filesystem::path directory;
+        if (!ValidateReportTarget(target, &directory, error)) {
             return false;
         }
-
-        boost::filesystem::file_status target_status;
-        if (!ReadStatus(target.path, &target_status, error)) {
-            return false;
-        }
-        if (boost::filesystem::exists(target_status)) {
-            if (!boost::filesystem::is_regular_file(target_status)) {
-                return Fail("report target exists but is not a regular file: " + target.path.string(), error);
-            }
-            return Fail(
-                "output report '" + target.path.string() + "' already exists. Choose a different file name.", error);
-        }
-
-        boost::filesystem::path temporary_path;
-        int temporary_value = -1;
-        if (!CreateTemporaryFile(
-                directory, target.path.filename().string(), &temporary_path, &temporary_value, error)) {
-            return false;
-        }
-        FileDescriptor temporary_descriptor(temporary_value, &operations);
-        TemporaryFileCleanup temporary_cleanup(temporary_path);
-        if (!WriteAll(temporary_descriptor.Get(), encoded, operations, error) ||
-            !SyncDescriptor(
-                temporary_descriptor.Get(), "temporary report '" + temporary_path.string() + "'", operations, error) ||
-            !temporary_descriptor.Close("temporary report '" + temporary_path.string() + "'", error)) {
-            return false;
-        }
-
-        std::vector<uint8_t> readback;
-        if (!ReadFile(temporary_path, &readback, error) || readback != encoded) {
-            if (error != nullptr && error->empty()) {
-                *error = "temporary rep verification does not match input";
-            }
-            return false;
-        }
-        if (!ValidateRepBytes(readback, error)) {
-            return false;
-        }
-
-        const int directory_value = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-        if (directory_value < 0) {
-            return FailErrno("open report output directory failed: " + directory.string(), errno, error);
-        }
-        FileDescriptor directory_descriptor(directory_value, &operations);
-        if (operations.rename(temporary_path.c_str(), target.path.c_str(), operations.context) != 0) {
-            return FailErrno("publish rep report failed: " + target.path.string(), errno, error);
-        }
-        temporary_cleanup.Release();
-        if (!SyncDescriptor(
-                directory_descriptor.Get(), "report output directory '" + directory.string() + "'", operations,
-                error) ||
-            !directory_descriptor.Close("report output directory '" + directory.string() + "'", error)) {
-            return false;
-        }
-        return true;
+        return WriteAndPublishReport(encoded, target, directory, operations, error);
     } catch (const std::bad_alloc&) {
         return Fail("allocate report publishing buffer failed", error);
     }

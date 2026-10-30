@@ -111,6 +111,53 @@ uint16_t BlockId(const StampAssembler& stamp)
 
 bool ValidFrequency(double frequency) { return frequency > 0.0 && std::isfinite(frequency); }
 
+aclptiResult ReadOriginChannel(const std::vector<uint32_t>& words, uint64_t* origin, bool* found, BiuParseStats* stats)
+{
+    StampAssembler stamp;
+    bool afterEnd = false;
+    for (uint32_t word : words) {
+        if (word == END_WORD) {
+            if (stamp.size != 0) {
+                ++stats->invalidRecordCount;
+                return ACLPTI_ERROR_TRACE_INCOMPLETE;
+            }
+            afterEnd = true;
+            continue;
+        }
+        if (afterEnd && word == PADDING_WORD) {
+            stats->paddingBytes += sizeof(uint32_t);
+            continue;
+        }
+        afterEnd = false;
+        const uint8_t ctrl = Ctrl(word);
+        if (ctrl == 14U) {
+            stamp.words[stamp.size++] = word;
+            if (stamp.size == STAMP_WORD_COUNT) {
+                const uint64_t timestamp = Timestamp(stamp);
+                if (!*found || timestamp < *origin) {
+                    *origin = timestamp;
+                }
+                *found = true;
+                stamp.Reset();
+            }
+            continue;
+        }
+        if (stamp.size != 0) {
+            ++stats->invalidRecordCount;
+            return ACLPTI_ERROR_TRACE_INCOMPLETE;
+        }
+        if ((ctrl >= 7U && ctrl <= 9U) || (ctrl >= 11U && ctrl <= 13U)) {
+            ++stats->invalidRecordCount;
+            return ACLPTI_ERROR_DECODE;
+        }
+    }
+    if (stamp.size != 0) {
+        ++stats->invalidRecordCount;
+        return ACLPTI_ERROR_TRACE_INCOMPLETE;
+    }
+    return ACLPTI_SUCCESS;
+}
+
 aclptiResult FindOrigin(const aclptiPipelineData& replay, uint64_t* origin, BiuParseStats* stats)
 {
     bool found = false;
@@ -121,51 +168,9 @@ aclptiResult FindOrigin(const aclptiPipelineData& replay, uint64_t* origin, BiuP
             return ACLPTI_ERROR_OUT_OF_MEMORY;
         }
         stats->payloadBytes += words.size() * sizeof(uint32_t);
-        StampAssembler stamp;
-        bool afterEnd = false;
-        for (uint32_t word : words) {
-            if (word == END_WORD) {
-                if (stamp.size != 0) {
-                    ++stats->invalidRecordCount;
-                    return ACLPTI_ERROR_TRACE_INCOMPLETE;
-                }
-                afterEnd = true;
-                continue;
-            }
-            if (afterEnd && word == PADDING_WORD) {
-                stats->paddingBytes += sizeof(uint32_t);
-                continue;
-            }
-            afterEnd = false;
-            const uint8_t ctrl = Ctrl(word);
-            if (ctrl == 14U) {
-                stamp.words[stamp.size++] = word;
-                if (stamp.size == STAMP_WORD_COUNT) {
-                    const uint64_t timestamp = Timestamp(stamp);
-                    if (!found || timestamp < *origin) {
-                        *origin = timestamp;
-                    }
-                    found = true;
-                    stamp.Reset();
-                }
-                continue;
-            }
-            if (stamp.size != 0) {
-                ++stats->invalidRecordCount;
-                return ACLPTI_ERROR_TRACE_INCOMPLETE;
-            }
-            if (ctrl >= 7U && ctrl <= 9U) {
-                ++stats->invalidRecordCount;
-                return ACLPTI_ERROR_DECODE;
-            }
-            if (ctrl >= 11U && ctrl <= 13U) {
-                ++stats->invalidRecordCount;
-                return ACLPTI_ERROR_DECODE;
-            }
-        }
-        if (stamp.size != 0) {
-            ++stats->invalidRecordCount;
-            return ACLPTI_ERROR_TRACE_INCOMPLETE;
+        const aclptiResult status = ReadOriginChannel(words, origin, &found, stats);
+        if (status != ACLPTI_SUCCESS) {
+            return status;
         }
     }
     return found ? ACLPTI_SUCCESS : ACLPTI_ERROR_TRACE_INCOMPLETE;
@@ -182,89 +187,238 @@ double CurrentTimeUs(uint64_t anchor, uint64_t origin, uint64_t cycles, double s
            static_cast<double>(cycles) * MICROSECONDS_PER_SECOND / coreFrequency;
 }
 
-aclptiResult ParseChannel(
-    uint64_t replayId, int32_t deviceId, const aclptiPipelineKey& pipelineKey, const std::vector<uint32_t>& words,
-    uint64_t origin, const BiuClockConfig& clocks, ParsedChannelEvents* parsed, BiuParseStats* stats)
-{
-    if (parsed == nullptr) {
-        return ACLPTI_ERROR_INVALID_PARAMETER;
+class ChannelParser {
+public:
+    ChannelParser(
+        uint64_t replayId, int32_t deviceId, const aclptiPipelineKey& pipelineKey, const std::vector<uint32_t>& words,
+        uint64_t origin, const BiuClockConfig& clocks, ParsedChannelEvents& parsed, BiuParseStats& stats)
+        : words_(words),
+          origin_(origin),
+          clocks_(clocks),
+          stats_(stats),
+          channel_{replayId, deviceId, pipelineKey.groupId, pipelineKey.coreKind},
+          events_(parsed.events),
+          endMark_(parsed.endMark),
+          coreFrequency_(ChannelFrequency(clocks, pipelineKey.coreKind))
+    {}
+
+    aclptiResult Run()
+    {
+        for (uint32_t word : words_) {
+            const aclptiResult status = ProcessWord(word);
+            if (status != ACLPTI_SUCCESS) {
+                return status;
+            }
+        }
+        return Finish();
     }
-    StampAssembler stamp;
-    std::array<PipeState, PIPE_COUNT> states{};
-    std::array<double, PIPE_COUNT> starts{};
-    bool hasAnchor = false;
-    bool afterEnd = false;
-    uint64_t anchor = 0;
-    uint64_t cycles = 0;
-    uint16_t blockId = 0;
-    const BiuChannelKey channel{replayId, deviceId, pipelineKey.groupId, pipelineKey.coreKind};
-    std::vector<BiuTraceEvent>& events = parsed->events;
-    std::map<std::pair<BiuPipe, uint16_t>, RegionStart> regionStarts;
-    std::optional<EndMarkState>& endMark = parsed->endMark;
-    const double coreFrequency = ChannelFrequency(clocks, pipelineKey.coreKind);
 
-    const auto appendEvent = [&events](const BiuTraceEvent& event) { events.push_back(event); };
-
-    const auto processDfx = [&cycles, &anchor, origin, &clocks, coreFrequency, &appendEvent, &channel, &blockId,
-                             &regionStarts](BiuPipe pipe, uint16_t regionId, double now) {
-        const uint64_t markEndCycles = cycles + 1U;
-        const double markEndUs = CurrentTimeUs(anchor, origin, markEndCycles, clocks.syscntFrequencyHz, coreFrequency);
-        appendEvent(BiuTraceEvent{
-            channel, pipe, blockId, "MarkStamp" + std::to_string(regionId), "", now, markEndUs - now, true});
-        if ((regionId & 0x400U) == 0) {
-            return;
+private:
+    aclptiResult ProcessWord(uint32_t word)
+    {
+        if (word == END_WORD) {
+            return EndSegment();
         }
-        if ((regionId & 0x800U) != 0) {
-            return;
+        if (afterEnd_ && word == PADDING_WORD) {
+            return ACLPTI_SUCCESS;
         }
-        const uint16_t baseRegionId = regionId & 0x3ffU;
-        const auto key = std::make_pair(pipe, baseRegionId);
-        regionStarts[key] = RegionStart{now};
-    };
+        afterEnd_ = false;
+        const uint8_t ctrl = Ctrl(word);
+        if (ctrl == 14U) {
+            return AddStampWord(word);
+        }
+        if (stamp_.size != 0) {
+            return InvalidRecord(ACLPTI_ERROR_TRACE_INCOMPLETE);
+        }
+        if ((ctrl >= 7U && ctrl <= 9U) || (ctrl >= 11U && ctrl <= 13U)) {
+            return InvalidRecord(ACLPTI_ERROR_DECODE);
+        }
+        if (!hasAnchor_ || cycles_ > std::numeric_limits<uint64_t>::max() - TimeData(word)) {
+            return InvalidRecord(ACLPTI_ERROR_ASSEMBLE);
+        }
+        cycles_ += TimeData(word);
+        return ctrl == 15U ? ProcessPipeWord(word) : ProcessDfxWord(word, ctrl);
+    }
 
-    const auto processDfxStop = [&regionStarts, &appendEvent, &channel, &blockId](
-                                    BiuPipe pipe, uint16_t regionId, double now) {
+    aclptiResult EndSegment()
+    {
+        if (stamp_.size != 0) {
+            return InvalidRecord(ACLPTI_ERROR_TRACE_INCOMPLETE);
+        }
+        ResetSegment();
+        afterEnd_ = true;
+        return ACLPTI_SUCCESS;
+    }
+
+    aclptiResult AddStampWord(uint32_t word)
+    {
+        stamp_.words[stamp_.size++] = word;
+        if (stamp_.size == STAMP_WORD_COUNT) {
+            CountBusyIntervals();
+            anchor_ = Timestamp(stamp_);
+            blockId_ = BlockId(stamp_);
+            cycles_ = 0;
+            hasAnchor_ = true;
+            states_.fill(PipeState::Unknown);
+            stamp_.Reset();
+        }
+        return ACLPTI_SUCCESS;
+    }
+
+    aclptiResult ProcessDfxWord(uint32_t word, uint8_t ctrl)
+    {
+        BiuPipe pipe = BiuPipe::Scalar;
+        if (!DfxPipeForControl(ctrl, &pipe)) {
+            return ACLPTI_SUCCESS;
+        }
+        const double now = CurrentTimeUs(anchor_, origin_, cycles_, clocks_.syscntFrequencyHz, coreFrequency_);
+        if (!std::isfinite(now) || now < 0.0) {
+            return ACLPTI_ERROR_ASSEMBLE;
+        }
+        const uint16_t regionId = Events(word);
+        UpdateEndMarks(regionId);
+        ProcessDfxMark(pipe, regionId, now);
+        ProcessDfxStop(pipe, regionId, now);
+        return ACLPTI_SUCCESS;
+    }
+
+    aclptiResult ProcessPipeWord(uint32_t word)
+    {
+        const double now = CurrentTimeUs(anchor_, origin_, cycles_, clocks_.syscntFrequencyHz, coreFrequency_);
+        if (!std::isfinite(now) || now < 0.0) {
+            return ACLPTI_ERROR_ASSEMBLE;
+        }
+        const uint16_t pipeMask = Events(word);
+        for (std::size_t index = 0; index < states_.size(); ++index) {
+            const aclptiResult status = UpdatePipe(index, (pipeMask & (1U << index)) != 0, now);
+            if (status != ACLPTI_SUCCESS) {
+                return status;
+            }
+        }
+        return ACLPTI_SUCCESS;
+    }
+
+    aclptiResult UpdatePipe(std::size_t index, bool busy, double now)
+    {
+        PipeState& state = states_[index];
+        if (state == PipeState::Unknown) {
+            state = busy ? PipeState::BusyUnknownStart : PipeState::Idle;
+            if (busy) {
+                ++stats_.incompleteIntervalCount;
+            }
+        } else if (state == PipeState::Idle && busy) {
+            starts_[index] = now;
+            state = PipeState::Busy;
+        } else if ((state == PipeState::Busy || state == PipeState::BusyUnknownStart) && !busy) {
+            if (state == PipeState::Busy && !AppendPipeEvent(index, now)) {
+                return ACLPTI_ERROR_ASSEMBLE;
+            }
+            state = PipeState::Idle;
+        }
+        return ACLPTI_SUCCESS;
+    }
+
+    bool AppendPipeEvent(std::size_t index, double now)
+    {
+        const double duration = now - starts_[index];
+        if (!std::isfinite(duration) || duration < 0.0) {
+            return false;
+        }
+        events_.push_back(BiuTraceEvent{
+            channel_, static_cast<BiuPipe>(index), blockId_, PIPE_DESCRIPTORS[index].name,
+            PIPE_DESCRIPTORS[index].color, starts_[index], duration, false});
+        ++stats_.intervalCount;
+        return true;
+    }
+
+    void ProcessDfxMark(BiuPipe pipe, uint16_t regionId, double now)
+    {
+        const uint64_t markEndCycles = cycles_ + 1U;
+        const double markEndUs =
+            CurrentTimeUs(anchor_, origin_, markEndCycles, clocks_.syscntFrequencyHz, coreFrequency_);
+        events_.push_back(BiuTraceEvent{
+            channel_, pipe, blockId_, "MarkStamp" + std::to_string(regionId), "", now, markEndUs - now, true});
+        if ((regionId & 0x400U) != 0 && (regionId & 0x800U) == 0) {
+            regionStarts_[{pipe, static_cast<uint16_t>(regionId & 0x3ffU)}] = RegionStart{now};
+        }
+    }
+
+    void ProcessDfxStop(BiuPipe pipe, uint16_t regionId, double now)
+    {
         if ((regionId & 0xc00U) != 0xc00U) {
             return;
         }
         const uint16_t baseRegionId = regionId & 0x3ffU;
         const auto key = std::make_pair(pipe, baseRegionId);
-        const auto start = regionStarts.find(key);
-        if (start == regionStarts.end()) {
+        const auto start = regionStarts_.find(key);
+        if (start == regionStarts_.end()) {
             return;
         }
         const char* regionColor = REGION_COLORS[baseRegionId % REGION_COLORS.size()];
-        appendEvent(BiuTraceEvent{
-            channel, pipe, blockId, "Region" + std::to_string(baseRegionId), regionColor, start->second.startUs,
+        events_.push_back(BiuTraceEvent{
+            channel_, pipe, blockId_, "Region" + std::to_string(baseRegionId), regionColor, start->second.startUs,
             now - start->second.startUs, true});
-        regionStarts.erase(start);
-    };
+        regionStarts_.erase(start);
+    }
 
-    const auto updateEndMarks = [&endMark, &events](uint16_t regionId) {
+    void UpdateEndMarks(uint16_t regionId)
+    {
         const auto marker = std::find(END_MARK_SEQUENCE.begin(), END_MARK_SEQUENCE.end(), regionId);
         if (marker == END_MARK_SEQUENCE.end()) {
-            endMark.reset();
+            endMark_.reset();
             return;
         }
         const std::size_t markerIndex = static_cast<std::size_t>(std::distance(END_MARK_SEQUENCE.begin(), marker));
         if (markerIndex == 0U) {
-            endMark = EndMarkState{events.size(), 1};
-            return;
+            endMark_ = EndMarkState{events_.size(), 1};
+        } else if (endMark_ && endMark_->nextExpectedIndex != END_MARK_SEQUENCE.size()) {
+            if (endMark_->nextExpectedIndex == markerIndex) {
+                ++endMark_->nextExpectedIndex;
+            } else {
+                endMark_.reset();
+            }
         }
-        if (!endMark) {
-            return;
-        }
-        if (endMark->nextExpectedIndex == END_MARK_SEQUENCE.size()) {
-            return;
-        }
-        if (endMark->nextExpectedIndex != markerIndex) {
-            endMark.reset();
-            return;
-        }
-        ++endMark->nextExpectedIndex;
-    };
+    }
 
-    const auto dfxPipeForCtrl = [](uint8_t ctrl, BiuPipe* pipe) {
+    void ResetSegment()
+    {
+        for (PipeState& state : states_) {
+            if (state == PipeState::Busy) {
+                ++stats_.incompleteIntervalCount;
+            }
+            state = PipeState::Unknown;
+        }
+        hasAnchor_ = false;
+        cycles_ = 0;
+        stamp_.Reset();
+    }
+
+    void CountBusyIntervals()
+    {
+        for (PipeState state : states_) {
+            if (state == PipeState::Busy) {
+                ++stats_.incompleteIntervalCount;
+            }
+        }
+    }
+
+    aclptiResult InvalidRecord(aclptiResult status)
+    {
+        ++stats_.invalidRecordCount;
+        return status;
+    }
+
+    aclptiResult Finish()
+    {
+        if (stamp_.size != 0) {
+            return InvalidRecord(ACLPTI_ERROR_TRACE_INCOMPLETE);
+        }
+        CountBusyIntervals();
+        return ACLPTI_SUCCESS;
+    }
+
+    static bool DfxPipeForControl(uint8_t ctrl, BiuPipe* pipe)
+    {
         if (pipe == nullptr) {
             return false;
         }
@@ -277,134 +431,35 @@ aclptiResult ParseChannel(
             return true;
         }
         return false;
-    };
-
-    const auto resetSegment = [&states, stats, &hasAnchor, &cycles, &stamp]() {
-        for (PipeState& state : states) {
-            if (state == PipeState::Busy) {
-                ++stats->incompleteIntervalCount;
-            }
-            state = PipeState::Unknown;
-        }
-        hasAnchor = false;
-        cycles = 0;
-        stamp.Reset();
-    };
-
-    for (uint32_t word : words) {
-        if (word == END_WORD) {
-            if (stamp.size != 0) {
-                ++stats->invalidRecordCount;
-                return ACLPTI_ERROR_TRACE_INCOMPLETE;
-            }
-            resetSegment();
-            afterEnd = true;
-            continue;
-        }
-        if (afterEnd && word == PADDING_WORD) {
-            continue;
-        }
-        afterEnd = false;
-        const uint8_t ctrl = Ctrl(word);
-        if (ctrl == 14U) {
-            stamp.words[stamp.size++] = word;
-            if (stamp.size == STAMP_WORD_COUNT) {
-                for (PipeState state : states) {
-                    if (state == PipeState::Busy) {
-                        ++stats->incompleteIntervalCount;
-                    }
-                }
-                anchor = Timestamp(stamp);
-                blockId = BlockId(stamp);
-                cycles = 0;
-                hasAnchor = true;
-                states.fill(PipeState::Unknown);
-                stamp.Reset();
-            }
-            continue;
-        }
-        if (stamp.size != 0) {
-            ++stats->invalidRecordCount;
-            return ACLPTI_ERROR_TRACE_INCOMPLETE;
-        }
-        if (ctrl >= 7U && ctrl <= 9U) {
-            ++stats->invalidRecordCount;
-            return ACLPTI_ERROR_DECODE;
-        }
-        if (ctrl >= 11U && ctrl <= 13U) {
-            ++stats->invalidRecordCount;
-            return ACLPTI_ERROR_DECODE;
-        }
-        if (!hasAnchor) {
-            ++stats->invalidRecordCount;
-            return ACLPTI_ERROR_ASSEMBLE;
-        }
-        if (cycles > std::numeric_limits<uint64_t>::max() - TimeData(word)) {
-            ++stats->invalidRecordCount;
-            return ACLPTI_ERROR_ASSEMBLE;
-        }
-        cycles += TimeData(word);
-        if (ctrl != 15U) {
-            BiuPipe pipe = BiuPipe::Scalar;
-            if (dfxPipeForCtrl(ctrl, &pipe)) {
-                const double now = CurrentTimeUs(anchor, origin, cycles, clocks.syscntFrequencyHz, coreFrequency);
-                if (!std::isfinite(now) || now < 0.0) {
-                    return ACLPTI_ERROR_ASSEMBLE;
-                }
-                const uint16_t regionId = Events(word);
-                updateEndMarks(regionId);
-                processDfx(pipe, regionId, now);
-                processDfxStop(pipe, regionId, now);
-            }
-            continue;
-        }
-
-        const double now = CurrentTimeUs(anchor, origin, cycles, clocks.syscntFrequencyHz, coreFrequency);
-        if (!std::isfinite(now) || now < 0.0) {
-            return ACLPTI_ERROR_ASSEMBLE;
-        }
-        const uint16_t pipeMask = Events(word);
-        for (std::size_t index = 0; index < states.size(); ++index) {
-            const bool busy = (pipeMask & (1U << index)) != 0;
-            PipeState& state = states[index];
-            if (state == PipeState::Unknown) {
-                state = busy ? PipeState::BusyUnknownStart : PipeState::Idle;
-                if (busy) {
-                    ++stats->incompleteIntervalCount;
-                }
-            } else if (state == PipeState::Idle && busy) {
-                starts[index] = now;
-                state = PipeState::Busy;
-            } else if ((state == PipeState::Busy || state == PipeState::BusyUnknownStart) && !busy) {
-                if (state == PipeState::Busy) {
-                    BiuTraceEvent event{channel,
-                                        static_cast<BiuPipe>(index),
-                                        blockId,
-                                        PIPE_DESCRIPTORS[index].name,
-                                        PIPE_DESCRIPTORS[index].color,
-                                        starts[index],
-                                        now - starts[index],
-                                        false};
-                    if (!std::isfinite(event.durationUs) || event.durationUs < 0.0) {
-                        return ACLPTI_ERROR_ASSEMBLE;
-                    }
-                    events.push_back(event);
-                    ++stats->intervalCount;
-                }
-                state = PipeState::Idle;
-            }
-        }
     }
-    if (stamp.size != 0) {
-        ++stats->invalidRecordCount;
-        return ACLPTI_ERROR_TRACE_INCOMPLETE;
+
+    const std::vector<uint32_t>& words_;
+    uint64_t origin_;
+    const BiuClockConfig& clocks_;
+    BiuParseStats& stats_;
+    BiuChannelKey channel_;
+    std::vector<BiuTraceEvent>& events_;
+    std::optional<EndMarkState>& endMark_;
+    double coreFrequency_;
+    StampAssembler stamp_;
+    std::array<PipeState, PIPE_COUNT> states_{};
+    std::array<double, PIPE_COUNT> starts_{};
+    bool hasAnchor_ = false;
+    bool afterEnd_ = false;
+    uint64_t anchor_ = 0;
+    uint64_t cycles_ = 0;
+    uint16_t blockId_ = 0;
+    std::map<std::pair<BiuPipe, uint16_t>, RegionStart> regionStarts_;
+};
+
+aclptiResult ParseChannel(
+    uint64_t replayId, int32_t deviceId, const aclptiPipelineKey& pipelineKey, const std::vector<uint32_t>& words,
+    uint64_t origin, const BiuClockConfig& clocks, ParsedChannelEvents* parsed, BiuParseStats* stats)
+{
+    if (parsed == nullptr) {
+        return ACLPTI_ERROR_INVALID_PARAMETER;
     }
-    for (PipeState state : states) {
-        if (state == PipeState::Busy) {
-            ++stats->incompleteIntervalCount;
-        }
-    }
-    return ACLPTI_SUCCESS;
+    return ChannelParser(replayId, deviceId, pipelineKey, words, origin, clocks, *parsed, *stats).Run();
 }
 
 const char* CoreSuffix(aclptiBiuCoreKind kind)

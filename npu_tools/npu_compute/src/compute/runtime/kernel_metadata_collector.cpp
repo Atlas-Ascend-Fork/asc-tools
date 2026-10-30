@@ -45,46 +45,56 @@ bool ReadElfValue(std::ifstream& input, uint64_t offset, uint64_t fileSize, Valu
     return static_cast<bool>(input.read(reinterpret_cast<char*>(&value), sizeof(value)));
 }
 
-bool ValidSymbolElf(const Elf64_Ehdr& header, uint64_t fileSize)
+bool ReadElfHeader(std::ifstream& input, uint64_t fileSize, Elf64_Ehdr& header)
 {
-    return std::memcmp(header.e_ident, ELFMAG, SELFMAG) == 0 && header.e_ident[EI_CLASS] == ELFCLASS64 &&
-           header.e_ident[EI_DATA] == ELFDATA2LSB && header.e_shentsize == sizeof(Elf64_Shdr) &&
-           (header.e_type == ET_DYN || header.e_type == ET_EXEC) && header.e_shoff <= fileSize &&
-           header.e_shnum <= (fileSize - header.e_shoff) / sizeof(Elf64_Shdr);
+    return ReadElfValue(input, 0, fileSize, header) && std::memcmp(header.e_ident, ELFMAG, SELFMAG) == 0 &&
+           header.e_ident[EI_CLASS] == ELFCLASS64 && header.e_ident[EI_DATA] == ELFDATA2LSB &&
+           header.e_shentsize == sizeof(Elf64_Shdr) && (header.e_type == ET_DYN || header.e_type == ET_EXEC) &&
+           header.e_shoff <= fileSize && header.e_shnum <= (fileSize - header.e_shoff) / sizeof(Elf64_Shdr);
 }
 
-std::optional<std::string> ReadSymbolName(std::ifstream& input, uint64_t offset, uint64_t remaining)
+bool IsSymbolTable(const Elf64_Shdr& section, uint64_t fileSize)
 {
-    input.seekg(static_cast<std::streamoff>(offset));
-    std::string name;
-    for (; remaining > 0; --remaining) {
+    return (section.sh_type == SHT_SYMTAB || section.sh_type == SHT_DYNSYM) &&
+           section.sh_entsize == sizeof(Elf64_Sym) && section.sh_offset <= fileSize &&
+           section.sh_size <= fileSize - section.sh_offset;
+}
+
+bool ReadStringTable(
+    std::ifstream& input, const Elf64_Ehdr& header, uint64_t fileSize, const Elf64_Shdr& section, Elf64_Shdr& strings)
+{
+    return section.sh_link < header.e_shnum &&
+           ReadElfValue(input, header.e_shoff + section.sh_link * sizeof(strings), fileSize, strings) &&
+           strings.sh_type == SHT_STRTAB && strings.sh_offset <= fileSize &&
+           strings.sh_size <= fileSize - strings.sh_offset;
+}
+
+bool ReadFunctionName(std::ifstream& input, const Elf64_Shdr& strings, uint32_t nameOffset, std::string& name)
+{
+    input.seekg(static_cast<std::streamoff>(strings.sh_offset + nameOffset));
+    for (uint64_t remaining = strings.sh_size - nameOffset; remaining > 0; --remaining) {
         char character = 0;
         if (!input.get(character)) {
             break;
         }
         if (character == '\0') {
-            return name;
+            return true;
         }
         name += character;
     }
-    return std::nullopt;
+    return false;
 }
 
-std::optional<std::string> FindSectionSymbol(
-    std::ifstream& input, const Elf64_Ehdr& header, uint16_t sectionIndex, uint64_t address, uint64_t fileSize)
+bool FindFunctionInTable(
+    std::ifstream& input, uint64_t fileSize, const Elf64_Ehdr& header, uint64_t address, const Elf64_Shdr& section,
+    std::string& name)
 {
-    Elf64_Shdr section{};
-    Elf64_Shdr strings{};
-    if (!ReadElfValue(input, header.e_shoff + sectionIndex * sizeof(section), fileSize, section) ||
-        (section.sh_type != SHT_SYMTAB && section.sh_type != SHT_DYNSYM) || section.sh_entsize != sizeof(Elf64_Sym) ||
-        section.sh_link >= header.e_shnum || section.sh_offset > fileSize ||
-        section.sh_size > fileSize - section.sh_offset) {
-        return std::nullopt;
+    if (!IsSymbolTable(section, fileSize)) {
+        return false;
     }
-    if (!ReadElfValue(input, header.e_shoff + section.sh_link * sizeof(strings), fileSize, strings) ||
-        strings.sh_type != SHT_STRTAB || strings.sh_offset > fileSize ||
-        strings.sh_size > fileSize - strings.sh_offset) {
-        return std::nullopt;
+    Elf64_Shdr strings{};
+    if (!ReadStringTable(input, header, fileSize, section, strings)) {
+        return false;
     }
     for (uint64_t index = 0; index < section.sh_size / sizeof(Elf64_Sym); ++index) {
         Elf64_Sym entry{};
@@ -93,12 +103,12 @@ std::optional<std::string> FindSectionSymbol(
             entry.st_name >= strings.sh_size) {
             continue;
         }
-        const auto name = ReadSymbolName(input, strings.sh_offset + entry.st_name, strings.sh_size - entry.st_name);
-        if (name) {
-            return name;
+        name.clear();
+        if (ReadFunctionName(input, strings, entry.st_name, name)) {
+            return true;
         }
     }
-    return std::nullopt;
+    return false;
 }
 
 std::string ResolveSymbolName(const void* symbol)
@@ -119,15 +129,18 @@ std::string ResolveSymbolName(const void* symbol)
     }
     const auto fileSize = static_cast<uint64_t>(input.tellg());
     Elf64_Ehdr header{};
-    if (!ReadElfValue(input, 0, fileSize, header) || !ValidSymbolElf(header, fileSize)) {
+    if (!ReadElfHeader(input, fileSize, header)) {
         return {};
     }
     const uint64_t address = reinterpret_cast<uintptr_t>(symbol) -
                              (header.e_type == ET_DYN ? reinterpret_cast<uintptr_t>(info.dli_fbase) : 0);
     for (uint16_t sectionIndex = 0; sectionIndex < header.e_shnum; ++sectionIndex) {
-        const auto name = FindSectionSymbol(input, header, sectionIndex, address, fileSize);
-        if (name) {
-            return *name;
+        Elf64_Shdr section{};
+        if (ReadElfValue(input, header.e_shoff + sectionIndex * sizeof(section), fileSize, section)) {
+            std::string name;
+            if (FindFunctionInTable(input, fileSize, header, address, section, name)) {
+                return name;
+            }
         }
     }
     return {};
@@ -160,8 +173,10 @@ template <typename Function>
 Function OriginalRuntimeFunction(const char* name)
 {
     aclrtApiFunc original = nullptr;
-    return aclrtApiInjectionGetFunc(name, &original, nullptr) == ACL_SUCCESS ? reinterpret_cast<Function>(original) :
-                                                                               nullptr;
+    if (aclrtApiInjectionGetFunc(name, &original, nullptr) != ACL_SUCCESS) {
+        return nullptr;
+    }
+    return reinterpret_cast<Function>(original);
 }
 
 // rtFunctionMetaType and payloads from CANN rt_external_base.h and kernel metadata:
@@ -245,6 +260,89 @@ void ApplyKernelRatio(const std::array<uint16_t, MIX_RATIO_COUNT>& ratio, Kernel
     }
 }
 
+struct FunctionLookupData {
+    aclrtBinHandle binHandle = nullptr;
+    aclrtFuncHandle* funcHandle = nullptr;
+    std::string kernelName;
+    bool hasKernelName = false;
+};
+
+bool ReadFunctionLookup(aclptiCallbackId cbid, const aclptiCallbackData& data, FunctionLookupData& lookup)
+{
+    if (cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunction) {
+        const auto& params = *static_cast<const aclptiAclrtBinaryGetFunctionParams*>(data.functionParams);
+        lookup.binHandle = params.binHandle;
+        lookup.hasKernelName = params.kernelName != nullptr;
+        if (lookup.hasKernelName) {
+            lookup.kernelName = params.kernelName;
+        }
+        lookup.funcHandle = params.funcHandle;
+        return true;
+    }
+    if (cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunctionByEntry) {
+        const auto& params = *static_cast<const aclptiAclrtBinaryGetFunctionByEntryParams*>(data.functionParams);
+        lookup.binHandle = params.binHandle;
+        lookup.funcHandle = params.funcHandle;
+        if (data.callbackSite == ACLPTI_API_ENTER) {
+            // Entry lookup has no kernel name parameter; keep a stable diagnostic name for OpInfoSummary.
+            lookup.kernelName = "entry_" + std::to_string(params.funcEntry);
+            lookup.hasKernelName = true;
+        }
+        return true;
+    }
+    if (cbid == ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol) {
+        const auto& params = *static_cast<const aclptiAclrtGetFuncBySymbolParams*>(data.functionParams);
+        lookup.funcHandle = params.funcHandle;
+        if (data.callbackSite == ACLPTI_API_ENTER) {
+            lookup.kernelName = ResolveSymbolName(params.symbol);
+            lookup.hasKernelName = !lookup.kernelName.empty();
+        }
+        return true;
+    }
+    return false;
+}
+
+bool ReadLaunchMetadata(
+    aclptiCallbackId cbid, const aclptiCallbackData& data, aclrtFuncHandle* handle, KernelMetadata* candidate)
+{
+    switch (cbid) {
+        case ACLPTI_RUNTIME_CBID_aclrtLaunchKernel: {
+            const auto& params = *static_cast<const aclptiAclrtLaunchKernelParams*>(data.functionParams);
+            *handle = params.funcHandle;
+            candidate->blockDim = params.numBlocks;
+            return true;
+        }
+        case ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithHostArgs: {
+            const auto& params = *static_cast<const aclptiAclrtLaunchKernelWithHostArgsParams*>(data.functionParams);
+            *handle = params.funcHandle;
+            candidate->blockDim = params.numBlocks;
+            return true;
+        }
+        case ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithArgsArray: {
+            const auto& params = *static_cast<const aclptiAclrtLaunchKernelWithArgsArrayParams*>(data.functionParams);
+            *handle = static_cast<aclrtFuncHandle>(params.func);
+            candidate->blockDim = params.numBlocks;
+            return true;
+        }
+        case ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithHostArgs: {
+            const auto& params =
+                *static_cast<const aclptiAclrtLaunchSIMTKernelWithHostArgsParams*>(data.functionParams);
+            *handle = static_cast<aclrtFuncHandle>(params.func);
+            candidate->blockDim = GridSize(params.gridDim);
+            return true;
+        }
+        case ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithArgsArray: {
+            const auto& params =
+                *static_cast<const aclptiAclrtLaunchSIMTKernelWithArgsArrayParams*>(data.functionParams);
+            *handle = static_cast<aclrtFuncHandle>(params.func);
+            candidate->blockDim = GridSize(params.gridDim);
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
 void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata)
 {
     if (function == nullptr) {
@@ -294,121 +392,81 @@ void KernelMetadataCollector::OnCallback(aclptiCallbackId cbid, const aclptiCall
     if (frozen_) {
         return;
     }
-    if (cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunction ||
-        cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunctionByEntry || cbid == ACLPTI_RUNTIME_CBID_aclrtGetFuncBySymbol) {
-        aclrtBinHandle binHandle = nullptr;
-        aclrtFuncHandle* funcHandle = nullptr;
-        const char* kernelName = nullptr;
-        std::string symbolName;
-        if (cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunction) {
-            const auto& lookup = *static_cast<const aclptiAclrtBinaryGetFunctionParams*>(data.functionParams);
-            binHandle = lookup.binHandle;
-            kernelName = lookup.kernelName;
-            funcHandle = lookup.funcHandle;
-        } else if (cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunctionByEntry) {
-            const auto& lookup = *static_cast<const aclptiAclrtBinaryGetFunctionByEntryParams*>(data.functionParams);
-            binHandle = lookup.binHandle;
-            funcHandle = lookup.funcHandle;
-            if (data.callbackSite == ACLPTI_API_ENTER) {
-                // Entry lookup has no kernel name parameter; retain a stable diagnostic name for OpInfoSummary.
-                symbolName = "entry_" + std::to_string(lookup.funcEntry);
-                kernelName = symbolName.c_str();
-            }
-        } else {
-            const auto& lookup = *static_cast<const aclptiAclrtGetFuncBySymbolParams*>(data.functionParams);
-            funcHandle = lookup.funcHandle;
-            if (data.callbackSite == ACLPTI_API_ENTER) {
-                symbolName = ResolveSymbolName(lookup.symbol);
-                kernelName = symbolName.empty() ? nullptr : symbolName.c_str();
-            }
-        }
-        if (funcHandle == nullptr) {
-            return;
-        }
-        if (data.callbackSite == ACLPTI_API_ENTER) {
-            pendingNames_.erase(funcHandle);
-            if (kernelName != nullptr) {
-                pendingNames_[funcHandle] = {binHandle, kernelName};
-            }
-        } else if (data.callbackSite == ACLPTI_API_EXIT) {
-            const auto pending = pendingNames_.find(funcHandle);
-            if (pending != pendingNames_.end()) {
-                if (data.retval == ACL_SUCCESS && *funcHandle != nullptr) {
-                    auto resolved = pending->second;
-                    if (cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunctionByEntry) {
-                        const auto runtimeName = ResolveRuntimeFunctionName(*funcHandle);
-                        if (runtimeName.has_value()) {
-                            resolved.second = *runtimeName;
-                        }
-                    }
-                    names_[*funcHandle] = std::move(resolved);
-                }
-                pendingNames_.erase(pending);
-            }
-        }
+    if (HandleFunctionLookupCallback(cbid, data)) {
         return;
     }
     if (data.callbackSite == ACLPTI_API_EXIT) {
-        if (launchPending_ && cbid == pendingLaunchCbid_) {
-            if (data.retval == ACL_SUCCESS) {
-                frozen_ = true;
-            } else {
-                metadata_ = {};
-            }
-            launchPending_ = false;
-        }
-        if (data.retval == ACL_SUCCESS && cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad) {
-            const auto& params = *static_cast<const aclptiAclrtBinaryUnLoadParams*>(data.functionParams);
-            for (auto iterator = names_.begin(); iterator != names_.end();) {
-                if (iterator->second.first == params.binHandle) {
-                    iterator = names_.erase(iterator);
-                } else {
-                    ++iterator;
-                }
-            }
-        }
+        HandleCallbackExit(cbid, data);
         return;
     }
     if (data.callbackSite != ACLPTI_API_ENTER) {
         return;
     }
+    HandleKernelLaunchCallback(cbid, data);
+}
+
+bool KernelMetadataCollector::HandleFunctionLookupCallback(aclptiCallbackId cbid, const aclptiCallbackData& data)
+{
+    FunctionLookupData lookup;
+    if (!ReadFunctionLookup(cbid, data, lookup)) {
+        return false;
+    }
+    if (lookup.funcHandle == nullptr) {
+        return true;
+    }
+    if (data.callbackSite == ACLPTI_API_ENTER) {
+        pendingNames_.erase(lookup.funcHandle);
+        if (lookup.hasKernelName) {
+            pendingNames_[lookup.funcHandle] = {lookup.binHandle, std::move(lookup.kernelName)};
+        }
+    } else if (data.callbackSite == ACLPTI_API_EXIT) {
+        const auto pending = pendingNames_.find(lookup.funcHandle);
+        if (pending != pendingNames_.end()) {
+            if (data.retval == ACL_SUCCESS && *lookup.funcHandle != nullptr) {
+                auto resolved = pending->second;
+                if (cbid == ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunctionByEntry) {
+                    const auto runtimeName = ResolveRuntimeFunctionName(*lookup.funcHandle);
+                    if (runtimeName.has_value()) {
+                        resolved.second = *runtimeName;
+                    }
+                }
+                names_[*lookup.funcHandle] = std::move(resolved);
+            }
+            pendingNames_.erase(pending);
+        }
+    }
+    return true;
+}
+
+void KernelMetadataCollector::HandleCallbackExit(aclptiCallbackId cbid, const aclptiCallbackData& data)
+{
+    if (launchPending_ && cbid == pendingLaunchCbid_) {
+        if (data.retval == ACL_SUCCESS) {
+            frozen_ = true;
+        } else {
+            metadata_ = {};
+        }
+        launchPending_ = false;
+    }
+    if (data.retval != ACL_SUCCESS || cbid != ACLPTI_RUNTIME_CBID_aclrtBinaryUnLoad) {
+        return;
+    }
+    const auto& params = *static_cast<const aclptiAclrtBinaryUnLoadParams*>(data.functionParams);
+    for (auto iterator = names_.begin(); iterator != names_.end();) {
+        if (iterator->second.first == params.binHandle) {
+            iterator = names_.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+}
+
+void KernelMetadataCollector::HandleKernelLaunchCallback(aclptiCallbackId cbid, const aclptiCallbackData& data)
+{
     aclrtFuncHandle handle = nullptr;
     KernelMetadata candidate;
-    switch (cbid) {
-        case ACLPTI_RUNTIME_CBID_aclrtLaunchKernel: {
-            const auto& params = *static_cast<const aclptiAclrtLaunchKernelParams*>(data.functionParams);
-            handle = params.funcHandle;
-            candidate.blockDim = params.numBlocks;
-            break;
-        }
-        case ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithHostArgs: {
-            const auto& params = *static_cast<const aclptiAclrtLaunchKernelWithHostArgsParams*>(data.functionParams);
-            handle = params.funcHandle;
-            candidate.blockDim = params.numBlocks;
-            break;
-        }
-        case ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithArgsArray: {
-            const auto& params = *static_cast<const aclptiAclrtLaunchKernelWithArgsArrayParams*>(data.functionParams);
-            handle = static_cast<aclrtFuncHandle>(params.func);
-            candidate.blockDim = params.numBlocks;
-            break;
-        }
-        case ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithHostArgs: {
-            const auto& params =
-                *static_cast<const aclptiAclrtLaunchSIMTKernelWithHostArgsParams*>(data.functionParams);
-            handle = static_cast<aclrtFuncHandle>(params.func);
-            candidate.blockDim = GridSize(params.gridDim);
-            break;
-        }
-        case ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithArgsArray: {
-            const auto& params =
-                *static_cast<const aclptiAclrtLaunchSIMTKernelWithArgsArrayParams*>(data.functionParams);
-            handle = static_cast<aclrtFuncHandle>(params.func);
-            candidate.blockDim = GridSize(params.gridDim);
-            break;
-        }
-        default:
-            return;
+    if (!ReadLaunchMetadata(cbid, data, &handle, &candidate)) {
+        return;
     }
     int32_t deviceId = 0;
     if (aclrtGetDevice(&deviceId) == ACL_SUCCESS) {

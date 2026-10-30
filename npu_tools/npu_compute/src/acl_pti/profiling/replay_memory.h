@@ -26,8 +26,11 @@ namespace aclpti::profiling {
 class ReplayMemory {
 public:
     /// Allocates a shadow buffer using the original allocation API, policy, and configuration.
+    // clang-format off
     aclptiResult MirrorMalloc(
-        void** devPtr, std::size_t size, aclrtMemMallocPolicy policy, aclrtApiId api, aclrtMallocConfig* cfg = nullptr);
+        void* const *devPtr, std::size_t size, aclrtMemMallocPolicy policy, aclrtApiId api,
+        aclrtMallocConfig* cfg = nullptr);
+    // clang-format on
 
     /// Releases and forgets the shadow buffer associated with a device allocation.
     aclptiResult MirrorFree(void* devPtr);

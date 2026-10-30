@@ -381,20 +381,24 @@ bool GeneratePmSamplingArtifacts(
         const auto disassembly = fs::path(stagingDirectory) / "objdump.txt";
         const auto stackPath = fs::path(stagingDirectory) / "symbolizer.json";
         if (!context && sampling.rows.empty()) {
-            return AttemptArtifact(stackPath, [&] { WriteEmptyPcStack(stackPath, artifacts); }, error);
+            return AttemptArtifact(
+                stackPath, [&stackPath, &artifacts] { WriteEmptyPcStack(stackPath, artifacts); }, error);
         }
         std::string pattern = (fs::path(stagingDirectory) / ".PmSampling-XXXXXX").string();
         Require(::mkdtemp(pattern.data()) != nullptr, "cannot create LLVM temporary directory");
         TemporaryDirectory temporary{pattern};
         const bool disassemblyOk = AttemptArtifact(
             disassembly,
-            [&] {
+            [&temporary, context, &options, &disassembly, &artifacts] {
                 Require(context != nullptr, "missing PmSampling ELF context");
                 GenerateDisassembly(temporary.path, *context, options, disassembly, artifacts);
             },
             error);
         const bool stackOk = AttemptArtifact(
-            stackPath, [&] { GeneratePcStack(temporary.path, context, sampling, options, stackPath, artifacts); },
+            stackPath,
+            [&temporary, context, &sampling, &options, &stackPath, &artifacts] {
+                GeneratePcStack(temporary.path, context, sampling, options, stackPath, artifacts);
+            },
             error);
         return disassemblyOk && stackOk;
     } catch (const std::exception& failure) {

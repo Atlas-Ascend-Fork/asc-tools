@@ -75,7 +75,8 @@ aclptiResult Dispatcher::SupportedDomains(std::size_t* domainCount, aclptiCallba
 }
 
 void Dispatcher::Dispatch(
-    aclptiCallbackDomain domain, aclptiCallbackId cbid, aclptiCallbackSite site, void* functionParams, aclError retval)
+    aclptiCallbackDomain domain, aclptiCallbackId cbid, aclptiCallbackSite site, void* const functionParams,
+    aclError retval)
 {
     aclptiCallbackFunc callback = nullptr;
     void* userData = nullptr;
