@@ -79,7 +79,7 @@ source <CANN安装目录>/cann/set_env.sh
 当输入 SoC 不受支持时，工具返回阻塞类错误，并提示：
 
 ```text
-Error: SoC name is not supported: {soc_version}
+Error: SoC version is not supported: {soc_version}
 ```
 
 冲突检测模式会覆盖以下两类冲突：

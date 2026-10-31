@@ -79,7 +79,7 @@ Each execution of the tool outputs the following information:
 When the input SoC is not supported, the tool returns a blocking error with the following prompt:
 
 ```text
-Error: SoC name is not supported: {soc_version}
+Error: SoC version is not supported: {soc_version}
 ```
 
 The conflict detection mode covers the following two types of conflicts:
