@@ -25,7 +25,7 @@
 ## 示例
 
 ```bash
-op_compiler --op_params_dir=<dump_dir>  --soc_version=<soc_version>  --enable_super_kernel --super_kernel_option="auto_op_parallel=1"
+op_compiler --op_params_dir=<dump_dir>  --soc_version=<soc_version>  --enable_super_kernel --super_kernel_options="auto_op_parallel=1"
 ```
 
 ## 支持的型号
