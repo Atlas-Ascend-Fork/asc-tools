@@ -15,6 +15,9 @@
         <path value="tools/cpudebug/lib64/KirinX90" chip="KirinX90"/>
         <path value="tools/cpudebug/lib64/Kirin9030" chip="Kirin9030"/>
         <path value="tools/cpudebug/lib64/Ascend960DT_968B7" chip="Ascend960DT_968B7"/>
+        <path value="tools/cpudebug/lib64/KirinDev0001" chip="KirinDev0001"/>
+        <path value="tools/cpudebug/lib64/KirinDev0002" chip="KirinDev0002"/>
+        <path value="tools/cpudebug/lib64/KirinDev0003" chip="KirinDev0003"/>
     </dir_info>
     <!-- tikcpp simulator -->
     <file_info value="tikcpp_simulator_ascend910" chip="Ascend910" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64/Ascend910A" install_path="tools/cpudebug/lib64/Ascend910A">
@@ -40,6 +43,15 @@
     </file_info>
     <file_info value="tikcpp_simulator_ascend960DT_968B7" chip="Ascend960DT_968B7" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64/Ascend960DT_968B7" install_path="tools/cpudebug/lib64/Ascend960DT_968B7">
         <file value="ascend960DT_968B7/libcpudebug.so" file_type="shared" install_mod="555" install_softlink="tools/cpudebug/lib64/Ascend960DT_968B7/libtikcpp_debug.so" optional="true"/>
+    </file_info>
+    <file_info value="tikcpp_simulator_kirindev0001" chip="KirinDev0001" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64/KirinDev0001" install_path="tools/cpudebug/lib64/KirinDev0001">
+        <file value="kirindev0001/libcpudebug.so" file_type="shared" install_mod="555" install_softlink="tools/cpudebug/lib64/KirinDev0001/libtikcpp_debug.so" optional="true"/>
+    </file_info>
+    <file_info value="tikcpp_simulator_kirindev0002" chip="KirinDev0002" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64/KirinDev0002" install_path="tools/cpudebug/lib64/KirinDev0002">
+        <file value="kirindev0002/libcpudebug.so" file_type="shared" install_mod="555" install_softlink="tools/cpudebug/lib64/KirinDev0002/libtikcpp_debug.so" optional="true"/>
+    </file_info>
+    <file_info value="tikcpp_simulator_kirindev0003" chip="KirinDev0003" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64/KirinDev0003" install_path="tools/cpudebug/lib64/KirinDev0003">
+        <file value="kirindev0003/libcpudebug.so" file_type="shared" install_mod="555" install_softlink="tools/cpudebug/lib64/KirinDev0003/libtikcpp_debug.so" optional="true"/>
     </file_info>
     <!-- tikcpp simulator libs -->
     <file_info value="tikcpp_simulator_libs" copy_type="delivery" src_path="lib/host" dst_path="tools/cpudebug/lib64" install_path="tools/cpudebug/lib64/">

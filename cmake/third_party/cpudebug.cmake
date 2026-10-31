@@ -38,7 +38,7 @@ if (NOT EXISTS ${CMAKE_SOURCE_DIR}/libraries/lib/include/stub_fun.h)
     )
 
     if(NOT EXISTS ${CPUDEBUG_PKG})
-        set(CPUDEBUG_PKG_URL "https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/package/master/20261027/${CPUDEBUG_PKG_ARCH}/${CPUDEBUG_PKG_NAME}")
+        set(CPUDEBUG_PKG_URL "https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/package/master/20261028/${CPUDEBUG_PKG_ARCH}/${CPUDEBUG_PKG_NAME}")
         message(STATUS "cpudebug pkg not found in ${CANN_3RD_LIB_PATH}, downloading from ${CPUDEBUG_PKG_URL}")
     else()
         set(CPUDEBUG_PKG_URL ${CPUDEBUG_PKG})

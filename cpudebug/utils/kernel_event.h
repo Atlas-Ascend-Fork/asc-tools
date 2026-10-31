@@ -43,11 +43,29 @@ enum class TPosition : uint8_t {
     TSCM,
     C2PIPE2GM,
     C2PIPE2LOCAL,
+#if defined(__NPU_ARCH__) && \
+    (__NPU_ARCH__ == 5101 || __NPU_ARCH__ == 5161 || __NPU_ARCH__ == 5165 || __NPU_ARCH__ == 5163)
+    C2PT,
+#endif
     MAX,
 };
 
 using QuePosition = TPosition;
-enum class Hardware : uint8_t { GM, UB, L1, L0A, L0B, L0C, BIAS, FIXBUF, MAX };
+enum class Hardware : uint8_t {
+    GM,
+    UB,
+    L1,
+    L0A,
+    L0B,
+    L0C,
+    BIAS,
+    FIXBUF,
+#if defined(__NPU_ARCH__) && \
+    (__NPU_ARCH__ == 5101 || __NPU_ARCH__ == 5161 || __NPU_ARCH__ == 5165 || __NPU_ARCH__ == 5163)
+    PT,
+#endif
+    MAX
+};
 
 enum class HardEvent : uint8_t {
     // src_dst
@@ -246,7 +264,12 @@ __aicore__ constexpr Hardware GetPhyType(TPosition pos)
     } else if (pos == TPosition::A1) {
         hard = Hardware::L1;
     } else if (pos == TPosition::A2) {
+#if defined(__NPU_ARCH__) && \
+    (__NPU_ARCH__ == 5101 || __NPU_ARCH__ == 5161 || __NPU_ARCH__ == 5165 || __NPU_ARCH__ == 5163)
+        hard = Hardware::L1;
+#else
         hard = Hardware::L0A;
+#endif
     } else if (pos == TPosition::B1) {
         hard = Hardware::L1;
     } else if (pos == TPosition::B2) {
@@ -304,7 +327,8 @@ __aicore__ constexpr Hardware GetPhyType(TPosition pos)
         hard = Hardware::BIAS;
     } else if (pos == TPosition::CO2) {
         hard = Hardware::GM;
-#elif defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 3113))
+#elif defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 3113) || (__NPU_ARCH__ == 5101) || \
+                                (__NPU_ARCH__ == 5161) || (__NPU_ARCH__ == 5163) || (__NPU_ARCH__ == 5165))
     } else if (pos == TPosition::C1) {
         hard = Hardware::L1;
     } else if (pos == TPosition::C2) {
@@ -314,12 +338,23 @@ __aicore__ constexpr Hardware GetPhyType(TPosition pos)
     } else if (pos == TPosition::C2PIPE2GM) {
         hard = Hardware::FIXBUF;
 #endif
+#if defined(__NPU_ARCH__) && \
+    ((__NPU_ARCH__ == 5101) || (__NPU_ARCH__ == 5161) || (__NPU_ARCH__ == 5163) || (__NPU_ARCH__ == 5165))
+    } else if (pos == TPosition::CO1) {
+        hard = Hardware::L1;
+#else
     } else if (pos == TPosition::CO1) {
         hard = Hardware::L0C;
+#endif
     } else if (pos == TPosition::SHM) {
         hard = Hardware::L1;
     } else if (pos == TPosition::TSCM) {
         hard = Hardware::L1;
+#if defined(__NPU_ARCH__) && \
+    (__NPU_ARCH__ == 5101 || __NPU_ARCH__ == 5161 || __NPU_ARCH__ == 5165 || __NPU_ARCH__ == 5163)
+    } else if (pos == TPosition::C2PT) {
+        hard = Hardware::PT;
+#endif
     }
     return hard;
 }
@@ -336,7 +371,8 @@ __aicore__ constexpr TPosition GetPosition(TPosition srcPos, TPosition dstPos)
 #elif defined(__NPU_ARCH__) &&                                                                               \
     ((__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) || (__NPU_ARCH__ == 3102) || (__NPU_ARCH__ == 3510) || \
      (__NPU_ARCH__ == 5102) || (__NPU_ARCH__ == 2103) || (__NPU_ARCH__ == 3003) || (__NPU_ARCH__ == 3103) || \
-     (__NPU_ARCH__ == 3113) || (__NPU_ARCH__ == 9201))
+     (__NPU_ARCH__ == 3113) || (__NPU_ARCH__ == 5161) || (__NPU_ARCH__ == 5163) || (__NPU_ARCH__ == 5165) || \
+     (__NPU_ARCH__ == 5101) || (__NPU_ARCH__ == 9201))
     if ((dstPos == TPosition::GM) || (dstPos == TPosition::CO2)) {
         return srcPos;
     }

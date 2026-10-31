@@ -147,6 +147,21 @@ const uint32_t TOTAL_L1_SIZE = 512 * 1024;
 const uint32_t TOTAL_L0C_SIZE = 64 * 1024;
 const uint32_t VECTOR_REG_WIDTH = 256;
 const uint32_t ONE_BLOCK_SIZE = 32;
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 5161)
+const uint32_t TOTAL_UB_SIZE = 128 * 1024;
+const uint32_t TOTAL_L1_SIZE = 1280 * 1024;
+const uint32_t VECTOR_REG_WIDTH = 64;
+const uint32_t ONE_BLOCK_SIZE = 32;
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 5163)
+const uint32_t TOTAL_UB_SIZE = 128 * 1024;
+const uint32_t TOTAL_L1_SIZE = 1024 * 1024;
+const uint32_t VECTOR_REG_WIDTH = 64;
+const uint32_t ONE_BLOCK_SIZE = 32;
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 5165)
+const uint32_t TOTAL_UB_SIZE = 128 * 1024;
+const uint32_t TOTAL_L1_SIZE = 384 * 1024;
+const uint32_t VECTOR_REG_WIDTH = 32;
+const uint32_t ONE_BLOCK_SIZE = 32;
 #endif
 
 #ifndef __NPU_HOST__

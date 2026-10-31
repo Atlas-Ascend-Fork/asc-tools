@@ -26,7 +26,8 @@
 #include "ascend910B1_ini.h"
 #elif defined __DAV_M300__ || (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3003))
 #include "ascend310B1_ini.h"
-#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3102 || __NPU_ARCH__ == 3103 || __NPU_ARCH__ == 3113)
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3102 || __NPU_ARCH__ == 3103 || __NPU_ARCH__ == 3113 || \
+                                __NPU_ARCH__ == 5161 || __NPU_ARCH__ == 5163 || __NPU_ARCH__ == 5165)
 #include "ascend610Lite_ini.h"
 #elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "ascend950pr_9599_ini.h"
