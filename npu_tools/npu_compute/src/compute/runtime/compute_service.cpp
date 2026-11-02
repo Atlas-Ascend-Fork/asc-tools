@@ -15,6 +15,32 @@
 #include <cstdlib>
 #include <stdexcept>
 namespace npucompute {
+namespace {
+class DeferredSink final : public ArtifactSink {
+public:
+    explicit DeferredSink(std::unique_ptr<ArtifactPublisher>& publisher) : publisher_(publisher) {}
+    void Begin(const std::string& name) override { Get().Begin(name); }
+    void Write(std::string_view bytes) override { Get().Write(bytes); }
+    void Commit(uint64_t records) override { Get().Commit(records); }
+    void Abort() noexcept override
+    {
+        if (publisher_) {
+            publisher_->Abort();
+        }
+    }
+
+private:
+    ArtifactPublisher& Get()
+    {
+        if (!publisher_) {
+            throw std::runtime_error("artifact before READY");
+        }
+        return *publisher_;
+    }
+    std::unique_ptr<ArtifactPublisher>& publisher_;
+};
+} // namespace
+
 ComputeService& ComputeService::Instance()
 {
     static ComputeService service;
@@ -35,29 +61,6 @@ int ComputeService::Initialize() noexcept
                                                                                       ACLPTI_CACHE_CONTROL_NONE};
         // Initialization cannot produce artifacts before the first launch; start worker after READY.
         // A deferred sink bridges this brief initialization interval.
-        class DeferredSink final : public ArtifactSink {
-        public:
-            explicit DeferredSink(std::unique_ptr<ArtifactPublisher>& publisher) : publisher_(publisher) {}
-            void Begin(const std::string& name) override { Get().Begin(name); }
-            void Write(std::string_view bytes) override { Get().Write(bytes); }
-            void Commit(uint64_t records) override { Get().Commit(records); }
-            void Abort() noexcept override
-            {
-                if (publisher_) {
-                    publisher_->Abort();
-                }
-            }
-
-        private:
-            ArtifactPublisher& Get()
-            {
-                if (!publisher_) {
-                    throw std::runtime_error("artifact before READY");
-                }
-                return *publisher_;
-            }
-            std::unique_ptr<ArtifactPublisher>& publisher_;
-        };
         // Keep sink alive for all callbacks; ownership follows service lifetime.
         static DeferredSink sink(publisher_);
         auto& runtime = NpuComputeRuntime::Instance();

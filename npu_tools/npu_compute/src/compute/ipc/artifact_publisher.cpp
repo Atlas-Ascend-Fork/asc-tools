@@ -131,6 +131,56 @@ void ArtifactPublisher::HandleControl(const ipc::Frame& frame)
     available_.notify_all();
     ASCTOOL_DEBUG("[npu-compute ipc] phase=flush");
 }
+void ArtifactPublisher::WaitForResultAck()
+{
+    if (interrupted_) {
+        throw std::runtime_error("interrupted result");
+    }
+    drain_deadline_ms_ = 0;
+    const auto deadline = IoDeadline();
+    for (;;) {
+        auto reply = channel_.Receive(deadline, [this] { return stopping_.load(); });
+        if (reply.type == ipc::Type::ResultAck && reply.payload.empty()) {
+            acknowledged_ = true;
+            channel_.Close();
+            return;
+        }
+        HandleControl(reply);
+    }
+}
+
+bool ArtifactPublisher::TakeNextFrame(ipc::Frame& frame)
+{
+    std::unique_lock<std::mutex> lock(queue_mutex_);
+    available_.wait_for(
+        lock, std::chrono::milliseconds(20), [this] { return !queue_.empty() || failed_ || stopping_; });
+    if (queue_.empty()) {
+        if (interrupted_) {
+            throw ipc::Exception({3, "collection interrupted", "PROFILING", "collect"});
+        }
+        return false;
+    }
+    frame = std::move(queue_.front());
+    queue_.pop_front();
+    available_.notify_all();
+    return true;
+}
+
+void ArtifactPublisher::PollControl()
+{
+    if (failed_ || stopping_) {
+        throw std::runtime_error("publisher stopped");
+    }
+    pollfd input{channel_.Fd(), POLLIN, 0};
+    const int ready = poll(&input, 1, 0);
+    if (ready < 0 && errno != EINTR) {
+        throw std::runtime_error("publisher poll failed");
+    }
+    if (ready > 0) {
+        HandleControl(channel_.Receive(IoDeadline()));
+    }
+}
+
 void ArtifactPublisher::Worker() noexcept
 {
     try {
@@ -146,51 +196,18 @@ void ArtifactPublisher::Worker() noexcept
         }
         available_.notify_all();
         for (;;) {
-            if (failed_ || stopping_) {
-                throw std::runtime_error("publisher stopped");
-            }
-            pollfd input{channel_.Fd(), POLLIN, 0};
-            const int ready = poll(&input, 1, 0);
-            if (ready < 0 && errno != EINTR) {
-                throw std::runtime_error("publisher poll failed");
-            }
-            if (ready > 0) {
-                HandleControl(channel_.Receive(IoDeadline()));
-            }
+            PollControl();
             ipc::Frame frame;
-            {
-                std::unique_lock<std::mutex> lock(queue_mutex_);
-                available_.wait_for(
-                    lock, std::chrono::milliseconds(20), [this] { return !queue_.empty() || failed_ || stopping_; });
-                if (queue_.empty()) {
-                    if (interrupted_) {
-                        throw ipc::Exception({3, "collection interrupted", "PROFILING", "collect"});
-                    }
-                    continue;
-                }
-                frame = std::move(queue_.front());
-                queue_.pop_front();
-                available_.notify_all();
+            if (!TakeNextFrame(frame)) {
+                continue;
             }
             if (interrupted_ && frame.type == ipc::Type::Result) {
                 throw ipc::Exception({3, "collection interrupted", "PROFILING", "collect"});
             }
             channel_.Send(frame.type, frame.payload, SendDeadline(), [this] { return SendCancelled(); });
             if (frame.type == ipc::Type::Result) {
-                if (interrupted_) {
-                    throw std::runtime_error("interrupted result");
-                }
-                drain_deadline_ms_ = 0;
-                const auto deadline = IoDeadline();
-                for (;;) {
-                    auto reply = channel_.Receive(deadline, [this] { return stopping_.load(); });
-                    if (reply.type == ipc::Type::ResultAck && reply.payload.empty()) {
-                        acknowledged_ = true;
-                        channel_.Close();
-                        return;
-                    }
-                    HandleControl(reply);
-                }
+                WaitForResultAck();
+                return;
             }
         }
     } catch (const std::exception& error) {

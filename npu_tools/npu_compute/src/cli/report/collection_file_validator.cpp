@@ -46,6 +46,21 @@ std::string Text(const boost::json::value* value)
     throw std::runtime_error("invalid OpInfoSummary context field");
 }
 
+void ReadPerformanceHints(const boost::json::object& object, SummaryJsonlInfo& info)
+{
+    const auto* hints = object.if_contains("hints");
+    if (hints == nullptr || !hints->is_array()) {
+        throw std::runtime_error("PerformanceHints.hints must be a string array");
+    }
+    info.hasHintsRecord = true;
+    for (const auto& hint : hints->as_array()) {
+        if (!hint.is_string()) {
+            throw std::runtime_error("PerformanceHints.hints contains a non-string item");
+        }
+        info.hints.emplace_back(hint.as_string());
+    }
+}
+
 SummaryJsonlInfo ParseSummaryJsonl(std::ifstream& input)
 {
     SummaryJsonlInfo info;
@@ -76,17 +91,7 @@ SummaryJsonlInfo ParseSummaryJsonl(std::ifstream& input)
             throw std::runtime_error("invalid PerformanceHints/OpInfoSummary ordering");
         }
         if (category == "PerformanceHints") {
-            const auto* hints = object.if_contains("hints");
-            if (hints == nullptr || !hints->is_array()) {
-                throw std::runtime_error("PerformanceHints.hints must be a string array");
-            }
-            info.hasHintsRecord = true;
-            for (const auto& hint : hints->as_array()) {
-                if (!hint.is_string()) {
-                    throw std::runtime_error("PerformanceHints.hints contains a non-string item");
-                }
-                info.hints.emplace_back(hint.as_string());
-            }
+            ReadPerformanceHints(object, info);
         } else if (category == "OpInfoSummary") {
             info.opName = Text(object.if_contains("Op Name"));
             info.device = Text(object.if_contains("Device Id"));

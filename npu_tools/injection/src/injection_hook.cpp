@@ -641,6 +641,97 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolUploaderInit(MsprofRawDataCa
     return result;
 }
 
+namespace {
+using RuntimeHookEntries = std::array<aclrtApiFunc, ACL_RT_API_MAX>;
+
+void RollbackRuntimeHooks(const RuntimeHookEntries& previous)
+{
+    for (size_t i = previous.size(); i != 0; --i) {
+        if (previous[i - 1] != nullptr) {
+            (void)aclrtApiInjectionSetFunc(FindRuntimeApiName(static_cast<aclrtApiId>(i - 1)), previous[i - 1]);
+        }
+    }
+}
+
+aclError PrepareRuntimeHook(
+    aclrtApiId id, const char* name, const RuntimeHookEntries& previous, aclrtApiFunc& current, bool& skipped)
+{
+    aclrtApiFunc origin = nullptr;
+    aclError ret = aclrtApiInjectionGetFunc(name, &origin, &current);
+    if ((id == ACL_RT_API_aclrtMallocWithCfg || id == ACL_RT_API_aclrtBinaryLoadFromFile) &&
+        (ret != ACL_SUCCESS || origin == nullptr || current == nullptr)) {
+        skipped = true;
+        return ACL_SUCCESS;
+    }
+    ASCTOOL_DEBUG(
+        "[tool_injection] get runtime entry: name=%s id=%d result=%d origin=%p current=%p", name, static_cast<int>(id),
+        static_cast<int>(ret), FunctionToAddress(origin), FunctionToAddress(current));
+    if (ret != ACL_SUCCESS) {
+        RollbackRuntimeHooks(previous);
+        ASCTOOL_ERROR(
+            "[tool_injection] hook initialization failed: get runtime entry name=%s result=%d"
+            " code=%u",
+            name, static_cast<int>(ret), static_cast<unsigned>(static_cast<uint32_t>(ret)));
+        return ret;
+    }
+    if (origin == nullptr || current == nullptr) {
+        RollbackRuntimeHooks(previous);
+        ASCTOOL_ERROR(
+            "[tool_injection] hook initialization failed: empty runtime entry name=%s"
+            " code=%u",
+            name, INJECTION_LOG_CODE_UNSPECIFIED);
+        return ACL_ERROR_UNINITIALIZE;
+    }
+    if (!SaveOriginalRuntimeEntry(id, FunctionToAddress(origin))) {
+        RollbackRuntimeHooks(previous);
+        ASCTOOL_ERROR(
+            "[tool_injection] hook initialization failed: save origin entry name=%s"
+            " code=%u",
+            name, INJECTION_LOG_CODE_UNSPECIFIED);
+        return ACL_ERROR_INTERNAL_ERROR;
+    }
+
+    return ACL_SUCCESS;
+}
+
+aclError InstallRuntimeHook(int32_t value, RuntimeHookEntries& previous)
+{
+    const auto id = static_cast<aclrtApiId>(value);
+    const size_t index = static_cast<size_t>(id);
+    const char* name = FindRuntimeApiName(id);
+    const aclrtApiFunc hook = AddressToFunction<aclrtApiFunc>(g_aclApiTable.hook[index]);
+    if (name == nullptr || hook == nullptr) {
+        RollbackRuntimeHooks(previous);
+        ASCTOOL_ERROR(
+            "[tool_injection] hook initialization failed: invalid entry id=%d name=%s hook=%p"
+            " code=%u",
+            static_cast<int>(id), name == nullptr ? "unknown" : name, FunctionToAddress(hook),
+            INJECTION_LOG_CODE_UNSPECIFIED);
+        return ACL_ERROR_INTERNAL_ERROR;
+    }
+    aclrtApiFunc current = nullptr;
+    bool skipped = false;
+    aclError ret = PrepareRuntimeHook(id, name, previous, current, skipped);
+    if (ret != ACL_SUCCESS || skipped) {
+        return ret;
+    }
+    ret = aclrtApiInjectionSetFunc(name, hook);
+    ASCTOOL_DEBUG(
+        "[tool_injection] set runtime hook: name=%s id=%d hook=%p result=%d", name, static_cast<int>(id),
+        FunctionToAddress(hook), static_cast<int>(ret));
+    if (ret != ACL_SUCCESS) {
+        RollbackRuntimeHooks(previous);
+        ASCTOOL_ERROR(
+            "[tool_injection] hook initialization failed: set runtime hook name=%s result=%d"
+            " code=%u",
+            name, static_cast<int>(ret), static_cast<unsigned>(static_cast<uint32_t>(ret)));
+        return ret;
+    }
+    previous[index] = current;
+    return ACL_SUCCESS;
+}
+} // namespace
+
 extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
 {
     std::lock_guard<std::mutex> initLock(g_initMutex);
@@ -650,76 +741,12 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolHookInit(void)
         return ACL_SUCCESS;
     }
 
-    std::array<aclrtApiFunc, ACL_RT_API_MAX> previous{};
-    auto rollback = [&previous]() {
-        for (size_t i = previous.size(); i != 0; --i) {
-            if (previous[i - 1] != nullptr) {
-                (void)aclrtApiInjectionSetFunc(FindRuntimeApiName(static_cast<aclrtApiId>(i - 1)), previous[i - 1]);
-            }
-        }
-    };
+    RuntimeHookEntries previous{};
     for (int32_t value = 0; value < static_cast<int32_t>(ACL_RT_API_MAX); ++value) {
-        const auto id = static_cast<aclrtApiId>(value);
-        const size_t index = static_cast<size_t>(id);
-        const char* name = FindRuntimeApiName(id);
-        const aclrtApiFunc hook = AddressToFunction<aclrtApiFunc>(g_aclApiTable.hook[index]);
-        if (name == nullptr || hook == nullptr) {
-            rollback();
-            ASCTOOL_ERROR(
-                "[tool_injection] hook initialization failed: invalid entry id=%d name=%s hook=%p"
-                " code=%u",
-                static_cast<int>(id), name == nullptr ? "unknown" : name, FunctionToAddress(hook),
-                INJECTION_LOG_CODE_UNSPECIFIED);
-            return ACL_ERROR_INTERNAL_ERROR;
+        const aclError status = InstallRuntimeHook(value, previous);
+        if (status != ACL_SUCCESS) {
+            return status;
         }
-        aclrtApiFunc origin = nullptr;
-        aclrtApiFunc current = nullptr;
-        aclError ret = aclrtApiInjectionGetFunc(name, &origin, &current);
-        if ((id == ACL_RT_API_aclrtMallocWithCfg || id == ACL_RT_API_aclrtBinaryLoadFromFile) &&
-            (ret != ACL_SUCCESS || origin == nullptr || current == nullptr)) {
-            continue;
-        }
-        ASCTOOL_DEBUG(
-            "[tool_injection] get runtime entry: name=%s id=%d result=%d origin=%p current=%p", name,
-            static_cast<int>(id), static_cast<int>(ret), FunctionToAddress(origin), FunctionToAddress(current));
-        if (ret != ACL_SUCCESS) {
-            rollback();
-            ASCTOOL_ERROR(
-                "[tool_injection] hook initialization failed: get runtime entry name=%s result=%d"
-                " code=%u",
-                name, static_cast<int>(ret), static_cast<unsigned>(static_cast<uint32_t>(ret)));
-            return ret;
-        }
-        if (origin == nullptr || current == nullptr) {
-            rollback();
-            ASCTOOL_ERROR(
-                "[tool_injection] hook initialization failed: empty runtime entry name=%s"
-                " code=%u",
-                name, INJECTION_LOG_CODE_UNSPECIFIED);
-            return ACL_ERROR_UNINITIALIZE;
-        }
-        if (!SaveOriginalRuntimeEntry(id, FunctionToAddress(origin))) {
-            rollback();
-            ASCTOOL_ERROR(
-                "[tool_injection] hook initialization failed: save origin entry name=%s"
-                " code=%u",
-                name, INJECTION_LOG_CODE_UNSPECIFIED);
-            return ACL_ERROR_INTERNAL_ERROR;
-        }
-
-        ret = aclrtApiInjectionSetFunc(name, hook);
-        ASCTOOL_DEBUG(
-            "[tool_injection] set runtime hook: name=%s id=%d hook=%p result=%d", name, static_cast<int>(id),
-            FunctionToAddress(hook), static_cast<int>(ret));
-        if (ret != ACL_SUCCESS) {
-            rollback();
-            ASCTOOL_ERROR(
-                "[tool_injection] hook initialization failed: set runtime hook name=%s result=%d"
-                " code=%u",
-                name, static_cast<int>(ret), static_cast<unsigned>(static_cast<uint32_t>(ret)));
-            return ret;
-        }
-        previous[index] = current;
     }
 
     g_hookInstalled = true;

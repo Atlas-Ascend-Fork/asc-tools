@@ -398,20 +398,8 @@ void AppendTlv(std::string& output, std::uint16_t tag, const std::string& value)
     output += value;
 }
 
-std::string NormalizeMetadata(const Metadata& original, const Metadata& patched, std::uint32_t traceArgumentOffset)
+void ValidateOriginalParameterRanges(const Metadata& original, std::uint32_t traceArgumentOffset)
 {
-    if (!original.hasParameterLayout) {
-        // Legacy HostArgs kernels have no ArgsArray ABI. Preserve non-parameter TLVs only.
-        std::string output;
-        for (const auto& item : patched.values) {
-            if (item.tag != PARAM_SUMMARY && item.tag != PARAM_INFO) {
-                AppendTlv(output, item.tag, item.value);
-            }
-        }
-        return output;
-    }
-    Require(patched.hasParameterLayout, "instrumented parameter summary is missing");
-    Require(original.parameters.size() < std::numeric_limits<std::uint32_t>::max(), "too many kernel parameters");
     for (const auto& item : original.values) {
         if (item.tag == PARAM_SUMMARY) {
             Require(
@@ -432,6 +420,23 @@ std::string NormalizeMetadata(const Metadata& original, const Metadata& patched,
     for (std::size_t index = 1; index < ranges.size(); ++index) {
         Require(ranges[index - 1].second <= ranges[index].first, "original parameters overlap");
     }
+}
+
+std::string NormalizeMetadata(const Metadata& original, const Metadata& patched, std::uint32_t traceArgumentOffset)
+{
+    if (!original.hasParameterLayout) {
+        // Legacy HostArgs kernels have no ArgsArray ABI. Preserve non-parameter TLVs only.
+        std::string output;
+        for (const auto& item : patched.values) {
+            if (item.tag != PARAM_SUMMARY && item.tag != PARAM_INFO) {
+                AppendTlv(output, item.tag, item.value);
+            }
+        }
+        return output;
+    }
+    Require(patched.hasParameterLayout, "instrumented parameter summary is missing");
+    Require(original.parameters.size() < std::numeric_limits<std::uint32_t>::max(), "too many kernel parameters");
+    ValidateOriginalParameterRanges(original, traceArgumentOffset);
 
     std::string pointer(PARAM_INFO_SIZE, '\0');
     WriteValue(pointer, PARAM_ORDINAL_OFFSET, original.parameters.size(), sizeof(uint32_t));

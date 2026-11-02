@@ -52,6 +52,7 @@ private:
     enum class ManagerState { Created, Running, Stopping, Stopped };
 
     aclptiResult ShutdownImpl(bool force);
+    aclptiResult PublishFinalResult();
     static std::int32_t RawDataThunk(MsprofRawData* raw);
     // Registered defaults persist; callback_ is the snapshot selected for this collection.
     aclptiProfilingDataCallback registeredCallback_;

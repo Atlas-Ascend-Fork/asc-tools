@@ -16,6 +16,47 @@
 #include "import/imported_profile_results.h"
 #include "launch/launcher.h"
 
+namespace {
+int ImportReport(const npucompute::cli::CliConfig& config)
+{
+    std::string error;
+    std::vector<npucompute::cli::ImportedProfileEntry> results;
+    if (!npucompute::cli::ReadImportedProfileResults(*config.import_path, &results, &error)) {
+        std::fprintf(stderr, "[ERROR] npu-compute: %s\n", error.c_str());
+        return npucompute::cli::kReportErrorExitCode;
+    }
+    npucompute::cli::ImportOutputDirectory outputDirectory;
+    if (!npucompute::cli::ImportOutputDirectory::Create(
+            *config.import_path, config.export_path, &outputDirectory, &error) ||
+        !npucompute::cli::UnpackImportedProfileResults(results, outputDirectory.TemporaryPath(), &error) ||
+        !outputDirectory.Publish(&error)) {
+        std::fprintf(stderr, "[ERROR] npu-compute: %s\n", error.c_str());
+        return npucompute::cli::kReportErrorExitCode;
+    }
+    std::fprintf(stderr, "npu-compute: unpacked= %s\n", outputDirectory.FinalPath().c_str());
+    return 0;
+}
+int CollectReport(const npucompute::cli::CliConfig& config)
+{
+    std::string report_path;
+    std::string error;
+    int result = npucompute::cli::LaunchTarget(config, &report_path, &error);
+    if (result != 0) {
+        if (!report_path.empty()) {
+            std::fprintf(stderr, "npu-compute: %s= %s\n", config.no_pack ? "directory" : "report", report_path.c_str());
+        }
+        if (!error.empty()) {
+            std::fprintf(stderr, "[ERROR] npu-compute: %s\n", error.c_str());
+        }
+        return result;
+    }
+    if (!report_path.empty()) {
+        std::fprintf(stderr, "npu-compute: %s= %s\n", config.no_pack ? "directory" : "report", report_path.c_str());
+    }
+    return 0;
+}
+} // namespace
+
 int main(int argc, char** argv)
 {
     npucompute::cli::CliConfig config;
@@ -48,38 +89,8 @@ int main(int argc, char** argv)
     }
 
     if (config.import_path.has_value()) {
-        std::string error;
-        std::vector<npucompute::cli::ImportedProfileEntry> results;
-        if (!npucompute::cli::ReadImportedProfileResults(*config.import_path, &results, &error)) {
-            std::fprintf(stderr, "[ERROR] npu-compute: %s\n", error.c_str());
-            return npucompute::cli::kReportErrorExitCode;
-        }
-        npucompute::cli::ImportOutputDirectory outputDirectory;
-        if (!npucompute::cli::ImportOutputDirectory::Create(
-                *config.import_path, config.export_path, &outputDirectory, &error) ||
-            !npucompute::cli::UnpackImportedProfileResults(results, outputDirectory.TemporaryPath(), &error) ||
-            !outputDirectory.Publish(&error)) {
-            std::fprintf(stderr, "[ERROR] npu-compute: %s\n", error.c_str());
-            return npucompute::cli::kReportErrorExitCode;
-        }
-        std::fprintf(stderr, "npu-compute: unpacked= %s\n", outputDirectory.FinalPath().c_str());
-        return 0;
+        return ImportReport(config);
     }
 
-    std::string report_path;
-    std::string error;
-    int result = npucompute::cli::LaunchTarget(config, &report_path, &error);
-    if (result != 0) {
-        if (!report_path.empty()) {
-            std::fprintf(stderr, "npu-compute: %s= %s\n", config.no_pack ? "directory" : "report", report_path.c_str());
-        }
-        if (!error.empty()) {
-            std::fprintf(stderr, "[ERROR] npu-compute: %s\n", error.c_str());
-        }
-        return result;
-    }
-    if (!report_path.empty()) {
-        std::fprintf(stderr, "npu-compute: %s= %s\n", config.no_pack ? "directory" : "report", report_path.c_str());
-    }
-    return 0;
+    return CollectReport(config);
 }

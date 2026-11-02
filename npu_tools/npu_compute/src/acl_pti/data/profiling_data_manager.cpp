@@ -111,22 +111,8 @@ aclptiResult ProfilingDataManager::ReleaseReplay(uint64_t replayId)
 aclptiResult ProfilingDataManager::Shutdown() { return ShutdownImpl(false); }
 aclptiResult ProfilingDataManager::ForceShutdown() { return ShutdownImpl(true); }
 
-aclptiResult ProfilingDataManager::ShutdownImpl(bool force)
+aclptiResult ProfilingDataManager::PublishFinalResult()
 {
-    // Serializes shutdown and restart; result callbacks run without the instance lock.
-    std::lock_guard<std::mutex> shutdownLock(shutdownMutex_);
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (state_ == ManagerState::Created || state_ == ManagerState::Stopped) {
-            return shutdownStatus_;
-        }
-        const auto status = processor_.CloseReplay(force);
-        if (status != ACLPTI_SUCCESS) {
-            return status;
-        }
-        state_ = ManagerState::Stopping;
-    }
-    // Stopping rejects callbacks before draining; the singleton itself remains alive.
     aclptiResult callbackStatus = ACLPTI_SUCCESS;
     aclptiResult publicationStatus = ACLPTI_SUCCESS;
     try {
@@ -147,6 +133,27 @@ aclptiResult ProfilingDataManager::ShutdownImpl(bool force)
     } catch (...) {
         callbackStatus = ACLPTI_ERROR_CALLBACK;
     }
+    ASCTOOL_DEBUG("[aclpti-data] result callback status=%d", static_cast<int>(callbackStatus));
+    return publicationStatus;
+}
+
+aclptiResult ProfilingDataManager::ShutdownImpl(bool force)
+{
+    // Serializes shutdown and restart; result callbacks run without the instance lock.
+    std::lock_guard<std::mutex> shutdownLock(shutdownMutex_);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ == ManagerState::Created || state_ == ManagerState::Stopped) {
+            return shutdownStatus_;
+        }
+        const auto status = processor_.CloseReplay(force);
+        if (status != ACLPTI_SUCCESS) {
+            return status;
+        }
+        state_ = ManagerState::Stopping;
+    }
+    // Stopping rejects callbacks before draining; the singleton itself remains alive.
+    const aclptiResult publicationStatus = PublishFinalResult();
     aclptiDataModuleShutdownCallback shutdownCallback;
     void* userData;
     {
@@ -155,7 +162,6 @@ aclptiResult ProfilingDataManager::ShutdownImpl(bool force)
         userData = shutdownUserData_;
     }
     // Consumer failures are reported through the registered drain callback, as before.
-    ASCTOOL_DEBUG("[aclpti-data] result callback status=%d", static_cast<int>(callbackStatus));
     aclptiResult status = ACLPTI_SUCCESS;
     if (shutdownCallback) {
         try {

@@ -58,6 +58,37 @@ struct ReplayLaunchArguments {
     std::vector<aclrtPlaceHolderInfo> placeholders;
 };
 
+aclError ReadHiddenParameterInfo(
+    aclrtFuncHandle function, aclrtFunctionGetParamInfoFunc getInfo, std::size_t parameterCount,
+    std::size_t& hiddenOffset, std::size_t& hiddenSize)
+{
+    const std::size_t hiddenParameterIndex = parameterCount - 1;
+    const aclError infoStatus = getInfo(function, hiddenParameterIndex, &hiddenOffset, &hiddenSize);
+    if (infoStatus != ACL_SUCCESS) {
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=instrumented_param_info function=%p api=aclrtFunctionGetParamInfo status=%d "
+            "param_count=%zu param_index=%zu param_offset=%zu param_size=%zu expected_size=%zu"
+            " code=%u",
+            function, infoStatus, parameterCount, hiddenParameterIndex, hiddenOffset, hiddenSize, sizeof(void*),
+            static_cast<unsigned>(static_cast<uint32_t>(infoStatus)));
+        return ACL_ERROR_FEATURE_UNSUPPORTED;
+    }
+    if (hiddenSize != sizeof(void*)) {
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=instrumented_param_info function=%p api=aclrtFunctionGetParamInfo status=%d "
+            "param_count=%zu param_index=%zu param_offset=%zu param_size=%zu expected_size=%zu"
+            " code=%u",
+            function, infoStatus, parameterCount, hiddenParameterIndex, hiddenOffset, hiddenSize, sizeof(void*),
+            static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_FEATURE_UNSUPPORTED)));
+        return ACL_ERROR_FEATURE_UNSUPPORTED;
+    }
+    ASCTOOL_DEBUG(
+        "[aclpti] instrumented hidden parameter metadata function=%p param_count=%zu param_index=%zu param_offset=%zu "
+        "param_size=%zu",
+        function, parameterCount, hiddenParameterIndex, hiddenOffset, hiddenSize);
+    return ACL_SUCCESS;
+}
+
 aclError GetHiddenParameterInfo(
     aclrtFuncHandle function, std::size_t& parameterCount, std::size_t& hiddenOffset, std::size_t& hiddenSize)
 {
@@ -97,31 +128,7 @@ aclError GetHiddenParameterInfo(
             function, countStatus, static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_FEATURE_UNSUPPORTED)));
         return ACL_ERROR_FEATURE_UNSUPPORTED;
     }
-    const std::size_t hiddenParameterIndex = parameterCount - 1;
-    const aclError infoStatus = getInfo(function, hiddenParameterIndex, &hiddenOffset, &hiddenSize);
-    if (infoStatus != ACL_SUCCESS) {
-        ASCTOOL_ERROR(
-            "[aclpti] error operation=instrumented_param_info function=%p api=aclrtFunctionGetParamInfo status=%d "
-            "param_count=%zu param_index=%zu param_offset=%zu param_size=%zu expected_size=%zu"
-            " code=%u",
-            function, infoStatus, parameterCount, hiddenParameterIndex, hiddenOffset, hiddenSize, sizeof(void*),
-            static_cast<unsigned>(static_cast<uint32_t>(infoStatus)));
-        return ACL_ERROR_FEATURE_UNSUPPORTED;
-    }
-    if (hiddenSize != sizeof(void*)) {
-        ASCTOOL_ERROR(
-            "[aclpti] error operation=instrumented_param_info function=%p api=aclrtFunctionGetParamInfo status=%d "
-            "param_count=%zu param_index=%zu param_offset=%zu param_size=%zu expected_size=%zu"
-            " code=%u",
-            function, infoStatus, parameterCount, hiddenParameterIndex, hiddenOffset, hiddenSize, sizeof(void*),
-            static_cast<unsigned>(static_cast<uint32_t>(ACL_ERROR_FEATURE_UNSUPPORTED)));
-        return ACL_ERROR_FEATURE_UNSUPPORTED;
-    }
-    ASCTOOL_DEBUG(
-        "[aclpti] instrumented hidden parameter metadata function=%p param_count=%zu param_index=%zu param_offset=%zu "
-        "param_size=%zu",
-        function, parameterCount, hiddenParameterIndex, hiddenOffset, hiddenSize);
-    return ACL_SUCCESS;
+    return ReadHiddenParameterInfo(function, getInfo, parameterCount, hiddenOffset, hiddenSize);
 }
 
 aclError BuildInstrumentedReplayArgsArray(

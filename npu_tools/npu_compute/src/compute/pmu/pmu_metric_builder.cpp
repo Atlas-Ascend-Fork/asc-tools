@@ -628,24 +628,10 @@ std::vector<std::string> MemoryHeader()
         "UB_to_GM_bw_usage_rate(%)"};
 }
 
-CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric operationDurationUs)
+void SetAicMemoryFields(
+    CsvFields& fields, const RowMetrics& row, const ReportConfig& config, Metric operationDurationUs)
 {
-    CsvFields fields = CommonFields(row, config);
     const double aicFrequencyMhz = AicFrequencyMhz(config);
-    const double aivFrequencyMhz = AivFrequencyMhz(config);
-    const auto duration = operationDurationUs.has_value() ? operationDurationUs : Time(row.aiv, aivFrequencyMhz);
-    const auto xgu =
-        NonNegativeDifference(row.aiv, pmu::GM_TO_L1_EVENT, {pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT});
-    const MissingReason xguReason = EventBandwidthReason(
-        row.aiv, {pmu::GM_TO_L1_EVENT, pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT}, aivFrequencyMhz,
-        operationDurationUs);
-    SetMetric(
-        fields, "aiv_ub_to_gm_bw(GB/s)", std::nullopt,
-        row.aiv.present ? MissingReason::DbiUnavailable : MissingReason::CoreTypeNotApplicable);
-    SetMetric(
-        fields, "aiv_gm_to_ub_bw(GB/s)",
-        xgu.has_value() && duration.has_value() ? Bandwidth(*xgu * MEMORY_EVENT_UNIT_BYTES, *duration) : std::nullopt,
-        xguReason);
     SetMetric(
         fields, "aic_l1_read_bw(GB/s)",
         EventBandwidth(row.aic, pmu::L1_READ_EVENT, L1_READ_BYTES_PER_EVENT, aicFrequencyMhz, operationDurationUs),
@@ -674,6 +660,25 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     SetMetric(
         fields, "aic_mte3_ratio", ValueRatio(row.aic, pmu::MTE3_ACTIVE_CYCLES_EVENT),
         RatioReason(row.aic, {pmu::MTE3_ACTIVE_CYCLES_EVENT}));
+}
+
+void SetAivMemoryFields(
+    CsvFields& fields, const RowMetrics& row, const ReportConfig& config, Metric operationDurationUs)
+{
+    const double aivFrequencyMhz = AivFrequencyMhz(config);
+    const auto duration = operationDurationUs.has_value() ? operationDurationUs : Time(row.aiv, aivFrequencyMhz);
+    const auto xgu =
+        NonNegativeDifference(row.aiv, pmu::GM_TO_L1_EVENT, {pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT});
+    const MissingReason xguReason = EventBandwidthReason(
+        row.aiv, {pmu::GM_TO_L1_EVENT, pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT}, aivFrequencyMhz,
+        operationDurationUs);
+    SetMetric(
+        fields, "aiv_ub_to_gm_bw(GB/s)", std::nullopt,
+        row.aiv.present ? MissingReason::DbiUnavailable : MissingReason::CoreTypeNotApplicable);
+    SetMetric(
+        fields, "aiv_gm_to_ub_bw(GB/s)",
+        xgu.has_value() && duration.has_value() ? Bandwidth(*xgu * MEMORY_EVENT_UNIT_BYTES, *duration) : std::nullopt,
+        xguReason);
     SetMetric(
         fields, "aiv_main_mem_read_bw(GB/s)",
         EventBandwidth(row.aiv, pmu::GM_TO_L1_EVENT, MEMORY_EVENT_UNIT_BYTES, aivFrequencyMhz, operationDurationUs),
@@ -690,9 +695,13 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     SetMetric(
         fields, "aiv_mte3_ratio", ValueRatio(row.aiv, pmu::MTE3_ACTIVE_CYCLES_EVENT),
         RatioReason(row.aiv, {pmu::MTE3_ACTIVE_CYCLES_EVENT}));
+}
+
+void SetMainMemoryTraffic(CsvFields& fields, const RowMetrics& row)
+{
     // Block rows report the current core's traffic; Task rows sum AIC and AIV traffic.
     // An absent side contributes zero, but a present side missing the event makes the total unavailable.
-    const auto mainMemoryTraffic = [&](uint32_t event) -> Metric {
+    const auto mainMemoryTraffic = [&row](uint32_t event) -> Metric {
         if (row.key) {
             const auto& current = row.key->coreType == ACLPTI_CORE_TYPE_AIC ? row.aic : row.aiv;
             return Scale(current.Value(event), MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB);
@@ -704,7 +713,7 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
         const auto aiv = row.aiv.present ? row.aiv.Value(event) : Metric(0);
         return aic && aiv ? Metric((*aic + *aiv) * MEMORY_EVENT_UNIT_BYTES / BYTES_PER_KB) : std::nullopt;
     };
-    const auto trafficReason = [&](uint32_t event) {
+    const auto trafficReason = [&row](uint32_t event) {
         if (row.key) {
             const auto& current = row.key->coreType == ACLPTI_CORE_TYPE_AIC ? row.aic : row.aiv;
             return EventReason(current, {event});
@@ -718,6 +727,12 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     SetMetric(
         fields, "write_main_memory_datas(KB)", mainMemoryTraffic(pmu::L0C_TO_GM_EVENT),
         trafficReason(pmu::L0C_TO_GM_EVENT));
+}
+
+void SetDirectionalMemoryTraffic(CsvFields& fields, const RowMetrics& row)
+{
+    const auto xgu =
+        NonNegativeDifference(row.aiv, pmu::GM_TO_L1_EVENT, {pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT});
     // Directional transfers retain their core ownership at both levels:
     // GM/L0C to L1 and L0C to GM use AIC; GM to UB and UB to GM use AIV.
     SetMetric(
@@ -737,10 +752,14 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     SetMetric(
         fields, "UB_to_GM_datas(KB)", std::nullopt,
         row.aiv.present ? MissingReason::DbiUnavailable : MissingReason::CoreTypeNotApplicable);
+}
+
+void SetAicMemoryUsage(CsvFields& fields, const RowMetrics& row, const ReportConfig& config, Metric operationDurationUs)
+{
+    const double aicFrequencyMhz = AicFrequencyMhz(config);
     const double gmToL1Max = MaxBandwidth(config.socName, "GM_TO_L1");
     const double l0cToL1Max = MaxBandwidth(config.socName, "L0C_TO_L1");
     const double l0cToGmMax = MaxBandwidth(config.socName, "L0C_TO_GM");
-    const double gmToUbMax = MaxBandwidth(config.socName, "GM_TO_UB");
     SetMetric(
         fields, "GM_to_L1_bw_usage_rate(%)",
         UsageRate(
@@ -764,6 +783,18 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
             l0cToGmMax),
         UsageRateReason(
             EventBandwidthReason(row.aic, {pmu::L0C_TO_GM_EVENT}, aicFrequencyMhz, operationDurationUs), l0cToGmMax));
+}
+
+void SetAivMemoryUsage(CsvFields& fields, const RowMetrics& row, const ReportConfig& config, Metric operationDurationUs)
+{
+    const double aivFrequencyMhz = AivFrequencyMhz(config);
+    const auto duration = operationDurationUs.has_value() ? operationDurationUs : Time(row.aiv, aivFrequencyMhz);
+    const auto xgu =
+        NonNegativeDifference(row.aiv, pmu::GM_TO_L1_EVENT, {pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT});
+    const MissingReason xguReason = EventBandwidthReason(
+        row.aiv, {pmu::GM_TO_L1_EVENT, pmu::UB_TO_GM_EVENT, pmu::UB_TO_GM_ALT_EVENT}, aivFrequencyMhz,
+        operationDurationUs);
+    const double gmToUbMax = MaxBandwidth(config.socName, "GM_TO_UB");
     SetMetric(
         fields, "GM_to_UB_bw_usage_rate(%)",
         UsageRate(
@@ -774,6 +805,17 @@ CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric opera
     SetMetric(
         fields, "UB_to_GM_bw_usage_rate(%)", std::nullopt,
         row.aiv.present ? MissingReason::DbiUnavailable : MissingReason::CoreTypeNotApplicable);
+}
+
+CsvRow MemoryRow(const RowMetrics& row, const ReportConfig& config, Metric operationDurationUs)
+{
+    CsvFields fields = CommonFields(row, config);
+    SetAivMemoryFields(fields, row, config, operationDurationUs);
+    SetAicMemoryFields(fields, row, config, operationDurationUs);
+    SetMainMemoryTraffic(fields, row);
+    SetDirectionalMemoryTraffic(fields, row);
+    SetAicMemoryUsage(fields, row, config, operationDurationUs);
+    SetAivMemoryUsage(fields, row, config, operationDurationUs);
     return BuildRow(MemoryHeader(), fields);
 }
 

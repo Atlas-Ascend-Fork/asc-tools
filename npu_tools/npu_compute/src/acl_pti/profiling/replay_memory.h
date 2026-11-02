@@ -46,6 +46,8 @@ public:
     aclptiResult Restore() const;
 
 private:
+    aclptiResult TrackShadowAllocation(void* devPtr, void* shadow, std::size_t size, aclrtFreeFunc freeFunction);
+
     struct ShadowBuffer {
         void* shadow;
         std::size_t size;

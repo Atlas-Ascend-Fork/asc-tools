@@ -649,21 +649,8 @@ void NpuComputeRuntime::DisableHardwareCallbacks() noexcept
     }
 }
 
-int NpuComputeRuntime::ShutdownAfterPtiDrain()
+aclptiResult NpuComputeRuntime::FinalizePipeline(aclptiResult status)
 {
-    if (initializing_) {
-        return 0;
-    }
-    std::shared_ptr<PmuDataConsumer> consumer;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        consumer = std::move(pmu_consumer_);
-    }
-    aclptiResult status = ACLPTI_SUCCESS;
-    if (consumer != nullptr) {
-        status = consumer->ShutdownAndDrain();
-    }
-    std::lock_guard<std::mutex> lock(mutex_);
     if (pipeline_enabled_ && !pipeline_finalized_) {
         if (status == ACLPTI_SUCCESS && pipeline_fragments_.empty()) {
             status = ACLPTI_ERROR_TRACE_INCOMPLETE;
@@ -691,6 +678,25 @@ int NpuComputeRuntime::ShutdownAfterPtiDrain()
             status = ACLPTI_ERROR_TRACE_WRITE;
         }
     }
+    return status;
+}
+
+int NpuComputeRuntime::ShutdownAfterPtiDrain()
+{
+    if (initializing_) {
+        return 0;
+    }
+    std::shared_ptr<PmuDataConsumer> consumer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        consumer = std::move(pmu_consumer_);
+    }
+    aclptiResult status = ACLPTI_SUCCESS;
+    if (consumer != nullptr) {
+        status = consumer->ShutdownAndDrain();
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    status = FinalizePipeline(status);
     if (pm_sampling_enabled_ && (!PmSamplingComplete() || error_count_ != 0)) {
         if (error_count_ == 0) {
             ++error_count_;

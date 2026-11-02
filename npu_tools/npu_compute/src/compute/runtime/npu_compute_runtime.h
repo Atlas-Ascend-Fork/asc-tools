@@ -67,6 +67,8 @@ private:
         std::uint64_t replayId, const aclptiPipelineData& replay, DynamicHardwareDeviceApi& deviceApi);
     aclptiResult ProcessPipelineData(const aclptiProfilingDataResult& result, const ReportConfig& config);
     aclptiResult PublishPipelineArtifacts();
+    // Called with mutex_ held after the PMU consumer has drained.
+    aclptiResult FinalizePipeline(aclptiResult status);
     aclptiResult ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix);
 
     std::mutex mutex_;

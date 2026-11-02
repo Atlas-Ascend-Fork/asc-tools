@@ -161,9 +161,8 @@ OptionSpec FlagOption(std::string name, char alias, bool CliConfig::*field, Repe
     return option;
 }
 
-OptionRegistry RegisterOptions()
+void RegisterSectionOptions(OptionRegistryBuilder& builder)
 {
-    OptionRegistryBuilder builder;
     auto help = FlagOption("--help", 'h', &CliConfig::show_help, RepeatPolicy::Allow);
     help.protect_from_value = true;
     help.help = "Show help information.";
@@ -187,7 +186,10 @@ OptionRegistry RegisterOptions()
     auto list = FlagOption("--list-sections", '\0', &CliConfig::list_sections, RepeatPolicy::Once);
     list.help = "List supported section names.";
     builder.Add(std::move(list));
+}
 
+void RegisterSetOptions(OptionRegistryBuilder& builder)
+{
     OptionSpec set;
     set.long_name = "--set";
     set.arity = OptionArity::RequiredValue;
@@ -223,7 +225,10 @@ OptionRegistry RegisterOptions()
     auto list_sets = FlagOption("--list-sets", '\0', &CliConfig::list_sets, RepeatPolicy::Once);
     list_sets.help = "List supported section sets and their sections.";
     builder.Add(std::move(list_sets));
+}
 
+void RegisterReplayOptions(OptionRegistryBuilder& builder)
+{
     auto no_pack = FlagOption("--no-pack", '\0', &CliConfig::no_pack, RepeatPolicy::Once);
     no_pack.help = "Keep original collection files in a unique directory\n"
                    "instead of generating .npu-rep. Cannot use --import.\n"
@@ -247,7 +252,10 @@ OptionRegistry RegisterOptions()
     replay.help = "Kernel replay mode.\n"
                   "Value: kernel. Default: kernel.";
     builder.Add(std::move(replay));
+}
 
+void RegisterCacheOption(OptionRegistryBuilder& builder)
+{
     OptionSpec cache;
     cache.long_name = "--cache-control";
     cache.arity = OptionArity::RequiredValue;
@@ -267,7 +275,10 @@ OptionRegistry RegisterOptions()
     cache.help = "L2 cache control before each kernel replay.\n"
                  "Values: all (flush), none (retain). Default: none.";
     builder.Add(std::move(cache));
+}
 
+void RegisterPathOptions(OptionRegistryBuilder& builder)
+{
     auto add_path = [&builder](
                         const char* name, char alias, const char* missing, const char* empty,
                         std::optional<std::string> CliConfig::*field, const char* help_text) {
@@ -303,6 +314,16 @@ OptionRegistry RegisterOptions()
         "Import: an existing directory for unpacking.\n"
         "Default location: current directory.\n"
         "Existing files are not overwritten.");
+}
+
+OptionRegistry RegisterOptions()
+{
+    OptionRegistryBuilder builder;
+    RegisterSectionOptions(builder);
+    RegisterSetOptions(builder);
+    RegisterReplayOptions(builder);
+    RegisterCacheOption(builder);
+    RegisterPathOptions(builder);
     return builder.Build();
 }
 

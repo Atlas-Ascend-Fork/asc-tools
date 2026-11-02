@@ -33,6 +33,9 @@ public:
 private:
     void Enqueue(ipc::Frame frame);
     void Worker() noexcept;
+    void PollControl();
+    bool TakeNextFrame(ipc::Frame& frame);
+    void WaitForResultAck();
     void HandleControl(const ipc::Frame& frame);
     bool SendCancelled() const;
     ipc::Deadline SendDeadline();

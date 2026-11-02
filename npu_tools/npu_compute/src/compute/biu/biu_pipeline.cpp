@@ -536,6 +536,36 @@ aclptiResult AtomicWrite(const boost::filesystem::path& path, const std::string&
 
 } // namespace
 
+namespace {
+aclptiResult PublishParsedChannels(
+    std::vector<ParsedChannelEvents>& parsedChannels, const BiuTraceEventSink& sink, BiuParseStats* stats)
+{
+    for (ParsedChannelEvents& parsed : parsedChannels) {
+        if (parsed.endMark && parsed.endMark->eventStartIndex < parsed.events.size()) {
+            parsed.events.erase(
+                parsed.events.begin() + static_cast<std::ptrdiff_t>(parsed.endMark->eventStartIndex),
+                parsed.events.end());
+        }
+        stats->dfxEventCount += static_cast<uint64_t>(
+            std::count_if(parsed.events.begin(), parsed.events.end(), [](const auto& event) { return event.isDfx; }));
+        for (const BiuTraceEvent& event : parsed.events) {
+            aclptiResult status = ACLPTI_ERROR_INTERNAL;
+            try {
+                status = sink(event);
+            } catch (...) {
+                return ACLPTI_ERROR_INTERNAL;
+            }
+            if (status != ACLPTI_SUCCESS) {
+                return status;
+            }
+        }
+    }
+    return (stats->intervalCount == 0 && stats->dfxEventCount == 0 && stats->incompleteIntervalCount == 0) ?
+               ACLPTI_ERROR_TRACE_INCOMPLETE :
+               ACLPTI_SUCCESS;
+}
+} // namespace
+
 aclptiResult ParsePipelineReplay(
     uint64_t replayId, const aclptiPipelineData& replay, const BiuClockConfig& clocks, const BiuTraceEventSink& sink,
     BiuParseStats* stats)
@@ -581,29 +611,7 @@ aclptiResult ParsePipelineReplay(
         }
         parsedChannels.push_back(std::move(parsed));
     }
-    for (ParsedChannelEvents& parsed : parsedChannels) {
-        if (parsed.endMark && parsed.endMark->eventStartIndex < parsed.events.size()) {
-            parsed.events.erase(
-                parsed.events.begin() + static_cast<std::ptrdiff_t>(parsed.endMark->eventStartIndex),
-                parsed.events.end());
-        }
-        stats->dfxEventCount += static_cast<uint64_t>(
-            std::count_if(parsed.events.begin(), parsed.events.end(), [](const auto& event) { return event.isDfx; }));
-        for (const BiuTraceEvent& event : parsed.events) {
-            aclptiResult status = ACLPTI_ERROR_INTERNAL;
-            try {
-                status = sink(event);
-            } catch (...) {
-                return ACLPTI_ERROR_INTERNAL;
-            }
-            if (status != ACLPTI_SUCCESS) {
-                return status;
-            }
-        }
-    }
-    return (stats->intervalCount == 0 && stats->dfxEventCount == 0 && stats->incompleteIntervalCount == 0) ?
-               ACLPTI_ERROR_TRACE_INCOMPLETE :
-               ACLPTI_SUCCESS;
+    return PublishParsedChannels(parsedChannels, sink, stats);
 }
 
 PipeTraceWriter::~PipeTraceWriter() { Abort(); }

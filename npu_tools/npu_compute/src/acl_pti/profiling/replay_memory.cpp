@@ -14,6 +14,35 @@
 
 namespace aclpti::profiling {
 
+aclptiResult ReplayMemory::TrackShadowAllocation(
+    void* devPtr, void* shadow, std::size_t size, aclrtFreeFunc freeFunction)
+{
+    const std::uintptr_t origin = reinterpret_cast<std::uintptr_t>(devPtr);
+    try {
+        const auto inserted = shadowBuffers_.emplace(origin, ShadowBuffer{shadow, size, false});
+        if (inserted.second) {
+            ASCTOOL_DEBUG("[aclpti] shadow malloc origin=%p shadow=%p size=%zu", devPtr, shadow, size);
+            return ACLPTI_SUCCESS;
+        }
+        const aclError freeResult = freeFunction(shadow);
+        if (freeResult != ACL_SUCCESS) {
+            ASCTOOL_ERROR(
+                "[aclpti] error operation=shadow_duplicate_cleanup status=%d shadow=%p"
+                " code=%u",
+                freeResult, shadow, static_cast<unsigned>(static_cast<uint32_t>(freeResult)));
+        }
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    } catch (const std::bad_alloc&) {
+        const aclError freeStatus = freeFunction(shadow);
+        ASCTOOL_ERROR(
+            "[aclpti] error operation=shadow_metadata_alloc status=%d cleanup_status=%d"
+            " code=%u",
+            ACLPTI_ERROR_OUT_OF_MEMORY, freeStatus,
+            static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_OUT_OF_MEMORY)));
+        return ACLPTI_ERROR_OUT_OF_MEMORY;
+    }
+}
+
 aclptiResult ReplayMemory::MirrorMalloc(
     void* const* devPtr, std::size_t size, aclrtMemMallocPolicy policy, aclrtApiId api, aclrtMallocConfig* cfg)
 {
@@ -55,30 +84,7 @@ aclptiResult ReplayMemory::MirrorMalloc(
             ACLPTI_ERROR_PROFILING_FAILED, static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_PROFILING_FAILED)));
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
-    const std::uintptr_t origin = reinterpret_cast<std::uintptr_t>(*devPtr);
-    try {
-        const auto inserted = shadowBuffers_.emplace(origin, ShadowBuffer{shadow, size, false});
-        if (inserted.second) {
-            ASCTOOL_DEBUG("[aclpti] shadow malloc origin=%p shadow=%p size=%zu", *devPtr, shadow, size);
-            return ACLPTI_SUCCESS;
-        }
-        const aclError freeResult = freeFunction(shadow);
-        if (freeResult != ACL_SUCCESS) {
-            ASCTOOL_ERROR(
-                "[aclpti] error operation=shadow_duplicate_cleanup status=%d shadow=%p"
-                " code=%u",
-                freeResult, shadow, static_cast<unsigned>(static_cast<uint32_t>(freeResult)));
-        }
-        return ACLPTI_ERROR_PROFILING_FAILED;
-    } catch (const std::bad_alloc&) {
-        const aclError freeStatus = freeFunction(shadow);
-        ASCTOOL_ERROR(
-            "[aclpti] error operation=shadow_metadata_alloc status=%d cleanup_status=%d"
-            " code=%u",
-            ACLPTI_ERROR_OUT_OF_MEMORY, freeStatus,
-            static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_OUT_OF_MEMORY)));
-        return ACLPTI_ERROR_OUT_OF_MEMORY;
-    }
+    return TrackShadowAllocation(*devPtr, shadow, size, freeFunction);
 }
 
 aclptiResult ReplayMemory::MirrorFree(void* devPtr)
