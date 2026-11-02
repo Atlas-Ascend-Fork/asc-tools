@@ -42,6 +42,52 @@ template <typename T>
 struct VectorizedType4 : VectorizedType3<T> {
     T w;
 };
+
+template <typename T>
+VectorizedType2<T> operator+(const VectorizedType2<T>& lhs, const VectorizedType2<T>& rhs)
+{
+    VectorizedType2<T> output = {};
+    output.x = lhs.x + rhs.x;
+    output.y = lhs.y + rhs.y;
+    return output;
+}
+
+template <typename T>
+VectorizedType2<T> operator-(const VectorizedType2<T>& lhs, const VectorizedType2<T>& rhs)
+{
+    VectorizedType2<T> output = {};
+    output.x = lhs.x - rhs.x;
+    output.y = lhs.y - rhs.y;
+    return output;
+}
+
+template <typename T>
+VectorizedType2<T> operator-(const VectorizedType2<T>& rhs)
+{
+    VectorizedType2<T> output = {};
+    output.x = T{0} - rhs.x;
+    output.y = T{0} - rhs.y;
+    return output;
+}
+
+template <typename T>
+VectorizedType2<T> operator*(const VectorizedType2<T>& lhs, const VectorizedType2<T>& rhs)
+{
+    VectorizedType2<T> output = {};
+    output.x = lhs.x * rhs.x;
+    output.y = lhs.y * rhs.y;
+    return output;
+}
+
+template <typename T>
+VectorizedType2<T> operator/(const VectorizedType2<T>& lhs, const VectorizedType2<T>& rhs)
+{
+    VectorizedType2<T> output = {};
+    output.x = lhs.x / rhs.x;
+    output.y = lhs.y / rhs.y;
+    return output;
+}
+
 } // namespace Vectorized
 using uint4 = Vectorized::VectorizedType4<uint32_t>;
 using uint3 = Vectorized::VectorizedType3<uint32_t>;
