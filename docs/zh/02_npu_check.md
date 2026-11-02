@@ -50,15 +50,17 @@ source ${INSTALL_DIR}/set_env.sh
 npu-check [--tool <checktype>]... [--log-file <filepath>] [--deadlock-timeout <seconds>] [--] <application> [args...]
 ```
 
+`<application>`为必选参数（仅查看帮助时除外），表示要检查的可执行程序；`[args...]`为可选参数，表示传递给该程序的命令行参数。
+
 ### 选项
 
-| 选项 | 输入 | 默认行为 | 说明 |
-| --- | --- | --- | --- |
-| `--tool <checktype>` | `memcheck`、`synccheck`、`initcheck`、`racecheck` | 未指定时启用`memcheck` | 可多次指定，用于同时启用多个工具；重复指定同一工具不会重复检查 |
-| `--log-file <filepath>` | 文件路径 | 报告显示在终端 | 保存检查诊断信息 |
-| `--deadlock-timeout <seconds>` | 正整数秒数 | 使用 Runtime 默认算子超时策略 | 设置算子执行超时时间 |
-| `-h`、`--help` | 无 | 不显示帮助 | 显示命令帮助 |
-| `--` | 无 | 可选添加 | 用于分隔工具参数和应用参数 |
+| 选项 | 必选/可选 | 输入 | 默认行为 | 说明 |
+| --- | --- | --- | --- | --- |
+| `--tool <checktype>` | 可选 | `memcheck`、`synccheck`、`initcheck`、`racecheck` | 未指定时启用`memcheck` | 可多次指定，用于同时启用多个工具；重复指定同一工具不会重复检查 |
+| `--log-file <filepath>` | 可选 | 文件路径 | 报告显示在终端 | 保存检查诊断信息 |
+| `--deadlock-timeout <seconds>` | 可选 | 正整数秒数 | 使用 Runtime 默认算子超时策略 | 设置算子执行超时时间 |
+| `-h`、`--help` | 可选 | 无 | 不显示帮助 | 显示命令帮助 |
+| `--` | 可选 | 无 | 可选添加 | 用于分隔工具参数和应用参数 |
 
 ## 使用示例
 

@@ -50,15 +50,17 @@ To locate source files and line numbers directly from a report, preserve line in
 npu-check [--tool <checktype>]... [--log-file <filepath>] [--deadlock-timeout <seconds>] [--] <application> [args...]
 ```
 
+`<application>` is required (except when viewing help only) and specifies the executable to check. `[args...]` is optional and specifies the command-line arguments passed to that executable.
+
 ### Options
 
-| Option | Input | Default Behavior | Description |
-| --- | --- | --- | --- |
-| `--tool <checktype>` | `memcheck`, `synccheck`, `initcheck`, `racecheck` | Enables `memcheck` when omitted | Can be specified multiple times to enable multiple tools; repeating the same tool does not repeat the check |
-| `--log-file <filepath>` | A file path | Displays the report in the terminal | Saves diagnostic information |
-| `--deadlock-timeout <seconds>` | Positive integer seconds | Uses the Runtime default operator timeout policy | Sets the operator execution timeout |
-| `-h`, `--help` | None | Does not display help | Displays command help |
-| `--` | None | Optional | Separates tool options from application arguments |
+| Option | Required/Optional | Input | Default Behavior | Description |
+| --- | --- | --- | --- | --- |
+| `--tool <checktype>` | Optional | `memcheck`, `synccheck`, `initcheck`, `racecheck` | Enables `memcheck` when omitted | Can be specified multiple times to enable multiple tools; repeating the same tool does not repeat the check |
+| `--log-file <filepath>` | Optional | A file path | Displays the report in the terminal | Saves diagnostic information |
+| `--deadlock-timeout <seconds>` | Optional | Positive integer seconds | Uses the Runtime default operator timeout policy | Sets the operator execution timeout |
+| `-h`, `--help` | Optional | None | Does not display help | Displays command help |
+| `--` | Optional | None | Optional | Separates tool options from application arguments |
 
 ## Usage Examples
 
