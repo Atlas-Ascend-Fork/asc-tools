@@ -81,6 +81,7 @@ NpuCheckReportExecContext ExecContext(const AclsanDeviceSyncData& data)
     exec.launchId = data.header.launchId;
     exec.instrExecId = data.header.instrExecId;
     exec.pc = data.header.pc;
+    exec.deviceId = data.header.deviceId;
     exec.phyCoreId = data.header.phyCoreId;
     exec.blockId = data.header.blockId;
     exec.blockType = data.header.blockType;

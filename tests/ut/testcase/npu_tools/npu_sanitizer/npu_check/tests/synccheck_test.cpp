@@ -125,6 +125,55 @@ TEST(SynccheckTest, PreservesDeviceBlockTypeInReport)
     EXPECT_EQ(reports.front().triggerPoint.exec.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
 }
 
+TEST(SynccheckTest, PreservesDeviceIdInUnconsumedSyncBufReport)
+{
+    for (uint32_t deviceId : {0U, 3U}) {
+        SCOPED_TRACE(deviceId);
+        Synccheck synccheck;
+        synccheck.OnKernelLaunch(0, {});
+        auto data = MakeSyncEvent(ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF, ACLSAN_DEVICE_SYNC_ACTION_GET);
+        data.header.deviceId = deviceId;
+
+        synccheck.OnDeviceSync(data);
+        const auto reports = synccheck.OnSynchronization();
+
+        ASSERT_EQ(reports.size(), 1U);
+        const auto& report = reports.front();
+        EXPECT_EQ(report.common.pattern, NpuCheckReportPattern::SYNCCHECK_PAIRING_MISMATCH);
+        EXPECT_EQ(
+            std::get<NpuCheckSyncPairingError>(report.detail).reason, NpuCheckSyncMismatchReason::UNCONSUMED_OPEN);
+        EXPECT_EQ(report.common.exec.deviceId, deviceId);
+        EXPECT_EQ(report.triggerPoint.exec.deviceId, deviceId);
+    }
+}
+
+TEST(SynccheckTest, PreservesDeviceIdInDuplicateSyncBufReport)
+{
+    for (uint32_t deviceId : {0U, 3U}) {
+        SCOPED_TRACE(deviceId);
+        Synccheck synccheck;
+        synccheck.OnKernelLaunch(0, {});
+        auto data = MakeSyncEvent(ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF, ACLSAN_DEVICE_SYNC_ACTION_GET);
+        data.header.deviceId = deviceId;
+
+        synccheck.OnDeviceSync(data);
+        synccheck.OnDeviceSync(data);
+        data.action = ACLSAN_DEVICE_SYNC_ACTION_RELEASE;
+        synccheck.OnDeviceSync(data);
+        const auto reports = synccheck.OnSynchronization();
+
+        ASSERT_EQ(reports.size(), 1U);
+        const auto& report = reports.front();
+        EXPECT_EQ(report.common.pattern, NpuCheckReportPattern::SYNCCHECK_PAIRING_MISMATCH);
+        EXPECT_EQ(std::get<NpuCheckSyncPairingError>(report.detail).reason, NpuCheckSyncMismatchReason::DUPLICATE_OPEN);
+        EXPECT_EQ(report.common.exec.deviceId, deviceId);
+        EXPECT_EQ(report.triggerPoint.exec.deviceId, deviceId);
+        ASSERT_TRUE(report.hasRelatedPoint);
+        ASSERT_TRUE(report.relatedPoint.hasExecContext);
+        EXPECT_EQ(report.relatedPoint.exec.deviceId, deviceId);
+    }
+}
+
 LaunchTopology MakeTopology(uint32_t kernelType, uint32_t groups = 1, uint16_t aivs = 2)
 {
     LaunchTopology topology;
