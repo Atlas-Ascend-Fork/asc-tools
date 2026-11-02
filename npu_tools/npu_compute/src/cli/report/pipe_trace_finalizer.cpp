@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/pipe_trace_finalizer.h"
+#include "file_io.h"
 
 #include <limits>
 #include <boost/filesystem.hpp>
@@ -246,6 +247,9 @@ bool WriteFinalTrace(
     }
     const boost::filesystem::path temporaryPath =
         collectionDirectory / ("PipeTrace.json.tmp." + std::to_string(static_cast<long long>(::getpid())));
+    if (!asctools::security::ValidatePath(temporaryPath.string(), asctools::security::PathKind::FileOrNew)) {
+        return Fail("open final PipeTrace temporary file failed", error);
+    }
     std::ofstream output(temporaryPath.string(), std::ios::binary | std::ios::trunc);
     if (!output.is_open()) {
         return Fail("open final PipeTrace temporary file failed", error);

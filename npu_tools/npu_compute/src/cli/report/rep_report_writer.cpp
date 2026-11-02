@@ -10,6 +10,7 @@
 #include "report/rep_report_writer.h"
 
 #include "report/rep_format.h"
+#include "file_io.h"
 
 #include <algorithm>
 #include <atomic>
@@ -257,6 +258,9 @@ bool SyncDescriptor(
 
 bool ReadFile(const boost::filesystem::path& path, std::vector<uint8_t>* content, std::string* error)
 {
+    if (!asctools::security::ValidatePath(path.string(), asctools::security::PathKind::ExistingFile)) {
+        return Fail("open temporary rep for verification failed: " + path.string(), error);
+    }
     std::ifstream input(path.string(), std::ios::binary);
     if (!input.is_open()) {
         return Fail("open temporary rep for verification failed: " + path.string(), error);
@@ -277,6 +281,9 @@ bool CreateTemporaryFile(
         const uint64_t sequence = g_temporarySequence.fetch_add(1U, std::memory_order_relaxed);
         *temporary_path =
             directory / ("." + target_name + ".tmp." + std::to_string(::getpid()) + "." + std::to_string(sequence));
+        if (!asctools::security::ValidatePath(temporary_path->string(), asctools::security::PathKind::FileOrNew)) {
+            return Fail("inspect temporary rep path failed: " + temporary_path->string(), error);
+        }
         const int value =
             ::open(temporary_path->c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
         if (value >= 0) {
@@ -346,7 +353,7 @@ bool WriteAndPublishReport(
     if (!ValidateRepBytes(readback, error)) {
         return false;
     }
-    const int directory_value = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    const int directory_value = asctools::security::OpenDirectory(directory.string());
     if (directory_value < 0) {
         return FailErrno("open report output directory failed: " + directory.string(), errno, error);
     }

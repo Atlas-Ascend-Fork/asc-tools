@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "launch/launcher.h"
+#include "file_io.h"
 #include "launch/collection_session.h"
 
 #include "launch/injection_path.h"
@@ -128,6 +129,9 @@ bool RecordNestedCollection(std::string* error)
     }
 
     const boost::filesystem::path marker_path(markerPathValue);
+    if (!asctools::security::ValidatePath(marker_path.string(), asctools::security::PathKind::FileOrNew)) {
+        return Fail("nested collection detection failed", error);
+    }
     FileDescriptor marker(
         ::open(marker_path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, S_IRUSR | S_IWUSR));
     if (marker.Get() < 0) {

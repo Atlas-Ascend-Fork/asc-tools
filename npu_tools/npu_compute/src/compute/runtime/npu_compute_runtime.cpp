@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute_log.h"
+#include "file_io.h"
 #include "runtime/npu_compute_runtime.h"
 #include <vector>
 
@@ -367,6 +368,9 @@ void PublishPmSamplingFiles(
     for (const auto& file : output.files) {
         bool started = false;
         try {
+            if (!asctools::security::ValidatePath(file.string(), asctools::security::PathKind::ExistingFile)) {
+                throw std::runtime_error("cannot read PmSampling artifact");
+            }
             std::ifstream input(file.string(), std::ios::binary);
             if (!input) {
                 throw std::runtime_error("cannot read PmSampling artifact");

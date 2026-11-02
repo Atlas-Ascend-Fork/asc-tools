@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/pm_sampling_file_validator.h"
+#include "file_io.h"
 #include <string>
 #include <string_view>
 
@@ -60,6 +61,9 @@ bool ParsePc(const std::string& text, std::uint64_t& pc)
 }
 std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path)
 {
+    Require(
+        asctools::security::ValidatePath(path.string(), asctools::security::PathKind::ExistingFile),
+        "cannot read PmSampling SQLite");
     std::ifstream input(path.string(), std::ios::binary);
     std::array<char, sizeof(sqlite::kDatabaseHeader)> magic{};
     input.read(magic.data(), magic.size());
@@ -107,6 +111,9 @@ std::set<std::uint64_t> DatabasePcs(const boost::filesystem::path& path)
 }
 void ValidateDisassembly(const boost::filesystem::path& path)
 {
+    Require(
+        asctools::security::ValidatePath(path.string(), asctools::security::PathKind::ExistingFile),
+        "cannot read PmSampling disassembly");
     std::ifstream input(path.string());
     Require(bool(input), "cannot read PmSampling disassembly");
     // Accept the CANN objdump byte/word forms, ignoring labels and source lines.
@@ -121,6 +128,9 @@ void ValidateDisassembly(const boost::filesystem::path& path)
 }
 void ValidateStack(const boost::filesystem::path& path)
 {
+    Require(
+        asctools::security::ValidatePath(path.string(), asctools::security::PathKind::ExistingFile),
+        "cannot read PmSampling PC stack");
     std::ifstream input(path.string(), std::ios::binary);
     Require(bool(input), "cannot read PmSampling PC stack");
     const std::string contents{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};

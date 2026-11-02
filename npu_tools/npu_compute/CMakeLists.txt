@@ -145,6 +145,14 @@ set_target_properties(npu_compute_sqlite_runtime PROPERTIES
 add_subdirectory(src/compute)
 add_subdirectory(src/cli)
 
+# Compile the shared file operations directly into their consumers; no utility library.
+set(NPU_COMPUTE_SECURITY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../utils/security")
+target_link_libraries(npu_compute_ipc PRIVATE Boost::filesystem)
+foreach(target IN ITEMS npu_compute_ipc npu_compute_launcher_core npu_compute acl_pti)
+  target_sources(${target} PRIVATE "${NPU_COMPUTE_SECURITY_DIR}/file_io.cpp")
+  target_include_directories(${target} PRIVATE "${NPU_COMPUTE_SECURITY_DIR}")
+endforeach()
+
 install(TARGETS acl_pti npu_compute
   LIBRARY DESTINATION "${NPU_COMPUTE_INSTALL_LIBDIR}" ${INSTALL_OPTIONAL}
   COMPONENT asc-tools

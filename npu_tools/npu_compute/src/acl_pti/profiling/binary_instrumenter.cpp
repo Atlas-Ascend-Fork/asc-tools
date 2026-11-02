@@ -9,6 +9,7 @@
  */
 #include "npu_compute_log.h"
 #include "binary_instrumenter.h"
+#include "file_io.h"
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -531,10 +532,7 @@ bool WriteLittleEndian(std::ostream& output, UInt value)
 
 bool WriteKernelEndControl(const fs::path& directory)
 {
-    std::ofstream file((directory / CONTROL_RECORD_NAME).string(), std::ios::binary);
-    if (!file) {
-        return false;
-    }
+    std::ostringstream file;
 
     const std::string symbols(KERNEL_END_PROBE_SYMBOL);
     const auto bindingCount = KERNEL_END_PROBE_BINDING_COUNT;
@@ -555,8 +553,8 @@ bool WriteKernelEndControl(const fs::path& directory)
     }
     file.write(symbols.data(), static_cast<std::streamsize>(symbols.size()));
     file.write(FUNCTION_NAME_LIST_PADDING, sizeof(FUNCTION_NAME_LIST_PADDING));
-    file.close();
-    return static_cast<bool>(file);
+    return static_cast<bool>(file) &&
+           asctools::security::WriteFile((directory / CONTROL_RECORD_NAME).string(), file.str());
 }
 
 bool WriteSimtStartControl(const fs::path& directory)
@@ -586,14 +584,18 @@ bool WriteSimtStartControl(const fs::path& directory)
 
 bool WriteProbeFiles(const fs::path& directory, bool simtStart)
 {
-    const auto write = [&directory](const char* name, const void* bytes, std::size_t size) {
-        std::ofstream file((directory / name).string(), std::ios::binary);
+    const auto write = [](const char* name, const void* bytes, std::size_t size, const fs::path& directory) {
+        const auto pathStr = (directory / name).string();
+        if (!asctools::security::ValidatePath(pathStr, asctools::security::PathKind::FileOrNew)) {
+            return false;
+        }
+        std::ofstream file(pathStr, std::ios::binary);
         file.write(static_cast<const char*>(bytes), static_cast<std::streamsize>(size));
         file.close();
         return static_cast<bool>(file);
     };
     const std::string source(simtStart ? SIMT_START_PROBE_SOURCE : KERNEL_END_PROBE_SOURCE);
-    return write(PROBE_SOURCE_NAME, source.data(), source.size()) &&
+    return write(PROBE_SOURCE_NAME, source.data(), source.size(), directory) &&
            (simtStart ? WriteSimtStartControl(directory) : WriteKernelEndControl(directory));
 }
 
@@ -933,6 +935,9 @@ static bool ReadPatchedProbeImage(
     std::vector<char>& result)
 {
     std::string diagnostic;
+    if (!asctools::security::ValidatePath(patched.string(), asctools::security::PathKind::ExistingFile)) {
+        return false;
+    }
     std::ifstream file(patched.string(), std::ios::binary);
     if (!file) {
         return false;
@@ -972,6 +977,9 @@ static void MapCompanionFunctions(
 
 static bool WriteProbeInput(const fs::path& input, const void* data, std::size_t size)
 {
+    if (!asctools::security::ValidatePath(input.string(), asctools::security::PathKind::FileOrNew)) {
+        return false;
+    }
     std::ofstream file(input.string(), std::ios::binary);
     file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
     file.close();
@@ -1085,6 +1093,10 @@ bool BuildOriginalPmSamplingInstructionMap(const void* data, std::size_t size, P
     TemporaryDirectory temporary{pattern};
     const auto input = temporary.path / "input.o";
     {
+        if (!asctools::security::ValidatePath(input.string(), asctools::security::PathKind::FileOrNew)) {
+            output.error = "cannot write device ELF for PmSampling mapping";
+            return false;
+        }
         std::ofstream file(input.string(), std::ios::binary);
         file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
         if (!file) {
@@ -1095,6 +1107,10 @@ bool BuildOriginalPmSamplingInstructionMap(const void* data, std::size_t size, P
     const auto disassembly = temporary.path / "original.txt";
     if (!Run({objdump.string(), "-d", input.string()}, disassembly)) {
         output.error = "llvm-objdump failed during PmSampling instruction mapping";
+        return false;
+    }
+    if (!asctools::security::ValidatePath(disassembly.string(), asctools::security::PathKind::ExistingFile)) {
+        output.error = "cannot read PmSampling disassembly";
         return false;
     }
     std::ifstream file(disassembly.string(), std::ios::binary);

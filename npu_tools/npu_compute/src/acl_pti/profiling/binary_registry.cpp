@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute_log.h"
+#include "file_io.h"
 #include "binary_registry.h"
 #include <elf.h>
 #include <memory>
@@ -267,6 +268,9 @@ aclptiResult BinaryRegistry::RegisterBinaryFromFile(
     const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling, bool pipeline)
 {
     if (path == nullptr || path[0] == '\0' || binary == nullptr) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    if (!asctools::security::ValidatePath(path, asctools::security::PathKind::ExistingFile)) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     try {

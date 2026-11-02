@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/csv_sqlite_writer.h"
+#include "file_io.h"
 #include "shared/sqlite_runtime_loader.h"
 
 #include <cstdint>
@@ -245,6 +246,9 @@ CsvSqliteWriteResult WriteCsvTable(sqlite3* database, const std::string& path, c
     CsvRecordLocation location{};
     std::string field;
     try {
+        if (!asctools::security::ValidatePath(path, asctools::security::PathKind::ExistingFile)) {
+            throw std::runtime_error("cannot open CSV for reading");
+        }
         std::ifstream input(path, std::ios::binary);
         if (!input) {
             throw std::runtime_error("cannot open CSV for reading");

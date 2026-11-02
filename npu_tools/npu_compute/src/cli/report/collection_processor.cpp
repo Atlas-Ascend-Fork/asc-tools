@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/collection_processor.h"
+#include "file_io.h"
 
 #include "report/collection_file_validator.h"
 #include "report/pm_sampling_file_validator.h"
@@ -357,18 +358,22 @@ bool ProcessDirectoryInternal(
 
 bool ReadCollectionFile(const boost::filesystem::path& path, std::vector<uint8_t>* payload, std::string* error)
 {
-    std::ifstream input(path.string(), std::ios::binary);
+    const std::string& path_str = path.string();
+    if (!asctools::security::ValidatePath(path_str, asctools::security::PathKind::ExistingFile)) {
+        return Fail("open collection file for processing failed: " + path_str, error);
+    }
+    std::ifstream input(path_str, std::ios::binary);
     if (!input.is_open()) {
-        return Fail("open collection file for processing failed: " + path.string(), error);
+        return Fail("open collection file for processing failed: " + path_str, error);
     }
     if (payload != nullptr) {
         payload->assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
         if (input.bad()) {
             payload->clear();
-            return Fail("read collection file for processing failed: " + path.string(), error);
+            return Fail("read collection file for processing failed: " + path_str, error);
         }
         if (payload->empty()) {
-            return Fail("collection file became empty while processing: " + path.string(), error);
+            return Fail("collection file became empty while processing: " + path_str, error);
         }
         return true;
     }

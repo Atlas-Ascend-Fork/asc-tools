@@ -86,7 +86,7 @@ bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordB
     const auto rawPc = encodedPc * kPmSamplingAddressScale;
     std::optional<std::uint64_t> selected;
     for (const auto entry : {context_->aicRuntimeEntry, context_->aivRuntimeEntry}) {
-        if (!entry) {
+        if (entry == 0) {
             continue;
         }
         const auto pc = (rawPc - entry - context_->pcOffset + context_->originalEntry) & kPmSamplingPcMask;

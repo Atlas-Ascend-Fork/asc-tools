@@ -63,7 +63,7 @@ Function ToFunction(void* symbol)
     static_assert(std::is_pointer_v<Function>);
     static_assert(sizeof(Function) == sizeof(symbol));
     Function function = nullptr;
-    if (memcpy_s(&function, sizeof(function), &symbol, sizeof(symbol)) != EOK) {
+    if (memcpy_s(&function, sizeof(Function), &symbol, sizeof(void*)) != EOK) {
         return nullptr;
     }
     return function;

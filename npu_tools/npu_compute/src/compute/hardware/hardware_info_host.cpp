@@ -8,11 +8,11 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "hardware/hardware_info_host.h"
+#include "file_io.h"
 
 #include <boost/filesystem.hpp>
 
 #include <cstdint>
-#include <fstream>
 #include <limits>
 #include <set>
 #include <string>
@@ -86,12 +86,7 @@ bool ParseInteger(std::string_view text, Integer* value)
 
 bool ReadFile(const boost::filesystem::path& path, std::string* content)
 {
-    std::ifstream input(path.string());
-    if (!input.is_open()) {
-        return false;
-    }
-    content->assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-    return !input.bad();
+    return asctools::security::ReadTextFile(path.string(), *content);
 }
 
 bool ParseOnlineCpuList(std::string_view text, std::vector<uint32_t>* cpuIds)

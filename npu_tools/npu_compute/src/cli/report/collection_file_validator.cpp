@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/collection_file_validator.h"
+#include "file_io.h"
 
 #include <boost/filesystem.hpp>
 #include <boost/json.hpp>
@@ -234,6 +235,9 @@ bool ValidateCollectionFile(
             return Fail("unknown collection file type for: " + path.string(), error);
     }
 
+    if (!asctools::security::ValidatePath(path.string(), asctools::security::PathKind::ExistingFile)) {
+        return Fail("open collection file failed: " + path.string(), error);
+    }
     std::ifstream input(path.string(), std::ios::binary);
     if (!input.is_open()) {
         return Fail("open collection file failed: " + path.string(), error);

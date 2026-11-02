@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "runtime/kernel_metadata_collector.h"
+#include "file_io.h"
 
 #include <array>
 #include <limits>
@@ -121,6 +122,9 @@ std::string ResolveSymbolName(const void* symbol)
         return info.dli_sname;
     }
     if (info.dli_fname == nullptr) {
+        return {};
+    }
+    if (!asctools::security::ValidatePath(info.dli_fname, asctools::security::PathKind::ExistingFile)) {
         return {};
     }
     std::ifstream input(info.dli_fname, std::ios::binary | std::ios::ate);

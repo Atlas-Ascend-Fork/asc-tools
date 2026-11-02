@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/csv_reader.h"
+#include "file_io.h"
 
 #include <boost/filesystem/path.hpp>
 #include <algorithm>
@@ -447,7 +448,7 @@ bool ParseCsvReal(std::string_view value, double& real)
         if (consumed != value.size() || !std::isfinite(parsed)) {
             return false;
         }
-        if (parsed == 0 && (first != value.size() || start != 0)) {
+        if (std::fpclassify(parsed) == FP_ZERO && (first != value.size() || start != 0)) {
             return false;
         }
         real = parsed;
@@ -463,6 +464,12 @@ CsvSchema AnalyzeCsv(const std::string& path)
 {
     if (path.find('\0') != std::string::npos) {
         throw std::runtime_error("Cannot open CSV: path contains a NUL character");
+    }
+    if (!asctools::security::ValidatePath(path, asctools::security::PathKind::ExistingFile)) {
+        const int openError = errno;
+        const auto reason = openError != 0 ? std::error_code(openError, std::generic_category()).message() :
+                                             "input stream could not be opened";
+        throw std::runtime_error("Cannot open CSV '" + path + "' for reading: " + reason);
     }
     errno = 0;
     std::ifstream input(path, std::ios::binary);

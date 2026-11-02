@@ -11,7 +11,6 @@
 #define NPU_TOOLS_NPU_COMPUTE_SRC_CLI_REPORT_COLLECTION_PROCESSOR_H
 
 #include <boost/filesystem/path.hpp>
-#include <cstdint>
 #include <string>
 #include <vector>
 

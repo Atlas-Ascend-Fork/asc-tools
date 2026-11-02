@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "artifact_receiver.h"
+#include "file_io.h"
 #include "report/pm_sampling_file_validator.h"
 #include <algorithm>
 #include <boost/filesystem.hpp>
@@ -113,19 +114,33 @@ ManifestGroups CollectManifestGroups(
     return groups;
 }
 
-template <typename Check>
+struct CollectionValidation {
+    std::vector<std::string>* issues = nullptr;
+    bool complete = true;
+
+    void Check(bool condition, const std::string& message)
+    {
+        if (!condition) {
+            complete = false;
+            if (issues != nullptr) {
+                issues->push_back(message);
+            }
+        }
+    }
+};
+
 void ValidateSamplingGroup(
     const boost::filesystem::path& directory, const std::string& parent, const std::set<std::string>& files,
-    const ArtifactGroups& pmuGroups, const Check& CheckCollection)
+    const ArtifactGroups& pmuGroups, CollectionValidation& validation)
 {
     const auto pmu = pmuGroups.find(parent);
-    CheckCollection(
+    validation.Check(
         pmu != pmuGroups.end() && pmu->second.count("summary.jsonl") != 0,
         (directory / parent / "summary.jsonl").string() + ": required summary artifact missing");
     for (const auto& name : files) {
         std::string error;
         const bool valid = ValidatePmSamplingFile(directory / parent / name, &error);
-        CheckCollection(valid, error);
+        validation.Check(valid, error);
     }
 }
 
@@ -133,7 +148,7 @@ void ValidateSamplingGroup(
 ArtifactReceiver::ArtifactReceiver(const std::string& directory)
     : directory_path_(boost::filesystem::absolute(directory))
 {
-    directory_ = open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    directory_ = asctools::security::OpenDirectory(directory);
     if (directory_ < 0) {
         FileError("open staging");
     }
@@ -315,15 +330,14 @@ void WarnMissingSamplingFiles(const boost::filesystem::path& directory, const Ma
     }
 }
 
-template <typename Check>
 void ValidatePmuGroups(
-    const ManifestGroups& groups, const std::set<std::string>& expectedPmu, const Check& CheckCollection)
+    const ManifestGroups& groups, const std::set<std::string>& expectedPmu, CollectionValidation& validation)
 {
     if (!expectedPmu.empty()) {
-        CheckCollection(!groups.pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
+        validation.Check(!groups.pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
         for (const auto& [parent, files] : groups.pmuGroups) {
             for (const auto& name : expectedPmu) {
-                CheckCollection(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
+                validation.Check(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
             }
         }
     } else {
@@ -337,16 +351,8 @@ bool ArtifactReceiver::Validate(
     const ipc::Result& result, const ipc::Config& config, std::vector<std::string>* issues) const
 {
     Require(file_ < 0, "ARTIFACT: unfinished artifact");
-    bool complete = true;
-    const auto CheckCollection = [&complete, issues](bool condition, const std::string& message) {
-        if (!condition) {
-            complete = false;
-            if (issues != nullptr) {
-                issues->push_back(message);
-            }
-        }
-    };
-    CheckCollection(
+    CollectionValidation validation{issues};
+    validation.Check(
         result.status == 0 && result.code == 0 && result.complete && result.errorCount == 0 && result.droppedCount == 0,
         "PROFILING: incomplete result");
     Require(
@@ -356,17 +362,17 @@ bool ArtifactReceiver::Validate(
     bool samplingExpected = false;
     const auto expectedPmu = ExpectedPmuFiles(config, pipelineExpected, samplingExpected);
     const auto groups = CollectManifestGroups(result, manifest_, expectedPmu, pipelineExpected, samplingExpected);
-    CheckCollection(groups.hardwareFound, "HardwareInfo.jsonl: required artifact missing");
-    CheckCollection(
+    validation.Check(groups.hardwareFound, "HardwareInfo.jsonl: required artifact missing");
+    validation.Check(
         pipelineExpected == (groups.pipelineManifestFound && groups.pipelineFragments > 0),
         "ARTIFACT: required Pipeline artifact missing");
     if (samplingExpected) {
         WarnMissingSamplingFiles(directory_path_, groups);
         for (const auto& [parent, files] : groups.samplingGroups) {
-            ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, CheckCollection);
+            ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, validation);
         }
     }
-    ValidatePmuGroups(groups, expectedPmu, CheckCollection);
-    return complete;
+    ValidatePmuGroups(groups, expectedPmu, validation);
+    return validation.complete;
 }
 } // namespace npucompute::cli

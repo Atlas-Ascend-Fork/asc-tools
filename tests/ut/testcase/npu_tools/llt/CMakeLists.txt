@@ -47,6 +47,7 @@ endif()
 
 add_executable(npu_tools_utest
   gtest_main.cpp
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/security_file_io_test.cpp"
   # npu_check processor / tool manager / renderer
   "${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/log_capture.cpp"
   "${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/mem_state_tracker_test.cpp"
@@ -214,6 +215,10 @@ target_include_directories(npu_tools_utest PRIVATE
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/device_runtime"
 )
 
+target_sources(npu_tools_utest PRIVATE
+  "${NPU_TOOLS_LLT_COMPUTE_DIR}/../utils/security/file_io.cpp"
+)
+target_include_directories(npu_tools_utest PRIVATE "${NPU_TOOLS_LLT_COMPUTE_DIR}/../utils/security")
 target_link_libraries(npu_tools_utest PRIVATE c_sec_static)
 target_link_libraries(npu_tools_utest PRIVATE
   npu_compute_sqlite_runtime

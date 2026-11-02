@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "ipc.h"
+#include "file_io.h"
 #include "securec.h"
 
 #include <algorithm>
@@ -195,7 +196,11 @@ bool IsDescendant(pid_t pid, pid_t ancestor)
         if (pid == ancestor) {
             return true;
         }
-        std::ifstream input("/proc/" + std::to_string(pid) + "/stat");
+        const std::string statPath = "/proc/" + std::to_string(pid) + "/stat";
+        if (!asctools::security::ValidatePath(statPath, asctools::security::PathKind::ExistingFile)) {
+            return false;
+        }
+        std::ifstream input(statPath);
         std::string stat;
         if (!std::getline(input, stat)) {
             return false;

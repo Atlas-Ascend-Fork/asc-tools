@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "import/imported_profile_results.h"
+#include "file_io.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -244,6 +245,9 @@ bool SyncDescriptor(int descriptor, const std::string& description, std::string*
 
 bool WriteImportedFile(const boost::filesystem::path& path, const std::vector<uint8_t>& payload, std::string* error)
 {
+    if (!asctools::security::ValidatePath(path.string(), asctools::security::PathKind::FileOrNew)) {
+        return FailErrno("create imported file failed: " + path.string(), error);
+    }
     FileDescriptor descriptor(
         ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR));
     if (descriptor.Get() < 0) {
@@ -260,7 +264,7 @@ bool WriteImportedFile(const boost::filesystem::path& path, const std::vector<ui
 
 bool SyncDirectory(const boost::filesystem::path& path, std::string* error)
 {
-    FileDescriptor descriptor(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+    FileDescriptor descriptor(asctools::security::OpenDirectory(path.string()));
     if (descriptor.Get() < 0) {
         return FailErrno("open imported directory for sync failed: " + path.string(), error);
     }
@@ -306,38 +310,42 @@ bool ReadInputFile(const boost::filesystem::path& path, std::vector<uint8_t>* co
 {
     boost::system::error_code status_error;
     const boost::filesystem::file_status status = boost::filesystem::symlink_status(path, status_error);
+    const std::string& path_str = path.string();
     if (status_error == boost::system::errc::no_such_file_or_directory ||
         (!status_error && !boost::filesystem::exists(status))) {
-        return InvalidInput(path.string(), "does not exist", error);
+        return InvalidInput(path_str, "does not exist", error);
     }
     if (status_error) {
-        return InvalidInput(path.string(), "cannot be inspected: " + status_error.message(), error);
+        return InvalidInput(path_str, "cannot be inspected: " + status_error.message(), error);
     }
     if (boost::filesystem::is_directory(status)) {
-        return InvalidInput(path.string(), "is a directory", error);
+        return InvalidInput(path_str, "is a directory", error);
     }
     if (!boost::filesystem::is_regular_file(status)) {
-        return InvalidInput(path.string(), "is not a supported file; symbolic links are not supported", error);
+        return InvalidInput(path_str, "is not a supported file; symbolic links are not supported", error);
     }
 
+    if (!asctools::security::ValidatePath(path_str, asctools::security::PathKind::ExistingFile)) {
+        return InvalidInput(path_str, "cannot be opened", error);
+    }
     errno = 0;
-    std::ifstream input(path.string(), std::ios::binary);
+    std::ifstream input(path_str, std::ios::binary);
     if (!input.is_open()) {
         const int code = errno;
         const std::string reason = code == 0 ?
                                        "cannot be opened" :
                                        "cannot be opened: " + std::error_code(code, std::generic_category()).message();
-        return InvalidInput(path.string(), reason, error);
+        return InvalidInput(path_str, reason, error);
     }
     try {
         content->assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
     } catch (const std::ios_base::failure& failure) {
         content->clear();
-        return InvalidInput(path.string(), "cannot be read: " + std::string(failure.what()), error);
+        return InvalidInput(path_str, "cannot be read: " + std::string(failure.what()), error);
     }
     if (input.bad()) {
         content->clear();
-        return InvalidInput(path.string(), "cannot be read", error);
+        return InvalidInput(path_str, "cannot be read", error);
     }
     return true;
 }

@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "biu/biu_pipeline.h"
+#include "file_io.h"
 
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
@@ -508,6 +509,9 @@ aclptiResult AtomicWrite(const boost::filesystem::path& path, const std::string&
 {
     boost::filesystem::path temporary = path;
     temporary += ".tmp." + std::to_string(static_cast<long long>(::getpid()));
+    if (!asctools::security::ValidatePath(temporary.string(), asctools::security::PathKind::FileOrNew)) {
+        return ACLPTI_ERROR_TRACE_WRITE;
+    }
     std::ofstream output(temporary.string(), std::ios::binary | std::ios::trunc);
     if (!output.is_open()) {
         return ACLPTI_ERROR_TRACE_WRITE;

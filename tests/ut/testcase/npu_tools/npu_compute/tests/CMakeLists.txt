@@ -61,6 +61,8 @@ add_library(acl_pti_unit STATIC
 )
 target_compile_definitions(acl_pti_unit PRIVATE NPU_COMPUTE_ENABLE_TEST_CONTROLS=1)
 target_include_directories(acl_pti_unit PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
+target_sources(acl_pti_unit PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp")
+target_include_directories(acl_pti_unit PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(acl_pti_unit
   PUBLIC npu_compute_test_headers
   PRIVATE c_sec_static acl_tool_injection_test_unit Threads::Threads Boost::filesystem ${CMAKE_DL_LIBS}
@@ -78,6 +80,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_executable(npu_compute_binary_registry_test binary_registry_test.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_registry.cpp)
 target_include_directories(npu_compute_binary_registry_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
+target_include_directories(npu_compute_binary_registry_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(npu_compute_binary_registry_test PRIVATE
   acl_pti_unit ${NPU_COMPUTE_ACLPTI_UNIT_BACKENDS})
 set_target_properties(npu_compute_binary_registry_test PROPERTIES
@@ -89,6 +92,10 @@ add_executable(npu_compute_binary_instrumenter_test binary_instrumenter_test.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/pm_sampling_instruction_map.cpp)
 target_compile_definitions(npu_compute_binary_instrumenter_test PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_include_directories(npu_compute_binary_instrumenter_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
+target_sources(npu_compute_binary_instrumenter_test PRIVATE
+  "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp"
+)
+target_include_directories(npu_compute_binary_instrumenter_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(npu_compute_binary_instrumenter_test PRIVATE npu_compute_plog_test_headers plog_test_library Boost::filesystem Threads::Threads ${CMAKE_DL_LIBS})
 add_executable(npu_compute_binary_instrumenter_tool_stub binary_instrumenter_tool_stub.cpp)
 target_link_libraries(npu_compute_binary_instrumenter_tool_stub PRIVATE Boost::filesystem npu_compute_test_headers)
@@ -121,9 +128,11 @@ target_compile_definitions(acl_pti_test PRIVATE
   NPU_COMPUTE_ENABLE_TEST_CONTROLS=1
 )
 target_include_directories(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
+target_sources(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp")
+target_include_directories(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(acl_pti_test
   PUBLIC npu_compute_test_headers
-  PRIVATE c_sec_static acl_tool_injection_test acl_prof_api_stub Threads::Threads
+  PRIVATE c_sec_static acl_tool_injection_test acl_prof_api_stub Threads::Threads Boost::filesystem
 )
 set_target_properties(acl_pti_test PROPERTIES
   OUTPUT_NAME acl_pti_test
@@ -163,6 +172,10 @@ target_include_directories(npu_compute_test PRIVATE
   "${NPU_COMPUTE_SOURCE_DIR}/src"
   "${NPU_COMPUTE_SOURCE_DIR}/src/compute"
 )
+target_sources(npu_compute_test PRIVATE
+  "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp"
+)
+target_include_directories(npu_compute_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(npu_compute_test
   PUBLIC npu_compute_test_headers
   PRIVATE c_sec_static acl_pti_test ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_ipc npu_compute_sqlite_runtime
@@ -214,6 +227,10 @@ add_library(npu_compute_launcher_core_test STATIC
 )
 target_include_directories(npu_compute_launcher_core_test PUBLIC
   "${NPU_COMPUTE_SOURCE_DIR}/src/cli")
+target_sources(npu_compute_launcher_core_test PRIVATE
+  "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp"
+)
+target_include_directories(npu_compute_launcher_core_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(npu_compute_launcher_core_test
   PUBLIC npu_compute_test_headers Boost::filesystem)
 target_link_libraries(npu_compute_launcher_core_test PRIVATE c_sec_static npu_compute_ipc Threads::Threads npu_compute_sqlite_runtime)
@@ -500,6 +517,8 @@ add_executable(npu_compute_biu_pipeline_test
 target_include_directories(npu_compute_biu_pipeline_test PRIVATE
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute
 )
+target_sources(npu_compute_biu_pipeline_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp")
+target_include_directories(npu_compute_biu_pipeline_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(npu_compute_biu_pipeline_test PRIVATE
   acl_pti_test Boost::filesystem
 )
@@ -552,6 +571,10 @@ target_include_directories(npu_compute_runtime_callback_test PRIVATE
   ${NPU_COMPUTE_SOURCE_DIR}/src
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute
 )
+target_sources(npu_compute_runtime_callback_test PRIVATE
+  "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp"
+)
+target_include_directories(npu_compute_runtime_callback_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(npu_compute_runtime_callback_test PRIVATE c_sec_static
   acl_pti_callback_stub
   acl_runtime_stub
@@ -581,6 +604,10 @@ if(ENABLE_TEST)
     ${NPU_COMPUTE_SOURCE_DIR}/src
     ${NPU_COMPUTE_SOURCE_DIR}/src/compute
   )
+  target_sources(npu_compute_hardware_collection_stub_library PRIVATE
+    "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp"
+  )
+  target_include_directories(npu_compute_hardware_collection_stub_library PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
   target_link_libraries(npu_compute_hardware_collection_stub_library PRIVATE c_sec_static
     acl_pti_callback_stub
     acl_runtime_stub
@@ -702,6 +729,10 @@ if(NPU_COMPUTE_BUILD_REAL_HARDWARE_TESTS)
     ${NPU_COMPUTE_SOURCE_DIR}/src
     ${NPU_COMPUTE_SOURCE_DIR}/src/compute
   )
+  target_sources(npu_compute_real_hardware_test_library PRIVATE
+    "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp"
+  )
+  target_include_directories(npu_compute_real_hardware_test_library PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
   target_link_libraries(npu_compute_real_hardware_test_library PRIVATE
     acl_pti_callback_stub
     npu_compute_test_headers
@@ -924,6 +955,10 @@ target_include_directories(npu_compute_pm_sampling_runtime_test PRIVATE
   ${NPU_COMPUTE_SOURCE_DIR}/src
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute
 )
+target_sources(npu_compute_pm_sampling_runtime_test PRIVATE
+  "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp"
+)
+target_include_directories(npu_compute_pm_sampling_runtime_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(npu_compute_pm_sampling_runtime_test PRIVATE
   acl_pti_callback_stub acl_runtime_stub npu_compute_test_headers acl_pti_test
   npu_compute_launcher_core_test
