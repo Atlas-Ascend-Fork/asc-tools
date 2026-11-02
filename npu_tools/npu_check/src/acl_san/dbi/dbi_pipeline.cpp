@@ -493,8 +493,9 @@ std::string SelectKernelTextSymbol(const std::string& text, const std::optional<
     // selected entry exactly and use the AIC half as the ordering anchor, as MS does.
     for (const char* suffix : {"_mix_aic", "_aic", "", "_mix_aiv", "_aiv"}) {
         const std::string expected = key + suffix;
-        const auto selected = std::find_if(
-            symbols.begin(), symbols.end(), [&](const std::string& symbol) { return EndsWith(symbol, expected); });
+        const auto selected = std::find_if(symbols.begin(), symbols.end(), [&expected](const std::string& symbol) {
+            return EndsWith(symbol, expected);
+        });
         if (selected != symbols.end()) {
             return *selected;
         }
@@ -652,9 +653,9 @@ bool GetOrBuildGroupArtifact(
         if (!RunChecked("validate-probe", {tools.llvmObjdump, "--syms", stagedObject.string()}, result, &symbols)) {
             return false;
         }
-        const auto missing = std::find_if(generated.symbols.begin(), generated.symbols.end(), [&](const auto& symbol) {
-            return !HasTextSymbol(symbols, "w", symbol);
-        });
+        const auto missing = std::find_if(
+            generated.symbols.begin(), generated.symbols.end(),
+            [&symbols](const auto& symbol) { return !HasTextSymbol(symbols, "w", symbol); });
         if (missing != generated.symbols.end()) {
             if (result.diagnostic.empty()) {
                 result.stage = "validate-probe";

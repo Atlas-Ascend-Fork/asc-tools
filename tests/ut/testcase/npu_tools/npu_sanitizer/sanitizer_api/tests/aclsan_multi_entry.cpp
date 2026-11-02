@@ -30,12 +30,14 @@ std::atomic<size_t> loads{0}, launches{0}, unloads{0};
 std::atomic<int> syncResult{0};
 std::atomic<int> unloadResult{0};
 std::atomic<int> lookupResult{0};
+std::atomic<int> launchResult{0};
 thread_local uintptr_t contextValue = 0xabc;
 aclrtBinHandle parent = nullptr;
 std::string filePath;
 bool fileMode = false;
 bool returnNullBinary = false;
 bool returnDuplicateBinary = false;
+bool unloadOnLaunchFailure = false;
 
 std::vector<uint8_t> MultiElf()
 {
@@ -124,7 +126,7 @@ aclError Launch(
     std::memcpy(&trace, static_cast<char*>(args) + 16, sizeof(trace));
     assert(trace != nullptr);
     ++launches;
-    return ACL_SUCCESS;
+    return launchResult;
 }
 aclError ArrayLaunch(void* function, uint32_t blocks, aclrtStream stream, aclrtLaunchKernelCfg* cfg, void** args)
 {
@@ -144,7 +146,15 @@ aclError ParamInfo(const void*, size_t, size_t* offset, size_t* bytes)
     return ACL_SUCCESS;
 }
 aclError Sync(aclrtStream) { return syncResult; }
-void Callback(void*, AclsanCallbackDomain, AclsanCallbackId, const void*) {}
+void Callback(void*, AclsanCallbackDomain domain, AclsanCallbackId id, const void* data)
+{
+    if (unloadOnLaunchFailure && domain == ACLSAN_CB_DOMAIN_LAUNCH && id == ACLSAN_CBID_LAUNCH_KERNEL) {
+        const auto& launch = *static_cast<const AclsanLaunchData*>(data);
+        assert(launch.common.result != ACL_SUCCESS);
+        unloadOnLaunchFailure = false;
+        assert(aclrtBinaryUnLoad(parent) == ACL_SUCCESS);
+    }
+}
 size_t TuneCount(const std::string& key)
 {
     std::ifstream input(std::getenv("DBI_FAKE_LOG"));
@@ -357,6 +367,41 @@ int main(int argc, char**)
     assert(aclrtSynchronizeStream(stream) == ACL_SUCCESS);
     assert(aclrtBinaryUnLoad(parent) == ACL_SUCCESS);
     assert(unloads == loads);
+    assert(
+        aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL) ==
+        ACLSAN_STATUS_SUCCESS);
+    for (bool missingContext : {true, false}) {
+        for (bool argsArray : {false, true}) {
+            assert(aclrtBinaryLoadFromData(image.data(), image.size(), &options, &parent) == ACL_SUCCESS);
+            assert(aclrtBinaryGetFunctionByEntry(parent, 0, &zero) == ACL_SUCCESS);
+            contextValue = missingContext ? 0 : 0xabc;
+            lookupResult = missingContext ? 0 : 83;
+            unloadOnLaunchFailure = true;
+            // Bound the test if the failure callback deadlocks while unloading the binary.
+            alarm(10);
+            const auto status = argsArray ?
+                                    aclrtLaunchKernelWithArgsArray(zero, 1, stream, nullptr, nullptr) :
+                                    aclrtLaunchKernelWithHostArgs(zero, 1, stream, nullptr, nullptr, 0, nullptr, 0);
+            alarm(0);
+            assert(status == (missingContext ? ACL_ERROR_FEATURE_UNSUPPORTED : 83));
+            assert(!unloadOnLaunchFailure && unloads == loads);
+        }
+    }
+    lookupResult = 0;
+    contextValue = 0xabc;
+    launchResult = 83;
+    for (bool argsArray : {false, true}) {
+        assert(aclrtBinaryLoadFromData(image.data(), image.size(), &options, &parent) == ACL_SUCCESS);
+        assert(aclrtBinaryGetFunctionByEntry(parent, 0, &zero) == ACL_SUCCESS);
+        unloadOnLaunchFailure = true;
+        const auto status = argsArray ? aclrtLaunchKernelWithArgsArray(zero, 1, stream, nullptr, nullptr) :
+                                        aclrtLaunchKernelWithHostArgs(zero, 1, stream, nullptr, nullptr, 0, nullptr, 0);
+        assert(status == 83);
+        assert(!unloadOnLaunchFailure);
+        assert(aclrtSynchronizeStream(stream) == ACL_SUCCESS);
+        assert(unloads == loads);
+    }
+    launchResult = 0;
     assert(aclsanUnsubscribe(subscriber) == ACLSAN_STATUS_SUCCESS);
     return 0;
 }

@@ -772,13 +772,14 @@ std::string CtrlBinGeneratorIdentity()
     constexpr int BINDING_HASH_HEX_WIDTH = 16;
     uint64_t hash = 1469598103934665603ULL;
     constexpr uint64_t prime = 1099511628211ULL;
-    const auto append = [&](const std::string& value) {
+    // FNV hashing keeps the low 64 bits; widen the multiplication before masking.
+    const auto append = [&hash](const std::string& value) {
         for (const unsigned char byte : value) {
             hash ^= byte;
-            hash *= prime;
+            hash = static_cast<uint64_t>((static_cast<unsigned __int128>(hash) * prime) & UINT64_MAX);
         }
         hash ^= 0xffU;
-        hash *= prime;
+        hash = static_cast<uint64_t>((static_cast<unsigned __int128>(hash) * prime) & UINT64_MAX);
     };
     for (const auto& binding : ALL_BINDINGS) {
         append(std::to_string(static_cast<uint16_t>(binding.instrType)));

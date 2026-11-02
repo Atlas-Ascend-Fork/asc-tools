@@ -324,7 +324,7 @@ bool ModifyKernelParamMetadata(
         size_t selected = 0;
         for (const auto& entry : sources) {
             if (tilingKey != nullptr) {
-                const auto endsWith = [&](const std::string& suffix) {
+                const auto endsWith = [&entry](const std::string& suffix) {
                     return entry.first.size() >= suffix.size() &&
                            entry.first.compare(entry.first.size() - suffix.size(), suffix.size(), suffix) == 0;
                 };

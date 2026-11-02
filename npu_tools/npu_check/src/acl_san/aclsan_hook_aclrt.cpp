@@ -256,6 +256,14 @@ struct DeferredLaunch {
     std::shared_ptr<DeferredBinary> source;
     std::shared_lock<std::shared_mutex> lock;
     std::shared_ptr<DeferredVariant> variant;
+
+    // Failure and completion callbacks may re-enter binary unload.
+    void Release() noexcept
+    {
+        if (lock.owns_lock()) {
+            lock.unlock();
+        }
+    }
 };
 
 aclError PrepareDeferredLaunch(
@@ -711,7 +719,8 @@ aclError PrepareDeferredLaunch(
             selected = it->second;
         }
         launch.source = selected.source;
-        launch.lock = std::shared_lock<std::shared_mutex>(launch.source->lifecycle);
+        // Keep the lock local until preparation succeeds; failure callbacks may unload this binary.
+        std::shared_lock<std::shared_mutex> lifecycleLock(launch.source->lifecycle);
         if (launch.source->closing) {
             return ACL_ERROR_INVALID_PARAM;
         }
@@ -818,6 +827,7 @@ aclError PrepareDeferredLaunch(
                 variant.registered = true;
             }
             function = variant.function;
+            launch.lock = std::move(lifecycleLock);
         }
         return variant.status;
     } catch (const std::bad_alloc&) {
@@ -895,6 +905,7 @@ void ResetDeferredDevice(int32_t deviceId) noexcept
                 std::lock_guard<std::mutex> registryLock(g_deferredMutex);
                 g_retiredBinaries.splice(g_retiredBinaries.end(), staging);
             }
+            lock.unlock();
         }
     } catch (...) {
         AbortHookFailure("aclrtResetDevice", "invalidate_deferred_cache", "cannot invalidate deferred DBI cache");
@@ -940,7 +951,9 @@ aclError aclrtLaunchKernelWithHostArgsHook(
     aclrtFuncHandle funcHandle, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void* hostArgs,
     size_t argsSize, aclrtPlaceHolderInfo* placeHolderArray, size_t placeHolderNum) noexcept
 {
-    const auto fail = [&funcHandle, &stream, &numBlocks](aclError status) {
+    DeferredLaunch deferred;
+    const auto fail = [&deferred, &funcHandle, &stream, &numBlocks](aclError status) {
+        deferred.Release();
         const AclsanLaunchData callback{
             MakeCallbackCommonData("aclrtLaunchKernelWithHostArgs", status, sizeof(AclsanLaunchData)),
             0,
@@ -953,7 +966,6 @@ aclError aclrtLaunchKernelWithHostArgsHook(
     };
     const auto original = GetOriginalRuntimeFunction<aclrtLaunchKernelWithHostArgsFunc>(
         ACL_RT_API_aclrtLaunchKernelWithHostArgs, "aclrtLaunchKernelWithHostArgs");
-    DeferredLaunch deferred;
     uint32_t traceOffset = 0;
     if (placeHolderNum != 0) {
         if (placeHolderArray == nullptr || hostArgs == nullptr) {
@@ -1006,6 +1018,7 @@ aclError aclrtLaunchKernelWithHostArgsHook(
     const aclError result = original(
         funcHandle, numBlocks, stream, config, launchArguments, launchArgumentBytes, launchPlaceholders,
         launchPlaceholderCount);
+    deferred.Release();
     ASCTOOL_DEBUG(
         "aclrtLaunchKernelWithHostArgs: function=%p blocks=%u stream=%p instrumented=%u result=%d", funcHandle,
         numBlocks, stream, static_cast<unsigned>(prepared.instrumented), result);
@@ -1021,7 +1034,9 @@ aclError aclrtLaunchKernelWithHostArgsHook(
 aclError aclrtLaunchKernelWithArgsArrayHook(
     void* func, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void** args) noexcept
 {
-    const auto fail = [&func, &stream, &numBlocks](aclError status) {
+    DeferredLaunch deferred;
+    const auto fail = [&deferred, &func, &stream, &numBlocks](aclError status) {
+        deferred.Release();
         const AclsanLaunchData callback{
             MakeCallbackCommonData("aclrtLaunchKernelWithArgsArray", status, sizeof(AclsanLaunchData)),
             0,
@@ -1032,7 +1047,6 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
         aclsan::AclsanCallbackDispatcher::DispatchLaunch(callback);
         return status;
     };
-    DeferredLaunch deferred;
     const auto deferredStatus = PrepareDeferredLaunch(func, 1, deferred);
     if (deferredStatus != ACL_SUCCESS) {
         return fail(deferredStatus);
@@ -1071,6 +1085,7 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
     } catch (...) {
         result = ACL_ERROR_FAILURE;
     }
+    deferred.Release();
     std::string functionName;
     (void)aclsan::GetTraceFunctionName(func, functionName);
     const AclsanLaunchData callbackData = MakeLaunchData(
@@ -1165,6 +1180,9 @@ aclError aclrtBinaryUnLoadHook(aclrtBinHandle binHandle) noexcept
         aclsan::RecordTraceBinaryUnload(binHandle);
         std::lock_guard<std::mutex> lock(g_patchedFileMutex);
         g_patchedFiles.remove_if([binHandle](const auto& file) { return file.binary == binHandle; });
+    }
+    if (lifecycle.owns_lock()) {
+        lifecycle.unlock();
     }
     CollectRetiredVariants();
     return result;

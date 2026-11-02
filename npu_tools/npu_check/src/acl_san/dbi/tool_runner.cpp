@@ -123,8 +123,8 @@ ToolResult RunTool(const std::vector<std::string>& commandArguments)
     close(errorPipe[1]);
     std::string standardOutput;
     std::string standardError;
-    std::thread outputReader([&] { standardOutput = ReadPipe(outputPipe[0]); });
-    std::thread errorReader([&] { standardError = ReadPipe(errorPipe[0]); });
+    std::thread outputReader([&standardOutput, &outputPipe] { standardOutput = ReadPipe(outputPipe[0]); });
+    std::thread errorReader([&standardError, &errorPipe] { standardError = ReadPipe(errorPipe[0]); });
     int status = 0;
     pid_t waited = -1;
     do {

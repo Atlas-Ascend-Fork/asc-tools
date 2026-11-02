@@ -128,7 +128,7 @@ bool ParseUint32(const std::string& text, uint32_t& value)
         if (character < '0' || character > '9') {
             return false;
         }
-        parsed = parsed * DECIMAL_BASE + static_cast<uint32_t>(character - '0');
+        parsed = parsed * DECIMAL_BASE + (static_cast<uint32_t>(character) - static_cast<uint32_t>('0'));
         if (parsed > std::numeric_limits<uint32_t>::max()) {
             return false;
         }
