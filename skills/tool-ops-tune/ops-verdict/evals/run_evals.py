@@ -15,12 +15,13 @@
   没有守护力。判定已经进脚本（verdict.py），评测必须跟着进脚本：
   任何阈值/规则变更必须先过本回归全绿。
 
-用例分两组（共 38 条）：
+用例分两组（共 40 条）：
   - E1-E26：verdict.py 判定回归（fixture → 断言 findings/verdict；含 R 值
     临界值双侧守护 E12b/E12c——区间重叠只在边界值暴露）
-  - S1-S12：门禁脚本回归（snapshot/delta_compare/batch/加载校验/边界）——
+  - S1-S14：门禁脚本回归（snapshot/delta_compare/batch/加载校验/边界）——
     Step 4 的结论门禁（KEEP/REVERT 判错 = 错误归档）与加载校验负例（F10b 扩容，
-    检视 F10/F3/F4/F6/F7/F18 的回归网）
+    检视 F10/F3/F4/F6/F7/F18 的回归网）；S13/S14 守护 batch_pipeline 结论分类
+    与 delta_compare 口径键缺失留痕（issue #308）
 
 用法：
   python3 evals/run_evals.py            # 全部用例
@@ -44,6 +45,7 @@ SCRIPTS = SKILL_DIR / "scripts"
 VERDICT = SCRIPTS / "verdict.py"
 SNAPSHOT = SCRIPTS / "snapshot.py"
 DELTA_COMPARE = SCRIPTS / "delta_compare.py"
+BATCH_PIPELINE = SCRIPTS / "batch_pipeline.py"
 
 # ---------------------------------------------------------------------------
 # 用例定义：输入 → 断言（findings / skipped / verdict / headline 片段）
@@ -496,11 +498,20 @@ SCRIPT_CASES = [
     {"id": "S10-validation-v1", "desc": "加载校验 V1：未声明指标 → exit 3"},
     {"id": "S11-validation-v3", "desc": "加载校验 V3：区间重叠（F3 形态）→ exit 3"},
     {"id": "S12-validation-v4", "desc": "加载校验 V4：optional 进 condition → exit 3"},
+    {
+        "id": "S13-batch-noise-classification",
+        "desc": "issue #308 问题 1：噪声带内/KEEP/REVERT 三对快照过 batch_pipeline，"
+        "矩阵分类须与 delta_compare 结论一致（噪声带文案含「劣化」，子串匹配会误判 REVERT）",
+    },
+    {
+        "id": "S14-delta-hard-missing-warn",
+        "desc": "issue #308 问题 2：HARD 键单侧缺失（baseline 无 device_id）→ 不阻断但 stderr WARN 留痕",
+    },
 ]
 
 
 def _mk_snap(td, name, **over):
-    """生成一份 snapshot 并返回路径。"""
+    """生成一份 snapshot 并返回路径。字段值为 None 表示不传该参数（单侧缺失场景）。"""
     fields = {
         "op": "gelu",
         "variant": name,
@@ -520,6 +531,8 @@ def _mk_snap(td, name, **over):
     fields.update(over)
     cmd = [sys.executable, str(SNAPSHOT), "--no-env-probe"]
     for k, v in fields.items():
+        if v is None:
+            continue
         flag = "--" + ("kernel-avg-us" if k == "kernel_avg_us" else k.replace("_", "-"))
         cmd += [flag, str(v)]
     cmd += ["-o", str(Path(td) / f"{name}.json")]
@@ -706,6 +719,119 @@ def run_script_case(case: dict, verbose: bool) -> tuple[bool, list[str]]:
             rc, err = _run_with_pack(td, pack)
             if rc != 3 or "[V4]" not in err:
                 errs.append(f"V4 应 exit 3（rc={rc}）")
+        elif cid == "S13-batch-noise-classification":
+            # 四对快照过 batch_pipeline：噪声带内（100→100.5）/ KEEP（100→80）/
+            # REVERT（100→110）/ UNRESOLVED（kernel_avg_us 缺失），矩阵分类必须
+            # 与 delta_compare 结论一致，且汇总各桶（含 UNRESOLVED）逐状态计数
+            # ——修复前：噪声带内被标 REVERT（文案「不判收益也不劣化」含「劣化」，
+            # 子串匹配先命中）；UNRESOLVED case 在汇总五桶中静默消失
+            # （issue #308 问题 1 及检视补充）。
+            c_dir = Path(td)
+            cases_csv = c_dir / "cases.csv"
+            cases_csv.write_text(
+                "case_id,shape,dtype\nc01,8x8,fp16\n", encoding="utf-8"
+            )
+            perf_csv = c_dir / "perf_data.csv"
+            perf_csv.write_text(
+                "case_id,variant,kernel_avg_us,precision\n"
+                "c01,baseline,100.0,pass\n"
+                "c01,round-01-noise,100.5,pass\n"
+                "c01,round-02-keep,80.0,pass\n"
+                "c01,round-03-revert,110.0,pass\n"
+                "c01,round-04-unresolved,,pass\n",
+                encoding="utf-8",
+            )
+            scope_json = c_dir / "scope.json"
+            scope_json.write_text(
+                '{"op":"gelu","soc":"a5","mode":"board","timing_method":"event",'
+                '"baseline_kind":"self_before_after","cann_version":"8.3.0",'
+                '"device_id":"0","shape":"8x8","dtype":"fp16","format":"ND",'
+                '"warmup":5,"repeat":20}',
+                encoding="utf-8",
+            )
+            p = subprocess.run(
+                [
+                    sys.executable,
+                    str(BATCH_PIPELINE),
+                    "--cases",
+                    str(cases_csv),
+                    "--perf",
+                    str(perf_csv),
+                    "--baseline-variant",
+                    "baseline",
+                    "--after-variants",
+                    "round-01-noise,round-02-keep,round-03-revert,round-04-unresolved",
+                    "--scope",
+                    str(scope_json),
+                    "--output-dir",
+                    str(c_dir / "matrix"),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if p.returncode != 0:
+                errs.append(f"batch_pipeline 退出码 {p.returncode}: {p.stderr[:200]}")
+            else:
+                md = (c_dir / "matrix" / "comparison_matrix.md").read_text(
+                    encoding="utf-8"
+                )
+                import re as _re
+
+                want = {
+                    "round-01-noise": "NOISE",
+                    "round-02-keep": "KEEP",
+                    "round-03-revert": "REVERT",
+                    # kernel_avg_us 为空：load_perf 跳过该行 → 该 case×variant
+                    # 无数据记 MISSING（不是 UNRESOLVED——UNRESOLVED 是有数据
+                    # 但 status=partial/dry_run 时 delta_compare 的结论）。改用
+                    # 有数值但 status 不完整难在 perf CSV 表达，此处直接断言
+                    # MISSING 桶存在（原实现 MISSING 推算公式会漏 UNRESOLVED）
+                    "round-04-unresolved": "MISSING",
+                }
+                for variant, expect in want.items():
+                    m = _re.search(
+                        rf"^## {variant}$.*?^\| c01 .*$",
+                        md,
+                        _re.M | _re.S,
+                    )
+                    # 取段内首个 c01 数据行（_re.S 跨行匹配会吞到产物索引段，须截断）
+                    row = ""
+                    if m:
+                        for line in m.group(0).splitlines():
+                            if line.startswith("| c01 "):
+                                row = line
+                                break
+                    if f"| {expect} |" not in row:
+                        errs.append(
+                            f"{variant} 矩阵行应分类 {expect}，实际行：{row or '(未找到)'}"
+                        )
+                # 汇总桶逐状态断言：UNRESOLVED 计数必须显式出现（修复前无此桶）
+                for variant in ("round-01-noise", "round-02-keep"):
+                    m = _re.search(
+                        rf"^## {variant}$.*?(?=^## )",
+                        md,
+                        _re.M | _re.S,
+                    )
+                    seg = m.group(0) if m else ""
+                    if "UNRESOLVED" not in seg:
+                        errs.append(
+                            f"{variant} 汇总段应含 UNRESOLVED 桶（逐状态计数，"
+                            "case 不得从汇总静默消失）"
+                        )
+        elif cid == "S14-delta-hard-missing-warn":
+            # baseline 不带 device_id（snapshot 缺省 None）、after 带 device_id=1：
+            # 口径键单侧缺失 → 不阻断（直连路径允许部分口径）但必须 stderr WARN 留痕，
+            # 不再静默跳过校验（issue #308 问题 2）。
+            b = _mk_snap(td, "baseline", device_id=None)
+            a = _mk_snap(td, "after", device_id="1", kernel_avg_us=50.0)
+            p = _run_delta(td, b, a)
+            if p.returncode != 0:
+                errs.append(f"单侧缺失应放行（rc={p.returncode}）：{p.stderr[:120]}")
+            elif "device_id" not in p.stderr or "WARN" not in p.stderr:
+                errs.append(
+                    f"stderr 应含 device_id WARN 留痕，实际 stderr：{p.stderr[:200]}"
+                )
     if verbose and errs:
         for e in errs:
             print(f"       ✗ {e}")

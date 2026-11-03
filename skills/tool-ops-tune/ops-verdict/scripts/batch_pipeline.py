@@ -183,7 +183,12 @@ def run_compare(base: Path, after: Path, out_md: Path) -> tuple[int, str]:
 
 
 def parse_conclusion(md_text: str) -> tuple[str, float | None]:
-    """从 comparison.md 提取三段结论类型与 speedup。"""
+    """从 comparison.md 提取三段结论类型与 speedup。
+
+    只匹配「## 结论」段的行首加粗结论词（**提升 / **劣化 / **噪声带内 / **UNRESOLVED），
+    不做全文子串匹配——噪声带结论文案含「不判收益也不劣化」，
+    全文匹配会先命中「劣化」把噪声带误判为 REVERT（issue #308）。
+    """
     speedup = None
     for line in md_text.splitlines():
         # 行形态：| speedup | — | 1.200 |（第三列为值）
@@ -193,12 +198,16 @@ def parse_conclusion(md_text: str) -> tuple[str, float | None]:
                 speedup = float(cells[3])
             except (ValueError, IndexError):
                 pass
-    if "提升" in md_text:
-        return "KEEP", speedup
-    if "劣化" in md_text:
-        return "REVERT", speedup
-    if "噪声带内" in md_text:
-        return "NOISE", speedup
+    for line in md_text.splitlines():
+        s = line.strip()
+        if s.startswith("**提升"):
+            return "KEEP", speedup
+        if s.startswith("**劣化"):
+            return "REVERT", speedup
+        if s.startswith("**噪声带内"):
+            return "NOISE", speedup
+        if s.startswith("**UNRESOLVED"):
+            return "UNRESOLVED", speedup
     return "UNRESOLVED", speedup
 
 
@@ -400,11 +409,24 @@ def main() -> int:
                     matrix.get((c["case_id"], variant), {}).get("status", "")
                 ).startswith("REJECTED")
             )
+            # UNRESOLVED（缺可比 kernel_avg_us / partial）/ MISSING（无数据）逐状态计数——
+            # 按状态数而非「case 数 − 有数据数」推算，任一状态的 case 都不静默消失
+            n_unresolved = sum(
+                1
+                for c in cases
+                if matrix.get((c["case_id"], variant), {}).get("status") == "UNRESOLVED"
+            )
+            n_missing = sum(
+                1
+                for c in cases
+                if matrix.get((c["case_id"], variant), {}).get("status") == "MISSING"
+            )
             md += [
                 "**汇总**：",
                 f"- geomean speedup：**{geomean:.3f}x**（{len(speeds)}/{len(cases)} case 有可比数据）",
                 f"- 最好 case：{best:.3f}x ｜ 最差 case：{worst:.3f}x",
-                f"- KEEP {n_keep} ｜ REVERT {n_revert} ｜ 噪声带内 {n_noise} ｜ 拒绝比较 {n_rej} ｜ MISSING {len(cases) - len(speeds) - n_rej}",
+                f"- KEEP {n_keep} ｜ REVERT {n_revert} ｜ 噪声带内 {n_noise} ｜ UNRESOLVED {n_unresolved}"
+                f" ｜ 拒绝比较 {n_rej} ｜ MISSING {n_missing}",
                 "",
                 "> 汇总口径：拒绝比较（口径漂移/精度 fail）与 MISSING 的 case 不进 geomean；"
                 "REVERT case 计入（负样本是瓶颈证据）。逐 case comparison.md 见各 case 子目录。",

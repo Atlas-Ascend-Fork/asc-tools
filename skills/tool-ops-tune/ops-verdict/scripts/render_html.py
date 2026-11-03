@@ -58,15 +58,37 @@ def load_matrix(matrix_dir: Path) -> dict:
 
 
 def conclusion_of(comp_md: str | None, speedup: float | None) -> str:
+    """由 comparison.md 结论段分类（与 batch_pipeline.parse_conclusion 同判定语义）。
+
+    只匹配「## 结论」段的行首加粗结论词——噪声带结论文案含「不判收益也不劣化」，
+    全文子串匹配会先命中「劣化」把噪声带误判为 REVERT（issue #308）。
+    结论词与 speedup 数值交叉校验：文案 KEEP/REVERT 但数值落噪声带（±5%）时
+    以数值为准返回 NOISE——comparison.md 非本工具生成（--snapshots 手工对/
+    文件被改）时，文案 bug 不得单方面定结论。
+    结论缺失时按 speedup 数值兜底（带内灰 / 无数据 MISSING）。
+    """
     if comp_md:
-        if "提升" in comp_md and speedup and speedup > 1.05:
-            return "KEEP"
-        if "劣化" in comp_md:
-            return "REVERT"
-        if "噪声带内" in comp_md:
-            return "NOISE"
-        if "拒绝" in comp_md or "口径" in comp_md.split("## 结论")[0][:50]:
-            pass
+        verdict = None
+        for line in comp_md.splitlines():
+            s = line.strip()
+            if s.startswith("**提升"):
+                verdict = "KEEP"
+                break
+            if s.startswith("**劣化"):
+                verdict = "REVERT"
+                break
+            if s.startswith("**噪声带内"):
+                verdict = "NOISE"
+                break
+            if s.startswith("**UNRESOLVED"):
+                verdict = "UNRESOLVED"
+                break
+        if verdict in ("KEEP", "REVERT") and speedup is not None:
+            # 数值交叉校验（与 delta_compare 默认 ±5% 噪声带同口径）
+            if 0.95 <= speedup <= 1.05:
+                return "NOISE"
+        if verdict is not None:
+            return verdict
     if speedup is None:
         return "MISSING"
     return "NOISE"
@@ -147,6 +169,7 @@ def render(data: dict, title: str) -> str:
             "keep": sts.count("KEEP"),
             "revert": sts.count("REVERT"),
             "noise": sts.count("NOISE"),
+            "unresolved": sts.count("UNRESOLVED"),
             "missing": sts.count("MISSING"),
             "n": len(sts),
         }
@@ -190,6 +213,8 @@ def render(data: dict, title: str) -> str:
             f"<div class='lbl'>REVERT</div></div>"
             f"<div class='card'><div class='num' style='color:#9e9e9e'>{s['noise']}</div>"
             f"<div class='lbl'>噪声带内</div></div>"
+            f"<div class='card'><div class='num'>{s['unresolved']}</div>"
+            f"<div class='lbl'>UNRESOLVED</div></div>"
             f"<div class='card'><div class='num'>{s['missing']}</div>"
             f"<div class='lbl'>MISSING</div></div>"
         )

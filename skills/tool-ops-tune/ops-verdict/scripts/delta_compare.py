@@ -92,6 +92,28 @@ def main() -> int:
         )
         print("任一口径字段变化都应重建基线（跨口径比较禁令）。", file=sys.stderr)
         return 2
+    # 口径键缺失留痕（issue #308）：任一侧缺失的 HARD 键跳过比对，但口径
+    # 不完整必须可见——不静默放行后直接产出 KEEP/REVERT 结论（snapshot 的
+    # HARD 字段缺省即 None，直连路径下两侧均缺会被整体吞掉）。
+    missing_side = [
+        (
+            k,
+            "双侧缺" if (base.get(k) is None and after.get(k) is None) else "单侧缺",
+            f"baseline={'缺' if base.get(k) is None else base.get(k)!r}"
+            f" / after={'缺' if after.get(k) is None else after.get(k)!r}",
+        )
+        for k in hard
+        if base.get(k) is None or after.get(k) is None
+    ]
+    if missing_side:
+        print(
+            "WARN: 口径键缺失（缺失键不参与硬校验；本结论建立在口径不完整的数据上，"
+            "snapshot 侧补齐后重比）：\n"
+            + "\n".join(
+                f"  {k} [{which}]：{detail}" for k, which, detail in missing_side
+            ),
+            file=sys.stderr,
+        )
 
     # ---- 门禁 2：精度门禁（第三道）----
     if base.get("precision") != "pass" or after.get("precision") != "pass":
@@ -202,6 +224,18 @@ def main() -> int:
         f"| status | {base.get('status')} | {after.get('status')} |",
         *err_lines,
     ]
+    if missing_side:
+        # 审计留痕进 comparison.md（与终端 WARN 同源）：报告消费方沿口径链回溯时
+        # 可见「结论建立在口径不完整数据上」，不依赖翻终端日志
+        md += [
+            "",
+            "## 口径完整性",
+            "",
+            *[
+                f"- ⚠ {k} [{which}]：{detail}——缺失键未参与硬校验，建议补齐后重比"
+                for k, which, detail in missing_side
+            ],
+        ]
     if mech_warns:
         md += [
             "",
