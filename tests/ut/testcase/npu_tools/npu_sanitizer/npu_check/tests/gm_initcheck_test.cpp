@@ -166,7 +166,7 @@ TEST(GmInitcheckTest, UnknownOutOfBoundsAndIncompleteRecordsAreNotUninitializedE
     MemoryInitcheck checker;
     auto read = Access(base, 128, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
     auto result = checker.CheckInstruction(scope, {read});
-    EXPECT_EQ(result.status, InitCheckStatus::INVALID_ALLOCATION);
+    EXPECT_EQ(result.status, InitCheckStatus::UNRESOLVED_ALLOCATION);
     EXPECT_TRUE(result.reports.empty());
     ASSERT_EQ(checker.RegisterAllocation(scope, 1, base, 64), AllocationUpdateStatus::OK);
     EXPECT_EQ(checker.CheckInstruction(scope, {read}).status, InitCheckStatus::INVALID_ALLOCATION);

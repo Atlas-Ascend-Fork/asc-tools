@@ -7,14 +7,15 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-
 #include "checker/allocation_registry.h"
 
 #include <algorithm>
 #include <limits>
-#include <vector>
 
 namespace npucheck {
+namespace {
+constexpr uint32_t kInvalidIndex = std::numeric_limits<uint32_t>::max();
+} // namespace
 
 std::optional<uint64_t> AllocationRegistry::RangeEnd(uint64_t base, uint64_t bytes)
 {
@@ -34,10 +35,24 @@ bool AllocationRegistry::Overlaps(uint64_t firstBase, uint64_t firstBytes, uint6
     return firstBase < *secondEnd && secondBase < *firstEnd;
 }
 
+uint32_t AllocationRegistry::AppendRecord(const Allocation& allocation, size_t allocated, std::optional<size_t> freed)
+{
+    if (records_.size() >= kMaxRecords) {
+        complete_ = false;
+        return kInvalidIndex;
+    }
+    records_.push_back(Record{allocation, allocated, freed});
+    return static_cast<uint32_t>(records_.size() - 1);
+}
+
 AllocationUpdateStatus AllocationRegistry::Register(
-    uint64_t resourceId, uint64_t base, uint64_t bytes, uint32_t deviceId)
+    uint64_t resourceId, uint64_t base, uint64_t bytes, uint32_t deviceId, size_t node)
 {
     if (base == 0 || !RangeEnd(base, bytes)) {
+        return AllocationUpdateStatus::INVALID_RANGE;
+    }
+    if (records_.size() >= kMaxRecords) {
+        complete_ = false;
         return AllocationUpdateStatus::INVALID_RANGE;
     }
     const ResourceKey resourceKey{deviceId, resourceId};
@@ -48,12 +63,12 @@ AllocationUpdateStatus AllocationRegistry::Register(
 
     auto& deviceAllocations = live_[deviceId];
     auto next = deviceAllocations.lower_bound(base);
-    if (next != deviceAllocations.end() && Overlaps(base, bytes, next->second.base, next->second.bytes)) {
+    if (next != deviceAllocations.end() && Overlaps(base, bytes, At(next->second).base, At(next->second).bytes)) {
         return AllocationUpdateStatus::OVERLAP;
     }
     if (next != deviceAllocations.begin()) {
         const auto previous = std::prev(next);
-        if (Overlaps(base, bytes, previous->second.base, previous->second.bytes)) {
+        if (Overlaps(base, bytes, At(previous->second).base, At(previous->second).bytes)) {
             return AllocationUpdateStatus::OVERLAP;
         }
     }
@@ -65,21 +80,25 @@ AllocationUpdateStatus AllocationRegistry::Register(
     allocation.bytes = bytes;
     allocation.deviceId = deviceId;
     allocation.allocSequence = nextSequence_++;
-    deviceAllocations.emplace(base, allocation);
+    const auto index = AppendRecord(allocation, node, std::nullopt);
+    if (index == kInvalidIndex) {
+        return AllocationUpdateStatus::INVALID_RANGE;
+    }
+    deviceAllocations.emplace(base, index);
     if (resourceId != 0) {
-        liveByResource_[resourceKey] = allocation;
+        liveByResource_[resourceKey] = index;
     }
     return AllocationUpdateStatus::OK;
 }
 
-AllocationUpdateStatus AllocationRegistry::Release(uint64_t resourceId, uint64_t base, uint32_t deviceId)
+AllocationUpdateStatus AllocationRegistry::Release(uint64_t resourceId, uint64_t base, uint32_t deviceId, size_t node)
 {
-    std::optional<Allocation> selected;
+    std::optional<uint32_t> selected;
     if (resourceId != 0) {
         const ResourceKey resourceKey{deviceId, resourceId};
         auto resource = liveByResource_.find(resourceKey);
         if (resource != liveByResource_.end()) {
-            if (base != 0 && resource->second.base != base) {
+            if (base != 0 && At(resource->second).base != base) {
                 return AllocationUpdateStatus::STALE_RESOURCE;
             }
             selected = resource->second;
@@ -87,7 +106,7 @@ AllocationUpdateStatus AllocationRegistry::Release(uint64_t resourceId, uint64_t
             const auto device = tombstones_.find(deviceId);
             if (device != tombstones_.end()) {
                 for (const auto& allocation : device->second) {
-                    if (allocation.second.resourceId == resourceId) {
+                    if (At(allocation.second).resourceId == resourceId) {
                         return AllocationUpdateStatus::DOUBLE_FREE;
                     }
                 }
@@ -112,37 +131,41 @@ AllocationUpdateStatus AllocationRegistry::Release(uint64_t resourceId, uint64_t
         return AllocationUpdateStatus::NOT_FOUND;
     }
 
-    auto& deviceAllocations = live_[selected->deviceId];
-    deviceAllocations.erase(selected->base);
-    if (selected->resourceId != 0) {
-        liveByResource_.erase(ResourceKey{selected->deviceId, selected->resourceId});
+    auto& record = records_[*selected];
+    auto& deviceAllocations = live_[record.allocation.deviceId];
+    deviceAllocations.erase(record.allocation.base);
+    if (record.allocation.resourceId != 0) {
+        liveByResource_.erase(ResourceKey{record.allocation.deviceId, record.allocation.resourceId});
     }
-    selected->freeSequence = nextSequence_++;
-    tombstones_[selected->deviceId][selected->base] = *selected;
+    record.allocation.freeSequence = nextSequence_++;
+    record.freed = node;
+    tombstones_[record.allocation.deviceId][record.allocation.base] = *selected;
     TrimTombstones();
     return AllocationUpdateStatus::OK;
 }
 
-std::optional<Allocation> AllocationRegistry::FindStartingAllocation(const AllocationMap& allocations, uint64_t address)
+std::optional<Allocation> AllocationRegistry::FindStartingAllocation(
+    const IndexMap& allocations, uint64_t address) const
 {
     auto upper = allocations.upper_bound(address);
     if (upper == allocations.begin()) {
         return std::nullopt;
     }
     const auto candidate = std::prev(upper);
-    const auto end = RangeEnd(candidate->second.base, candidate->second.bytes);
+    const auto& allocation = At(candidate->second);
+    const auto end = RangeEnd(allocation.base, allocation.bytes);
     if (end && address < *end) {
-        return candidate->second;
+        return allocation;
     }
     return std::nullopt;
 }
 
 std::optional<Allocation> AllocationRegistry::FindCrossedAllocation(
-    const AllocationMap& allocations, uint64_t address, uint64_t end)
+    const IndexMap& allocations, uint64_t address, uint64_t end) const
 {
     const auto next = allocations.lower_bound(address);
-    if (next != allocations.end() && next->second.base < end) {
-        return next->second;
+    if (next != allocations.end() && At(next->second).base < end) {
+        return At(next->second);
     }
     return std::nullopt;
 }
@@ -189,10 +212,10 @@ RangeResult AllocationRegistry::Classify(uint32_t deviceId, uint64_t address, ui
             } else {
                 auto upper = liveDevice->second.lower_bound(address);
                 if (upper != liveDevice->second.begin()) {
-                    const auto previous = std::prev(upper);
-                    const auto previousEnd = RangeEnd(previous->second.base, previous->second.bytes);
+                    const auto& previous = At(std::prev(upper)->second);
+                    const auto previousEnd = RangeEnd(previous.base, previous.bytes);
                     if (previousEnd && *previousEnd == address) {
-                        liveOutOfBounds = previous->second;
+                        liveOutOfBounds = previous;
                     }
                 }
             }
@@ -239,14 +262,14 @@ std::optional<Allocation> AllocationRegistry::Nearest(uint32_t deviceId, uint64_
 
     const auto next = device->second.lower_bound(address);
     if (next == device->second.begin()) {
-        return next->second;
+        return At(next->second);
     }
     const auto previous = std::prev(next);
     if (next == device->second.end() ||
-        DistanceToAllocation(previous->second, address) <= DistanceToAllocation(next->second, address)) {
-        return previous->second;
+        DistanceToAllocation(At(previous->second), address) <= DistanceToAllocation(At(next->second), address)) {
+        return At(previous->second);
     }
-    return next->second;
+    return At(next->second);
 }
 
 size_t AllocationRegistry::TombstoneCount() const
@@ -264,37 +287,44 @@ void AllocationRegistry::EraseReusedTombstones(uint64_t base, uint64_t bytes, ui
     if (device == tombstones_.end()) {
         return;
     }
-    std::vector<Allocation> preserved;
+    std::vector<Record> preserved;
     const auto reusedEnd = RangeEnd(base, bytes);
     if (!reusedEnd) {
         return;
     }
     for (auto it = device->second.begin(); it != device->second.end();) {
-        if (Overlaps(base, bytes, it->second.base, it->second.bytes)) {
-            const Allocation original = it->second;
+        const auto index = it->second;
+        const auto& original = At(index);
+        if (Overlaps(base, bytes, original.base, original.bytes)) {
             const auto originalEnd = RangeEnd(original.base, original.bytes);
             if (!originalEnd) {
                 it = device->second.erase(it);
                 continue;
             }
+            const auto allocated = records_[index].allocated;
+            const auto freed = records_[index].freed;
             if (original.base < base) {
                 Allocation left = original;
                 left.bytes = base - original.base;
-                preserved.push_back(left);
+                preserved.push_back(Record{left, allocated, freed});
             }
             if (*reusedEnd < *originalEnd) {
                 Allocation right = original;
                 right.base = *reusedEnd;
                 right.bytes = *originalEnd - *reusedEnd;
-                preserved.push_back(right);
+                preserved.push_back(Record{right, allocated, freed});
             }
             it = device->second.erase(it);
         } else {
             ++it;
         }
     }
-    for (const auto& allocation : preserved) {
-        device->second[allocation.base] = allocation;
+    for (const auto& record : preserved) {
+        const auto index = AppendRecord(record.allocation, record.allocated, record.freed);
+        if (index == kInvalidIndex) {
+            return;
+        }
+        device->second[record.allocation.base] = index;
     }
 }
 
@@ -302,12 +332,12 @@ void AllocationRegistry::TrimTombstones()
 {
     while (TombstoneCount() > kMaxTombstones) {
         auto oldestDevice = tombstones_.end();
-        AllocationMap::iterator oldestAllocation;
+        IndexMap::iterator oldestAllocation;
         uint64_t oldestSequence = std::numeric_limits<uint64_t>::max();
         for (auto device = tombstones_.begin(); device != tombstones_.end(); ++device) {
             for (auto allocation = device->second.begin(); allocation != device->second.end(); ++allocation) {
-                if (allocation->second.freeSequence < oldestSequence) {
-                    oldestSequence = allocation->second.freeSequence;
+                if (At(allocation->second).freeSequence < oldestSequence) {
+                    oldestSequence = At(allocation->second).freeSequence;
                     oldestDevice = device;
                     oldestAllocation = allocation;
                 }
@@ -319,5 +349,4 @@ void AllocationRegistry::TrimTombstones()
         oldestDevice->second.erase(oldestAllocation);
     }
 }
-
 } // namespace npucheck

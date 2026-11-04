@@ -8,7 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#include "checker/synccheck.h"
+#include "checker/sync_ledger.h"
 #include "diagnostic/pipeline_name.h"
 
 #include <algorithm>
@@ -121,23 +121,23 @@ const char* KernelMixTypeName(KernelMixType mixType)
 
 } // namespace
 
-void Synccheck::HashCombine(size_t& seed, uint64_t value) noexcept
+void SyncLedger::HashCombine(size_t& seed, uint64_t value) noexcept
 {
     seed ^= std::hash<uint64_t>{}(value) + static_cast<size_t>(0x9e3779b9U) + (seed << 6U) + (seed >> 2U);
 }
 
-Synccheck::FlagPairKey Synccheck::FlagPairKey::FromCbdata(const AclsanDeviceSyncData& data) noexcept
+SyncLedger::FlagPairKey SyncLedger::FlagPairKey::FromCbdata(const AclsanDeviceSyncData& data) noexcept
 {
     return {data.objectId, data.header.blockType, data.header.blockId, data.srcPipe, data.dstPipe};
 }
 
-bool Synccheck::FlagPairKey::operator==(const FlagPairKey& other) const noexcept
+bool SyncLedger::FlagPairKey::operator==(const FlagPairKey& other) const noexcept
 {
     return objectId == other.objectId && blockType == other.blockType && blockId == other.blockId &&
            srcPipe == other.srcPipe && dstPipe == other.dstPipe;
 }
 
-size_t Synccheck::FlagPairKeyHash::operator()(const FlagPairKey& key) const noexcept
+size_t SyncLedger::FlagPairKeyHash::operator()(const FlagPairKey& key) const noexcept
 {
     size_t seed = 0;
     HashCombine(seed, key.objectId);
@@ -148,18 +148,18 @@ size_t Synccheck::FlagPairKeyHash::operator()(const FlagPairKey& key) const noex
     return seed;
 }
 
-Synccheck::SyncBufPairKey Synccheck::SyncBufPairKey::FromCbdata(const AclsanDeviceSyncData& data) noexcept
+SyncLedger::SyncBufPairKey SyncLedger::SyncBufPairKey::FromCbdata(const AclsanDeviceSyncData& data) noexcept
 {
     return {data.objectId, data.header.blockType, data.header.blockId, data.dstPipe, data.mode};
 }
 
-bool Synccheck::SyncBufPairKey::operator==(const SyncBufPairKey& other) const noexcept
+bool SyncLedger::SyncBufPairKey::operator==(const SyncBufPairKey& other) const noexcept
 {
     return objectId == other.objectId && blockType == other.blockType && blockId == other.blockId &&
            pipe == other.pipe && mode == other.mode;
 }
 
-size_t Synccheck::SyncBufPairKeyHash::operator()(const SyncBufPairKey& key) const noexcept
+size_t SyncLedger::SyncBufPairKeyHash::operator()(const SyncBufPairKey& key) const noexcept
 {
     size_t seed = 0;
     HashCombine(seed, key.objectId);
@@ -170,12 +170,12 @@ size_t Synccheck::SyncBufPairKeyHash::operator()(const SyncBufPairKey& key) cons
     return seed;
 }
 
-bool Synccheck::SyncBufOccupancyKey::operator==(const SyncBufOccupancyKey& other) const noexcept
+bool SyncLedger::SyncBufOccupancyKey::operator==(const SyncBufOccupancyKey& other) const noexcept
 {
     return objectId == other.objectId && phyCoreId == other.phyCoreId;
 }
 
-size_t Synccheck::SyncBufOccupancyKeyHash::operator()(const SyncBufOccupancyKey& key) const noexcept
+size_t SyncLedger::SyncBufOccupancyKeyHash::operator()(const SyncBufOccupancyKey& key) const noexcept
 {
     size_t seed = 0;
     HashCombine(seed, key.objectId);
@@ -183,12 +183,12 @@ size_t Synccheck::SyncBufOccupancyKeyHash::operator()(const SyncBufOccupancyKey&
     return seed;
 }
 
-bool Synccheck::ParticipantKey::operator==(const ParticipantKey& other) const noexcept
+bool SyncLedger::ParticipantKey::operator==(const ParticipantKey& other) const noexcept
 {
     return groupId == other.groupId && role == other.role;
 }
 
-size_t Synccheck::ParticipantKeyHash::operator()(const ParticipantKey& key) const noexcept
+size_t SyncLedger::ParticipantKeyHash::operator()(const ParticipantKey& key) const noexcept
 {
     size_t seed = 0;
     HashCombine(seed, key.groupId);
@@ -196,12 +196,12 @@ size_t Synccheck::ParticipantKeyHash::operator()(const ParticipantKey& key) cons
     return seed;
 }
 
-bool Synccheck::CounterKey::operator==(const CounterKey& other) const noexcept
+bool SyncLedger::CounterKey::operator==(const CounterKey& other) const noexcept
 {
     return target == other.target && flagId == other.flagId;
 }
 
-size_t Synccheck::CounterKeyHash::operator()(const CounterKey& key) const noexcept
+size_t SyncLedger::CounterKeyHash::operator()(const CounterKey& key) const noexcept
 {
     size_t seed = 0;
     HashCombine(seed, key.target.groupId);
@@ -210,13 +210,13 @@ size_t Synccheck::CounterKeyHash::operator()(const CounterKey& key) const noexce
     return seed;
 }
 
-bool Synccheck::SetChannelKey::operator==(const SetChannelKey& other) const noexcept
+bool SyncLedger::SetChannelKey::operator==(const SetChannelKey& other) const noexcept
 {
     return mode == other.mode && flagId == other.flagId && sourceFlagId == other.sourceFlagId &&
            groupId == other.groupId && direction == other.direction && target == other.target;
 }
 
-size_t Synccheck::SetChannelKeyHash::operator()(const SetChannelKey& key) const noexcept
+size_t SyncLedger::SetChannelKeyHash::operator()(const SetChannelKey& key) const noexcept
 {
     size_t seed = 0;
     HashCombine(seed, key.mode);
@@ -229,12 +229,12 @@ size_t Synccheck::SetChannelKeyHash::operator()(const SetChannelKey& key) const 
     return seed;
 }
 
-bool Synccheck::FlagUsageKey::operator==(const FlagUsageKey& other) const noexcept
+bool SyncLedger::FlagUsageKey::operator==(const FlagUsageKey& other) const noexcept
 {
     return participant == other.participant && flagId == other.flagId;
 }
 
-size_t Synccheck::FlagUsageKeyHash::operator()(const FlagUsageKey& key) const noexcept
+size_t SyncLedger::FlagUsageKeyHash::operator()(const FlagUsageKey& key) const noexcept
 {
     size_t seed = 0;
     HashCombine(seed, key.participant.groupId);
@@ -243,7 +243,7 @@ size_t Synccheck::FlagUsageKeyHash::operator()(const FlagUsageKey& key) const no
     return seed;
 }
 
-LaunchTopology Synccheck::NormalizeTopology(const LaunchTopology& input)
+LaunchTopology SyncLedger::NormalizeTopology(const LaunchTopology& input)
 {
     LaunchTopology topology = input;
     topology.mixType = KernelMixType::UNKNOWN;
@@ -278,7 +278,7 @@ LaunchTopology Synccheck::NormalizeTopology(const LaunchTopology& input)
     return topology;
 }
 
-void Synccheck::OnKernelLaunch(uint64_t launchId, const LaunchTopology& topology, void* stream)
+void SyncLedger::OnKernelLaunch(uint64_t launchId, const LaunchTopology& topology, void* stream)
 {
     finalizedLaunches_.erase(launchId);
     LaunchSyncState state;
@@ -288,12 +288,12 @@ void Synccheck::OnKernelLaunch(uint64_t launchId, const LaunchTopology& topology
     launchStates_.insert_or_assign(launchId, std::move(state));
 }
 
-Synccheck::SyncBufOccupancyKey Synccheck::BuildSyncBufOccupancyKey(const AclsanDeviceSyncData& data)
+SyncLedger::SyncBufOccupancyKey SyncLedger::BuildSyncBufOccupancyKey(const AclsanDeviceSyncData& data)
 {
     return {data.objectId, data.header.phyCoreId};
 }
 
-bool Synccheck::ResolveParticipant(
+bool SyncLedger::ResolveParticipant(
     const LaunchTopology& topology, const AclsanDeviceSyncData& data, ParticipantKey& participant, std::string& error)
 {
     if (!topology.groupCountValid || topology.mixType == KernelMixType::UNKNOWN) {
@@ -320,7 +320,8 @@ bool Synccheck::ResolveParticipant(
     return true;
 }
 
-Synccheck::CanonicalCrossFlag Synccheck::CanonicalizeMode4SetFlag(const ParticipantKey& participant, uint64_t rawFlagId)
+SyncLedger::CanonicalCrossFlag SyncLedger::CanonicalizeMode4SetFlag(
+    const ParticipantKey& participant, uint64_t rawFlagId)
 {
     if (participant.role == ParticipantRole::AIC) {
         const uint32_t sourceFlagId = static_cast<uint32_t>(rawFlagId & 0x1fU);
@@ -331,7 +332,7 @@ Synccheck::CanonicalCrossFlag Synccheck::CanonicalizeMode4SetFlag(const Particip
     return {sourceFlagId, sourceFlagId + 16U * aivIndex, aivIndex};
 }
 
-uint32_t Synccheck::CanonicalizeLocalWaitFlag(const ParticipantKey& participant, uint32_t syncKind, uint64_t rawFlagId)
+uint32_t SyncLedger::CanonicalizeLocalWaitFlag(const ParticipantKey& participant, uint32_t syncKind, uint64_t rawFlagId)
 {
     if (syncKind == ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK && participant.role == ParticipantRole::AIC) {
         return static_cast<uint32_t>(rawFlagId & 0x1fU);
@@ -339,7 +340,7 @@ uint32_t Synccheck::CanonicalizeLocalWaitFlag(const ParticipantKey& participant,
     return static_cast<uint32_t>(rawFlagId & 0xfU);
 }
 
-bool Synccheck::ValidateCrossInstruction(const AclsanDeviceSyncData& data, std::string& error)
+bool SyncLedger::ValidateCrossInstruction(const AclsanDeviceSyncData& data, std::string& error)
 {
     const bool isWait = data.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT;
     const bool validCrossCoreSet =
@@ -356,7 +357,7 @@ bool Synccheck::ValidateCrossInstruction(const AclsanDeviceSyncData& data, std::
     return valid;
 }
 
-bool Synccheck::BuildCounterContributions(
+bool SyncLedger::BuildCounterContributions(
     const LaunchSyncState& state, const ParticipantKey& participant, uint32_t mode, uint32_t sourceFlagId,
     uint32_t targetFlagId, uint32_t aivIndex, std::vector<CounterContribution>& contributions, std::string& error)
 {
@@ -477,7 +478,7 @@ bool Synccheck::BuildCounterContributions(
     return !contributions.empty();
 }
 
-const char* Synccheck::DirectionName(CrossDirection direction)
+const char* SyncLedger::DirectionName(CrossDirection direction)
 {
     switch (direction) {
         case CrossDirection::ALL_AIC:
@@ -495,7 +496,7 @@ const char* Synccheck::DirectionName(CrossDirection direction)
     }
 }
 
-std::string Synccheck::ParticipantSetText(const ParticipantSet& participants)
+std::string SyncLedger::ParticipantSetText(const ParticipantSet& participants)
 {
     std::vector<std::pair<uint32_t, ParticipantRole>> sorted;
     for (const auto& participant : participants) {
@@ -520,7 +521,7 @@ std::string Synccheck::ParticipantSetText(const ParticipantSet& participants)
     return output.str();
 }
 
-void Synccheck::HandleFlagEvent(
+void SyncLedger::HandleFlagEvent(
     FlagState& state, const AclsanDeviceSyncData& data, const FlagPairKey& key, Reports& reports)
 {
     if (data.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
@@ -546,7 +547,7 @@ void Synccheck::HandleFlagEvent(
     }
 }
 
-void Synccheck::HandleSyncBufEvent(
+void SyncLedger::HandleSyncBufEvent(
     SyncBufState& state, const AclsanDeviceSyncData& data, const SyncBufPairKey& key, Reports& reports)
 {
     if (data.action == ACLSAN_DEVICE_SYNC_ACTION_GET) {
@@ -577,7 +578,7 @@ void Synccheck::HandleSyncBufEvent(
     }
 }
 
-bool Synccheck::ValidateFlagMode(
+bool SyncLedger::ValidateFlagMode(
     LaunchSyncState& state, const FlagUsageKey& key, uint32_t mode, const AclsanDeviceSyncData& trigger)
 {
     if (mode == ACLSAN_DEVICE_SYNC_MODE_UNKNOWN) {
@@ -601,7 +602,7 @@ bool Synccheck::ValidateFlagMode(
     return false;
 }
 
-void Synccheck::CleanupFlagUsage(LaunchSyncState& state, const FlagUsageKey& key)
+void SyncLedger::CleanupFlagUsage(LaunchSyncState& state, const FlagUsageKey& key)
 {
     const auto usage = state.crossCore.flagUsage.find(key);
     if (usage == state.crossCore.flagUsage.end() || usage->second.pendingSetRoundRefs != 0) {
@@ -614,7 +615,7 @@ void Synccheck::CleanupFlagUsage(LaunchSyncState& state, const FlagUsageKey& key
     }
 }
 
-void Synccheck::ActivateSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round)
+void SyncLedger::ActivateSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round)
 {
     std::unordered_set<FlagUsageKey, FlagUsageKeyHash> usageKeys;
     for (const ParticipantKey& participant : round.expectedSet) {
@@ -628,7 +629,7 @@ void Synccheck::ActivateSetRoundUsage(LaunchSyncState& state, const SetChannelKe
     }
 }
 
-void Synccheck::ReleaseSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round)
+void SyncLedger::ReleaseSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round)
 {
     std::unordered_set<FlagUsageKey, FlagUsageKeyHash> usageKeys;
     for (const ParticipantKey& participant : round.expectedSet) {
@@ -644,7 +645,7 @@ void Synccheck::ReleaseSetRoundUsage(LaunchSyncState& state, const SetChannelKey
     }
 }
 
-void Synccheck::ProduceCounterToken(
+void SyncLedger::ProduceCounterToken(
     LaunchSyncState& state, const CounterContribution& contribution, const AclsanDeviceSyncData& trigger)
 {
     CounterState& counter = state.crossCore.counters[contribution.targetCounter];
@@ -679,7 +680,7 @@ void Synccheck::ProduceCounterToken(
     usage.activeMode = contribution.mode;
 }
 
-void Synccheck::ProcessCrossSet(
+void SyncLedger::ProcessCrossSet(
     LaunchSyncState& state, const ParticipantKey& participant, const AclsanDeviceSyncData& data,
     const CanonicalCrossFlag& flag)
 {
@@ -730,7 +731,7 @@ void Synccheck::ProcessCrossSet(
     }
 }
 
-void Synccheck::ProcessCrossWait(
+void SyncLedger::ProcessCrossWait(
     LaunchSyncState& state, const ParticipantKey& participant, const AclsanDeviceSyncData& data, uint32_t flagId)
 {
     const FlagUsageKey usageKey{participant, flagId};
@@ -749,7 +750,7 @@ void Synccheck::ProcessCrossWait(
     counter.pendingWaits.push_back(data);
 }
 
-void Synccheck::HandleCrossCoreEvent(LaunchSyncState& state, const AclsanDeviceSyncData& data)
+void SyncLedger::HandleCrossCoreEvent(LaunchSyncState& state, const AclsanDeviceSyncData& data)
 {
     ParticipantKey participant;
     std::string error;
@@ -776,7 +777,7 @@ void Synccheck::HandleCrossCoreEvent(LaunchSyncState& state, const AclsanDeviceS
     }
 }
 
-void Synccheck::ProcessSyncEvent(LaunchSyncState& state, const AclsanDeviceSyncData& data)
+void SyncLedger::ProcessSyncEvent(LaunchSyncState& state, const AclsanDeviceSyncData& data)
 {
     switch (data.syncKind) {
         case ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG:
@@ -796,7 +797,7 @@ void Synccheck::ProcessSyncEvent(LaunchSyncState& state, const AclsanDeviceSyncD
     }
 }
 
-void Synccheck::OnDeviceSync(const AclsanDeviceSyncData& data)
+void SyncLedger::OnDeviceSync(const AclsanDeviceSyncData& data)
 {
     ++stats_.syncEvents;
     const auto state = launchStates_.find(data.header.launchId);
@@ -811,7 +812,7 @@ void Synccheck::OnDeviceSync(const AclsanDeviceSyncData& data)
     ProcessSyncEvent(state->second, data);
 }
 
-void Synccheck::FinalizeCrossCore(LaunchSyncState& state, Reports& reports)
+void SyncLedger::FinalizeCrossCore(LaunchSyncState& state, Reports& reports)
 {
     for (const auto& channelEntry : state.crossCore.pendingSetRounds) {
         for (const auto& roundEntry : channelEntry.second.pendingRounds) {
@@ -838,11 +839,11 @@ void Synccheck::FinalizeCrossCore(LaunchSyncState& state, Reports& reports)
     }
 }
 
-std::vector<Synccheck::Report> Synccheck::OnSynchronization() { return FinalizeLaunches(nullptr, false); }
+std::vector<SyncLedger::Report> SyncLedger::OnSynchronization() { return FinalizeLaunches(nullptr, false); }
 
-std::vector<Synccheck::Report> Synccheck::OnSynchronization(void* stream) { return FinalizeLaunches(stream, true); }
+std::vector<SyncLedger::Report> SyncLedger::OnSynchronization(void* stream) { return FinalizeLaunches(stream, true); }
 
-std::vector<Synccheck::Report> Synccheck::FinalizeLaunches(void* stream, bool filterByStream)
+std::vector<SyncLedger::Report> SyncLedger::FinalizeLaunches(void* stream, bool filterByStream)
 {
     ++stats_.synchronizationEvents;
     Reports reports = std::move(orphanReports_);
@@ -874,9 +875,9 @@ std::vector<Synccheck::Report> Synccheck::FinalizeLaunches(void* stream, bool fi
     return reports;
 }
 
-SynccheckStats Synccheck::Stats() const { return stats_; }
+SynccheckStats SyncLedger::Stats() const { return stats_; }
 
-std::optional<LaunchTopology> Synccheck::TopologyForLaunch(uint64_t launchId) const
+std::optional<LaunchTopology> SyncLedger::TopologyForLaunch(uint64_t launchId) const
 {
     const auto state = launchStates_.find(launchId);
     if (state == launchStates_.end()) {
@@ -885,7 +886,7 @@ std::optional<LaunchTopology> Synccheck::TopologyForLaunch(uint64_t launchId) co
     return state->second.topology;
 }
 
-std::optional<uint32_t> Synccheck::CrossCounterValue(
+std::optional<uint32_t> SyncLedger::CrossCounterValue(
     uint64_t launchId, uint32_t groupId, ParticipantRole role, uint32_t flagId) const
 {
     const auto state = launchStates_.find(launchId);
@@ -898,7 +899,7 @@ std::optional<uint32_t> Synccheck::CrossCounterValue(
                                                                std::optional<uint32_t>{counter->second.value};
 }
 
-size_t Synccheck::PendingCrossSetRoundCount(uint64_t launchId) const
+size_t SyncLedger::PendingCrossSetRoundCount(uint64_t launchId) const
 {
     const auto state = launchStates_.find(launchId);
     if (state == launchStates_.end()) {
@@ -911,7 +912,7 @@ size_t Synccheck::PendingCrossSetRoundCount(uint64_t launchId) const
     return count;
 }
 
-NpuCheckSyncPoint Synccheck::ActualPoint(const AclsanDeviceSyncData& data)
+NpuCheckSyncPoint SyncLedger::ActualPoint(const AclsanDeviceSyncData& data)
 {
     NpuCheckSyncPoint point{};
     point.operation = OperationName(data);
@@ -920,14 +921,14 @@ NpuCheckSyncPoint Synccheck::ActualPoint(const AclsanDeviceSyncData& data)
     return point;
 }
 
-NpuCheckSyncPoint Synccheck::ExpectedPoint(const AclsanDeviceSyncData& data, uint32_t reason)
+NpuCheckSyncPoint SyncLedger::ExpectedPoint(const AclsanDeviceSyncData& data, uint32_t reason)
 {
     NpuCheckSyncPoint point{};
     point.operation = ExpectedOperation(data, reason);
     return point;
 }
 
-Synccheck::Report Synccheck::BuildReportBase(
+SyncLedger::Report SyncLedger::BuildReportBase(
     const AclsanDeviceSyncData& trigger, NpuCheckReportPattern pattern, NpuCheckSyncPrimitiveKind primitiveKind,
     NpuCheckSyncDetailKind detailKind)
 {
@@ -943,7 +944,7 @@ Synccheck::Report Synccheck::BuildReportBase(
     return report;
 }
 
-Synccheck::Report Synccheck::BuildMismatchBase(
+SyncLedger::Report SyncLedger::BuildMismatchBase(
     const AclsanDeviceSyncData& trigger, const AclsanDeviceSyncData* related, uint32_t reason)
 {
     const NpuCheckSyncPrimitiveKind primitiveKind =
@@ -957,7 +958,7 @@ Synccheck::Report Synccheck::BuildMismatchBase(
     return report;
 }
 
-Synccheck::Report Synccheck::BuildMismatch(
+SyncLedger::Report SyncLedger::BuildMismatch(
     const AclsanDeviceSyncData& trigger, const AclsanDeviceSyncData* related, uint32_t reason, const FlagPairKey& key)
 {
     Report report = BuildMismatchBase(trigger, related, reason);
@@ -971,7 +972,7 @@ Synccheck::Report Synccheck::BuildMismatch(
     return report;
 }
 
-Synccheck::Report Synccheck::BuildMismatch(
+SyncLedger::Report SyncLedger::BuildMismatch(
     const AclsanDeviceSyncData& trigger, const AclsanDeviceSyncData* related, uint32_t reason,
     const SyncBufPairKey& key)
 {
@@ -986,7 +987,7 @@ Synccheck::Report Synccheck::BuildMismatch(
     return report;
 }
 
-Synccheck::Report Synccheck::BuildInvalid(const AclsanDeviceSyncData& trigger, const std::string& reason)
+SyncLedger::Report SyncLedger::BuildInvalid(const AclsanDeviceSyncData& trigger, const std::string& reason)
 {
     const NpuCheckSyncPrimitiveKind primitiveKind = IsCrossCoreSyncKind(trigger.syncKind) ?
                                                         NpuCheckSyncPrimitiveKind::BARRIER :
@@ -1000,7 +1001,7 @@ Synccheck::Report Synccheck::BuildInvalid(const AclsanDeviceSyncData& trigger, c
     return report;
 }
 
-Synccheck::Report Synccheck::BuildSequence(const AclsanDeviceSyncData& trigger, const std::string& reason)
+SyncLedger::Report SyncLedger::BuildSequence(const AclsanDeviceSyncData& trigger, const std::string& reason)
 {
     Report report = BuildReportBase(
         trigger, NpuCheckReportPattern::SYNCCHECK_INSTRUCTION_SEQUENCE_MISMATCH,
@@ -1013,7 +1014,7 @@ Synccheck::Report Synccheck::BuildSequence(const AclsanDeviceSyncData& trigger, 
     return report;
 }
 
-Synccheck::Report Synccheck::BuildParticipantMismatch(
+SyncLedger::Report SyncLedger::BuildParticipantMismatch(
     const SetChannelKey& key, uint64_t roundId, const SetRound& round, const AclsanDeviceSyncData& trigger)
 {
     ParticipantSet missingSet;
@@ -1039,7 +1040,7 @@ Synccheck::Report Synccheck::BuildParticipantMismatch(
     return report;
 }
 
-Synccheck::Report Synccheck::BuildCrossTokenMismatch(
+SyncLedger::Report SyncLedger::BuildCrossTokenMismatch(
     const CounterKey& key, const CounterState& counter, const AclsanDeviceSyncData& trigger, uint32_t reason,
     uint32_t tokenCount)
 {

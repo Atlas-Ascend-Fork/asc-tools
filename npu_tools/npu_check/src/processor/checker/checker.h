@@ -21,6 +21,7 @@
 #include <vector>
 
 namespace npucheck {
+class MemoryAnalysis;
 using CallbackSpec = std::pair<AclsanCallbackDomain, AclsanCallbackId>;
 using CheckerReport = std::variant<
     npucheck::NpuCheckMemcheckReport, npucheck::NpuCheckInitcheckReport, npucheck::NpuCheckSynccheckReport,
@@ -49,7 +50,7 @@ public:
     bool IsSubscribed(AclsanCallbackDomain domain, AclsanCallbackId cbid) const;
 };
 
-std::unique_ptr<Checker> CreateChecker(npucheck::ipc::ToolId tool);
+std::unique_ptr<Checker> CreateChecker(npucheck::ipc::ToolId tool, std::shared_ptr<MemoryAnalysis> analysis = {});
 std::vector<CallbackSpec> RequiredCallbacks(const std::vector<std::unique_ptr<Checker>>& checkers);
 
 template <class T>

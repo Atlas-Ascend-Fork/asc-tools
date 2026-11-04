@@ -110,6 +110,9 @@ bool Racecheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
         if (data.header.size != sizeof(data)) {
             throw RacecheckError(RacecheckErrorKind::UnsupportedEvent, "unsupported memory callback size");
         }
+        if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+            return true;
+        }
         if (!ordering_ && !warnedUnavailable_) {
             Log("ordering.unavailable", &data.header, "no synchronization ordering provider; analysis incomplete");
             warnedUnavailable_ = true;

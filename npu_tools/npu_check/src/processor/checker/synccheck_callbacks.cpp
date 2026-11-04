@@ -8,13 +8,13 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#include "checker/synccheck.h"
+#include "checker/sync_ledger.h"
 #include "tool_manager/kernel_attributes.h"
 #include "npu_tool_log.h"
 #include <sstream>
 
 namespace npucheck {
-const std::vector<npucheck::CallbackSpec>& Synccheck::GetSubscribedID() const
+const std::vector<npucheck::CallbackSpec>& SyncLedger::GetSubscribedID() const
 {
     static const std::vector<npucheck::CallbackSpec> callbacks{
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC},
@@ -22,12 +22,34 @@ const std::vector<npucheck::CallbackSpec>& Synccheck::GetSubscribedID() const
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL}};
     return callbacks;
 }
-bool Synccheck::OnCallback(
+bool SyncLedger::OnCallback(
     AclsanCallbackDomain domain, [[maybe_unused]] AclsanCallbackId cbid, const void* data,
     npucheck::CheckerReportList& reports)
 {
+    if (!data) {
+        observationComplete_ = false;
+        return false;
+    }
+    if (domain != ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
+        const auto& common = *static_cast<const AclsanCallbackCommonData*>(data);
+        const auto required =
+            domain == ACLSAN_CB_DOMAIN_LAUNCH ? sizeof(AclsanLaunchData) : sizeof(AclsanSynchronizeData);
+        if (common.version != ACLSAN_API_VERSION || common.size < required) {
+            observationComplete_ = false;
+            return false;
+        }
+        if (common.result != 0 && domain == ACLSAN_CB_DOMAIN_LAUNCH)
+            return true;
+        // A synchronization failure still closes the diagnostic observation
+        // batch. Only MemoryAnalysis may publish successful stream-completion
+        // edges; flushing this ledger never asserts kernel completion.
+    }
     if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
         const auto* syncData = static_cast<const AclsanDeviceSyncData*>(data);
+        if (syncData->header.version != ACLSAN_API_VERSION || syncData->header.size < sizeof(*syncData)) {
+            observationComplete_ = false;
+            return false;
+        }
         OnDeviceSync(*syncData);
     } else if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
         const auto* syncData = static_cast<const AclsanSynchronizeData*>(data);
@@ -77,15 +99,15 @@ bool Synccheck::OnCallback(
     }
     return true;
 }
-bool Synccheck::HasErrors() const
+bool SyncLedger::HasErrors() const
 {
     const auto stats = Stats();
     return stats.duplicateOpens != 0 || stats.unmatchedCloses != 0 || stats.unconsumedOpens != 0 ||
            stats.participantMismatches != 0 || stats.sequenceMismatches != 0 || stats.invalidArguments != 0 ||
            stats.unconsumedSyncTokens != 0 || stats.waitWithoutSyncTokens != 0;
 }
-bool Synccheck::AnalysisComplete() const { return Stats().pendingOpens == 0; }
-std::string Synccheck::Summary() const
+bool SyncLedger::AnalysisComplete() const { return observationComplete_ && Stats().pendingOpens == 0; }
+std::string SyncLedger::Summary() const
 {
     const auto stats = Stats();
     const uint64_t errors = stats.duplicateOpens + stats.unmatchedCloses + stats.unconsumedOpens +

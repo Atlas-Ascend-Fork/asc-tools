@@ -376,6 +376,8 @@ TEST(SynccheckCrossCoreTest, SynchronizationCallbackFinalizesPendingLaunchOnTime
     checker.OnKernelLaunch(1, MakeTopology(1));
     checker.OnDeviceSync(MakeCrossEvent(0, ACLSAN_DEVICE_SYNC_ACTION_SET, true));
     AclsanSynchronizeData synchronization{};
+    synchronization.common.version = ACLSAN_API_VERSION;
+    synchronization.common.size = sizeof(synchronization);
     synchronization.common.result = ACL_ERROR_RT_STREAM_SYNC_TIMEOUT;
     CheckerReportList reports;
     EXPECT_TRUE(checker.OnCallback(

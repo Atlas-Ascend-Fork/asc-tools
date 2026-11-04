@@ -39,9 +39,20 @@ add_library(npu_check_core STATIC
   checker/checker.cpp
   checker/memcheck_callbacks.cpp
   checker/synccheck_callbacks.cpp
+  checker/synccheck_adapter.cpp
   diagnostic/report/device_call_stack.cpp
   diagnostic/report/report_assembler.cpp
   diagnostic/report/report_fields.cpp
+  checker/memory_state.cpp
+  checker/host_order.cpp
+  checker/memory_analysis.cpp
+  checker/memory_resources.cpp
+  checker/memory_initialization.cpp
+  checker/memory_analysis_state.cpp
+  checker/memory_global_history.cpp
+  checker/memory_host.cpp
+  checker/memory_host_checks.cpp
+  checker/memory_host_races.cpp
   checker/allocation_registry.cpp
   checker/memcheck.cpp
   checker/mem_state_tracker.cpp
@@ -49,7 +60,6 @@ add_library(npu_check_core STATIC
   checker/racecheck.cpp
   checker/racecheck/dependency_graph.cpp
   checker/initcheck.cpp
-  checker/initcheck_memory.cpp
   checker/racecheck/sync_analysis.cpp
   checker/racecheck/types.cpp
   checker/racecheck/happens_before_graph.cpp

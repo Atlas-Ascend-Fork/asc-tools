@@ -20,6 +20,7 @@ bool InvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId cbId, const vo
 class AclsanCallbackDispatcher final {
 public:
     static void DispatchResource(AclsanCallbackId cbId, const AclsanResourceData& cbData) noexcept;
+    static void DispatchMemoryTransfer(const AclsanMemoryTransferData& data) noexcept;
     static void DispatchMemoryWrite(const AclsanMemoryWriteData& cbData) noexcept;
     static void DispatchSynchronizeEnd(const AclsanSynchronizeData& cbData) noexcept;
     static void DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& cbData) noexcept;

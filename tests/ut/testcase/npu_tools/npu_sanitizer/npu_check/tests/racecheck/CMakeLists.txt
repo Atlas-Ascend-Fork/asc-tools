@@ -95,6 +95,9 @@ add_test(NAME racecheck_render_tests COMMAND racecheck_render_tests)
 add_executable(racecheck_integration_tests
   ../gtest_main.cpp
   ../racecheck_test.cpp ../happens_before_graph_test.cpp ../memory_access_state_test.cpp
+  "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/memory_analysis.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/memory_state.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/allocation_registry.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/dependency_graph.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/sync_analysis.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/happens_before_graph.cpp"
@@ -117,5 +120,6 @@ target_include_directories(racecheck_integration_tests PRIVATE
   "${REPO_ROOT}/npu_tools/npu_check/src/shared"
   "${REPO_ROOT}/npu_tools/npu_check/src/acl_san"
   "${REPO_ROOT}/npu_tools/npu_check/include")
-target_link_libraries(racecheck_integration_tests PRIVATE GTest::gtest Threads::Threads npu_sanitizer_plog)
+target_link_libraries(racecheck_integration_tests PRIVATE
+  npu_check_core GTest::gtest Threads::Threads npu_sanitizer_plog)
 add_test(NAME racecheck_integration_tests COMMAND racecheck_integration_tests)

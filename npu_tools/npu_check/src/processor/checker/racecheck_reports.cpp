@@ -49,7 +49,10 @@ PhysicalSpaceKey ValidateAccesses(
     ConflictKind* inferredKind, const racecheck::PreparedAccess* prepared = nullptr)
 {
     const auto key = prepared ? prepared->key : racecheck::MakeKey(current);
-    if (previous.header.launchId != current.header.launchId || !SameKey(key, racecheck::MakeKey(previous))) {
+    const bool crossLaunchGm =
+        previous.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    if ((!crossLaunchGm && previous.header.launchId != current.header.launchId) ||
+        !SameKey(key, racecheck::MakeKey(previous))) {
         throw RacecheckError(
             RacecheckErrorKind::InvalidEvent, "race report belongs to another launch or physical table");
     }
@@ -198,6 +201,65 @@ std::vector<NpuCheckRacecheckReport> MakeRacecheckDiagnostics(
     return MakeDiagnostics(evidence, records, currentIndex, &current);
 }
 
+namespace {
+std::string DeviceActor(const AclsanDeviceMemoryAccessData& access)
+{
+    return "by aicore (" + detail::FormatCoreId(access.header.phyCoreId) + ") type (" +
+           detail::FormatBlockType(access.header.blockType) + ") block (" + std::to_string(access.header.blockId) +
+           ") pipe (" + detail::DevicePipelineName(access.header.pipeline) + ")";
+}
+void PutActor(
+    const std::optional<HostAccessEvidence>& host, const AclsanDeviceMemoryAccessData& device,
+    const NpuCheckRacecheckRange& range, const char* prefix, const char* accessPrefix, ReportFields& fields)
+{
+    const std::string name(accessPrefix);
+    if (!host) {
+        PutAccess(device, range, prefix, accessPrefix, fields);
+        fields[name + "Actor"] = DeviceActor(device);
+        return;
+    }
+    fields[name + "Actor"] = "by Host API " + host->apiName + " (device " + std::to_string(host->deviceId) + ")";
+    fields[name + "Access"] = host->mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ ? "READ" : "WRITE";
+    fields[name + "RangeBegin"] = detail::Hex(range.begin);
+    fields[name + "RangeEnd"] = detail::Hex(range.end);
+}
+void ValidateHostActor(const std::optional<HostAccessEvidence>& host, const NpuCheckRacecheckRange& range)
+{
+    if (!host)
+        return;
+    if ((host->mode != ACLSAN_DEVICE_MEMORY_ACCESS_READ && host->mode != ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) ||
+        host->apiName.empty() || host->bytes > UINT64_MAX - host->address || range.begin < host->address ||
+        range.end > host->address + host->bytes)
+        throw RacecheckError(RacecheckErrorKind::InvalidEvent, "invalid host access evidence");
+}
+PhysicalSpaceKey ValidateReportActors(const NpuCheckRacecheckReport& report, ConflictKind& kind)
+{
+    if (!report.previousHost && !report.currentHost) {
+        const auto key = ValidateAccesses(report.previous, report.current, &kind);
+        if (report.launchId != report.current.header.launchId)
+            throw RacecheckError(RacecheckErrorKind::InvalidEvent, "incorrect launch in race report");
+        return key;
+    }
+    ValidateHostActor(report.previousHost, report.previousRange);
+    ValidateHostActor(report.currentHost, report.currentRange);
+    const auto previous =
+        report.previousHost ? report.previousHost->mode : static_cast<uint32_t>(racecheck::AccessMode(report.previous));
+    const auto current =
+        report.currentHost ? report.currentHost->mode : static_cast<uint32_t>(racecheck::AccessMode(report.current));
+    if (previous == ACLSAN_DEVICE_MEMORY_ACCESS_READ && current == ACLSAN_DEVICE_MEMORY_ACCESS_READ)
+        throw RacecheckError(RacecheckErrorKind::InvalidEvent, "two readers have no race");
+    kind = previous == ACLSAN_DEVICE_MEMORY_ACCESS_READ ? ConflictKind::WAR :
+           current == ACLSAN_DEVICE_MEMORY_ACCESS_READ  ? ConflictKind::RAW :
+                                                          ConflictKind::WAW;
+    const uint32_t a = report.previousHost ? report.previousHost->deviceId : report.previous.header.deviceId;
+    const uint32_t b = report.currentHost ? report.currentHost->deviceId : report.current.header.deviceId;
+    if (a != b || (!report.previousHost && report.previous.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM) ||
+        (!report.currentHost && report.current.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM))
+        throw RacecheckError(RacecheckErrorKind::InvalidEvent, "host race is not in one device GM domain");
+    return {a, ACLSAN_DEVICE_MEMORY_SPACE_GM, 0};
+}
+} // namespace
+
 ReportRenderStatus NormalizeRacecheckReport(const NpuCheckRacecheckReport& report, ReportRecord* out)
 {
     if (!out || report.checkRange.begin >= report.checkRange.end ||
@@ -210,8 +272,8 @@ ReportRenderStatus NormalizeRacecheckReport(const NpuCheckRacecheckReport& repor
         const auto& previous = report.previous;
         const auto& current = report.current;
         ConflictKind inferredKind;
-        const auto key = ValidateAccesses(previous, current, &inferredKind);
-        if (!SameKey(key, report.key) || report.launchId != current.header.launchId || report.kind != inferredKind) {
+        const auto key = ValidateReportActors(report, inferredKind);
+        if (!SameKey(key, report.key) || report.kind != inferredKind) {
             return ReportRenderStatus::INVALID_ARGUMENT;
         }
         const char* pattern = report.kind == ConflictKind::RAW ? "hazard_raw" :
@@ -220,9 +282,12 @@ ReportRenderStatus NormalizeRacecheckReport(const NpuCheckRacecheckReport& repor
                                                                  "atomic_semantic";
         ReportRecord resolved{{ReportTool::RACECHECK, pattern}, ReportSeverity::WARNING, {}, {}};
         auto& fields = resolved.fields;
-        PutExecFields(ExecContext(current), &fields);
-        PutAccess(previous, report.previousRange, "first", "previous", fields);
-        PutAccess(current, report.currentRange, "second", "current", fields);
+        if (!report.currentHost)
+            PutExecFields(ExecContext(current), &fields);
+        else if (!report.previousHost)
+            PutExecFields(ExecContext(previous), &fields);
+        PutActor(report.previousHost, previous, report.previousRange, "first", "previous", fields);
+        PutActor(report.currentHost, current, report.currentRange, "second", "current", fields);
         fields["space"] = MemorySpaceName(static_cast<NpuCheckReportMemorySpace>(key.memorySpace));
         fields["overlapBegin"] = Hex(report.checkRange.begin);
         fields["overlapEnd"] = Hex(report.checkRange.end);
@@ -231,8 +296,10 @@ ReportRenderStatus NormalizeRacecheckReport(const NpuCheckRacecheckReport& repor
                                     "" :
                                     " in aicore (" + FormatCoreId(key.phyCoreId) + ") type (" +
                                         detail::FormatBlockType(current.header.blockType) + ")";
-        resolved.stacks.push_back(FallbackStack(current, ReportStackRole::RELATED_ACCESS_B));
-        resolved.stacks.push_back(FallbackStack(previous, ReportStackRole::RELATED_ACCESS_A));
+        if (!report.currentHost)
+            resolved.stacks.push_back(FallbackStack(current, ReportStackRole::RELATED_ACCESS_B));
+        if (!report.previousHost)
+            resolved.stacks.push_back(FallbackStack(previous, ReportStackRole::RELATED_ACCESS_A));
         *out = std::move(resolved);
         return ReportRenderStatus::SUCCESS;
     } catch (const RacecheckError&) {

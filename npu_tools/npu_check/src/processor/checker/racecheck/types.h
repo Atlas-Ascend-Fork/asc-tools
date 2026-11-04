@@ -40,12 +40,24 @@ struct Limits {
     size_t comparisons = 10000000;
     size_t queryWork = 10000000;
     size_t queryCache = 65536;
+    size_t analysisWork = 100000000; // DFS work per build or checker replay, not per shared graph lifetime.
     size_t stateSegments = 1U << 20U;
     size_t stateBytes = 128U << 20U;
 };
 bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::vector<Interval>& result);
 void MergeIntervals(std::vector<Interval>& intervals);
 bool ValidPipe(uint32_t pipe);
+// Atomic destinations read the old bytes and then write the result. The API
+// enumerates modes; they are not a READ/WRITE bitmask.
+inline bool ReadsMemory(uint32_t mode)
+{
+    return mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ || (mode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD &&
+                                                        mode <= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX);
+}
+inline bool WritesMemory(uint32_t mode)
+{
+    return mode >= ACLSAN_DEVICE_MEMORY_ACCESS_WRITE && mode <= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX;
+}
 // Adapt ACLSan cross-core callbacks to the SET/WAIT representation used by dependency graphs.
 AclsanDeviceSyncData NormalizeSync(const AclsanDeviceSyncData& data);
 

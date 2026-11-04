@@ -17,12 +17,10 @@ namespace {
 
 constexpr char kRaceHazardTemplate[] =
     "========= {{Severity}}:[RACECHECK] {{raceKind}} race detected.\n"
-    "=========     current access: {{currentAccess}} by aicore ({{secondCoreId}}) type ({{secondType}}) block "
-    "({{secondBlock}}) "
-    "pipe ({{secondPipe}}), range [0x{{currentRangeBegin}}, 0x{{currentRangeEnd}})\n"
-    "=========     previous access: {{previousAccess}} by aicore ({{firstCoreId}}) type ({{firstType}}) block "
-    "({{firstBlock}}) "
-    "pipe ({{firstPipe}}), range [0x{{previousRangeBegin}}, 0x{{previousRangeEnd}})\n"
+    "=========     current access: {{currentAccess}} {{currentActor}}, range [0x{{currentRangeBegin}}, "
+    "0x{{currentRangeEnd}})\n"
+    "=========     previous access: {{previousAccess}} {{previousActor}}, range [0x{{previousRangeBegin}}, "
+    "0x{{previousRangeEnd}})\n"
     "=========     memory: {{space}}{{memoryOwner}}, overlap [0x{{overlapBegin}}, 0x{{overlapEnd}}), "
     "{{overlapBytes}} bytes\n";
 
@@ -83,6 +81,14 @@ const PatternCatalog& Catalog()
             ReportTool::MEMCHECK, NpuCheckReportPattern::MEMCHECK_LEAK, "leak",
             "========= {{Severity}}:[MEMCHECK] Leaked {{bytes}} bytes at 0x{{base}}\n"
             "=========     allocation id {{allocId}}, memory space {{space}}\n"),
+        MakePattern(
+            ReportTool::MEMCHECK, NpuCheckReportPattern::MEMCHECK_HOST_INVALID_ACCESS, "host_invalid_access",
+            "========= {{Severity}}:[MEMCHECK] Invalid {{space}} {{access}} by {{apiName}}\n"
+            "=========     Address 0x{{address}}, size {{accessBytes}} bytes is out of bounds\n"),
+        MakePattern(
+            ReportTool::MEMCHECK, NpuCheckReportPattern::MEMCHECK_HOST_USE_AFTER_FREE, "host_use_after_free",
+            "========= {{Severity}}:[MEMCHECK] Invalid {{space}} {{access}} by {{apiName}}\n"
+            "=========     Address 0x{{address}}, size {{accessBytes}} bytes is used after free\n"),
         MakePattern(
             ReportTool::MEMCHECK, NpuCheckReportPattern::MEMCHECK_API_ERROR, "api_error",
             "========= {{Severity}}:[MEMCHECK] Program hit {{apiErrorName}} (error {{apiErrorCode}}) due to "

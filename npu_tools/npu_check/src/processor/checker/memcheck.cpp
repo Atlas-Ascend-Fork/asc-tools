@@ -39,30 +39,14 @@ constexpr uint32_t ALLOCATION_STATE_LIVE = 1;
 constexpr uint32_t ALLOCATION_STATE_FREED = 2;
 constexpr uint32_t MAX_AFFINE_RANK = 5;
 constexpr uint64_t MAX_LAYOUT_SEGMENTS = 1u << 20u;
-constexpr uint64_t DAV3510_L1_BYTES = 512 * 1024;
-constexpr uint64_t DAV3510_L0AB_BYTES = 64 * 1024;
-constexpr uint64_t DAV3510_L0C_BYTES = 256 * 1024;
-
-// Cube decoding currently supports only dav3510 (Ascend 950). Capacities match
-// CANN platform_config and mssanitizer CHIP_INFO_MAP, not sample tensor sizes.
-uint64_t CubeCapacity(uint32_t space)
-{
-    switch (space) {
-        case ACLSAN_DEVICE_MEMORY_SPACE_L1:
-            return DAV3510_L1_BYTES;
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0B:
-            return DAV3510_L0AB_BYTES;
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
-            return DAV3510_L0C_BYTES;
-        default:
-            return 0;
-    }
-}
+// Capacities are shared with initialization and range classification.
+uint64_t CubeCapacity(uint32_t space) { return npucheck::InitStateTableIndex::LocalCapacity(space); }
 
 NpuCheckReportMemorySpace CubeReportSpace(uint32_t space)
 {
     switch (space) {
+        case ACLSAN_DEVICE_MEMORY_SPACE_UB:
+            return NpuCheckReportMemorySpace::UB;
         case ACLSAN_DEVICE_MEMORY_SPACE_L1:
             return NpuCheckReportMemorySpace::L1;
         case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
@@ -311,8 +295,10 @@ void Memcheck::OnAllocation(const AclsanResourceData& data)
     if (data.memorySpace != ACLSAN_MEMORY_SPACE_DEVICE || data.common.result != 0) {
         return;
     }
-    const auto status =
-        allocations_.Register(data.resourceId, reinterpret_cast<uint64_t>(data.ptr), data.bytes, data.deviceId);
+    const auto status = analysis_->Managed() ?
+                            analysis_->ResourceUpdate() :
+                            memoryState_->Register(
+                                {data.deviceId, 0}, data.resourceId, reinterpret_cast<uint64_t>(data.ptr), data.bytes);
     if (status == AllocationUpdateStatus::OK) {
         ++stats_.allocations;
     }
@@ -323,7 +309,10 @@ void Memcheck::OnFree(const AclsanResourceData& data)
     if (data.memorySpace != ACLSAN_MEMORY_SPACE_DEVICE || data.common.result != 0) {
         return;
     }
-    const auto status = allocations_.Release(data.resourceId, reinterpret_cast<uint64_t>(data.ptr), data.deviceId);
+    const auto status =
+        analysis_->Managed() ?
+            analysis_->ResourceUpdate() :
+            memoryState_->Release({data.deviceId, 0}, data.resourceId, reinterpret_cast<uint64_t>(data.ptr));
     if (status == AllocationUpdateStatus::OK) {
         ++stats_.frees;
     }
@@ -342,9 +331,13 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
             address <= capacity && bytes <= capacity - address ? RangeStatus::VALID : RangeStatus::OUT_OF_BOUNDS;
         range.allocation = Allocation{0, 0, capacity, data.header.deviceId, 0, 0};
     } else {
-        range = allocations_.Classify(data.header.deviceId, address, preload ? 1 : bytes);
+        range = analysis_->ClassifyAccessRange(data, address, preload ? 1 : bytes);
     }
     if (range.status == RangeStatus::VALID) {
+        return {};
+    }
+    if (analysis_->Managed() && range.status == RangeStatus::AMBIGUOUS) {
+        ++stats_.droppedDeviceOperations;
         return {};
     }
 
@@ -370,7 +363,9 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     report.access.rangeEnd = RangeEnd(address, bytes).value_or(std::numeric_limits<uint64_t>::max());
 
     report.allocation = ToReportAllocation(range.allocation);
-    const auto nearest = range.allocation ? range.allocation : allocations_.Nearest(data.header.deviceId, address);
+    const auto nearest =
+        range.allocation ? range.allocation :
+                           memoryState_->Allocations({data.header.deviceId, 0}).Nearest(data.header.deviceId, address);
     report.nearestAllocation = ToReportAllocation(nearest);
     if (capacity != 0) {
         report.allocation.memorySpace = report.access.memorySpace;
@@ -392,17 +387,27 @@ void Memcheck::QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data)
         return;
     }
     ++stats_.deviceOperations;
-    if (pendingDeviceAccesses_.size() >= maxPendingDeviceOperations) {
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+        return;
+    }
+    if (stats_.pendingDeviceOperations >= maxPendingDeviceOperations) {
         ++stats_.droppedDeviceOperations;
         return;
     }
-    pendingDeviceAccesses_.push_back(data);
-    stats_.pendingDeviceOperations = pendingDeviceAccesses_.size();
+    if (analysis_->Managed()) {
+        ++stats_.pendingDeviceOperations;
+    } else {
+        pendingDeviceAccesses_.push_back(data);
+        stats_.pendingDeviceOperations = pendingDeviceAccesses_.size();
+    }
 }
 
 std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
     const AclsanDeviceMemoryAccessData& data, uint64_t groupId)
 {
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+        return {};
+    }
     const auto markIncomplete = [this]() {
         ++stats_.droppedDeviceOperations;
         return std::vector<NpuCheckMemcheckReport>{};
@@ -495,12 +500,18 @@ std::vector<NpuCheckMemcheckReport> Memcheck::OnSynchronization()
     ++stats_.synchronizationEvents;
     std::vector<AclsanDeviceMemoryAccessData> accesses;
     accesses.swap(pendingDeviceAccesses_);
-    stats_.pendingDeviceOperations = pendingDeviceAccesses_.size(); // update stats after swap
+    if (!analysis_->Managed())
+        stats_.pendingDeviceOperations = pendingDeviceAccesses_.size();
 
     using InstructionIdentity = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t, uint64_t>;
     std::map<InstructionIdentity, uint64_t> instructionGroups;
     std::vector<NpuCheckMemcheckReport> reports;
-    for (const auto& access : accesses) {
+    const auto check = [&](const AclsanDeviceMemoryAccessData& access) {
+        if ((access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0 ||
+            (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM && CubeCapacity(access.memorySpace) == 0))
+            return;
+        if (analysis_->Managed() && stats_.pendingDeviceOperations != 0)
+            --stats_.pendingDeviceOperations;
         const InstructionIdentity identity{
             access.header.deviceId, access.header.launchId, access.header.blockType, access.header.blockId,
             access.header.instrExecId};
@@ -510,6 +521,16 @@ std::vector<NpuCheckMemcheckReport> Memcheck::OnSynchronization()
         }
         auto found = CheckDeviceMemoryAccess(access, group->second);
         reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+    };
+    if (analysis_->Managed()) {
+        for (auto id : analysis_->Closing()) {
+            const auto& shared = analysis_->Get(id);
+            for (const auto& access : shared.memory)
+                check(access);
+        }
+    } else {
+        for (const auto& access : accesses)
+            check(access);
     }
     Count(reports);
     return reports;

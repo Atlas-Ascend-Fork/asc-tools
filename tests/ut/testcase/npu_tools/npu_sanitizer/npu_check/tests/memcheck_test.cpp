@@ -327,7 +327,7 @@ TEST(MemcheckTest, IgnoresHostResourceEvents)
     EXPECT_EQ(checker.Stats().frees, 0U);
 }
 
-TEST(MemcheckTest, ReportsOutOfBoundsWriteAndIgnoresNonGmAccesses)
+TEST(MemcheckTest, ReportsOutOfBoundsGmAndUbWrites)
 {
     Memcheck checker;
     const auto invalidWrite = Access(DeviceSourceKind::MTE3, 0x200000, 64);
@@ -340,8 +340,10 @@ TEST(MemcheckTest, ReportsOutOfBoundsWriteAndIgnoresNonGmAccesses)
     auto nonGm = invalidWrite;
     nonGm.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
     checker.QueueDeviceMemoryAccess(nonGm);
-    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 0U);
-    EXPECT_TRUE(checker.OnSynchronization().empty());
+    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 1U);
+    const auto localReports = checker.OnSynchronization();
+    ASSERT_EQ(localReports.size(), 1U);
+    EXPECT_EQ(localReports.front().access.memorySpace, NpuCheckReportMemorySpace::UB);
 }
 
 TEST(MemcheckTest, ExpandsBlockRepeatAndAffineLayouts)

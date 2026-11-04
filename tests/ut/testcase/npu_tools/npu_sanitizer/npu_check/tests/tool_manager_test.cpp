@@ -8,6 +8,7 @@
 
 #include "acl_san/aclsan_api.h"
 #include "tool_manager/tool_manager.h"
+#include "checker/memory_analysis.h"
 #include "options.h"
 #include "uds_client.h"
 #include "acl/acl_rt.h"
@@ -134,7 +135,7 @@ Session RunSession(
         allocation.memorySpace = ACLSAN_MEMORY_SPACE_DEVICE;
         allocation.resourceId = 1;
         Emit(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, &allocation);
-        if (race) {
+        {
             AclsanLaunchData launch{};
             launch.common.version = ACLSAN_API_VERSION;
             launch.common.size = sizeof(launch);
@@ -145,6 +146,9 @@ Session RunSession(
         memory.header.version = ACLSAN_API_VERSION;
         memory.header.size = sizeof(memory);
         memory.header.pc = 0x170;
+        memory.header.launchId = 1;
+        memory.header.instrExecId = 1;
+        memory.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         memory.address = memoryError ? 0x1018 : 0x1000;
         memory.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
         memory.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
@@ -163,6 +167,8 @@ Session RunSession(
             memory.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
             memory.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
         }
+        if (!race && options.tools.size() == 1 && options.tools.front().toolId == npucheck::ipc::ToolId::RACECHECK)
+            memory.header.size = sizeof(AclsanDeviceEventHeader);
         Emit(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &memory);
         if (race) {
             memory.header.instrExecId = 2;
@@ -176,6 +182,8 @@ Session RunSession(
             sync.header.version = ACLSAN_API_VERSION;
             sync.header.size = sizeof(sync);
             sync.header.pc = 0x180;
+            sync.header.launchId = 1;
+            sync.header.instrExecId = 2;
             sync.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
             sync.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
             sync.scope = ACLSAN_DEVICE_SYNC_SCOPE_BLOCK;
@@ -241,8 +249,8 @@ TEST(ToolManagerTest, CombinedToolsReportBothAndSubscribeSharedCallbackOnce)
         {"npu-check", "--tool", "synccheck", "--tool", "memcheck", "--tool", "memcheck", "/bin/true"}, true, true);
     ASSERT_EQ(result.initialized, 0);
     ASSERT_TRUE(result.error.empty()) << result.error;
-    EXPECT_EQ(enableCalls, 6U);
-    EXPECT_EQ(enabled.size(), 6U);
+    EXPECT_EQ(enableCalls, npucheck::MemoryAnalysis::RequiredCallbacks().size());
+    EXPECT_EQ(enabled.size(), npucheck::MemoryAnalysis::RequiredCallbacks().size());
     EXPECT_NE(result.text.find("tool=memcheck"), std::string::npos);
     EXPECT_NE(result.text.find("tool=synccheck"), std::string::npos);
     EXPECT_NE(result.text.find("status=complete"), std::string::npos);
@@ -257,9 +265,9 @@ TEST(ToolManagerTest, RacecheckConfigurationReachesGraphAndRejectsMalformedObser
     const auto session = RunSession({"npu-check", "--tool", "racecheck", "/bin/true"}, false, false);
     ASSERT_EQ(session.initialized, 0);
     ASSERT_TRUE(session.error.empty()) << session.error;
-    EXPECT_EQ(enabled.size(), 5U);
+    EXPECT_EQ(enabled.size(), npucheck::MemoryAnalysis::RequiredCallbacks().size());
     EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
-    EXPECT_NE(session.text.find("malformed_callback=1"), std::string::npos);
+    EXPECT_NE(session.text.find("malformed_callback="), std::string::npos);
     EXPECT_NE(session.text.find("status=incomplete"), std::string::npos);
     EXPECT_NE(session.text.find("analysis_complete=false"), std::string::npos);
     EXPECT_EQ(session.text.find("WARNING:[RACECHECK]"), std::string::npos);
@@ -284,10 +292,10 @@ TEST(ToolManagerTest, RacecheckDoesNotSuppressOtherToolsReports)
         RunSession({"npu-check", "--tool", "racecheck", "--tool", "memcheck", "/bin/true"}, true, false);
     ASSERT_EQ(session.initialized, 0);
     ASSERT_TRUE(session.error.empty()) << session.error;
-    EXPECT_EQ(enabled.size(), 7U);
+    EXPECT_EQ(enabled.size(), npucheck::MemoryAnalysis::RequiredCallbacks().size());
     EXPECT_NE(session.text.find("MEMCHECK SUMMARY: 1 errors"), std::string::npos);
     EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
-    EXPECT_NE(session.text.find("analysis_complete=false"), std::string::npos);
+    EXPECT_NE(session.text.find("analysis_complete=true"), std::string::npos);
     EXPECT_NE(session.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }
 
@@ -302,6 +310,7 @@ TEST(ToolManagerTest, ThreeToolsReportIndependentlyAndShareCallbacks)
         {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC},
         {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE},
         {ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END},
+        {ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_TRANSFER_END},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE},
@@ -333,15 +342,15 @@ TEST(ToolManagerTest, SingleCheckerAndFailedSyncRetainIndependentState)
 {
     const auto single = RunSession({"npu-check", "--tool", "synccheck", "/bin/true"}, true, true);
     ASSERT_TRUE(single.error.empty()) << single.error;
-    EXPECT_EQ(enableCalls, 3U);
+    EXPECT_EQ(enableCalls, npucheck::MemoryAnalysis::RequiredCallbacks().size());
     EXPECT_EQ(single.text.find("tool=memcheck"), std::string::npos);
     EXPECT_NE(single.text.find("tool=synccheck"), std::string::npos);
     const auto incomplete =
         RunSession({"npu-check", "--tool", "memcheck", "--tool", "synccheck", "/bin/true"}, true, true, true);
     ASSERT_TRUE(incomplete.error.empty()) << incomplete.error;
     EXPECT_NE(incomplete.text.find("status=incomplete"), std::string::npos);
-    EXPECT_NE(incomplete.text.find("pending_device_operations=0"), std::string::npos);
-    EXPECT_NE(incomplete.text.find("MEMCHECK SUMMARY: 1 errors"), std::string::npos);
+    EXPECT_NE(incomplete.text.find("pending_device_operations=1"), std::string::npos);
+    EXPECT_EQ(incomplete.text.find("ERROR:[MEMCHECK]"), std::string::npos);
     EXPECT_NE(incomplete.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }
 

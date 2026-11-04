@@ -453,13 +453,26 @@ aclError aclrtMemcpyHook(
     void* destination, size_t capacity, const void* source, size_t count, aclrtMemcpyKind kind) noexcept
 {
     const auto original = GetOriginalRuntimeFunction<aclrtMemcpyFunc>(ACL_RT_API_aclrtMemcpy, "aclrtMemcpy");
-    if (kind != ACL_MEMCPY_HOST_TO_DEVICE) {
+    if (kind != ACL_MEMCPY_HOST_TO_DEVICE && kind != ACL_MEMCPY_DEVICE_TO_HOST && kind != ACL_MEMCPY_DEVICE_TO_DEVICE)
         return original(destination, capacity, source, count, kind);
-    }
     uint32_t deviceId = 0;
     const bool hasDevice = GetCurrentDeviceId(deviceId);
     const aclError result = original(destination, capacity, source, count, kind);
-    ReportHostWrite("aclrtMemcpy", result, destination, count, hasDevice, deviceId);
+    const auto transferKind = kind == ACL_MEMCPY_HOST_TO_DEVICE ? ACLSAN_MEMORY_TRANSFER_HOST_TO_DEVICE :
+                              kind == ACL_MEMCPY_DEVICE_TO_HOST ? ACLSAN_MEMORY_TRANSFER_DEVICE_TO_HOST :
+                                                                  ACLSAN_MEMORY_TRANSFER_DEVICE_TO_DEVICE;
+    const AclsanMemoryTransferData transfer{
+        MakeCallbackCommonData("aclrtMemcpy", hasDevice ? result : ACL_ERROR_FAILURE, sizeof(AclsanMemoryTransferData)),
+        source,
+        destination,
+        count,
+        deviceId,
+        transferKind};
+    aclsan::AclsanCallbackDispatcher::DispatchMemoryTransfer(transfer);
+    // Old consumers still receive their H2D-only notification. The unified
+    // consumer uses TRANSFER_END for memcpy and WRITE_END for memset.
+    if (kind == ACL_MEMCPY_HOST_TO_DEVICE)
+        ReportHostWrite("aclrtMemcpy", result, destination, count, hasDevice, deviceId);
     return result;
 }
 

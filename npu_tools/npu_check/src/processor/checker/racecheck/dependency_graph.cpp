@@ -7,22 +7,43 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+
 #include "checker/racecheck/dependency_graph.h"
-
-#include "acl_san/aclsan_api.h"
 #include "device_instr/common/instruction_id.h"
-
 #include <algorithm>
 #include <limits>
 #include <optional>
-#include <string>
-#include <tuple>
+#include <set>
 #include <utility>
 
-namespace npucheck {
+namespace npucheck::race {
 namespace {
-using namespace race;
-
+constexpr uint32_t DAV3510_BLOCKS_PER_DIE = 54U;
+constexpr uint32_t DAV3510_PHYSICAL_BLOCK_LIMIT = 2U * DAV3510_BLOCKS_PER_DIE;
+constexpr uint32_t DAV3510_CUBE_GROUPS_PER_DIE = 18U;
+constexpr uint32_t DAV3510_VECTOR_SUBBLOCKS_PER_GROUP = 2U;
+constexpr uint32_t CROSS_CORE_MODE_SAME_PIPE = 0U;
+constexpr uint32_t CROSS_CORE_MODE_VECTOR = 1U;
+constexpr uint32_t CROSS_CORE_MODE_CROSS_TYPE = 2U;
+constexpr uint32_t CROSS_CORE_MODE_RECEIVER_FLAG = 4U;
+constexpr uint32_t RECEIVER_FLAG_SELECTOR_SHIFT = 4U;
+constexpr uint32_t RECEIVER_FLAG_SELECTOR_MASK = 1U;
+bool IsSupportedMemorySpace(AclsanDeviceMemorySpace space)
+{
+    switch (space) {
+        case ACLSAN_DEVICE_MEMORY_SPACE_GM:
+        case ACLSAN_DEVICE_MEMORY_SPACE_UB:
+        case ACLSAN_DEVICE_MEMORY_SPACE_L1:
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0B:
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
+        case ACLSAN_DEVICE_MEMORY_SPACE_BT:
+        case ACLSAN_DEVICE_MEMORY_SPACE_FB:
+            return true;
+        default:
+            return false;
+    }
+}
 bool SameHeader(const AclsanDeviceEventHeader& a, const AclsanDeviceEventHeader& b)
 {
     return Key(a) == Key(b) && a.launchId == b.launchId && a.pc == b.pc && a.siteId == b.siteId &&
@@ -68,6 +89,8 @@ bool SameSync(const AclsanDeviceSyncData& a, const AclsanDeviceSyncData& b)
            std::tie(a.syncKind, a.action, a.scope, a.srcPipe, a.dstPipe, a.mode, a.objectId) ==
                std::tie(b.syncKind, b.action, b.scope, b.srcPipe, b.dstPipe, b.mode, b.objectId);
 }
+// Physical topology of the supported dav-3510 target. Logical blockId is a
+// launch scheduling identity and must not be used as a physical group index.
 struct CorePosition {
     uint32_t die;
     uint32_t group;
@@ -77,50 +100,41 @@ std::optional<CorePosition> Position3510(const Domain& domain)
 {
     const auto type = std::get<1>(domain);
     const auto physical = std::get<3>(domain);
-    const auto local = physical % 54U;
-    if (physical >= 108U)
+    const auto local = physical % DAV3510_BLOCKS_PER_DIE;
+    if (physical >= DAV3510_PHYSICAL_BLOCK_LIMIT)
         return std::nullopt;
-    if (type == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE && local < 18U)
-        return CorePosition{physical / 54U, local, 0U};
-    if (type == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR && local >= 18U)
-        return CorePosition{physical / 54U, (local - 18U) / 2U, (local - 18U) % 2U};
+    if (type == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE && local < DAV3510_CUBE_GROUPS_PER_DIE)
+        return CorePosition{physical / DAV3510_BLOCKS_PER_DIE, local, 0U};
+    if (type == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR && local >= DAV3510_CUBE_GROUPS_PER_DIE)
+        return CorePosition{
+            physical / DAV3510_BLOCKS_PER_DIE,
+            (local - DAV3510_CUBE_GROUPS_PER_DIE) / DAV3510_VECTOR_SUBBLOCKS_PER_GROUP,
+            (local - DAV3510_CUBE_GROUPS_PER_DIE) % DAV3510_VECTOR_SUBBLOCKS_PER_GROUP};
     return std::nullopt;
 }
+// Whether this sender contributes to a receiver's hardware counter. Mode 4
+// uses the receiver's flag: C flags 16..31 select V1; V flags are always 0..15.
 bool CrossParticipant(uint32_t mode, const Domain& sender, const Domain& receiver, uint64_t receiverFlag)
 {
     if (std::get<0>(sender) != std::get<0>(receiver))
         return false;
     const auto st = std::get<1>(sender), rt = std::get<1>(receiver);
-    if (mode == ACLSAN_DEVICE_SYNC_MODE_GLOBAL)
+    if (mode == CROSS_CORE_MODE_SAME_PIPE)
         return st == rt;
     const auto sp = Position3510(sender), rp = Position3510(receiver);
     if (!sp || !rp || sp->die != rp->die || sp->group != rp->group)
         return false;
-    if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV)
+    if (mode == CROSS_CORE_MODE_VECTOR)
         return st == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR && st == rt;
-    if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV)
+    if (mode == CROSS_CORE_MODE_CROSS_TYPE)
         return st != rt;
-    if (mode == ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV)
+    if (mode == CROSS_CORE_MODE_RECEIVER_FLAG)
         return st != rt &&
-               (rt == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR || sp->subblock == ((receiverFlag >> 4U) & 1U));
+               (rt == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR ||
+                sp->subblock == ((receiverFlag >> RECEIVER_FLAG_SELECTOR_SHIFT) & RECEIVER_FLAG_SELECTOR_MASK));
     return false;
 }
-bool IsSupportedMemorySpace(uint32_t space)
-{
-    switch (space) {
-        case ACLSAN_DEVICE_MEMORY_SPACE_GM:
-        case ACLSAN_DEVICE_MEMORY_SPACE_UB:
-        case ACLSAN_DEVICE_MEMORY_SPACE_L1:
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0B:
-        case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
-        case ACLSAN_DEVICE_MEMORY_SPACE_BT:
-        case ACLSAN_DEVICE_MEMORY_SPACE_FB:
-            return true;
-        default:
-            return false;
-    }
-}
+} // namespace
 class DependencyGraphBuilder {
     using Access = DependencyGraph::Access;
     struct Event {
@@ -147,11 +161,27 @@ class DependencyGraphBuilder {
         size_t consumed = 0;
     };
     std::map<CrossFlag, CrossCounter> crossCounters;
+    // GET/RLS BUF is the device-level representation of a Mutex. A mutex is
+    // shared by all supported pipes in one execution domain. Only one GET may
+    // be active for a mutex, while GET/RLS itself must pair on the same pipe,
+    // buffer id and mode.
+    using MutexKey = std::pair<Domain, uint64_t>;
+    struct MutexGet {
+        size_t node;
+        uint32_t pipe;
+        uint32_t mode;
+    };
+    struct MutexState {
+        std::map<uint32_t, size_t> releases;
+        std::optional<MutexGet> get;
+    };
+    std::map<MutexKey, MutexState> mutexes;
     using Pipe = std::pair<Domain, uint32_t>;
     std::vector<AclsanDeviceMemoryAccessData>& memory;
     std::vector<AclsanDeviceSyncData>& sync;
     const std::map<Instruction, std::set<uint32_t>>& skippedFragments;
     std::set<std::string>& reasons;
+    const std::vector<AclsanDeviceRegisterStateData>& registers;
     const Limits& limits_;
     HappensBeforeGraph& graph;
     std::map<Instruction, Event> events;
@@ -165,34 +195,34 @@ class DependencyGraphBuilder {
     std::map<Pipe, size_t> lastOrdered;
     bool graphExhausted = false;
     size_t joinNodes = 0;
+    size_t comparisons = 0;
 
 public:
     DependencyGraphBuilder(
         std::vector<AclsanDeviceMemoryAccessData>& memoryData, std::vector<AclsanDeviceSyncData>& syncData,
         const std::map<Instruction, std::set<uint32_t>>& skipped, const Limits& limits, std::set<std::string>& failures,
-        DependencyGraph& output, const std::vector<AclsanDeviceRegisterStateData>& registers)
+        DependencyGraph& output, const std::vector<AclsanDeviceRegisterStateData>& registerData)
         : memory(memoryData),
           sync(syncData),
           skippedFragments(skipped),
           reasons(failures),
+          registers(registerData),
           limits_(limits),
           graph(output.graph),
           accesses(output.accesses)
-    {
-        unitResets = UnitFlagResets(registers, reasons);
-    }
+    {}
 
     void Run()
     {
         NormalizeEvents();
+        unitResets = UnitFlagResets(registers, reasons);
         ExpandUnitFlagAccesses();
         LinkRemoteFixpipeEndpoints();
         RouteCrossCoreNotifications();
         BuildNotificationTokens();
         BuildLocalEdges();
         ResolveCrossCoreWaits();
-        if (!graph.Seal(reasons.empty()))
-            reasons.insert("incomplete_sync_graph");
+        SealGraph();
     }
 
 private:
@@ -220,7 +250,7 @@ private:
                 continue;
             }
             auto& count = counts[key];
-            if (count.first && count.first != a.accessCount)
+            if (count.first != 0 && count.first != a.accessCount)
                 reasons.insert("access_count_mismatch");
             count.first = a.accessCount;
             count.second.insert(a.accessIndex);
@@ -248,7 +278,9 @@ private:
                 reasons.insert("owner_mapping_unknown");
             }
             if (a.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
-                a.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD || !IsSupportedMemorySpace(a.memorySpace)) {
+                a.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX ||
+                a.memorySpace > ACLSAN_DEVICE_MEMORY_SPACE_FB ||
+                !IsSupportedMemorySpace(static_cast<AclsanDeviceMemorySpace>(a.memorySpace))) {
                 reasons.insert("access_coverage_unknown");
             } else if (!Normalize(a, limits_.segments - segments, access.ranges)) {
                 reasons.insert("invalid_or_excessive_layout");
@@ -374,6 +406,26 @@ private:
         }
     }
 
+    void PartitionUnitRange(UnitPartition& partition, const Access& access, size_t start, const Interval& range)
+    {
+        const auto& a = access.data;
+        for (uint64_t begin = range.begin; begin < range.end;) {
+            const auto& boundaries = partition.boundaries.at(DomainOf(a.header));
+            const auto next = boundaries.upper_bound(begin / unitBytes);
+            const uint64_t end = next == boundaries.end() || *next > UINT64_MAX / unitBytes ?
+                                     range.end :
+                                     std::min(range.end, *next * unitBytes);
+            const uint64_t length = end - begin;
+            AddUnitFragment(partition, access, start, {Interval{begin, begin + length}}, true);
+            begin += length;
+            if (graphExhausted || partition.expanded.size() >= limits_.segments) {
+                if (begin < range.end)
+                    reasons.insert("unit_flag_budget");
+                break;
+            }
+        }
+    }
+
     void PartitionUnitAccesses(UnitPartition& partition)
     {
         for (const auto& access : accesses) {
@@ -402,23 +454,53 @@ private:
                 continue;
             }
             for (const auto& range : access.ranges) {
-                for (uint64_t begin = range.begin; begin < range.end;) {
-                    const auto& boundaries = partition.boundaries.at(DomainOf(a.header));
-                    const auto next = boundaries.upper_bound(begin / unitBytes);
-                    const uint64_t end = next == boundaries.end() || *next > UINT64_MAX / unitBytes ?
-                                             range.end :
-                                             std::min(range.end, *next * unitBytes);
-                    const uint64_t length = end - begin;
-                    AddUnitFragment(partition, access, start->second, {Interval{begin, begin + length}}, true);
-                    begin += length;
-                    if (graphExhausted || partition.expanded.size() >= limits_.segments) {
-                        if (begin < range.end)
-                            reasons.insert("unit_flag_budget");
-                        break;
-                    }
-                }
+                PartitionUnitRange(partition, access, start->second, range);
             }
         }
+    }
+
+    void MatchUnitQueue(const UnitQueues& q)
+    {
+        size_t w = 0, r = 0;
+        std::optional<size_t> released;
+        while (w < q.writes.size()) {
+            std::optional<size_t> published;
+            while (w < q.writes.size()) {
+                const auto current = q.writes[w++];
+                if (released)
+                    AddEdge(*released, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                if (current.mode == UNIT_FLAG_MODE_END) {
+                    published = current.node;
+                    break;
+                }
+            }
+            if (!published) {
+                if (r < q.reads.size())
+                    reasons.insert("unit_flag_missing_publish");
+                break;
+            }
+            released.reset();
+            std::optional<size_t> previousRead;
+            while (r < q.reads.size()) {
+                const auto current = q.reads[r++];
+                AddEdge(*published, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                // Hardware completes the preceding L0C read/flag action before
+                // the next FIX instruction's unit action. This does not order GM writes.
+                if (previousRead)
+                    AddEdge(*previousRead, current.node, HappensBeforeGraph::Reason::UnitFlag);
+                previousRead = current.node;
+                if (current.mode == UNIT_FLAG_MODE_END) {
+                    released = current.node;
+                    break;
+                }
+            }
+            if (!released && w < q.writes.size()) {
+                reasons.insert("unit_flag_missing_release");
+                break;
+            }
+        }
+        if (r < q.reads.size())
+            reasons.insert("unit_flag_missing_publish");
     }
 
     void MatchUnitFlags(const UnitPartition& partition)
@@ -426,49 +508,8 @@ private:
         // Match generations independently in each physical L0C unit. Callback
         // interleaving across M and FIX is not ordering evidence. Mode 2 holds
         // ownership; only mode 3 hands the unit to the opposite pipeline.
-        for (const auto& item : partition.units) {
-            const auto& q = item.second;
-            size_t w = 0, r = 0;
-            std::optional<size_t> released;
-            while (w < q.writes.size()) {
-                std::optional<size_t> published;
-                while (w < q.writes.size()) {
-                    const auto current = q.writes[w++];
-                    if (released)
-                        AddEdge(*released, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                    if (current.mode == UNIT_FLAG_MODE_END) {
-                        published = current.node;
-                        break;
-                    }
-                }
-                if (!published) {
-                    if (r < q.reads.size())
-                        reasons.insert("unit_flag_missing_publish");
-                    break;
-                }
-                released.reset();
-                std::optional<size_t> previousRead;
-                while (r < q.reads.size()) {
-                    const auto current = q.reads[r++];
-                    AddEdge(*published, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                    // Hardware completes the preceding L0C read/flag action before
-                    // the next FIX instruction's unit action. This does not order GM writes.
-                    if (previousRead)
-                        AddEdge(*previousRead, current.node, HappensBeforeGraph::Reason::UnitFlag);
-                    previousRead = current.node;
-                    if (current.mode == UNIT_FLAG_MODE_END) {
-                        released = current.node;
-                        break;
-                    }
-                }
-                if (!released && w < q.writes.size()) {
-                    reasons.insert("unit_flag_missing_release");
-                    break;
-                }
-            }
-            if (r < q.reads.size())
-                reasons.insert("unit_flag_missing_publish");
-        }
+        for (const auto& item : partition.units)
+            MatchUnitQueue(item.second);
     }
 
     void ExpandUnitFlagAccesses()
@@ -504,6 +545,23 @@ private:
         }
     }
 
+    void RecordNotification(
+        const AclsanDeviceSyncData& s, const Domain& receiver, uint64_t receiverFlag, size_t node,
+        const std::set<Domain>& domains)
+    {
+        auto& counter = crossCounters[{receiver, s.mode == CROSS_CORE_MODE_RECEIVER_FLAG, receiverFlag}];
+        auto [streamIt, inserted] = counter.modes.try_emplace(s.mode);
+        auto& stream = streamIt->second;
+        if (inserted) {
+            // A notification requires every active participant in this
+            // mode's scope. A missing SET must not shrink that scope.
+            for (const auto& peer : domains)
+                if (CrossParticipant(s.mode, peer, receiver, receiverFlag))
+                    stream.senders[peer];
+        }
+        stream.senders[DomainOf(s.header)].push_back(node);
+    }
+
     void RouteCrossCoreNotifications()
     {
         // Route notifications to actual receiver counters before adding HB edges.
@@ -521,13 +579,13 @@ private:
             if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK)
                 continue;
             const auto sender = DomainOf(s.header);
-            const bool intra = s.mode == ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
+            const bool intra = s.mode == CROSS_CORE_MODE_RECEIVER_FLAG;
             const bool cube = s.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
             const auto flag = s.objectId & (intra && cube ? 31U : 15U);
             if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE ||
-                (s.mode != ACLSAN_DEVICE_SYNC_MODE_GLOBAL && s.mode != ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV &&
-                 s.mode != ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV && s.mode != ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV) ||
-                (s.mode != ACLSAN_DEVICE_SYNC_MODE_GLOBAL && !Position3510(sender))) {
+                (s.mode != CROSS_CORE_MODE_SAME_PIPE && s.mode != CROSS_CORE_MODE_VECTOR &&
+                 s.mode != CROSS_CORE_MODE_CROSS_TYPE && s.mode != CROSS_CORE_MODE_RECEIVER_FLAG) ||
+                (s.mode != CROSS_CORE_MODE_SAME_PIPE && !Position3510(sender))) {
                 reasons.insert("unsupported_cross_core_topology_or_mode");
                 continue;
             }
@@ -555,17 +613,7 @@ private:
                     reasons.insert("graph_budget");
                     break;
                 }
-                auto& counter = crossCounters[{receiver, intra, receiverFlag}];
-                auto [streamIt, inserted] = counter.modes.try_emplace(s.mode);
-                auto& stream = streamIt->second;
-                if (inserted) {
-                    // A notification requires every active participant in this
-                    // mode's scope. A missing SET must not shrink that scope.
-                    for (const auto& peer : domains)
-                        if (CrossParticipant(s.mode, peer, receiver, receiverFlag))
-                            stream.senders[peer];
-                }
-                stream.senders[sender].push_back(e.node);
+                RecordNotification(s, receiver, receiverFlag, e.node, domains);
             }
             if (!delivered)
                 reasons.insert("pending_cross_core_set");
@@ -574,32 +622,34 @@ private:
         }
     }
 
+    void BuildStreamTokens(NotificationStream& stream)
+    {
+        size_t complete = std::numeric_limits<size_t>::max();
+        for (const auto& sender : stream.senders)
+            complete = std::min(complete, sender.second.size());
+        if (stream.senders.empty())
+            return;
+        for (size_t i = 0; i < complete; ++i) {
+            std::optional<size_t> joined;
+            std::vector<size_t> contributors;
+            for (const auto& sender : stream.senders) {
+                const auto node = sender.second[i];
+                contributors.push_back(node);
+                MergePrefix(joined, node, HappensBeforeGraph::Reason::TokenMatch);
+            }
+            // Per-core scalar SET order makes successive complete
+            // notifications in one participant stream ordered as well.
+            if (!stream.tokens.empty())
+                AddEdge(stream.tokens.back().node, *joined, HappensBeforeGraph::Reason::TokenMatch);
+            stream.tokens.push_back({*joined, std::move(contributors)});
+        }
+    }
+
     void BuildNotificationTokens()
     {
-        for (auto& entry : crossCounters) {
-            for (auto& mode : entry.second.modes) {
-                auto& stream = mode.second;
-                size_t complete = std::numeric_limits<size_t>::max();
-                for (const auto& sender : stream.senders)
-                    complete = std::min(complete, sender.second.size());
-                if (stream.senders.empty())
-                    continue;
-                for (size_t i = 0; i < complete; ++i) {
-                    std::optional<size_t> joined;
-                    std::vector<size_t> contributors;
-                    for (const auto& sender : stream.senders) {
-                        const auto node = sender.second[i];
-                        contributors.push_back(node);
-                        MergePrefix(joined, node, HappensBeforeGraph::Reason::TokenMatch);
-                    }
-                    // Per-core scalar SET order makes successive complete
-                    // notifications in one participant stream ordered as well.
-                    if (!stream.tokens.empty())
-                        AddEdge(stream.tokens.back().node, *joined, HappensBeforeGraph::Reason::TokenMatch);
-                    stream.tokens.push_back({*joined, std::move(contributors)});
-                }
-            }
-        }
+        for (auto& entry : crossCounters)
+            for (auto& mode : entry.second.modes)
+                BuildStreamTokens(mode.second);
     }
 
     void BuildLocalEdges()
@@ -610,9 +660,6 @@ private:
         for (const auto& pair : events) {
             if (graphExhausted)
                 break;
-            // This is an AIC-issued FIX completion with AIV storage ownership,
-            // not an instruction issued in the AIV pipeline. An AIV-local barrier
-            // cannot acquire it; ordering requires the issuing AIC's notification.
             if (remoteFixpipeOrigins.count(pair.first) != 0)
                 continue;
             const Domain domain = std::get<0>(pair.first);
@@ -655,10 +702,14 @@ private:
                 }
                 continue;
             }
+            if (s.syncKind == ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF) {
+                BuildMutexEdges(domain, e, s);
+                continue;
+            }
             if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || !ValidPipe(s.srcPipe) || !ValidPipe(s.dstPipe) ||
-                (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != ACLSAN_DEVICE_SYNC_MODE_GLOBAL) ||
+                (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != CROSS_CORE_MODE_SAME_PIPE) ||
                 (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE && s.srcPipe == s.dstPipe) ||
-                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV)) {
+                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > CROSS_CORE_MODE_RECEIVER_FLAG)) {
                 reasons.insert("sync_coverage_unknown");
                 continue;
             }
@@ -718,6 +769,127 @@ private:
         }
         if (!flags.empty())
             reasons.insert("pending_set");
+        for (const auto& entry : mutexes)
+            if (entry.second.get)
+                reasons.insert("pending_get_buf");
+    }
+
+    void BuildMutexEdges(const Domain& domain, const Event& event, const AclsanDeviceSyncData& sync)
+    {
+        if (sync.scope != ACLSAN_DEVICE_SYNC_SCOPE_PIPE || !ValidPipe(sync.dstPipe) || sync.mode > 1U ||
+            sync.objectId > 31U) {
+            reasons.insert("sync_coverage_unknown");
+            return;
+        }
+        auto& state = mutexes[{domain, sync.objectId}];
+        const uint32_t pipe = sync.dstPipe;
+        if (sync.action == ACLSAN_DEVICE_SYNC_ACTION_GET) {
+            if (state.get) {
+                reasons.insert("duplicate_get_buf");
+                return;
+            }
+            // BLOCK mode waits for every pipe's preceding release. NON_BLOCK
+            // deliberately contributes no acquire edge because the API does
+            // not block the selected pipe in that mode.
+            if (sync.mode == 0) {
+                for (const auto& release : state.releases)
+                    AddEdge(release.second, event.node, HappensBeforeGraph::Reason::TokenMatch);
+            }
+            if (sync.mode == 0)
+                MergePrefix(acquired[{domain, pipe}], event.node, HappensBeforeGraph::Reason::AcquireSuffix);
+            state.get = MutexGet{event.node, pipe, sync.mode};
+            return;
+        }
+        if (sync.action != ACLSAN_DEVICE_SYNC_ACTION_RELEASE) {
+            reasons.insert("invalid_sync_action");
+            return;
+        }
+        if (!state.get || state.get->pipe != pipe || state.get->mode != sync.mode) {
+            reasons.insert("unmatched_release_buf");
+            return;
+        }
+        if (const auto prior = prefix[{domain, pipe}])
+            AddEdge(*prior, event.node, HappensBeforeGraph::Reason::PublishPrefix);
+        if (sync.mode == 1) {
+            for (const auto& release : state.releases)
+                if (release.first != pipe)
+                    AddEdge(release.second, event.node, HappensBeforeGraph::Reason::TokenMatch);
+        }
+        AddEdge(state.get->node, event.node, HappensBeforeGraph::Reason::TokenMatch);
+        state.get.reset();
+        state.releases[pipe] = event.node;
+        // The release waits for the pipe prefix (and, in NON_BLOCK mode,
+        // preceding releases), so its suffix must observe that completion.
+        acquired[{domain, pipe}] = event.node;
+        prefix[{domain, pipe}] = event.node;
+    }
+
+    std::vector<NotificationStream*> PendingWaitCandidates(CrossCounter& counter, size_t wait)
+    {
+        std::vector<NotificationStream*> candidates;
+        for (auto& mode : counter.modes) {
+            auto& stream = mode.second;
+            if (stream.consumed == stream.tokens.size())
+                continue;
+            bool future = false;
+            for (auto source : stream.tokens[stream.consumed].contributors) {
+                const auto path = graph.PrecedesDuringBuild(wait, source);
+                if (!path) {
+                    reasons.insert("graph_query_budget");
+                    break;
+                }
+                future |= *path;
+            }
+            if (!future)
+                candidates.push_back(&stream);
+        }
+        return candidates;
+    }
+
+    bool NotificationPrecedes(const Notification& notification, size_t other)
+    {
+        for (auto source : notification.contributors) {
+            const auto path = graph.PrecedesDuringBuild(source, other);
+            if (!path)
+                reasons.insert("graph_query_budget");
+            if (!path || !*path)
+                return false;
+        }
+        return true;
+    }
+
+    NotificationStream* SelectFirstNotification(const std::vector<NotificationStream*>& candidates)
+    {
+        for (auto* candidate : candidates) {
+            bool first = true;
+            for (auto* other : candidates) {
+                if (candidate == other)
+                    continue;
+                if (!NotificationPrecedes(
+                        candidate->tokens[candidate->consumed], other->tokens[other->consumed].node)) {
+                    first = false;
+                    break;
+                }
+            }
+            if (first)
+                return candidate;
+        }
+        return nullptr;
+    }
+
+    bool ResolveCounterWait(CrossCounter& counter)
+    {
+        if (counter.consumed == counter.waits.size())
+            return false;
+        const auto wait = counter.waits[counter.consumed];
+        const auto candidates = PendingWaitCandidates(counter, wait);
+        auto* selected = SelectFirstNotification(candidates);
+        if (selected && reasons.empty()) {
+            AddEdge(selected->tokens[selected->consumed++].node, wait, HappensBeforeGraph::Reason::TokenMatch);
+            ++counter.consumed;
+            return true;
+        }
+        return false;
     }
 
     void ResolveCrossCoreWaits()
@@ -729,57 +901,9 @@ private:
         bool progress = true;
         while (progress && reasons.empty()) {
             progress = false;
-            for (auto& entry : crossCounters) {
-                auto& counter = entry.second;
-                if (counter.consumed == counter.waits.size())
-                    continue;
-                const auto wait = counter.waits[counter.consumed];
-                std::vector<NotificationStream*> candidates;
-                for (auto& mode : counter.modes) {
-                    auto& stream = mode.second;
-                    if (stream.consumed == stream.tokens.size())
-                        continue;
-                    bool future = false;
-                    for (auto source : stream.tokens[stream.consumed].contributors) {
-                        const auto path = graph.PrecedesDuringBuild(wait, source);
-                        if (!path) {
-                            reasons.insert("graph_query_budget");
-                            break;
-                        }
-                        future |= *path;
-                    }
-                    if (!future)
-                        candidates.push_back(&stream);
-                }
-                NotificationStream* selected = nullptr;
-                for (auto* candidate : candidates) {
-                    bool first = true;
-                    for (auto* other : candidates) {
-                        if (candidate == other)
-                            continue;
-                        for (auto source : candidate->tokens[candidate->consumed].contributors) {
-                            const auto path = graph.PrecedesDuringBuild(source, other->tokens[other->consumed].node);
-                            if (!path)
-                                reasons.insert("graph_query_budget");
-                            if (!path || !*path) {
-                                first = false;
-                                break;
-                            }
-                        }
-                        if (!first)
-                            break;
-                    }
-                    if (first) {
-                        selected = candidate;
-                        break;
-                    }
-                }
-                if (selected && reasons.empty()) {
-                    AddEdge(selected->tokens[selected->consumed++].node, wait, HappensBeforeGraph::Reason::TokenMatch);
-                    ++counter.consumed;
+            for (auto& entry : crossCounters)
+                if (ResolveCounterWait(entry.second))
                     progress = true;
-                }
-            }
         }
         for (const auto& entry : crossCounters) {
             const auto& counter = entry.second;
@@ -793,15 +917,26 @@ private:
                                                                       "ambiguous_cross_core_notification_order");
         }
     }
-};
-} // namespace
 
-void race::BuildDependencyGraph(
+    bool SealGraph()
+    {
+        const bool graphComplete = graph.Seal(reasons.empty());
+        if (!graphComplete) {
+            reasons.insert("incomplete_sync_graph");
+            return false;
+        }
+
+        return true;
+    }
+};
+
+void BuildDependencyGraph(
     std::vector<AclsanDeviceMemoryAccessData>& memory, std::vector<AclsanDeviceSyncData>& sync,
     const std::map<Instruction, std::set<uint32_t>>& skippedFragments, const Limits& limits,
     std::set<std::string>& reasons, DependencyGraph& output,
     const std::vector<AclsanDeviceRegisterStateData>& registers)
 {
+    output.graph.BeginAnalysis(limits.analysisWork);
     DependencyGraphBuilder(memory, sync, skippedFragments, limits, reasons, output, registers).Run();
-} // namespace
-} // namespace npucheck
+}
+} // namespace npucheck::race

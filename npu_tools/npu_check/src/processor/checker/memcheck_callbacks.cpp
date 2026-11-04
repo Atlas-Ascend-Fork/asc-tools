@@ -16,6 +16,8 @@ namespace npucheck {
 const std::vector<CallbackSpec>& Memcheck::GetSubscribedID() const
 {
     static const std::vector<CallbackSpec> callbacks{
+        {ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END},
+        {ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_TRANSFER_END},
         {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC},
         {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS},
@@ -27,7 +29,11 @@ const std::vector<CallbackSpec>& Memcheck::GetSubscribedID() const
 bool Memcheck::OnCallback(
     AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
 {
-    if (domain == ACLSAN_CB_DOMAIN_RESOURCE) {
+    if (domain == ACLSAN_CB_DOMAIN_MEMORY) {
+        const auto& common = *static_cast<const AclsanCallbackCommonData*>(data);
+        if (!analysis_->IsLegacyMemcpy(cbid, common))
+            OnHostMemory(common, reports);
+    } else if (domain == ACLSAN_CB_DOMAIN_RESOURCE) {
         const auto* event = static_cast<const AclsanResourceData*>(data);
         if (cbid == ACLSAN_CBID_RESOURCE_MEMORY_ALLOC) {
             OnAllocation(*event);
@@ -59,7 +65,7 @@ bool Memcheck::AnalysisComplete() const
 {
     const auto stats = Stats();
     return stats.pendingDeviceOperations == 0 && stats.droppedDeviceOperations == 0 && stats.failedLaunches == 0 &&
-           stats.failedSynchronizations == 0;
+           stats.failedSynchronizations == 0 && stats.incompleteHostOperations == 0;
 }
 std::string Memcheck::Summary() const
 {
@@ -72,7 +78,9 @@ std::string Memcheck::Summary() const
            << " dropped_device_operations=" << stats.droppedDeviceOperations
            << " failed_launches=" << stats.failedLaunches
            << " failed_synchronizations=" << stats.failedSynchronizations;
-    output << " inexact_device_operations=" << stats.inexactDeviceOperations;
+    output << " inexact_device_operations=" << stats.inexactDeviceOperations
+           << " host_operations=" << stats.hostOperations
+           << " incomplete_host_operations=" << stats.incompleteHostOperations;
     return output.str();
 }
 } // namespace npucheck

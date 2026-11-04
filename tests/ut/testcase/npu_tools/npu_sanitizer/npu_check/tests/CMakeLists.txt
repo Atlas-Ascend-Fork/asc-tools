@@ -29,6 +29,7 @@ endif()
 
 add_executable(npu_check_unit_tests
   gtest_main.cpp log_capture.cpp
+  unified_memory_test.cpp
   allocation_registry_test.cpp
   memcheck_test.cpp
   mem_state_tracker_test.cpp
@@ -39,6 +40,7 @@ add_executable(npu_check_unit_tests
   initcheck_memory_test.cpp
   racecheck_test.cpp
   happens_before_graph_test.cpp
+  host_order_test.cpp
   memory_access_state_test.cpp
   checker_test.cpp
   report_buffer_test.cpp

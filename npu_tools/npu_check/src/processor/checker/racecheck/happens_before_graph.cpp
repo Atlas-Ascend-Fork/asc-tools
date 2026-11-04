@@ -16,6 +16,23 @@ namespace npucheck::race {
 HappensBeforeGraph::HappensBeforeGraph(size_t edgeBudget, size_t workBudget, size_t cacheBudget)
     : edgeBudget_(edgeBudget), workBudget_(workBudget), cacheBudget_(cacheBudget)
 {}
+void HappensBeforeGraph::BeginAnalysis(size_t workBudget)
+{
+    analysisWork_ = 0;
+    analysisBudget_ = workBudget;
+}
+bool HappensBeforeGraph::SpendWork(size_t& queryWork)
+{
+    if (queryWork >= workBudget_ || analysisWork_ >= analysisBudget_) {
+        return false;
+    }
+    ++queryWork;
+    ++analysisWork_;
+    if (work_ != std::numeric_limits<size_t>::max()) {
+        ++work_;
+    }
+    return true;
+}
 size_t HappensBeforeGraph::AddNode()
 {
     if (sealed_) {
@@ -49,16 +66,19 @@ std::optional<bool> HappensBeforeGraph::PrecedesDuringBuild(size_t from, size_t 
     pending_.clear();
     pending_.push_back(from);
     seen_[from] = generation_;
+    // Bound each search independently. Aggregate work is telemetry: a checker
+    // querying the shared graph must not spend another checker's search quota.
+    size_t spent = 0;
     while (!pending_.empty()) {
         const auto node = pending_.back();
         pending_.pop_back();
-        if (work_ >= workBudget_)
+        if (!SpendWork(spent)) {
             return std::nullopt;
-        ++work_; // Also bound searches through nodes with no outgoing edges.
+        }
         for (const auto& e : edges_[node]) {
-            if (work_ >= workBudget_)
+            if (!SpendWork(spent)) {
                 return std::nullopt;
-            ++work_;
+            }
             if (e.target == to)
                 return true;
             if (seen_[e.target] != generation_) {
@@ -94,6 +114,24 @@ bool HappensBeforeGraph::Seal(bool coverageComplete)
         rank_[order_[i]] = i;
     seen_.resize(edges_.size());
     pending_.reserve(edges_.size());
+    if (valid_) {
+        // Greedy path cover over the actual edges. Each node not claimed by a
+        // predecessor starts a chain; every node claims at most one successor.
+        // O(V+E), no storage beyond one flag per node.
+        std::vector<uint8_t> claimed(edges_.size(), 0);
+        size_t chains = 0;
+        for (auto node : order_) {
+            if (!claimed[node])
+                ++chains;
+            for (const auto& edge : edges_[node]) {
+                if (!claimed[edge.target]) {
+                    claimed[edge.target] = 1;
+                    break;
+                }
+            }
+        }
+        chainCount_ = chains;
+    }
     return valid_;
 }
 HappensBeforeGraph::Path HappensBeforeGraph::Reachable(size_t from, size_t to)
@@ -111,13 +149,14 @@ HappensBeforeGraph::Path HappensBeforeGraph::Reachable(size_t from, size_t to)
     pending_.push_back(from);
     seen_[from] = generation_;
     bool found = false;
+    size_t spent = 0;
     while (!pending_.empty() && !found) {
         auto node = pending_.back();
         pending_.pop_back();
         for (auto e : edges_[node]) {
-            if (work_ >= workBudget_)
+            if (!SpendWork(spent)) {
                 return Path::Unknown; // Never cache an interrupted search as false.
-            ++work_;
+            }
             if (e.target == to) {
                 found = true;
                 break;

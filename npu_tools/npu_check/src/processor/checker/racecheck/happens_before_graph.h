@@ -22,6 +22,7 @@ class HappensBeforeGraph {
 public:
     enum class Relation { Before, After, Unordered, Unknown };
     enum class Reason {
+        HostOrder,
         VectorOrder,
         PipelineOrder,
         InstructionBoundary,
@@ -43,17 +44,26 @@ public:
     // edges are still being added. nullopt means unknown, never "no path".
     std::optional<bool> PrecedesDuringBuild(size_t from, size_t to);
     Relation Compare(size_t a, size_t b);
+    // A build and each checker replay own independent work allowances. Resetting
+    // this allowance never restores missing observations or changes graph validity.
+    void BeginAnalysis(size_t workBudget);
     const std::vector<size_t>& Order() const { return order_; }
     size_t QueryWork() const { return work_; }
     size_t EdgeCount() const { return edgeCount_; }
+    // Greedy path cover size computed at Seal. It is the dimension of a future
+    // reachability index; reported for measurement only, never used for verdicts.
+    size_t ChainCount() const { return chainCount_; }
 
 private:
     enum class Path { Yes, No, Unknown };
     Path Reachable(size_t from, size_t to);
+    bool SpendWork(size_t& queryWork);
     std::vector<std::vector<Edge>> edges_;
     std::vector<size_t> order_, rank_, seen_, pending_;
     std::map<std::pair<size_t, size_t>, bool> cache_;
-    size_t edgeBudget_, workBudget_, cacheBudget_, edgeCount_ = 0, work_ = 0, generation_ = 0;
+    size_t edgeBudget_, workBudget_, cacheBudget_, edgeCount_ = 0, work_ = 0, generation_ = 0, chainCount_ = 0;
+    size_t analysisWork_ = 0;
+    size_t analysisBudget_ = static_cast<size_t>(-1);
     bool sealed_ = false;
     bool valid_ = true;
 };

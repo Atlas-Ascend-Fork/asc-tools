@@ -47,12 +47,15 @@ struct CanDispatchDeviceMemoryAccess<
     : std::true_type {};
 
 static_assert(!CanDispatchDeviceMemoryAccess<aclsan::DeviceMemoryAccessDataList>::value);
+static_assert(sizeof(AclsanMemoryTransferData) == 64);
+static_assert(std::is_same_v<decltype(AclsanMemoryTransferData::kind), AclsanMemoryTransferKind>);
 
 struct CallbackCapture {
     AclsanCallbackDomain domain = ACLSAN_CB_DOMAIN_INVALID;
     AclsanCallbackId callbackId{};
     AclsanResourceData resource{};
     AclsanMemoryWriteData memoryWrite{};
+    AclsanMemoryTransferData memoryTransfer{};
     AclsanSynchronizeData synchronize{};
     AclsanLaunchData launch{};
     std::string launchFunctionName;
@@ -1131,6 +1134,8 @@ bool CaptureInvokeCallback(AclsanCallbackDomain domain, AclsanCallbackId callbac
     ++g_callbackCapture.calls;
     if (domain == ACLSAN_CB_DOMAIN_RESOURCE) {
         g_callbackCapture.resource = *static_cast<const AclsanResourceData*>(callbackData);
+    } else if (domain == ACLSAN_CB_DOMAIN_MEMORY && callbackId == ACLSAN_CBID_MEMORY_TRANSFER_END) {
+        g_callbackCapture.memoryTransfer = *static_cast<const AclsanMemoryTransferData*>(callbackData);
     } else if (domain == ACLSAN_CB_DOMAIN_MEMORY) {
         g_callbackCapture.memoryWrite = *static_cast<const AclsanMemoryWriteData*>(callbackData);
     } else if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
@@ -1533,7 +1538,7 @@ TEST(AclsanHookCbdata, AtomicCtrlReplayPersistsAcrossSnapshotsAndRestoresMode)
     }
 }
 
-TEST(AclsanHookCbdata, HostWritesReportCompletionAndExcludeOtherCopyDirections)
+TEST(AclsanHookCbdata, SynchronousTransfersReportBothOperandsAndPreserveLegacyH2d)
 {
     aclsan_test::Boundary boundary;
     boundary.getOriginalRuntimeApi = &CaptureGetOriginalRuntimeApi;
@@ -1559,7 +1564,24 @@ TEST(AclsanHookCbdata, HostWritesReportCompletionAndExcludeOtherCopyDirections)
             EXPECT_EQ(destination[0], failure == 1 ? 0 : 7);
             EXPECT_EQ(destination[4], 0); // capacity must not replace the actual write length.
             const bool reportsWrite = operation == -1 || operation == ACL_MEMCPY_HOST_TO_DEVICE;
-            ASSERT_EQ(g_callbackCapture.calls, reportsWrite ? 1U : 0U);
+            const bool reportsTransfer = operation >= 0 && operation != ACL_MEMCPY_HOST_TO_HOST;
+            ASSERT_EQ(g_callbackCapture.calls, unsigned(reportsWrite) + unsigned(reportsTransfer));
+            if (reportsTransfer) {
+                const auto& transfer = g_callbackCapture.memoryTransfer;
+                EXPECT_EQ(transfer.common.version, ACLSAN_API_VERSION);
+                EXPECT_EQ(transfer.common.size, sizeof(transfer));
+                EXPECT_EQ(transfer.common.result, failure == 2 ? ACL_ERROR_FAILURE : g_hostWriteResult);
+                EXPECT_EQ(transfer.source, source.data());
+                EXPECT_EQ(transfer.destination, destination.data());
+                EXPECT_EQ(transfer.bytes, source.size());
+                const auto expected = operation == ACL_MEMCPY_HOST_TO_DEVICE ? ACLSAN_MEMORY_TRANSFER_HOST_TO_DEVICE :
+                                      operation == ACL_MEMCPY_DEVICE_TO_HOST ? ACLSAN_MEMORY_TRANSFER_DEVICE_TO_HOST :
+                                                                               ACLSAN_MEMORY_TRANSFER_DEVICE_TO_DEVICE;
+                EXPECT_EQ(transfer.kind, expected);
+                if (failure != 2) {
+                    EXPECT_EQ(transfer.deviceId, 3U);
+                }
+            }
             if (!reportsWrite) {
                 continue;
             }

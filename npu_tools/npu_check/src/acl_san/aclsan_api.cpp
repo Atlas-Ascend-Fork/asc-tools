@@ -80,6 +80,7 @@ struct CallbackKey {
 
 // 记录每组 domain + callback id 需要开启 Hook 的 Runtime API。
 const std::map<CallbackKey, std::vector<aclrtApiId>> CALLBACK_ROUTES = {
+    {{ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_TRANSFER_END}, {ACL_RT_API_aclrtMemcpy}},
     {{ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END}, {ACL_RT_API_aclrtMemset, ACL_RT_API_aclrtMemcpy}},
     {{ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC},
      {ACL_RT_API_aclrtMalloc, ACL_RT_API_aclrtMallocAlign32, ACL_RT_API_aclrtMallocWithCfg}},
@@ -169,7 +170,7 @@ bool AclsanSubscriber::IsValidCallbackId(AclsanCallbackDomain domain, AclsanCall
 {
     switch (domain) {
         case ACLSAN_CB_DOMAIN_MEMORY:
-            return callbackId == ACLSAN_CBID_MEMORY_WRITE_END;
+            return callbackId == ACLSAN_CBID_MEMORY_WRITE_END || callbackId == ACLSAN_CBID_MEMORY_TRANSFER_END;
         case ACLSAN_CB_DOMAIN_RESOURCE:
             return callbackId >= ACLSAN_CBID_RESOURCE_MEMORY_ALLOC && callbackId <= ACLSAN_CBID_RESOURCE_MEMORY_FREE;
         case ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION:

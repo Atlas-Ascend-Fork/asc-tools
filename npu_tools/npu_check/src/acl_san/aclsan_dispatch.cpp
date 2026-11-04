@@ -41,6 +41,11 @@ void AclsanCallbackDispatcher::DispatchResource(AclsanCallbackId cbId, const Acl
     Dispatch(ACLSAN_CB_DOMAIN_RESOURCE, cbId, &cbData, cbData.common.apiName);
 }
 
+void AclsanCallbackDispatcher::DispatchMemoryTransfer(const AclsanMemoryTransferData& data) noexcept
+{
+    Dispatch(ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_TRANSFER_END, &data, data.common.apiName);
+}
+
 void AclsanCallbackDispatcher::DispatchMemoryWrite(const AclsanMemoryWriteData& cbData) noexcept
 {
     Dispatch(ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END, &cbData, cbData.common.apiName);

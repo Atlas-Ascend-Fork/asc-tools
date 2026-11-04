@@ -78,7 +78,7 @@ TEST(CheckerTest, CallbackUnionAndIndependentTools)
 {
     auto checkers = Both();
     const auto callbacks = RequiredCallbacks(checkers);
-    EXPECT_EQ(callbacks.size(), 6U);
+    EXPECT_EQ(callbacks.size(), 8U);
     EXPECT_EQ(
         std::count_if(
             callbacks.begin(), callbacks.end(),
@@ -168,23 +168,20 @@ TEST(CheckerTest, FailedSynchronizationAnalyzesPendingRecords)
     EXPECT_NE(checkers[0]->Summary().find("pending_device_operations=0"), std::string::npos);
 }
 
-TEST(CheckerTest, CallbackMetadataIsNotRevalidated)
+TEST(CheckerTest, MalformedCallbackCannotFinalizeSynchronization)
 {
     auto checkers = Both();
     CheckerReportList reports;
     auto wait = Wait();
     wait.header.size = 1;
-    EXPECT_TRUE(Dispatch(checkers, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &wait, reports));
+    EXPECT_FALSE(Dispatch(checkers, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &wait, reports));
     auto sync = Sync();
     sync.common.version = ACLSAN_API_VERSION + 1;
-    EXPECT_TRUE(
+    EXPECT_FALSE(
         Dispatch(checkers, ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
-    ASSERT_EQ(reports.size(), 1U);
-    EXPECT_TRUE(std::holds_alternative<npucheck::NpuCheckSynccheckReport>(reports.front()));
-    for (const auto& checker : checkers) {
-        EXPECT_TRUE(checker->AnalysisComplete());
-        EXPECT_NE(checker->Summary().find("synchronizations=1"), std::string::npos);
-    }
+    EXPECT_TRUE(reports.empty());
+    EXPECT_FALSE(checkers[1]->AnalysisComplete());
+    EXPECT_NE(checkers[1]->Summary().find("synchronizations=0"), std::string::npos);
 }
 
 TEST(CallStackReportTest, MissingFramesOnlyShowsLineInformationHint)

@@ -26,17 +26,17 @@ bool Checker::IsSubscribed(AclsanCallbackDomain domain, AclsanCallbackId cbid) c
     });
 }
 
-std::unique_ptr<Checker> CreateChecker(npucheck::ipc::ToolId tool)
+std::unique_ptr<Checker> CreateChecker(npucheck::ipc::ToolId tool, std::shared_ptr<MemoryAnalysis> analysis)
 {
     switch (tool) {
         case ipc::ToolId::MEMCHECK:
-            return std::make_unique<Memcheck>();
+            return std::make_unique<Memcheck>(analysis);
         case ipc::ToolId::SYNCCHECK:
-            return std::make_unique<Synccheck>();
+            return std::make_unique<Synccheck>(analysis);
         case ipc::ToolId::RACECHECK:
-            return std::make_unique<Racechecker>();
+            return std::make_unique<Racechecker>(race::Limits{}, analysis);
         case ipc::ToolId::INITCHECK:
-            return std::make_unique<Initcheck>();
+            return std::make_unique<Initcheck>(analysis);
         default:
             return nullptr;
     }

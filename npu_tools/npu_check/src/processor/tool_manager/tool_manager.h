@@ -89,6 +89,7 @@ private:
     // callback 线程即时标准化的拥有型记录；Finalize 渲染它们以及工具级汇总。
     std::vector<npucheck::ReportRecord> reportRecords_;
     AclsanSubscriberHandle subscriber_ = nullptr;
+    std::shared_ptr<MemoryAnalysis> memoryAnalysis_;
     std::vector<std::unique_ptr<Checker>> checkers_;
     std::atomic<uint64_t> callbackCount_{0};
     uint64_t malformedCallbacks_ = 0;

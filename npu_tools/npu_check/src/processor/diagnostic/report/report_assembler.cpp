@@ -38,6 +38,9 @@ ReportAssemblyResult AssembleReport(CheckerReport& report)
                 for (const auto& [pc, role] :
                      {std::make_pair(typed.current.header.pc, ReportStackRole::RELATED_ACCESS_B),
                       std::make_pair(typed.previous.header.pc, ReportStackRole::RELATED_ACCESS_A)}) {
+                    if ((role == ReportStackRole::RELATED_ACCESS_B && typed.currentHost) ||
+                        (role == ReportStackRole::RELATED_ACCESS_A && typed.previousHost))
+                        continue;
                     auto resolved = ResolveDeviceCallStack(pc);
                     try {
                         if (role == ReportStackRole::RELATED_ACCESS_B && resolved.binaryId != 0) {

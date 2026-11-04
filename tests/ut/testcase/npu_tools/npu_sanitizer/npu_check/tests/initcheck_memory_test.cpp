@@ -186,7 +186,9 @@ TEST_F(InitcheckMemoryTest, ReadWriteChecksExistingBytesBeforeWriting)
     ASSERT_TRUE(Memory(Range(1, kA, kRead | kWrite)));
     ASSERT_TRUE(Memory(Range(2, kA, kRead)));
     Sync();
-    ASSERT_EQ(reports.size(), 2U);
+    // The failing source read is reported; a completed write initializes bytes
+    // for subsequent reads. Initialization state does not propagate value taint.
+    ASSERT_EQ(reports.size(), 1U);
     EXPECT_EQ(std::get<NpuCheckInitcheckReport>(reports.front()).common.exec.instrExecId, 1U);
 }
 
@@ -203,7 +205,9 @@ TEST_F(InitcheckMemoryTest, EveryInstructionReadPrecedesItsWrites)
     ASSERT_TRUE(Memory(read));
     ASSERT_TRUE(Memory(Range(2, kA, kRead)));
     Sync();
-    ASSERT_EQ(reports.size(), 2U);
+    // The failing source read is reported; a completed write initializes bytes
+    // for subsequent reads. Initialization state does not propagate value taint.
+    ASSERT_EQ(reports.size(), 1U);
     EXPECT_EQ(std::get<NpuCheckInitcheckReport>(reports.front()).common.exec.instrExecId, 1U);
 }
 
@@ -247,11 +251,14 @@ TEST_F(InitcheckMemoryTest, ContextSeparatesDeviceLaunchBlockAndBlockType)
 {
     Launch();
     Launch(12);
+    Launch(13);
     ASSERT_TRUE(Memory(Range(1, kA, kWrite)));
     for (unsigned variation = 0; variation < 4; ++variation) {
         auto read = Range(2, kA, kRead);
-        if (variation == 0)
+        if (variation == 0) {
             read.header.deviceId = 3;
+            read.header.launchId = 13; // Each launch belongs to exactly one device.
+        }
         if (variation == 1)
             read.header.launchId = 12;
         if (variation == 2)
@@ -699,7 +706,7 @@ TEST_F(InitcheckMemoryTest, MalformedMemoryEventSuppressesUnreliableDiagnostics)
     EXPECT_FALSE(checker.AnalysisComplete());
 }
 
-TEST_F(InitcheckMemoryTest, NonL0RegisterFailureDoesNotSuppressL0Read)
+TEST_F(InitcheckMemoryTest, RegisterFailureWithholdsMemoryDiagnosticsFromTheSharedLaunch)
 {
     Launch();
     auto source = Range(1, ACLSAN_DEVICE_MEMORY_SPACE_GM, kRead, 0, 512, ACLSAN_DEVICE_PIPE_MTE2);
@@ -708,10 +715,10 @@ TEST_F(InitcheckMemoryTest, NonL0RegisterFailureDoesNotSuppressL0Read)
     ASSERT_TRUE(Memory(source));
     ASSERT_TRUE(Memory(Range(2, kA, kRead)));
     Sync();
-    ASSERT_EQ(reports.size(), 2U);
+    ASSERT_EQ(reports.size(), 1U);
     EXPECT_EQ(
-        std::get<NpuCheckInitcheckReport>(reports[1]).common.pattern,
-        NpuCheckReportPattern::INITCHECK_UNINITIALIZED_READ);
+        std::get<NpuCheckInitcheckReport>(reports[0]).common.pattern,
+        NpuCheckReportPattern::INITCHECK_UNINITIALIZED_REGISTER_USE);
     EXPECT_FALSE(checker.AnalysisComplete());
 }
 
@@ -732,7 +739,7 @@ TEST_F(InitcheckMemoryTest, MissingL0DestinationWithRegisterErrorRemainsIncomple
     EXPECT_FALSE(checker.AnalysisComplete());
 }
 
-TEST_F(InitcheckMemoryTest, InterCoreSyncDoesNotRequireNotificationMatching)
+TEST_F(InitcheckMemoryTest, UnmatchedInterCoreWaitInvalidatesTheSharedGraph)
 {
     for (uint32_t kind :
          {ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG, ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE,
@@ -752,8 +759,8 @@ TEST_F(InitcheckMemoryTest, InterCoreSyncDoesNotRequireNotificationMatching)
         EXPECT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &data, reports));
         Memory(Range(2, kB, kRead));
         Sync();
-        ASSERT_EQ(reports.size(), 1U);
-        EXPECT_TRUE(checker.AnalysisComplete());
+        EXPECT_TRUE(reports.empty());
+        EXPECT_FALSE(checker.AnalysisComplete());
     }
 }
 

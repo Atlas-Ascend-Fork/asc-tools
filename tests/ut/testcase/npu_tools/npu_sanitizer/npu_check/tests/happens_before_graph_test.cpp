@@ -81,8 +81,21 @@ TEST(HappensBeforeGraphTest, UnknownNeverTurnsIntoNoPath)
     ASSERT_TRUE(graph.Seal());
     EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Unknown);
     EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Unknown);
-    EXPECT_EQ(graph.QueryWork(), 1U);
+    // The budget bounds one search, not the session: a shallow query after an
+    // exhausted deep one still answers instead of inheriting Unknown.
+    EXPECT_EQ(graph.Compare(0, 1), Graph::Relation::Before);
+    EXPECT_EQ(graph.QueryWork(), 3U);
     EXPECT_EQ(graph.Compare(2, 3), Graph::Relation::Unordered); // Empty adjacency needs no work.
+}
+TEST(HappensBeforeGraphTest, LaterQueryAnswersAfterAnExhaustedSearch)
+{
+    Graph graph(10, 2, 10);
+    for (int i = 0; i < 3; ++i)
+        graph.AddNode();
+    ASSERT_TRUE(graph.AddEdge(0, 1, EDGE));
+    ASSERT_TRUE(graph.AddEdge(1, 2, EDGE));
+    ASSERT_TRUE(graph.Seal());
+    EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Before);
 }
 TEST(HappensBeforeGraphTest, CyclesMissingCoverageAndPostSealMutationFailClosed)
 {
@@ -103,6 +116,40 @@ TEST(HappensBeforeGraphTest, CyclesMissingCoverageAndPostSealMutationFailClosed)
             graph.AddNode();
         EXPECT_EQ(graph.Compare(0, 1), Graph::Relation::Unknown);
     }
+}
+TEST(HappensBeforeGraphTest, AggregateWorkDoesNotSpendFutureQueriesQuota)
+{
+    Graph graph(600, 600, 0);
+    for (size_t i = 0; i <= 512; ++i) {
+        graph.AddNode();
+        if (i != 0) {
+            ASSERT_TRUE(graph.AddEdge(i - 1, i, EDGE));
+        }
+    }
+    ASSERT_TRUE(graph.Seal());
+    for (size_t i = 0; i < 200000; ++i) {
+        if (graph.Compare(0, 512) != Graph::Relation::Before) {
+            FAIL() << "A previous query exhausted this query's quota at iteration " << i;
+        }
+    }
+    EXPECT_GT(graph.QueryWork(), 100000000U);
+    EXPECT_EQ(graph.Compare(0, 1), Graph::Relation::Before);
+}
+TEST(HappensBeforeGraphTest, CheckerAnalysisAllowancesAreIndependent)
+{
+    Graph graph(10, 100, 0);
+    graph.AddNode();
+    graph.AddNode();
+    graph.AddNode();
+    ASSERT_TRUE(graph.AddEdge(0, 1, EDGE));
+    ASSERT_TRUE(graph.AddEdge(1, 2, EDGE));
+    ASSERT_TRUE(graph.Seal());
+    graph.BeginAnalysis(1);
+    EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Unknown);
+    // The same checker cannot silently recover by starting another search.
+    EXPECT_EQ(graph.Compare(0, 1), Graph::Relation::Unknown);
+    graph.BeginAnalysis(100);
+    EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Before);
 }
 } // namespace
 } // namespace npucheck::race

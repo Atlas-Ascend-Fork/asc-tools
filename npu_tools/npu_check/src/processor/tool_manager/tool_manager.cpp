@@ -9,6 +9,7 @@
  */
 
 #include "tool_manager/tool_manager.h"
+#include "checker/memory_analysis.h"
 
 #include "diagnostic/report/report_assembler.h"
 
@@ -110,8 +111,9 @@ bool ToolManager::ConfigureSanitizer(std::string& error)
         error = "configure enabled no tool";
         return false;
     }
+    memoryAnalysis_ = std::make_shared<MemoryAnalysis>(true);
     for (const auto& tool : configure_.tools) {
-        auto checker = CreateChecker(tool.toolId);
+        auto checker = CreateChecker(tool.toolId, memoryAnalysis_);
         if (!checker) {
             error = std::string("unsupported tool '") + npucheck::ipc::ToolName(tool.toolId) + "'";
             return false;
@@ -133,6 +135,10 @@ bool ToolManager::EnableCallbacks(std::string& error)
     auto required = RequiredCallbacks(checkers_);
     if (configure_.opExecuteTimeoutSec.has_value()) {
         required.emplace_back(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL_BEFORE);
+    }
+    for (const auto& callback : MemoryAnalysis::RequiredCallbacks()) {
+        if (std::find(required.begin(), required.end(), callback) == required.end())
+            required.push_back(callback);
     }
 
     for (const auto& [domain, cbid] : required) {
@@ -162,6 +168,7 @@ void ToolManager::RollbackSanitizer()
         callbacksDrained_.wait(callbackLock, [this] { return activeCallbacks_ == 0; });
     }
     checkers_.clear();
+    memoryAnalysis_.reset();
 }
 
 void ToolManager::Finalize()
@@ -228,7 +235,8 @@ void ToolManager::Finalize()
         std::lock_guard<std::mutex> stateLock(stateMutex_);
         analysisComplete = std::all_of(
             checkers_.begin(), checkers_.end(), [](const auto& checker) { return checker->AnalysisComplete(); });
-        analysisComplete = analysisComplete && malformedCallbacks_ == 0 && frameworkErrors_ == 0;
+        analysisComplete =
+            analysisComplete && memoryAnalysis_->Complete() && malformedCallbacks_ == 0 && frameworkErrors_ == 0;
     }
     const bool truncated = report_.Truncated();
     std::ostringstream sessionEnd;
@@ -266,6 +274,7 @@ void ToolManager::Finalize()
         completionStatus, static_cast<int>(unsubscribeStatus), static_cast<unsigned long long>(droppedMessages),
         analysisComplete ? "true" : "false", truncated ? "true" : "false");
     checkers_.clear();
+    memoryAnalysis_.reset();
     initialized_ = false;
 }
 
@@ -354,6 +363,12 @@ void ToolManager::OnCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid,
     CheckerReportList reports;
     {
         std::lock_guard<std::mutex> stateLock(stateMutex_);
+        if (!memoryAnalysis_->BeginCallback(domain, cbid, cbdata))
+            ++malformedCallbacks_;
+        struct EventGuard {
+            MemoryAnalysis& analysis;
+            ~EventGuard() { analysis.EndCallback(); }
+        } eventGuard{*memoryAnalysis_};
         for (const auto& checker : checkers_) {
             if (!checker->IsSubscribed(domain, cbid)) {
                 continue;
@@ -435,6 +450,10 @@ std::string ToolManager::BuildAndLogSummaryMessage() const
     std::ostringstream output;
     for (const auto& checker : checkers_) {
         output << checker->Summary() << '\n';
+    }
+    if (memoryAnalysis_) {
+        output << "memory_resource_scans=" << memoryAnalysis_->ResourceRecordsScanned()
+               << " initialization_candidates=" << memoryAnalysis_->InitializationCandidates() << '\n';
     }
     const auto callbackCount = callbackCount_.load();
     const auto droppedMessages = server_.DroppedMessages();

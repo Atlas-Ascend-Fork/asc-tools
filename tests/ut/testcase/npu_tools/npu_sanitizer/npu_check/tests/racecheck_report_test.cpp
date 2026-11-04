@@ -347,6 +347,29 @@ public:
     bool AnalysisComplete() const override { return complete; }
 };
 
+AclsanDeviceMemoryAccessData GmMemory(
+    uint32_t mode, uint64_t begin, uint64_t end, uint32_t core = 10, uint64_t instruction = 1)
+{
+    auto data = Memory(mode, begin, end, core, instruction);
+    data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    return data;
+}
+
+TEST(RacecheckCheckerTest, IgnoresUbConflicts)
+{
+    Ordering ordering;
+    Racecheck checker(&ordering);
+    CheckerReportList reports;
+    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
+    auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
+    for (const auto* access : {&write, &read}) {
+        ASSERT_TRUE(
+            checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, access, reports));
+    }
+    EXPECT_TRUE(reports.empty());
+    EXPECT_TRUE(checker.AnalysisComplete());
+}
+
 TEST(RacecheckCheckerTest, HostAllocationFailureStopsLaunchWithClearError)
 {
     class FailingOrdering final : public RacecheckOrdering {
@@ -362,8 +385,8 @@ TEST(RacecheckCheckerTest, HostAllocationFailureStopsLaunchWithClearError)
     test::ScopedLogCapture capture(log);
     Racecheck checker(&ordering);
     CheckerReportList reports;
-    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
-    auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
+    auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
+    auto read = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
     ASSERT_TRUE(
         checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &write, reports));
     log.clear();
@@ -393,7 +416,7 @@ TEST(RacecheckCheckerTest, ContainerMaximumCapacityIsNotReportedAsHostMemoryFail
     std::string log;
     test::ScopedLogCapture capture(log);
     Racecheck checker(&ordering);
-    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 1);
+    auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 1);
     write.layoutKind = ACLSAN_MEM_LAYOUT_ND_AFFINE;
     write.layout.ndAffine.elementBytes = 1;
     write.layout.ndAffine.rank = 2;
@@ -417,9 +440,9 @@ TEST(RacecheckCheckerTest, ReportsBothReadersConflictingWithOneWriter)
     Ordering ordering;
     Racecheck checker(&ordering);
     CheckerReportList reports;
-    auto first = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 1);
-    auto second = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
-    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32, 10, 3);
+    auto first = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 1);
+    auto second = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
+    auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32, 10, 3);
     for (const auto* access : {&first, &second, &write}) {
         ASSERT_TRUE(
             checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, access, reports));
@@ -477,8 +500,8 @@ TEST(RacecheckCheckerTest, AtomicSemanticRaceReportsEveryUnorderedPairAndSkipsRa
         ordering.result = order;
         Racecheck checker(&ordering);
         CheckerReportList reports;
-        auto add = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, 0, 32);
-        auto min = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN, 0, 32, 10, 2);
+        auto add = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, 0, 32);
+        auto min = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN, 0, 32, 10, 2);
         const auto dispatch = [&](const auto& access) {
             return checker.OnCallback(
                 ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports);
@@ -507,8 +530,8 @@ TEST(RacecheckCheckerTest, DefaultConfigurationCannotClaimCompleteWithoutOrderin
 {
     Racecheck checker;
     CheckerReportList reports;
-    auto data = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
-    auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
+    auto data = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
+    auto read = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
     const auto& ids = checker.GetSubscribedID();
     EXPECT_EQ(
         std::count(
@@ -533,8 +556,8 @@ TEST(RacecheckCheckerTest, OwnedReportsOutliveCheckerAndKeepLaunchIdentity)
     {
         Ordering ordering;
         Racecheck checker(&ordering);
-        auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
-        auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
+        auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
+        auto read = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
         for (uint32_t device : {0U, 1U}) {
             for (uint64_t launch : {7U, 8U}) {
                 write.header.deviceId = read.header.deviceId = device;
@@ -564,8 +587,8 @@ TEST(RacecheckCheckerTest, ReportsOnlyCommittedFirstConflict)
     Ordering ordering;
     Racecheck checker(&ordering);
     CheckerReportList reports;
-    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 1024);
-    auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 512, 1536, 10, 2);
+    auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 1024);
+    auto read = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 512, 1536, 10, 2);
     ASSERT_TRUE(
         checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &write, reports));
     EXPECT_TRUE(reports.empty());
@@ -588,8 +611,8 @@ TEST(RacecheckCheckerTest, IgnoresApiVersion)
     Ordering ordering;
     Racecheck checker(&ordering);
     CheckerReportList reports;
-    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
-    auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
+    auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
+    auto read = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
     write.header.version = ACLSAN_API_VERSION + 1;
     read.header.version = ACLSAN_API_VERSION + 1;
     ASSERT_TRUE(
@@ -619,7 +642,7 @@ TEST(RacecheckCheckerTest, OwnReadWriteDoesNotWarnOrLoseOtherInstructionRace)
     Ordering ordering;
     Racecheck checker(&ordering);
     CheckerReportList reports;
-    auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32);
+    auto read = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32);
     auto write = read;
     write.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
     ASSERT_TRUE(
@@ -640,8 +663,8 @@ TEST(RacecheckCheckerTest, UnknownOrderingAndInvalidAccessNeverPublishRace)
     ordering.result = RacecheckOrder::Unknown;
     Racecheck checker(&ordering);
     CheckerReportList reports;
-    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 1024);
-    auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 512, 1536, 10, 2);
+    auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 1024);
+    auto read = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 512, 1536, 10, 2);
     ASSERT_TRUE(
         checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &write, reports));
     EXPECT_FALSE(
@@ -666,8 +689,8 @@ TEST(RacecheckCheckerTest, OrderedPairsAndIndependentLaunchesDoNotWarn)
     ordering.result = RacecheckOrder::Ordered;
     Racecheck checker(&ordering);
     CheckerReportList reports;
-    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
-    auto read = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
+    auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32);
+    auto read = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2);
     ASSERT_TRUE(
         checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &write, reports));
     ASSERT_TRUE(
@@ -689,7 +712,7 @@ TEST(RacecheckCheckerTest, ManySparseConflictsKeepIndependentSegments)
     Racecheck checker(&ordering);
     CheckerReportList reports;
     constexpr uint32_t blocks = 1024;
-    auto write = Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, blocks * 64);
+    auto write = GmMemory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, blocks * 64);
     write.layoutKind = ACLSAN_MEM_LAYOUT_BLOCK_REPEAT;
     write.layout.blockRepeat = {blocks, 32, 64, 1, 0, 0};
     auto read = write;

@@ -13,7 +13,7 @@
 
 #include "acl_san/aclsan_api.h"
 #include "acl_san/aclsan_cbdata.h"
-#include "checker/allocation_registry.h"
+#include "checker/memory_analysis.h"
 #include "checker/checker.h"
 #include "diagnostic/device_protocol.h"
 #include "diagnostic/report_renderer.h"
@@ -35,10 +35,14 @@ struct MemcheckStats {
     uint64_t failedLaunches = 0;
     uint64_t failedSynchronizations = 0;
     uint64_t inexactDeviceOperations = 0;
+    uint64_t hostOperations = 0, incompleteHostOperations = 0;
 };
 
 class Memcheck final : public Checker {
 public:
+    explicit Memcheck(std::shared_ptr<MemoryAnalysis> analysis = {})
+        : analysis_(analysis ? std::move(analysis) : std::make_shared<MemoryAnalysis>()), memoryState_(analysis_->state)
+    {}
     const std::vector<CallbackSpec>& GetSubscribedID() const override;
     bool OnCallback(
         AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports) override;
@@ -58,9 +62,11 @@ private:
         uint64_t bytes, uint64_t groupId);
     std::vector<npucheck::NpuCheckMemcheckReport> CheckDeviceMemoryAccess(
         const AclsanDeviceMemoryAccessData& data, uint64_t groupId);
+    void OnHostMemory(const AclsanCallbackCommonData& common, CheckerReportList& reports);
     void Count(const std::vector<npucheck::NpuCheckMemcheckReport>& reports);
 
-    AllocationRegistry allocations_;
+    std::shared_ptr<MemoryAnalysis> analysis_;
+    std::shared_ptr<MemoryState> memoryState_;
     std::vector<AclsanDeviceMemoryAccessData> pendingDeviceAccesses_;
     MemcheckStats stats_{};
     uint64_t nextReportId_ = 1;

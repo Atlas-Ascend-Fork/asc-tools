@@ -14,6 +14,7 @@
 #include "acl_san/aclsan_cbdata_device.h"
 
 #include <array>
+#include <optional>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -154,6 +155,8 @@ enum class NpuCheckReportPattern : std::uint32_t {
     MEMCHECK_DOUBLE_FREE = 0x0106,
     MEMCHECK_LEAK = 0x0107,
     MEMCHECK_API_ERROR = 0x0108,
+    MEMCHECK_HOST_INVALID_ACCESS = 0x0109,
+    MEMCHECK_HOST_USE_AFTER_FREE = 0x010a,
 
     INITCHECK_UNINITIALIZED_READ = 0x0201,
     INITCHECK_PARTIAL_UNINITIALIZED_READ = 0x0202,
@@ -384,6 +387,14 @@ struct NpuCheckRacecheckRange {
     std::uint64_t end = 0;
 };
 
+struct HostAccessEvidence {
+    uint32_t deviceId = 0;
+    uint64_t address = 0, bytes = 0;
+    uint32_t mode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+    size_t node = 0;
+    std::string apiName;
+};
+
 // 每条报告拥有一对已确认冲突的原始访问及各自涉及冲突的连续访问段。
 // 在生成报告时解析布局，消费报告不再依赖 tracker 或 launch 记录容器。
 struct NpuCheckRacecheckReport {
@@ -396,6 +407,7 @@ struct NpuCheckRacecheckReport {
     NpuCheckRacecheckRange currentRange;
     NpuCheckRacecheckRange checkRange; // 本次确认发生冲突的区间 [begin, end)。
     ConflictKind kind = ConflictKind::RAW;
+    std::optional<HostAccessEvidence> previousHost, currentHost;
 };
 
 inline NpuCheckReportPattern RacecheckPattern(ConflictKind kind) noexcept
