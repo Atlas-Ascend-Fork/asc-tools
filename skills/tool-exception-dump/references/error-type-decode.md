@@ -1,8 +1,8 @@
 # 错误类型识别（P3知识）
 
-本文件是 tool-exception-dump 技能的P3阶段知识，覆盖芯片形态判定、错误位解读、六模块子域分析、五类特殊场景、AI Core数量与blockDim检查、结论码101-107全表。对应`msaicerr -p`内部解析管线的寄存器解码环节，其产出即分析报告第2段"AI Core DFX Register"（`oam-tools/src/msaicerr/ms_interface/aic_error_info.py:186-188`，段名样例见`oam-tools/test/st/msaicerr/testcase/test_aicore_error_parse_st.py:448`）。
+本文件是 tool-exception-dump 技能的P3阶段知识，覆盖芯片形态判定、错误位解读、六模块子域分析、五类特殊场景、AI Core数量与blockDim检查、结论码101-107全表。对应`msaicerr -p`内部解析管线的寄存器解码环节，其产出即分析报告第2段"AI Core DFX Register"（`oam-tools/src/msaicerr/ms_interface/aic_error_info.py:186-188`，段名样例见`oam-tools/test/st/msaicerr/testcase/test_aicore_error_parse_st.py:448`）；info.json 结构化报告中对应 `aic_error.groups`（错误码与寄存器解码的数组形态，字段语义见`json-report-decode.md`）。
 
-路径约定：本文 path:line 引用：oam-tools 相关路径（如`oam-tools/src/...`）相对于 CANN 社区仓 cann/oam-tools 根目录。文中简写的`constant.py`、`aic_error_info.py`、`aicore_error_parser.py`、`utils.py`均指`oam-tools/src/msaicerr/ms_interface/`下的同名文件。术语约定：plog指收集目录下`collection/plog`内的进程运行日志；UB（Unified Buffer，统一缓冲区）、ECC（Error Correcting Code，错误校验）为硬件术语。
+路径约定：本文 path:line 引用：oam-tools 相关路径（如`oam-tools/src/...`）相对于 CANN 社区仓 cann/oam-tools 根目录。文中简写的`constant.py`、`aic_error_info.py`、`aicore_error_parser.py`、`utils.py`、`json_report_builder.py`均指`oam-tools/src/msaicerr/ms_interface/`下的同名文件。术语约定：plog指收集目录下`collection/plog`内的进程运行日志；UB（Unified Buffer，统一缓冲区）、ECC（Error Correcting Code，错误校验）为硬件术语。
 
 前置依赖：已按`error-line-location.md`完成场景判定与报错行定位；本文件结论供P4单算子复现与P5证据链汇聚使用。
 
@@ -40,6 +40,8 @@ Stars与David两种芯片形态打印错误码的方言不同，解码前必须�
 | 两者都没有 | 判不出，返回None，由调用方决定回退口径 |
 
 该方法比方法一可靠：错误码为裸`0`时方法一只能落到Stars，而寄存器键不会同形。
+
+info.json 对照：判型依据有结构化投影——错误码形态读 `aic_error.groups[].error_code`（错误码字符串原样，`json_report_builder.py:276、283`）；寄存器键差异读 `aic_error.groups[].registers`（仅Stars非空、键为vec/mte/ifu/ccu/cube/biu模块名，David恒`{}`，`json_report_builder.py:277-278`），`registers` 是否为空对象即判型结论的JSON侧形态。字段语义见`json-report-decode.md`。
 
 判型时序硬约束（`aicore_error_parser.py:491-496`）：判型必须在`_get_extra_info`之前执行。`_get_extra_info`只抽取Stars的六个寄存器字段，David独有的sc/su/l1 error info会被丢弃，之后再判型则无法判定。判出的chip_type同时传给PC修正引擎（`aicore_error_parser.py:538-540`），PC修正细节见`error-line-location.md`。
 
@@ -115,7 +117,7 @@ David解码（`aic_error_info.py:419-435`）：
 
 ## 六模块子域分析
 
-Stars错误码展开为置位位号后，报告第2段对每个命中模块输出子寄存器解读。机制是两级翻译（`aic_error_info.py:437-477`）：
+Stars错误码展开为置位位号后，报告第2段对每个命中模块输出子寄存器解读；info.json 中同一解读落在 `aic_error.groups[].registers` 的模块对象（`raw_value`/`bits`/`value`/`meaning`/`approximate`，字段语义见`json-report-decode.md`）。机制是两级翻译（`aic_error_info.py:437-477`）：
 
 - 第一级：位号查Stars字典得"错误名, 英文释义"，错误名前缀识别功能单元。
 - 第二级：每个单元首次命中时，从extra_info中用`单元键=(\S+)`提取该单元子寄存器串，按该单元位段解析出错误类型与出错地址；同一单元去重（子寄存器只解析一次），但每个位的错误名与释义逐位输出。
@@ -192,12 +194,14 @@ MTE是唯一按错误位动态选子字典的模块（`aic_error_info.py:562-573
 - 比对：`_check_args`将执行后首个参数与执行前参数列表逐一比对，命中任意一个即通过，全部不命中即check_args_result为False；args_before全为0时跳过检查（GE可能未打印，`aicore_error_parser.py:93-103`）。
 - 报告呈现：第4段逐行输出args before execution与args after execution（`aic_error_info.py:195-196`）。
 - 结论：args前后不一致即算子参数在执行期间被改写（被踩），结论为`If the arguments are inconsistent before and after operator execution, memory access may be out of bounds. You are advised to use the memory error detection model to locate the fault.`（`aic_error_info.py:242-247`），对应结论码106（`constant.py:77`）。常见根因是本算子或并发算子越界写踩到args区域，下一步走P4复现或内存错误检测模式（升级路径见`fix-suggestions.md`）。
+- info.json 对照：第4段的两列即 `args.before_execute` 与 `args.after_execute` 两个列表，逐 `arg_index` 对比同序号条目的address/dtype/shape即可判定args是否被踩（字段语义见`json-report-decode.md`）。
 
 ### 场景3：outstanding双PC
 
 - plog主正则AICORE_ERR_OCCUR无命中时，`get_op_info`降级使用outstanding变体AICORE_ERR_OCCUR_OST（`aicore_error_parser.py:554-565`），该变体把start_pc改由`first pc start:`捕获，并额外捕获`second pc start:`（s_start_pc，`constant.py:1203-1210`）。
 - 一条异常日志同时记录两个PC起点。`update_dumpinfo_for_outstanding`汇总并发信息后，若判定错误属于第二个任务（is_second_error为True），`get_op_info`把start_pc替换为s_start_pc（`aicore_error_parser.py:583-588`、`2126-2149`）。
 - 判读要点：双PC场景选错起点会导致报错行定位整体偏移；报告第3段的PC若来自outstanding记录，应确认使用的是与出错任务对应的那个PC。报错行定位流程见`error-line-location.md`。
+- info.json 对照：实际选用的起点PC读 `instructions.original.start_pc`（PC修正可用时另见 `instructions.corrected`，字段语义见`json-report-decode.md`）。
 
 ### 场景4：并发执行isconcurrentexe
 
@@ -212,6 +216,7 @@ MTE是唯一按错误位动态选子字典的模块（`aic_error_info.py:562-573
 - `_get_v300_error_code`在collection/plog下grep`The extend info: errcode:`，正则提取三元组（`code0`、`code1`、`code2`），拼接为一个大整数：code0占低64位，code1左移64位，code2位重组后左移128位，返回十六进制串（`aicore_error_parser.py:389-403`）。
 - 报告第2段AIC_ERROR行优先显示与error_code匹配的三元组原文error_code_all（`aicore_error_parser.py:483-490`；`aic_error_info.py:187`），如`(0x200000000, 0, 0)`（断言样例见`oam-tools/test/st/msaicerr/testcase/test_aicore_error_parse_st.py:446`）。
 - 判读要点：错误码为0不代表无异常，可能是寄存器未直接给出置位值，需从extend info三元组重建；三元组也重建不出时错误码仍为`0x0`，无位置位，按trap_or_timeout兜底处理（`constant.py:143-146`）。
+- info.json 对照：三元组重读重建后的错误码以字符串原样落在 `aic_error.groups[].error_code`；三元组原文（error_code_all）仍以info.txt第2段AIC_ERROR行为准（`aicore_error_parser.py:483-490`）。
 
 ## AI Core数量与blockDim检查
 
@@ -219,6 +224,7 @@ MTE是唯一按错误位动态选子字典的模块（`aic_error_info.py:562-573
 - rts_block_dim：在plog中检索`RUNTIME`行，按`blockDim=(\d+)`提取并取最大值（`aicore_error_parser.py:599-611`）。
 - 判定：两者均有效（非-1）且rts_block_dim大于driver_aicore_num的2倍时，结论为`The number of AI Cores in the environment is less than that required by the operator.`，即环境AI Core数量不满足算子并发需求（`aic_error_info.py:219-224`）。
 - 报告Basic information段直接展示rts_block_dim与driver_aicore_num（`aic_error_info.py:183-184`），核对时直接对照这两个值。
+- info.json 对照：两值直接读 `basic_info.rts_block_dim` 与 `basic_info.driver_aicore_num`；未取到时输出 `not_collected`（数值哨兵-1已转换，勿当数值解读，`json_report_builder.py:311-312`），字段语义见`json-report-decode.md`。
 
 ## 结论码101-107全表
 

@@ -78,18 +78,20 @@ python3 msaicerr.py -p <收集目录> -out <结果目录> -dev <Device ID>
 
 1. 在msaicerr.py所在目录执行，先完成P0/P1的环境与输入检查（见 SKILL.md Phase 0/Phase 1，工具准备详见官方文档（oam-tools docs/zh/msaicerr））。
 2. 预检查三要素：`dfx/data-dump`下有dump文件、有算子编译产物（`.o`与`.json`）、`dfx/log/host/cann`下有日志；缺任一则工具无法提取AI Core Error信息（oam-tools/docs/zh/msaicerr/AI_Core_error_analysis.md:19）。
-3. 执行后跟随终端提示`Analysis info is saved in <info.txt路径>`定位结果文件（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1358）；工具执行日志在同级的`debug_info.txt`（oam-tools/docs/zh/msaicerr/AI_Core_error_analysis.md:41）。
-4. 结果目录形态：`<out>/info_{执行时间戳}/aicerror_0_{错误时间戳}/info.txt`（输出目录拼接oam-tools/src/msaicerr/msaicerr.py:127，错误子目录拼接oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1829-1830）。
+3. 执行后跟随终端提示`Analysis info is saved in <info.txt路径>`定位结果文件（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1358）；工具执行日志在同级的`debug_info.txt`（oam-tools/docs/zh/msaicerr/AI_Core_error_analysis.md:41）。CANN 9.3.0 之后版本（版本边界为用户口径，待上游确认）在 info.txt 同目录另产出结构化报告 info.json，终端另有`Analysis info (json) is saved in <info.json路径>`提示（oam-tools/src/msaicerr/ms_interface/json_report_builder.py:790），字段级判读优先读 info.json、回退规则见`json-report-decode.md`。
+4. 结果目录形态：`<out>/info_{执行时间戳}/aicerror_0_{错误时间戳}/info.txt`，info.json 与之同目录落盘（仅 9.3.0 之后版本产出，用户口径；同点写盘oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:2119-2123；输出目录拼接oam-tools/src/msaicerr/msaicerr.py:127，错误子目录拼接oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1829-1830）。
 
 **多错误只解析第一个**：若故障信息中存在多个AI Core Error问题，msaicerr按日志时间解析第一次出现的问题（oam-tools/docs/zh/msaicerr/AI_Core_error_analysis.md:39）。实现上，错误记录按`err_time`排序（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:567-569），再与dump侧线程号匹配取对应记录；tid不一致时报`Dump data tid is not the same with rts tid`并终止解析（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:575-597）。若plog中常规错误正则（`error info:`行加`AICORE_ERR_OCCUR`）无命中，工具改试outstanding双PC正则`AICORE_ERR_OCCUR_OST`，仍无命中则报`Aicore error exception does not match`终止（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:554-565；正则定义oam-tools/src/msaicerr/ms_interface/constant.py:1195-1210）。
 
-**info提取失败分支**：Step 1拿不到算子信息（或采集上报失败）时，工具直接写一份空结论的`info.txt`到`aicerror/`目录并返回8（`MS_AICERR_INVALID_SLOG_DATA_ERROR`），不执行后续步骤（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1820-1824）。此时按P1的输入完整性检查回退（三要素排查详见官方文档（oam-tools docs/zh/msaicerr）），不要重复执行`-p`。
+**info提取失败分支**：Step 1拿不到算子信息（或采集上报失败）时，工具直接写一份空结论的`info.txt`到`aicerror/`目录并返回8（`MS_AICERR_INVALID_SLOG_DATA_ERROR`），不执行后续步骤（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1820-1824）；同目录也写 info.json（`<out>/info_{ts}/aicerror/info.json`，无时间戳后缀，`analysis_result="failed"`，由空 `AicErrorInfo()` 构建、其余字段为空默认值不得当真实结果解读，oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1988-1995）。此时按P1的输入完整性检查回退（三要素排查详见官方文档（oam-tools docs/zh/msaicerr）），不要重复执行`-p`。
 
 ## 四、info.txt判读
 
 ### 4.1六段结构
 
 `info.txt`由`analyse()`渲染，固定六段（oam-tools/src/msaicerr/ms_interface/aic_error_info.py:169-206）：①基本信息；②AI Core DFX Register；③Operator Error Line Number；④Operator Input/Output Memory；⑤Operator Dump File Parsing；⑥Execution Result of the Single-Operator Test Case。P2阶段重点判读第③段，第②段转error-type-decode.md，第⑤⑥段转reproduction-guide.md。
+
+**info.json 对照**：CANN 9.3.0 之后版本（用户口径，待上游确认）在 info.txt 同目录落盘结构化报告 info.json，存在时按字段级取值优先、缺失时回退本节六段文本判读（回退规则见`json-report-decode.md`）。六段与 info.json 顶层键粗对应：第①段→`basic_info`、第②段→`aic_error`、第③段→`instructions`、第④段→`args`、第⑤段→`dump_info`、第⑥段→`single_op_test`，首段结论文本→`root_cause.summary`。
 
 ### 4.2第③段逐行判读
 
@@ -104,7 +106,7 @@ Error occurred most likely at line: <汇编偏移>
 
 判读规则：
 
-- `Error occurred most likely at line:`后跟的是**估算的汇编偏移**（十六进制，无`0x`前缀），由`current_pc`与`start_pc`末5位差值结合子寄存器Error PC位修正得出，不是源码行号（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1146、oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1119-1147）。工具自己声明这是估算值（"most likely"）。
+- `Error occurred most likely at line:`后跟的是**估算的汇编偏移**（十六进制、带`0x`前缀，如`0x5e8`，拼接见oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1317），由`current_pc`与`start_pc`末5位差值结合子寄存器Error PC位修正得出，不是源码行号（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1146、oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1119-1147）。工具自己声明这是估算值（"most likely"）。info.json 对照：本块取值对应`instructions.original`（`start_pc`/`current_pc`/`likely_error_line`；`likely_error_line` 为该十六进制偏移换算的**十进制 int**，如`0x5e8`→`1512`，与info.txt的十六进制串进制不同、对照需换算，见`json-report-decode.md`）。
 - 偏移行之后若跟随`<反汇编文件名>:<err_pc>`与cce行号、TBE源码`文件:行号`，说明L1行号映射链走通（映射链见本文件第七节）。
 - 若跟随`related instructions (error occurred before the mark *):`段，为报错指令上下文，判读见第十一节。
 
@@ -123,12 +125,13 @@ The corrected PC is fixed by the AI Core error registers and is more
 credible than the original PC. Locate the fault by the corrected info first.
 ```
 
-判读规则：**优先按Corrected Info定位**——修正PC由AI Core错误寄存器回填得出，工具明确声明其比原始PC更可信（oam-tools/src/msaicerr/ms_interface/aic_error_info.py:308-311）。`Error occurred most likely at line:`后是修正后偏移的十六进制（无`0x`前缀），随后一行为llvm-symbolizer符号化结果（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1037-1040）。无修正结果时整块不出现，只有Original Info（oam-tools/test/ut/msaicerr/testcase/test_pc_corrector_ut.py:441-446）。
+判读规则：**优先按Corrected Info定位**——修正PC由AI Core错误寄存器回填得出，工具明确声明其比原始PC更可信（oam-tools/src/msaicerr/ms_interface/aic_error_info.py:308-311）。`Error occurred most likely at line:`后是修正后偏移的十六进制（带`0x`前缀，`hex(offset)` 原样输出，见oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1205），随后一行为llvm-symbolizer符号化结果（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1037-1040）。无修正结果时整块不出现，只有Original Info（oam-tools/test/ut/msaicerr/testcase/test_pc_corrector_ut.py:441-446）。info.json 对照：本块对应`instructions.corrected`（`{start_pc, current_pc, likely_error_line, src_locations}`，`src_locations` 为 `[outerSrc, innerSrc]`；无修正时整个 `corrected` 为 `null`，修正提示文案对应 `instructions.notice`；字段语义见`json-report-decode.md`）。
 
 ### 4.4 "??" 与行号缺失提示的判读
 
 - `info.txt`中修正块出现`Unable to calculate the corrected line number, check the logs for more details.`：表示修正PC已得到，但符号化失败（未装llvm-symbolizer、`.o`不存在、执行失败或无调试信息），行号一行被替换为该提示（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1030-1036）。此时修正PC仍然有效，转手动回退（P2.4，见本文件第六节）。
 - 手动或自动符号化输出中出现`??`或`??:0:0`：`??`是llvm-symbolizer的未知位置标记（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:101-102），任何一行以`??`开头即判定该偏移在`.o`中**无调试信息、符号化失败**，工具告警后放弃行号（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:266-273）。判读动作同上：转手动回退（P2.4），并确认`.o`是否为带调试信息的编译产物。
+- info.json 对照：修正PC已得到但符号化失败时，`instructions.corrected` 存在而 `src_locations` 为 `not_collected`（corrected 存在但解析不出 outerSrc/innerSrc，区别于无修正时整个 `corrected` 为 `null`），符号化输入偏移从 `instructions.corrected.likely_error_line`（十进制 int）换算，见`json-report-decode.md`。
 
 ## 五、PC修正两引擎（原理简述）
 
@@ -146,17 +149,17 @@ plog中若存在adump打印的`[Dump][Exception] Error PC information. coreId=..
 
 掩码表按芯片分三套，均为"源寄存器名、源位段、目标PC位段"三元组形式的条目表（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:42-89）：V100表`V100_ENTRIES`按CUBE/CCU/MTE/VEC/FIXP模块分组；V200表`V200_GROUPS`与V300表`V300_GROUPS`以`*_ERROR_T0_*`触发寄存器为准（仅adump日志里有），V300复用V200寄存器布局但掩码不同。选表逻辑：芯片判为ASCEND_950用V300表，否则V200表，均未命中再回落V100模块匹配（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:219-246）。回填实现`_replace_pc_bits`：源位段与目标位段位宽相等才回填，不等则告警并保持原值（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:109-117）。芯片类型由调用方按plog dump info字段判定后传入（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:328-330）。
 
-**如何使用其输出**：两引擎成功时返回`start_pc`/`current_pc`/`offset`三元组，渲染为info.txt第③段的Corrected Info块（见4.3）；`offset`（修正后PC与start pc的差）供llvm-symbolizer符号化（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1030-1040）。
+**如何使用其输出**：两引擎成功时返回`start_pc`/`current_pc`/`offset`三元组，渲染为info.txt第③段的Corrected Info块（见4.3）；`offset`（修正后PC与start pc的差）供llvm-symbolizer符号化（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1030-1040）。info.json 对照：该三元组即`instructions.corrected`的`start_pc`/`current_pc`/`likely_error_line`取值来源。
 
 ### 5.3放弃修正的三种情形
 
-以下情形`get_corrected_pc()`返回空，info.txt只报原始PC（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:357-368）：
+以下情形`get_corrected_pc()`返回空，info.txt只报原始PC（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:357-368；info.json 对照：此时`instructions.corrected`为`null`，判读改用`instructions.original`）：
 
 1. 无任何位段被回填（修正前后PC相同）——避免报出与原始完全相同的"修正值"误导判读（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:357-362）；
 2. 修正后`fixedCurrentPC < startPC`——结果不合理，跳过（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:363-368）；
 3. 原始PC本身非法（解析为负）——提前跳过（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:344-348）。
 
-判读动作：出现这三种情形时以Original Info的估算偏移走第七节反汇编链，偏移本身仍可用于定位。
+判读动作：出现这三种情形时以Original Info的估算偏移走第七节反汇编链，偏移本身仍可用于定位（偏移取值：info.txt第③段Original Info行，或 info.json `instructions.original.likely_error_line` 十进制 int 换算回十六进制）。
 
 ## 六、llvm-symbolizer自动流程与手动回退（P2.4）
 
@@ -187,11 +190,11 @@ plog中若存在adump打印的`[Dump][Exception] Error PC information. coreId=..
 手动回退步骤（技能动作）：
 
 1. 找工具：`which llvm-symbolizer`；未命中则到CANN工具链目录查找（msaicerr对objdump的猜测路径为`/usr/local/Ascend/latest/<arch>-linux/ccec_compiler/bin/`，oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1679-1688；llvm-symbolizer的确切目录以现场CANN安装为准，此为排查建议）。
-2. 取输入：从info.txt第③段Corrected Info拿`offset`（`Error occurred most likely at line:`后的十六进制值）与kernel的`.o`路径（第①段`kernel file`字段）。
-3. 执行与自动流程同形的命令：
+2. 取输入：从info.txt第③段Corrected Info拿`offset`（`Error occurred most likely at line:`后的十六进制值，带`0x`前缀）与kernel的`.o`路径（第①段`kernel file`字段）；info.json 存在时改从`instructions.corrected.likely_error_line`（十进制 int，换算为十六进制）与`basic_info.kernel_file`取值。
+3. 执行与自动流程同形的命令（`<修正后偏移>`用第③段原样值，已含`0x`前缀；工具自动流程以 `hex(offset)` 同款形态传参，oam-tools/src/msaicerr/ms_interface/pc_corrector.py:280）：
 
    ```bash
-   llvm-symbolizer -obj=<kernel的.o文件> 0x<修正后偏移>
+   llvm-symbolizer -obj=<kernel的.o文件> <修正后偏移>
    ```
 
 4. 判读：输出两行为符号与`文件:行:列`；出现`??`或`??:0:0`即该`.o`无调试信息（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:101-102、oam-tools/src/msaicerr/ms_interface/pc_corrector.py:266-273），放弃符号化、改走第七节objdump反汇编链。
@@ -237,7 +240,7 @@ cce-objdump -d --line-numbers <kernel.o> > <kernel.o>.txt
 ```bash
 # 1. 反汇编（与工具命令同形）
 cce-objdump -d --line-numbers <kernel.o> > <kernel.o>.txt
-# 2. 定位报错偏移行（<err_pc> 为 info.txt 第③段偏移，十六进制无 0x 前缀）
+# 2. 定位报错偏移行（info.txt 第③段偏移带 0x 前缀，如 0x5e8；grep 前去掉 0x 前缀取纯十六进制串，反汇编行形态如 504:）
 grep -n "<err_pc>:" <kernel.o>.txt
 # 3. 从该行向上找最近的 cce:<行号> 注释
 grep -n "cce:" <kernel.o>.txt
@@ -297,7 +300,7 @@ grep -rn "the address maybe invalid" <收集目录>
 
 ## 十一、报错点10条指令上下文
 
-L1场景下行号映射后，工具在`info.txt`第③段追加报错指令上下文段（仅L1执行，oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1110-1113）：
+L1场景下行号映射后，工具在`info.txt`第③段追加报错指令上下文段（仅L1执行，oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1110-1113）。info.json 对照：第③段的原始/修正偏移取值对应`instructions`（original/corrected/notice，`likely_error_line` 为十进制 int，字段语义见`json-report-decode.md`），指令上下文本体不在 info.json 中。上下文段形态：
 
 ```text
 related instructions (error occurred before the mark *):
@@ -318,4 +321,4 @@ For complete instructions, please view <kernel.o>.txt
 
 ---
 
-**相关文件**：场景与收集输入判定见 SKILL.md 参考文件路由表（工具用法详见官方文档 oam-tools docs/zh/msaicerr、docs/zh/asys）；错误码与寄存器解码见`error-type-decode.md`；单算子复现见`reproduction-guide.md`；结论汇聚与修复建议见`fix-suggestions.md`。
+**相关文件**：场景与收集输入判定见 SKILL.md 参考文件路由表（工具用法详见官方文档 oam-tools docs/zh/msaicerr、docs/zh/asys）；错误码与寄存器解码见`error-type-decode.md`；单算子复现见`reproduction-guide.md`；结论汇聚与修复建议见`fix-suggestions.md`；info.json 结构化报告判读与回退见`json-report-decode.md`。

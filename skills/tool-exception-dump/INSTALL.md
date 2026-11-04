@@ -1,6 +1,6 @@
 # tool-exception-dump 安装与使用指导
 
-本文说明将 tool-exception-dump 技能加载到三种 AI 助手（opencode、Claude Code、Codex）的安装方式、前置依赖、加载验证与使用示例。本技能是纯知识资产：SKILL.md 承载 34 步诊断主流程与指路规则，references/ 承载各阶段判读规则，evals/ 与 scripts/ 为开发自测资产，不参与运行时安装；安装即把整个目录放到对应助手的技能目录，无需额外注册或编译。
+本文说明将 tool-exception-dump 技能加载到三种 AI 助手（opencode、Claude Code、Codex）的安装方式、前置依赖、加载验证与使用示例。本技能是纯知识资产：SKILL.md 承载 31 步诊断主流程与指路规则，references/ 承载各阶段判读规则，evals/ 与 scripts/ 为开发自测资产，不参与运行时安装；安装即把整个目录放到对应助手的技能目录，无需额外注册或编译。
 
 ## 前置依赖
 
@@ -33,7 +33,7 @@
 ## 加载验证
 
 - opencode：发起与 description 强信号吻合的提问（如"这个报错是不是 AI Core Error"），或查看 skill 工具是否列出 `tool-exception-dump`。
-- Claude Code：输入含 aicore error、核错误、结论码 101-107 等触发词的问题，观察是否按 34 步剧本进入 Phase 0 环境与输入检查。
+- Claude Code：输入含 aicore error、核错误、结论码 101-107 等触发词的问题，观察是否按 31 步剧本进入 Phase 0 环境与输入检查。
 - Codex：启动后使用 `/skills` 浏览（或输入含触发词的问题），确认 `tool-exception-dump` 出现在可用技能列表。
 
 ## 使用示例
@@ -53,4 +53,4 @@ cd skills/tool-exception-dump
 python3 scripts/eval_compare.py --mode dry-run
 ```
 
-11 条评测（RED-GREEN 断言覆盖 34 个诊断步骤）全部通过、退出码 0 即自测通过；失败时读 `<out-dir>/report.md` 定位失败断言并按 SKILL.md/references 修复知识文本，不得为凑绿删除或弱化 evals/evals.json 断言。
+13 条评测（RED-GREEN 断言覆盖 31 个诊断步骤）全部通过、退出码 0 即自测通过；失败时读 `<out-dir>/report.md` 定位失败断言并按 SKILL.md/references 修复知识文本，不得为凑绿删除或弱化 evals/evals.json 断言。

@@ -56,7 +56,7 @@
 - 退出码 2：ASCEND_OPP_PATH 未设置（msaicerr.py:290-293）；当前目录或 debug_info.txt 不可写（msaicerr.py:301-307）；当前目录或 -out 位于 -p 目录内（msaicerr.py:120-123）。
 - 退出码 1：无参数（msaicerr.py:295-298）；未识别参数且无有效路径（msaicerr.py:316-318）。
 - 退出码 103：`-e` 环境自检失败，无论样例算子运行失败还是过程抛异常，统一返回退出码 103（msaicerr.py:195-207）。
-- 退出码 8：收集失败或日志中无法提取 AI Core Error 信息时，工具在 `aicerror` 目录写出空结论报告后返回退出码 8（aicore_error_parser.py:1819-1824）。
+- 退出码 8：收集失败或日志中无法提取 AI Core Error 信息时，工具在 `aicerror` 目录写出空结论报告后返回退出码 8（aicore_error_parser.py:1819-1824）；同目录另写 info.json（`analysis_result="failed"`，由空 `AicErrorInfo()` 构建、其余字段为空默认值不得当真实结果解读；目录为 `<out>/info_{ts}/aicerror/`，无时间戳后缀，aicore_error_parser.py:1988-1995）。
 - 退出码 4：`-d` 解析路径校验失败或解析异常（msaicerr.py:161-171）。
 
 ### 2.2 分析结论码（101-107）
@@ -104,12 +104,12 @@ get_return_code 是一条 elif 链，顺序即优先级，先命中先返回（a
 | 缺失项 | 工具侧行为（证据） | 诊断流程标记与后续动作 |
 | --- | --- | --- |
 | 缺 dump 文件 | Collection 校验报错并抛异常，收集失败返回 False（oam-tools/src/msaicerr/ms_interface/collection.py:340-358、399-408）；随后解析器写出空结论报告并返回退出码 8（aicore_error_parser.py:1819-1824） | 标记"缺 dump"；报错文案中的两种可能原因（dump 缺失、日志非报错时日志）需逐项向用户核实；后续复现阶段改走构造数据路径（见 reproduction-guide.md），不得基于无 dump 证据下 104 结论 |
-| 缺 .o/.json 编译文件 | 定位链缺少反编译输入；info.txt 中 `cce file` 等字段为空（模板见 oam-tools/src/msaicerr/ms_interface/aic_error_info.py:180-182） | 标记"定位降级"；报错行定位能力受限，报告须注明定位结论置信度降低 |
+| 缺 .o/.json 编译文件 | 定位链缺少反编译输入；info.txt 中 `cce file` 等字段为空（模板见 oam-tools/src/msaicerr/ms_interface/aic_error_info.py:180-182）；info.json 对照 `basic_info.cce_file` 为 `not_collected`（oam-tools/src/msaicerr/ms_interface/json_report_builder.py:305，空值语义见 json-report-decode.md） | 标记"定位降级"；报错行定位能力受限，报告须注明定位结论置信度降低 |
 | 缺 plog（dfx/log/host/cann 无日志） | 无法使用 msaicerr 提取 AI Core Error 信息（oam-tools/docs/zh/msaicerr/AI_Core_error_analysis.md:19）；收集阶段找不到 `[Dump][Exception]` 关键字即报错（collection.py:206-211） | 停止分析，要求用户重新收集或补齐日志后再进入后续阶段 |
 
 补充两种相关场景：
 
-- **空报告统一退出码 8**：收集失败或日志无法提取 AI Core Error 信息时，工具在 `aicerror` 目录写出空结论报告并返回退出码 8（aicore_error_parser.py:1819-1824）。见到退出码 8 即按"输入信息不可用"处理，检查三要素与日志时间窗。
+- **空报告统一退出码 8**：收集失败或日志无法提取 AI Core Error 信息时，工具在 `aicerror` 目录写出空结论报告并返回退出码 8（aicore_error_parser.py:1819-1824）；该目录同时落盘 info.json（`analysis_result="failed"`，判读只认 `analysis_result`、其余字段为空对象默认值，空报告语义见 json-report-decode.md）。见到退出码 8 即按"输入信息不可用"处理，检查三要素与日志时间窗。
 - **SK 场景**：收集阶段在日志中命中 `Begin to dump callback exception` 即判定为 SK 场景，该场景只生成 host.o，没有 device .o/.json/.cce（collection.py:221-226），同样触发定位降级；SK 场景的判读与处理动作见 error-line-location.md。
 
 降级标记必须写入最终诊断报告的"场景与定位"段，作为证据链的一部分；任何降级状态下给出的结论都必须标注置信度并附反证说明。

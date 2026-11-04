@@ -21,7 +21,7 @@ msaicerr把AI Core Error定位拆成四条相互独立的证据链，每条链�
 
 ### 1.1 各链证据来源与报告落点
 
-工具解析完成后产出"结论加六节"的info.txt报告。每条证据链的事实落在固定报告节，判定字段与结论码的对应关系如下：
+工具解析完成后产出"结论加六节"的info.txt报告；`-p` 模式在同目录另产出结构化报告 info.json，两份同源——结论文案与单算子结果文案由 aic_error_info.py 的共用常量（`CONCLUSION_TEXT`、`SINGLE_OP_RESULT_MSG`，aic_error_info.py:32-39、44-75）分别渲染进两份产物，口径一致。每条证据链的事实落在固定报告节，判定字段与结论码的对应关系如下：
 
 | 证据链 | 判定字段（由谁填充） | 报告落点 | 命中结论码 |
 | --- | --- | --- | --- |
@@ -29,6 +29,8 @@ msaicerr把AI Core Error定位拆成四条相互独立的证据链，每条链�
 | 反编译 | 报错行与出错指令上下文 | 第3节Operator Error Line Number（aic_error_info.py:190-191） | 101（经单算子复现落地）；args执行前后比对落在第4节（aic_error_info.py:195-196），支撑106 |
 | dump校验 | data_dump_result（Step 7落盘校验，aicore_error_parser.py:1892、1896）；dump_info中的"data invalid"子串（dump_data_parser.py:191-194） | 第5节Operator Dump File Parsing（aic_error_info.py:198-200） | 104（data invalid子串）、102（落盘失败） |
 | 单算子复现 | single_op_test_result（Step 9）；atomic_clean_check（Step 6，aicore_error_parser.py:1877）；atomic_add_err（aicore_error_parser.py:1878-1882） | 第6节Execution Result of the Single-Operator Test Case（aic_error_info.py:202-205） | 101、105、107 |
+
+info.json 对照：四条链的事实在 info.json 结构化报告中各落一个顶层键——寄存器解码→`aic_error`（`aic_error.groups[].error_code`/`registers`）、反编译→`instructions`（original/corrected/notice）、dump校验→`dump_info`（exception_dump_file/tiling_data/files）、单算子复现→`single_op_test`（result/execute_info/memory_status/log_path）；结论与证据见 `root_cause`（summary/evidence/action_items，分支判定与结论文案链共用，见2.1节第4条）。字段级语义与空值口径见`json-report-decode.md`。
 
 ### 1.2 汇总表填写方法
 
@@ -75,7 +77,7 @@ get_return_code是一条elif链，顺序即优先级，先命中先返回（aico
 1. **107在返回码层面实际不可达**：atomic_add_err仅当错误码恰为0x800000且atomic_clean_check为假时才求值（aicore_error_parser.py:1878-1882），而atomic_clean_check为假会先命中105，两个条件互斥。结论文案同样先命中memset缺失分支（aic_error_info.py:212-216在前，227-231在后）。判读报告时不要期望见到返回码107。
 2. **NOT_RUN同样命中101**：源码注释明确NOT_RUN也返回非0，用例没跑起来时不能认为没有发现问题（aicore_error_parser.py:1974）。SK（SuperKernel，融合算子）场景下单算子未执行，字段保持NOT_RUN，只要前五级判据未命中，返回码就是101，把"没跑"报成了"单算子运行错误"；报告文本无此混淆。
 3. **flag_check、AI Core数量不足、current_pc为0x0没有专属返回码**：这三种情形只进结论文案（aic_error_info.py:217-226），返回码会落到后续分支或0，依赖返回码做告警会漏掉它们。
-4. **结论文案链与返回码链排序不同**：典型组合是args被踩（check_args_result为假）同时复现成功（single_op_test_result为FAILED），此时结论文案链先命中单算子分支说算子逻辑可能有误，返回码链先命中106返回args被踩。人工读文案、脚本读返回码时预期到这个差异。
+4. **结论文案链与返回码链排序不同**：典型组合是args被踩（check_args_result为假）同时复现成功（single_op_test_result为FAILED），此时结论文案链先命中单算子分支说算子逻辑可能有误，返回码链先命中106返回args被踩。人工读文案、脚本读返回码时预期到这个差异。info.json 视角：`root_cause` 的分支判定即结论文案链顺序（`match_conclusion_branch`，aic_error_info.py:275-311）——`root_cause.evidence`/`root_cause.action_items` 按命中分支输出、`root_cause.evidence[].field` 直接指向info.json内字段路径，与返回码链的顺序差异全表见`json-report-decode.md`第十一节。
 
 ## 三、修复建议映射表
 
@@ -85,6 +87,7 @@ get_return_code是一条elif链，顺序即优先级，先命中先返回（aico
 2. 根因方向区分两类：带path:line的是代码或文档依据；标注"经验"的是排查方向建议，无代码直接依据，不构成确定性根因。
 3. 结论码触发与错误位触发同时存在时，以结论码行为主、错误位行为根因细化。
 4. 复现失败场景只给排查方向，不给确定性根因（见第四节）。
+5. info.json 的 `root_cause.action_items` 是工具侧生成的动作清单（`action`/`target`/`purpose`三键，字段序action→target→purpose，json_report_builder.py:715-725），仅作工具佐证；修复建议仍以本节映射表为权威，两者不一致时按映射表执行。
 
 | 触发条件（结论码/错误位） | 根因方向 | 修复建议 | 验证方法 |
 | --- | --- | --- | --- |
@@ -154,6 +157,8 @@ get_return_code是一条elif链，顺序即优先级，先命中先返回（aico
 ### 验证方法
 <按映射表验证列执行，写明复查命令与判读要点>
 ```
+
+出处列填写口径：证据出处优先引info.txt报告第N节；info.json存在时可并列JSON字段出处（如 `instructions.corrected.likely_error_line`、`aic_error.groups[0].error_code`、`single_op_test.result`、`dump_info.files[].data_stats`），字段级取值以info.json为准（判读规则见`json-report-decode.md`）。
 
 置信度口径（本skill定义）：
 

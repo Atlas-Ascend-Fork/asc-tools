@@ -199,6 +199,42 @@
         { "type": "contains", "pattern": "CUBE" },
         { "type": "not_contains", "pattern": "David" }
       ]
+    },
+    {
+      "id": 12,
+      "dimension": "slot_filling",
+      "title": "info.json 四态与哨兵判读",
+      "config": {
+        "max_tokens": 200000,
+        "ascend_platforms": ["A2"],
+        "eval_mode": "text"
+      },
+      "prompt": "msaicerr -p 结果目录的 info.json 里摘出这几个字段（片段）：\n\"analysis_result\": \"success\",\n\"basic_info\": {\"kernel_name\": \"AddCustom_ab1b6750d7f510985325b603cb06dc8b\", \"rts_block_dim\": \"not_collected\", \"driver_aicore_num\": 48},\n\"single_op_test\": {\"result\": \"Execute Success\", \"execute_info\": \"The single-operator test case was executed, but the AI Core error was not reproduced.\", \"memory_status\": \"\", \"log_path\": \"aicerror_0_1726159207469285/single_op/run.log\"},\n\"root_cause\": {\"evidence\": [{\"field\": \"single_op_test.result\", \"value\": \"Execute Success\", \"interpretation\": \"the single-operator test case was executed, but the AI Core error was not reproduced\"}]}\n单算子复现的结论是什么？rts_block_dim 是多少？算子有问题吗？",
+      "expected_output": "应以 info.json 字段判读为准（先核 analysis_result 为 success，字段才可当真实结果解读）：single_op_test.result 为 Execute Success，按四态判读为未复现（RetCode.SUCCESS 语义反转：单算子测试用例执行完成但没有复现出 AI Core Error，不代表算子无问题，结论不因此改写，须走升级路径）；basic_info.rts_block_dim 为 not_collected 空值哨兵，表示该值未采集到（数值哨兵 -1 已转 not_collected），不是数值、不得当数值解读，更不得当 0 或 -1 参与与 driver_aicore_num 的比较；算子有没有问题不由单算子这一条链决定，按四证据链优先级取结论，未复现走升级路径。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "未复现" },
+        { "type": "contains", "pattern": "not_collected" },
+        { "type": "not_contains", "pattern": "复现成功，根因是" }
+      ]
+    },
+    {
+      "id": 13,
+      "dimension": "tool_use_adherence",
+      "title": "旧版本 CANN 无 info.json 的回退",
+      "config": {
+        "max_tokens": 200000,
+        "ascend_platforms": ["A2"],
+        "eval_mode": "text"
+      },
+      "prompt": "CANN 9.3.0 环境执行 msaicerr -p 后，结果目录里只有 info.txt，没有 info.json（终端也只打印了 Analysis info is saved in 一行提示）。结果应该怎么读？是不是工具坏了？要不要升级 CANN？",
+      "expected_output": "应判 info.json 缺失属预期：CANN 9.3.0 及之前版本本就不携带 info.json（用户口径，仓内无版本标记可引），不是工具损坏；判据是文件存在性（ls 结果目录核验），不做版本号检测；缺失时无缝回退 info.txt 六段既有判读，全部后续步骤按 info.txt 文本判读推进，并在诊断报告\"环境与输入\"段标注回退与归因；不得把 info.json 缺失判为工具故障，不建议升级 CANN；另一类归因是旁路写失败（异常仅告警、不影响退出码，可核终端是否缺 Analysis info (json) is saved in 提示），同样回退 info.txt 判读。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "info.txt" },
+        { "type": "contains", "pattern": "回退" },
+        { "type": "not_contains", "pattern": "请升级" }
+      ]
     }
   ]
 }

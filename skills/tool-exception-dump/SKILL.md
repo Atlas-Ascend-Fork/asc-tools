@@ -30,7 +30,8 @@ description: 昇腾 NPU AI Core Error 系统化诊断工作流 skill：基于 ms
 | P3 错误类型识别 | [error-type-decode.md](references/error-type-decode.md) | 芯片形态判定两法、高频错误位表、六模块子域分析、五类特殊场景、结论码 101-107 全表 |
 | P4 单算子复现 | [reproduction-guide.md](references/reproduction-guide.md) | 复现路径决策、路径 A/B、tiling 三源重建、16 键 config、三变体、越界探测双模式、三态判读 |
 | P5 证据链汇聚与修复建议 | [fix-suggestions.md](references/fix-suggestions.md) | 四证据链框架、优先级链逐级触发条件、修复建议映射表、升级路径、证据链格式报告模板 |
-| 评测自查 | [eval-cases.md](references/eval-cases.md) | 14 个 RED-GREEN 用例，GREEN 断言覆盖全部 31 步 |
+| P2-P5 msaicerr 结果读取（info.json 判读与回退） | [json-report-decode.md](references/json-report-decode.md) | 产物版本约束、字段 schema、空值三义、四态、12 结论分支、字段↔步骤↔段位映射、回退规则 |
+| 评测自查 | [eval-cases.md](references/eval-cases.md) | 16 个 RED-GREEN 用例，GREEN 断言覆盖全部 31 步 |
 
 官方文档分工（知识依赖单向性，工具用法知识只读引用不复制）：msaicerr CLI 参数与命令速查、环境准备、`-e` 环境自检、收集目录三要素排查、8 个暂不支持算子清单、dump 解析与 `-dtype` 转换 → oam-tools docs/zh/msaicerr；asys collect/analyze 用法与参数、asys_output 目录树全景、自动收集的 6 个环境变量一致性清单 → oam-tools docs/zh/asys。
 
@@ -220,15 +221,16 @@ grep -rn "Begin to dump callback exception" <收集目录>  # 命中=SK
 
 #### P2.2 执行 msaicerr -p 完整分析
 
-**动作**：在 msaicerr.py 所在目录执行完整根因分析，跟随终端提示定位 info.txt。
+**动作**：在 msaicerr.py 所在目录执行完整根因分析，跟随终端提示定位 info.txt，并核验同目录是否产出结构化报告 info.json。
 **命令**：
 
 ```bash
 python3 msaicerr.py -p <收集目录> -out <结果目录> -dev <device_id>
+ls <info.txt所在目录>/info.json    # info.json 存在性核验（与 info.txt 同目录；判据为文件存在性，不做版本号检测）
 ```
 
-**判读**：成功时终端打印 `Analysis info is saved in <info.txt路径>`（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1354-1358），结果目录形态为 `<out>/info_{执行时间戳}/aicerror_0_{错误时间戳}/info.txt`；退出码 0 或 101-107 为正常完成（101-107 即分析结论码），1-11 为工具状态码（全表见 references/toolchain-orchestration.md）。本步执行时工具内部自动完成 6 步收集（oam-tools/src/msaicerr/ms_interface/collection.py:383-429）与 11 步解析（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1802-1960），解析产出对应后续各判读点：错误行提取与 PC 修正→P2、寄存器解码→P3、dump 解析与单算子复现→P4、结论与报告→P5。
-**失败分支**：退出码 8（空报告）表示收集失败或日志无法提取信息，回 P1.3 复核三要素与日志时间窗，不要盲目重复执行 -p；退出码 2 回 P0.6 检查路径约束；退出码 1 检查参数依赖规则（详见官方文档 oam-tools docs/zh/msaicerr）；否则转 P2.3 判读 info.txt。
+**判读**：成功时终端打印 `Analysis info is saved in <info.txt路径>`（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1354-1358），结果目录形态为 `<out>/info_{执行时间戳}/aicerror_0_{错误时间戳}/info.txt`；退出码 0 或 101-107 为正常完成（101-107 即分析结论码），1-11 为工具状态码（全表见 references/toolchain-orchestration.md）。info.json 是与 info.txt 同源、同目录落盘的结构化报告，为 CANN 9.3.0 之后版本才出现的产物（用户口径，仓内无版本标记可引），写盘成功时终端另有 `Analysis info (json) is saved in <info.json路径>` 提示（oam-tools/src/msaicerr/ms_interface/json_report_builder.py:790）。ls 命中 info.json 时，P2.3 起各步判读以 info.json 字段取值优先（先核 `analysis_result`，为 `"failed"` 时按空报告处理、只认此键，其余字段为空默认值不得当真实结果解读；空值三义、四态、12 结论分支等穷尽细节路由 references/json-report-decode.md）；ls 未命中时按两类归因回退 info.txt 既有判读：CANN 9.3.0 及之前版本本就不携带该产物（属预期缺失）或旁路写失败（json_report_builder.py:781-799，异常仅告警、不影响退出码），并在诊断报告"环境与输入"段标注回退与归因。本步执行时工具内部自动完成 6 步收集（oam-tools/src/msaicerr/ms_interface/collection.py:383-429）与 11 步解析（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1802-1960），解析产出对应后续各判读点：错误行提取与 PC 修正→P2、寄存器解码→P3、dump 解析与单算子复现→P4、结论与报告→P5。
+**失败分支**：退出码 8（空报告）表示收集失败或日志无法提取信息，该路径的 info.json 落在 `<out>/info_{执行时间戳}/aicerror/info.json`（无时间戳子目录，glob `aicerror_0_*` 会漏掉，oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1988-1995），且 `analysis_result` 为 `"failed"`、其余字段皆为空默认值，不得当真实结果解读；回 P1.3 复核三要素与日志时间窗，不要盲目重复执行 -p；退出码 2 回 P0.6 检查路径约束；退出码 1 检查参数依赖规则（详见官方文档 oam-tools docs/zh/msaicerr）；info.json 缺失不构成失败，按版本兼容处理回退 info.txt 判读，不得把 info.json 缺失判为工具故障或要求用户升级 CANN；否则转 P2.3 判读 info.txt。
 
 #### P2.3 判读 info.txt 第③段（报错行定位）
 
@@ -239,7 +241,7 @@ python3 msaicerr.py -p <收集目录> -out <结果目录> -dev <device_id>
 cat <info.txt路径>
 ```
 
-**判读**：第③段先给 Original Info（`start pc`、`current pc`、`Error occurred most likely at line: <汇编偏移>`，偏移为十六进制无 0x 前缀，是估算值而非源码行号）；出现 Corrected Info 块时优先按其定位（修正 PC 由 AI Core 错误寄存器回填，比原始 PC 更可信）；偏移行之后跟随 `<反汇编文件名>:<err_pc>`、cce 行号、TBE 源码 `文件:行号` 三级信息（L1 才有后两级）；修正块出现 `Unable to calculate the corrected line number, check the logs for more details.` 表示符号化失败。六段结构与逐行判读见 references/error-line-location.md「四、info.txt 判读」与「4.3 Corrected Info 块」。
+**判读**：第③段先给 Original Info（`start pc`、`current pc`、`Error occurred most likely at line: <汇编偏移>`，偏移为十六进制、带 0x 前缀（如 `0x5e8`；oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1317、:1205），是估算值而非源码行号）；出现 Corrected Info 块时优先按其定位（修正 PC 由 AI Core 错误寄存器回填，比原始 PC 更可信）；偏移行之后跟随 `<反汇编文件名>:<err_pc>`、cce 行号、TBE 源码 `文件:行号` 三级信息（L1 才有后两级）；修正块出现 `Unable to calculate the corrected line number, check the logs for more details.` 表示符号化失败。info.json 存在时本步优先读 `instructions` 字段：`instructions.original` 对应 Original Info，`instructions.corrected` 对应 Corrected Info（无 PC 修正时整体为 `null`），`instructions.notice` 为修正提示（`null` 即无提示），corrected 优先逻辑不变；`likely_error_line` 为十进制 int，与第③段带 0x 前缀的十六进制偏移进制不同（如 `0x5e8` 对应 JSON `1512`），对照时需换算。六段结构与逐行判读见 references/error-line-location.md「四、info.txt 判读」与「4.3 Corrected Info 块」，字段语义见 references/json-report-decode.md「六、instructions」。
 **失败分支**：无 Corrected Info 块时以 Original Info 估算偏移转 P2.5 反汇编链；行号缺失提示出现则转 P2.4 手动回退。
 
 #### P2.4 llvm-symbolizer 手动回退
@@ -249,10 +251,10 @@ cat <info.txt路径>
 
 ```bash
 which llvm-symbolizer    # 未命中则到 CANN 工具链目录查找，如 /usr/local/Ascend/latest/<arch>-linux/ccec_compiler/bin/
-llvm-symbolizer -obj=<kernel的.o文件> 0x<修正后偏移>
+llvm-symbolizer -obj=<kernel的.o文件> <修正后偏移>    # <修正后偏移> 为带 0x 前缀的十六进制（如 0x5e8）
 ```
 
-**判读**：正常输出两行，即函数名与 `源文件:行:列`（如 `my_kernel at /path/to/kernel.cce:88:3`）；输出 `??` 或 `??:0:0` 即该 .o 无调试信息、符号化失败（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:266-273）；未安装态工具文案为 `llvm-symbolizer is not installed.`（pc_corrector.py:251-254）。输入取值：偏移来自 info.txt 第③段 Corrected Info，.o 路径来自第①段 kernel file 字段。失败四态与手动回退全流程见 references/error-line-location.md「六、llvm-symbolizer 自动流程与手动回退（P2.4）」。
+**判读**：正常输出两行，即函数名与 `源文件:行:列`（如 `my_kernel at /path/to/kernel.cce:88:3`）；输出 `??` 或 `??:0:0` 即该 .o 无调试信息、符号化失败（oam-tools/src/msaicerr/ms_interface/pc_corrector.py:266-273）；未安装态工具文案为 `llvm-symbolizer is not installed.`（pc_corrector.py:251-254）。输入取值：偏移来自 info.txt 第③段 Corrected Info，.o 路径来自第①段 kernel file 字段；info.json 存在时输入取值优先读 `instructions.corrected.likely_error_line`（十进制 int，换算回带 0x 前缀的十六进制后填入命令）与 `basic_info.kernel_file`。失败四态与手动回退全流程见 references/error-line-location.md「六、llvm-symbolizer 自动流程与手动回退（P2.4）」。
 **失败分支**：手动仍输出 `??` 则放弃符号化，转 P2.5 objdump 反汇编链；.o 文件不存在则回 P1 检查编译产物收集（dfx/ops），补齐后重试本步。
 
 #### P2.5 objdump 反汇编回退链
@@ -262,12 +264,12 @@ llvm-symbolizer -obj=<kernel的.o文件> 0x<修正后偏移>
 
 ```bash
 cce-objdump -d --line-numbers <kernel.o> > <kernel.o>.txt     # 反汇编（llvm-objdump 为备选）
-grep -n "<err_pc>:" <kernel.o>.txt                            # <err_pc> 为第③段偏移（十六进制无 0x 前缀）
+grep -n "<err_pc>:" <kernel.o>.txt                            # <err_pc> 为第③段偏移去掉 0x 前缀后的纯十六进制串
 grep -n "cce:" <kernel.o>.txt                                 # 从报错行向上找最近 cce:<行号>
 grep -n "\"cce_line\": <cce行号>" <kernel_name>_loc.json      # 映射 TBE 源码 文件:行号
 ```
 
-**判读**：五步链走通得到 TBE 源码 `文件:行号`；反汇编文本报错行含 PIPE_ALL 时工具给出 set_flag/wait_flag 配对检查提示（提示原文见 references/error-line-location.md「八、PIPE_ALL 提示」），动作是检查算子代码中 set_flag 与 wait_flag 是否配对使用；断链点（.o 与 .json 都不存在、无 cce 行号、_loc.json 缺失、L0 到偏移为止）均为正常降级，保留已有级结果。五步链与断链点全表见 references/error-line-location.md「七、objdump 回退链」。
+**判读**：err_pc 来源：info.txt 第③段偏移（十六进制、带 0x 前缀，如 `0x5e8`；oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1317、:1205），info.json 存在时读 `instructions.corrected.likely_error_line`（十进制 int，换算回十六进制）；拿该偏移去反汇编文本 grep（`grep -n "<err_pc>:"`）时去掉 0x 前缀、取纯十六进制串（反汇编行形态如 `504:`）。五步链走通得到 TBE 源码 `文件:行号`；反汇编文本报错行含 PIPE_ALL 时工具给出 set_flag/wait_flag 配对检查提示（提示原文见 references/error-line-location.md「八、PIPE_ALL 提示」），动作是检查算子代码中 set_flag 与 wait_flag 是否配对使用；断链点（.o 与 .json 都不存在、无 cce 行号、_loc.json 缺失、L0 到偏移为止）均为正常降级，保留已有级结果。五步链与断链点全表见 references/error-line-location.md「七、objdump 回退链」。
 **失败分支**：cce-objdump 与 llvm-objdump 均不可用（`No cce-objdump or llvm-objdump found.`）时，按工具建议把 cce-objdump 与 .o 复制到其他机器执行 `cce-objdump -d <kernel_name>.o > <kernel_name>.o.txt`；L0 场景只给汇编偏移属正常，围绕偏移与 10 条指令上下文判读（references/error-line-location.md「十一、报错点 10 条指令上下文」）；完成后转 P3.1。
 
 #### P2.6 dump 失败分类与多错误判读
@@ -281,7 +283,7 @@ grep -rn "D2H failed" <收集目录>                  # device 到 host 拷贝�
 grep -rn "the address maybe invalid" <收集目录>    # 异常地址无效
 ```
 
-**判读**：第⑤段出现 `Failed to get dump data of error op!` 或任一特征命中即 dump 失败、结论码 102（内存分配错误方向，oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1972-1973），P4 无 dump 输入可用；SK 场景（P2.1 判定）证据链退化，定位不清时向用户给出关闭算子融合后重跑的建议（四链即可全部生效）；故障信息含多个 AI Core Error 时工具按日志时间只解析第一个（多错误行为详见官方文档 oam-tools docs/zh/msaicerr），修复首个错误后仍有报错则重新收集走一轮 P1-P5。三类特征与 102 判读见 references/error-line-location.md「十、多错误与 dump 失败分类」，SK 处置见「九、SK 场景处理与关融合重跑建议」。
+**判读**：第⑤段出现 `Failed to get dump data of error op!` 或任一特征命中即 dump 失败、结论码 102（内存分配错误方向，oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1972-1973），P4 无 dump 输入可用；info.json 存在时 dump 结论优先对照 `root_cause` 分支（`addr_invalid` 地址无效 / `data_invalid` 数据无效方向）与 `dump_info` 字段（exception_dump_file、files[].data_stats），既有三条 grep 保留为 info.json 缺失时的回退与 plog 原文核验手段；SK 场景（P2.1 判定）证据链退化，定位不清时向用户给出关闭算子融合后重跑的建议（四链即可全部生效）；故障信息含多个 AI Core Error 时工具按日志时间只解析第一个（多错误行为详见官方文档 oam-tools docs/zh/msaicerr），修复首个错误后仍有报错则重新收集走一轮 P1-P5。三类特征与 102 判读见 references/error-line-location.md「十、多错误与 dump 失败分类」，SK 处置见「九、SK 场景处理与关融合重跑建议」。
 **失败分支**：dump 失败则结合 P3 寄存器解码判断是否越界、地址类错误位，P4 改走路径 B，转 P3.1；dump 有效则直接转 P3.1。
 
 ### Phase 3：错误类型识别（P3.1-P3.5）
@@ -290,7 +292,7 @@ grep -rn "the address maybe invalid" <收集目录>    # 异常地址无效
 
 **动作**：判读 info.txt 第②段 AI Core DFX Register，先判芯片形态（Stars 或 David）再选择解码路径。
 **命令**：无独立命令（判读动作：错误码形态如 `0x40000` 或 `257, 341` 来自第②段与 plog 原文）。
-**判读**：方法一按错误码形态：以 0x 开头的十六进制指向 Stars（ASCEND_910B），逗号分隔的十进制位号指向 David（ASCEND_950），方向不得写反（oam-tools/src/msaicerr/ms_interface/aic_error_info.py:25-40）；裸 `0` 两芯片同形，只能落到 Stars 路径走 trap_or_timeout 兜底。方法二按 dump info 寄存器键：含 `sc error info:`、`su error info:`、`l1 error info:` 指向 David，含 `ifu error info:`、`ccu error info:`、`biu error info:` 指向 Stars；两法冲突以方法二为准（aic_error_info.py:43-58）。两法详解见 references/error-type-decode.md「芯片形态判定（两法）」。
+**判读**：方法一按错误码形态：以 0x 开头的十六进制指向 Stars（ASCEND_910B），逗号分隔的十进制位号指向 David（ASCEND_950），方向不得写反（oam-tools/src/msaicerr/ms_interface/aic_error_info.py:25-40）；裸 `0` 两芯片同形，只能落到 Stars 路径走 trap_or_timeout 兜底。方法二按 dump info 寄存器键：含 `sc error info:`、`su error info:`、`l1 error info:` 指向 David，含 `ifu error info:`、`ccu error info:`、`biu error info:` 指向 Stars；两法冲突以方法二为准（aic_error_info.py:43-58）。info.json 存在时错误码与寄存器键优先读 `aic_error.groups[].error_code`（字符串原样，如 `"0x40000"`）与 `aic_error.groups[].registers`（仅 Stars/910B 非空，键为模块名 vec/mte/ifu/ccu/cube/biu，David/950 恒为空对象）。两法详解见 references/error-type-decode.md「芯片形态判定（两法）」。
 **失败分支**：两法都判不出（返回 None）时按 Stars 路径兜底处理并在报告注明判定置信度降低；否则按判型转 P3.2。
 
 #### P3.2 错误位解码
@@ -309,7 +311,7 @@ grep -n "<错误位名>" oam-tools/src/msaicerr/ms_interface/constant.py    # �
 
 **动作**：对 Stars 命中的模块提取并解读子寄存器串（IFU、MTE、CCU、BIU、CUBE、VEC 六模块）。
 **命令**：无独立命令（判读动作：子寄存器串来自 plog 的 `vec error info:` 等六个键）。
-**判读**：每个单元首次命中时提取 `<单元键>=(\S+)` 解析错误类型与出错地址；MTE 按错误位动态选子字典（SOC、FMC、FMD、UNZIP、AIPP）；approximate 地址是补零近似值仅供参考；VEC 的 repeats 字段表示错误重复次数；David 不走子域分析，模块信息直接读错误名前缀（CUBE_、MTE_、L1_、SC_、SU_、VEC_）。位段表与五张子字典见 references/error-type-decode.md「六模块子域分析」。
+**判读**：每个单元首次命中时提取 `<单元键>=(\S+)` 解析错误类型与出错地址；MTE 按错误位动态选子字典（SOC、FMC、FMD、UNZIP、AIPP）；approximate 地址是补零近似值仅供参考；VEC 的 repeats 字段表示错误重复次数；David 不走子域分析，模块信息直接读错误名前缀（CUBE_、MTE_、L1_、SC_、SU_、VEC_）。info.json 存在时 Stars 子域优先读 `aic_error.groups[].registers` 模块对象（raw_value/bits/value/meaning/approximate 五键，approximate 为补零近似地址、仅供参考），与 plog 子寄存器串同源。位段表与五张子字典见 references/error-type-decode.md「六模块子域分析」。
 **失败分支**：子寄存器串取不到时输出 `No <单元>_ERR_INFO found` 属正常（plog 可能只记录部分单元），靠主字典释义继续，转 P3.4。
 
 #### P3.4 特殊场景判读（五项）
@@ -323,14 +325,14 @@ grep -rn "isconcurrentexe" <收集目录>              # 并发执行判定
 grep -rn "The extend info: errcode:" <收集目录>    # 错误码 0x0 的 v300 三元组
 ```
 
-**判读**：场景 1 atomic 溢出，等于错误码恰 `0x800000` 加 `dha status 1` 命中加 memset 检查缺失（AtomicLaunchKernelWithFlag 未找到），三证据并存时结论按 105 优先；场景 2 args 前后改写，即第④段 args before 与 after 不一致，指向 106 方向；场景 3 outstanding 双 PC，主正则无命中时降级 AICORE_ERR_OCCUR_OST，需确认使用与出错任务对应的 PC；场景 4 并发 isconcurrentexe，去重后任务数超过 2 时放弃自动判定需人工分析，并发时 atomic 结论可能误报；场景 5 错误码 `0x0` 不等于无异常，从 extend info 三元组重建错误码，重建不出按 trap_or_timeout 兜底。五项详解见 references/error-type-decode.md「特殊场景判读」。
+**判读**：场景 1 atomic 溢出，等于错误码恰 `0x800000` 加 `dha status 1` 命中加 memset 检查缺失（AtomicLaunchKernelWithFlag 未找到），三证据并存时结论按 105 优先；场景 2 args 前后改写，即第④段 args before 与 after 不一致，指向 106 方向（info.json 存在时按 JSON 方式核验：`args.before_execute` 与 `args.after_execute` 逐 `arg_index` 对比，同 index 的 address/dtype/shape 是否一致，条目已按 arg_type 语义化为 input/output/workspace/tiling_data/shape/other，以字段级对比为准）；场景 3 outstanding 双 PC，主正则无命中时降级 AICORE_ERR_OCCUR_OST，需确认使用与出错任务对应的 PC；场景 4 并发 isconcurrentexe，去重后任务数超过 2 时放弃自动判定需人工分析，并发时 atomic 结论可能误报；场景 5 错误码 `0x0` 不等于无异常，从 extend info 三元组重建错误码，重建不出按 trap_or_timeout 兜底。五项详解见 references/error-type-decode.md「特殊场景判读」。
 **失败分支**：错误码 0x0 且三元组重建失败时按无位置位兜底处理并注明置信度低；否则转 P3.5。
 
 #### P3.5 AI Core 数量与 blockDim 检查及结论码对照
 
 **动作**：核对报告基本信息段的 rts_block_dim 与 driver_aicore_num，并对照结论码语义表。
 **命令**：无独立命令（判读动作：直接读报告 Basic information 段的 `rts_block_dim` 与 `driver_aicore_num`）。
-**判读**：两者均有效且 rts_block_dim 大于 driver_aicore_num 的 2 倍时，结论为环境 AI Core 数量不满足算子并发需求（oam-tools/src/msaicerr/ms_interface/aic_error_info.py:219-224）；结论码语义：101 单算子运行错误、102 内存分配错误、103 硬件错误、104 算子输入数据错误、105 框架未执行 memset 清零、106 算子 args 被踩、107 atomic 算子溢出（oam-tools/src/msaicerr/ms_interface/constant.py:72-78），全表见 references/error-type-decode.md「结论码 101-107 全表」。P3 产出的错误位与特殊场景结论供 P5 证据链汇聚使用。
+**判读**：两者均有效且 rts_block_dim 大于 driver_aicore_num 的 2 倍时，结论为环境 AI Core 数量不满足算子并发需求（oam-tools/src/msaicerr/ms_interface/aic_error_info.py:219-224）；info.json 存在时读 `basic_info.rts_block_dim` 与 `basic_info.driver_aicore_num`：数值哨兵 -1 已转 `not_collected`，命中 `not_collected` 表示该值未采集到，勿当数值解读、更不得当 -1 参与比较；结论码语义：101 单算子运行错误、102 内存分配错误、103 硬件错误、104 算子输入数据错误、105 框架未执行 memset 清零、106 算子 args 被踩、107 atomic 算子溢出（oam-tools/src/msaicerr/ms_interface/constant.py:72-78），全表见 references/error-type-decode.md「结论码 101-107 全表」。P3 产出的错误位与特殊场景结论供 P5 证据链汇聚使用。
 **失败分支**：driver_aicore_num 获取失败对应工具状态码 10，检查驱动与 runtime 动态库后重试；否则转 P4.1。
 
 ### Phase 4：单算子复现结果判读与回退（P4.1-P4.3）
@@ -351,14 +353,14 @@ grep -n "Input data invalid" <info.txt路径>
 grep -n "Input data maybe invalid" <info.txt路径>
 ```
 
-**判读**：第⑥段三种结果文案分别对应三态：`The AI Core error was reproduced...` 为复现成功（RetCode.FAILED）；`...was executed, but the AI Core error was not reproduced.` 为未复现（RetCode.SUCCESS，不代表算子无问题）；`...was not executed...` 为未运行（RetCode.NOT_RUN），info.txt 会提示查看 single_op 日志路径（aic_error_info.py:179-183、218-221、271-277）。第⑤段出现 `Input data invalid` 或 `Input data maybe invalid` 时，dump 校验链支撑 104；NaN/Inf 为强证据，0.9 倍值域为弱证据，须结合业务值域确认。
+**判读**：第⑥段三种结果文案分别对应三态：`The AI Core error was reproduced...` 为复现成功（RetCode.FAILED）；`...was executed, but the AI Core error was not reproduced.` 为未复现（RetCode.SUCCESS，不代表算子无问题）；`...was not executed...` 为未运行（RetCode.NOT_RUN），info.txt 会提示查看 single_op 日志路径（aic_error_info.py:179-183、218-221、271-277）。info.json 存在时本步优先读 `single_op_test` 字段：`result` 取四态（`Aicore Error`=复现成功、`Execute Success`=未复现、`Execute Failed` 与 `Not Run`=未运行），`execute_info` 与第⑥段文案同源，`memory_status` 为越界探测结论串（采集到但为空是 `""`），`log_path` 为单算子日志路径；第⑤段输入数据有效性对照 `dump_info.files[].data_stats`（按全局 arg_index 对应张量统计）。既有六条 grep info.txt 命令保留，定位为 info.json 缺失时的回退与原文核验手段，四态到三态映射见 references/json-report-decode.md「十、single_op_test 四态与三态映射」。第⑤段出现 `Input data invalid` 或 `Input data maybe invalid` 时，dump 校验链支撑 104；NaN/Inf 为强证据，0.9 倍值域为弱证据，须结合业务值域确认。
 **失败分支**：info.txt 第⑥段缺失或三态文案无法判读时，标记“自动复现结果缺失”；不得编造复现结果，转 P4.3 判断是否需要手动回退。
 
 #### P4.2 三态与越界结果判读
 
 **动作**：按三态判读复现结果，并结合第⑥段 mem_monitor、magic_ret 与 tail 遍 sync_ret 判读越界。
 **命令**：无独立命令（判读动作：以 info.txt 第⑥段与 msaicerr 过程日志为准）。
-**判读**：复现成功说明问题锁定算子自身，进入 P5 证据链汇聚；未复现什么都没证明，走 P5.4 升级路径；未运行同样计入 101 方向，不得当作“无问题”。越界判读以 magic_ret（1 为向前越界、2 为向后越界）与 tail 遍 sync_ret 为主；`Access Memory without OverBoundary` 关键字在当前 msaicerr 代码内没有产出方，运行时侧输出仍可作越界佐证，须如实注明。三态与双模式全表见 references/reproduction-guide.md「六、复现结果三态与下一步动作」与「五、内存越界探测：tail 与 magic 双模式」。
+**判读**：复现成功说明问题锁定算子自身，进入 P5 证据链汇聚；未复现什么都没证明，走 P5.4 升级路径；未运行同样计入 101 方向，不得当作“无问题”。越界判读以 magic_ret（1 为向前越界、2 为向后越界）与 tail 遍 sync_ret 为主；info.json 存在时越界判读优先对照 `single_op_test.memory_status`（越界探测结论串），结论方向佐证读 `root_cause`（summary/evidence）；`Access Memory without OverBoundary` 关键字在当前 msaicerr 代码内没有产出方，运行时侧输出仍可作越界佐证，须如实注明。三态与双模式全表见 references/reproduction-guide.md「六、复现结果三态与下一步动作」与「五、内存越界探测：tail 与 magic 双模式」。
 **失败分支**：mem_monitor 为空且 magic_ret/sync_ret 均无有效值时，越界判读链失效并如实标注；未复现不得臆断根因，转 P5.4。
 
 #### P4.3 手动复现回退
@@ -374,21 +376,21 @@ grep -n "Input data maybe invalid" <info.txt路径>
 
 **动作**：把 P2 至 P4 的产出按四证据链框架逐链填写事实与判定，形成汇总表。
 **命令**：无（汇聚动作：按 `证据链→事实→判定字段→是否支撑结论码` 四列逐链填写）。
-**判读**：四链权威定义：反编译→101（出错在算子源码哪一行）；寄存器解码→103（硬件报了哪一类异常，辅以 golden op 环境自检）；dump 校验→104（输入数据本身是否已脏）；单算子复现→105-107（脱离模型能否稳定复现、args 有没有被踩）。某条链数据缺失时明确写"本链失效（原因）"，不允许留空或臆造。各链证据来源与报告落点见 references/fix-suggestions.md「一、四证据链框架」。
+**判读**：四链权威定义：反编译→101（出错在算子源码哪一行）；寄存器解码→103（硬件报了哪一类异常，辅以 golden op 环境自检）；dump 校验→104（输入数据本身是否已脏）；单算子复现→105-107（脱离模型能否稳定复现、args 有没有被踩）。某条链数据缺失时明确写"本链失效（原因）"，不允许留空或臆造。info.json 存在时各链事实来源优先取 `root_cause.evidence`（每项 field/value/interpretation，field 即 info.json 内字段路径），以结构化取值填表、与文本证据互证。各链证据来源与报告落点见 references/fix-suggestions.md「一、四证据链框架」。
 **失败分支**：链大面积缺失（无 dump、复现 NOT_RUN）时结论置信度降级为低，只输出排查方向；否则转 P5.2。
 
 #### P5.2 结论码优先级链判定
 
 **动作**：按 get_return_code 优先级链取最终结论码。
 **命令**：无（判定动作：优先级链为 `get_return_code` 的固定 elif 逻辑）。
-**判读**：优先级链 105→107→104→106→102→101→103→0，先命中先返回（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1963-1980）；四个判读细节：一是 107 在返回码层面实际不可达（atomic_add_err 求值前提含 atomic_clean_check 为假，会先命中 105，两条件互斥）；二是 NOT_RUN 同样命中 101（用例没跑起来不能认为没有发现问题）；三是 flag_check、AI Core 数量不足、current_pc 为 0x0 没有专属返回码，只进结论文案；四是结论文案链与返回码链排序不同，人工读文案、脚本读返回码时预期到差异。逐级触发条件见 references/fix-suggestions.md「二、结论码优先级链（get_return_code）」与 references/toolchain-orchestration.md。
+**判读**：优先级链 105→107→104→106→102→101→103→0，先命中先返回（oam-tools/src/msaicerr/ms_interface/aicore_error_parser.py:1963-1980）；四个判读细节：一是 107 在返回码层面实际不可达（atomic_add_err 求值前提含 atomic_clean_check 为假，会先命中 105，两条件互斥）；二是 NOT_RUN 同样命中 101（用例没跑起来不能认为没有发现问题）；三是 flag_check、AI Core 数量不足、current_pc 为 0x0 没有专属返回码，只进结论文案；四是结论文案链与返回码链排序不同，人工读文案、脚本读返回码时预期到差异。info.json 存在时注意 `root_cause` 分支顺序（12 分支优先序）≠ 返回码链顺序，读 `root_cause.summary` 文案与读返回码预期同样的顺序差异（详见 references/fix-suggestions.md 与 references/json-report-decode.md「十一、root_cause 12 分支与返回码链顺序差异」）。逐级触发条件见 references/fix-suggestions.md「二、结论码优先级链（get_return_code）」与 references/toolchain-orchestration.md。
 **失败分支**：全部判据未命中返回 0（兜底），0 不代表故障不存在，逐节核对六节报告证据，证据不足转 P5.4 升级路径；否则转 P5.3。
 
 #### P5.3 修复建议映射
 
 **动作**：按结论码与错误位查修复建议映射表，输出修复建议与验证方法。
 **命令**：无（查表动作：以 `<结论码或错误位>` 为键查映射表）。
-**判读**：映射表每行为四元组（触发条件、根因方向、修复建议、验证方法），约 25 条；代表性示例：结论码 105（图中算子前未插入 memset/atomic_clean）→排查 GE 侧清零算子未插入原因→验证方法为复跑后 plog 能检索到 `AtomicLaunchKernelWithFlag_<node_name>` 且 AI Core Error 不再复现；错误位 vec_ub_wrap_around（UB 越界绕回）→检查 UB 空间分配与单次搬运块大小、循环次数是否匹配。结论码触发与错误位触发同时存在时以结论码行为主、错误位行为根因细化；错误位名称以 constant.py:155-1123 为唯一名称源。完整映射表见 references/fix-suggestions.md「三、修复建议映射表」。
+**判读**：映射表每行为四元组（触发条件、根因方向、修复建议、验证方法），约 25 条；代表性示例：结论码 105（图中算子前未插入 memset/atomic_clean）→排查 GE 侧清零算子未插入原因→验证方法为复跑后 plog 能检索到 `AtomicLaunchKernelWithFlag_<node_name>` 且 AI Core Error 不再复现；错误位 vec_ub_wrap_around（UB 越界绕回）→检查 UB 空间分配与单次搬运块大小、循环次数是否匹配。结论码触发与错误位触发同时存在时以结论码行为主、错误位行为根因细化；错误位名称以 constant.py:155-1123 为唯一名称源。info.json 的 `root_cause.action_items`（每项 action/target/purpose）为工具侧动作建议，可作修复方向佐证；修复建议仍以本技能映射表为权威。完整映射表见 references/fix-suggestions.md「三、修复建议映射表」。
 **失败分支**：映射表未覆盖且无法按已覆盖根因方向（越界读写、UB 越界绕回、原子溢出、输入数据非法、地址未对齐、ECC 硬件类）就近归类时，只给排查方向不给确定性根因，并注明依据不足；否则转 P5.4。
 
 #### P5.4 复现失败升级路径
@@ -418,7 +420,7 @@ readlink -f <结果目录>/tool_exception_dump_report_<执行时间戳>.md    # 
 
 诊断完成后按以下固定顺序输出六段式报告，段落名不得增删改：
 
-1. **环境与输入**：运行环境结论（本地分析确认、python 版本、ASCEND_OPP_PATH、环境自检结果）、输入四要素、收集目录形态、降级标记清单。
+1. **环境与输入**：运行环境结论（本地分析确认、python 版本、ASCEND_OPP_PATH、环境自检结果）、输入四要素、收集目录形态、降级标记清单、info.json 可用性与回退标注（缺失时注明归因：版本不携带或旁路写失败，不判故障）。
 2. **场景与定位**：场景判定结论（L0/L1/ffts/SK 及证据行）、报错行定位结论（Corrected Info 优先，偏移、cce 行号、TBE 源码行三级）、定位降级说明。
 3. **错误类型**：芯片形态判定结论（两法）、错误位名与释义、模块子域解读、特殊场景判读结论。
 4. **复现结果**：复现路径（A 或 B）、三变体执行情况、三态结论（复现成功、未复现、未运行）、越界探测判读（以 magic_ret 与 sync_ret 为主）。
@@ -440,7 +442,7 @@ readlink -f <结果目录>/tool_exception_dump_report_<执行时间戳>.md    # 
 ## 五、执行纪律（NEVER 清单）
 
 1. NEVER 在 `-p` 指定的目录或其子目录内执行 msaicerr，也绝不把 `-p` 目录或其子目录用作 `-out`（oam-tools/src/msaicerr/msaicerr.py:120-123，违反时工具解析卡住或失败）。
-2. NEVER 伪造定位或复现结果：报错行、错误位、复现三态只能来自工具实际产出（info.txt 与日志原文），查证不了就写"待确认"，禁止编造。
+2. NEVER 伪造定位或复现结果：报错行、错误位、复现三态只能来自工具实际产出（info.txt、info.json 与日志原文），查证不了就写"待确认"，禁止编造。
 3. NEVER 在 dump 数据无效时关联 104 以外的结论：NaN/Inf 与 0.9 倍值域命中只支撑 104 证据链，不得据此臆断 101、103 等其他结论。
 4. NEVER 在复现失败（未复现）时臆断根因：未复现什么都没证明，必须走 P5.4 升级路径（msSanitizer、op_debug_config=oom、关融合重跑、框架侧上报）。
 5. NEVER 对 8 个暂不支持算子强行分析（MatmulAllReduce 类、MemSet 等，oam-tools/docs/zh/msaicerr/msaicerr_functions_and_restrictions.md:8-16），命中即如实告知用户并停止。
@@ -453,6 +455,9 @@ readlink -f <结果目录>/tool_exception_dump_report_<执行时间戳>.md    # 
 12. NEVER 假设设备内存或 UB 初值为 0（malloc 后填随机字节、UB 不自动清零），也不在异地环境分析故障日志（仅本地分析）。
 13. NEVER 只在对话中输出最终报告：最终报告必须保存为 `.md` 文件，并在回复中告知用户该文件的绝对路径；提前停止时同样落盘已完成内容与停止原因。
 14. NEVER 未预先指定独立运行目录就执行 demo 或测试用例：启动前必须设置 `ASCEND_WORK_PATH` 指向本轮独立目录，使日志落在 ${ASCEND_WORK_PATH}/log；命令退出后必须立即留存 stdout、stderr 与运行日志快照，禁止等待后续重跑、报告生成或清理动作后再收集。
+15. NEVER 在 info.json 存在时跳过结构化读取、退回纯文本 grep 判读：P2.3 起各步判读以 info.json 字段取值优先，info.txt 六段判读是回退手段而非首选。
+16. NEVER 在 info.json 缺失时臆造字段值或跳过回退：按文件存在性判定缺失后，无缝回退 info.txt 既有判读并在报告"环境与输入"段标注归因，不得虚构 JSON 字段取值。
+17. NEVER 在 info.json 缺失时判故障或催升级：不得把 info.json 缺失判为工具故障或要求用户升级 CANN——缺失按版本兼容处理（CANN 9.3.0 及之前版本不携带属预期，用户口径；或旁路写失败仅告警、不影响退出码），回退 info.txt 判读即可。
 
 ## 六、信息来源
 

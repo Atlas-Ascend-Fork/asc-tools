@@ -92,7 +92,7 @@ tiling数据统一由`write_tiling_data_to_file`落盘为`{kernel_path}/{kernel_
 | --- | --- | --- |
 | `cce_file` | 编译产物目录 | 先取info.cce_file，不存在则回退`{kernel_path}/{kernel_name}_{tiling_key}.cce`（single_op_case.py:122-134）。自动流程中被注释掉（见3.5节），仅手工运行时用于ccec重编译 |
 | `bin_path` | info.bin_file | kernel二进制`.o`路径，注册到device执行（single_op_case.py:80） |
-| `json_path` | info.json_file | kernel元信息json路径，解析blockDim、kernelName、parameters、opParaSize、workspace等（ascend_tbe_op.py:98-122） |
+| `json_path` | info.json_file | kernel元信息json路径，解析blockDim、kernelName、parameters、opParaSize、workspace等（ascend_tbe_op.py:98-122；注意：此为kernel元信息属性，非 msaicerr 的 info.json 结构化报告） |
 | `tiling_data` | info.tiling_data | `{kernel_name}_tiling.bin`路径（三源重建见3.3节；single_op_case.py:82） |
 | `tiling_key` | info.tiling_key | 注册stub函数名后缀，非kernel0结尾的kernel按`{stub_func_name}_{tiling_key}`注册（ascend_tbe_op.py:775-782） |
 | `block_dim` | info.block_dim | launch的block数；config未给时用kernel json中的blockDim兜底（ascend_tbe_op.py:898-902） |
@@ -245,6 +245,7 @@ malloc按页大小（PageMemorySize=0x200000，即2MB）向上对齐后，把张
 
 - **`Access Memory without OverBoundary`关键字**：`_test_single_op`从子进程stdout中`SingleOpCase.run Execute Info`标记之后检索该串，命中则single_op_mem_monitor记录`Out-of-bounds memory access.`（aicore_error_parser.py:1263-1267）。注意：按架构文档注记，这两个关键字在当前msaicerr代码内没有产出方，mem_monitor字段实际常为空串，属于待接通的钩子；运行时侧输出的该关键字仍可作越界佐证。
 - **越界证据的可靠来源**：magic_ret（1=向前越界、2=向后越界）与tail遍的sync_ret，以`memory status check result`、`execute result`形式出现在用例输出中（ascend_tbe_op.py:942-951）。
+- **info.json 对照**：越界探测结论串读 `single_op_test.memory_status`（即info.txt第⑥段的single_op_mem_monitor行，aic_error_info.py:271；采集到但为空时该字段输出空串而非not_collected，json_report_builder.py:579），字段语义见`json-report-decode.md`。
 - 判读顺序：先看三态（第六节）确定是否复现，再看magic_ret与sync_ret判断是否伴随越界，最后结合P3寄存器解码的错误位（如越界类错误位）交叉印证。
 
 ## 六、复现结果三态与下一步动作
@@ -264,6 +265,17 @@ malloc按页大小（PageMemorySize=0x200000，即2MB）向上对齐后，把张
 | 复现成功（RetCode.FAILED=1） | search_aicerr_log命中（五种错误串+kernel名共现） | `Successfully reproduced the AI Core exception by running the single-operator test case.`（aicore_error_parser.py:1782-1785） | 问题锁定在算子自身：结合P2报错行定位与P3寄存器解码收敛根因方向，进入P5修复建议；返回码层面走101（MS_AICERR_SINGLE_OP_ERR，get_return_code优先级链:1975-1976，前提是无更优先证据命中） |
 | 未复现（RetCode.SUCCESS=0） | 用例正常跑完且日志未命中错误串 | `Failed to reproduce the AI Core exception by running the single-operator test case.`（:1794-1797） | 此时error_single_op已执行（末参置零反向验证）；问题大概率依赖运行环境或时序，走P5复现失败升级路径（msSanitizer、op_debug_config=oom、关融合重跑、框架侧上报），不臆断根因 |
 | 未运行（RetCode.NOT_RUN=2） | 两种触发：①子进程退出码非0且日志无错误串（:1271-1279，提示`exited with code ... and no aicore error was found`）；②stdout含`Execute single op case failed`（NOT_RUN_EXEC_FAILED，constant.py:37）或`exec single op case failed`（NOT_RUN_LAUNCH_FAILED，constant.py:38）（:1284-1297） | `The single-operator test case was not executed successfully. Whether the AI Core exception can be reproduced is unknown.`（:1786-1793） | 检查用例文件、依赖（numpy/tbe/ccec/驱动）、日志路径与权限后重试；NOT_RUN同样计入非SUCCESS，返回码走101（:1974-1976，用例没跑起来不能视为没有问题） |
+
+**三态与 info.json 四态的对照**：info.json 的 `single_op_test.result` 由同一 RetCode 加 `single_op_attempted` 拆分得更细，为四态（json_report_builder.py:566-573）；三态判读框架不变，映射如下（四态判读细则见`json-report-decode.md`第十节）：
+
+| info.json `single_op_test.result` | 判定字段 | info.txt 第⑥段三态文案 | RetCode | 三态判读 |
+| --- | --- | --- | --- | --- |
+| `Aicore Error` | `single_op_test_result is FAILED` | `The AI Core error was reproduced by the single-operator test case.` | FAILED=1 | 复现成功 |
+| `Execute Success` | `single_op_test_result is SUCCESS` | `The single-operator test case was executed, but the AI Core error was not reproduced.` | SUCCESS=0 | 未复现 |
+| `Execute Failed` | NOT_RUN且已尝试执行（`single_op_attempted=True`） | `The single-operator test case was not executed, so it cannot be used to confirm the AI Core error.` | NOT_RUN=2 | 未运行 |
+| `Not Run` | NOT_RUN且未尝试执行（`single_op_attempted=False`） | 同上（与`Execute Failed`共用同一条文案） | NOT_RUN=2 | 未运行 |
+
+即 `Execute Failed` 与 `Not Run` 在三态框架下都归"未运行"——两者共用 `SINGLE_OP_RESULT_MSG[NOT_RUN]` 同一条文案。`single_op_test.execute_info` 与info.txt第⑥段文案同源（同一份 `SINGLE_OP_RESULT_MSG` 常量，aic_error_info.py:32-39；info.txt第⑥段渲染见aic_error_info.py:268-269），两者只区分三态，四态细分只看 `result` 字段。
 
 结果字段去向：single_op变体的三态与日志路径记入info.single_op_test_result/single_op_mem_monitor/single_op_log_path（:1767-1773）；host_single_op与error_single_op仅打日志不进info（:1752-1760、:1774-1780）。ST用例以`single op case success`子串断言运行成功（oam-tools/test/st/msaicerr/testcase/test_single_op_case_st.py:224，源码输出`exec single op case success.`，ascend_tbe_op.py:949）。
 

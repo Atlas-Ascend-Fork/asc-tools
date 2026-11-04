@@ -1,6 +1,6 @@
 # tool-exception-dump 技能评测用例集（RED-GREEN）
 
-本文件包含14个RED-GREEN评测用例，用于验证`tool-exception-dump`技能的诊断正确性：Phase 0至Phase 5每阶段至少1个专项用例，另含2个端到端用例与1个真机日志用例；GREEN段的步骤级判读断言合计覆盖SKILL.md全部31个编号步骤（P0.1至P5.5，覆盖映射表见文末）。关键行文案一律抄录自本技能SKILL.md对应步骤的判读规则原文；fixture相关的实测口径（退出码、输出串、结果码）以oam-tools测试断言为据并逐处标注path:line，不虚构fixture中不存在的内容。
+本文件包含16个RED-GREEN评测用例，用于验证`tool-exception-dump`技能的诊断正确性：Phase 0至Phase 5每阶段至少1个专项用例，另含2个端到端用例与1个真机日志用例；GREEN段的步骤级判读断言合计覆盖SKILL.md全部31个编号步骤（P0.1至P5.5，覆盖映射表见文末）。关键行文案一律抄录自本技能SKILL.md对应步骤的判读规则原文；fixture相关的实测口径（退出码、输出串、结果码）以oam-tools测试断言为据并逐处标注path:line，不虚构fixture中不存在的内容。
 
 ## 通用约定
 
@@ -80,8 +80,8 @@
 **GREEN（有skill时的预期行为与判读）**：
 
 - 步骤P2.1：断言三条grep判定：`grep -rn "\[AIC_INFO\] dev_func:" <收集目录>`命中即L1（该fixture实测命中）、`grep -rn "fftsplus task execute failed" <收集目录>`无命中、`grep -rn "Begin to dump callback exception" <收集目录>`无命中，即L1且非ffts、非SK；判定只依赖日志文案命中与否；记录L1影响：无有效dump时P4转构造数据路径；实测口径印证：该fixture在ST中parse_level=1、结果码0（`oam-tools/test/st/msaicerr/testcase/test_aicore_error_parse_st.py:199-234`参数化含`collect/l1/`）。
-- 步骤P2.2：断言在msaicerr.py所在目录执行`python3 msaicerr.py -p <收集目录> -out <结果目录> -dev <device_id>`；成功判据为终端打印`Analysis info is saved in <info.txt路径>`，结果目录形态为`<out>/info_{执行时间戳}/aicerror_0_{错误时间戳}/info.txt`；退出码0或101-107为正常完成，1-11为工具状态码；退出码8回P1.3复核三要素与日志时间窗，退出码2回P0.6检查路径约束，不得盲目重复执行-p。
-- 步骤P2.3：断言读info.txt第③段Operator Error Line Number：Original Info给出`start pc`、`current pc`、`Error occurred most likely at line: <汇编偏移>`，偏移为十六进制无0x前缀、是估算值而非源码行号；L1场景偏移行之后跟随`<反汇编文件名>:<err_pc>`、cce行号、TBE源码`文件:行号`三级信息（L1才有后两级）；出现Corrected Info块时优先按其定位（修正PC由AI Core错误寄存器回填，比原始PC更可信）；反断言：不得把汇编偏移直接当TBE源码行号报告给用户。
+- 步骤P2.2：断言在msaicerr.py所在目录执行`python3 msaicerr.py -p <收集目录> -out <结果目录> -dev <device_id>`；成功判据为终端打印`Analysis info is saved in <info.txt路径>`，结果目录形态为`<out>/info_{执行时间戳}/aicerror_0_{错误时间戳}/info.txt`；CANN 9.3.0之后版本（用户口径）在info.txt同目录产出结构化报告info.json（`ls`核验存在性），存在时后续各步判读以info.json字段取值优先；退出码0或101-107为正常完成，1-11为工具状态码；退出码8回P1.3复核三要素与日志时间窗，退出码2回P0.6检查路径约束，不得盲目重复执行-p。
+- 步骤P2.3：断言读info.txt第③段Operator Error Line Number：Original Info给出`start pc`、`current pc`、`Error occurred most likely at line: <汇编偏移>`，偏移为十六进制、带0x前缀（如`0x5e8`）、是估算值而非源码行号；L1场景偏移行之后跟随`<反汇编文件名>:<err_pc>`、cce行号、TBE源码`文件:行号`三级信息（L1才有后两级）；出现Corrected Info块时优先按其定位（修正PC由AI Core错误寄存器回填，比原始PC更可信）；反断言：不得把汇编偏移直接当TBE源码行号报告给用户。
 
 **涉及步骤号**：P2.1、P2.2、P2.3。
 
@@ -116,8 +116,8 @@
 **GREEN（有skill时的预期行为与判读）**：
 
 - 步骤P2.3：断言行号缺失提示`Unable to calculate the corrected line number, check the logs for more details.`出现即判符号化失败，转P2.4手动回退；无Corrected Info块时以Original Info估算偏移转P2.5反汇编链；反断言：不得停留在"待确认"而不给回退动作。
-- 步骤P2.4：断言手动回退顺序：先`which llvm-symbolizer`，未命中则到CANN工具链目录查找（如`/usr/local/Ascend/latest/<arch>-linux/ccec_compiler/bin/`）；找到后执行`llvm-symbolizer -obj=<kernel的.o文件> 0x<修正后偏移>`（偏移取info.txt第③段Corrected Info，.o路径取第①段kernel file字段）；正常输出两行，即函数名与`源文件:行:列`；输出`??`或`??:0:0`即该.o无调试信息、符号化失败；未安装态工具文案为`llvm-symbolizer is not installed.`；反断言：手动回退仍输出`??`时不得编造行号，转P2.5。
-- 步骤P2.5：断言五步链执行：`cce-objdump -d --line-numbers <kernel.o> > <kernel.o>.txt`反汇编（llvm-objdump为备选）、`grep -n "<err_pc>:" <kernel.o>.txt`（err_pc为第③段偏移，十六进制无0x前缀）、从报错行向上找最近`cce:<行号>`、`grep -n "\"cce_line\": <cce行号>" <kernel_name>_loc.json`映射TBE源码`文件:行号`（_loc.json结构见上述真实fixture）；断链点（.o与.json都不存在、无cce行号、_loc.json缺失、L0到偏移为止）均为正常降级，保留已有级结果；`cce-objdump`与`llvm-objdump`均不可用（`No cce-objdump or llvm-objdump found.`）时按工具建议把cce-objdump与.o复制到其他机器执行`cce-objdump -d <kernel_name>.o > <kernel_name>.o.txt`；反汇编文本报错行含PIPE_ALL时给出set_flag/wait_flag配对检查提示（检查算子代码中set_flag与wait_flag是否配对使用）；反断言：L0场景只给汇编偏移属正常，围绕偏移与10条指令上下文判读，不得硬造cce行号。
+- 步骤P2.4：断言手动回退顺序：先`which llvm-symbolizer`，未命中则到CANN工具链目录查找（如`/usr/local/Ascend/latest/<arch>-linux/ccec_compiler/bin/`）；找到后执行`llvm-symbolizer -obj=<kernel的.o文件> <修正后偏移>`（偏移取info.txt第③段Corrected Info，本身带0x前缀、原样传入；.o路径取第①段kernel file字段）；正常输出两行，即函数名与`源文件:行:列`；输出`??`或`??:0:0`即该.o无调试信息、符号化失败；未安装态工具文案为`llvm-symbolizer is not installed.`；反断言：手动回退仍输出`??`时不得编造行号，转P2.5。
+- 步骤P2.5：断言五步链执行：`cce-objdump -d --line-numbers <kernel.o> > <kernel.o>.txt`反汇编（llvm-objdump为备选）、`grep -n "<err_pc>:" <kernel.o>.txt`（第③段偏移本身为十六进制、带0x前缀，如`0x5e8`；err_pc取该偏移去掉0x前缀后的纯十六进制串，反汇编行形态如`504:`）、从报错行向上找最近`cce:<行号>`、`grep -n "\"cce_line\": <cce行号>" <kernel_name>_loc.json`映射TBE源码`文件:行号`（_loc.json结构见上述真实fixture）；断链点（.o与.json都不存在、无cce行号、_loc.json缺失、L0到偏移为止）均为正常降级，保留已有级结果；`cce-objdump`与`llvm-objdump`均不可用（`No cce-objdump or llvm-objdump found.`）时按工具建议把cce-objdump与.o复制到其他机器执行`cce-objdump -d <kernel_name>.o > <kernel_name>.o.txt`；反汇编文本报错行含PIPE_ALL时给出set_flag/wait_flag配对检查提示（检查算子代码中set_flag与wait_flag是否配对使用）；反断言：L0场景只给汇编偏移属正常，围绕偏移与10条指令上下文判读，不得硬造cce行号。
 
 **涉及步骤号**：P2.3、P2.4、P2.5。
 
@@ -171,7 +171,7 @@
 
 **GREEN（有skill时的预期行为与判读）**：
 
-- 步骤P4.1：断言读取msaicerr自动复现结果：`grep -n "Execution Result of the Single-Operator Test Case" <info.txt路径>`定位第⑥段，再检索三种结果文案；本fixture收集目录含exception_info文件说明工具具备路径A输入，但仍以info.txt自动结果为准，不重新执行dump解析或单算子复现；反断言：不得在自动结果存在时另行执行-d或重跑单算子。
+- 步骤P4.1：断言读取msaicerr自动复现结果：`grep -n "Execution Result of the Single-Operator Test Case" <info.txt路径>`定位第⑥段，再检索三种结果文案；info.json存在时以`single_op_test`字段判读优先（result四态+execute_info+memory_status+log_path），六条grep info.txt命令为回退与原文核验手段；本fixture收集目录含exception_info文件说明工具具备路径A输入，但仍以info.txt自动结果为准，不重新执行dump解析或单算子复现；反断言：不得在自动结果存在时另行执行-d或重跑单算子。
 - 步骤P4.1补充：从info.txt第⑤段检索`Input data invalid`与`Input data maybe invalid`。NaN/Inf为强证据，0.9倍值域为弱证据，须结合业务值域确认；两提示只支撑104，不得据此臆断101或103；均无命中时dump校验链判有效，不得臆造104。`-d`是独立解析入口，仅当用户要求单独解析dump或msaicerr结果缺失时使用，本用例不执行。
 - 步骤P4.2：断言三态与越界判读：第⑥段命中`The AI Core error was reproduced...`即复现成功（RetCode.FAILED）；`...was executed, but the AI Core error was not reproduced.`即未复现（RetCode.SUCCESS，不代表算子无问题）；`...was not executed...`即未运行（RetCode.NOT_RUN）。复现成功的底层判据是同一日志文件内错误串与目标kernel名共现，但该判定已由msaicerr完成，主流程读取结果文案而非重扫日志；未复现走升级路径；未运行计入101方向。越界判读以magic_ret与tail遍sync_ret为主；`Access Memory without OverBoundary`无当前代码产出方，运行时侧输出仅作佐证；反断言：不得仅凭日志含aicore error关键字就认定复现成功。
 
@@ -228,9 +228,9 @@
 
 - Phase 0：步骤P0.1确认本地分析与python版本；步骤P0.2source后`echo "$ASCEND_OPP_PATH"`非空并进入msaicerr.py所在目录；步骤P0.3执行`python3 msaicerr.py -e -dev 0`自检通过（末行`The built-in sample operator runs successfully, The environment is normal.`）；步骤P0.4清点输入（收集目录即本fixture、Device ID默认0、算子名未知留待工具提取）；步骤P0.5无已知算子名，名单比对不命中；步骤P0.6预检执行位置与可写性；步骤P0.7`ls debug_info.txt`核验痕迹并汇总入口。
 - Phase 1：步骤P1.1`ls -d <输入路径>/dfx`命中走分支A；步骤P1.3三要素校验：`dfx/data-dump/0/`非空（exception dump在）、`dfx/ops`缺失（无.o/.json，定位降级）、`dfx/log/host/cann/`非空；步骤P1.5打"定位降级"标记后继续（plog在，不触发停止条件）。
-- Phase 2：步骤P2.1三条grep：`[AIC_INFO] dev_func:`无命中判L0、`fftsplus task execute failed`无命中、`Begin to dump callback exception`无命中；反断言：不得因plog存在`fftsplus aivector error exception`字样而误判ffts场景（场景判定只认`fftsplus task execute failed`文案命中与否）。步骤P2.2执行-p并按`Analysis info is saved in <info.txt路径>`定位info.txt。步骤P2.3判读第③段：L0场景报错行定位到汇编偏移为止（三级信息L0只有第一级），`Error occurred most likely at line: <汇编偏移>`且偏移是估算值。步骤P2.4与步骤P2.5因无.o（fixture无dfx/ops）符号化与反汇编链断链，属正常降级：保留偏移级结果，按P2.4失败分支提示补齐dfx/ops编译产物后可重试，不得伪造cce行号。步骤P2.6三条dump失败grep（`Dump exception.*failed`、`D2H failed`、`the address maybe invalid`）均无命中，dump有效，直接转P3.1。
+- Phase 2：步骤P2.1三条grep：`[AIC_INFO] dev_func:`无命中判L0、`fftsplus task execute failed`无命中、`Begin to dump callback exception`无命中；反断言：不得因plog存在`fftsplus aivector error exception`字样而误判ffts场景（场景判定只认`fftsplus task execute failed`文案命中与否）。步骤P2.2执行-p并按`Analysis info is saved in <info.txt路径>`定位info.txt，`ls`核验info.json：存在时P2.3起以JSON字段判读优先，缺失时按两类归因回退info.txt判读。步骤P2.3判读第③段：L0场景报错行定位到汇编偏移为止（三级信息L0只有第一级），`Error occurred most likely at line: <汇编偏移>`且偏移是估算值；info.json存在时优先读`instructions`字段（original/corrected/notice，corrected优先逻辑不变）。步骤P2.4与步骤P2.5因无.o（fixture无dfx/ops）符号化与反汇编链断链，属正常降级：保留偏移级结果，按P2.4失败分支提示补齐dfx/ops编译产物后可重试，不得伪造cce行号。步骤P2.6三条dump失败grep（`Dump exception.*failed`、`D2H failed`、`the address maybe invalid`）均无命中，dump有效，直接转P3.1。
 - Phase 3：步骤P3.1判型：错误码裸`0`两芯片同形只能落Stars走trap_or_timeout兜底，方法二dump info含`ifu error info:`、`ccu error info:`、`biu error info:`键指向Stars，两法一致。步骤P3.2无位置位，输出兜底文案`trap_or_timeout, timeout or trap error`，不能直接读成"确认超时"。步骤P3.3提取vec、mte、ifu、ccu子寄存器串做子域解读（真实串如`vec error info: 0x99000000a2`、`mte error info: 0x5003000031`）。步骤P3.4场景5：三元组行`The extend info: errcode:(0, 0, 0) errorStr: timeout or trap error.`重建失败，按无位置位兜底处理并注明置信度低。步骤P3.5核对`rts_block_dim`与`driver_aicore_num`并对照结论码语义表。
-- Phase 4：步骤P4.1读取msaicerr自动复现结果与第⑤段输入有效性结论；不重复执行-d或单算子复现。步骤P4.2按第⑥段三态文案判读，复现成功底层判据是错误串与目标kernel名共现（本fixture目标kernel为`FlashAttentionScore_5881aeec01e51adb01fb1db8be1c04f0_10000000000022420943_mix_aic`），但主流程读取工具结果而非重扫日志。若自动结果缺失或NOT_RUN，步骤P4.3先向用户确认是否手动回退；自动结果充分时不执行回退。
+- Phase 4：步骤P4.1读取msaicerr自动复现结果与第⑤段输入有效性结论，info.json存在时以`single_op_test`字段判读优先；不重复执行-d或单算子复现。步骤P4.2按第⑥段三态文案判读，复现成功底层判据是错误串与目标kernel名共现（本fixture目标kernel为`FlashAttentionScore_5881aeec01e51adb01fb1db8be1c04f0_10000000000022420943_mix_aic`），但主流程读取工具结果而非重扫日志。若自动结果缺失或NOT_RUN，步骤P4.3先向用户确认是否手动回退；自动结果充分时不执行回退。
 - Phase 5：步骤P5.1四链逐链填写（反编译链因无.o失效须如实写"本链失效（原因）"）。步骤P5.2按优先级链105→107→104→106→102→101→103→0取最终结论码。步骤P5.3按结论码与错误位查映射表输出修复建议与验证方法。步骤P5.4仅在复现未复现或证据不足时输出四条升级路径。步骤P5.5输出六段式报告并保存为Markdown文件，每个结论附事实、对比、判定、置信度与反证，降级与证据不足如实标注，回复用户时告知报告绝对路径。
 
 **涉及步骤号**：P0.1、P0.2、P0.3、P0.4、P0.5、P0.6、P0.7、P1.1、P1.3、P1.5、P2.1、P2.2、P2.3、P2.4、P2.5、P2.6、P3.1、P3.2、P3.3、P3.4、P3.5、P4.1、P4.2、P4.3、P5.1、P5.2、P5.3、P5.4、P5.5（共29步；P1.2与P1.4由用例3覆盖）。
@@ -249,9 +249,9 @@
 
 - Phase 0：步骤P0.1、P0.2、P0.3、P0.4、P0.5、P0.6、P0.7同用例12口径执行（环境确认、source与变量校验、golden op自检、输入清点、无已知算子名不命中名单、预检、汇总入口）。
 - Phase 1：步骤P1.1`ls -d <输入路径>/dfx`命中走分支A；步骤P1.3三要素校验：`dfx/data-dump`不存在判缺dump、`dfx/ops`非空但只有json无.o、`dfx/log/host/cann/`非空；步骤P1.5打"缺dump"与"定位降级"双标记，继续P2（plog在，不停止）。
-- Phase 2：步骤P2.1`grep -rn "\[AIC_INFO\] dev_func:" <收集目录>`命中（真实证据行在run/plog）判L1。步骤P2.2执行-p，成功判据为终端打印`Analysis info is saved in <info.txt路径>`（ST在mock反编译与dump结果后实测该输出并读取info.txt，`oam-tools/test/st/msaicerr/testcase/test_msaicerr_st.py:267-292`）。步骤P2.3判读第③段：L1期望三级定位信息，但本场景info.txt第①段cce file字段值为空（ST断言原文`'cce file          : \n'`，`oam-tools/test/st/msaicerr/testcase/test_msaicerr_st.py:291-292`），判读为定位降级并如实呈现；反断言：不得伪造cce行号或TBE源码行号。步骤P2.4.o不存在，失败分支为回P1检查编译产物收集（dfx/ops），补齐后重试本步。步骤P2.5反汇编链断链（.o不存在属断链点），保留已有级结果，向用户说明补齐.o后可重试。步骤P2.6三条dump失败grep无命中：本场景是"缺dump数据"（收集侧无data-dump目录，P1.5已标记）而非"dump失败"，不得误关联102。
+- Phase 2：步骤P2.1`grep -rn "\[AIC_INFO\] dev_func:" <收集目录>`命中（真实证据行在run/plog）判L1。步骤P2.2执行-p，成功判据为终端打印`Analysis info is saved in <info.txt路径>`（ST在mock反编译与dump结果后实测该输出并读取info.txt，`oam-tools/test/st/msaicerr/testcase/test_msaicerr_st.py:267-292`）；info.json存在时P2.3起以JSON字段判读优先，缺失时按文件存在性判据回退info.txt判读。步骤P2.3判读第③段：L1期望三级定位信息，但本场景info.txt第①段cce file字段值为空（ST断言原文`'cce file          : \n'`，`oam-tools/test/st/msaicerr/testcase/test_msaicerr_st.py:291-292`），判读为定位降级并如实呈现；info.json存在时优先读`instructions`字段（corrected为null即无PC修正），JSON优先不改变定位降级结论；反断言：不得伪造cce行号或TBE源码行号。步骤P2.4.o不存在，失败分支为回P1检查编译产物收集（dfx/ops），补齐后重试本步。步骤P2.5反汇编链断链（.o不存在属断链点），保留已有级结果，向用户说明补齐.o后可重试。步骤P2.6三条dump失败grep无命中：本场景是"缺dump数据"（收集侧无data-dump目录，P1.5已标记）而非"dump失败"，不得误关联102。
 - Phase 3：步骤P3.1错误码裸`0`落Stars走兜底，方法二dump info含`ifu error info:`等Stars键，两法一致。步骤P3.2兜底文案`trap_or_timeout, timeout or trap error`，不读成"确认超时"。步骤P3.3提取vec、mte、ifu子寄存器串做Stars子域解读（真实串`vec error info: 0x51000070f7`、`mte error info: 0x206000046`）。步骤P3.4场景5三元组（真实证据行`The extend info: errcode:(0, 0, 0) errorStr: timeout or trap error.`）重建失败按兜底处理并注明置信度低。
-- Phase 4：步骤P4.1读取msaicerr自动复现结果；无dump只影响工具内部single_op输入，不触发主流程重跑。步骤P4.2按三态判读，目标kernel名为`GatherV3_9e31943a1a48bf81ddff1fc6379e0be3_high_performance_10330`。步骤P4.3仅在结果缺失或NOT_RUN且用户确认后手动回退。
+- Phase 4：步骤P4.1读取msaicerr自动复现结果，info.json存在时以`single_op_test`字段判读优先；无dump只影响工具内部single_op输入，不触发主流程重跑。步骤P4.2按三态判读，目标kernel名为`GatherV3_9e31943a1a48bf81ddff1fc6379e0be3_high_performance_10330`。步骤P4.3仅在结果缺失或NOT_RUN且用户确认后手动回退。
 - Phase 5：步骤P5.1反编译链失效如实写"本链失效（无.o编译产物）"，dump校验链失效如实写"本链失效（无dump）"；链大面积缺失时结论置信度降级为低，只输出排查方向。步骤P5.2仍按优先级链105→107→104→106→102→101→103→0取结论码，全部判据未命中返回0时逐节核对六节报告证据，0不代表故障不存在。步骤P5.4证据不足时输出四条升级路径。步骤P5.5输出六段式报告并保存为Markdown文件，降级与证据不足如实标注，反证段不得省略，回复用户时告知报告绝对路径。
 
 **涉及步骤号**：P0.1、P0.2、P0.3、P0.4、P0.5、P0.6、P0.7、P1.1、P1.3、P1.5、P2.1、P2.2、P2.3、P2.4、P2.5、P2.6、P3.1、P3.2、P3.3、P3.4、P4.1、P4.2、P4.3、P5.1、P5.2、P5.4、P5.5。
@@ -312,12 +312,48 @@
 
 ---
 
+## 用例15（P2/P3/P4）：info.json 判读（Execute Success 四态与 not_collected 哨兵）
+
+**场景描述**：CANN 9.3.0之后版本（用户口径）环境下，msaicerr -p 在info.txt同目录产出了AI亲和的结构化报告info.json，须按字段级取值判读单算子复现结论与blockDim信息，四态文案与空值哨兵不得按字面臆读或当数值解读。
+
+**输入**：构造：info.json字段级片段（非完整dump，与evals.json id 12用例同源）：`"analysis_result": "success"`、`"basic_info": {"kernel_name": "AddCustom_ab1b6750d7f510985325b603cb06dc8b", "rts_block_dim": "not_collected", "driver_aicore_num": 48}`、`"single_op_test": {"result": "Execute Success", "execute_info": "The single-operator test case was executed, but the AI Core error was not reproduced.", "memory_status": "", "log_path": "aicerror_0_1726159207469285/single_op/run.log"}`、`"root_cause": {"evidence": [{"field": "single_op_test.result", "value": "Execute Success", "interpretation": "the single-operator test case was executed, but the AI Core error was not reproduced"}]}`。
+
+**RED（无skill时的典型失败模式）**：AI把`"result": "Execute Success"`按字面读成"执行成功"，宣称复现成功、根因已锁定；把`rts_block_dim: "not_collected"`当数值臆读，编造"block_dim是-1（或当0），与driver_aicore_num=48比较不满足2倍关系，环境核数不足"之类的结论；不知道Execute Success对应RetCode.SUCCESS的语义反转，也不知道not_collected是空值哨兵，全文没有任何字段级判读依据。
+
+**GREEN（有skill时的预期行为与判读）**：
+
+- 步骤P2.2：断言以`ls <info.txt所在目录>/info.json`核验info.json存在性（判据为文件存在性，不做版本号检测）；存在时P2.3起各步判读以info.json字段取值优先，先核`analysis_result`（为`"success"`才当真实结果解读；为`"failed"`时按空报告处理、只认此键，其余字段为空默认值不得当真实结果解读）；JSON优先不改变各步既有判读规则，info.txt六段判读保留为回退手段。
+- 步骤P4.1：断言`single_op_test.result`按四态判读：`Execute Success`=未复现（RetCode.SUCCESS语义反转：单算子测试用例执行完成但没有复现出AI Core Error，不代表算子无问题），结论不因此改写，未复现走升级路径；`Aicore Error`=复现成功（RetCode.FAILED）、`Execute Failed`与`Not Run`=未运行（都归NOT_RUN，计入101方向）；判读以info.json字段为准，六条grep info.txt命令为回退与原文核验手段。
+- 步骤P3.5：断言`basic_info.rts_block_dim`命中`not_collected`即判该值未采集到（数值哨兵-1已转not_collected），勿当数值解读、更不得当-1或0参与与`driver_aicore_num`的比较；本场景该比较链路不成立，按证据链其余判据继续。
+
+**反断言**：不得把not_collected当0或-1解读（它是空值哨兵不是数值，不得当-1参与比较）；不得凭Execute Success宣布"算子没问题"（未复现什么都没证明，须走升级路径）；不得在info.json存在时跳过结构化读取、退回纯文本grep判读（NEVER清单第15条）。
+
+**涉及步骤号**：P2.2、P3.5、P4.1。
+
+---
+
+## 用例16（P2）：旧版本 CANN 无 info.json 的版本回退
+
+**场景描述**：CANN 9.3.0环境执行msaicerr -p后，结果目录只有info.txt、没有info.json（终端只打印`Analysis info is saved in`一行提示），须按文件存在性判据回退info.txt判读并在报告标注归因。
+
+**输入**：构造：CANN 9.3.0环境（安装路径含版本号，如`/usr/local/Ascend/cann-9.3.0`）；msaicerr -p正常完成（退出码0或101-107），结果目录形态`<out>/info_{执行时间戳}/aicerror_0_{错误时间戳}/info.txt`且六段齐备；`ls <info.txt所在目录>/info.json`无命中。
+
+**RED（无skill时的典型失败模式）**：AI见结果目录没有info.json即判"工具产出不完整、工具坏了"，建议重装或升级CANN到带该产物的版本；或全盘find找info.json、怀疑环境装错组件，把分析主线丢在一边；不知道旧版本本就不携带该产物，把预期缺失当故障上报，迟迟不进入info.txt判读。
+
+**GREEN（有skill时的预期行为与判读）**：
+
+- 步骤P2.2：断言以文件存在性为判据（`ls`无命中即缺失，不做CANN版本号检测——版本知识会过时，文件存在性是确定的）；缺失按两类归因处理：CANN 9.3.0及之前版本本就不携带info.json（用户口径，仓内无版本标记可引，属预期缺失）或旁路写失败（异常仅告警、不影响退出码，可核终端是否缺`Analysis info (json) is saved in`提示）；无缝回退info.txt六段既有判读，后续各步按info.txt文本判读推进，并在诊断报告"环境与输入"段标注回退与归因（版本号在可得时记录用于佐证归因，得不到时不臆测版本）；info.json缺失不构成失败，不影响退出码判读与后续Phase推进；反断言：不得把info.json缺失判为工具故障或要求用户升级CANN，不得因缺失臆造JSON字段值或跳过回退（NEVER清单第16、17条）。
+
+**涉及步骤号**：P2.2。
+
+---
+
 ## 步骤覆盖映射表（31步自查）
 
 | 步骤 | 提供正/反断言的用例 | 步骤 | 提供正/反断言的用例 |
 | --- | --- | --- | --- |
 | P0.1 | 用例1、12、13 | P2.1 | 用例4、5、12、13、14 |
-| P0.2 | 用例1、12、13 | P2.2 | 用例4、12、13 |
+| P0.2 | 用例1、12、13 | P2.2 | 用例4、12、13、15、16 |
 | P0.3 | 用例1、12、13 | P2.3 | 用例4、6、12、13、14 |
 | P0.4 | 用例2、12、13 | P2.4 | 用例6、12、13、14 |
 | P0.5 | 用例2、12、13 | P2.5 | 用例6、12、13、14 |
@@ -326,8 +362,8 @@
 | P1.1 | 用例3、12、13 | P3.2 | 用例7、8、12、13 |
 | P1.2 | 用例3 | P3.3 | 用例7、8、12、13、14 |
 | P1.3 | 用例3、12、13 | P3.4 | 用例8、12、13、14 |
-| P1.4 | 用例3 | P3.5 | 用例8、12 |
-| P1.5 | 用例3、12、13 | P4.1 | 用例5、9、10、12、13 |
+| P1.4 | 用例3 | P3.5 | 用例8、12、15 |
+| P1.5 | 用例3、12、13 | P4.1 | 用例5、9、10、12、13、15 |
 | P4.2 | 用例5、9、12、13 | P4.3 | 用例10、12、13 |
 | P5.1 | 用例11、12、13 | P5.2 | 用例11、12、13 |
 | P5.2 | 用例11、12、13 | P5.3 | 用例11、12 |
@@ -340,6 +376,6 @@
 | 判读规则遵循 | 高 | GREEN断言的关键行文案、退出码、结论码与SKILL.md对应步骤判读规则一致 |
 | fixture事实准确 | 高 | 用例输入引用的路径、目录结构、日志证据行真实存在，构造项明确标注构造方法 |
 | 降级与失效如实标注 | 高 | 链失效、定位降级、缺dump等场景如实标注，不臆造定位或复现结果 |
-| NEVER违反 | 高 | 任何用例的GREEN预期行为不得违反SKILL.md NEVER清单14条 |
+| NEVER违反 | 高 | 任何用例的GREEN预期行为不得违反SKILL.md NEVER清单17条 |
 | 反断言有效性 | 中 | 每个专项用例至少含1条反断言（明确必须避免的误判） |
 | 报告契约完整 | 中 | 端到用例的预期输出覆盖六段式报告全部段落，并断言报告落盘为Markdown文件且告知绝对路径 |
