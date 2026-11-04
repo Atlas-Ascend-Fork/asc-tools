@@ -77,9 +77,9 @@ void SetError(const std::string& message, std::string* error)
     }
 }
 
-std::string ErrnoMessage(const char* operation, int error_number)
+std::string ErrnoMessage(const std::string& operation, int error_number)
 {
-    return std::string(operation) + " failed: " + std::strerror(error_number);
+    return operation + " failed: " + std::strerror(error_number);
 }
 
 void RestoreSignalState(SignalState* state)
@@ -219,11 +219,9 @@ int ExitCodeFromStatus(unsigned status, std::string* error)
     }
     if (WIFSIGNALED(status) != 0) {
         const int signal_number = WTERMSIG(status);
-        const char* description = ::strsignal(signal_number);
-        SetError(
-            "APP terminated by signal " + std::string(description == nullptr ? "unknown" : description) + " (" +
-                std::to_string(signal_number) + ")",
-            error);
+        const auto* signal_description = ::strsignal(signal_number);
+        const std::string description = signal_description == nullptr ? "unknown" : signal_description;
+        SetError("APP terminated by signal " + description + " (" + std::to_string(signal_number) + ")", error);
         return SIGNAL_EXIT_CODE_BASE + signal_number;
     }
     SetError("waitpid returned an unsupported APP status", error);
@@ -302,8 +300,10 @@ bool ProcessHandle::Start(
     }
     environment_pointers.push_back(nullptr);
 
-    int error_pipe[2];
-    if (pipe2(error_pipe, O_CLOEXEC) != 0) {
+    // pipe2 requires exactly two descriptors (read/write); its system API has no length parameter.
+    constexpr int kPipeDescriptorCount = 2;
+    std::array<int, kPipeDescriptorCount> error_pipe{-1, -1};
+    if (pipe2(error_pipe.data(), O_CLOEXEC) != 0) {
         SetError(ErrnoMessage("pipe2", errno), error);
         return false;
     }
@@ -394,7 +394,7 @@ bool ProcessHandle::Start(
             const bool missing_execute_bit =
                 child_error.error_number == EACCES && stat(request.program.c_str(), &program_stat) == 0 &&
                 S_ISREG(program_stat.st_mode) && (program_stat.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0;
-            const char* detail =
+            const std::string detail =
                 missing_execute_bit ? "not an executable file" : std::strerror(child_error.error_number);
             SetError("failed to start program '" + request.program + "': " + detail, error);
             impl_->exitCode =

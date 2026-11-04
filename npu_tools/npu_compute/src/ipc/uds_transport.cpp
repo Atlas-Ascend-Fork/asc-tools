@@ -160,7 +160,8 @@ void ConfigureBuffers(int fd)
             SystemError("UDS socket buffer readback");
         }
         // Linux reports twice the requested size; reserve that half for bookkeeping.
-        if (size != sizeof(actual) || actual / 2 < static_cast<int>(kMaxFrameBytes)) {
+        constexpr int kSocketBufferAccountingFactor = 2;
+        if (size != sizeof(actual) || actual / kSocketBufferAccountingFactor < static_cast<int>(kMaxFrameBytes)) {
             throw Exception(
                 {UDS_SOCKET_BUFFER_ERROR_CODE, "UDS socket buffer too small", "transport", "socket-buffer"});
         }

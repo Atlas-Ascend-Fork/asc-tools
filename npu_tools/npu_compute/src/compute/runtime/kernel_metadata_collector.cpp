@@ -174,10 +174,10 @@ std::optional<std::string> ResolveRuntimeFunctionName(aclrtFuncHandle function)
 }
 
 template <typename Function>
-Function OriginalRuntimeFunction(const char* name)
+Function OriginalRuntimeFunction(const std::string& name)
 {
     aclrtApiFunc original = nullptr;
-    if (aclrtApiInjectionGetFunc(name, &original, nullptr) != ACL_SUCCESS) {
+    if (aclrtApiInjectionGetFunc(name.c_str(), &original, nullptr) != ACL_SUCCESS) {
         return nullptr;
     }
     return reinterpret_cast<Function>(original);
@@ -373,8 +373,9 @@ void CollectExecutionMetadata(aclrtFuncHandle function, KernelMetadata& metadata
     }
     using GetSoc = const char* (*)();
     const auto getSoc = OriginalRuntimeFunction<GetSoc>("aclrtGetSocName");
-    const char* soc = getSoc != nullptr ? getSoc() : nullptr;
-    if (soc == nullptr || !SupportsMixDimension(soc)) {
+    const auto* socName = getSoc != nullptr ? getSoc() : nullptr;
+    const std::string soc = socName == nullptr ? "" : socName;
+    if (!SupportsMixDimension(soc)) {
         return;
     }
     // npu-compute supports 950 only; ACL_FUNC_ATTR_KERNEL_RATIO is unsupported on this product.

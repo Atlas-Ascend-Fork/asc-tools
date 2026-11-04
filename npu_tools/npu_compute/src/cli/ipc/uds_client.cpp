@@ -9,6 +9,7 @@
  */
 #include "npu_compute_uds_client.h"
 #include "artifact_receiver.h"
+#include <chrono>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +20,7 @@
 #include <unistd.h>
 namespace npucompute::cli {
 namespace {
+constexpr std::chrono::milliseconds kControlMessageTimeout{100};
 // The SO owns detailed PLOG records. CLI validates the failure notification
 // and surfaces only a public notice, without a PLOG dependency.
 [[noreturn]] void ReportRemoteFailure(const ipc::Bytes& payload)
@@ -56,7 +58,7 @@ void UdsClient::Run(
                     dynamic_cast<const ipc::Exception*>(&error) ?
                         dynamic_cast<const ipc::Exception*>(&error)->Detail() :
                         ipc::Error{1, error.what(), "ARTIFACT", "receive"}),
-                ipc::After(std::chrono::milliseconds(100)));
+                ipc::After(kControlMessageTimeout));
         } catch (...) {
         }
         throw;
@@ -104,7 +106,7 @@ void UdsClient::ReceiveFrames(
     for (;;) {
         if (cancelled) {
             try {
-                channel.Send(ipc::Type::Interrupt, {}, ipc::After(std::chrono::milliseconds(100)));
+                channel.Send(ipc::Type::Interrupt, {}, ipc::After(kControlMessageTimeout));
             } catch (...) {
                 interrupt_attempted_ = true;
                 throw;

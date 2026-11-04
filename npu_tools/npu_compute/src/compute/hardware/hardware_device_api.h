@@ -22,9 +22,9 @@ class DynamicSymbolResolver {
 public:
     virtual ~DynamicSymbolResolver() = default;
 
-    virtual void* FindLoadedSymbol(const char* name) = 0;
-    virtual void* OpenLibrary(const char* soname) = 0;
-    virtual void* FindLibrarySymbol(void* handle, const char* name) = 0;
+    virtual void* FindLoadedSymbol(const std::string& name) = 0;
+    virtual void* OpenLibrary(const std::string& soname) = 0;
+    virtual void* FindLibrarySymbol(void* handle, const std::string& name) = 0;
     virtual void CloseLibrary(void* handle) = 0;
 };
 

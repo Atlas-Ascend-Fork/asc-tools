@@ -61,7 +61,11 @@ void Require(bool condition, const char* message)
 std::string Text(sqlite3_stmt* statement, int column)
 {
     const auto* text = sqlite::GetApi().columnText(statement, column);
-    return text ? reinterpret_cast<const char*>(text) : "";
+    if (text == nullptr) {
+        return {};
+    }
+    const int byteCount = sqlite::GetApi().columnBytes(statement, column);
+    return std::string(text, text + byteCount);
 }
 void ValidateSamples(const PmSamplingResult& result)
 {

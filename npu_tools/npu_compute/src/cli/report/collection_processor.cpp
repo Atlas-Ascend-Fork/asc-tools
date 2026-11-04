@@ -378,7 +378,8 @@ bool ReadCollectionFile(const boost::filesystem::path& path, std::vector<uint8_t
         return true;
     }
 
-    std::array<char, 4096> buffer{};
+    constexpr std::size_t kFileReadBufferSize = 4096;
+    std::array<char, kFileReadBufferSize> buffer{};
     bool has_content = false;
     while (input.read(buffer.data(), buffer.size()) || input.gcount() != 0) {
         has_content = true;
@@ -389,14 +390,20 @@ bool ReadCollectionFile(const boost::filesystem::path& path, std::vector<uint8_t
 
 std::string SafeText(const std::string& text)
 {
+    constexpr unsigned char kAsciiControlCharacterEnd = 0x20;
+    constexpr unsigned char kAsciiDeleteCharacter = 0x7f;
+    constexpr unsigned char kUtf8C1Prefix = 0xc2;
+    constexpr unsigned char kC1ControlCharacterStart = 0x80;
+    constexpr unsigned char kC1ControlCharacterEnd = 0x9f;
+
     std::ostringstream output;
     output.imbue(std::locale::classic());
     for (std::size_t i = 0; i < text.size(); ++i) {
         const auto character = static_cast<unsigned char>(text[i]);
         const auto next = i + 1 < text.size() ? static_cast<unsigned char>(text[i + 1]) : 0;
-        if (character < 0x20 || character == 0x7f) {
+        if (character < kAsciiControlCharacterEnd || character == kAsciiDeleteCharacter) {
             output << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<unsigned>(character);
-        } else if (character == 0xc2 && next >= 0x80 && next <= 0x9f) {
+        } else if (character == kUtf8C1Prefix && next >= kC1ControlCharacterStart && next <= kC1ControlCharacterEnd) {
             output << "\\u00" << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(next);
             ++i;
         } else {

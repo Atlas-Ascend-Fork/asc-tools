@@ -30,6 +30,8 @@ using performance_hints::Number;
 using performance_hints::Prefix;
 using performance_hints::ReadField;
 
+constexpr double kPercentScale = 100.0;
+
 void EvaluatePh01(const HintContext& context, HintAnalysis& analysis)
 {
     constexpr double kThreshold = .50;
@@ -39,7 +41,8 @@ void EvaluatePh01(const HintContext& context, HintAnalysis& analysis)
         const auto observed = ReadField(context, evaluation, "PipeUtilization", "aiv_vec_ratio");
         const bool highest = MaximumPipeline(context, evaluation, "PipeUtilization", "aiv_vec_ratio");
         if (observed && *observed > kThreshold && highest) {
-            message = "aiv_vec_ratio（Vector 流水占比）为 " + Number(*observed * 100, kThreshold * 100) +
+            message = "aiv_vec_ratio（Vector 流水占比）为 " +
+                      Number(*observed * kPercentScale, kThreshold * kPercentScale) +
                       "%，超过 50% 且占比最高；建议检查 Vector 指令序列、冗余计算、转换和归约。";
         }
     }
@@ -56,7 +59,8 @@ void EvaluatePh02(const HintContext& context, HintAnalysis& analysis)
             const auto field = Prefix(core) + "scalar_ratio";
             const auto observed = ReadField(context, evaluation, "PipeUtilization", field);
             if (observed && *observed > kThreshold) {
-                message = field + "（Scalar 流水占比）为 " + Number(*observed * 100, kThreshold * 100) +
+                message = field + "（Scalar 流水占比）为 " +
+                          Number(*observed * kPercentScale, kThreshold * kPercentScale) +
                           "%，超过 30%；建议检查循环内地址计算、参数重建、分支和可外提不变量。";
             }
         }
@@ -75,7 +79,8 @@ void EvaluatePh03(const HintContext& context, HintAnalysis& analysis)
             const auto observed = ReadField(context, evaluation, "PipeUtilization", field);
             const bool highest = MaximumPipeline(context, evaluation, "PipeUtilization", field);
             if (observed && *observed > kThreshold && highest) {
-                message = field + "（MTE2 流水占比）为 " + Number(*observed * 100, kThreshold * 100) +
+                message = field + "（MTE2 流水占比）为 " +
+                          Number(*observed * kPercentScale, kThreshold * kPercentScale) +
                           "%，超过 50% 且占比最高；建议检查搬入链路、搬运粒度和数据复用。";
             }
         }
@@ -127,7 +132,8 @@ void EvaluatePh05(const HintContext& context, HintAnalysis& analysis)
             const auto field = Prefix(core) + "icache_miss_rate";
             const auto observed = ReadField(context, evaluation, "PipeUtilization", field);
             if (observed && *observed > kThreshold) {
-                message = field + "（ICache 缺失率）为 " + Number(*observed * 100, kThreshold * 100) +
+                message = field + "（ICache 缺失率）为 " +
+                          Number(*observed * kPercentScale, kThreshold * kPercentScale) +
                           "%，超过 15%；建议检查代码体积、循环展开和模板分支。";
             }
         }
@@ -141,7 +147,11 @@ using Group = std::pair<aclptiCoreType, uint16_t>;
 struct IdentityHash {
     size_t operator()(const Identity& identity) const
     {
-        return (static_cast<size_t>(std::get<0>(identity)) << 17) | (static_cast<size_t>(std::get<1>(identity)) << 1) |
+        constexpr unsigned kCoreTypeBits = 1;
+        constexpr unsigned kSubBlockIdBits = std::numeric_limits<uint16_t>::digits;
+        // Pack block ID, sub-block ID and the AIC/AIV discriminator into separate bit ranges.
+        return (static_cast<size_t>(std::get<0>(identity)) << (kSubBlockIdBits + kCoreTypeBits)) |
+               (static_cast<size_t>(std::get<1>(identity)) << kCoreTypeBits) |
                static_cast<size_t>(std::get<2>(identity));
     }
 };
@@ -215,8 +225,9 @@ std::map<aclptiCoreType, double> Ph06Imbalance(const aclptiProfilingDataResult& 
         }
     }
     std::map<aclptiCoreType, double> values;
+    constexpr size_t kMinImbalanceSamples = 2;
     for (const auto& [group, range] : groups) {
-        if (range.count >= 2) {
+        if (range.count >= kMinImbalanceSamples) {
             // Frequency is constant within a role group and cancels from the duration ratio.
             values[group.first] = std::max(values[group.first], (range.max - range.min) / range.max);
         } else {
@@ -250,7 +261,8 @@ void EvaluatePh06(const HintContext& context, HintAnalysis& analysis)
         evaluation.observations["imbalance_ratio"] = observed;
         std::string message;
         if (observed >= kThreshold) {
-            message = "核间耗时分布不均匀，最长与最短耗时之差占最长耗时的 " + Number(observed * 100, kThreshold * 100) +
+            message = "核间耗时分布不均匀，最长与最短耗时之差占最长耗时的 " +
+                      Number(observed * kPercentScale, kThreshold * kPercentScale) +
                       "%（提示阈值：≥10%）；建议检查任务切分、尾块分配及各核工作量。";
         }
         FinishEvaluation(context, analysis, std::move(evaluation), message);

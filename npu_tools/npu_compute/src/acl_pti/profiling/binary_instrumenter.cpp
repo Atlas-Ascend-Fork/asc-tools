@@ -147,7 +147,7 @@ constexpr uint16_t POINTER_PARAMETER_TYPE = 2;
 
 constexpr char KERNEL_METADATA_PREFIX[] = ".ascend.meta.";
 
-void Require(bool condition, const char* message)
+void Require(bool condition, const std::string& message)
 {
     if (!condition) {
         throw std::runtime_error(message);
@@ -589,7 +589,7 @@ bool WriteSimtStartControl(const fs::path& directory)
 
 bool WriteProbeFiles(const fs::path& directory, bool simtStart)
 {
-    const auto write = [](const char* name, const void* bytes, std::size_t size, const fs::path& directory) {
+    const auto write = [&directory](const std::string& name, const void* bytes, std::size_t size) {
         const auto pathStr = (directory / name).string();
         if (!asctools::security::ValidatePath(pathStr, asctools::security::PathKind::FileOrNew)) {
             return false;
@@ -600,15 +600,15 @@ bool WriteProbeFiles(const fs::path& directory, bool simtStart)
         return static_cast<bool>(file);
     };
     const std::string source(simtStart ? SIMT_START_PROBE_SOURCE : KERNEL_END_PROBE_SOURCE);
-    return write(PROBE_SOURCE_NAME, source.data(), source.size(), directory) &&
+    return write(PROBE_SOURCE_NAME, source.data(), source.size()) &&
            (simtStart ? WriteSimtStartControl(directory) : WriteKernelEndControl(directory));
 }
 
-bool Run(const std::vector<std::string>& arguments, const fs::path& stdoutFile = {}, bool captureStderr = false)
+bool Run(std::vector<std::string> arguments, const fs::path& stdoutFile = {}, bool captureStderr = false)
 {
-    std::vector<std::string> argumentStorage(arguments);
     std::vector<char*> argv;
-    for (auto& argument : argumentStorage) {
+    argv.reserve(arguments.size() + 1);
+    for (auto& argument : arguments) {
         argv.push_back(argument.data());
     }
     argv.push_back(nullptr);
@@ -710,7 +710,7 @@ bool CompileProbe(const fs::path& directory, const fs::path& compiler, bool simt
          (directory / PROBE_SOURCE_NAME).string(), "-o", (directory / PROBE_OBJECT_NAME).string()});
 }
 
-bool FindTool(const fs::path& directory, const char* name, fs::path& tool)
+bool FindTool(const fs::path& directory, const std::string& name, fs::path& tool)
 {
     const fs::path candidate = directory / name;
     if (fs::is_regular_file(candidate)) {
@@ -722,8 +722,9 @@ bool FindTool(const fs::path& directory, const char* name, fs::path& tool)
 
 bool ResolveTools(KernelEndTools& tools)
 {
-    const char* cann = std::getenv("ASCEND_HOME_PATH");
-    if (cann == nullptr || cann[0] == '\0') {
+    const auto* cannEnvironment = std::getenv("ASCEND_HOME_PATH");
+    const std::string cann = cannEnvironment == nullptr ? "" : cannEnvironment;
+    if (cann.empty()) {
         ASCTOOL_ERROR(
             "[aclpti] kernel-end requires ASCEND_HOME_PATH"
             " code=%u",
@@ -731,9 +732,10 @@ bool ResolveTools(KernelEndTools& tools)
         return false;
     }
     const fs::path directory = fs::path(cann) / "tools/bisheng_compiler/bin";
-    const char* override = std::getenv("NPU_COMPUTE_BISHENG");
-    if (override != nullptr && override[0] != '\0') {
-        tools.compiler = override;
+    const auto* compilerEnvironment = std::getenv("NPU_COMPUTE_BISHENG");
+    const std::string compilerOverride = compilerEnvironment == nullptr ? "" : compilerEnvironment;
+    if (!compilerOverride.empty()) {
+        tools.compiler = compilerOverride;
     }
     if (!FindTool(directory, "ld.lld", tools.linker) || !FindTool(directory, "bisheng-tune", tools.tuner) ||
         (tools.compiler.empty() && !FindTool(directory, "bisheng", tools.compiler))) {

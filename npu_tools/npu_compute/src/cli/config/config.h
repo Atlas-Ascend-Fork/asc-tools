@@ -46,7 +46,7 @@ struct CliConfig {
 
 bool ParseCli(int argc, char** argv, CliConfig* config, std::vector<std::string>* errors);
 
-const char* ReplayModeName(ReplayMode mode);
+std::string ReplayModeName(ReplayMode mode);
 
 void PrintUsage(FILE* stream, const char* program);
 

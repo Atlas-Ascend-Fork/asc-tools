@@ -437,6 +437,8 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
     on_drained_ = std::move(onDrained);
     initializing_ = true;
     struct InitializationGuard {
+        explicit InitializationGuard(std::atomic<bool>& flag) : value(flag) {}
+
         std::atomic<bool>& value;
         ~InitializationGuard() { value = false; }
     } guard{initializing_};
@@ -454,14 +456,15 @@ int NpuComputeRuntime::Initialize(const RuntimeConfig& config, ArtifactSink& sin
     csv_config_.frequencyMhz = A5_FALLBACK_FREQUENCY_MHZ;
     csv_config_.aicFrequencyMhz = 0.0;
     csv_config_.aivFrequencyMhz = 0.0;
-    if (const char* frequency = std::getenv("NPU_COMPUTE_FREQUENCY_MHZ");
-        frequency != nullptr && frequency[0] != '\0') {
+    const auto* frequencyEnvironment = std::getenv("NPU_COMPUTE_FREQUENCY_MHZ");
+    const std::string frequency = frequencyEnvironment == nullptr ? "" : frequencyEnvironment;
+    if (!frequency.empty()) {
         double parsed = 0.0;
         if (!ParsePositiveDouble(frequency, &parsed)) {
             ASCTOOL_ERROR(
                 "[npu-compute] [libnpu-compute] invalid NPU_COMPUTE_FREQUENCY_MHZ: %s"
                 " code=%u",
-                frequency, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+                frequency.c_str(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return kInitializeFailed;
         }
         csv_config_.frequencyMhz = parsed;

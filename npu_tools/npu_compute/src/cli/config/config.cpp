@@ -359,12 +359,13 @@ bool ParseCli(int argc, char** argv, CliConfig* config, std::vector<std::string>
     return errors->empty();
 }
 
-const char* ReplayModeName(ReplayMode mode)
+std::string ReplayModeName(ReplayMode mode)
 {
-    switch (mode) {
-        case ReplayMode::Kernel:
-            return "kernel";
+    if (mode == ReplayMode::Kernel) {
+        return "kernel";
     }
+    // The CLI and IPC protocol currently support only kernel replay. Keep the
+    // existing kernel default if an invalid enum value reaches this boundary.
     return "kernel";
 }
 

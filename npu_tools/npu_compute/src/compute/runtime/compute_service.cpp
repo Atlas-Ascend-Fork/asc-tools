@@ -12,7 +12,6 @@
 #include "runtime/npu_compute_runtime.h"
 #include <algorithm>
 #include <cstdio>
-#include <cstdlib>
 #include <stdexcept>
 namespace npucompute {
 namespace {
@@ -67,9 +66,16 @@ int ComputeService::Initialize() noexcept
         if (runtime.Initialize(runtime_config_, sink, [this](int status) { return FinalizeOnce(status); }) != 0) {
             throw std::runtime_error("hook or profiling initialization failed");
         }
-        if (std::atexit([] { ComputeService::Instance().Stop(); }) != 0) {
-            throw std::runtime_error("register exit handler failed");
-        }
+        class ServiceStopGuard {
+        public:
+            explicit ServiceStopGuard(ComputeService& service) : service_(service) {}
+            ~ServiceStopGuard() { service_.Stop(); }
+
+        private:
+            ComputeService& service_;
+        };
+        // Construct after runtime initialization so Stop runs before its dependencies are destroyed.
+        static ServiceStopGuard serviceStopGuard(*this);
         publisher_ = std::make_unique<ArtifactPublisher>(server.TakeChannel(), server.Deadline());
         initialized_ = true;
         result_ = 0;

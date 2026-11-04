@@ -189,14 +189,14 @@ public:
         std::string name;
     };
 
-    void* FindLoadedSymbol(const char* name) override
+    void* FindLoadedSymbol(const std::string& name) override
     {
         requestedLoadedSymbols.emplace_back(name);
         const auto iterator = loadedSymbols.find(name);
         return iterator == loadedSymbols.end() ? nullptr : iterator->second;
     }
 
-    void* OpenLibrary(const char* soname) override
+    void* OpenLibrary(const std::string& soname) override
     {
         openedLibraries.emplace_back(soname);
         if (availableLibraries.count(soname) == 0) {
@@ -209,7 +209,7 @@ public:
         return handle;
     }
 
-    void* FindLibrarySymbol(void* handle, const char* name) override
+    void* FindLibrarySymbol(void* handle, const std::string& name) override
     {
         requestedLibrarySymbols.emplace_back(name);
         const auto handleIterator = handles.find(handle);

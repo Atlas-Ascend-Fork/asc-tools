@@ -18,15 +18,16 @@ namespace npucompute {
 namespace {
 constexpr uint64_t kMaxHandshakeTimeoutMs = 120000;
 
-std::string Environment(const char* name)
+std::string Environment(const std::string& name)
 {
-    const char* value = std::getenv(name);
-    if (value == nullptr || *value == '\0') {
-        throw ipc::Exception({1, std::string("missing ") + name, "BOOTSTRAP", "initialize"});
+    const auto* environment = std::getenv(name.c_str());
+    const std::string value = environment == nullptr ? "" : environment;
+    if (value.empty()) {
+        throw ipc::Exception({1, "missing " + name, "BOOTSTRAP", "initialize"});
     }
     return value;
 }
-uint64_t Number(const char* name)
+uint64_t Number(const std::string& name)
 {
     const std::string value = Environment(name);
     char* end = nullptr;
@@ -34,7 +35,7 @@ uint64_t Number(const char* name)
     const unsigned long long parsed = std::strtoull(value.c_str(), &end, 10);
     if (errno != 0 || value.find_first_not_of("0123456789") != std::string::npos ||
         end != value.c_str() + value.size() || parsed == 0 || parsed > std::numeric_limits<uint64_t>::max()) {
-        throw ipc::Exception({1, std::string("invalid ") + name, "BOOTSTRAP", "initialize"});
+        throw ipc::Exception({1, "invalid " + name, "BOOTSTRAP", "initialize"});
     }
     return static_cast<uint64_t>(parsed);
 }
@@ -74,7 +75,8 @@ void UdsServer::Fail(const ipc::Error& error) noexcept
     ASCTOOL_ERROR(
         "[UDS] %s/%s code=%u: %s", error.domain.c_str(), error.phase.c_str(), error.code, error.message.c_str());
     try {
-        channel_.Send(ipc::Type::Error, ipc::EncodeError(error), ipc::After(std::chrono::milliseconds(100)));
+        constexpr std::chrono::milliseconds kErrorNotificationTimeout{100};
+        channel_.Send(ipc::Type::Error, ipc::EncodeError(error), ipc::After(kErrorNotificationTimeout));
     } catch (...) {
     }
     channel_.Close();

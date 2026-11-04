@@ -16,7 +16,6 @@
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <string>
-#include <vector>
 
 #include <unistd.h>
 
@@ -70,17 +69,13 @@ bool StagingDirectory::Create(const boost::filesystem::path& root, StagingDirect
 
     const std::string directory_name =
         "npu-compute-" + std::to_string(milliseconds.count()) + "-" + std::to_string(::getpid()) + "-XXXXXX";
-    const std::string path_template = (root.lexically_normal() / directory_name).string();
-    std::vector<char> writable_template(path_template.begin(), path_template.end());
-    writable_template.push_back('\0');
-
-    char* created = ::mkdtemp(writable_template.data());
-    if (created == nullptr) {
+    std::string path_template = (root.lexically_normal() / directory_name).string();
+    if (::mkdtemp(path_template.data()) == nullptr) {
         SetError("create collection data directory failed: " + std::string(std::strerror(errno)), error);
         return false;
     }
 
-    result->path_ = created;
+    result->path_ = path_template;
     return true;
 }
 

@@ -32,21 +32,21 @@
 namespace npucompute {
 namespace {
 
-constexpr char ACL_LIBRARY[] = "libascendcl.so";
-constexpr char PLATFORM_LIBRARY[] = "libplatform.so";
-constexpr char HAL_LIBRARY[] = "libascend_hal.so";
-constexpr char DSMI_LIBRARY[] = "libdrvdsmi_host.so";
+const std::string ACL_LIBRARY = "libascendcl.so";
+const std::string PLATFORM_LIBRARY = "libplatform.so";
+const std::string HAL_LIBRARY = "libascend_hal.so";
+const std::string DSMI_LIBRARY = "libdrvdsmi_host.so";
 constexpr std::size_t PLATFORM_VALUE_SIZE = 4096;
 
 class PosixDynamicSymbolResolver final : public DynamicSymbolResolver {
 public:
-    void* FindLoadedSymbol(const char* name) override { return ::dlsym(RTLD_DEFAULT, name); }
+    void* FindLoadedSymbol(const std::string& name) override { return ::dlsym(RTLD_DEFAULT, name.c_str()); }
 
-    void* OpenLibrary(const char* soname) override { return ::dlopen(soname, RTLD_NOW | RTLD_LOCAL); }
+    void* OpenLibrary(const std::string& soname) override { return ::dlopen(soname.c_str(), RTLD_NOW | RTLD_LOCAL); }
 
-    void* FindLibrarySymbol(void* handle, const char* name) override
+    void* FindLibrarySymbol(void* handle, const std::string& name) override
     {
-        return handle == nullptr ? nullptr : ::dlsym(handle, name);
+        return handle == nullptr ? nullptr : ::dlsym(handle, name.c_str());
     }
 
     void CloseLibrary(void* handle) override
@@ -97,7 +97,7 @@ public:
         }
     }
 
-    void* Resolve(const char* name, const char* fallbackLibrary)
+    void* Resolve(const std::string& name, const std::string& fallbackLibrary)
     {
         if (void* symbol = resolver_->FindLoadedSymbol(name); symbol != nullptr) {
             return symbol;
@@ -109,7 +109,7 @@ public:
     }
 
 private:
-    void* GetLibrary(const char* soname)
+    void* GetLibrary(const std::string& soname)
     {
         const auto library = libraries_.find(soname);
         if (library != libraries_.end()) {
@@ -172,7 +172,7 @@ bool DynamicHardwareDeviceApi::GetSocName(std::string* value)
     if (function == nullptr) {
         return false;
     }
-    const char* socName = function();
+    const auto* socName = function();
     if (socName == nullptr) {
         return false;
     }
@@ -336,7 +336,8 @@ bool DynamicHardwareDeviceApi::GetSyscntFrequencyHz(std::int32_t deviceId, doubl
         frequencyKhz <= 0) {
         return false;
     }
-    *frequencyHz = static_cast<double>(frequencyKhz) * 1000.0;
+    constexpr double kHertzPerKilohertz = 1000.0;
+    *frequencyHz = static_cast<double>(frequencyKhz) * kHertzPerKilohertz;
     return true;
 }
 

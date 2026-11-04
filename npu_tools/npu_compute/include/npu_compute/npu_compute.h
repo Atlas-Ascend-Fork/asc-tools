@@ -16,8 +16,8 @@
 extern "C" {
 #endif
 
-NPU_COMPUTE_EXPORT int acltoolInitialize();
-NPU_COMPUTE_EXPORT int acltoolShutdown();
+NPU_COMPUTE_EXPORT int acltoolInitialize(void);
+NPU_COMPUTE_EXPORT int acltoolShutdown(void);
 
 #ifdef __cplusplus
 }

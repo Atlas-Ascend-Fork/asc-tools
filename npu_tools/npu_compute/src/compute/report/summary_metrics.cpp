@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string_view>
 #include <tuple>
 
 namespace npucompute {
@@ -27,8 +28,16 @@ bool SupportsSummary(const KernelMetadata& metadata, const ReportConfig& config)
 {
     const auto soc =
         metadata.hardware.collected ? metadata.hardware.socName : std::optional<std::string>(config.socName);
-    return soc && (soc->compare(0, 3, "950") == 0 || soc->compare(0, 11, "Ascend950PR") == 0 ||
-                   soc->compare(0, 11, "Ascend950DT") == 0);
+    if (!soc) {
+        return false;
+    }
+    constexpr std::string_view kSupportedSocPrefixes[] = {"950", "Ascend950PR", "Ascend950DT"};
+    for (const auto prefix : kSupportedSocPrefixes) {
+        if (soc->compare(0, prefix.size(), prefix) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 SummaryMetric Cycles(const aclptiBlockKey& key, const aclptiPmuDataRow& row)
 {
@@ -50,17 +59,19 @@ SummaryMetric Cycles(const aclptiBlockKey& key, const aclptiPmuDataRow& row)
 }
 std::optional<uint64_t> VectorRatio(const KernelMetadata& metadata)
 {
+    constexpr uint64_t kSingleVectorRatio = 1;
+    constexpr uint64_t kDualVectorRatio = 2;
     if (*metadata.kind == KernelKind::Mix) {
         if (!metadata.mixBlockDim || *metadata.mixBlockDim == 0 || *metadata.mixBlockDim % *metadata.blockDim != 0) {
             return {};
         }
         const uint64_t vectorRatio = *metadata.mixBlockDim / *metadata.blockDim;
-        if (vectorRatio != 1 && vectorRatio != 2) {
+        if (vectorRatio != kSingleVectorRatio && vectorRatio != kDualVectorRatio) {
             return {};
         }
         return vectorRatio;
     }
-    return 1;
+    return kSingleVectorRatio;
 }
 
 using ParallelIdentity = std::tuple<uint16_t, uint16_t, aclptiCoreType>;
@@ -137,9 +148,10 @@ std::pair<SummaryMetric, SummaryMetric> Parallel(
         return {};
     }
     const auto duration = Positive(PmuMetricBuilder::TaskDuration(result));
+    constexpr double kPercentScale = 100.0;
     return {
-        duration ? SummaryMetric(sum / static_cast<double>(expected) / *duration * 100) : std::nullopt,
-        maximum > 0 ? SummaryMetric(sum / static_cast<double>(expected) / maximum * 100) : std::nullopt};
+        duration ? SummaryMetric(sum / static_cast<double>(expected) / *duration * kPercentScale) : std::nullopt,
+        maximum > 0 ? SummaryMetric(sum / static_cast<double>(expected) / maximum * kPercentScale) : std::nullopt};
 }
 SummaryMetric Estimate(const aclptiProfilingDataResult& result, const ReportConfig& config, bool aic)
 {

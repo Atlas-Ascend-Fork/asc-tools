@@ -28,10 +28,12 @@ namespace npucompute {
 namespace {
 
 using Metric = std::optional<double>;
+constexpr int kSummaryDecimalPlaces = 6;
 
 std::string DemangleName(const std::string& name)
 {
-    if (name.compare(0, 2, "_Z") != 0) {
+    constexpr std::string_view kMangledNamePrefix = "_Z";
+    if (name.compare(0, kMangledNamePrefix.size(), kMangledNamePrefix) != 0) {
         return name;
     }
     int status = 0;
@@ -42,14 +44,17 @@ std::string DemangleName(const std::string& name)
 
 std::string Quote(std::string_view value)
 {
+    constexpr unsigned char kAsciiControlCharacterEnd = 0x20;
+    constexpr int kUnicodeEscapeHexDigits = 4;
     std::ostringstream output;
     output.imbue(std::locale::classic());
     output << '"';
     for (unsigned char character : value) {
         if (character == '"' || character == '\\') {
             output << '\\' << character;
-        } else if (character < 0x20) {
-            output << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<unsigned>(character);
+        } else if (character < kAsciiControlCharacterEnd) {
+            output << "\\u" << std::hex << std::setw(kUnicodeEscapeHexDigits) << std::setfill('0')
+                   << static_cast<unsigned>(character);
         } else {
             output << character;
         }
@@ -58,7 +63,7 @@ std::string Quote(std::string_view value)
     return output.str();
 }
 
-std::string Number(Metric value, bool integer = false, int precision = 6)
+std::string Number(Metric value, bool integer = false, int precision = kSummaryDecimalPlaces)
 {
     if (!value || !std::isfinite(*value)) {
         return "\"NA\"";
@@ -132,17 +137,24 @@ void WriteOpPerformance(
     const auto metrics = BuildSummaryMetrics(result, config, metadata);
     const Metric read = Sum(memory["aic_main_mem_read_bw(GB/s)"].value, memory["aiv_main_mem_read_bw(GB/s)"].value);
     const Metric write = Sum(memory["aic_main_mem_write_bw(GB/s)"].value, memory["aiv_main_mem_write_bw(GB/s)"].value);
-    const Metric usage = read && write ? Metric((*read + *write) / 1600.0 * 100.0) : std::nullopt;
-    const auto field = [&output](std::string_view name, Metric value, bool integer = false, int precision = 6) {
-        output << ',' << Quote(name) << ':' << Number(value, integer, precision);
-    };
-    field("aic_flops_theoretical", metrics.aicFlopsTheoretical, false, 2);
-    field("aiv_flops_theoretical", metrics.aivFlopsTheoretical, false, 2);
+    constexpr double kTheoreticalGmBandwidthGbps = 1600.0;
+    constexpr double kPercentScale = 100.0;
+    const Metric usage =
+        read && write ? Metric((*read + *write) / kTheoreticalGmBandwidthGbps * kPercentScale) : std::nullopt;
+    const auto field =
+        [&output](std::string_view name, Metric value, bool integer = false, int precision = kSummaryDecimalPlaces) {
+            output << ',' << Quote(name) << ':' << Number(value, integer, precision);
+        };
+    constexpr int kTheoreticalFlopsDecimalPlaces = 2;
+    field("aic_flops_theoretical", metrics.aicFlopsTheoretical, false, kTheoreticalFlopsDecimalPlaces);
+    field("aiv_flops_theoretical", metrics.aivFlopsTheoretical, false, kTheoreticalFlopsDecimalPlaces);
     field("aic_flops", metrics.aicFlops);
     field("aiv_flops", metrics.aivFlops);
     field("aicore_parallel_utilization", metrics.parallelUtilization);
     field("aicore_parallel_balance", metrics.parallelBalance);
-    field("aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(1600) : std::nullopt, true);
+    field(
+        "aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(kTheoreticalGmBandwidthGbps) : std::nullopt,
+        true);
     field("aicore_gm_read_bw(GB/s)", read);
     field("aicore_gm_write_bw(GB/s)", write);
     field("aicore_gm_bw_usage_rate(%)", usage);
@@ -167,9 +179,10 @@ void OpInfo(
            << (hasAic ? (hasAiv ? "\"mix\"" : "\"cube\"") :
                hasAiv ? "\"vector\"" :
                         "\"NA\"");
-    const auto field = [&output](std::string_view name, Metric value, bool integer = false, int precision = 6) {
-        output << ',' << Quote(name) << ':' << Number(value, integer, precision);
-    };
+    const auto field =
+        [&output](std::string_view name, Metric value, bool integer = false, int precision = kSummaryDecimalPlaces) {
+            output << ',' << Quote(name) << ':' << Number(value, integer, precision);
+        };
     field("Task Duration(us)", PmuMetricBuilder::TaskDuration(result));
     field("Block Dim", metadata.blockDim ? Metric(*metadata.blockDim) : std::nullopt, true);
     field(
@@ -222,7 +235,9 @@ aclptiResult WriteSummaryJsonl(
         sink.Begin(std::string(artifactPrefix) + "summary.jsonl");
         artifactStarted = true;
         sink.Write(content);
-        sink.Commit(selectedSections.size() + 2U);
+        // PerformanceHints and OpInfoSummary are emitted in addition to the selected sections.
+        constexpr std::size_t kNonSectionSummaryRecords = 2;
+        sink.Commit(selectedSections.size() + kNonSectionSummaryRecords);
         artifactStarted = false;
         return ACLPTI_SUCCESS;
     } catch (const std::exception& error) {
@@ -232,7 +247,7 @@ aclptiResult WriteSummaryJsonl(
         ASCTOOL_ERROR(
             "[npu-compute] summary failed: %s"
             " code=%u",
-            error.what(), static_cast<unsigned>(1));
+            error.what(), NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INTERNAL;
     }
 }

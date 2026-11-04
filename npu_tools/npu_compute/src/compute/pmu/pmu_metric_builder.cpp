@@ -56,6 +56,8 @@ constexpr BandwidthLimits DEFAULT_BANDWIDTH_GBPS{162.77, 377.80, 130.21, 163.13,
 
 constexpr double BYTES_PER_KB = 1024.0;
 constexpr double A5_TASK_SCHEDULER_FREQUENCY_KHZ = 1000000.0;
+// Block-level rows start with block_id and sub_block_id; task-level rows omit both.
+constexpr std::size_t BLOCK_IDENTITY_COLUMN_COUNT = 2;
 
 struct TypeMetrics {
     bool present = false;
@@ -331,13 +333,14 @@ Metric TaskLogDurationUs(const aclptiProfilingDataResult& result)
     }
 
     std::vector<double> durations;
+    constexpr double kMicrosecondsPerMillisecond = 1000.0;
     for (const auto& [replayId, pair] : pairs) {
         static_cast<void>(replayId);
         if (pair.invalid || !pair.start.has_value() || !pair.end.has_value() || *pair.end <= *pair.start) {
             continue;
         }
-        const double durationUs =
-            static_cast<double>(*pair.end - *pair.start) * 1000.0 / A5_TASK_SCHEDULER_FREQUENCY_KHZ;
+        const double durationUs = static_cast<double>(*pair.end - *pair.start) * kMicrosecondsPerMillisecond /
+                                  A5_TASK_SCHEDULER_FREQUENCY_KHZ;
         if (std::isfinite(durationUs) && durationUs > 0.0) {
             durations.push_back(durationUs);
         }
@@ -346,8 +349,10 @@ Metric TaskLogDurationUs(const aclptiProfilingDataResult& result)
         return std::nullopt;
     }
     std::sort(durations.begin(), durations.end());
-    const std::size_t middle = durations.size() / 2;
-    return durations.size() % 2U == 0U ? (durations[middle - 1] + durations[middle]) / 2.0 : durations[middle];
+    constexpr std::size_t kMedianDivisor = 2;
+    const std::size_t middle = durations.size() / kMedianDivisor;
+    return durations.size() % kMedianDivisor == 0U ? (durations[middle - 1] + durations[middle]) / kMedianDivisor :
+                                                     durations[middle];
 }
 
 std::optional<double> ValueRatio(const TypeMetrics& metrics, uint32_t eventId)
@@ -1243,8 +1248,8 @@ std::vector<std::string> PmuMetricBuilder::Header(std::string_view section, PmuD
 {
     const auto* writer = FindWriter(section);
     auto header = writer == nullptr ? std::vector<std::string>{} : writer->header();
-    if (level == PmuDataLevel::Task && header.size() >= 2) {
-        header.erase(header.begin(), header.begin() + 2);
+    if (level == PmuDataLevel::Task && header.size() >= BLOCK_IDENTITY_COLUMN_COUNT) {
+        header.erase(header.begin(), header.begin() + BLOCK_IDENTITY_COLUMN_COUNT);
     }
     return header;
 }
@@ -1278,7 +1283,7 @@ PmuMetricRow PmuMetricBuilder::BuildTask(
     assignCoreMetrics(metrics.aic, taskPmuData.aic);
     assignCoreMetrics(metrics.aiv, taskPmuData.aiv);
     auto fields = writer->row(metrics, config, duration);
-    fields.erase(fields.begin(), fields.begin() + 2);
+    fields.erase(fields.begin(), fields.begin() + BLOCK_IDENTITY_COLUMN_COUNT);
     return fields;
 }
 

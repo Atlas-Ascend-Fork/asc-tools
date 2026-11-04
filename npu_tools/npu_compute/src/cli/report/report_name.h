@@ -11,6 +11,7 @@
 #define NPU_TOOLS_NPU_COMPUTE_SRC_CLI_REPORT_REPORT_NAME_H
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <boost/filesystem/path.hpp>
 #include <optional>
@@ -18,12 +19,14 @@
 
 namespace npucompute::cli {
 
+inline constexpr std::size_t kReportRandomIdBytes = 4;
+
 struct ReportTarget {
     boost::filesystem::path path;
 };
 
 using EpochMillisecondsSource = bool (*)(uint64_t* value, void* context, std::string* error);
-using RandomBytesSource = bool (*)(std::array<uint8_t, 4>* value, void* context, std::string* error);
+using RandomBytesSource = bool (*)(std::array<uint8_t, kReportRandomIdBytes>* value, void* context, std::string* error);
 
 struct ReportNameSources {
     boost::filesystem::path current_directory;

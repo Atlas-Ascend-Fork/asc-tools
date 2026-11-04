@@ -41,7 +41,8 @@ bool ReadExecutablePath(boost::filesystem::path* path, std::string* error)
             *path = std::string(buffer.data(), static_cast<std::size_t>(length));
             return true;
         }
-        buffer.resize(buffer.size() * 2);
+        constexpr std::size_t kPathBufferGrowthFactor = 2;
+        buffer.resize(buffer.size() * kPathBufferGrowthFactor);
     }
 
     if (error != nullptr) {

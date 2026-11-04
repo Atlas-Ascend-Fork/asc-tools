@@ -53,16 +53,9 @@ bool HasMagic(const uint8_t* data) { return std::equal(NPU_REP_MAGIC.begin(), NP
 
 bool IsKnownFileType(NpuRepFileType type)
 {
-    switch (type) {
-        case NpuRepFileType::NpuRep:
-        case NpuRepFileType::Json:
-        case NpuRepFileType::Jsonl:
-        case NpuRepFileType::Csv:
-        case NpuRepFileType::Sqlite:
-        case NpuRepFileType::Txt:
-            return true;
-    }
-    return false;
+    // Keep this allowlist explicit because enum values are part of the external REP format.
+    return type == NpuRepFileType::NpuRep || type == NpuRepFileType::Json || type == NpuRepFileType::Jsonl ||
+           type == NpuRepFileType::Csv || type == NpuRepFileType::Sqlite || type == NpuRepFileType::Txt;
 }
 
 bool ReadFileName(const uint8_t* data, std::string* name, std::string* error)

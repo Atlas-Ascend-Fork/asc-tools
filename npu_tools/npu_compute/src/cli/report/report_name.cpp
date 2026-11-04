@@ -95,7 +95,7 @@ bool SystemEpochMilliseconds(uint64_t* value, void*, std::string* error)
     return true;
 }
 
-bool SystemRandomBytes(std::array<uint8_t, 4>* value, void*, std::string* error)
+bool SystemRandomBytes(std::array<uint8_t, kReportRandomIdBytes>* value, void*, std::string* error)
 {
     std::size_t offset = 0;
 #ifdef SYS_getrandom
@@ -153,18 +153,22 @@ bool ReadStatus(const boost::filesystem::path& path, boost::filesystem::file_sta
     return true;
 }
 
-std::string FormatRandomId(const std::array<uint8_t, 4>& bytes)
+std::string FormatRandomId(const std::array<uint8_t, kReportRandomIdBytes>& bytes)
 {
     static constexpr char HEX[] = "0123456789abcdef";
-    std::string result(8U, '0');
+    constexpr std::size_t kHexDigitsPerByte = 2;
+    constexpr unsigned kBitsPerHexDigit = 4;
+    constexpr unsigned kHexDigitMask = 0x0f;
+    std::string result(bytes.size() * kHexDigitsPerByte, '0');
     for (std::size_t index = 0; index < bytes.size(); ++index) {
-        result[index * 2U] = HEX[bytes[index] >> 4U];
-        result[index * 2U + 1U] = HEX[bytes[index] & 0x0fU];
+        result[index * kHexDigitsPerByte] = HEX[bytes[index] >> kBitsPerHexDigit];
+        result[index * kHexDigitsPerByte + 1U] = HEX[bytes[index] & kHexDigitMask];
     }
     return result;
 }
 
-std::string FormatReportBaseName(uint64_t epoch_milliseconds, const std::array<uint8_t, 4>& random_bytes)
+std::string FormatReportBaseName(
+    uint64_t epoch_milliseconds, const std::array<uint8_t, kReportRandomIdBytes>& random_bytes)
 {
     return "report_" + std::to_string(epoch_milliseconds) + "_" + FormatRandomId(random_bytes);
 }
@@ -186,7 +190,7 @@ bool GenerateTargetInDirectory(
         return false;
     }
     for (std::size_t attempt = 0; attempt < MAXIMUM_NAME_ATTEMPTS; ++attempt) {
-        std::array<uint8_t, 4> random_bytes{};
+        std::array<uint8_t, kReportRandomIdBytes> random_bytes{};
         if (!sources.random_bytes(&random_bytes, sources.context, error)) {
             return false;
         }
@@ -246,7 +250,7 @@ bool GenerateReportBaseNameWithSources(const ReportNameSources& sources, std::st
     }
     name->clear();
     uint64_t epoch_milliseconds = 0;
-    std::array<uint8_t, 4> random_bytes{};
+    std::array<uint8_t, kReportRandomIdBytes> random_bytes{};
     if (!sources.epoch_milliseconds(&epoch_milliseconds, sources.context, error) ||
         !sources.random_bytes(&random_bytes, sources.context, error)) {
         return false;

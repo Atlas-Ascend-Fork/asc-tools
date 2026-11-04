@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cerrno>
+#include <chrono>
 #include <stdexcept>
 #include <poll.h>
 #include <unistd.h>
@@ -37,9 +38,11 @@ ArtifactPublisher::ArtifactPublisher(ipc::Channel channel, ipc::Deadline readyDe
 ArtifactPublisher::~ArtifactPublisher() { Stop(); }
 void ArtifactPublisher::Enqueue(ipc::Frame frame)
 {
+    constexpr std::size_t kMaxQueuedFrames = 16;
     std::unique_lock<std::mutex> lock(queue_mutex_);
     if (!available_.wait_until(
-            lock, IoDeadline(), [this] { return queue_.size() < 16 || failed_ || stopping_ || interrupted_; }) ||
+            lock, IoDeadline(),
+            [this] { return queue_.size() < kMaxQueuedFrames || failed_ || stopping_ || interrupted_; }) ||
         failed_ || stopping_ || interrupted_) {
         throw std::runtime_error("ARTIFACT: publisher unavailable or backpressure timeout");
     }
@@ -151,9 +154,9 @@ void ArtifactPublisher::WaitForResultAck()
 
 bool ArtifactPublisher::TakeNextFrame(ipc::Frame& frame)
 {
+    constexpr std::chrono::milliseconds kControlPollInterval{20};
     std::unique_lock<std::mutex> lock(queue_mutex_);
-    available_.wait_for(
-        lock, std::chrono::milliseconds(20), [this] { return !queue_.empty() || failed_ || stopping_; });
+    available_.wait_for(lock, kControlPollInterval, [this] { return !queue_.empty() || failed_ || stopping_; });
     if (queue_.empty()) {
         if (interrupted_) {
             throw ipc::Exception({3, "collection interrupted", "PROFILING", "collect"});
@@ -218,7 +221,8 @@ void ArtifactPublisher::Worker() noexcept
             ASCTOOL_ERROR(
                 "[UDS] %s/%s code=%u: %s", detail.domain.c_str(), detail.phase.c_str(), detail.code,
                 detail.message.c_str());
-            channel_.Send(ipc::Type::Error, ipc::EncodeError(detail), ipc::After(std::chrono::milliseconds(100)));
+            constexpr std::chrono::milliseconds kErrorNotificationTimeout{100};
+            channel_.Send(ipc::Type::Error, ipc::EncodeError(detail), ipc::After(kErrorNotificationTimeout));
         } catch (...) {
         }
     } catch (...) {

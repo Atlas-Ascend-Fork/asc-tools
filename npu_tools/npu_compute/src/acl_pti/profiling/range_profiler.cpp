@@ -107,8 +107,11 @@ struct RangeProfiler::ReplayRound {
 };
 
 struct RangeProfiler::ProfilingRoundConfig {
+    // A profiling round has one primary attribute and may add one task-block attribute.
+    static constexpr std::size_t kMaxProfilingRoundAttributes = 2;
+
     MsprofConfig msprof{};
-    std::array<MsprofConfigAttr, 2> attrs{};
+    std::array<MsprofConfigAttr, kMaxProfilingRoundAttributes> attrs{};
     data::ReplayPrepareInfo prepareInfo{};
     std::shared_ptr<aclptiPmSamplingContext> samplingContext;
 };
