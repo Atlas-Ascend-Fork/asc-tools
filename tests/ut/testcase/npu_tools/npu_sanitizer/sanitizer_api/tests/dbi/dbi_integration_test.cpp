@@ -9,12 +9,15 @@
 #include "dbi/dbi_pipeline.h"
 #include "../../../common/tests/plog_capture.h"
 
+#include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
@@ -42,6 +45,7 @@ printf '%s' "$name" >> "$DBI_FAKE_LOG"
 for arg in "$@"; do printf ' <%s>' "$arg" >> "$DBI_FAKE_LOG"; done
 printf '\n' >> "$DBI_FAKE_LOG"
 if [ "$name" = llvm-objdump ]; then
+  printf 'SYMBOL TABLE:\n'
   case "$2" in
     *group.o)
       for symbol in $(sed -n 's/.*void \(__sanitizer_report_[A-Za-z0-9_]*\)(.*/\1/p' "$(dirname "$2")"/src/*.cpp); do
@@ -114,10 +118,13 @@ TEST(DbiIntegrationTest, CompilesLinksAndPatchesSelectedProbeSet)
     request.cacheDirectory = (root / "cache").string();
     request.keepTemp = true;
 
+    testing::internal::CaptureStderr();
     const DbiResult result = RunDbiPipeline(request);
+    const std::string console = testing::internal::GetCapturedStderr();
     EXPECT_TRUE(result.success) << result.stage << ": " << result.diagnostic;
     EXPECT_EQ(result.patchedPath, request.outputKernel);
     EXPECT_TRUE(boost::filesystem::is_regular_file(request.outputKernel));
+    EXPECT_EQ(console.find("-fno-jump-tables"), std::string::npos) << console;
 
     const std::string logs = capture.Text();
     EXPECT_NE(logs.find("DBI stage=bisheng-tune output=stdout line=1 part=1 text=first line"), std::string::npos);
@@ -162,6 +169,121 @@ TEST(DbiIntegrationTest, CompilesLinksAndPatchesSelectedProbeSet)
     unsetenv("DBI_FAKE_LOG");
     boost::filesystem::remove_all(root);
 }
+
+class JumpTableSymbolTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        root_ = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("dbi-jump-table-%%%%-%%%%");
+        const auto toolBin = root_ / "toolchain/tools/bisheng_compiler/bin";
+        for (const char* name : {"bisheng", "bisheng-tune", "ld.lld", "llvm-objdump"}) {
+            InstallFakeTool(toolBin / name);
+        }
+        WriteFile(root_ / "input.o", "kernel\n");
+        WriteFile(root_ / "commands.log", "");
+        ASSERT_EQ(setenv("DBI_FAKE_LOG", (root_ / "commands.log").c_str(), 1), 0);
+        request_.inputKernel = (root_ / "input.o").string();
+        request_.outputKernel = (root_ / "patched.o").string();
+        request_.arch = "dav-3510";
+        request_.traceArgumentOffset = 24;
+        request_.probeGroups = {ProbeGroup::Mte2};
+        request_.toolchainRoot = (root_ / "toolchain").string();
+        request_.workDirectory = (root_ / "work").string();
+        request_.cacheDirectory = (root_ / "cache").string();
+    }
+
+    void TearDown() override
+    {
+        unsetenv("DBI_FAKE_KERNEL_SYMBOLS");
+        unsetenv("DBI_FAKE_LOG");
+        boost::filesystem::remove_all(root_);
+    }
+
+    void SetSymbols(const std::string& row)
+    {
+        const std::string symbols = "00000000 g F .text.kernel 00000010 kernel_main\n" + row;
+        ASSERT_EQ(setenv("DBI_FAKE_KERNEL_SYMBOLS", symbols.c_str(), 1), 0);
+    }
+
+    boost::filesystem::path root_;
+    DbiRequest request_;
+};
+
+class JumpTableRejectionTest : public JumpTableSymbolTest, public testing::WithParamInterface<const char*> {};
+
+int32_t EnableLogLevel(int32_t, int32_t) { return 1; }
+
+void RecordJumpTableError(int32_t, int32_t level, const char* format, ...)
+{
+    if (level != DLOG_ERROR) {
+        return;
+    }
+    char message[2048] = {};
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+    const char* log = std::getenv("DBI_FAKE_LOG");
+    if (log != nullptr) {
+        std::ofstream output(std::string(log) + ".plog", std::ios::app);
+        output << message;
+    }
+}
+
+TEST_P(JumpTableRejectionTest, ExitsBeforeCompilingOrRunningKernel)
+{
+    SetSymbols(GetParam());
+    // The child must exit inside the pipeline even if its caller would ignore a returned failure.
+    EXPECT_EXIT(
+        {
+            plog_test::SetApi({EnableLogLevel, RecordJumpTableError});
+            RunDbiPipeline(request_);
+            _exit(0);
+        },
+        testing::ExitedWithCode(EXIT_FAILURE), "npu_check: ERROR:.*JTI.*-fno-jump-tables");
+
+    const std::string commands = ReadFile(root_ / "commands.log");
+    EXPECT_EQ(CountOccurrences(commands, "llvm-objdump <--syms>"), 1U) << commands;
+    EXPECT_EQ(commands.find("bisheng <"), std::string::npos) << commands;
+    EXPECT_EQ(commands.find("ld.lld <"), std::string::npos) << commands;
+    EXPECT_EQ(commands.find("bisheng-tune <"), std::string::npos) << commands;
+    EXPECT_FALSE(boost::filesystem::exists(request_.outputKernel));
+    EXPECT_FALSE(boost::filesystem::exists(request_.cacheDirectory));
+    const std::string errors = ReadFile(root_ / "commands.log.plog");
+    EXPECT_NE(errors.find("kernel contains a jump table"), std::string::npos) << errors;
+    EXPECT_NE(errors.find("-fno-jump-tables"), std::string::npos) << errors;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    DefinedJumpTables, JumpTableRejectionTest,
+    testing::Values(
+        "00000000000001e0 l       .rodata\t0000000000000000 JTI0_0\n", "00000040 l O .rodata 00000010 JTI12_34\n",
+        "00000040 l O .rodata 00000010 JTI\n", "00000040 l O .rodata 00000010 JTI42\n",
+        "00000040 l O .rodata 00000010 JTI0_\n", "00000040 l O .rodata 00000010 JTI0_0_extra\n",
+        "00000040 l   .rodata 00000010 JTIx_0\n"));
+
+class NonJumpTableSymbolTest : public JumpTableSymbolTest, public testing::WithParamInterface<const char*> {};
+
+TEST_P(NonJumpTableSymbolTest, DoesNotRejectUnrelatedNamesOrNonSymbolText)
+{
+    SetSymbols(GetParam());
+    PlogCapture capture;
+    testing::internal::CaptureStderr();
+    const DbiResult result = RunDbiPipeline(request_);
+    const std::string console = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(result.success) << result.stage << ": " << result.diagnostic;
+    EXPECT_EQ(console.find("-fno-jump-tables"), std::string::npos) << console;
+    EXPECT_EQ(capture.Text().find("kernel contains a jump table"), std::string::npos);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    SymbolTableBoundaries, NonJumpTableSymbolTest,
+    testing::Values(
+        "00000040 l O .rodata 00000010 jti0_0\n", "00000040 l O .rodata 00000010 user_JTI0_0\n",
+        "00000000         *UND* 00000000 JTI0_0\n", "00000000 l    df *ABS* 00000000 JTI0_0\n",
+        "00000000 l    d  .rodata 00000000 JTI0_0\n", "00000000 l    F  .text 00000010 JTI0_0\n",
+        "00000040 l O JTI0_0 00000010 regular_name\n", "00000040 l O .rodata 00000010 regular_name JTI0_0\n",
+        "/tmp/JTI0_0\n", "note: JTI0_0\n"));
 
 TEST(DbiIntegrationTest, KeepsFirstKernelAsOrderingAnchorAndPassesSelectedTilingKeyToTune)
 {

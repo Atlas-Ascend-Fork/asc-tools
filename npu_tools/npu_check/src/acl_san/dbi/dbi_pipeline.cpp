@@ -26,6 +26,7 @@
 #include <boost/system/error_code.hpp>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <iterator>
 #include <sstream>
 #include <system_error>
@@ -457,6 +458,65 @@ bool RunChecked(
     return false;
 }
 
+// Bisheng jump-table symbols start with uppercase JTI; do not depend on their numeric suffix format.
+bool IsJumpTableSymbolName(const std::string& name)
+{
+    constexpr std::size_t JUMP_TABLE_PREFIX_LENGTH = 3;
+    return name.compare(0, JUMP_TABLE_PREFIX_LENGTH, "JTI") == 0;
+}
+
+bool IsJumpTableSymbolRecord(const std::string& line)
+{
+    // llvm-objdump prints section/name instead of readelf's Ndx/Name. Only accept a defined local data label,
+    // with an optional O (OBJECT) type; FILE, SECTION, function and undefined symbols are not jump tables.
+    std::istringstream fields(line);
+    std::string address, binding, section, size, name, extra;
+    if (!(fields >> address >> binding >> section) || binding != "l") {
+        return false;
+    }
+    if (section == "O" && !(fields >> section)) {
+        return false;
+    }
+    if ((!(fields >> size >> name)) || (fields >> extra) || (section.front() == '*')) {
+        return false;
+    }
+    return IsJumpTableSymbolName(name);
+}
+
+bool HasJumpTableSymbol(const std::string& symbolTable)
+{
+    std::istringstream lines(symbolTable);
+    std::string line;
+    bool inSymbolTable = false;
+    while (std::getline(lines, line)) {
+        if (line == "SYMBOL TABLE:") {
+            inSymbolTable = true;
+            continue;
+        }
+        if (inSymbolTable && IsJumpTableSymbolRecord(line)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[noreturn]] void RejectJumpTableKernel()
+{
+    constexpr const char* PLOG_ERROR =
+        "kernel contains a jump table (JTI symbol), which bisheng-tune may fail to relocate; "
+        "execution stopped; add -fno-jump-tables to the kernel Bisheng compile options and rerun npu-check";
+    constexpr const char* TERMINAL_ERROR =
+        "npu_check: ERROR: kernel contains a jump table (JTI symbol), which bisheng-tune may "
+        "fail to relocate. Execution stopped. Add -fno-jump-tables to the kernel's Bisheng compile options and "
+        "rerun npu-check.\n";
+    ASCTOOL_ERROR("%s", PLOG_ERROR);
+    std::cerr << TERMINAL_ERROR << std::flush;
+    DlogFlush();
+    // Stop the instrumented process even if its caller ignores an ACL failure. Do not run exit handlers that
+    // could launch more kernels or publish a misleading complete analysis after rejecting this binary.
+    _exit(EXIT_FAILURE);
+}
+
 std::vector<std::string> ParseTextSymbols(const std::string& text, const std::string& property)
 {
     std::vector<std::string> symbols;
@@ -848,6 +908,9 @@ DbiResult RunDbiPipeline(const DbiRequest& request)
     std::string kernelSymbols;
     if (!RunChecked("inspect-kernel", {tools.llvmObjdump, "--syms", request.inputKernel}, result, &kernelSymbols)) {
         return result;
+    }
+    if (HasJumpTableSymbol(kernelSymbols)) {
+        RejectJumpTableKernel();
     }
     const std::string selectedKernelSymbol = SelectKernelTextSymbol(kernelSymbols, request.tilingKey);
     if (selectedKernelSymbol.empty()) {
