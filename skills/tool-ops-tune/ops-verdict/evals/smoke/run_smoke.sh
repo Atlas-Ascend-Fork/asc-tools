@@ -68,6 +68,19 @@ assert m['blocks'] and all(b['status'] == 'ok' for b in m['blocks']), m['blocks'
   fi
 done
 
+# ranks 守卫：--mode standard --ranks>1 必须拒绝（exit 非 0）并
+# 引导 --mode mc2——fork 多 rank 走非 task-based 采集数据不可靠。
+# 子 shell 必须 `|| true` 兜底（守卫生效时 collect_board.sh 以 exit 4 终止，
+# set -e 会连带杀掉 smoke 本体）；退出码在兜底前先行捕获。
+GUARD_RC=0
+GUARD_ERR=$(PATH="$SHIM_BIN:$PATH" bash "$REPO_ROOT/ops-collect/scripts/collect_board.sh" \
+    --exe /bin/true --mode standard --ranks 4 --output "$SMOKE_TMP/prof_guard" 2>&1) || GUARD_RC=$?
+if [[ $GUARD_RC -ne 0 ]] && grep -q -- "--mode mc2" <<< "$GUARD_ERR"; then
+  pass "collect_board.sh --mode standard --ranks 4 拒绝并引导 mc2（rc=$GUARD_RC）"
+else
+  fail "collect_board.sh ranks 守卫（rc=$GUARD_RC，stderr 未含引导）"
+fi
+
 echo "=== smoke 3: isolation from-prof 干跑（R 值档位从规则 YAML 派生）==="
 if [ ! -f "$REPO_ROOT/ops-collect/scripts/isolation_test.py" ]; then
   echo "[SKIP] isolation_test.py 未交付（随多卡域 PR），smoke 3 暂跳过——交付后本段自动生效"
@@ -233,6 +246,33 @@ assert r['kernel_avg_us'] == 14.2
   pass "collect_board.sh --mode timing（harness result.json 归档 + manifest ok）"
 else
   fail "collect_board.sh --mode timing"
+fi
+
+# 失败分支：harness 非零退出必须仍落 manifest（failed 块）——
+# 修复前 set -e 在 timeout 行直接杀脚本，failed 分支不可达、manifest 不落盘
+# （失败无审计记录，且该目录因无 manifest 可被重复采集，防重采闸门失效）。
+# 子 shell 必须 `|| true` 兜底：修复前的 bug 形态下 collect_board.sh 以
+# harness 退出码终止（非 0），set -e 会连带杀掉 smoke 本体。
+TIMING_TMP2="$SMOKE_TMP/timing_fail"
+mkdir -p "$TIMING_TMP2"
+cat > "$TIMING_TMP2/fail_harness.sh" <<'FAILH'
+#!/usr/bin/env bash
+echo "boom" >&2
+exit 3
+FAILH
+chmod +x "$TIMING_TMP2/fail_harness.sh"
+( cd "$TIMING_TMP2" && PATH="$SHIM_BIN:$PATH" bash "$REPO_ROOT/ops-collect/scripts/collect_board.sh" \
+    --exe "$TIMING_TMP2/fail_harness.sh" --mode timing --output "$TIMING_TMP2/prof" ) >/dev/null 2>&1 || true
+if python3 -c "
+import json
+m = json.load(open('$TIMING_TMP2/prof/collection_manifest.json'))
+assert m['blocks'][0]['name'] == 'timing_harness', m['blocks']
+assert m['blocks'][0]['status'] == 'failed', m['blocks']
+assert 'rc=3' in m['blocks'][0]['note'], m['blocks']
+" 2>/dev/null; then
+  pass "collect_board.sh --mode timing 失败分支（manifest 落盘 + failed 块 + rc 留痕）"
+else
+  fail "collect_board.sh --mode timing 失败分支（manifest 丢失=死代码回归）"
 fi
 
 

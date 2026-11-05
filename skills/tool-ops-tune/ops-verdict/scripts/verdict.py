@@ -825,12 +825,6 @@ def main() -> int:
     ap.add_argument(
         "--soc", default=None, help="SoC 标识（a2/a3/a5），用于规则包 soc 域过滤"
     )
-    ap.add_argument(
-        "--min-confidence",
-        default="low",
-        choices=["low", "medium", "high"],
-        help="过滤输出置信度下限（不改变触发，只影响报告呈现）",
-    )
     ap.add_argument("-o", "--output", required=True, help="verdict.json 输出路径")
     args = ap.parse_args()
 

@@ -43,7 +43,7 @@ KERNEL_NAME=""
 MSPROF_TIMEOUT=1800   # msprof 单块采集超时（秒）；挂起程序不再无限阻塞
 
 usage() {
-  sed -n '2,32p' "$0"; exit 1
+  sed -n '2,33p' "$0"; exit 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -308,9 +308,19 @@ run_msprof_op() {  # msprof op 分支（单卡 + 本机支持；tool-routing 决
 
 case "$MODE" in
   standard)
-    # 采集模式路由（tool-routing 决策树）：MC² 强制 task-based；单卡在本机
-    # msprof op 可用时优先 msprof op（探测结果真正参与路由，不再只是打印）
-    if [[ $RANKS -le 1 && $MSPROF_OP_OK -eq 1 ]]; then
+    # 守卫：--ranks>1 说明是 fork 多 rank 程序——msprof op 对
+    # fork 行为未定义、完整 msprof 非 task-based 采集数据不可靠（SKILL.md
+    # 路由决策树：MC²/多 rank 必须走 --mode mc2）。此前 standard 模式静默
+    # 接受 ranks>1（ranks 只参与 msprof op 分支路由），采出不可靠数据。
+    if [[ $RANKS -gt 1 ]]; then
+      echo "ERROR: --ranks $RANKS > 1 是 fork 多 rank 程序，--mode standard 对其采集数据不可靠" >&2
+      echo "       （msprof op 对 fork 行为未定义；非 task-based 采集混入跨 rank 噪声）。" >&2
+      echo "       请改用 --mode mc2（msprof --aic-mode=task-based 强制路由）。" >&2
+      exit 4
+    fi
+    # 采集模式路由（tool-routing 决策树）：单卡在本机 msprof op 可用时优先
+    # msprof op（探测结果真正参与路由，不再只是打印）
+    if [[ $MSPROF_OP_OK -eq 1 ]]; then
       echo "[route] 单卡 + msprof op 可用 → msprof op 分支"
       run_msprof_op
     else
@@ -336,9 +346,13 @@ case "$MODE" in
     # 提供（含 --output 时以调用方为准；缺省追加本脚本的目标路径）。
     TIMING_JSON="$OUTPUT/result.json"
     TIMING_LOG="$OUTPUT/timing_harness.log"
-    # 退出码先捕获再判定（跨 [[ ]] 取 $? 会拿到测试结果而非 harness 退出码
-    timeout "$MSPROF_TIMEOUT" bash -c "cd '$PWD' && '${EXE}' ${EXE_ARGS} --output '$PWD/result.json'" >"$TIMING_LOG" 2>&1
-    harness_rc=$?
+    # 退出码先捕获再判定（跨 [[ ]] 取 $? 会拿到测试结果而非 harness 退出码）。
+    # harness 非零退出必须被 || 兜底吸收：此前 timeout 行非零会被
+    # set -e 直接终止脚本，harness_rc=$? 与下方两个 failed 分支全部不可达——
+    # manifest 不落盘：失败无审计记录，且该目录因无 manifest 可被重复采集
+    # （防重采闸门失效）。退出码经 harness_rc 走三态判定。
+    harness_rc=0
+    timeout "$MSPROF_TIMEOUT" bash -c "cd '$PWD' && '${EXE}' ${EXE_ARGS} --output '$PWD/result.json'" >"$TIMING_LOG" 2>&1 || harness_rc=$?
     if [[ $harness_rc -eq 0 ]] && [[ -f "result.json" ]]; then
       mv "result.json" "$TIMING_JSON"
       record_block "timing_harness" ok "$TIMING_JSON" "harness 直跑（event 口径，warmup/repeat 见 result.json）"
