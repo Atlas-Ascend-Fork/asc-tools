@@ -9,14 +9,14 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""trace_bubble.py — cannsim/trace 空泡与重叠度分析（REVIEW2 G7/G8/G13 / 反馈 P1-1②）
+"""trace_bubble.py — cannsim/trace 空泡与重叠度分析
 
 设计对齐：
   - L1_SERIAL_NO_OVERLAP 的串行指纹此前是派生推断（pipe 求和≈100%），
-    L1_LATENCY_SYNC_SUSPECT 置信度 medium、无直接证据（G13）；
+    L1_LATENCY_SYNC_SUSPECT 置信度 medium、无直接证据；
   - pipeline.md 机制卡承诺「DoubleBuffer 生效 = MTE 与计算重叠比例 >30%
-    （部分 10-30%，未生效 <5%）」只有文字，无度量工具（G8）；
-  - L0_STALL_DOMINANT 的 top_stall_pct 无生产者（G7）。
+    （部分 10-30%，未生效 <5%）」只有文字，无度量工具；
+  - L0_STALL_DOMINANT 的 top_stall_pct 无生产者。
   - 本脚本从 trace_core*.json（cannsim report 产出的 Chrome Trace Format）直接
     提取：pipe 重叠比例 → overlap_pct、空泡占比 → top_stall_pct，输出 verdict.py
     可直接消费的 --scalar 串——三个缺口一个工具补齐。

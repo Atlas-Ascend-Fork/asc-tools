@@ -167,7 +167,7 @@ def parse_task_durations(prof_dir: str) -> dict[str, list[float]]:
     """从 msprof 产出的 op_summary_*.csv 提取 Task Duration(us)，按文件分组返回。
 
     每个文件 ≈ 一个 rank 的独立 op_summary（msprof 每设备一份 PROF 目录）——
-    分组是「逐 rank 稳态均值再跨 rank 取 max」（木桶口径）的前提（检视 F19：
+    分组是「逐 rank 稳态均值再跨 rank 取 max」（木桶口径）的前提——
     全部行统一求均值在数学上不等价，mean(所有行) ≤ max(各 rank 均值)，
     系统性低估 T → R 偏向「计算 bound」结论）。
     返回 {文件名: [时长列表]}；空文件不产生键。
@@ -189,7 +189,7 @@ def parse_task_durations(prof_dir: str) -> dict[str, list[float]]:
 
 
 def steady_max(grouped: dict[str, list[float]], warmup: int) -> float | None:
-    """木桶口径稳态聚合（检视 F19）：每 rank（文件组）内丢弃前 warmup 次取均值，
+    """木桶口径稳态聚合：每 rank（文件组）内丢弃前 warmup 次取均值，
     再跨 rank 取 max——所有 rank 经 BarrierAll/CrossCoreFlag 同步，整体性能由
     最慢 rank 决定。"""
     per_rank = []
@@ -201,7 +201,7 @@ def steady_max(grouped: dict[str, list[float]], warmup: int) -> float | None:
 
 
 def parse_pipe_ratio(prof_dir: str, columns: list[str]) -> dict[str, float]:
-    """从 op_summary_*.csv 提取 pipe 占比列的逐 rank 稳态均值（F8：mte2_ratio_pure 等的生产者）。
+    """从 op_summary_*.csv 提取 pipe 占比列的逐 rank 稳态均值（mte2_ratio_pure 等的生产者）。
 
     返回 {文件名: 稳态均值}；列不存在或全空 → 空 dict。
     """
@@ -250,7 +250,7 @@ def run_msprof_task_based(
 
     env 采用整体替换语义（subprocess.run(env=...) 不继承父进程环境），因此必须
     以 os.environ 为底、env_extra 覆盖——否则 PATH/ASCEND_HOME_PATH/LD_LIBRARY_PATH
-    全部丢失，msprof 无法运行（检视 F2）。
+    全部丢失，msprof 无法运行。
     """
     env = {**os.environ, **env_extra}
     cmd = [
@@ -338,7 +338,7 @@ def main() -> int:
         )
     else:
         # env 开关模式：--comm-switch/--compute-switch 支持 K=V（或 K1=V1,K2=V2）形式，
-        # 解析出的变量真正注入子进程 env（消灭死参数，检视 F2/N2）
+        # 解析出的变量真正注入子进程 env（消灭死参数
         comm_env = parse_switch(args.comm_switch) or {"MC2_MODE": "COMM_ONLY"}
         compute_env = parse_switch(args.compute_switch) or {"MC2_MODE": "COMPUTE_ONLY"}
         comm_out = str(Path(args.prof_dir) / "comm")

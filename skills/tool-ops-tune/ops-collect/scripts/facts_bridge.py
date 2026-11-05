@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""facts_bridge.py — msprof 7 组产物 → verdict.py --scalar 标量生产者（REVIEW2 G2 / 整改 P0-4）
+"""facts_bridge.py — msprof 7 组产物 → verdict.py --scalar 标量生产者
 
 设计对齐：
   - 判定侧契约：L0 规则 3 条 + L1 反证 2 条的指标全部 source: scalar 且描述写明
@@ -19,7 +19,7 @@
     Memory(PipeUtilization) 提取换算，输出 verdict.py 可直接消费的 --scalar 串。
   - 列名三代兼容：aic_/aiv_/ai_ 前缀逐候选尝试（verdict.py 同款经验）；
     三代 msprof 版本的列名漂移是主要风险点，evals 用真实导出 CSV 做 fixture。
-  - 峰值换算消费 soc-spec.yaml（P0-3）——GM 带宽标尺有溯源，不再拍脑袋。
+  - 峰值换算消费 soc-spec.yaml——GM 带宽标尺有溯源，不再拍脑袋。
   - **npu-compute DB 通道（Roadmap #4）**：npu-compute（950/A5）解包目录自带
     summary.db（7 Section 表 + PcSampling + FieldUnitMap），DB 是 CSV 的同数据
     入库副本（与 msprof DB 双源的「task 级口径差异」不同，可安全互通）——
@@ -219,7 +219,7 @@ def db_column_mean(
 ) -> tuple[float | None, str | None]:
     """DB 通道标量：候选列 COALESCE 逐行回退后 AVG（NA→NULL 语义内建）。
 
-    与 CSV 侧 extract_from_csv 的逐行 _first_float **同语义**（检视 #3 修复：
+    与 CSV 侧 extract_from_csv 的逐行 _first_float **同语义**——
     此前「候选列逐个 AVG 取首个有值列」是按列选择——同一 Section 表内
     aiv_*/aic_* 部分行有值部分行 NULL 的混排形态（AIC/AIV block 混排报告
     常态）下，DB 侧只统计首个有值列自身的行子集，CSV 侧逐行合并两列，
@@ -377,7 +377,7 @@ def load_opinfo_summary(root: Path) -> dict | None:
     return None
 
 
-# ---- DB 双源（P1-6 / G12）：msprof_*.db 与 CSV 等价定位 -----------------------
+# ---- DB 双源：msprof_*.db 与 CSV 等价定位 -----------------------
 # 等价查询固化在脚本（判定只出自脚本原则：SQL 拼接不进 LLM）。
 # 真源核验：msprof 9.0 产物 device_0/sqlite/ai_core_op_summary.db 的 task_time 表
 # （startNs/endNs/duration_time/task_type），op 级 per-kernel 行由 op_summary 语义
@@ -399,7 +399,7 @@ def find_metric_db(manifest_dir: Path) -> Path | None:
 
 
 def extract_from_db(db_path: Path, kernel_name: str | None) -> dict:
-    """从 msprof sqlite 提取 task 级标量（P1-6 DB 双源）。
+    """从 msprof sqlite 提取 task 级标量（DB 双源）。
 
     等价查询（与 CSV 路径同口径）：
       - task_duration_us：AI Core 计算类 task 的 duration 均值（duration_time
@@ -546,7 +546,7 @@ def soc_gm_bw_gbps(
 def main() -> int:
     here = Path(__file__).resolve().parent
     ap = argparse.ArgumentParser(
-        description="采集产物 → verdict --scalar 生产者（G2 桥接；msprof 7 组 / npu-compute DB 通道）"
+        description="采集产物 → verdict --scalar 生产者（msprof 7 组 / npu-compute DB 通道）"
     )
     ap.add_argument(
         "--manifest",
@@ -570,7 +570,7 @@ def main() -> int:
     ap.add_argument(
         "--kernel-name",
         default=None,
-        help="多 kernel CSV 过滤（G15 同款；不产出跨 kernel 平均标量）",
+        help="多 kernel CSV 过滤（不产出跨 kernel 平均标量）",
     )
     ap.add_argument(
         "--soc-spec",
@@ -580,7 +580,7 @@ def main() -> int:
         "--db",
         default=None,
         help="sqlite 产物路径：npu-compute 通道缺省探测 <dir>/summary.db；"
-        "msprof 通道缺省探测 PROF_*/sqlite/ai_core_op_summary.db（P1-6 DB 双源）",
+        "msprof 通道缺省探测 PROF_*/sqlite/ai_core_op_summary.db（DB 双源）",
     )
     ap.add_argument(
         "--no-db", action="store_true", help="禁用一切 DB 读取（纯 CSV 口径）"
@@ -594,7 +594,7 @@ def main() -> int:
     args = ap.parse_args()
 
     manifest_path = Path(args.manifest)
-    # 入参二义性按 help 文档口径消解（检视 #12/High 修复）：--manifest 可传
+    # 入参二义性按 help 文档口径消解：--manifest 可传
     # manifest 文件或产物根目录——传目录时 root 取该目录本身（取 .parent 会在
     # prof/{baseline,after} 布局下 rglob 命中字母序靠前的另一轮采集，
     # 把「优化后」CSV 当「基线」标量喂给 verdict，结论方向反转）；
@@ -731,7 +731,7 @@ def main() -> int:
         # ---- npu-compute 通道（Roadmap #4）：DB SQL 优先，CSV 补位 ----
         # DB 列名为规范化形（单位后缀已拆入 FieldUnitMap）；候选序与 CSV 同语义
         # （db_column_mean 用 COALESCE 逐行回退，与 CSV 侧 _first_float 逐行
-        #   语义对齐——检视 #3）。
+        #   语义对齐。
         # npu-compute L2Cache 无 total hit_rate 列——read 口径补位（列集真源核验）。
         bridge_db_first(
             "PipeUtilization",
@@ -922,7 +922,7 @@ def main() -> int:
                     if str(r.get("Op Name") or "").strip() == args.kernel_name
                 ]
             elif len(op_names) > 1:
-                # G15 同款防护（检视 #19 修复）：多 Op Name 且无 --kernel-name →
+                # G15 同款防护：多 Op Name 且无 --kernel-name →
                 # 不取 rows[0] 张冠李戴，记 missing 待补采
                 missing.append(
                     {
@@ -973,7 +973,7 @@ def main() -> int:
     ):
         db_path = Path(args.db) if args.db else find_metric_db(root)
         if db_path and db_path.exists():
-            # G15 同款防护（检视 #14 修复）：DB 无 kernel 名维度，指定
+            # G15 同款防护：DB 无 kernel 名维度，指定
             # --kernel-name 时拒绝 DB 补位——不产出跨 kernel 平均标量
             if args.kernel_name:
                 db_out = {

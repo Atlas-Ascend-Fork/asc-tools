@@ -168,7 +168,7 @@ def main() -> int:
         if bv is not None or av is not None:
             err_lines.append(f"| {k} | {bv} | {av} |")
 
-    # ---- 抖动诊断段（F20：分布字段存在时输出；缺失时向后兼容不输出）----
+    # ---- 抖动诊断段（分布字段存在时输出；缺失时向后兼容不输出）----
     jitter_lines = []
     for k in ("kernel_p50_us", "kernel_p95_us", "kernel_max_us"):
         bv, av = base.get(k), after.get(k)

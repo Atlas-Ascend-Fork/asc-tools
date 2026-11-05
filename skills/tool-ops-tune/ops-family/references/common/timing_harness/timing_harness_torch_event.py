@@ -10,7 +10,7 @@
 # ----------------------------------------------------------------------------------------------------------
 # timing_harness_torch_event.py — torch_npu 侧 event 计时模板（短 kernel 多 launch 单 event）
 #
-# 对应：REVIEW2 G4 / 整改 P0-2；timing_harness/index.md 的 torch 形态。
+# 对应：timing_harness/index.md 的 torch 形态。
 # 与 C++ 模板同一结构：warmup 剔除 → 稳态 repeat ≥3 → 每轮 N 次 launch 用首尾
 # event 差值 / N → 取中位；p50/p95/max 一并产出（snapshot.py 分布字段数据源）。
 #

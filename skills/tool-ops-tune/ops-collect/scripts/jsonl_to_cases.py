@@ -9,13 +9,13 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""jsonl_to_cases.py — JSONL 用例 → cases.csv 适配（REVIEW2 G11 / 反馈 P1-5①）
+"""jsonl_to_cases.py — JSONL 用例 → cases.csv 适配
 
 设计对齐：
   - cases.csv 是本仓 A1 全量铁律的输入契约（io-contracts.md §1：case_id/shape/
     dtype/attrs），但生态内存量算子工程用 JSONL 用例（torch-ops-profiler
     规范：每行 {"inputs": [{name/type/dtype/shape|value}...]})——两格式不通，
-    存量工程进不了 Phase 0（REVIEW2 G11 定性）。
+    存量工程进不了 Phase 0。
   - 本脚本做单向适配：JSONL → cases.csv。转换规则全落脚本（判定/转换逻辑
     不进 LLM），歧义处 fail loud 列入 skipped 而非猜测。
 
@@ -140,7 +140,7 @@ def main() -> int:
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    # csv.writer 统一转义（检视 #16 修复）：case_id/shape/dtype 来自外部 JSONL
+    # csv.writer 统一转义：case_id/shape/dtype 来自外部 JSONL
     # 属不可信输入，手写拼接在含逗号/引号时产生错位或非法 CSV
     with open(out, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)

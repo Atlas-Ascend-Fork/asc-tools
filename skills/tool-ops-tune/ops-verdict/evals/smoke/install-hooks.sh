@@ -13,7 +13,7 @@
 # 用法：bash ops-verdict/evals/smoke/install-hooks.sh（在 skills/tool-ops-tune/ 下执行）
 set -euo pipefail
 # 脚本所在套件目录（三级上溯 = skills/tool-ops-tune）；git 仓库根与 git dir
-# 一律以 git 命令解析（检视 #20 修复：直接把套件目录当仓库根会导致
+# 一律以 git 命令解析（直接把套件目录当仓库根会导致
 # hooks 写到不存在的 skills/tool-ops-tune/.git/hooks/，set -e 下安装直接失败）
 SUITE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 REPO_ROOT="$(git -C "$SUITE_ROOT" rev-parse --show-toplevel)" || {
@@ -24,12 +24,12 @@ GIT_DIR="$(git -C "$SUITE_ROOT" rev-parse --absolute-git-dir)"
 HOOK="$GIT_DIR/hooks/pre-push"
 mkdir -p "$GIT_DIR/hooks"
 
-# 套件在仓内的真实路径（hook 以 git toplevel 为根解析；检视 #18 修复：
+# 套件在仓内的真实路径（hook 以 git toplevel 为根解析；
 # 此前两套路径互相矛盾且都缺 tool-ops-tune 一级 → 每次 push 必被误拦）
 SUITE_DIR="skills/tool-ops-tune"
 cat > "$HOOK" <<HOOKEOF
 #!/usr/bin/env bash
-# OpsTune pre-push 门禁（install-hooks.sh 生成；检视 §7b）
+# OpsTune pre-push 门禁（install-hooks.sh 生成
 set -uo pipefail
 REPO_ROOT="\$(git rev-parse --show-toplevel)"
 SUITE="\$REPO_ROOT/${SUITE_DIR}"

@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""tiling_candidates.py — Tiling 候选参数生成器·四族（REVIEW2 G6 短期 / 整改 P0-5）
+"""tiling_candidates.py — Tiling 候选参数生成器·四族
 
 设计对齐：
   - 机制卡 ascendc-tiling.md「禁止经验值交付」与 mc2-balancing.md 四剪枝此前

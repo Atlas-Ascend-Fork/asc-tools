@@ -1,4 +1,4 @@
-# soc-spec.yaml — SoC 峰值标尺表（REVIEW2 G3 / 整改 P0-3）
+# soc-spec.yaml — SoC 峰值标尺表
 #
 # 目的：「还差多远」的客观标尺。MTE2 真假 bound 二分（data-copy.md 公式需要 GM 峰值
 # 带宽）与 NEAR_LIMIT 停止决策的第二证据源（距峰值 X% 读数）此前无可计算来源——本表补上。

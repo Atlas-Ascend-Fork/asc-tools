@@ -19,8 +19,8 @@
   - E1-E26：verdict.py 判定回归（fixture → 断言 findings/verdict；含 R 值
     临界值双侧守护 E12b/E12c——区间重叠只在边界值暴露）
   - S1-S14：门禁脚本回归（snapshot/delta_compare/batch/加载校验/边界）——
-    Step 4 的结论门禁（KEEP/REVERT 判错 = 错误归档）与加载校验负例（F10b 扩容，
-    检视 F10/F3/F4/F6/F7/F18 的回归网）；S13/S14 守护 batch_pipeline 结论分类
+    Step 4 的结论门禁（KEEP/REVERT 判错 = 错误归档）与加载校验负例的
+    回归网；S13/S14 守护 batch_pipeline 结论分类
     与 delta_compare 口径键缺失留痕（issue #308）
 
 用法：
@@ -238,7 +238,7 @@ CASES = [
     },
     {
         "id": "E12b-r-boundary-090-balanced",
-        "desc": "F3 临界值（检视补）：R=0.90 → 仅 BALANCED 命中——COMM_BOUND 上界与 BALANCED 下界在 0.90 不重叠（改 <= 即双命中，本用例守护）",
+        "desc": "区间上界临界值：R=0.90 → 仅 BALANCED 命中——COMM_BOUND 上界与 BALANCED 下界在 0.90 不重叠（改 <= 即双命中，本用例守护）",
         "args": [
             "--rules",
             str(RULES / "L3-inter-card.yaml"),
@@ -254,7 +254,7 @@ CASES = [
     },
     {
         "id": "E12c-r-boundary-110-balanced",
-        "desc": "F3 临界值（检视补）：R=1.10 → 仅 BALANCED 命中——BALANCED 上界与 COMPUTE_BOUND 下界在 1.10 不重叠（改 <= 即双命中，本用例守护）",
+        "desc": "区间上界临界值：R=1.10 → 仅 BALANCED 命中——BALANCED 上界与 COMPUTE_BOUND 下界在 1.10 不重叠（改 <= 即双命中，本用例守护）",
         "args": [
             "--rules",
             str(RULES / "L3-inter-card.yaml"),
@@ -476,7 +476,7 @@ CASES = [
     },
 ]
 # ---------------------------------------------------------------------------
-# 门禁脚本回归（F10b：snapshot/delta_compare 的 exit 码与三段结论边界 +
+# 门禁脚本回归（snapshot/delta_compare 的 exit 码与三段结论边界 +
 # 加载校验负例）——Step 4 结论门禁的回归网
 # ---------------------------------------------------------------------------
 SCRIPT_CASES = [
@@ -496,7 +496,7 @@ SCRIPT_CASES = [
         "desc": "分布字段（p95>2×p50）→ 抖动诊断段 + 双峰提示",
     },
     {"id": "S10-validation-v1", "desc": "加载校验 V1：未声明指标 → exit 3"},
-    {"id": "S11-validation-v3", "desc": "加载校验 V3：区间重叠（F3 形态）→ exit 3"},
+    {"id": "S11-validation-v3", "desc": "加载校验 V3：区间重叠→ exit 3"},
     {"id": "S12-validation-v4", "desc": "加载校验 V4：optional 进 condition → exit 3"},
     {
         "id": "S13-batch-noise-classification",
@@ -725,7 +725,7 @@ def run_script_case(case: dict, verbose: bool) -> tuple[bool, list[str]]:
             # 与 delta_compare 结论一致，且汇总各桶（含 UNRESOLVED）逐状态计数
             # ——修复前：噪声带内被标 REVERT（文案「不判收益也不劣化」含「劣化」，
             # 子串匹配先命中）；UNRESOLVED case 在汇总五桶中静默消失
-            # （issue #308 问题 1 及检视补充）。
+            # （issue #308 问题 1 及补充）。
             c_dir = Path(td)
             cases_csv = c_dir / "cases.csv"
             cases_csv.write_text(

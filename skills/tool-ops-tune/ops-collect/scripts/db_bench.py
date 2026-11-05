@@ -124,7 +124,7 @@ def open_ro(db_path: Path) -> sqlite3.Connection:
 def table_columns(db: sqlite3.Connection, table: str) -> set[str]:
     """实际列集合（PRAGMA 先验）——SQLite 对双引号未知标识符按字符串字面量
     处理（AVG('不存在的列') 合法且返回 0.0，不报错！），「列不存在」不能交给
-    OperationalError 判定（检视 #4 修复，facts_bridge._table_columns 同款）。"""
+    OperationalError 判定（facts_bridge._table_columns 同款）。"""
     return {d[1] for d in db.execute(f'PRAGMA table_info("{table}")')}
 
 
@@ -166,7 +166,7 @@ def w1_csv(data_dir: Path) -> dict[str, float]:
 
 def w1_db(db_path: Path) -> dict[str, float]:
     """同标量 DB 通道：COALESCE 逐行回退后 AVG——与 w1_csv 的逐行取首个
-    可解析候选列**同语义**（检视 #5 修复：此前按列取首个有值列整列求均值，
+    可解析候选列**同语义**（此前按列取首个有值列整列求均值，
     aiv_*/aic_* 部分行 NULL 的混排 Section 下两通道必然分叉，门禁误报）。
 
     单列形态退化为该列 AVG（COALESCE 至少两参——列集过滤后只剩一列时
@@ -175,7 +175,7 @@ def w1_db(db_path: Path) -> dict[str, float]:
     db = open_ro(db_path)
     try:
         for section, (db_cols, _) in W1_COLUMNS.items():
-            # 列存在性 PRAGMA 先验（检视 #4）：双引号未知列不报错而返回 0.0
+            # 列存在性 PRAGMA 先验：双引号未知列不报错而返回 0.0
             actual = table_columns(db, section)
             present = [c for c in db_cols if c in actual]
             if not present:
@@ -228,7 +228,7 @@ def w2_db(db_path: Path, table: str) -> list[dict]:
 def w3_csv(data_dir: Path) -> dict[str, float]:
     """6 条查询的 CSV 等价实现（只解析所需 Section，与消费语义一致）。
 
-    缺 Section 文件按「无数据」跳过（检视 #2 修复：Section 子集目录——
+    缺 Section 文件按「无数据」跳过（Section 子集目录——
     npu-compute --sections 追加可能只采部分 Section——不再 FileNotFoundError
     traceback，与 w1_csv 容错同款）。
     """
@@ -269,7 +269,7 @@ def w3_csv(data_dir: Path) -> dict[str, float]:
 
 
 def w3_db(db_path: Path) -> dict[str, float]:
-    """DB 通道查询批：列存在性 PRAGMA 先验（检视 #4）+ Section 缺失同跳过。"""
+    """DB 通道查询批：列存在性 PRAGMA 先验+ Section 缺失同跳过。"""
     db = open_ro(db_path)
     try:
         out = {}

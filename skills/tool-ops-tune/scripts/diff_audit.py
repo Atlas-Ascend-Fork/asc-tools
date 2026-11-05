@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""diff_audit.py — 实施范围机器校验（REVIEW2 G10 / 反馈 P1-3 ①）
+"""diff_audit.py — 实施范围机器校验
 
 设计对齐：
   - 单变量铁律与 diff 范围此前完全靠 perf-implementer 自报（"diff 摘要（改动点
@@ -19,7 +19,7 @@
     方案卡声明的范围 → 该轮标 UNATTRIBUTABLE，禁止进 KEEP 仲裁（退出码 2）。
   - 与 perf-reviewer subagent 的分工：本脚本只做**范围**校验（哪些文件被动了），
     代码质量与模板保真（MicroAPI VF 是否被降级）由 perf-reviewer subagent
-    独立审查（P1-3 ②）。
+    独立审查。
 
 用法：
   python3 diff_audit.py --baseline <原工程目录> --opt <优化副本目录> \

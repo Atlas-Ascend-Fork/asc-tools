@@ -254,7 +254,7 @@ PASS / PASS WITH NOTES / FAIL / UNATTRIBUTABLE。
 ### 阶段 4c：统一采集与对比（主 agent 垄断）
 
 1. 对基线 + 各机制目录，逐 case 同口径采集（与 Step 1 完全相同的 timing/warmup/repeat/device）。
-   **工具化（P0-1）**：`collect_cases.py`（cases.csv + exe → 逐 case manifest + perf_data.csv）
+   **工具化**：`collect_cases.py`（cases.csv + exe → 逐 case manifest + perf_data.csv）
    替代手工串接——case 间串行同卡、防重采闸门、failed 如实呈现；
    `batch_pipeline.py --from-collect` 直连产出对比矩阵，零手工中间产物
 2. 每机制落 snapshot：`round-<N>-<mechanism>/result.json`

@@ -8,12 +8,12 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-# collect_sim.sh — 仿真路径采集编排（REVIEW2 G7 / 反馈 P1-1①）
+# collect_sim.sh — 仿真路径采集编排
 #
 # 设计对齐：
 #   - tool-routing 决策树④「无卡 / 指令级下钻 → cannsim（仅 A5 单卡 AI Core）」
 #     此前只有决策树一行文字，全仓无 cannsim 编排脚本——mode=sim /
-#     timing_method=sim 空转（REVIEW2 G7 定性）。
+#     timing_method=sim 空转。
 #   - 本脚本补编排：cannsim record（精度+性能仿真）→ report（trace 生成）→
 #     归档进 collection_manifest（mode=sim 块），下游 trace_bubble.py /
 #     verdict.py 消费同一条链。
@@ -91,7 +91,7 @@ if timeout "$TIMEOUT" "$CANNBIN" record "$EXE" -s "$SOC_VERSION" -o "$OUTPUT" -g
      ${EXE_ARGS:+-u "$EXE_ARGS"} > "$OUTPUT/cannsim_record.log" 2>&1; then
   # cannsim 输出目录形态：{output}/cannsim_<timestamp>_<appname>/
   # 只匹配目录（-d 投影；cannsim_record.log 同样命中 cannsim_* 通配且 mtime
-  # 更晚，会把 head -1 顶成日志文件——检视 #15 修复）
+  # 更晚，会把 head -1 顶成日志文件
   SIM_DIR=$(find "$OUTPUT" -maxdepth 1 -type d -name 'cannsim_*' 2>/dev/null \
             | sort -r | head -1 || true)
   if [[ -n "${SIM_DIR:-}" && -d "$SIM_DIR/report" ]]; then

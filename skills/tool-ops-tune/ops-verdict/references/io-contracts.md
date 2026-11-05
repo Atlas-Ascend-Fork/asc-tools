@@ -1,6 +1,6 @@
 # 输入/输出数据契约（cases.csv / case_candidate / calibration_data）
 
-> 三个此前无 schema 的数据契约（检视 F21）：输入侧 cases.csv 只有「shape/dtype/attrs」
+> 三个此前无 schema 的数据契约：输入侧 cases.csv 只有「shape/dtype/attrs」
 > 一句话；输出侧 case_candidate.json / calibration_data.json 只在 Step 5 被点名要求
 > 产出。E 级回灌与校准回路（27 年两个核心回路）的输入格式由此定型，与现有 7 个
 > 数据契约同一写法（对齐 USAGE.md §5 契约表）。
@@ -15,7 +15,7 @@
 | `shape` | ✅ | string | 如 `8448x4096`（多维用 x 分隔） |
 | `dtype` | ✅ | string | `fp16` / `fp32` / `bf16` / … |
 | `attrs` | — | string | 算子属性（如 `axis=-1,keepdim=true`；无属性留空） |
-| `ref_impl` | — | string | 标杆调用描述（P0-1 标杆双路径：非空时 collect_cases.py 该 case 跑 system 变体；如 `aclnnGelu` / `torch.nn.functional.gelu`） |
+| `ref_impl` | — | string | 标杆调用描述（标杆双路径：非空时 collect_cases.py 该 case 跑 system 变体；如 `aclnnGelu` / `torch.nn.functional.gelu`） |
 
 ```csv
 case_id,shape,dtype,attrs

@@ -2,7 +2,7 @@
 
 > 对应判定规则：L1_SCALAR_BOUND、L1_VEC_BOUND（Cast 重反证）、L0_ICACHE_MISS、
 > L2_HEAD_OVERHEAD。内容沉淀自标量与 API 层调优一线实践。
-> **DSL 适用域（P2-5/G19）**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
+> **DSL 适用域**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
 
 ## 标量削减（L1_SCALAR_BOUND）
 

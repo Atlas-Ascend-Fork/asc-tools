@@ -50,7 +50,7 @@ description: 算子族实践库与模板代码货架。按算子族（matmul/mc2
 | 脚本 | 职责 |
 |------|------|
 | `scripts/family_asset_audit.py` | 族表模板数静态断言（防 SKILL.md 数据漂移，CI 门禁） |
-| `scripts/tiling_candidates.py` | Tiling 候选生成器·四族（elementwise/reduction/broadcast/conversion）：shape/dtype + soc-spec 容量约束 → 候选参数表（block_dim/tile），逐候选附容量占用计算过程 + 剪枝记录——机制卡「禁止经验值交付」的执行载体（P0-5；L2_UNDERUTILIZATION 命中后调用的首选工具） |
+| `scripts/tiling_candidates.py` | Tiling 候选生成器·四族（elementwise/reduction/broadcast/conversion）：shape/dtype + soc-spec 容量约束 → 候选参数表（block_dim/tile），逐候选附容量占用计算过程 + 剪枝记录——机制卡「禁止经验值交付」的执行载体（L2_UNDERUTILIZATION 命中后调用的首选工具） |
 
 ## 模板优先纪律（T1-T5，编排层同款）
 

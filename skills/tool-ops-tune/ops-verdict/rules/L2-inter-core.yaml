@@ -147,7 +147,7 @@ rules:
     mechanism_refs:
       - ops-mechanism:references/optimize/api-usage.md
 
-  # ------------------------------------------------ host 下发档（P2-4/G17，scene=cluster）
+  # ------------------------------------------------ host 下发档（scene=cluster）
   # 集群视角的 host 侧证据：下发阻塞（launch → task start 的 host 间隙）主导时，
   # 算子侧优化收益有限，先解 host 下发（流组织 / launch 合并 / host 占用）。
   - id: L2_HOST_DISPATCH_BLOCK
@@ -168,6 +168,6 @@ rules:
       default: light
     confidence: low
     speedup_range: [1.0, 1.2]
-    speedup_source: 🟡 待标定（P2-4 规划态规则，缺真实集群数据）
+    speedup_source: 🟡 待标定（规划态规则，缺真实集群数据）
     mechanism_refs:
       - ops-mechanism:references/optimize/api-usage.md

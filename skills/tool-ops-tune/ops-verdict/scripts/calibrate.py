@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""calibrate.py — 预估-实测校准回路（REVIEW2 G9 / 反馈 P1-2 ①，27-2 回路兑现）
+"""calibrate.py — 预估-实测校准回路
 
 设计对齐：
   - io-contracts.md 已冻结 calibration_data.json 契约（opstune.calibration/1.0，
@@ -17,7 +17,7 @@
   - 本脚本是消费端：读多工程 calibration_data.json → 按 (mechanism, bound_rule)
     聚合 est vs measured 偏差 → 输出 speedup_range 修订建议（Markdown diff）。
   - **不自动回写规则 YAML**：修订建议经人工评审后改 YAML，改完必须过
-    evals/run_evals.py 回归（反馈 P1-2 原文要求，阈值纪律不破坏）。
+    evals/run_evals.py 回归（阈值纪律不破坏）。
 
 用法：
   python3 calibrate.py --inputs tuning_artifacts/gelu/calibration_data.json \
@@ -145,7 +145,7 @@ def main() -> int:
         "",
         "> **处置纪律**：本报告只产出修订**建议**（Markdown diff 形态）。修订须人工评审后",
         "> 手工改规则 YAML 的 speedup_range，改完必须过 `evals/run_evals.py` 回归全绿",
-        "> 才可合入——不自动回写（阈值纪律，反馈 P1-2 原文）。",
+        "> 才可合入——不自动回写（阈值纪律）。",
         "",
     ]
 

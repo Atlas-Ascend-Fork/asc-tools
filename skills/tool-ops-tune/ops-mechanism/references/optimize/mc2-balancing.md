@@ -30,7 +30,7 @@ MC² 算子 = AIC（matmul 计算）+ AIV（UDMA/shmem 跨卡通信）分离架�
 输出：Top-N 候选 → 逐个实测（tileCnt 扫描）→ 按跨 rank max 口径择优
 ```
 
-**执行载体（P1-4）**：`ops-mechanism/scripts/mc2_search.py`——上述算法的脚本化：
+**执行载体**：`ops-mechanism/scripts/mc2_search.py`——上述算法的脚本化：
 
 ```bash
 python3 skills/ops-mechanism/scripts/mc2_search.py \

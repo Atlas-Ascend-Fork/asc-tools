@@ -8,7 +8,7 @@ description: 调优结果可视化报告。把 tuning_artifacts（verdict 判定
 > **来源（蒸馏）**：报告形态与模块合同借鉴 NPU profiling 可视化最佳实践
 > （独立 HTML 报告 + 数据解析/渲染分离 + 缺失如实呈现三原则）；数据真源与口径
 > 校验是本仓自有（verdict/snapshot/delta_compare 契约），渲染入口为
-> `ops-verdict/scripts/render_html.py`（P2-3 交付）。
+> `ops-verdict/scripts/render_html.py`。
 
 ## 职责边界
 
@@ -67,7 +67,7 @@ python3 .../batch_pipeline.py --cases cases.csv --from-collect <collect_root> \
 python3 .../render_html.py --matrix-dir tuning_artifacts/<op>/matrix -o tuning_artifacts/<op>/report.html
 ```
 
-产物索引（P2-2）：comparison_matrix.md 末尾自动生成归档清单；report.html 一并
+产物索引：comparison_matrix.md 末尾自动生成归档清单；report.html 一并
 列入。HTML 与 markdown 矩阵同数据源——数字不一致 = 渲染 bug，报 issue 不手改。
 
 ## 模板资产

@@ -40,7 +40,7 @@ python3 ../ops-verdict/scripts/verdict.py --rules ../ops-verdict/rules/L1-single
 # 期望：__pipe_sum_mean 明显下降或 L1_SERIAL_NO_OVERLAP 转为 NOT_HIT
 ```
 
-**重叠比例的直接度量（P1-1，G8/G13 验证闭环）**：上板有 A5 PipeTimeline 或
+**重叠比例的直接度量**：上板有 A5 PipeTimeline 或
 仿真路径（cannsim）时，用 trace 工具替代间接指纹：
 
 ```bash

@@ -31,7 +31,7 @@
   python3 csv_to_db.py --csv-dir <解包目录> --db <out.db> [--drop-existing]
   python3 csv_to_db.py --csv-dir <dir> --db <out.db> --tables PipeUtilization,L2Cache
 
-输出保护（检视 #1 修复）：
+输出保护：
   --db 已存在时默认拒覆盖（exit 1）——现代 .npu-rep 解包目录的原生 summary.db
   携带 PcSampling 表（无 CSV 对应物，删后不可从 CSV 重建）；确认覆盖须显式
   --drop-existing，或另指定输出路径。
@@ -192,7 +192,7 @@ def convert(
 ) -> dict:
     """CSV 目录 → summary.db。返回逐表统计（供 stdout 摘要与调用方校验）。
 
-    输出保护（检视 #1 修复）：db_path 已存在时默认拒覆盖——现代 .npu-rep 解包
+    输出保护：db_path 已存在时默认拒覆盖——现代 .npu-rep 解包
     目录的原生 summary.db 是 PcSampling（无 CSV 对应物，不可从 CSV 重建）的
     唯一载体，静默重建会打断 top_stall_pct → L0_STALL_DOMINANT 链路且无法
     恢复；确认覆盖须显式 --drop-existing。

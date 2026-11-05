@@ -22,7 +22,7 @@
 # 用法：
 #   bash collect_board.sh --exe ./build/demo --args "8448 4096 4096" --output ./prof/baseline
 #   bash collect_board.sh --exe ./build/demo --mode quick  --output ./prof/quick_check
-#   bash collect_board.sh --exe ./build/timing_harness --mode timing --output ./prof/timing_base   # 跑 event 计时 harness（P0-2）
+#   bash collect_board.sh --exe ./build/timing_harness --mode timing --output ./prof/timing_base   # 跑 event 计时 harness
 #   bash collect_board.sh --exe ./build/mc2_demo --mode mc2 --ranks 4 --output ./prof/mc2_base
 #   bash collect_board.sh --exe ./build/demo --mode npu-compute --output ./prof/npc_base   # 950/A5 DB 格式采集（Roadmap #4）
 #   可选：--kernel-name <名>（单卡 msprof op 分支过滤，本机 --help 为门禁）
@@ -30,7 +30,7 @@
 #         --sections <A,B>（npu-compute 模式追加 Section，如 PmSampling——本机
 #           npu-compute --list-sections 为门禁，不支持者跳过并告警）
 #   注：稳态 warm-up 由被测程序自身循环保证（循环 ≥10 次前 5 warm-up），
-#       采集脚本不做应用层 warmup（F17：原 --warmup 为死参数，已删除）。
+#       采集脚本不做应用层 warmup（原 --warmup 为死参数，已删除）。
 
 set -euo pipefail
 
@@ -40,7 +40,7 @@ EXE_ARGS=""
 OUTPUT="./prof/run"
 RANKS=1
 KERNEL_NAME=""
-MSPROF_TIMEOUT=1800   # msprof 单块采集超时（秒）；挂起程序不再无限阻塞（检视 F23）
+MSPROF_TIMEOUT=1800   # msprof 单块采集超时（秒）；挂起程序不再无限阻塞
 
 usage() {
   sed -n '2,32p' "$0"; exit 1
@@ -167,7 +167,7 @@ record_block() {  # name status path note
   BLOCKS+=("$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1], "status": sys.argv[2], "path": sys.argv[3], "note": sys.argv[4]}, ensure_ascii=False))' "$1" "$2" "$3" "$4")")
 }
 
-# ---- 采后产物有效性断言（P2-1 / G18：消灭「manifest ok 但数据不可用」的伪 Green）----
+# ---- 采后产物有效性断言（消灭「manifest ok 但数据不可用」的伪 Green）----
 # msprof 退出 0 ≠ 产物可用。断言四项（任一不满足 → 状态降级 partial，note 记原因）：
 #   ① op_summary CSV 存在且非空（≥2 行 = 表头 + ≥1 数据行）
 #   ② Task Duration 列存在且有 ≥1 数值（verdict/isolation 的主消费字段）
@@ -223,7 +223,7 @@ assert_block_artifacts() {  # prof_dir metrics_name
 }
 
 run_msprof() {  # metrics_name aic_metrics_value extra_flags...
-  # 统一 msprof 调用形态：timeout 包裹（挂起可诊断）+ 全量日志落盘副本（检视 F23：
+  # 统一 msprof 调用形态：timeout 包裹（挂起可诊断）+ 全量日志落盘副本——
   # 此前 >/dev/null 2>&1 把排障现场全部丢弃，troubleshooting.md 第一条就要看采集输出）
   # P2-1：msprof 退出 0 后跑产物有效性断言，断言不过 → 状态 partial（不伪 Green）
   local name="$1" metric="$2"; shift 2
@@ -309,7 +309,7 @@ run_msprof_op() {  # msprof op 分支（单卡 + 本机支持；tool-routing 决
 case "$MODE" in
   standard)
     # 采集模式路由（tool-routing 决策树）：MC² 强制 task-based；单卡在本机
-    # msprof op 可用时优先 msprof op（F17：探测结果真正参与路由，不再只是打印）
+    # msprof op 可用时优先 msprof op（探测结果真正参与路由，不再只是打印）
     if [[ $RANKS -le 1 && $MSPROF_OP_OK -eq 1 ]]; then
       echo "[route] 单卡 + msprof op 可用 → msprof op 分支"
       run_msprof_op
@@ -336,7 +336,7 @@ case "$MODE" in
     # 提供（含 --output 时以调用方为准；缺省追加本脚本的目标路径）。
     TIMING_JSON="$OUTPUT/result.json"
     TIMING_LOG="$OUTPUT/timing_harness.log"
-    # 退出码先捕获再判定（跨 [[ ]] 取 $? 会拿到测试结果而非 harness 退出码——检视 #9 修复）
+    # 退出码先捕获再判定（跨 [[ ]] 取 $? 会拿到测试结果而非 harness 退出码
     timeout "$MSPROF_TIMEOUT" bash -c "cd '$PWD' && '${EXE}' ${EXE_ARGS} --output '$PWD/result.json'" >"$TIMING_LOG" 2>&1
     harness_rc=$?
     if [[ $harness_rc -eq 0 ]] && [[ -f "result.json" ]]; then
@@ -389,7 +389,7 @@ case "$MODE" in
            --export "$OUTPUT/unpacked" >"$UNPACK_LOG" 2>&1; then
         UNPACKED_DIR=$(sed -n 's/.*npu-compute: unpacked= *//p' "$UNPACK_LOG" | tail -1)
       fi
-      # 产物断言（P2-1 伪 Green 防护同款）：解包目录须含判定引擎主输入
+      # 产物断言（伪 Green 防护同款）：解包目录须含判定引擎主输入
       # （PipeUtilization.csv 或 summary.db 任一）
       ASSERT_NOTE=""
       if [[ -z "$UNPACKED_DIR" || ! -d "$UNPACKED_DIR" ]]; then

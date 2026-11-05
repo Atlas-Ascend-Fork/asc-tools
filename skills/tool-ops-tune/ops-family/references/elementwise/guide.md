@@ -1,6 +1,6 @@
 # Elementwise 族指南（guide）
 
-> P1-7③（G14）：elementwise 此前为 🟡 骨架（仅 index + 2 篇设计文档，无 guide
+> elementwise 此前为 🟡 骨架（仅 index + 2 篇设计文档，无 guide
 > 路由层）——本 guide 补路由，设计文档补实施深度。
 
 ## 族特点

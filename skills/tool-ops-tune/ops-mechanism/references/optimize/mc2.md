@@ -4,7 +4,7 @@
 > STRONG_COMM / L3_MTE2_POLLUTED / L3_RANK_IMBALANCE。
 > 内容沉淀自 MC² 通算融合调优实践（指标定义 / Bound 判定 / Local Matmul /
 > 流水配平 / 膨胀分析），本卡将其机制决策浓缩为可执行顺序。
-> **DSL 适用域（P2-5/G19）**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
+> **DSL 适用域**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
 
 ## 策略优先级（与 R 值无关的固定顺序）
 

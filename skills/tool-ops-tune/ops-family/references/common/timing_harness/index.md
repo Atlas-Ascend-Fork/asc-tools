@@ -1,4 +1,4 @@
-# timing_harness — 计时口径货架（REVIEW2 G4 / 整改 P0-2）
+# timing_harness — 计时口径货架
 
 > snapshot.py `--kernel-avg-us` 的第一生产者。此前的状态：口径纪律只在
 > ops-collect SKILL.md 计时口径表（文字），无自带 benchmark 的工程要靠

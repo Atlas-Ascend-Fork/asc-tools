@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""log_gap.py — ops-family 知识缺口计数写入（REVIEW2 G9 / 反馈 P1-2 ③，提前骑行项）
+"""log_gap.py — ops-family 知识缺口计数写入
 
 设计对齐：
   - ops-family SKILL.md 承诺「未收录族返回并**计数上报**（知识缺口感知回路的输入，

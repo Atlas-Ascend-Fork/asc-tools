@@ -27,12 +27,12 @@
    A5：PipeTimeline / PcSampling 可用 → 优先评估（pipe 重叠 / 指令热点）
    通用底座：7 组 aic-metrics 顺序采集（PipeUtilization 为判定引擎主输入）
 ⑤ 无卡 / 指令级下钻 ──────────────→ cannsim（仅 A5 单卡 AI Core；MC²/HCCL 不支持）
-                                    编排：ops-collect/scripts/collect_sim.sh（P1-1）
+                                    编排：ops-collect/scripts/collect_sim.sh
                                     record → report(trace_core*.json) → mode=sim manifest
                                     → trace_bubble.py（overlap/top_stall/bubble 标量）
 ⑥ torch 生态 ────────────────────→ torch_npu.profiler（JSONL 用例，warmup/active 固定 5）
                                       JSONL → cases.csv 入口：ops-collect/scripts/jsonl_to_cases.py
-                                      （P1-5；schedule 5/5 由 torch 侧基准脚本持有，
+                                      （schedule 5/5 由 torch 侧基准脚本持有，
                                        产物兼容性评估后接入 verdict 链路——当前标注
                                        🟡 评估中，未接入主判定链）
 ⑦ 集群视角（scene=cluster，P2-4 规划态）→ msprof advisor（集群/通信分析路径；
@@ -63,7 +63,7 @@
 | `OpBasicInfo.csv`（Task Duration / Block Dim / 频率） | facts_bridge.py（→ `task_duration_us` / `block_dim` 标量）+ L2 头开销判定 |
 | `ArithmeticUtilization / L2Cache / ResourceConflictRatio` | facts_bridge.py（→ L0 规则 + L1 反证标量：`l2_hit_rate` / `vec_fp32_ratio` / `vec_total_cflt_ratio`） |
 | 7 组产物根目录 | facts_bridge.py `--manifest`（一条命令产出 verdict.py `--scalar` 串；含峰值换算，读 soc-spec.yaml） |
-| `PROF_*/device_*/sqlite/ai_core_op_summary.db`（task_time 表） | facts_bridge.py **DB 双源**（P1-6）：CSV OpBasicInfo 缺失时备位 task 级时长；等价查询固化在脚本（不让 LLM 拼 SQL）；DB 口径 ≠ op 级 Task Duration，禁混比 |
+| `PROF_*/device_*/sqlite/ai_core_op_summary.db`（task_time 表） | facts_bridge.py **DB 双源**：CSV OpBasicInfo 缺失时备位 task 级时长；等价查询固化在脚本（不让 LLM 拼 SQL）；DB 口径 ≠ op 级 Task Duration，禁混比 |
 | npu-compute `.npu-rep` → 解包目录（7 Section CSV + Summary.jsonl） | facts_bridge.py `--source auto`（npu-compute 通道：Summary.jsonl OpInfoSummary → task_duration/block_dim；CSV 补位） |
 | npu-compute 解包目录 **`summary.db`**（Roadmap #4） | facts_bridge.py DB 通道（逐指标 AVG+NULL-skip 下推，DB 是 CSV 同数据入库副本可互通）+ verdict.py `--db`（FieldUnitMap 还原列名，规则求值零改动）+ db_bench.py（性能验证） |
 | `summary.db` **`PcSampling` 表**（DB 独有，无 CSV 对应物） | facts_bridge.py → `top_stall_pct` 标量（**L0_STALL_DOMINANT 的首个生产者**；仅 SIMT 指令采样，纯 SIMD 算子无此表如实 missing） |

@@ -9,12 +9,12 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""render_html.py — comparison_matrix.md → 静态 HTML 报告（REVIEW2 G16 / 反馈 P2-3）
+"""render_html.py — comparison_matrix.md → 静态 HTML 报告
 
 设计对齐：
-  - 20 case × 多轮的对比矩阵纯文本人读不动（REVIEW2 G16）；同类工具已有
+  - 20 case × 多轮的对比矩阵纯文本人读不动；同类工具已有
     8 页交互式 HTML——本仓定位**静态 HTML**（数据已在 JSON/矩阵，不追交互，
-    反馈 P2-3 措施原文：「数据已在 JSON，不追交互式」）。
+    定位：数据已在 JSON，不追交互式。
   - 输入两种形态任选：
     ① batch_pipeline 的矩阵目录（逐 case 的 comparison_md + snapshot json——
        矩阵结论从 snapshot json 重读，保数值真源）

@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""family_asset_audit.py — ops-family 族表数据防漂移静态断言（F13 整改验收）
+"""family_asset_audit.py — ops-family 族表数据防漂移静态断言
 
 对 SKILL.md 族分类表中的「模板数」列做实测校验：模板数必须与
 references/<族>/ 下 .h/.cpp/.template 文件的实际计数一致。
@@ -56,7 +56,7 @@ def main() -> int:
     if failed:
         print(
             f"\n族表模板数与实测不一致：{', '.join(failed)} —— 模板路由第一跳数据失真，"
-            f"请更新 SKILL.md 族表（检视 F13）",
+            f"请更新 SKILL.md 族表",
             file=sys.stderr,
         )
         return 1

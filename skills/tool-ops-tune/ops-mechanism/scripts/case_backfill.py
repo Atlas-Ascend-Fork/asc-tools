@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""case_backfill.py — E 级案例回灌草稿生成（REVIEW2 G9 / 反馈 P1-2 ②）
+"""case_backfill.py — E 级案例回灌草稿生成
 
 设计对齐：
   - io-contracts.md 已冻结 case_candidate.json 契约（opstune.case-candidate/1.0，

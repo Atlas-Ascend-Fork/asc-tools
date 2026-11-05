@@ -88,7 +88,7 @@ Phase 1 环境与基线固化
     ├─ /ops-collect：环境指纹（env）+ 工具路由（MC² → task-based 强制）
     ├─ 不可变基线：snapshot.py 落盘（timing-method 五选一 + 口径 12 字段）
     └─ 理论标尺：soc-spec.yaml 峰值表（ops-verdict references/）→「还差多远」读数；
-       CANN-Bench t_hw 接入为规划项（未接入，占位——REVIEW2 G3 如实标注）
+       CANN-Bench t_hw 接入为规划项（未接入，占位）
     │
     ▼
 Phase 2 采集与分层判定

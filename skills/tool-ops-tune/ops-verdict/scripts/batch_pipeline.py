@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""batch_pipeline.py — 全量 case 批量快照与对比（检视 F11）
+"""batch_pipeline.py — 全量 case 批量快照与对比
 
 把 A1 全量 case 铁律（>20 取前 20 逐 case 覆盖）从「主 agent 手工串 20×N
 次命令再手拼表」变成一条命令：输入 cases.csv + 逐 case 性能数据 +
@@ -30,7 +30,7 @@ comparison_matrix.md（逐 case 表 + geomean + 最差/最好 case + 精度列�
       --scope tuning_artifacts/gelu/scope.json \
       --output-dir tuning_artifacts/gelu/matrix
 
-  # 直连模式（P0-1）：collect_cases.py 产物目录直接进来，无需手拼 CSV
+  # 直连模式：collect_cases.py 产物目录直接进来，无需手拼 CSV
   python3 batch_pipeline.py \
       --from-collect ./collect_out \
       --cases cases.csv \
@@ -227,7 +227,7 @@ def main() -> int:
     ap.add_argument(
         "--from-collect",
         default=None,
-        help="collect_cases.py 产物根目录（P0-1 直连：读 <dir>/perf_data.csv，"
+        help="collect_cases.py 产物根目录（直连：读 <dir>/perf_data.csv，"
         "消灭手拼 CSV；未完成的 case 行由 collect 侧标注，此处如实跳过）",
     )
     ap.add_argument("--baseline-variant", default="baseline")
@@ -346,7 +346,7 @@ def main() -> int:
                 "base_us": base_perf["kernel_avg_us"],
                 "after_us": v_perf["kernel_avg_us"],
             }
-        # 中间快照保留策略（P2-2/G20 ③，反馈修正：此前注释自相矛盾——标题「清理」
+        # 中间快照保留策略（此前注释自相矛盾——标题「清理」
         # 正文「不删」）。决策：**默认全保留**（snapshot 契约文件是审计真源，
         # delta_compare 的口径指纹复验依赖两侧 json）；目录膨胀用归档清单治理：
         # comparison_matrix.md 末尾自动生成产物索引（哪些文件可归档/删除由人工
@@ -433,7 +433,7 @@ def main() -> int:
             ]
         md.append("")
 
-    # ---- 产物索引（P2-2/G20 ③：目录膨胀治理——归档清单自动生成，删除由人工决策）----
+    # ---- 产物索引（目录膨胀治理——归档清单自动生成，删除由人工决策）----
     n_snap = n_comp = 0
     for cid_dir in out_dir.iterdir():
         if not cid_dir.is_dir():

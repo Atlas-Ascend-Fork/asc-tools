@@ -10,7 +10,7 @@
 
 // timing_harness_aclrt_event.cpp — 短 kernel 计时模板（aclrtEvent 多 launch 单 event）
 //
-// 对应：REVIEW2 G4 / 整改 P0-2（计时 harness 货架）；ops-collect SKILL.md 计时口径表
+// 对应：（计时 harness 货架）；ops-collect SKILL.md 计时口径表
 // 「短 kernel（µs 级）launch 开销掩盖收益：stream 内多 launch 单 event 对计时」的
 // 可拷贝实现。snapshot.py --kernel-avg-us 的第一生产者。
 //

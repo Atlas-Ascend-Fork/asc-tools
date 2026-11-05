@@ -9,7 +9,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""collect_cases.py — 逐 case 采集编排 + 标杆双路径（REVIEW2 G1+G5 / 整改 P0-1）
+"""collect_cases.py — 逐 case 采集编排 + 标杆双路径
 
 设计对齐：
   - A1 全量 case 铁律（>20 取前 20 逐 case 覆盖）此前靠主 agent 手工串
@@ -130,7 +130,7 @@ def task_duration_of(manifest: dict | None, out_dir: Path) -> float | None:
     """从采集产物提取 Task Duration 均值（quick/standard 模式的 op_summary）。"""
     if manifest is None:
         return None
-    # 快路径：timing 模式 result.json（P0-2 产物）
+    # 快路径：timing 模式 result.json
     timing_json = out_dir / "result.json"
     if timing_json.exists():
         try:
@@ -202,7 +202,7 @@ def main() -> int:
 
     cases = load_cases(args.cases)
     # 定向补采先于截断过滤：subset 指定的 case 必须全量可见（否则 >max-cases
-    # 工程的定向补采会误报「无匹配」或漏采——检视 #8 修复）
+    # 工程的定向补采会误报「无匹配」或漏采）
     if args.cases_subset:
         wanted = {c.strip() for c in args.cases_subset.split(",") if c.strip()}
         cases = [c for c in cases if c["case_id"] in wanted]
@@ -264,7 +264,7 @@ def main() -> int:
             vdir = out_root / cid / vname
             if (vdir / "collection_manifest.json").exists():
                 # 复用分支读取已有 manifest（传 None 会被 task_duration_of 短路
-                # 恒返 None → 已采 case 从对比矩阵消失——检视 #11 修复）
+                # 恒返 None → 已采 case 从对比矩阵消失）
                 dur = task_duration_of(
                     json.loads(
                         (vdir / "collection_manifest.json").read_text(encoding="utf-8")

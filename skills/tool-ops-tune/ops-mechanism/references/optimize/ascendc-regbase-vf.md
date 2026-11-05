@@ -3,7 +3,7 @@
 > 对应判定规则：L1_VEC_BOUND（深度档：>80% 接近极限后的存量空间）、多步融合 Vector、
 > MemBase 已尽场景。仅 A5（dav-3510）；A2/A3 保留兼容分支，禁止下沉此路径。
 > 内容沉淀自 A5 RegBase/VF 与 SIMT 范式调优一线实践。
-> **DSL 适用域（P2-5/G19）**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
+> **DSL 适用域**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
 
 ## 原理
 

@@ -9,11 +9,11 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""mc2_search.py — MC² 配平系统搜索器（REVIEW2 G6-M2 / 反馈 P1-4）
+"""mc2_search.py — MC² 配平系统搜索器
 
 设计对齐：
   - mc2-balancing.md 机制卡写明「统一搜索算法（禁止经验值交付）」：四剪枝 +
-    Top-N 输出——此前只有 markdown 描述，全仓无执行载体（REVIEW2 G6 定性）。
+    Top-N 输出——此前只有 markdown 描述，全仓无执行载体。
   - 本脚本是执行载体：输入 TilingData + R（隔离测试产出）→ 长短块排布候选
     搜索 → 四剪枝 → Top-N 候选 + 剪枝记录（配平方案卡必须附本输出）。
 

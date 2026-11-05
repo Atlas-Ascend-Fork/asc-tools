@@ -169,7 +169,7 @@ def main() -> int:
         "variant": args.variant,
         "precision": args.precision,
         "kernel_avg_us": args.kernel_avg_us,
-        # 可选分布字段（F20：±5% 噪声带判定的统计基础；MC² 抖动双维纪律的落盘载体）
+        # 可选分布字段（±5% 噪声带判定的统计基础；MC² 抖动双维纪律的落盘载体）
         "kernel_p50_us": args.kernel_p50_us,
         "kernel_p95_us": args.kernel_p95_us,
         "kernel_max_us": args.kernel_max_us,

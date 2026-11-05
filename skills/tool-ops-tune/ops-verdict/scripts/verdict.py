@@ -24,7 +24,7 @@
   python3 verdict.py --rules ../rules/L1-single-core.yaml --csv PipeUtilization.csv \
       --scalar mte2_active_bw_pct_of_peak=82 --soc a5 -o verdict.json
 
-  # 多 kernel CSV（msprof op_summary 全量导出）：必须 --kernel-name 过滤（G15）
+  # 多 kernel CSV（msprof op_summary 全量导出）：必须 --kernel-name 过滤
   python3 verdict.py --rules ../rules/L1-single-core.yaml --csv op_summary.csv \
       --kernel-name my_custom_kernel --soc a5 -o verdict.json
 
@@ -61,9 +61,7 @@ import json
 import sys
 from pathlib import Path
 
-SCHEMA_VERDICT = (
-    "opstune.verdict/1.1"  # 1.1：拆分 NO_BOUND_FOUND / NEAR_LIMIT（检视 F7）
-)
+SCHEMA_VERDICT = "opstune.verdict/1.1"  # 1.1：拆分 NO_BOUND_FOUND / NEAR_LIMIT
 
 
 # --------------------------------------------------------------------------
@@ -229,7 +227,7 @@ def _two_cluster_gap(times: list[float]):
 
 
 def split_rows_by_kernel(rows: list[dict]) -> dict[str, list[dict]]:
-    """按 Op Name 列分组（多 kernel 混采防护，REVIEW2 G15）。
+    """按 Op Name 列分组（多 kernel 混采防护）。
 
     - 无 Op Name 列（逐核明细 CSV 形态，本仓 fixtures / PipeUtilization 常态）
       → 单组 "<all>"，保持向后兼容；
@@ -491,7 +489,7 @@ def _counter_evidence(rule, facts, metrics_spec, scalars) -> list:
 
 
 # --------------------------------------------------------------------------
-# 规则包加载校验（schema 纪律机制化：违规启动即报错，检视 §7a/F5/F16）
+# 规则包加载校验（schema 纪律机制化：违规启动即报错）
 # --------------------------------------------------------------------------
 
 # 引擎内置 derived 指标白名单（不声明在词汇表也可被规则引用）
@@ -684,7 +682,7 @@ def _rule_default_severity(rule: dict) -> str:
 
 
 def near_limit_threshold(all_hits_seeds: list[dict]) -> float | None:
-    """「接近上限」触发阈值（数据驱动，检视 F7）。
+    """「接近上限」触发阈值（数据驱动）。
 
     threshold = min(已加载规则中 default severity=critical 且 confidence=high 的
     speedup_range 上界)——不硬编码 1.15，规则集演进自动联动（当前规则集下
@@ -716,7 +714,7 @@ def headline_and_verdict(
                 ["按 skipped[].missing 提示补采指标后重跑 verdict.py"],
             )
         # 「未命中任何规则」≠「接近上限」：前者是「该换更深的指标」，后者是「该收手」
-        # ——拆分为独立 verdict 值 NO_BOUND_FOUND（schema 1.1，检视 F7）
+        # ——拆分为独立 verdict 值 NO_BOUND_FOUND（schema 1.1）
         return (
             "未命中任何瓶颈规则（各 pipe 占比均衡且低于判定线）",
             "NO_BOUND_FOUND",
@@ -815,7 +813,7 @@ def main() -> int:
                     scalars[k.strip()] = float(v)
                 except ValueError:
                     # 非数值标量（脏输入如 N/A）：按缺失处理（None 语义 → 相关规则
-                    # INSUFFICIENT/SKIPPED 降级），不进 facts 参与比较（检视 F18：
+                    # INSUFFICIENT/SKIPPED 降级），不进 facts 参与比较——
                     # 字符串进比较会 TypeError 崩溃）
                     print(
                         f"WARN: 标量 {k.strip()}={v!r} 非数值，按缺失处理（不参与判定）",
@@ -917,7 +915,7 @@ def main() -> int:
         if rows:
             facts.update(pipe_metrics_from_rows(rows, metrics_spec))
             facts.update(time_metrics_from_rows(rows))
-        # 规则包循环内按包名累积 facts（F4：全瀑布跑法下循环外只剩末包指标，
+        # 规则包循环内按包名累积 facts（全瀑布跑法下循环外只剩末包指标，
         # L1 pipe 指标丢失，审计承诺失效；分层结构天然保留指标来源信息）
         facts_by_pack[Path(rf).stem] = facts
         # MC² 隔离实验标量 → 衍生指标（r_value 等）
@@ -944,7 +942,7 @@ def main() -> int:
                 facts[name] = {"value": scalars[name]}
         # L2 derived：occupancy 与头开销（依赖 scalar 提供的 physical_cores / task_duration_us）
         #  — 三个 derived 此前从未计算：L2_HEAD_OVERHEAD 永 SKIPPED、L2_UNDERUTILIZATION
-        #    的 critical 档与头开销 critical 档是死代码（检视 F6）
+        #    的 critical 档与头开销 critical 档是死代码
         if "row_count" in facts and scalars.get("physical_cores"):
             facts["__occupancy_pct"] = {
                 "value": facts["row_count"]["value"] / scalars["physical_cores"] * 100
@@ -957,7 +955,7 @@ def main() -> int:
             td, tmax = scalars["task_duration_us"], facts["time_max_us"]["value"]
             if td > 0:
                 facts["__head_overhead_pct"] = {"value": (td - tmax) / td * 100}
-        # L2 derived：host 下发占比（P2-4/G17 scene=cluster 档；host_dispatch_us
+        # L2 derived：host 下发占比（scene=cluster 档；host_dispatch_us
         # 暂无生产者——真实集群数据到位前本规则维持 SKIPPED，绑定契约兜底）
         if scalars.get("host_dispatch_us") and scalars.get("task_duration_us"):
             td2 = scalars["task_duration_us"]
@@ -988,7 +986,7 @@ def main() -> int:
         all_findings, all_skipped, rule_seeds=all_rule_seeds
     )
 
-    # 事实快照（审计：判定书可回溯到指标值与来源）——按规则包分层输出（F4）：
+    # 事实快照（审计：判定书可回溯到指标值与来源）——按规则包分层输出：
     # 全瀑布 --rules L3,L2,L1,L0 时保留每包的完整指标事实（含 L1 pipe 指标），
     # 不再只剩最后一个包的 facts；scalars 字段维持现状（不依赖包）
     def _snap(f: dict) -> dict:
@@ -1006,7 +1004,7 @@ def main() -> int:
         else {}
     )
 
-    # watch 观察档（检视 F29：R2 风险对策的「watch 档灰度输出」要求可见，
+    # watch 观察档（R2 风险对策的「watch 档灰度输出」要求可见，
     # 此前只在 verdict.json 内部、终端与 recommended_next 均不呈现）
     watches = [
         (s["rule_id"], s["watch"])

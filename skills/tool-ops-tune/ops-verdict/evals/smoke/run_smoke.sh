@@ -8,9 +8,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-# run_smoke.sh — 离线干跑冒烟（检视 §7b / 整改批次 0）
+# run_smoke.sh — 离线干跑冒烟
 #
-# 目的：F1 类「bash -n 查不出、只有真跑才暴露」的 bug 在无 NPU 环境即暴露。
+# 目的：「bash -n 查不出、只有真跑才暴露」类 bug 在无 NPU 环境即暴露。
 # 手段：msprof shim（按参数产出预置 CSV 目录的假可执行文件）+ 三模式
 # collect_board.sh 干跑 + bash 语法检查 + isolation from-prof 干跑 +
 # 规则包加载校验 + 族表资产断言。
@@ -108,7 +108,7 @@ fi
 echo "=== smoke 5: 防回归自证——顶层 local 注入必须被冒烟抓住 ==="
 INJECT_TMP="$SMOKE_TMP/inject.sh"
 cp "$REPO_ROOT/ops-collect/scripts/collect_board.sh" "$INJECT_TMP"
-# 在 mc2 case 前注入一行顶层 local（复刻 F1 bug 形态）
+# 在 mc2 case 前注入一行顶层 local（复刻「local 函数外使用」bug 形态）
 python3 - "$INJECT_TMP" <<'PYEOF'
 import sys
 from pathlib import Path
@@ -120,7 +120,7 @@ PYEOF
 if bash "$INJECT_TMP" --exe /bin/true --mode mc2 --output "$SMOKE_TMP/prof_inject" >/dev/null 2>&1; then
   fail "顶层 local 注入未被抓住（冒烟网失效）"
 else
-  pass "顶层 local 注入 → mc2 模式退出非 0（F1 类 bug 冒烟可抓）"
+  pass "顶层 local 注入 → mc2 模式退出非 0（bash -n 查不出类 bug 冒烟可抓）"
 fi
 
 echo "=== smoke 6: 族表资产静态断言（防 SKILL.md 数据漂移）==="
@@ -131,7 +131,7 @@ else
   echo "[SKIP] family_asset_audit.py 未交付（随算子族 PR），smoke 6 暂跳过——交付后本段自动生效"
 fi
 
-echo "=== smoke 7: facts_bridge 真实导出干跑（G2 标量生产者）==="
+echo "=== smoke 7: facts_bridge 真实导出干跑（--scalar 标量生产者）==="
 BRIDGE_TMP="$SMOKE_TMP/bridge"
 mkdir -p "$BRIDGE_TMP/fixtures"
 # 用 fixture 形态（本仓 6 个 fixtures 同款逐核明细 + 顶层 7 组导出）构造最小产物集
@@ -162,7 +162,7 @@ fi
 
 
 
-echo "=== smoke 8: timing 模式干跑（P0-2 计时 harness 归档）==="
+echo "=== smoke 8: timing 模式干跑（event 计时 harness 归档）==="
 TIMING_TMP="$SMOKE_TMP/timing"
 mkdir -p "$TIMING_TMP"
 cat > "$TIMING_TMP/fake_harness.sh" <<'HARNESS'
@@ -217,7 +217,7 @@ fi
 fi
 
 
-echo "=== smoke 10: collect_cases → batch 直连端到端（P0-1 A1 铁律一条命令）==="
+echo "=== smoke 10: collect_cases → batch 直连端到端（A1 铁律一条命令）==="
 P1_TMP="$SMOKE_TMP/p1"; mkdir -p "$P1_TMP/bin"
 cat > "$P1_TMP/cases.csv" <<'CASES'
 case_id,shape,dtype,ref_impl
@@ -400,6 +400,6 @@ if [[ $FAILURES -eq 0 ]]; then
   echo "smoke: 全部通过"
   exit 0
 else
-  echo "smoke: $FAILURES 项失败 —— F1 类运行时 bug 防线失效，禁止合入"
+  echo "smoke: $FAILURES 项失败 —— 运行时 bug 防线失效，禁止合入"
   exit 1
 fi

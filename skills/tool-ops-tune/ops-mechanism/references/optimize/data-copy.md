@@ -3,7 +3,7 @@
 > 对应判定规则：L1_MTE2_BOUND、L1_MTE3_BOUND、L1_FIXP_BOUND。
 > 核心方法：**先分真假 bound，再选机制**——真带宽饱和优化数据量/复用；假 bound（busy 高
 > 但带宽低）优化搬运组织。判定引擎的反证条目已给出方向，机制卡只做实施。
-> **DSL 适用域（P2-5/G19）**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
+> **DSL 适用域**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
 
 ## 原理与二分
 

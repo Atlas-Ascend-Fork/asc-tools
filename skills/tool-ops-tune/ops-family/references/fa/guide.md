@@ -3,7 +3,7 @@
 > **来源（蒸馏）**：内容整理自 Ascend C Tiling 设计方法论·FlashAttention 分册
 > 四层方法论（patterns / foundation / design / subfamilies，约 2000 行）+
 > 业界 Attention 设计实践（CATLASS 路径与标杆
-> 对齐）——P1-7① 台账残留项的先期知识就位（真实 FA 工程接入时方法论文档已可用，
+> 对齐）——台账残留项的先期知识就位（真实 FA 工程接入时方法论文档已可用，
 > 实战案例仍按无同型降级策略沉淀）。
 
 ## 族特点

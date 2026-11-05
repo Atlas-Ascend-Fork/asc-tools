@@ -2,7 +2,7 @@
 
 > 对应判定规则：L1_MTE2_BOUND（真饱和档）、L0_L2_LOW_HIT、L1_VEC_BOUND（UB 往返类）。
 > 内容沉淀自存储层次调优一线实践（L2 命中率判读、UB 常驻复用设计）。
-> **DSL 适用域（P2-5/G19）**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
+> **DSL 适用域**：本卡实施细节以 **Ascend C** 为准；Triton / CATLASS / TileLang 的等价原语与实施差异见 [index.md 跨 DSL 原语对照表](index.md#跨-dsl-原语对照六原语--dsl)——跨 DSL 实施时以该表为路由、对应 DSL 专项文档为深度参考，不按本卡字面照搬。
 
 ## 机制清单（按层次）
 

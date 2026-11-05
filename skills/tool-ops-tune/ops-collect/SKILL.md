@@ -43,14 +43,14 @@ description: NPU 性能采集编排。统一采集入口：上板（msprof 7 组
 
 | 脚本 | 职责 |
 |------|------|
-| `scripts/collect_board.sh` | 上板采集统一入口（standard / quick / timing / mc2 / npu-compute 五模式）+ manifest 落盘；timing 模式跑 event 计时 harness 并归档 result.json（P0-2）；npu-compute 模式采集 .npu-rep 并解包（探测门禁 + 伪 Green 断言，Roadmap #4） |
-| `scripts/collect_cases.py` | **逐 case 采集编排 + 标杆双路径**（P0-1，A1 铁律工具化）：cases.csv + exe [--ref-exe] → 逐 case×variant 调 collect_board → `perf_data.csv`（batch_pipeline `--from-collect` 直接输入）+ 逐 case manifest 归档；case 间串行同卡同口径；防重采闸门（已有 manifest 跳过）；`--cases-subset` 定向补采；failed/partial 如实进 collect_summary（伪 Green 防护） |
+| `scripts/collect_board.sh` | 上板采集统一入口（standard / quick / timing / mc2 / npu-compute 五模式）+ manifest 落盘；timing 模式跑 event 计时 harness 并归档 result.json；npu-compute 模式采集 .npu-rep 并解包（探测门禁 + 伪 Green 断言，Roadmap #4） |
+| `scripts/collect_cases.py` | **逐 case 采集编排 + 标杆双路径**（A1 铁律工具化）：cases.csv + exe [--ref-exe] → 逐 case×variant 调 collect_board → `perf_data.csv`（batch_pipeline `--from-collect` 直接输入）+ 逐 case manifest 归档；case 间串行同卡同口径；防重采闸门（已有 manifest 跳过）；`--cases-subset` 定向补采；failed/partial 如实进 collect_summary（伪 Green 防护） |
 | `scripts/isolation_test.py` | MC² 隔离测试编排：T_comm/T_compute（逐 rank 稳态均值，跨 rank max）+ mte2_ratio_full/pure / rank_imbalance / mask_ratio → R 值与 --scalar 串 → 喂 verdict |
-| `scripts/facts_bridge.py` | 采集产物 → verdict `--scalar` 串（G2 桥接）：L2Cache/Arithmetic/ResourceConflict/OpBasicInfo 提取 + soc-spec 峰值换算，产出 `mte2_active_bw_pct_of_peak` / `l2_hit_rate` / `vec_fp32_ratio` 等——L0 规则与 L1 反证的标量生产者；missing 列表即补采闭环真源；**DB 双源**（P1-6）：CSV OpBasicInfo 缺失时 sqlite（`ai_core_op_summary.db` task_time）备位 task 级时长（等价查询固化在脚本，ns→us 换算 + DB 口径注记防混比；`--no-db` 关闭）；**npu-compute DB 通道**（Roadmap #4）：`--source auto` 按目录特征判源，npu-compute 解包目录逐指标 DB SQL 优先（AVG+NULL-skip 下推）→ CSV 补位，`Summary.jsonl` OpInfoSummary 产出 task_duration/block_dim，PcSampling 产出 `top_stall_pct`（L0_STALL_DOMINANT 的首个生产者） |
+| `scripts/facts_bridge.py` | 采集产物 → verdict `--scalar` 串：L2Cache/Arithmetic/ResourceConflict/OpBasicInfo 提取 + soc-spec 峰值换算，产出 `mte2_active_bw_pct_of_peak` / `l2_hit_rate` / `vec_fp32_ratio` 等——L0 规则与 L1 反证的标量生产者；missing 列表即补采闭环真源；**DB 双源**：CSV OpBasicInfo 缺失时 sqlite（`ai_core_op_summary.db` task_time）备位 task 级时长（等价查询固化在脚本，ns→us 换算 + DB 口径注记防混比；`--no-db` 关闭）；**npu-compute DB 通道**（Roadmap #4）：`--source auto` 按目录特征判源，npu-compute 解包目录逐指标 DB SQL 优先（AVG+NULL-skip 下推）→ CSV 补位，`Summary.jsonl` OpInfoSummary 产出 task_duration/block_dim，PcSampling 产出 `top_stall_pct`（L0_STALL_DOMINANT 的首个生产者） |
 | `scripts/csv_to_db.py` | **CSV→summary.db 转换器**（Roadmap #4）：npu-compute 列名规范化规则移植（单位后缀拆 FieldUnitMap / 词法规范化 / NA→NULL / 类型推断），旧版 .npu-rep（无 DB）与任意 CSV 产物目录升级为 DB 格式消费；写入后回读行数校验 fail loud |
 | `scripts/db_bench.py` | **CSV vs DB 消费性能基准**（Roadmap #4「查询更快」的验证载体）：W1 facts 标量提取 / W2 verdict 全表加载 / W3 分析查询批 / W4 PcSampling（DB 独有）四负载逐项测中位耗时 + 提速比；**等价性门禁**（W1-W3 双通道数值必须一致，不等 exit 1）；提速数字如实逐负载呈现（全表 dict 化 DB 更慢就写慢，不粉饰） |
-| `scripts/jsonl_to_cases.py` | **JSONL 用例适配**（P1-5，G11）：生态内 JSONL 用例（torch-ops-profiler 规范）→ cases.csv（A1 铁律输入契约）；转换规则全落脚本（dtype 归一 / attrs 拼接 / CSV 转义），歧义行 skipped 列明原因不猜测 |
-| `scripts/collect_sim.sh` | **仿真路径采集编排**（P1-1，G7）：cannsim record（精度+性能仿真）→ report（trace_core*.json）→ mode=sim 的 collection_manifest 归档；cannsim 探测门禁（不可用明确报错）；sim 数字与上板禁混比（snapshot timing_method=sim 专用） |
+| `scripts/jsonl_to_cases.py` | **JSONL 用例适配**：生态内 JSONL 用例（torch-ops-profiler 规范）→ cases.csv（A1 铁律输入契约）；转换规则全落脚本（dtype 归一 / attrs 拼接 / CSV 转义），歧义行 skipped 列明原因不猜测 |
+| `scripts/collect_sim.sh` | **仿真路径采集编排**：cannsim record（精度+性能仿真）→ report（trace_core*.json）→ mode=sim 的 collection_manifest 归档；cannsim 探测门禁（不可用明确报错）；sim 数字与上板禁混比（snapshot timing_method=sim 专用） |
 
 **自动化分级**（如实宣称）：
 - 宿主程序自带模式开关（环境变量）→ **全自动**（env 模式：脚本注入开关、三轮采集、
@@ -130,9 +130,9 @@ npu-compute（950/A5 采集器，本仓 `npu_tools/npu_compute`）原生产出 `
 | 短 kernel（µs 级） | launch 开销掩盖收益：harness 模板内置 stream 内多 launch 单 event 对计时；仍不可归因用 profiler device duration 辅助并注明 |
 | 冷跑/稳态 | 首跑含初始化与缓存预热（实测可差 25%）：固定 warmup 剔除，稳态 ≥3 次取中位（harness 模板已固化此结构） |
 | profiling 构建 | 保持 Release；源码映射只加调试信息，禁 -O0（优化级别变化使前后数据不可比） |
-| 频率漂移（DVFS） | **可选锁频**（P2-2）：`npu-smi set -t freq-lock`（需 root；采集期固定频率消除 DVFS 爬升噪声）。**副作用如实标注**：锁频数字与出厂默认频率下的性能不可直接外推，报告须注明「锁频口径」；无 root 权限时按 warmup 爬升 + 多轮稳态中位数缓解（本仓默认路径，不强制锁频） |
+| 频率漂移（DVFS） | **可选锁频**：`npu-smi set -t freq-lock`（需 root；采集期固定频率消除 DVFS 爬升噪声）。**副作用如实标注**：锁频数字与出厂默认频率下的性能不可直接外推，报告须注明「锁频口径」；无 root 权限时按 warmup 爬升 + 多轮稳态中位数缓解（本仓默认路径，不强制锁频） |
 
-## 设备选择（P2-2/G20 ①）
+## 设备选择
 
 `collect_board.sh` 选卡逻辑：**结构化解析优先**——`npu-smi info -t usages -i <id>`
 的 `Aicore Usage Rate(%)` 字段判定（< 50% 视为可用），对 npu-smi 输出格式变化
