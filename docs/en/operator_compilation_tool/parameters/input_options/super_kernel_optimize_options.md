@@ -1,6 +1,6 @@
 # --super\_kernel\_optimize\_options
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:51:18.309Z pushedAt=2026-10-15T11:15:08.872Z -->
+<!-- md-trans-meta sourceCommit=2e0f6e7cad32f84a05321a16885c71c448cd9b6f translatedAt=2026-10-30T10:05:46.932Z pushedAt=2026-11-03T00:55:22.816Z nl=2 -->
 
 ## Description
 
@@ -29,7 +29,7 @@ The following two formats are supported:
 --super_kernel_optimize_options="{'early_start':1,'dcci_after_kernel_end':['.*']}"
 ```
 
-For available options, see *TorchAir User Guide*.
+For available options, see [TorchAir Usage Guide](https://gitcode.com/ascend/torchair/blob/master/docs/zh/overview.md).
 
 ## Recommended Configuration and Benefits
 
@@ -50,10 +50,10 @@ op_compiler --op_params_dir=<dump_dir>  --soc_version=<soc_version>  --enable_su
 - Atlas training products: This parameter is not supported.
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 training products/Atlas A2 inference products: This parameter is supported.
+- Atlas A2 products: This parameter is supported.
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT: This parameter is not supported.
+- Ascend 950PR&950DT products: This parameter is not supported.
 <!-- end id4 -->
 
 ## Dependencies and Constraints

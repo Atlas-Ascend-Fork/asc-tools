@@ -1,6 +1,6 @@
 # --enable\_super\_kernel
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:47:06.235Z pushedAt=2026-10-15T11:15:08.867Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:03:54.606Z pushedAt=2026-11-03T00:55:22.812Z nl=2 -->
 
 ## Description
 
@@ -33,10 +33,10 @@ op_compiler --op_params_dir=<dump_dir>  --soc_version=<soc_version>  --enable_su
 - Atlas training products: This parameter is not supported.
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 training products/Atlas A2 inference products: This parameter is supported.
+- Atlas A2 products: This parameter is supported.
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT: This parameter is not supported.
+- Ascend 950PR&950DT products: This parameter is not supported.
 <!-- end id4 -->
 
 ## Dependencies and Constraints

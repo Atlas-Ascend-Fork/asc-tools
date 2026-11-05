@@ -1,10 +1,10 @@
 # --output
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:52:54.706Z pushedAt=2026-10-15T11:15:08.874Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:06:19.853Z pushedAt=2026-11-03T00:55:22.817Z nl=2 -->
 
 ## Description
 
-(Optional) Specifies the path and name of the installation package generated during compilation, for example, ***xxx*/*xxx*/*xxx*.run**. Both relative paths and absolute paths are supported. If no path is specified, the package is generated in the current directory. If no package name is specified, the static shape installation package is named **static\_kernel\_*$\{datetime\}*\_*$\{pid\}*.run** by default, and the debug version installation package is named **debug\_kernel\_*$\{datetime\}*.run** by default. This parameter is abbreviated as **-o**.
+(Optional) Specifies the path and name of the installation package generated during compilation, for example, ***xxx*/*xxx*/*xxx*.run**. Both relative paths and absolute paths are supported. If no path is specified, the package is generated in the current directory. If no package name is specified, the static shape installation package is named `static_kernel_${datetime}_${pid}.run` by default, and the debug version installation package is named `debug_kernel_${datetime}.run` by default. This parameter is abbreviated as **-o**.
 
 ## Related Parameters
 
@@ -37,10 +37,10 @@ op_compiler --op_params_dir=<dump_dir>  --soc_version=Ascendxxxx --log=info --jo
 - Atlas training products
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 training products/Atlas A2 inference products
+- Atlas A2 products
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT
+- Ascend 950PR&950DT products
 <!-- end id4 -->
 
 ## Dependencies and Constraints

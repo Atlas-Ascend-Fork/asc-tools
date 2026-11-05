@@ -1,10 +1,10 @@
 # Preparation
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:54:25.791Z pushedAt=2026-10-15T11:15:08.875Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:06:58.159Z pushedAt=2026-11-03T00:55:22.819Z nl=2 -->
 
 ## Environment Setup
 
-1. Install the software packages. See *CANN Software Installation* to install the driver, firmware, and CANN software packages.
+1. Install the software packages. For details, see [CANN Software Installation](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/latest/softwareinst/instg/instg_0000.html?OS=openEuler&InstallType=netyum) to install the driver, firmware, and CANN software packages.
 2. Configure the environment variables.
 
     CANN provides process-level environment variable setting scripts for users to reference in processes, so that environment variables are set automatically. The following shows example commands. The examples use the default installation paths for both root and non-root users. Replace them with the actual installation paths.

@@ -1,12 +1,12 @@
 # Installing and Uninstalling a Kernel Package
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:56:50.098Z pushedAt=2026-10-15T11:15:08.879Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:08:02.898Z pushedAt=2026-11-03T00:55:22.822Z nl=2 -->
 
 The following uses a kernel package with the default name as an example. During actual execution, replace the kernel package name in the commands with the actual one.
 
 1. Install the static kernel package.
 
-    Go to the directory where the **static\_kernel\_*$\{datetime\}*\_*$\{pid\}*.run** package is located, and execute the RUN package as the running user (for example, **HwHiAiUser**):
+    Go to the directory where the `static_kernel_${datetime}_${pid}.run` package is located, and execute the RUN package as the running user (for example, **HwHiAiUser**):
 
     ```bash
     ./static_kernel_${datetime}_${pid}.run
@@ -21,12 +21,12 @@ The following uses a kernel package with the default name as an example. During 
 
     Both default installation and installation to a specified directory are supported.
 
-    - Default installation: The RUN package is installed to the ***$\{INSTALL\_DIR\}*/opp/static\_kernel** path by default, where ***$\{INSTALL\_DIR\}*** is the file storage path after the CANN software is installed. Source the CANN software environment variables based on the actual situation before performing the default installation.
+    - Default installation: The RUN package is installed to the `${INSTALL_DIR}/opp/static_kernel` path by default, where `${INSTALL_DIR}` is the file storage path after the CANN software is installed. Source the CANN software environment variables based on the actual situation before performing the default installation.
 
     - Installation to a specified directory: You can customize the installation target path by using the **--install-path=<path\>** parameter.
 
     > [!NOTE] Note
-    >- The default permission of the RUN package installation path ***$\{INSTALL\_DIR\}*/opp/static\_kernel** is 770 (accessible to the current user and users in the same group). If the static kernel package fails to be installed due to insufficient permissions, contact the user who installed the CANN software package to modify the permission of the **static\_kernel** directory.
+    >- The default permission of the RUN package installation path `${INSTALL_DIR}/opp/static_kernel` is 770 (accessible to the current user and users in the same group). If the static kernel package fails to be installed due to insufficient permissions, contact the user who installed the CANN software package to modify the permission of the `static_kernel` directory.
     >- The RUN package supports silent installation, which can be enabled by using the **--quiet** parameter (abbreviated as **-q**).
 
     The following is an example of the directory structure after the RUN package is installed:
@@ -69,22 +69,22 @@ The following uses a kernel package with the default name as an example. During 
 2. (Optional) When the static kernel package is no longer needed, you can uninstall a single package or uninstall all packages.
     - Uninstalling a single package
 
-        Go to the installation directory of the **static\_kernel\_*$\{datetime\}*\_*$\{pid\}*.run** package and run **uninstall.sh** as the running user (for example, **HwHiAiUser**).
+        Go to the installation directory of the `static_kernel_${datetime}_${pid}.run` package and run **uninstall.sh** as the running user (for example, **HwHiAiUser**).
 
         ```bash
         cd ${install_path}/opp/static_kernel/ai_core/static_kernel_${datetime}_${pid}
         ./uninstall.sh
         ```
 
-        If the uninstallation succeeds, the **static\_kernel\_*$\{datetime\}*\_*$\{pid\}*** folder under the **ai\_core** directory will be deleted.
+        If the uninstallation succeeds, the `static_kernel_${datetime}_${pid}` folder under the `ai_core` directory will be deleted.
 
     - Uninstalling all packages
 
-        Go to the ***$\{install\_path\}*/opp/static\_kernel/ai\_core** directory and run **uninstall.sh** as the running user (for example, **HwHiAiUser**).
+        Go to the `${install_path}/opp/static_kernel/ai_core` directory and run **uninstall.sh** as the running user (for example, **HwHiAiUser**).
 
         ```bash
         cd ${install_path}/opp/static_kernel/ai_core/
         ./uninstall.sh
         ```
 
-        After the uninstallation succeeds, all content in the **ai\_core** directory except the **config/static\_kernel.lock** file is deleted, and all installed kernel packages are uninstalled.
+        After the uninstallation succeeds, all content in the `ai_core` directory except the `config/static_kernel.lock` file will be deleted, and all installed kernel packages are uninstalled.

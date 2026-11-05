@@ -1,6 +1,6 @@
 # --help
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:45:48.933Z pushedAt=2026-10-15T11:15:08.865Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:03:29.404Z pushedAt=2026-11-03T00:55:22.811Z nl=2 -->
 
 ## Description
 
@@ -33,10 +33,10 @@ op_compiler --help
 - Atlas training products
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 training products/Atlas A2 inference products
+- Atlas A2 products
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT
+- Ascend 950PR&950DT products
 <!-- end id4 -->
 
 ## Dependencies and Constraints

@@ -1,6 +1,6 @@
 # --soc\_version
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:53:59.562Z pushedAt=2026-10-15T11:15:08.875Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:06:41.318Z pushedAt=2026-11-03T00:55:22.818Z nl=2 -->
 
 ## Description
 
@@ -14,7 +14,7 @@ None
 
 Model of the AI processor used for operator compilation.
 
-If you cannot determine the model of the current AI processor, run the **npu-smi info** command on the server where the NPU driver package is installed to query it. Add **Ascend** before the queried **Name** value. For example, if the **Name** value is **_xxxyy_**, the actual configured **soc\_version** value is **Ascend_xxxyy_**.
+If you cannot determine the model of the current AI processor, run the **npu-smi info** command on the server where the NPU driver package is installed to query it. Add **Ascend** before the queried **Name** value. For example, if the **Name** value is **xxxyy**, the actual configured **soc\_version** value is **Ascendxxxyy**.
 
 ## Recommended Configuration and Benefits
 
@@ -29,10 +29,10 @@ None
 - Atlas training products
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 training products/Atlas A2 inference products
+- Atlas A2 products
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT
+- Ascend 950PR&950DT products
 <!-- end id4 -->
 
 ## Dependencies and Constraints

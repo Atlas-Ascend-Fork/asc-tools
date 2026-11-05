@@ -1,6 +1,6 @@
 # Parameter Overview
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:42:20.932Z pushedAt=2026-10-15T11:15:08.860Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:01:43.611Z pushedAt=2026-11-03T00:55:22.807Z nl=2 -->
 
 **Table 1**  Operator compilation tool parameter overview
 
@@ -13,6 +13,8 @@
 | [--compile_mode](input_options/compile_mode.md) | The value can be set to **tune**, which enables the tuning mode and runs the tuning compilation process. If this parameter is not used, the default compilation process is executed. **The tuning function has been deprecated since CANN 9.1.0. After this parameter is set to tune, the tuning mode does not take effect and the default compilation process is automatically used.** | No | N/A |
 | [--enable_super_kernel](input_options/enable_super_kernel.md) | Whether to enable the Super Kernel function. | No | Super Kernel is disabled by default. |
 | [--super_kernel_options](input_options/super_kernel_options.md) | After the Super Kernel function is enabled, you can use this option to add Super Kernel compilation options. | No | N/A |
+| [--super_kernel_optimize_options](input_options/super_kernel_optimize_options.md) | Sets the fusion optimization options used when compiling the SuperKernel static kernel after Super Kernel is enabled. | No | N/A |
+| [--super_kernel_debug_options](input_options/super_kernel_debug_options.md) | Sets the debug options used when compiling the SuperKernel static kernel after Super Kernel is enabled. | No | N/A |
 | [--follow_op_params_jit](input_options/follow_op_params_jit.md) | This option is optional. After it is enabled, the compilation system automatically selects the deterministic or non-deterministic compilation mode (choose one of the two) based on the **deterministic** field in the dump operator JSON file, thereby effectively improving compilation performance. | No | N/A |
 | [--output](output_options/output.md) | Path and name of the installation package output by compilation, for example, ***xxx*/*xxx*/*xxx*.run**. Both relative and absolute paths are supported. | No | **static_kernel_*${datetime}*_*${pid}*.run** and **debug_kernel_*${datetime}*.run** are generated in the current path where the tool is executed |
 | [--soc_version](target_chip_options/soc_version.md) | Specifies the model of the AI processor used for operator compilation. | Yes (required only when the operator compilation function is executed) | N/A |

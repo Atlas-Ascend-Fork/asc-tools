@@ -1,12 +1,12 @@
 # Installing and Uninstalling a Kernel Package
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:56:18.779Z pushedAt=2026-10-15T11:15:08.877Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:07:40.726Z pushedAt=2026-11-03T00:55:22.820Z nl=2 -->
 
 The following uses the kernel package with the default name as an example. During actual execution, replace the kernel package name in the commands with the actual one.
 
 - Install the debug-version kernel package.
 
-    Go to the directory where the **debug\_kernel\_*$\{datetime\}*.run** package is located, and execute the RUN package as the running user (for example, **HwHiAiUser**):
+    Go to the directory where the `debug_kernel_${datetime}.run` package is located, and execute the RUN package as the running user (for example, **HwHiAiUser**):
 
     ```bash
     ./debug_kernel_${datetime}.run
@@ -18,10 +18,10 @@ The following uses the kernel package with the default name as an example. Durin
     installation complete.
     ```
 
-    Currently, installation to a specified directory is not supported. The RUN package is installed to the ***$\{install\_path\}*/opp/debug\_kernel** path by default, where ***$\{install\_path\}*** is the file storage path after the CANN software is installed.
+    Currently, installation to a specified directory is not supported. The RUN package is installed to the `${install_path}/opp/debug_kernel` directory by default, where `${install_path}` is the storage path of the files after CANN software installation.
 
     > [!NOTE] Note
-    > The default permission of the default installation path ***$\{install\_path\}*/opp/debug\_kernel** for the RUN package is 755. If the debug-version kernel package fails to be installed due to insufficient permissions, contact the user who installed the CANN software package to modify the permission of the **debug\_kernel** directory.
+    > The default permission of the RUN package installation directory `${install_path}/opp/debug_kernel` is 755. If the debug-version kernel package fails to be installed due to insufficient permissions, contact the user who installed the CANN software package to modify the permission of the `debug_kernel` directory.
 
     The following is an example of the directory structure after the RUN package is installed:
 
@@ -49,11 +49,11 @@ The following uses the kernel package with the default name as an example. Durin
 
 - Uninstallation
 
-    Go to the installation directory of the **debug\_kernel\_*$\{datetime\}*.run** package and run **uninstall.sh** as the running user (for example, **HwHiAiUser**).
+    Go to the installation directory of the `debug_kernel_${datetime}.run` package and run **uninstall.sh** as the running user (for example, **HwHiAiUser**).
 
     ```bash
     cd ${install_path}/opp/debug_kernel
     ./uninstall.sh
     ```
 
-    If the uninstallation succeeds, the **debug\_kernel** folder will be deleted.
+    If the uninstallation is successful, the `debug_kernel` folder will be deleted.

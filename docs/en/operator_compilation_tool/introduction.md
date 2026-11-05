@@ -1,14 +1,14 @@
 # Introduction
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:42:20.381Z pushedAt=2026-10-15T11:15:08.861Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:01:56.430Z pushedAt=2026-11-03T00:55:22.809Z nl=2 -->
 
 The operator compilation tool (op\_compiler) is a command-line tool provided by Ascend CANN for compiling operators and generating operator binary files. The specific functionality and usage constraints of this tool are as follows:
 
-**Specific functionality:**
+**Specific functionality**:
 
 - **Static shape compilation**: When operators are called through single-operator APIs and the operator shapes are fixed, you can use this tool to compile and install static kernel packages to improve operator call performance.
 
-    This document only describes how to use the operator compilation tool. For specific scenario examples, see the [Using Static Kernels to Improve Operator Execution Performance](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/latest/API/aolapi/docs/en/ops-lib/appendix/performance_improve_by_staticKernel.md) section in the [Operator Library](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/latest/API/aolapi/docs/en/ops-lib/introduction.md).
+    This document only describes how to use the operator compilation tool. For specific scenario examples, see the [Using Static Kernels to Improve Operator Execution Performance](https://gitcode.com/cann/docs/blob/master/docs/zh/ops-lib/appendix/performance_improve_by_staticKernel.md) section in the [Operator Library](https://gitcode.com/cann/docs/blob/master/docs/zh/ops-lib/0_README.md).
 
 - **Debug version compilation**. When locating operator issues, you can use this tool to compile a debug version of the binary file for issue reproduction and location.
 
@@ -25,10 +25,10 @@ The operator compilation tool (op\_compiler) is a command-line tool provided by 
     - Atlas training products
     <!-- end id2 -->
     <!-- npu="910b" id3 -->
-    - Atlas A2 training products/Atlas A2 inference products
+    - Atlas A2 products
     <!-- end id3 -->
     <!-- npu="950" id4 -->
-    - Ascend 950PR/Ascend 950DT
+    - Ascend 950PR&950DT products
     <!-- end id4 -->
 
 - **Debug version compilation**
@@ -42,10 +42,10 @@ The operator compilation tool (op\_compiler) is a command-line tool provided by 
     - Atlas training products: Supported
     <!-- end id6 -->
     <!-- npu="910b" id7 -->
-    - Atlas A2 training products/Atlas A2 inference products: Supported
+    - Atlas A2 products: Supported
     <!-- end id7 -->
     <!-- npu="950" id8 -->
-    - Ascend 950PR/Ascend 950DT: Not supported
+    - Ascend 950PR&950DT products: Not supported
     <!-- end id8 -->
 
 ## Functional Architecture of the Tool

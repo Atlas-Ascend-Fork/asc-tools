@@ -1,6 +1,6 @@
 # --log
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:44:29.931Z pushedAt=2026-10-15T11:15:08.864Z -->
+<!-- md-trans-meta sourceCommit=dab20c1a5c0505cf777deac6d50259bef05c16c7 translatedAt=2026-10-30T10:02:42.671Z pushedAt=2026-11-03T00:55:22.809Z nl=2 -->
 
 ## Description
 
@@ -8,9 +8,9 @@ Sets the log level during operator compilation. It is abbreviated as **-l**.
 
 - **Log persistence**
 
-    By default, logs are persisted to the following path: ***$HOME*/ascend/log/debug/plog/plog-_pid_\_\*.log**
+    By default, logs are persisted to the following path: `$HOME/ascend/log/debug/plog/plog-pid_*.log`
 
-    **_pid_** represents the process ID, and **\*** represents the timestamp when the log file is created.
+    **pid** represents the process ID, and **\*** represents the timestamp when the log file is created.
 
 - **Log printing**
 
@@ -26,7 +26,7 @@ None
 
 ## Parameter Values
 
-**Parameter values:**
+**Parameter values**:
 
 - **debug**: Outputs runtime information at the debug/info/warning/error/event levels.
 - **info**: Outputs runtime information at the info/warning/error/event levels.
@@ -54,10 +54,10 @@ op_compiler --op_params_dir=<dump_dir>  --soc_version=<soc_version> --log=debug
 - Atlas training products
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 training products/Atlas A2 inference products
+- Atlas A2 products
 <!-- end id3 -->
 <!-- npu="950" id4 -->
-- Ascend 950PR/Ascend 950DT
+- Ascend 950PR&950DT products
 <!-- end id4 -->
 
 ## Dependencies and Constraints

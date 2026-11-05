@@ -1,6 +1,6 @@
 # Compiling an Operator to Generate a Kernel Package
 
-<!-- md-trans-meta sourceCommit=681b3fab3b2117829dc3976c9606bfc0f3d15012 translatedAt=2026-10-14T08:55:56.288Z pushedAt=2026-10-15T11:15:08.878Z -->
+<!-- md-trans-meta sourceCommit=2e0f6e7cad32f84a05321a16885c71c448cd9b6f translatedAt=2026-10-30T10:07:22.955Z pushedAt=2026-11-03T00:55:22.820Z nl=2 -->
 
 In any directory, run the following command as the running user (for example, **HwHiAiUser**) to compile an operator:
 
@@ -30,16 +30,16 @@ op_compiler -k <kernel_name>  -d gm_debug.cfg -v <soc_version> -l info -j 128 -o
 
 - Either **--op\_params\_dir** or **--kernel\_name** is required. When the explicit operator **kernel\_name** can be obtained from the error log, you are advised to use the **kernel\_name** parameter.
     - **--op\_params\_dir**: abbreviated as **-p**. It specifies the path of the folder where the statistics data exported by the Dump tool is stored. Both absolute and relative paths are supported. Currently, two methods are supported for dumping operator JSON files. Select an appropriate method based on the actual situation.
-        - **When programming with the PyTorch Python API**, you can dump operator JSON files through the Ascend PyTorch Profiler API. For details, see the relevant section in *Performance Tuning Tool*.
+        - **When programming with the Python APIs of PyTorch**, you can dump operator JSON files through the Ascend PyTorch Profiler API. For details, see [Ascend PyTorch Profiling Tool](https://gitcode.com/ascend/pytorch/blob/master/docs/zh/developer_notes/ascend_pytorch_profiler_user_guide.md).
             1. Use the Ascend PyTorch Profiler API to enable performance data collection during PyTorch training.
 
                 Before training, enable the operator information statistics function in the extended parameter **experimental\_config**, that is, set the **record\_op\_args** parameter to **True**.
 
             2. View the collected PyTorch training performance data result file.
 
-                After training, the dumped operator information statistics file is stored in the **\{worker\_name\}\_*\{ timestamp \}*\_ascend\_pt\_op\_args/*\{pid\}*\_debug** directory by default.
+                After training, the dumped operator information statistics files are stored in the `{worker_name}_{timestamp}_ascend_pt_op_args/{pid}_debug` directory by default.
 
-        - **When programming with ACL APIs**, you can use the **aclopStartDumpArgs** and **aclopStopDumpArgs** APIs to dump the operator information statistics file to a specified directory. For details about how to use these APIs, see the "C Language API \> Model Management and Single-Operator Call API \> Single-Operator Call \> Single-Operator Model Execution" section in *Application Development* and *GE Graph Engine API*.
+        - **When programming with ACL APIs**, you can dump the operator information statistics files to a specified directory through the **aclopStartDumpArgs** and **aclopStopDumpArgs** APIs. For details about the APIs, see [Runtime API](https://gitcode.com/cann/runtime/blob/master/docs/zh/api_ref/README.md).
 
     - **--kernel\_name**: abbreviated as **-k**. **kernel\_name** is obtained from the operator execution error log.
 
@@ -58,11 +58,11 @@ op_compiler -k <kernel_name>  -d gm_debug.cfg -v <soc_version> -l info -j 128 -o
 - **--soc\_version**: abbreviated as **-v**. This parameter is required when compiling operators. Set it to the model of the AI processor used for operator compilation.
 
     > [!NOTE] Note
-    > If you cannot determine the **soc\_version** of the current device, run the **npu-smi info** command on the server where the NPU driver package is installed to query it. Add **Ascend** before the queried **Name** value. For example, if the value of **Name** is **_xxxyy_**, the actual value of **soc\_version** is **Ascend_xxxyy_**.
+    > If you cannot determine the **soc\_version** of the current device, run the **npu-smi info** command on the server where the NPU driver package is installed to query it. Add **Ascend** before the queried **Name** value. For example, if the **Name** value is **xxxyy**, the actual **soc\_version** value to configure is **Ascendxxxyy**.
 
 - **--log**: abbreviated as **-l**, optional. This parameter sets the log level during operator compilation. The value can be **debug**, **info**, **warning**, **error**, or **null**. The default value is **null**.
 - **--job**: abbreviated as **-j**, optional. This parameter sets the number of worker processes during compilation. The minimum value is **1**, and the default value is **16**.
-- **--output**: abbreviated as **-o**, optional. This parameter specifies the path and name of the installation package output during compilation, for example, ***xxx*/*xxx*/*xxx*.run**. Both relative and absolute paths are supported. If no path is specified, the package is generated in the current path. If no package name is specified, the package is named **debug\_kernel\_*$\{datetime\}*.run** by default.
+- **--output**: abbreviated as **-o**, optional. This parameter specifies the path and name of the installation package output during compilation, for example, ***xxx*/*xxx*/*xxx*.run**. Both relative and absolute paths are supported. If no path is specified, the package is generated in the current path. If no package name is specified, the package is named `debug_kernel_${datetime}.run` by default.
 
 For details about all parameters supported by the tool, see [Parameters](../../parameters/parameters.md).
 
@@ -73,4 +73,4 @@ generate run package debug_kernel_${datetime}.run success
 ```
 
 > [!NOTE] Note
-> Compilation commands cannot be executed under **_dump\_dir_**.
+> Running the compilation command in `dump_dir` is not supported.
