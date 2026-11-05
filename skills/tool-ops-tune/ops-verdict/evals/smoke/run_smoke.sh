@@ -93,6 +93,29 @@ assert 'mte2_ratio_pure' in d['verdict_scalar']
 else
   fail "isolation_test from-prof"
 fi
+
+# 档界值双侧断言（检视 P1-4 守护）：开闭语义由上界叶子算子推导——
+# R=0.9/1.1（BALANCED 闭上界两侧）与 R=0.5/2.0（开上界档界值，归下一档）
+# 任一翻转即 _has_closed_upper 类硬编码回归。
+if python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ops-collect/scripts')
+from isolation_test import r_bands_from_rules, classify_r
+bands = r_bands_from_rules('$REPO_ROOT/ops-verdict/rules/L3-inter-card.yaml')
+cases = {
+    0.5:  'L3_MC2_COMM_BOUND',     # STRONG_COMM 上界 lt=开 → r==0.5 归 COMM_BOUND
+    0.9:  'L3_MC2_BALANCED',       # BALANCED 下界 gte=闭
+    1.1:  'L3_MC2_BALANCED',       # BALANCED 上界 between=闭
+    2.0:  'L3_MC2_COMPUTE_BOUND',  # STRONG_COMPUTE 下界 gt=开 → r==2.0 归 COMPUTE_BOUND
+}
+for r, want in cases.items():
+    got, _ = classify_r(r, bands)
+    assert got == want, f'R={r}: {got} != {want}'
+" 2>/dev/null; then
+  pass "isolation_test 档界值双侧（0.5/0.9/1.1/2.0 开闭语义正确）"
+else
+  fail "isolation_test 档界值双侧（开闭语义回归）"
+fi
 fi
 
 echo "=== smoke 4: 规则包加载校验（四包零误报）==="
@@ -393,6 +416,46 @@ assert (pathlib.Path(unpacked) / 'PipeUtilization.csv').exists(), unpacked
   pass "collect_board --mode npu-compute（探测门禁 + manifest + 解包产物断言）"
 else
   fail "npu-compute 采集模式干跑"
+fi
+
+echo "=== smoke 14: trace_bubble 合成 trace 干跑（检视 C-5：唯一无回归覆盖脚本）==="
+# 合成 Chrome Trace（手算期望，内联生成）：VECTOR [0,40) / MTE2 [20,80)，
+# span=80 → bubble=50%；overlap=20/union=80 → 25%；尾 gap (40,80) MTE2 全覆 → DATA 100%。
+# 错误形态：坏 JSON → per-core error 留痕不崩、scalar 为空。
+TB_TMP="$SMOKE_TMP/tb"; mkdir -p "$TB_TMP/bad"
+cat > "$TB_TMP/trace_core_smoke.json" <<'TRACE'
+{
+  "traceEvents": [
+    {"ph": "M", "name": "process_name", "pid": 1, "args": {"name": "RVECLD"}},
+    {"ph": "M", "name": "process_name", "pid": 2, "args": {"name": "MTE2"}},
+    {"ph": "X", "name": "RVECLD", "pid": 1, "ts": 0, "dur": 40},
+    {"ph": "X", "name": "MTE2", "pid": 2, "ts": 20, "dur": 60}
+  ]
+}
+TRACE
+echo "not-json{" > "$TB_TMP/bad/trace_core_0.json"
+if python3 "$REPO_ROOT/ops-verdict/scripts/trace_bubble.py" \
+    --trace "$TB_TMP/trace_core_smoke.json" \
+    --scalar-out "$TB_TMP/scalars.json" >/dev/null 2>&1 \
+    && python3 -c "
+import json
+d = json.load(open('$TB_TMP/scalars.json'))
+assert d['scalars'] == {'overlap_pct': 25.0, 'top_stall_pct': 100.0, 'bubble_pct': 50.0}, d['scalars']
+assert d['per_core']['trace_core_smoke.json']['main_pipe'] == 'VECTOR'
+assert d['per_core']['trace_core_smoke.json']['top_stall_category'] == 'DATA'
+assert 'verdict.py' in d['next']
+" 2>/dev/null; then
+  pass "trace_bubble 合成 trace（overlap/bubble/top_stall 手算值断言）"
+else
+  fail "trace_bubble 合成 trace 断言"
+fi
+if python3 "$REPO_ROOT/ops-verdict/scripts/trace_bubble.py" \
+    --trace-dir "$TB_TMP/bad" >/dev/null 2>&1 \
+    && ! python3 "$REPO_ROOT/ops-verdict/scripts/trace_bubble.py" \
+    --trace-dir "$TB_TMP/bad" 2>/dev/null | grep -q "scalar: overlap"; then
+  pass "trace_bubble 坏 JSON 降级（error 留痕不崩，scalar 为空）"
+else
+  fail "trace_bubble 坏 JSON 降级"
 fi
 
 echo ""

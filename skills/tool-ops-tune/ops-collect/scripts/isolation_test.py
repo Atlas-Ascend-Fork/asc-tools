@@ -62,7 +62,9 @@ def r_bands_from_rules(rules_path: str) -> list[tuple]:
     """从 L3 规则包 YAML 派生 R 值档位表（规则 YAML 是唯一真源）。
 
     解析每条以 r_value 为唯一 metric 叶子条件、区间形状完整的规则，产出
-    [(lo, hi, rule_id, name), ...] 按 hi 升序（lo=None 表示无下界）。
+    [(lo, hi, rule_id, name, closed_upper), ...] 按 hi 升序（lo=None 表示
+    无下界）。closed_upper 由上界叶子的比较算子推导（between/lte → 闭，
+    lt → 开）——档界的开闭语义随规则包演进，不按规则 ID 硬编码反推。
     解析不出任何档位 → 直接抛错退出（fail loud）。
     """
     import yaml
@@ -74,6 +76,7 @@ def r_bands_from_rules(rules_path: str) -> list[tuple]:
         if not leaves:
             continue
         lo = hi = None
+        closed_upper = True  # between → 闭上界
         ok = True
         for leaf in leaves:
             op, val = leaf["op"], leaf["value"]
@@ -84,6 +87,7 @@ def r_bands_from_rules(rules_path: str) -> list[tuple]:
                     lo = float(val)
                 elif op in ("lt", "lte") and hi is None:
                     hi = float(val)
+                    closed_upper = op == "lte"
                 else:
                     ok = False
                     break
@@ -98,6 +102,7 @@ def r_bands_from_rules(rules_path: str) -> list[tuple]:
                     hi if hi is not None else float("inf"),
                     rule["id"],
                     rule.get("name", rule["id"]),
+                    closed_upper,
                 )
             )
     if not bands:
@@ -110,21 +115,21 @@ def r_bands_from_rules(rules_path: str) -> list[tuple]:
 def classify_r(r: float, bands: list[tuple]) -> tuple[str, str]:
     """按派生档位分类 R 值：唯一命中档 = 唯一满足区间条件的档；多重命中取最紧。
 
-    边界对齐规则表语义：STRONG_COMM 为开区间上界（R<hi），其余档下界 gte /
-    上界 lte/between——r 恰落档界（R=0.5/0.9/1.1/2.0）时同时满足两档的
-    "r ≤ hi"宽松判定，须比较真实区间条件：开上界档要求 r < hi。
+    边界语义由 band 元组的 closed_upper 携带（r_bands_from_rules 从上界
+    叶子算子推导：between/lte → 闭、lt → 开）——r 恰落档界
+    （R=0.5/0.9/1.1/2.0）时须比较真实区间条件：开上界档要求 r < hi，
+    闭上界档 r == hi 即命中。规则改名/新增档位时开闭语义自动跟随，
+    不依赖按规则 ID 的硬编码反推。
     """
     # 第一轮：严格区间命中（lo ≤ r 且 r < hi 开上界 / r ≤ hi 闭上界）
     strict = []
-    for lo, hi, bid, name in bands:
+    for lo, hi, bid, name, closed_upper in bands:
         if (lo is None or r >= lo) and r < hi:
-            strict.append((lo, hi, bid, name))
-        elif (lo is None or r >= lo) and r == hi:
+            strict.append((lo, hi, bid, name, closed_upper))
+        elif (lo is None or r >= lo) and r == hi and closed_upper:
             # r 恰等于闭上界档（between/lte）的 hi → 该档命中（如 BALANCED [0.9,1.1] 命中 R=1.1）
-            # 与开上界档（lt）区分：开上界在 r==hi 时不命中
-            strict.append((lo, hi, bid, name)) if _has_closed_upper(
-                bid, bands
-            ) else None
+            # 开上界档（lt）在 r==hi 时不命中
+            strict.append((lo, hi, bid, name, closed_upper))
     if len(strict) == 1:
         return strict[0][2], strict[0][3]
     if len(strict) > 1:
@@ -132,17 +137,10 @@ def classify_r(r: float, bands: list[tuple]) -> tuple[str, str]:
         strict.sort(key=lambda b: b[1])
         return strict[0][2], strict[0][3]
     # 无严格命中（r 落在档界间隙或超出覆盖）→ 兜底最紧上界
-    for lo, hi, bid, name in bands:
+    for lo, hi, bid, name, closed_upper in bands:
         if r <= hi:
             return bid, name
     return "UNRESOLVED", "超出规则档位覆盖范围（检查 L3 规则包区间连续性）"
-
-
-def _has_closed_upper(bid: str, bands: list[tuple]) -> bool:
-    """该档上界是否为闭（between/lte）。当前规则集：STRONG_COMM（lt）与
-    COMM_BOUND（lt 上界）为开，BALANCED/COMPUTE_BOUND 为闭。按 id 约定
-    强通信/通信档上界开、其余闭——由 r_bands_from_rules 的区间形状保证。"""
-    return bid not in ("L3_MC2_STRONG_COMM", "L3_MC2_COMM_BOUND")
 
 
 def _collect_metric_leaves(cond, metric: str) -> list[dict]:

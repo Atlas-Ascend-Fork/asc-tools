@@ -40,6 +40,11 @@ import math
 import re
 from pathlib import Path
 
+# 噪声带半宽（与 delta_compare.py 的 NOISE_BAND 同值同义）：带内浅灰 / 带外绿红渐变。
+# 单一常量承载三处引用（conclusion_of 数值交叉校验 + speedup_color 两侧色带），
+# 改动噪声带口径只改这一处。
+NOISE_BAND = 0.05
+
 
 def load_matrix(matrix_dir: Path) -> dict:
     """从矩阵目录重建逐 case 数据：{case: {variant: snapshot dict}} + 对比 md。"""
@@ -84,8 +89,8 @@ def conclusion_of(comp_md: str | None, speedup: float | None) -> str:
                 verdict = "UNRESOLVED"
                 break
         if verdict in ("KEEP", "REVERT") and speedup is not None:
-            # 数值交叉校验（与 delta_compare 默认 ±5% 噪声带同口径）
-            if 0.95 <= speedup <= 1.05:
+            # 数值交叉校验（与 delta_compare 同 ±NOISE_BAND 噪声带口径）
+            if 1 - NOISE_BAND <= speedup <= 1 + NOISE_BAND:
                 return "NOISE"
         if verdict is not None:
             return verdict
@@ -97,13 +102,13 @@ def conclusion_of(comp_md: str | None, speedup: float | None) -> str:
 def speedup_color(sp: float | None) -> str:
     if sp is None:
         return "#9e9e9e"  # 灰：无数据
-    if sp >= 1.05:
-        # 绿色渐变：越深收益越大（1.05 → 浅，≥1.5 → 深）
-        t = min((sp - 1.05) / 0.45, 1.0)
+    if sp >= 1 + NOISE_BAND:
+        # 绿色渐变：越深收益越大（带外下沿 → 浅，≥1.5 → 深）
+        t = min((sp - (1 + NOISE_BAND)) / 0.45, 1.0)
         return f"rgba(46, 125, 50, {0.25 + 0.55 * t})"
-    if sp <= 0.95:
+    if sp <= 1 - NOISE_BAND:
         # 红色渐变：越深劣化越大
-        t = min((0.95 - sp) / 0.25, 1.0)
+        t = min(((1 - NOISE_BAND) - sp) / 0.25, 1.0)
         return f"rgba(198, 40, 40, {0.25 + 0.55 * t})"
     return "#e0e0e0"  # 带内：浅灰
 
