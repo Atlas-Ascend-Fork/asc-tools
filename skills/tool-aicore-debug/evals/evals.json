@@ -1,0 +1,673 @@
+{
+  "skill_name": "tool-aicore-debug",
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "title": "diagnose 按错误码路由（EZ9999 errcode=141 碰撞码）",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我的 Ascend C 算子运行时 stderr 报 EZ9999，errcode 字段是 141。请加载 tool-aicore-debug 技能，用 diagnose 入口帮我路由定位可能的原因，并说明候选异常如何区分。不需要执行任何工具调用。",
+      "expected_output": "回复应说明错误码 141 命中两个候选异常（碰撞码）：fixpipe_gm_overflow（FixPipe 写 GM 溢出）与 atomic_fixpipe_overflow（FixPipe AtomicAdd GM 溢出）；区分要点是检查源码是否存在 SetAtomicAdd 调用。未提供 source_code_path，应按 brief 返回候选 ID 和摘要，说明未扫描源码；不要求评分、完整规则匹配或生成修复代码。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "fixpipe_gm_overflow" },
+        { "type": "contains", "pattern": "atomic_fixpipe_overflow" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "diagnose 挂起型路由（exit_code=124、stderr 为空）",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我的 Ascend C 算子上板运行直接超时被 kill，进程退出码是 124，stderr 完全为空，没有任何报错信息。请加载 tool-aicore-debug 技能帮我诊断 kernel 挂起的原因，设置 top_k=4，列出全部四个挂起型候选。不需要执行任何工具调用。",
+      "expected_output": "回复应说明 exit_code=124 且 stderr 为空走挂起型路由，候选为 flag_mismatch（SetFlag/WaitFlag 不配对）、alloc_free_mismatch（AllocTensor/FreeTensor 不配对）、enque_deque_mismatch（EnQue/DeQue 不配对或顺序颠倒）、padding_misconfig（LoadData3D padding 配置非法，错误码 41 但实际表现为挂起）；三个同步候选按 API 配对与实际控制流区分；padding_misconfig 按 padding/fmap/filter 几何条件和目标字段范围区分，不属于配对规则。无源码时只返回候选摘要，不声称已完成检查。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "flag_mismatch" },
+        { "type": "contains", "pattern": "alloc_free_mismatch" },
+        { "type": "contains", "pattern": "enque_deque_mismatch" },
+        { "type": "contains", "pattern": "padding_misconfig" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "error_code 与 exit_code 语义区分（数字 124 的双重含义）",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "请问 EZ9999 报错里 errcode=124 和进程退出码 exit_code=124 是同一个问题吗？加载 tool-aicore-debug 技能解释一下。不需要执行任何工具调用。",
+      "expected_output": "回复应明确两者独立、不存在转换关系：error_code=124 是 EZ9999 stderr 中的 errcode 字段（UB 写溢出类，候选 datacopypad_ub_overflow 与 mte_write_ub_overflow，进程 exit=1、stderr 非空）；exit_code=124 是操作系统超时杀死进程的退出码（kernel 挂起、stderr 完全为空，路由到同步类 detector）；两者是完全不同的异常。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "datacopypad_ub_overflow" },
+        { "type": "contains", "pattern": "mte_write_ub_overflow" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "diagnose 静态预防扫描（提供源码路径时的 Step 0）",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我还没遇到报错，想在提交前对 Ascend C 算子源码做一次预防性检查。加载 tool-aicore-debug 技能，说明提供 source_code_path 后 diagnose 会做哪些静态预防扫描。不需要执行任何工具调用。",
+      "expected_output": "回复应说明 Step 0 静态预防扫描对 static_preventive 10 篇按性质分流：预防型（cube_satmode_clean、arch_api_guard、load3d_mte_param_check、fixpipe_param_check、ccu_stack_check）按已确认的架构、单位、参数和目标语义执行检查；确认违规且有安全修复时才输出代码，未知时返回验证建议；信任型（compiler_guaranteed）仅输出说明；索引型（ecc_ras、system_bus）与探索型（research_items、ambiguous_items）不扫源码、仅查询可见；排序为预防型命中 > 信任型说明 > 索引型 > 探索型。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "static_preventive" },
+        { "type": "contains", "pattern": "ccu_stack_check" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "lint 入口知识库自检",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我是 tool-aicore-debug 技能的维护者，最近新增了几个 detector 文档，想校验知识库的一致性。请加载该技能说明 lint 入口的用法。不需要执行任何工具调用。",
+      "expected_output": "回复应说明 lint 入口支持 full/incremental/regression 三种 validation_mode（incremental 需提供 changed_seeds）；输出 12 项机械校验报告，按 mechanical_checks.md 校验项清单的编号与顺序逐项返回，包含第 11 项 static_preventive nature（性质）校验与第 12 项规则来源分布统计（仅统计，不阻断）；规则源为 constraints/mechanical_checks.md 与 constraints/validation_rules.md；机械校验基线为 runtime 81 ID、static_preventive 10 篇。 来源统计以当前范围的全部 runtime RULE 为分母，来源缺失计入未标注；LLM 推断-已验证归入 LLM 推断并单列验证状态，不以 OOB 兜底证明目标异常。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "12" },
+        { "type": "contains", "pattern": "static_preventive" },
+        { "type": "contains", "pattern": "来源" },
+        { "type": "contains", "pattern": "mechanical_checks" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "正向看护-多 skill 环境下正确触发目标 skill",
+      "config": {
+        "max_tokens": 150000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 160000,
+          "glm-5": 150000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "distractor_skills": [
+          "tool-npu-check",
+          "tool-npu-compute",
+          "tool-npu-objdump"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我的 Ascend C 算子上板运行报了 EZ9999，stderr 里的 errcode 是 141，帮我定位是什么原因导致的。",
+      "expected_output": "应成功激活并使用 tool-aicore-debug 技能，走 diagnose 入口按错误码路由：141 为碰撞码，候选 fixpipe_gm_overflow（FixPipe 写 GM 溢出）与 atomic_fixpipe_overflow（FixPipe AtomicAdd GM 溢出），说明可通过源码中的 SetAtomicAdd 调用区分。未提供 source_code_path，应按 brief 返回候选摘要，不声称已扫描源码、完成规则匹配或修改代码。",
+      "files": [],
+      "expectations": [
+        { "type": "skill_activated", "pattern": "tool-aicore-debug" },
+        { "type": "contains", "pattern": "fixpipe_gm_overflow" },
+        { "type": "contains", "pattern": "atomic_fixpipe_overflow" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "反向看护-精度问题不触发",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我写的 Ascend C 算子编译运行都正常，但精度验证失败，输出和期望值的 rtol/atol 不达标，部分位置数值偏差较大，该怎么排查？",
+      "expected_output": "不应激活 tool-aicore-debug 技能（无 AI Core 异常证据）：应说明这属于算子精度问题，按精度调试流程排查（如对比中间结果、检查数据类型与舍入误差），而不是进行 AI Core 错误码路由。允许在解释职责边界时提及 EZ9999 或 diagnose；不应查询错误码索引或输出 AI Core 异常候选诊断。 需结合实际执行轨迹确认未激活目标技能或执行诊断；not_contains 只是输出标记检查，不足以独立证明没有执行路由。",
+      "files": [],
+      "expectations": [
+        { "type": "not_contains", "pattern": "error_code_index" },
+        { "type": "not_contains", "pattern": "alloc_free_mismatch" },
+        { "type": "not_contains", "pattern": "atomic_dirty_cacheline" },
+        { "type": "not_contains", "pattern": "atomic_fixpipe_overflow" },
+        { "type": "not_contains", "pattern": "c0_idx_overflow" },
+        { "type": "not_contains", "pattern": "ccu_div0" },
+        { "type": "not_contains", "pattern": "cube_fixp_buffer_overflow" },
+        { "type": "not_contains", "pattern": "cube_fixp_overflow" },
+        { "type": "not_contains", "pattern": "cube_instr_illegal" },
+        { "type": "not_contains", "pattern": "cube_l0a_wraparound" },
+        { "type": "not_contains", "pattern": "cube_l0b_wraparound" },
+        { "type": "not_contains", "pattern": "cube_l0c_overflow" },
+        { "type": "not_contains", "pattern": "cube_nan_inf" },
+        { "type": "not_contains", "pattern": "datacopy_burst_len_illegal" },
+        { "type": "not_contains", "pattern": "datacopy_burst_num_illegal" },
+        { "type": "not_contains", "pattern": "datacopypad_ub_overflow" },
+        { "type": "not_contains", "pattern": "dcache_biu_response" },
+        { "type": "not_contains", "pattern": "dvg_stack_overflow" },
+        { "type": "not_contains", "pattern": "enque_deque_mismatch" },
+        { "type": "not_contains", "pattern": "first_window_overflow" },
+        { "type": "not_contains", "pattern": "fixp_b4_misalign" },
+        { "type": "not_contains", "pattern": "fixp_ch_split_illegal" },
+        { "type": "not_contains", "pattern": "fixp_fbuf_overflow" },
+        { "type": "not_contains", "pattern": "fixp_l0c_rw_conflict" },
+        { "type": "not_contains", "pattern": "fixp_l1_write_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_addr_misalign" },
+        { "type": "not_contains", "pattern": "fixpipe_biu_error" },
+        { "type": "not_contains", "pattern": "fixpipe_cfg_illegal" },
+        { "type": "not_contains", "pattern": "fixpipe_gm_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_l0c_conflict" },
+        { "type": "not_contains", "pattern": "fixpipe_l1_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_l1_read_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_srcstride_overflow" },
+        { "type": "not_contains", "pattern": "flag_counter_overflow" },
+        { "type": "not_contains", "pattern": "flag_mismatch" },
+        { "type": "not_contains", "pattern": "fmap_size_illegal" },
+        { "type": "not_contains", "pattern": "gm_overflow" },
+        { "type": "not_contains", "pattern": "hset_counter_overflow" },
+        { "type": "not_contains", "pattern": "illegal_instr" },
+        { "type": "not_contains", "pattern": "l0a_rdwr_conflict" },
+        { "type": "not_contains", "pattern": "l0b_rdwr_conflict" },
+        { "type": "not_contains", "pattern": "l1_3d_size_illegal" },
+        { "type": "not_contains", "pattern": "l2_write_overflow" },
+        { "type": "not_contains", "pattern": "load2d_write_overflow" },
+        { "type": "not_contains", "pattern": "load3d_chn_size_illegal" },
+        { "type": "not_contains", "pattern": "load3d_illegal_stride" },
+        { "type": "not_contains", "pattern": "load3d_km_start_illegal" },
+        { "type": "not_contains", "pattern": "load3d_km_step_illegal" },
+        { "type": "not_contains", "pattern": "loaddata2d_read_overflow" },
+        { "type": "not_contains", "pattern": "loaddata3d_read_overflow" },
+        { "type": "not_contains", "pattern": "loaddata3d_write_overflow" },
+        { "type": "not_contains", "pattern": "mmad_illegal" },
+        { "type": "not_contains", "pattern": "mte1_write_overflow" },
+        { "type": "not_contains", "pattern": "mte_atomic_misalign" },
+        { "type": "not_contains", "pattern": "mte_biu_rdwr_resp" },
+        { "type": "not_contains", "pattern": "mte_gdma_read_overflow" },
+        { "type": "not_contains", "pattern": "mte_instr_illegal_cfg" },
+        { "type": "not_contains", "pattern": "mte_mov_read_overflow" },
+        { "type": "not_contains", "pattern": "mte_read_ub_overflow" },
+        { "type": "not_contains", "pattern": "mte_write_ub_overflow" },
+        { "type": "not_contains", "pattern": "nd2nz_overflow" },
+        { "type": "not_contains", "pattern": "padding_misconfig" },
+        { "type": "not_contains", "pattern": "scalar_addr_error" },
+        { "type": "not_contains", "pattern": "scalar_fp_div0" },
+        { "type": "not_contains", "pattern": "scalar_fp_nan_inf" },
+        { "type": "not_contains", "pattern": "scalar_fp_neg_sqrt" },
+        { "type": "not_contains", "pattern": "scalar_gm_addr_oob" },
+        { "type": "not_contains", "pattern": "scalar_int_neg_sqrt" },
+        { "type": "not_contains", "pattern": "scalar_ub_forbidden" },
+        { "type": "not_contains", "pattern": "tiling_overflow" },
+        { "type": "not_contains", "pattern": "tiling_ub_misalign" },
+        { "type": "not_contains", "pattern": "trap_instr" },
+        { "type": "not_contains", "pattern": "ub_addr_misalign" },
+        { "type": "not_contains", "pattern": "ub_capacity_overflow" },
+        { "type": "not_contains", "pattern": "vec_div0" },
+        { "type": "not_contains", "pattern": "vec_gm_addr_oob" },
+        { "type": "not_contains", "pattern": "vec_ln_nonpositive" },
+        { "type": "not_contains", "pattern": "vec_mask_count_illegal" },
+        { "type": "not_contains", "pattern": "vec_nan_inf" },
+        { "type": "not_contains", "pattern": "vec_neg_sqrt" },
+        { "type": "not_contains", "pattern": "vec_ub_forbidden_access" },
+        { "type": "not_contains", "pattern": "vec_ub_overflow" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "反向看护-性能采集与调优不触发",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "想采集我这个 Ascend C 算子在 NPU 上的 Cube/Vector 利用率指标，看看瓶颈在哪个流水线，该用什么工具、怎么做？",
+      "expected_output": "不应激活 tool-aicore-debug 技能：应说明这属于性能采集与分析需求，建议使用性能类工具/技能（如 npu-compute）采集 PipeUtilization 等指标并解读报告。允许在解释职责边界时提及 EZ9999 或 diagnose；不应查询错误码索引或输出 AI Core 异常候选诊断。 需结合实际执行轨迹确认未激活目标技能或执行诊断；not_contains 只是输出标记检查，不足以独立证明没有执行路由。",
+      "files": [],
+      "expectations": [
+        { "type": "not_contains", "pattern": "error_code_index" },
+        { "type": "not_contains", "pattern": "alloc_free_mismatch" },
+        { "type": "not_contains", "pattern": "atomic_dirty_cacheline" },
+        { "type": "not_contains", "pattern": "atomic_fixpipe_overflow" },
+        { "type": "not_contains", "pattern": "c0_idx_overflow" },
+        { "type": "not_contains", "pattern": "ccu_div0" },
+        { "type": "not_contains", "pattern": "cube_fixp_buffer_overflow" },
+        { "type": "not_contains", "pattern": "cube_fixp_overflow" },
+        { "type": "not_contains", "pattern": "cube_instr_illegal" },
+        { "type": "not_contains", "pattern": "cube_l0a_wraparound" },
+        { "type": "not_contains", "pattern": "cube_l0b_wraparound" },
+        { "type": "not_contains", "pattern": "cube_l0c_overflow" },
+        { "type": "not_contains", "pattern": "cube_nan_inf" },
+        { "type": "not_contains", "pattern": "datacopy_burst_len_illegal" },
+        { "type": "not_contains", "pattern": "datacopy_burst_num_illegal" },
+        { "type": "not_contains", "pattern": "datacopypad_ub_overflow" },
+        { "type": "not_contains", "pattern": "dcache_biu_response" },
+        { "type": "not_contains", "pattern": "dvg_stack_overflow" },
+        { "type": "not_contains", "pattern": "enque_deque_mismatch" },
+        { "type": "not_contains", "pattern": "first_window_overflow" },
+        { "type": "not_contains", "pattern": "fixp_b4_misalign" },
+        { "type": "not_contains", "pattern": "fixp_ch_split_illegal" },
+        { "type": "not_contains", "pattern": "fixp_fbuf_overflow" },
+        { "type": "not_contains", "pattern": "fixp_l0c_rw_conflict" },
+        { "type": "not_contains", "pattern": "fixp_l1_write_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_addr_misalign" },
+        { "type": "not_contains", "pattern": "fixpipe_biu_error" },
+        { "type": "not_contains", "pattern": "fixpipe_cfg_illegal" },
+        { "type": "not_contains", "pattern": "fixpipe_gm_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_l0c_conflict" },
+        { "type": "not_contains", "pattern": "fixpipe_l1_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_l1_read_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_srcstride_overflow" },
+        { "type": "not_contains", "pattern": "flag_counter_overflow" },
+        { "type": "not_contains", "pattern": "flag_mismatch" },
+        { "type": "not_contains", "pattern": "fmap_size_illegal" },
+        { "type": "not_contains", "pattern": "gm_overflow" },
+        { "type": "not_contains", "pattern": "hset_counter_overflow" },
+        { "type": "not_contains", "pattern": "illegal_instr" },
+        { "type": "not_contains", "pattern": "l0a_rdwr_conflict" },
+        { "type": "not_contains", "pattern": "l0b_rdwr_conflict" },
+        { "type": "not_contains", "pattern": "l1_3d_size_illegal" },
+        { "type": "not_contains", "pattern": "l2_write_overflow" },
+        { "type": "not_contains", "pattern": "load2d_write_overflow" },
+        { "type": "not_contains", "pattern": "load3d_chn_size_illegal" },
+        { "type": "not_contains", "pattern": "load3d_illegal_stride" },
+        { "type": "not_contains", "pattern": "load3d_km_start_illegal" },
+        { "type": "not_contains", "pattern": "load3d_km_step_illegal" },
+        { "type": "not_contains", "pattern": "loaddata2d_read_overflow" },
+        { "type": "not_contains", "pattern": "loaddata3d_read_overflow" },
+        { "type": "not_contains", "pattern": "loaddata3d_write_overflow" },
+        { "type": "not_contains", "pattern": "mmad_illegal" },
+        { "type": "not_contains", "pattern": "mte1_write_overflow" },
+        { "type": "not_contains", "pattern": "mte_atomic_misalign" },
+        { "type": "not_contains", "pattern": "mte_biu_rdwr_resp" },
+        { "type": "not_contains", "pattern": "mte_gdma_read_overflow" },
+        { "type": "not_contains", "pattern": "mte_instr_illegal_cfg" },
+        { "type": "not_contains", "pattern": "mte_mov_read_overflow" },
+        { "type": "not_contains", "pattern": "mte_read_ub_overflow" },
+        { "type": "not_contains", "pattern": "mte_write_ub_overflow" },
+        { "type": "not_contains", "pattern": "nd2nz_overflow" },
+        { "type": "not_contains", "pattern": "padding_misconfig" },
+        { "type": "not_contains", "pattern": "scalar_addr_error" },
+        { "type": "not_contains", "pattern": "scalar_fp_div0" },
+        { "type": "not_contains", "pattern": "scalar_fp_nan_inf" },
+        { "type": "not_contains", "pattern": "scalar_fp_neg_sqrt" },
+        { "type": "not_contains", "pattern": "scalar_gm_addr_oob" },
+        { "type": "not_contains", "pattern": "scalar_int_neg_sqrt" },
+        { "type": "not_contains", "pattern": "scalar_ub_forbidden" },
+        { "type": "not_contains", "pattern": "tiling_overflow" },
+        { "type": "not_contains", "pattern": "tiling_ub_misalign" },
+        { "type": "not_contains", "pattern": "trap_instr" },
+        { "type": "not_contains", "pattern": "ub_addr_misalign" },
+        { "type": "not_contains", "pattern": "ub_capacity_overflow" },
+        { "type": "not_contains", "pattern": "vec_div0" },
+        { "type": "not_contains", "pattern": "vec_gm_addr_oob" },
+        { "type": "not_contains", "pattern": "vec_ln_nonpositive" },
+        { "type": "not_contains", "pattern": "vec_mask_count_illegal" },
+        { "type": "not_contains", "pattern": "vec_nan_inf" },
+        { "type": "not_contains", "pattern": "vec_neg_sqrt" },
+        { "type": "not_contains", "pattern": "vec_ub_forbidden_access" },
+        { "type": "not_contains", "pattern": "vec_ub_overflow" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "反向看护-Host 侧 runtime 报错不触发",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我的算子工程调用 aclrtMalloc 接口返回 207001，Host 侧 CANN runtime 直接报错，还没跑到 device 侧，帮我看看是什么原因？",
+      "expected_output": "不应激活 tool-aicore-debug 技能（AI Core 检测器不覆盖 Host 侧 API 错误）：应按 Host/runtime 侧排查路径（内存申请大小、设备可用内存、环境配置）处理。允许解释 EZ9999、diagnose 或 Fixpipe 的职责边界；不应查询错误码索引或输出 AI Core 异常候选诊断。 需结合实际执行轨迹确认未激活目标技能或执行诊断；not_contains 只是输出标记检查，不足以独立证明没有执行路由。",
+      "files": [],
+      "expectations": [
+        { "type": "not_contains", "pattern": "error_code_index" },
+        { "type": "not_contains", "pattern": "alloc_free_mismatch" },
+        { "type": "not_contains", "pattern": "atomic_dirty_cacheline" },
+        { "type": "not_contains", "pattern": "atomic_fixpipe_overflow" },
+        { "type": "not_contains", "pattern": "c0_idx_overflow" },
+        { "type": "not_contains", "pattern": "ccu_div0" },
+        { "type": "not_contains", "pattern": "cube_fixp_buffer_overflow" },
+        { "type": "not_contains", "pattern": "cube_fixp_overflow" },
+        { "type": "not_contains", "pattern": "cube_instr_illegal" },
+        { "type": "not_contains", "pattern": "cube_l0a_wraparound" },
+        { "type": "not_contains", "pattern": "cube_l0b_wraparound" },
+        { "type": "not_contains", "pattern": "cube_l0c_overflow" },
+        { "type": "not_contains", "pattern": "cube_nan_inf" },
+        { "type": "not_contains", "pattern": "datacopy_burst_len_illegal" },
+        { "type": "not_contains", "pattern": "datacopy_burst_num_illegal" },
+        { "type": "not_contains", "pattern": "datacopypad_ub_overflow" },
+        { "type": "not_contains", "pattern": "dcache_biu_response" },
+        { "type": "not_contains", "pattern": "dvg_stack_overflow" },
+        { "type": "not_contains", "pattern": "enque_deque_mismatch" },
+        { "type": "not_contains", "pattern": "first_window_overflow" },
+        { "type": "not_contains", "pattern": "fixp_b4_misalign" },
+        { "type": "not_contains", "pattern": "fixp_ch_split_illegal" },
+        { "type": "not_contains", "pattern": "fixp_fbuf_overflow" },
+        { "type": "not_contains", "pattern": "fixp_l0c_rw_conflict" },
+        { "type": "not_contains", "pattern": "fixp_l1_write_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_addr_misalign" },
+        { "type": "not_contains", "pattern": "fixpipe_biu_error" },
+        { "type": "not_contains", "pattern": "fixpipe_cfg_illegal" },
+        { "type": "not_contains", "pattern": "fixpipe_gm_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_l0c_conflict" },
+        { "type": "not_contains", "pattern": "fixpipe_l1_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_l1_read_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_srcstride_overflow" },
+        { "type": "not_contains", "pattern": "flag_counter_overflow" },
+        { "type": "not_contains", "pattern": "flag_mismatch" },
+        { "type": "not_contains", "pattern": "fmap_size_illegal" },
+        { "type": "not_contains", "pattern": "gm_overflow" },
+        { "type": "not_contains", "pattern": "hset_counter_overflow" },
+        { "type": "not_contains", "pattern": "illegal_instr" },
+        { "type": "not_contains", "pattern": "l0a_rdwr_conflict" },
+        { "type": "not_contains", "pattern": "l0b_rdwr_conflict" },
+        { "type": "not_contains", "pattern": "l1_3d_size_illegal" },
+        { "type": "not_contains", "pattern": "l2_write_overflow" },
+        { "type": "not_contains", "pattern": "load2d_write_overflow" },
+        { "type": "not_contains", "pattern": "load3d_chn_size_illegal" },
+        { "type": "not_contains", "pattern": "load3d_illegal_stride" },
+        { "type": "not_contains", "pattern": "load3d_km_start_illegal" },
+        { "type": "not_contains", "pattern": "load3d_km_step_illegal" },
+        { "type": "not_contains", "pattern": "loaddata2d_read_overflow" },
+        { "type": "not_contains", "pattern": "loaddata3d_read_overflow" },
+        { "type": "not_contains", "pattern": "loaddata3d_write_overflow" },
+        { "type": "not_contains", "pattern": "mmad_illegal" },
+        { "type": "not_contains", "pattern": "mte1_write_overflow" },
+        { "type": "not_contains", "pattern": "mte_atomic_misalign" },
+        { "type": "not_contains", "pattern": "mte_biu_rdwr_resp" },
+        { "type": "not_contains", "pattern": "mte_gdma_read_overflow" },
+        { "type": "not_contains", "pattern": "mte_instr_illegal_cfg" },
+        { "type": "not_contains", "pattern": "mte_mov_read_overflow" },
+        { "type": "not_contains", "pattern": "mte_read_ub_overflow" },
+        { "type": "not_contains", "pattern": "mte_write_ub_overflow" },
+        { "type": "not_contains", "pattern": "nd2nz_overflow" },
+        { "type": "not_contains", "pattern": "padding_misconfig" },
+        { "type": "not_contains", "pattern": "scalar_addr_error" },
+        { "type": "not_contains", "pattern": "scalar_fp_div0" },
+        { "type": "not_contains", "pattern": "scalar_fp_nan_inf" },
+        { "type": "not_contains", "pattern": "scalar_fp_neg_sqrt" },
+        { "type": "not_contains", "pattern": "scalar_gm_addr_oob" },
+        { "type": "not_contains", "pattern": "scalar_int_neg_sqrt" },
+        { "type": "not_contains", "pattern": "scalar_ub_forbidden" },
+        { "type": "not_contains", "pattern": "tiling_overflow" },
+        { "type": "not_contains", "pattern": "tiling_ub_misalign" },
+        { "type": "not_contains", "pattern": "trap_instr" },
+        { "type": "not_contains", "pattern": "ub_addr_misalign" },
+        { "type": "not_contains", "pattern": "ub_capacity_overflow" },
+        { "type": "not_contains", "pattern": "vec_div0" },
+        { "type": "not_contains", "pattern": "vec_gm_addr_oob" },
+        { "type": "not_contains", "pattern": "vec_ln_nonpositive" },
+        { "type": "not_contains", "pattern": "vec_mask_count_illegal" },
+        { "type": "not_contains", "pattern": "vec_nan_inf" },
+        { "type": "not_contains", "pattern": "vec_neg_sqrt" },
+        { "type": "not_contains", "pattern": "vec_ub_forbidden_access" },
+        { "type": "not_contains", "pattern": "vec_ub_overflow" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "反向看护-编译失败不触发",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我的 Ascend C 算子还没上板，编译阶段就报错了，提示某个头文件找不到，怎么解决？",
+      "expected_output": "不应激活 tool-aicore-debug 技能：应说明编译期错误与 AI Core 运行时异常无关，按编译环境与头文件包含路径排查（如 CANN 环境变量、include 路径配置）。允许解释 EZ9999、diagnose 或 Fixpipe 的职责边界；不应查询错误码索引或输出 AI Core 异常候选诊断。 需结合实际执行轨迹确认未激活目标技能或执行诊断；not_contains 只是输出标记检查，不足以独立证明没有执行路由。",
+      "files": [],
+      "expectations": [
+        { "type": "not_contains", "pattern": "error_code_index" },
+        { "type": "not_contains", "pattern": "alloc_free_mismatch" },
+        { "type": "not_contains", "pattern": "atomic_dirty_cacheline" },
+        { "type": "not_contains", "pattern": "atomic_fixpipe_overflow" },
+        { "type": "not_contains", "pattern": "c0_idx_overflow" },
+        { "type": "not_contains", "pattern": "ccu_div0" },
+        { "type": "not_contains", "pattern": "cube_fixp_buffer_overflow" },
+        { "type": "not_contains", "pattern": "cube_fixp_overflow" },
+        { "type": "not_contains", "pattern": "cube_instr_illegal" },
+        { "type": "not_contains", "pattern": "cube_l0a_wraparound" },
+        { "type": "not_contains", "pattern": "cube_l0b_wraparound" },
+        { "type": "not_contains", "pattern": "cube_l0c_overflow" },
+        { "type": "not_contains", "pattern": "cube_nan_inf" },
+        { "type": "not_contains", "pattern": "datacopy_burst_len_illegal" },
+        { "type": "not_contains", "pattern": "datacopy_burst_num_illegal" },
+        { "type": "not_contains", "pattern": "datacopypad_ub_overflow" },
+        { "type": "not_contains", "pattern": "dcache_biu_response" },
+        { "type": "not_contains", "pattern": "dvg_stack_overflow" },
+        { "type": "not_contains", "pattern": "enque_deque_mismatch" },
+        { "type": "not_contains", "pattern": "first_window_overflow" },
+        { "type": "not_contains", "pattern": "fixp_b4_misalign" },
+        { "type": "not_contains", "pattern": "fixp_ch_split_illegal" },
+        { "type": "not_contains", "pattern": "fixp_fbuf_overflow" },
+        { "type": "not_contains", "pattern": "fixp_l0c_rw_conflict" },
+        { "type": "not_contains", "pattern": "fixp_l1_write_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_addr_misalign" },
+        { "type": "not_contains", "pattern": "fixpipe_biu_error" },
+        { "type": "not_contains", "pattern": "fixpipe_cfg_illegal" },
+        { "type": "not_contains", "pattern": "fixpipe_gm_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_l0c_conflict" },
+        { "type": "not_contains", "pattern": "fixpipe_l1_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_l1_read_overflow" },
+        { "type": "not_contains", "pattern": "fixpipe_srcstride_overflow" },
+        { "type": "not_contains", "pattern": "flag_counter_overflow" },
+        { "type": "not_contains", "pattern": "flag_mismatch" },
+        { "type": "not_contains", "pattern": "fmap_size_illegal" },
+        { "type": "not_contains", "pattern": "gm_overflow" },
+        { "type": "not_contains", "pattern": "hset_counter_overflow" },
+        { "type": "not_contains", "pattern": "illegal_instr" },
+        { "type": "not_contains", "pattern": "l0a_rdwr_conflict" },
+        { "type": "not_contains", "pattern": "l0b_rdwr_conflict" },
+        { "type": "not_contains", "pattern": "l1_3d_size_illegal" },
+        { "type": "not_contains", "pattern": "l2_write_overflow" },
+        { "type": "not_contains", "pattern": "load2d_write_overflow" },
+        { "type": "not_contains", "pattern": "load3d_chn_size_illegal" },
+        { "type": "not_contains", "pattern": "load3d_illegal_stride" },
+        { "type": "not_contains", "pattern": "load3d_km_start_illegal" },
+        { "type": "not_contains", "pattern": "load3d_km_step_illegal" },
+        { "type": "not_contains", "pattern": "loaddata2d_read_overflow" },
+        { "type": "not_contains", "pattern": "loaddata3d_read_overflow" },
+        { "type": "not_contains", "pattern": "loaddata3d_write_overflow" },
+        { "type": "not_contains", "pattern": "mmad_illegal" },
+        { "type": "not_contains", "pattern": "mte1_write_overflow" },
+        { "type": "not_contains", "pattern": "mte_atomic_misalign" },
+        { "type": "not_contains", "pattern": "mte_biu_rdwr_resp" },
+        { "type": "not_contains", "pattern": "mte_gdma_read_overflow" },
+        { "type": "not_contains", "pattern": "mte_instr_illegal_cfg" },
+        { "type": "not_contains", "pattern": "mte_mov_read_overflow" },
+        { "type": "not_contains", "pattern": "mte_read_ub_overflow" },
+        { "type": "not_contains", "pattern": "mte_write_ub_overflow" },
+        { "type": "not_contains", "pattern": "nd2nz_overflow" },
+        { "type": "not_contains", "pattern": "padding_misconfig" },
+        { "type": "not_contains", "pattern": "scalar_addr_error" },
+        { "type": "not_contains", "pattern": "scalar_fp_div0" },
+        { "type": "not_contains", "pattern": "scalar_fp_nan_inf" },
+        { "type": "not_contains", "pattern": "scalar_fp_neg_sqrt" },
+        { "type": "not_contains", "pattern": "scalar_gm_addr_oob" },
+        { "type": "not_contains", "pattern": "scalar_int_neg_sqrt" },
+        { "type": "not_contains", "pattern": "scalar_ub_forbidden" },
+        { "type": "not_contains", "pattern": "tiling_overflow" },
+        { "type": "not_contains", "pattern": "tiling_ub_misalign" },
+        { "type": "not_contains", "pattern": "trap_instr" },
+        { "type": "not_contains", "pattern": "ub_addr_misalign" },
+        { "type": "not_contains", "pattern": "ub_capacity_overflow" },
+        { "type": "not_contains", "pattern": "vec_div0" },
+        { "type": "not_contains", "pattern": "vec_gm_addr_oob" },
+        { "type": "not_contains", "pattern": "vec_ln_nonpositive" },
+        { "type": "not_contains", "pattern": "vec_mask_count_illegal" },
+        { "type": "not_contains", "pattern": "vec_nan_inf" },
+        { "type": "not_contains", "pattern": "vec_neg_sqrt" },
+        { "type": "not_contains", "pattern": "vec_ub_forbidden_access" },
+        { "type": "not_contains", "pattern": "vec_ub_overflow" }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "未知错误码回退关键词",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "加载 tool-aicore-debug。error_code=987654，keyword=DataCopyPad，无源码路径。请说明候选与路由依据。不需要执行任何工具调用。",
+      "expected_output": "说明错误码未收录，回退显式关键词 DataCopyPad，候选 datacopypad_ub_overflow；按 brief 返回，不声称已扫描或修复，不因未知码直接给出空候选。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "datacopypad_ub_overflow" }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "padding 错误码与超时组合优先路由",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "加载 tool-aicore-debug。error_code=41，exit_code=124，stderr 为空，无源码路径。请说明优先路由结果。不需要执行任何工具调用。",
+      "expected_output": "优先返回 padding_misconfig，说明 kernel_may_hang=true，不展开全部挂起候选；保留错误码与进程退出码独立的解释，未取得源码不确诊参数根因。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "padding_misconfig" },
+        { "type": "contains", "pattern": "kernel_may_hang" }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "padding 奇数差值与不可行区间",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "请根据 tool-aicore-debug 的 padding 修复约定分析：H=W=12、filterH=filterW=15、requestedPad=2。场景 A 的 maxAllowedPad=10，场景 B 的 maxAllowedPad=1。分别计算所需 padding 下限，判断 requestedPad 是否有效，以及合法 padding 区间是否可行。先分别按固定格式输出一行结论：A: min_pad=<整数>; requested_valid=<true或false>; feasible=<true或false>，B 行格式相同。使用上述英文键、字段顺序及分号加空格分隔，每个场景的结论只输出一次；之后用中文自由解释依据，不重复引用其他版本的结论行。只分析这些参数，不调用工具或修改文件。",
+      "expected_output": "结论行为 A: min_pad=2; requested_valid=true; feasible=true 和 B: min_pad=2; requested_valid=false; feasible=false。语义评审必须确认下限按 (15-12)/2 向上取整得到 2；A 中原 padding 有效，不能用 min 截成 1；B 中下限超过上限，配置不可行，应返回失败，不能对倒置区间 clamp。任何参数调整须保持目标语义；若解释与结论行矛盾，即使字符串断言通过也判失败。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "A: min_pad=2; requested_valid=true; feasible=true" },
+        { "type": "contains", "pattern": "B: min_pad=2; requested_valid=false; feasible=false" },
+        { "type": "not_contains", "pattern": "A: min_pad=2; requested_valid=false" },
+        { "type": "not_contains", "pattern": "B: min_pad=2; requested_valid=true" },
+        { "type": "not_contains", "pattern": "A: min_pad=2; requested_valid=true; feasible=false" },
+        { "type": "not_contains", "pattern": "B: min_pad=2; requested_valid=false; feasible=true" }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "普通 DataCopy 零 gap 与单块跨度",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "请根据 tool-aicore-debug 检查普通 GM↔UB DataCopy(..., DataCopyParams) 的 UB 侧参数，offsetBytes=0：A 为 blockCount=2、blockLen=1、gap=0、capacityBytes=64；B 为 blockCount=1、blockLen=1、gap=65535、capacityBytes=32；C 与 A 相同但 capacityBytes=63。分别计算跨度并判断这侧边界。先分别按固定格式输出一行结论：A: span_bytes=<整数>; capacity_bytes=<整数>; in_bounds=<true或false>，B/C 行格式相同。使用上述英文键、字段顺序及分号加空格分隔，每个场景的结论只输出一次；之后用中文自由解释公式和边界，不重复引用其他版本的结论行。不调用工具，不修改参数。",
+      "expected_output": "结论行为 A: span_bytes=64; capacity_bytes=64; in_bounds=true，B: span_bytes=32; capacity_bytes=32; in_bounds=true，C: span_bytes=64; capacity_bytes=63; in_bounds=false。语义评审必须确认使用 (count*len+(count-1)*gap)*32，零 gap 合法，单块 gap 不影响跨度；C 的实际跨度是 64 而不是容量 63。GM 侧需另查，不能宣称整体算子安全，也不能截短 count/len/gap。若解释与结论行矛盾，即使字符串断言通过也判失败。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "A: span_bytes=64; capacity_bytes=64; in_bounds=true" },
+        { "type": "contains", "pattern": "B: span_bytes=32; capacity_bytes=32; in_bounds=true" },
+        { "type": "contains", "pattern": "C: span_bytes=64; capacity_bytes=63; in_bounds=false" },
+        { "type": "not_contains", "pattern": "A: span_bytes=64; capacity_bytes=64; in_bounds=false" },
+        { "type": "not_contains", "pattern": "B: span_bytes=32; capacity_bytes=32; in_bounds=false" },
+        { "type": "not_contains", "pattern": "C: span_bytes=64; capacity_bytes=63; in_bounds=true" }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "仅报错原文时提取十进制 errcode",
+      "config": {
+        "max_tokens": 100000,
+        "max_tokens_by_model": {
+          "deepseek-v4-flash": 120000,
+          "glm-5": 110000
+        },
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "加载 tool-aicore-debug。只提供 error_str=\"EZ9999 AI Core Error, errcode: 141\"，没有显式 error_code 或源码路径。请说明路由候选。不需要执行任何工具调用。",
+      "expected_output": "先从独立十进制 errcode 字段提取 141，再路由到 fixpipe_gm_overflow 与 atomic_fixpipe_overflow，而不是只用 EZ9999 泛词扩展其他候选。说明缺少源码未做规则匹配；不能把 retCode、hex 位图或三元组按此方式转换。",
+      "files": [],
+      "expectations": [
+        { "type": "contains", "pattern": "fixpipe_gm_overflow" },
+        { "type": "contains", "pattern": "atomic_fixpipe_overflow" }
+      ]
+    }
+  ]
+}
