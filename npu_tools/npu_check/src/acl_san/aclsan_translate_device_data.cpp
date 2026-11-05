@@ -168,7 +168,7 @@ private:
             internalInputs,
             readOnlyBinaryRanges,
             parsed.record.instrId,
-            parsed.physicalCoreCount};
+            parsed.physicalCoreSlotCount};
         MemoryCbdataResult result =
             MemoryFieldToCbdataConverter{context, registerState}.Convert(MemoryInstructionField{params});
         const RegisterDependencyMask dependencies =

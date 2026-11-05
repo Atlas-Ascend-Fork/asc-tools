@@ -47,7 +47,7 @@ struct PreparedTraceLaunch {
     bool instrumented = false;
     uint64_t launchId = 0;
     uint32_t blockCount = 0;
-    uint32_t physicalCoreCount = 0;
+    uint32_t physicalCoreSlotCount = 0;
     uint32_t deviceId = 0;
     // 隐藏参数 memInfo 在 kernel 连续参数布局中的字节偏移 例如[0~23为原始参数,24~31为memInfo的地址值]
     uint32_t traceArgumentOffset = 0;

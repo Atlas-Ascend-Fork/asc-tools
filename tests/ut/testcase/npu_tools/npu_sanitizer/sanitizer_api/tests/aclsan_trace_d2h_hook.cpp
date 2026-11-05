@@ -225,10 +225,10 @@ aclError OriginalLaunch(
     auto* bytes = static_cast<uint8_t*>(deviceBuffer);
     auto* header = reinterpret_cast<aclsan::AclsanTraceBufferHeader*>(bytes);
     if (header->magic != aclsan::ASCSAN_TRACE_BUFFER_MAGIC || header->blockCount != blocks ||
-        header->physicalCoreCount != 6U) {
+        header->physicalCoreSlotCount != aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return ACL_ERROR_INVALID_PARAM;
     }
-    constexpr uint32_t phyCoreId = 1U;
+    constexpr uint32_t phyCoreId = aclsan::ASCSAN_AIC_CORES_PER_DIE;
     const uint32_t sliceIndex = phyCoreId;
     auto* slice = reinterpret_cast<aclsan::AclsanTraceSliceHeader*>(
         bytes + sizeof(*header) + static_cast<size_t>(sliceIndex) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE);
@@ -476,9 +476,9 @@ int main(int argc, char** argv)
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
     CHECK(g_records.size() == 2);
     CHECK(g_records[0].launchId == 1);
-    CHECK(g_records[0].instrExecId == aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 1U);
+    CHECK(g_records[0].instrExecId == aclsan::ASCSAN_AIC_CORES_PER_DIE * aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 1U);
     CHECK(g_records[0].deviceId == 3);
-    CHECK(g_records[0].phyCoreId == 1);
+    CHECK(g_records[0].phyCoreId == aclsan::ASCSAN_AIC_CORES_PER_DIE);
     CHECK(g_records[0].blockId == 1);
     CHECK(g_records[0].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
     CHECK(g_records[0].pc == 0x1234);
@@ -486,9 +486,9 @@ int main(int argc, char** argv)
     CHECK(g_records[0].dstPipe == 3);
     CHECK(g_records[0].objectId == 7);
     CHECK(g_records[1].launchId == 1);
-    CHECK(g_records[1].instrExecId == aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 2U);
+    CHECK(g_records[1].instrExecId == aclsan::ASCSAN_AIC_CORES_PER_DIE * aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 2U);
     CHECK(g_records[1].deviceId == 3);
-    CHECK(g_records[1].phyCoreId == 1);
+    CHECK(g_records[1].phyCoreId == aclsan::ASCSAN_AIC_CORES_PER_DIE);
     CHECK(g_records[1].blockId == 1);
     CHECK(g_records[1].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
     CHECK(g_records[1].pc == 0x2234);

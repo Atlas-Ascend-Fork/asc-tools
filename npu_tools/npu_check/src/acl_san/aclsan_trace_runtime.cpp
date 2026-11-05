@@ -46,7 +46,7 @@ struct PendingTrace {
     const void* stream = nullptr;
     void* deviceBuffer = nullptr;
     uint32_t blockCount = 0;
-    uint32_t physicalCoreCount = 0;
+    uint32_t physicalCoreSlotCount = 0;
     uint32_t deviceId = 0;
     const aclsan::DeviceInstructionDecoder* decoder = nullptr;
     std::vector<uint8_t> hostBuffer;
@@ -120,23 +120,6 @@ std::vector<InternalMemoryRange> ResolveReadOnlyBinaryRanges(aclrtFuncHandle fun
 }
 
 constexpr bool StrictModeEnabled() { return true; }
-
-bool QueryPhysicalCoreCount(uint32_t deviceId, uint32_t& physicalCoreCount)
-{
-    const auto getDeviceInfo =
-        GetOriginalRuntimeFunction<aclrtGetDeviceInfoFunc>(ACL_RT_API_aclrtGetDeviceInfo, "aclrtGetDeviceInfo");
-    int64_t cubeCoreCount = 0;
-    int64_t vectorCoreCount = 0;
-    if (getDeviceInfo(deviceId, ACL_DEV_ATTR_CUBE_CORE_NUM, &cubeCoreCount) != ACL_SUCCESS ||
-        getDeviceInfo(deviceId, ACL_DEV_ATTR_VECTOR_CORE_NUM, &vectorCoreCount) != ACL_SUCCESS) {
-        return false;
-    }
-    ASCTOOL_DEBUG(
-        "[trace] Device %u core count: cube=%lld vector=%lld", deviceId, static_cast<long long>(cubeCoreCount),
-        static_cast<long long>(vectorCoreCount));
-    physicalCoreCount = static_cast<uint32_t>(cubeCoreCount + vectorCoreCount);
-    return aclsan::IsTracePhysicalCoreTopologyValid(physicalCoreCount);
-}
 
 uint64_t AllocateLaunchId()
 {
@@ -262,7 +245,7 @@ bool DispatchTraceSnapshot(PendingTrace& pending, bool executionComplete, TraceC
     }
 
     TraceBufferParseResult parsed = ParseTraceBuffer(
-        pending.hostBuffer.data(), pending.hostBuffer.size(), pending.physicalCoreCount, pending.blockCount,
+        pending.hostBuffer.data(), pending.hostBuffer.size(), pending.physicalCoreSlotCount, pending.blockCount,
         pending.launchId, pending.deviceId);
     if (!parsed.ok) {
         ASCTOOL_ERROR(
@@ -277,10 +260,10 @@ bool DispatchTraceSnapshot(PendingTrace& pending, bool executionComplete, TraceC
         ++collection.completeLaunchCount;
     }
 
-    if (pending.dispatchedRecordCounts.size() != pending.physicalCoreCount) {
-        pending.dispatchedRecordCounts.assign(pending.physicalCoreCount, 0U);
+    if (pending.dispatchedRecordCounts.size() != pending.physicalCoreSlotCount) {
+        pending.dispatchedRecordCounts.assign(pending.physicalCoreSlotCount, 0U);
     }
-    std::vector<uint32_t> observedRecordCounts(pending.physicalCoreCount, 0U);
+    std::vector<uint32_t> observedRecordCounts(pending.physicalCoreSlotCount, 0U);
     std::vector<ParsedTraceRecord> newRecords;
     try {
         newRecords.reserve(parsed.records.size());
@@ -303,7 +286,7 @@ bool DispatchTraceSnapshot(PendingTrace& pending, bool executionComplete, TraceC
             static_cast<unsigned long long>(pending.launchId));
         return false;
     }
-    for (uint32_t phyCoreId = 0; phyCoreId < pending.physicalCoreCount; ++phyCoreId) {
+    for (uint32_t phyCoreId = 0; phyCoreId < pending.physicalCoreSlotCount; ++phyCoreId) {
         if (observedRecordCounts[phyCoreId] < pending.dispatchedRecordCounts[phyCoreId]) {
             ASCTOOL_ERROR(
                 "acl_san trace: launch=%llu physical core %u record count regressed from %u to %u",
@@ -315,10 +298,10 @@ bool DispatchTraceSnapshot(PendingTrace& pending, bool executionComplete, TraceC
     pending.dispatchedRecordCounts = std::move(observedRecordCounts);
 
     ASCTOOL_INFO(
-        "acl_san trace: launch=%llu status=%s records=%zu newRecords=%zu dropped=%llu physicalCores=%u blocks=%u",
+        "acl_san trace: launch=%llu status=%s records=%zu newRecords=%zu dropped=%llu physicalCoreSlots=%u blocks=%u",
         static_cast<unsigned long long>(pending.launchId), executionComplete ? "complete" : "snapshot",
         parsed.records.size(), newRecords.size(), static_cast<unsigned long long>(parsed.overflowCount),
-        pending.physicalCoreCount, pending.blockCount);
+        pending.physicalCoreSlotCount, pending.blockCount);
     if (!newRecords.empty() && pending.decoder != nullptr) {
         DispatchTraceRecords(
             newRecords, *pending.decoder, &pending.hostInputs, pending.registerState.get(),
@@ -357,11 +340,9 @@ aclError ResolveLaunchContext(PreparedTraceLaunch& prepared) noexcept
         return ACL_ERROR_RT_INTERNAL_ERROR;
     }
     prepared.deviceId = static_cast<uint32_t>(deviceId);
-    if (!QueryPhysicalCoreCount(prepared.deviceId, prepared.physicalCoreCount)) {
-        ASCTOOL_ERROR(
-            "acl_san trace: cannot query a supported physical core topology for Device %u", prepared.deviceId);
-        return ACL_ERROR_RT_INTERNAL_ERROR;
-    }
+    // dav-3510 即使只有 96 个可用核，物理 ID 空间仍保留 108 个槽位；
+    // trace 按物理 ID 索引 slice，不能用 aclrt 返回的可用核数缩减布局。
+    prepared.physicalCoreSlotCount = aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT;
     return ACL_SUCCESS;
 }
 
@@ -585,7 +566,7 @@ aclError PrepareTraceLaunch(
 
         std::string error;
         if (!InitializeTraceBuffer(
-                prepared.hostBuffer, prepared.physicalCoreCount, blockCount, prepared.launchId, error)) {
+                prepared.hostBuffer, prepared.physicalCoreSlotCount, blockCount, prepared.launchId, error)) {
             ASCTOOL_ERROR("acl_san trace: cannot initialize launch buffer: %s", error.c_str());
             StoreHiddenPointer(prepared, argumentMode);
             return StrictModeEnabled() ? ACL_ERROR_FAILURE : ACL_SUCCESS;
@@ -731,7 +712,7 @@ void CompleteTraceLaunch(
             stream,
             prepared.deviceBuffer,
             prepared.blockCount,
-            prepared.physicalCoreCount,
+            prepared.physicalCoreSlotCount,
             prepared.deviceId,
             prepared.decoder,
             std::move(prepared.hostBuffer),
@@ -740,7 +721,7 @@ void CompleteTraceLaunch(
             std::move(prepared.placeholders),
             std::move(prepared.hostInputs),
             std::make_unique<dav3510::Dav3510RegisterStateManager>(prepared.launchId),
-            std::vector<uint32_t>(prepared.physicalCoreCount, 0U),
+            std::vector<uint32_t>(prepared.physicalCoreSlotCount, 0U),
             parameterBytes,
             std::move(prepared.readOnlyBinaryRanges)};
         TraceRuntimeState& state = State();

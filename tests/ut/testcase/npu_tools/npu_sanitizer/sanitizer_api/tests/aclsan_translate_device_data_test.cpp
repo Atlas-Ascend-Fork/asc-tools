@@ -839,7 +839,7 @@ void TestTranslatesLocalMemoryTransfersToOwnedAccesses()
     for (const uint64_t instructionId : LOCAL_INSTRUCTION_IDS) {
         SCOPED_TRACE(instructionId);
         auto trace = parsed;
-        trace.physicalCoreCount = 108;
+        trace.physicalCoreSlotCount = 108;
         auto& record = trace.record;
         record.instrId = instructionId;
         record.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;

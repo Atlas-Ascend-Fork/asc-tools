@@ -352,7 +352,7 @@ std::optional<MemoryCbdataContext> ContextForUbuf(const MemoryCbdataContext& con
     if (context.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
         return context;
     }
-    const uint32_t core = AivPhysicalCoreForAic(context.coreId, subBlockId, context.physicalCoreCount);
+    const uint32_t core = AivPhysicalCoreForAic(context.coreId, subBlockId);
     const uint32_t block = AivBlockIdForAic(context.blockId, subBlockId);
     if (core == UINT32_MAX || block == UINT32_MAX) {
         return std::nullopt;
@@ -373,7 +373,7 @@ std::optional<MemoryCbdataContext> ContextForL1(const MemoryCbdataContext& conte
     if (context.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
         return context;
     }
-    const uint32_t core = AicPhysicalCoreForAiv(context.coreId, context.physicalCoreCount);
+    const uint32_t core = AicPhysicalCoreForAiv(context.coreId);
     if (core == UINT32_MAX) {
         return std::nullopt;
     }

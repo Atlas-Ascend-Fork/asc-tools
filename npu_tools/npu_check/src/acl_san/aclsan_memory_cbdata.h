@@ -81,7 +81,7 @@ struct MemoryCbdataContext {
     const std::vector<InternalMemoryRange>* internalInputs = nullptr;
     const std::vector<InternalMemoryRange>* readOnlyBinaryRanges = nullptr;
     uint32_t instructionId = 0;
-    uint32_t physicalCoreCount = 0;
+    uint32_t physicalCoreSlotCount = 0;
 };
 
 using MemoryCbdata = std::vector<AclsanDeviceMemoryAccessData>;

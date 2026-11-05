@@ -21,11 +21,17 @@ constexpr uint64_t ASCSAN_SCALAR_ADDRESS_CONTEXT_V1 = 0x5343414C41520001ULL;
 
 constexpr uint64_t ASCSAN_TRACE_BUFFER_MAGIC = 0x41534353414E3038ULL;
 constexpr size_t ASCSAN_TRACE_BYTES_PER_CORE = 1024U * 1024U;
-// dav-3510 has two dies.  Each die numbers its physical cores as one AIC
-// partition followed by two AIV partitions.  The global order is therefore
-// AIC:AIV | AIC:AIV, with a 1:2 ratio inside each die.
+// dav-3510 的 108 个物理核槽位均分到两个 die，每个 die 有 108 / 2 = 54 个槽位。
+// 每个 die 内 AIC:AIV = 1:2，前 54 / (1 + 2) = 18 个槽位为 AIC，后 36 个为 AIV。
+// 全局物理 ID 分布：die 0 为 AIC [0, 17]、AIV [18, 53]；
+//                    die 1 为 AIC [54, 71]、AIV [72, 107]。
+// dav-3510 因核禁用导致的可用核数变化不影响物理 ID 和拓扑布局；
+// 禁用核对应的槽位保留为空洞，不重新编号或调整分区边界。
+constexpr uint32_t ASCSAN_PHYSICAL_CORE_SLOT_COUNT = 108U;
 constexpr uint32_t ASCSAN_PHYSICAL_CORE_PART_COUNT = 2U;
 constexpr uint32_t ASCSAN_AIC_CORE_RATIO_DENOMINATOR = 3U;
+constexpr uint32_t ASCSAN_CORES_PER_DIE = ASCSAN_PHYSICAL_CORE_SLOT_COUNT / ASCSAN_PHYSICAL_CORE_PART_COUNT;
+constexpr uint32_t ASCSAN_AIC_CORES_PER_DIE = ASCSAN_CORES_PER_DIE / ASCSAN_AIC_CORE_RATIO_DENOMINATOR;
 constexpr uint32_t ASCSAN_PHYSICAL_CORE_TOPOLOGY_UNIT =
     ASCSAN_PHYSICAL_CORE_PART_COUNT * ASCSAN_AIC_CORE_RATIO_DENOMINATOR;
 
@@ -36,49 +42,38 @@ enum class DeviceInstructionCategory : uint16_t {
     RegisterState,
 };
 
-constexpr bool IsTracePhysicalCoreTopologyValid(uint32_t physicalCoreCount)
+constexpr bool IsAicPhysicalCore(uint32_t phyCoreId)
 {
-    return physicalCoreCount != 0U && physicalCoreCount % ASCSAN_PHYSICAL_CORE_TOPOLOGY_UNIT == 0U;
-}
-
-constexpr bool IsAicPhysicalCore(uint32_t phyCoreId, uint32_t physicalCoreCount)
-{
-    if (!IsTracePhysicalCoreTopologyValid(physicalCoreCount) || phyCoreId >= physicalCoreCount) {
+    if (phyCoreId >= ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return false;
     }
-    const uint32_t coresPerDie = physicalCoreCount / ASCSAN_PHYSICAL_CORE_PART_COUNT;
-    const uint32_t aicCoresPerDie = coresPerDie / ASCSAN_AIC_CORE_RATIO_DENOMINATOR;
-    const uint32_t dieLocalCoreId = phyCoreId % coresPerDie;
-    return dieLocalCoreId < aicCoresPerDie;
+    const uint32_t dieLocalCoreId = phyCoreId % ASCSAN_CORES_PER_DIE;
+    return dieLocalCoreId < ASCSAN_AIC_CORES_PER_DIE;
 }
 
 // dav-3510 maps each AIC to two adjacent AIVs in the same die partition.
-// Return UINT32_MAX when the topology or selector is invalid.
-constexpr uint32_t AivPhysicalCoreForAic(uint32_t aicPhyCoreId, uint32_t subBlockId, uint32_t physicalCoreCount)
+// Return UINT32_MAX when the core ID or selector is invalid.
+constexpr uint32_t AivPhysicalCoreForAic(uint32_t aicPhyCoreId, uint32_t subBlockId)
 {
-    if (subBlockId > 1U || !IsAicPhysicalCore(aicPhyCoreId, physicalCoreCount)) {
+    if (subBlockId > 1U || !IsAicPhysicalCore(aicPhyCoreId)) {
         return UINT32_MAX;
     }
-    const uint32_t coresPerDie = physicalCoreCount / ASCSAN_PHYSICAL_CORE_PART_COUNT;
-    const uint32_t aicCoresPerDie = coresPerDie / ASCSAN_AIC_CORE_RATIO_DENOMINATOR;
-    const uint32_t dieBase = (aicPhyCoreId / coresPerDie) * coresPerDie;
-    const uint32_t aicLocal = aicPhyCoreId % coresPerDie;
-    return dieBase + aicCoresPerDie + 2U * aicLocal + subBlockId;
+    const uint32_t dieBase = (aicPhyCoreId / ASCSAN_CORES_PER_DIE) * ASCSAN_CORES_PER_DIE;
+    const uint32_t aicLocal = aicPhyCoreId % ASCSAN_CORES_PER_DIE;
+    return dieBase + ASCSAN_AIC_CORES_PER_DIE + 2U * aicLocal + subBlockId;
 }
 
-constexpr uint32_t AicPhysicalCoreForAiv(uint32_t aivPhyCoreId, uint32_t physicalCoreCount)
+constexpr uint32_t AicPhysicalCoreForAiv(uint32_t aivPhyCoreId)
 {
-    if (!IsTracePhysicalCoreTopologyValid(physicalCoreCount) || aivPhyCoreId >= physicalCoreCount) {
+    if (aivPhyCoreId >= ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return UINT32_MAX;
     }
-    const uint32_t coresPerDie = physicalCoreCount / ASCSAN_PHYSICAL_CORE_PART_COUNT;
-    const uint32_t aicCoresPerDie = coresPerDie / ASCSAN_AIC_CORE_RATIO_DENOMINATOR;
-    const uint32_t dieBase = (aivPhyCoreId / coresPerDie) * coresPerDie;
-    const uint32_t aivLocal = aivPhyCoreId % coresPerDie;
-    if (aivLocal < aicCoresPerDie) {
+    const uint32_t dieBase = (aivPhyCoreId / ASCSAN_CORES_PER_DIE) * ASCSAN_CORES_PER_DIE;
+    const uint32_t aivLocal = aivPhyCoreId % ASCSAN_CORES_PER_DIE;
+    if (aivLocal < ASCSAN_AIC_CORES_PER_DIE) {
         return UINT32_MAX;
     }
-    return dieBase + (aivLocal - aicCoresPerDie) / 2U;
+    return dieBase + (aivLocal - ASCSAN_AIC_CORES_PER_DIE) / 2U;
 }
 
 constexpr uint32_t AivBlockIdForAic(uint32_t aicBlockId, uint32_t subBlockId)
@@ -105,7 +100,7 @@ constexpr bool IsTraceBlockIdValid(uint64_t blockId, bool isAic, uint32_t blockC
 //
 // 大小及偏移计算：
 //   sliceBytes  = ASCSAN_TRACE_BYTES_PER_CORE
-//   sliceCount  = physicalCoreCount
+//   sliceCount  = physicalCoreSlotCount
 //   segmentBytes = sizeof(AclsanTraceBufferHeader) + sliceCount * sliceBytes
 //   sliceOffset(sliceIndex) = sizeof(AclsanTraceBufferHeader) + sliceIndex * sliceBytes
 //
@@ -120,7 +115,8 @@ struct AclsanTraceBufferHeader {
     uint64_t launchId;     // Host 为本次 launch 分配的标识；该 segment 内所有 record 均继承此归属。
     uint64_t segmentBytes; // 包含 header 和所有定长 slice 的完整 segment 字节数。
     uint32_t blockCount;   // 本次 kernel launch 的 blockDim，即 A。
-    uint32_t physicalCoreCount; // Host 查询得到的 Cube 与 Vector 物理核数量之和。
+    // 固定物理 ID 槽位数（108），包含禁用核的空洞，不是 aclrt 返回的可用核数。
+    uint32_t physicalCoreSlotCount;
 };
 
 // 新代码可使用 segment 术语；保留 AclsanTraceBufferHeader 名称以兼容现有调用点。
@@ -153,12 +149,12 @@ struct AclsanRawTraceRecord {
 constexpr uint32_t ASCSAN_TRACE_RECORDS_PER_CORE = static_cast<uint32_t>(
     (ASCSAN_TRACE_BYTES_PER_CORE - sizeof(AclsanTraceSliceHeader)) / sizeof(AclsanRawTraceRecord));
 
-constexpr bool TraceBufferBytes(uint32_t physicalCoreCount, size_t* bytes)
+constexpr bool TraceBufferBytes(uint32_t physicalCoreSlotCount, size_t* bytes)
 {
-    if (bytes == nullptr || !IsTracePhysicalCoreTopologyValid(physicalCoreCount)) {
+    if (bytes == nullptr || physicalCoreSlotCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return false;
     }
-    *bytes = sizeof(AclsanTraceBufferHeader) + static_cast<size_t>(physicalCoreCount) * ASCSAN_TRACE_BYTES_PER_CORE;
+    *bytes = sizeof(AclsanTraceBufferHeader) + static_cast<size_t>(physicalCoreSlotCount) * ASCSAN_TRACE_BYTES_PER_CORE;
     return true;
 }
 

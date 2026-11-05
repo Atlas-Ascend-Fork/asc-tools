@@ -32,9 +32,9 @@ __aicore__ inline void WriteTraceRecord(
     __gm__ aclsan::AclsanTraceBufferHeader* header = reinterpret_cast<__gm__ aclsan::AclsanTraceBufferHeader*>(memInfo);
     const uint32_t phyCoreId = static_cast<uint32_t>(get_coreid());
     const uint32_t blockCount = header->blockCount;
-    const uint32_t physicalCoreCount = header->physicalCoreCount;
-    if (header->magic != aclsan::ASCSAN_TRACE_BUFFER_MAGIC || blockCount == 0U || physicalCoreCount == 0U ||
-        physicalCoreCount % aclsan::ASCSAN_PHYSICAL_CORE_TOPOLOGY_UNIT != 0U || phyCoreId >= physicalCoreCount) {
+    const uint32_t physicalCoreSlotCount = header->physicalCoreSlotCount;
+    if (header->magic != aclsan::ASCSAN_TRACE_BUFFER_MAGIC || blockCount == 0U ||
+        physicalCoreSlotCount != aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT || phyCoreId >= physicalCoreSlotCount) {
         return;
     }
 
@@ -43,8 +43,8 @@ __aicore__ inline void WriteTraceRecord(
     // partitions. Keep this expression local to Device code because calling
     // the Host constexpr helper can leave an unresolved symbol in the probe
     // object.
-    const uint32_t coresPerDie = physicalCoreCount / aclsan::ASCSAN_PHYSICAL_CORE_PART_COUNT;
-    const uint32_t aicCoresPerDie = coresPerDie / aclsan::ASCSAN_AIC_CORE_RATIO_DENOMINATOR;
+    const uint32_t coresPerDie = aclsan::ASCSAN_CORES_PER_DIE;
+    const uint32_t aicCoresPerDie = aclsan::ASCSAN_AIC_CORES_PER_DIE;
     const uint32_t dieLocalCoreId = phyCoreId % coresPerDie;
     const bool isAic = dieLocalCoreId < aicCoresPerDie;
     const uint64_t blockLimit = isAic ? static_cast<uint64_t>(blockCount) : 2ULL * blockCount;
@@ -54,7 +54,7 @@ __aicore__ inline void WriteTraceRecord(
 
     constexpr uint64_t sliceBytes = aclsan::ASCSAN_TRACE_BYTES_PER_CORE;
     if (header->segmentBytes !=
-        sizeof(aclsan::AclsanTraceBufferHeader) + static_cast<uint64_t>(physicalCoreCount) * sliceBytes) {
+        sizeof(aclsan::AclsanTraceBufferHeader) + static_cast<uint64_t>(physicalCoreSlotCount) * sliceBytes) {
         return;
     }
     __gm__ uint8_t* sliceAddress =

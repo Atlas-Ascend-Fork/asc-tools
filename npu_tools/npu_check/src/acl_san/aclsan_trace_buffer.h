@@ -31,7 +31,7 @@ struct ParsedTraceRecord {
     uint32_t phyCoreId = 0;
     uint32_t deviceId = 0;
     uint64_t parameterBytes = 0; // Filled from the owning launch, never inferred from an access.
-    uint32_t physicalCoreCount = 0;
+    uint32_t physicalCoreSlotCount = 0;
 };
 
 struct TraceBufferParseResult {
@@ -42,11 +42,11 @@ struct TraceBufferParseResult {
 };
 
 bool InitializeTraceBuffer(
-    std::vector<uint8_t>& buffer, uint32_t physicalCoreCount, uint32_t blockCount, uint64_t launchId,
+    std::vector<uint8_t>& buffer, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,
     std::string& error);
 
 TraceBufferParseResult ParseTraceBuffer(
-    const uint8_t* buffer, size_t bytes, uint32_t expectedPhysicalCoreCount, uint32_t expectedBlockCount,
+    const uint8_t* buffer, size_t bytes, uint32_t expectedPhysicalCoreSlotCount, uint32_t expectedBlockCount,
     uint64_t expectedLaunchId, uint32_t deviceId);
 
 } // namespace aclsan

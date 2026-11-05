@@ -143,10 +143,10 @@ MemoryCbdataResult ConvertRaw(
             using T = std::decay_t<decltype(f)>;
             if constexpr (std::is_constructible_v<MemoryInstructionField, T>) {
                 MemoryCbdataContext context{};
-                context.physicalCoreCount = 6;
+                context.physicalCoreSlotCount = 108;
                 context.blockType =
                     id == 173 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-                context.coreId = id == 173 ? 1 : 0;
+                context.coreId = id == 173 ? 18 : 0;
                 return MemoryFieldToCbdataConverter{context, state}.Convert(MemoryInstructionField{f});
             }
             return {MemoryCbdataStatus::INVALID_FIELD, {}};

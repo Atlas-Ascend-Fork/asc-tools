@@ -152,12 +152,12 @@ aclError OriginalLaunch(
     auto* bytes = static_cast<uint8_t*>(traceBuffer);
     auto* header = reinterpret_cast<aclsan::AclsanTraceBufferHeader*>(bytes);
     if (header->magic != aclsan::ASCSAN_TRACE_BUFFER_MAGIC || header->blockCount != blocks ||
-        header->physicalCoreCount != 6U) {
+        header->physicalCoreSlotCount != aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return ACL_ERROR_INVALID_PARAM;
     }
 
     constexpr uint32_t blockIds[] = {0U, 1U};
-    constexpr uint32_t phyCoreIds[] = {0U, 1U};
+    constexpr uint32_t phyCoreIds[] = {0U, aclsan::ASCSAN_AIC_CORES_PER_DIE};
     for (uint32_t recordIndex = 0; recordIndex < 2; ++recordIndex) {
         auto* slice = reinterpret_cast<aclsan::AclsanTraceSliceHeader*>(
             bytes + sizeof(*header) +
@@ -304,7 +304,7 @@ int main()
     CHECK(g_state.callbacks[0].pc == 0x1000);
     CHECK(g_state.callbacks[1].blockId == 1);
     CHECK(g_state.callbacks[1].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
-    CHECK(g_state.callbacks[1].phyCoreId == 1);
+    CHECK(g_state.callbacks[1].phyCoreId == aclsan::ASCSAN_AIC_CORES_PER_DIE);
     CHECK(g_state.callbacks[1].pipeline == ACLSAN_DEVICE_PIPE_SCALAR);
     CHECK(g_state.callbacks[1].siteId == 0);
     CHECK(g_state.callbacks[1].pc == 0x2000);

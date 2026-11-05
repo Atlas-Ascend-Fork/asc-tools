@@ -57,7 +57,7 @@ TEST(RacecheckTranslation, UnitFlagModesTravelWithMemoryBehavior)
             raw.launchId = 1;
             raw.instrExecId = 1;
             raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-            raw.physicalCoreCount = 6;
+            raw.physicalCoreSlotCount = 108;
             raw.record.instrId = id;
             raw.record.pipeline = id == 400 ? ACLSAN_DEVICE_PIPE_MATRIX : ACLSAN_DEVICE_PIPE_FIXPIPE;
             if (id == 400) {
@@ -129,7 +129,7 @@ TEST(RacecheckTranslation, DecodedFixToUbUsesAicSynchronizationForEveryDestinati
                         raw.launchId = 994;
                         raw.instrExecId = 2;
                         raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-                        raw.physicalCoreCount = 108;
+                        raw.physicalCoreSlotCount = 108;
                         raw.record.instrId = id;
                         raw.record.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
                         raw.record.args[0] = 0x400;
@@ -238,7 +238,7 @@ TEST(RacecheckTranslation, FixToUbChecksLoop3OnIssuingAicInsteadOfUbOwner)
         raw.launchId = 995;
         raw.instrExecId = 2;
         raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-        raw.physicalCoreCount = 108;
+        raw.physicalCoreSlotCount = 108;
         raw.record.instrId = 170;
         raw.record.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
         raw.record.args[0] = 0x400;

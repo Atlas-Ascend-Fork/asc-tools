@@ -18,11 +18,11 @@
 namespace aclsan {
 
 bool InitializeTraceBuffer(
-    std::vector<uint8_t>& buffer, uint32_t physicalCoreCount, uint32_t blockCount, uint64_t launchId,
+    std::vector<uint8_t>& buffer, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,
     std::string& error)
 {
     size_t bytes = 0;
-    if (blockCount == 0U || !aclsan::TraceBufferBytes(physicalCoreCount, &bytes)) {
+    if (blockCount == 0U || !aclsan::TraceBufferBytes(physicalCoreSlotCount, &bytes)) {
         buffer.clear();
         error = "trace buffer dimensions are zero or overflow the layout";
         return false;
@@ -34,7 +34,7 @@ bool InitializeTraceBuffer(
     header.launchId = launchId;
     header.segmentBytes = static_cast<uint64_t>(bytes);
     header.blockCount = blockCount;
-    header.physicalCoreCount = physicalCoreCount;
+    header.physicalCoreSlotCount = physicalCoreSlotCount;
     if (memcpy_s(buffer.data(), buffer.size(), &header, sizeof(header)) != EOK) {
         buffer.clear();
         error = "cannot initialize trace segment header";
@@ -42,7 +42,7 @@ bool InitializeTraceBuffer(
     }
 
     const aclsan::AclsanTraceSliceHeader emptySlice{};
-    for (uint32_t sliceIndex = 0; sliceIndex < physicalCoreCount; ++sliceIndex) {
+    for (uint32_t sliceIndex = 0; sliceIndex < physicalCoreSlotCount; ++sliceIndex) {
         const size_t sliceOffset =
             sizeof(header) + static_cast<size_t>(sliceIndex) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE;
         if (memcpy_s(buffer.data() + sliceOffset, buffer.size() - sliceOffset, &emptySlice, sizeof(emptySlice)) !=
@@ -57,13 +57,13 @@ bool InitializeTraceBuffer(
 }
 
 TraceBufferParseResult ParseTraceBuffer(
-    const uint8_t* buffer, size_t bytes, uint32_t expectedPhysicalCoreCount, uint32_t expectedBlockCount,
+    const uint8_t* buffer, size_t bytes, uint32_t expectedPhysicalCoreSlotCount, uint32_t expectedBlockCount,
     uint64_t expectedLaunchId, uint32_t deviceId)
 {
     TraceBufferParseResult result;
     size_t requiredBytes = 0;
     if (buffer == nullptr || expectedBlockCount == 0U ||
-        !aclsan::TraceBufferBytes(expectedPhysicalCoreCount, &requiredBytes) || bytes < requiredBytes) {
+        !aclsan::TraceBufferBytes(expectedPhysicalCoreSlotCount, &requiredBytes) || bytes < requiredBytes) {
         result.error = "trace buffer is null, truncated, or has invalid expected dimensions";
         return result;
     }
@@ -76,13 +76,13 @@ TraceBufferParseResult ParseTraceBuffer(
     }
     if (header.magic != aclsan::ASCSAN_TRACE_BUFFER_MAGIC || header.launchId != expectedLaunchId ||
         header.segmentBytes != requiredBytes || header.blockCount != expectedBlockCount ||
-        header.physicalCoreCount != expectedPhysicalCoreCount) {
+        header.physicalCoreSlotCount != expectedPhysicalCoreSlotCount) {
         result.error = "trace segment header does not match the launch-owned layout";
         return result;
     }
 
     size_t recordCount = 0;
-    for (uint32_t sliceIndex = 0; sliceIndex < expectedPhysicalCoreCount; ++sliceIndex) {
+    for (uint32_t sliceIndex = 0; sliceIndex < expectedPhysicalCoreSlotCount; ++sliceIndex) {
         const size_t sliceOffset =
             sizeof(header) + static_cast<size_t>(sliceIndex) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE;
         aclsan::AclsanTraceSliceHeader slice{};
@@ -109,7 +109,7 @@ TraceBufferParseResult ParseTraceBuffer(
     }
 
     result.records.reserve(recordCount);
-    for (uint32_t sliceIndex = 0; sliceIndex < expectedPhysicalCoreCount; ++sliceIndex) {
+    for (uint32_t sliceIndex = 0; sliceIndex < expectedPhysicalCoreSlotCount; ++sliceIndex) {
         const size_t sliceOffset =
             sizeof(header) + static_cast<size_t>(sliceIndex) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE;
         aclsan::AclsanTraceSliceHeader slice{};
@@ -122,7 +122,7 @@ TraceBufferParseResult ParseTraceBuffer(
             continue;
         }
 
-        const bool isAic = aclsan::IsAicPhysicalCore(sliceIndex, expectedPhysicalCoreCount);
+        const bool isAic = aclsan::IsAicPhysicalCore(sliceIndex);
         const uint32_t expectedPhyCoreId = sliceIndex;
         const uint32_t blockType =
             isAic ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
@@ -165,7 +165,7 @@ TraceBufferParseResult ParseTraceBuffer(
             parsed.blockType = blockType;
             parsed.phyCoreId = expectedPhyCoreId;
             parsed.deviceId = deviceId;
-            parsed.physicalCoreCount = expectedPhysicalCoreCount;
+            parsed.physicalCoreSlotCount = expectedPhysicalCoreSlotCount;
             result.records.push_back(parsed);
         }
     }
