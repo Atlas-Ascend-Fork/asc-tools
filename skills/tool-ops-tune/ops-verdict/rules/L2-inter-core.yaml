@@ -18,7 +18,7 @@ metrics:
     description: OpBasicInfo Block Dim（逻辑核数）
   physical_cores:
     source: scalar
-    description: 目标 SoC 物理核数（调用方提供：优先按 soc-spec.yaml skus 解析实际 SKU；a5 典型 28 AIC/56 AIV、a2 典型 24 AIC/48 AIV——旧注释「A5 约 48 AIV/28 AIC」已按 ini 实测勘误）
+    description: 目标 SoC 物理核数（与 row_count 同维——row_count 是活跃子块行数，Vec/Cube 行都计入；分母按行集核型选：cube 行集配 AIC 数、vec 行集配 AIV 数，facts_bridge 按 sub_block_id 自动选，调用方手传时核对 facts.row_kind；a5 典型 56 AIV/28 AIC、a2 典型 48 AIV/24 AIC——旧注释「A5 约 48 AIV/28 AIC」已按 ini 实测勘误）
   task_duration_us:
     source: scalar
     description: OpBasicInfo Task Duration(us)

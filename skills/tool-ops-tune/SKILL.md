@@ -55,7 +55,7 @@ Step 执行手册：`agent/workflows/task-prompts.md`；故障分流：`agent/wo
 # 拿一份 msprof 导出的 PipeUtilization.csv，一句话出判定书：
 python3 ops-verdict/scripts/verdict.py \
     --rules ops-verdict/rules/L2-inter-core.yaml,ops-verdict/rules/L1-single-core.yaml \
-    --csv PipeUtilization.csv --soc a5 \
+    --csv PipeUtilization.csv --soc a2 \
     --scalar physical_cores=48,block_dim=24,task_duration_us=195 \
     -o verdict.json
 ```

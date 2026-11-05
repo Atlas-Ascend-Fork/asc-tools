@@ -11,7 +11,7 @@
 # ----------------------------------------------------------------------------------------------------------
 """verdict.py — 算子调优判定引擎（规则-指标绑定契约 + 分层路由 + 反证 + 置信度）
 
-设计对齐（见 docs/算子调优AGENT设计文档.md §5 核心设计决策）：
+设计对齐（见 docs/ops-tune-design.md §3 核心设计决策 D1-D10）：
   - 对标业界领先 GPU Profiling 工具的 Guided Analysis：规则声明绑定指标，未采集则规则不触发
     （机制上杜绝「指标没采却报规则」）；REQUIRED 缺失 → rule: SKIPPED，OPTIONAL 缺失 → 降级不阻断（optional 仅用于反证；condition 内引用必须 required——加载校验 V4 强制）。
   - 判定进脚本、解释进 LLM：本引擎输出结构化 verdict.json（机器可读契约），
@@ -185,8 +185,36 @@ def pipe_metrics_from_rows(rows: list[dict], spec: dict) -> dict:
     return out
 
 
+def _rows_core_kind(rows: list[dict]) -> str | None:
+    """从 sub_block_id 判活跃行集的核型（null=CSV 无该列或未知前缀）。
+
+    row_count 是「活跃子块行数」（Vec/Cube 行都计入）——row_kind 把行集核型
+    显式化，供 occupancy 分母交叉审计（physical_cores 须与行集同维：cube
+    行集配 AIC 数、vec 行集配 AIV 数；facts_bridge 按同款判别选分母）。
+    纯 Cube 行（cube 前缀，忽略大小写）→ "cube"；含 Vec 行 → "vector"。
+    """
+    if not rows or "sub_block_id" not in rows[0]:
+        return None
+    kinds = set()
+    for r in rows:
+        sb = str(r.get("sub_block_id") or "").strip().lower()
+        if sb.startswith("cube"):
+            kinds.add("cube")
+        elif sb.startswith("vec"):
+            kinds.add("vector")
+    if kinds == {"cube"}:
+        return "cube"
+    if "vector" in kinds:
+        return "vector"
+    return None
+
+
 def time_metrics_from_rows(rows: list[dict]) -> dict:
-    """逐核耗时（核间层）：aiv_time/aic_time 双列兼容，取大者为该核主体时间。"""
+    """逐核耗时（核间层）：aiv_time/aic_time 双列兼容，取大者为该核主体时间。
+
+    row_count 语义 = 活跃子块行数（Vec/Cube 行都计入，不滤 sub_block_id）；
+    row_kind 是行集核型审计字段（occupancy 分母同维检查的真源）。
+    """
     times = []
     for r in rows:
         aiv = parse_float(r.get("aiv_time(us)"))
@@ -199,6 +227,7 @@ def time_metrics_from_rows(rows: list[dict]) -> dict:
     mean = sum(times) / len(times)
     return {
         "row_count": {"value": float(len(times))},
+        "row_kind": {"value": _rows_core_kind(rows)},
         "time_mean_us": {"value": mean},
         "time_max_us": {"value": max(times)},
         "time_min_us": {"value": min(times)},
@@ -504,6 +533,7 @@ DERIVED_WHITELIST = {
     "__mte2_pollution_gap",
     "__mte2_pure_ratio_pct",
     "row_count",
+    "row_kind",
     "time_mean_us",
     "time_max_us",
     "time_min_us",

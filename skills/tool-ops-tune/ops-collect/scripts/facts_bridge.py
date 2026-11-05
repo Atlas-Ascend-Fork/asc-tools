@@ -1003,15 +1003,54 @@ def main() -> int:
                 if prev:
                     prev["reason"] += f"；DB 双源亦失败（{db_out.get('error', '—')}）"
 
-    # ---- physical_cores（soc-spec reference；调用方可用 --scalar 覆盖为 SKU 精确值）----
+    # ---- physical_cores（soc-spec reference；调用方可用 --scalar 覆写为 SKU 精确值）----
+    # 口径：verdict 的 row_count 是「活跃子块行数」（time_metrics_from_rows 不滤
+    # sub_block_id，Vec/Cube 行都计入）——分母须与实际行集同维：纯 Cube 行集
+    # 按 ai_core_cnt，其余按 vector_core_cnt。
+    def _rows_core_kind(csv_path: Path | None) -> str | None:
+        """从 PipeUtilization CSV 的 sub_block_id 判行集核型（null=不可判）。
+
+        纯 Cube 行（cube 前缀，忽略大小写）→ "cube"；含 Vec 行 → "vector"；
+        缺列/无行/未知前缀 → None（调用方回退 AIV 默认，不改变现状行为）。
+        """
+        if csv_path is None or not Path(csv_path).exists():
+            return None
+        try:
+            rows = _load_rows(Path(csv_path))
+        except Exception:
+            return None
+        if not rows or "sub_block_id" not in rows[0]:
+            return None
+        kinds = set()
+        for r in rows:
+            sb = str(r.get("sub_block_id") or "").strip().lower()
+            if sb.startswith("cube"):
+                kinds.add("cube")
+            elif sb.startswith("vec"):
+                kinds.add("vector")
+        if kinds == {"cube"}:
+            return "cube"
+        if "vector" in kinds:
+            return "vector"
+        return None
+
     block = soc_spec.get("socs", {}).get(args.soc, {})
     ref_cores = block.get("reference", {}).get("ai_core_cnt", {}).get("value")
     vec_cores = block.get("reference", {}).get("vector_core_cnt", {}).get("value")
-    if ref_cores:
-        scalars["physical_cores"] = float(ref_cores)
+    row_kind = _rows_core_kind(pipe_csv)
+    # cube 行集 → 分母取 AIC 数（与活跃 Cube 行同维）；其余（vector/不可判）→ AIV 数
+    use_cores = ref_cores if (row_kind == "cube" and ref_cores) else vec_cores
+    use_label = (
+        "AIC（cube 行集同维）"
+        if row_kind == "cube"
+        else "AIV（Vec 行集同维；不可判时的默认）"
+    )
+    if use_cores:
+        scalars["physical_cores"] = float(use_cores)
         sources["physical_cores"] = (
             f"soc-spec:{args.soc} reference（{vec_cores} AIV / "
-            f"{ref_cores} AIC；按实际 SKU 覆写可得精确值）"
+            f"{ref_cores} AIC；行集核型={row_kind or '不可判'} → 取 {use_label}；"
+            f"按实际 SKU 覆写可得精确值）"
         )
 
     # ---- verdict --scalar 串 ----

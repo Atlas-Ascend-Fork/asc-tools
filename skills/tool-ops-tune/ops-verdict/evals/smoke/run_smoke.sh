@@ -175,12 +175,39 @@ assert abs(s['vec_fp32_ratio'] - 62.0) < 0.01, s          # 0~1 比例 ×100
 assert abs(s['vec_total_cflt_ratio'] - 8.0) < 0.01, s      # 0~1 比例 ×100（mean 0.075 → round 0.08 ×100）
 assert abs(s['mte2_active_bw_pct_of_peak'] - 76.25) < 0.01, s  # 1220/1600 GB/s
 assert abs(s['task_duration_us'] - 14.7) < 0.01, s
-assert s['block_dim'] == 8 and s['physical_cores'] == 24, s
+# physical_cores 为 AIV 口径（Vec 行集与 row_count 同维；a2 vector_core_cnt=48）
+assert s['block_dim'] == 8 and s['physical_cores'] == 48, s
 assert d['missing'] == [], d['missing']
 " 2>/dev/null; then
   pass "facts_bridge 标量提取与峰值换算（7 标量 + 换算正确）"
 else
   fail "facts_bridge 标量提取"
+fi
+
+# physical_cores 分母按行集核型选择：row_count 是活跃子块行数
+# （verdict.time_metrics_from_rows 不滤 sub_block_id，Vec/Cube 行都计入），分母须与
+# 实际行集同维——纯 Cube 行集按 ai_core_cnt，其余按 vector_core_cnt（缺列/不可判
+# 回退 AIV 默认）。
+BRIDGE_TMP2="$SMOKE_TMP/bridge_cube"
+mkdir -p "$BRIDGE_TMP2/fixtures"
+# Cube 行形态（serial_no_overlap_a2.csv 同款）：aic_time 有值、aiv_time=0
+printf 'block_id,sub_block_id,aic_time(us),aiv_time(us),aiv_vec_ratio,aic_cube_ratio,aic_mte2_ratio,aic_mte1_ratio,aic_fixpipe_ratio,ai_scalar_ratio,aic_mte3_ratio,ai_icache_miss_rate,aiv_mte2_active_bw(GB/s)\n0,Cube0,612.4,0,0.01,0.44,0.42,0.18,0.02,0.06,0.01,0.8,1200.0\n1,Cube0,609.8,0,0.01,0.45,0.41,0.18,0.02,0.06,0.01,0.8,1240.0\n' > "$BRIDGE_TMP2/fixtures/PipeUtilization.csv"
+cp "$BRIDGE_TMP/fixtures/L2Cache.csv" "$BRIDGE_TMP2/fixtures/L2Cache.csv"
+cp "$BRIDGE_TMP/fixtures/ArithmeticUtilization.csv" "$BRIDGE_TMP2/fixtures/ArithmeticUtilization.csv"
+cp "$BRIDGE_TMP/fixtures/ResourceConflictRatio.csv" "$BRIDGE_TMP2/fixtures/ResourceConflictRatio.csv"
+cp "$BRIDGE_TMP/fixtures/OpBasicInfo.csv" "$BRIDGE_TMP2/fixtures/OpBasicInfo.csv"
+if python3 "$REPO_ROOT/ops-collect/scripts/facts_bridge.py" \
+    --manifest "$BRIDGE_TMP2/fixtures" --soc a2 --output "$BRIDGE_TMP2/scalars.json" >/dev/null 2>&1 \
+    && python3 -c "
+import json
+d = json.load(open('$BRIDGE_TMP2/scalars.json'))
+s = d['scalars']
+# cube 主导行集 → 分母按行型选 ai_core_cnt（a2=24；非 48 的 AIV 值）
+assert s['physical_cores'] == 24, s
+" 2>/dev/null; then
+  pass "facts_bridge cube 行集分母按行型选择（physical_cores=ai_core_cnt 24）"
+else
+  fail "facts_bridge cube 行集分母（行型错维回归）"
 fi
 
 
