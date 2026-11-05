@@ -83,6 +83,7 @@ constexpr uint32_t DMA_DESCRIPTOR_DIMENSION_COUNT = 3U;
 constexpr uint32_t UNSPECIFIED_DATA_BITS = 0U;
 constexpr uint32_t SCALAR_SYSTEM_WINDOW_MASK_BITS = 24U;
 constexpr uint32_t SCALAR_ADDRESS_SPACE_FLAG_SHIFT = 24U;
+constexpr uint32_t SCALAR_UB_OFFSET_BITS = 19U;
 constexpr uint32_t TRANSPOSE_B4_M_STEP_ALIGNMENT = 4U;
 constexpr uint32_t TRANSPOSE_B8_M_STEP_ALIGNMENT = 2U;
 constexpr uint32_t TRANSPOSE_B32_K_STEP_ALIGNMENT = 2U;
@@ -690,14 +691,14 @@ private:
     MemoryCbdataStatus status_ = MemoryCbdataStatus::SUCCESS;
 };
 
-struct ScalarGmAddressResult {
+struct ScalarAddressResult {
     MemoryCbdataStatus status = MemoryCbdataStatus::SUCCESS;
     uint64_t address = 0;
+    uint32_t memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
 };
 
 template <typename ParamField>
-ScalarGmAddressResult ResolveScalarGmAddress(
-    const ParamField& field, int64_t offsetScale, uint64_t accessBytes) noexcept
+ScalarAddressResult ResolveScalarAddress(const ParamField& field, int64_t offsetScale, uint64_t accessBytes) noexcept
 {
     if (field.post > 1U) {
         return {MemoryCbdataStatus::INVALID_FIELD, 0};
@@ -713,15 +714,22 @@ ScalarGmAddressResult ResolveScalarGmAddress(
     }
 
     // Match dav-3510 RemapAddress after effective-address calculation.
-    // Stack backing is irrelevant here: local spaces are outside this GM-only scope.
+    // UB events use byte offsets, like the UB endpoints of DMA instructions.
     const uint64_t effective = static_cast<uint64_t>(address);
     constexpr uint64_t windowMask = (UINT64_C(1) << SCALAR_SYSTEM_WINDOW_MASK_BITS) - 1;
     const bool systemWindow = ((effective >> 25) & windowMask) == ((field.sysVaBase >> 25) & windowMask);
     if (systemWindow && ((effective >> SCALAR_ADDRESS_SPACE_FLAG_SHIFT) & 1U) == NO_ACCESS_COUNT) {
         const bool ub = ((effective >> 20) & 0x1fU) == 0 && ((effective >> 19) & 1U) != 0;
+        if (ub) {
+            constexpr uint64_t ubWindowBytes = UINT64_C(1) << SCALAR_UB_OFFSET_BITS;
+            const uint64_t ubAddress = effective & (ubWindowBytes - 1);
+            if (accessBytes > ubWindowBytes - ubAddress) {
+                return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, 0};
+            }
+            return {MemoryCbdataStatus::SUCCESS, ubAddress, ACLSAN_DEVICE_MEMORY_SPACE_UB};
+        }
         const bool stack = ((effective >> 20) & 0xfU) != 0;
-        return {
-            ub || stack ? MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE : MemoryCbdataStatus::INVALID_ADDRESS_SPACE, 0};
+        return {stack ? MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE : MemoryCbdataStatus::INVALID_ADDRESS_SPACE, 0};
     }
     constexpr uint64_t gmLimit = UINT64_C(1) << 48;
     const uint64_t gmAddress = effective & (gmLimit - 1);
@@ -775,13 +783,13 @@ public:
                                         field.instrId <= static_cast<uint32_t>(InstructionId::LdB8Reg));
         const uint64_t accessBytes = static_cast<uint64_t>(dataBits / 8U) * (isPair ? 2U : 1U);
         const int64_t offsetScale = hasRegisterOffset ? static_cast<int64_t>(dataBits / 8U) : 1;
-        const ScalarGmAddressResult resolved = ResolveScalarGmAddress(field, offsetScale, accessBytes);
+        const ScalarAddressResult resolved = ResolveScalarAddress(field, offsetScale, accessBytes);
         if (resolved.status != MemoryCbdataStatus::SUCCESS) {
             return {resolved.status, {}};
         }
         const MemoryInstructionProfile profile{
             dataBits, isStore ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD, context_.blockType};
-        MemoryCbdataBuilder builder{context_, profile};
+        MemoryCbdataBuilder builder{context_, profile, resolved.memorySpace};
         (void)builder.Add(
             {resolved.address, isStore ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, dataBits,
              RangeDescriptor{accessBytes}});
@@ -835,15 +843,14 @@ public:
         }
         // ST_ATOMIC keeps an element offset; STI_ATOMIC keeps a byte offset.
         const int64_t elementBytes = static_cast<int64_t>(dataBits / 8U);
-        const ScalarGmAddressResult resolved =
-            ResolveScalarGmAddress(field, isStAtomic ? elementBytes : 1, dataBits / 8U);
+        const ScalarAddressResult resolved = ResolveScalarAddress(field, isStAtomic ? elementBytes : 1, dataBits / 8U);
         if (resolved.status != MemoryCbdataStatus::SUCCESS) {
             return {resolved.status, {}};
         }
         // ST_ATOMIC_CFG 独立于 CTRL，且 ctrlbin 不会提供它。
         // 保留已知地址和位宽，供 Memcheck 按普通写检查；Racecheck 通过标记识别语义缺失。
         const MemoryInstructionProfile profile{dataBits, ACLSAN_DEVICE_SOURCE_ST, context_.blockType};
-        MemoryCbdataBuilder builder{context_, profile};
+        MemoryCbdataBuilder builder{context_, profile, resolved.memorySpace};
         (void)builder.Add(
             {resolved.address, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, dataBits, RangeDescriptor{dataBits / 8U}});
         auto result = std::move(builder).Build();

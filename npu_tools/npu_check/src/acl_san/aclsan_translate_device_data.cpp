@@ -232,7 +232,7 @@ private:
         }
         if (result.status == MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE) {
             ASCTOOL_DEBUG(
-                "acl_san trace: skipped memory access in known UB/PRIVATE address space instrId=%llu pc=0x%llx "
+                "acl_san trace: skipped memory access in known PRIVATE address space instrId=%llu pc=0x%llx "
                 "blockType=%u blockId=%u",
                 static_cast<unsigned long long>(parsed.record.instrId),
                 static_cast<unsigned long long>(parsed.record.pc), parsed.blockType, parsed.blockId);

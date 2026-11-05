@@ -26,6 +26,7 @@
 using namespace aclsan;
 namespace {
 std::vector<AclsanDeviceRegisterStateData> registerStates;
+std::vector<AclsanDeviceMemoryAccessData> memoryAccesses;
 std::string logs;
 unsigned errorCount = 0;
 unsigned instructionCallbacks = 0;
@@ -199,12 +200,83 @@ void TestVectorMaskCollection()
     assert(!registers.Get(key));
     assert(errorCount == 0 && instructionCallbacks == 0);
 }
+
+void TestScalarUbCollection()
+{
+    const auto& decoder = dav3510::GetDeviceInstructionDecoder();
+    registerStates.clear();
+    // IDs 24..55 are the complete scalar LD/ST/STI/pair families; 56..61 are atomic stores.
+    for (uint32_t id = 24; id <= 61; ++id) {
+        const bool pair = (id >= 32 && id <= 35) || (id >= 52 && id <= 55);
+        for (int64_t offset : {-8, 0, 8}) {
+            for (uint64_t post : {0U, 1U}) {
+                if (pair && post != 0) {
+                    continue;
+                }
+                auto record = Record(static_cast<InstructionId>(id), 0x400 + id * 4);
+                record.record.args[0] = 0x100080040; // UB window relative to SYS_VA_BASE.
+                record.record.args[1] = static_cast<uint64_t>(offset);
+                record.record.args[2] = post;
+                record.record.args[3] = 0x100000000;
+                record.record.args[4] = ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
+                const auto decoded = decoder.decode(record.record);
+                assert(decoded);
+                if (id < 56) {
+                    const auto& params = std::get<ScalarGmParamField>(decoded->params);
+                    assert(params.addr == record.record.args[0] && params.offset == offset && params.post == post);
+                    assert(params.sysVaBase == record.record.args[3]);
+                    assert(params.addressContext == ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
+                } else {
+                    const auto& params = std::get<ScalarAtomicParamField>(decoded->params);
+                    assert(params.addr == record.record.args[0] && params.offset == offset && params.post == post);
+                    assert(params.sysVaBase == record.record.args[3]);
+                    assert(params.addressContext == ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
+                }
+                logs.clear();
+                memoryAccesses.clear();
+                const unsigned callbacksBefore = instructionCallbacks;
+                DispatchTraceRecords({record}, decoder);
+                assert(logs.find("[raw]") != std::string::npos);
+                assert(logs.find("addr=0x100080040 offset=" + std::to_string(offset)) != std::string::npos);
+                assert(logs.find("post=" + std::to_string(post) + " sysVaBase=0x100000000") != std::string::npos);
+                assert(logs.find("[cbdata]") != std::string::npos);
+                assert(memoryAccesses.size() == 1 && instructionCallbacks == callbacksBefore + 1);
+                const auto& access = memoryAccesses.front();
+                const uint32_t bits = id < 56 ? 64U >> ((id - 24) % 4) : 32U >> ((id - 56) % 3);
+                const bool registerOffset = (id >= 28 && id <= 31) || (id >= 40 && id <= 43) ||
+                                            (id >= 48 && id <= 51) || (id >= 56 && id <= 58);
+                const int64_t byteOffset = post == 1 ? 0 : offset * (registerOffset ? bits / 8 : 1);
+                const bool store = id <= 43 || id >= 56;
+                assert(access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB);
+                assert(access.address == static_cast<uint64_t>(0x40 + byteOffset));
+                assert(access.dataBits == bits && access.instructionId == id);
+                assert(
+                    access.accessMode ==
+                    (store ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ));
+                assert(access.layoutKind == ACLSAN_MEM_LAYOUT_RANGE);
+                assert(access.layout.range.bytes == (bits / 8) * (pair ? 2 : 1));
+                assert(access.accessIndex == 0 && access.accessCount == 1);
+                assert(access.header.launchId == record.launchId && access.header.pc == record.record.pc);
+                assert(access.header.instrExecId == record.instrExecId && access.header.siteId == record.record.siteId);
+                assert(access.header.deviceId == record.deviceId && access.header.phyCoreId == record.phyCoreId);
+                assert(access.header.blockId == record.blockId && access.header.blockType == record.blockType);
+                assert(access.header.pipeline == ACLSAN_DEVICE_PIPE_SCALAR);
+                assert(access.header.sourceKind == (store ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD));
+                const uint32_t flags =
+                    ACLSAN_DEVICE_EVENT_FLAG_EXACT | (id >= 56 ? ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN : 0);
+                assert(access.header.flags == flags);
+                assert(errorCount == 0 && registerStates.empty());
+            }
+        }
+    }
+}
 } // namespace
 
 // Capture the real dispatcher's output at the callback boundary.
 namespace aclsan {
-void AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData&) noexcept
+void AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& access) noexcept
 {
+    memoryAccesses.push_back(access);
     ++instructionCallbacks;
 }
 void AclsanCallbackDispatcher::DispatchDeviceState(const AclsanDeviceRegisterStateData& state) noexcept
@@ -249,6 +321,7 @@ int main()
     TestPushPbAndVfCollection();
     TestVectorMaskCollection();
     TestFixStateCollection();
+    TestScalarUbCollection();
     plog_test::ResetApi();
-    std::cout << "PUSH_PB/VF/vector_mask collection checks passed\n";
+    std::cout << "PUSH_PB/VF/vector_mask and scalar UB instruction collection checks passed\n";
 }

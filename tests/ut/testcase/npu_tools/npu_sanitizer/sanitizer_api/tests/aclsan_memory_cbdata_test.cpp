@@ -1135,6 +1135,83 @@ TEST(AclsanMemoryCbdata, ScalarGmValidatesAddressContextAndBounds)
     EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::ARITHMETIC_OVERFLOW);
 }
 
+TEST(AclsanMemoryCbdata, ScalarUbResolvesEffectiveAddressBeforeSelectingMemorySpace)
+{
+    struct Case {
+        uint64_t address;
+        int64_t offset;
+        uint64_t post;
+        uint64_t sysVaBase;
+        uint32_t memorySpace;
+        uint64_t resolvedAddress;
+    };
+    const Case cases[] = {
+        {UINT64_C(0x100080040), 3, 0, UINT64_C(0x100000000), ACLSAN_DEVICE_MEMORY_SPACE_UB, 0x58},
+        {UINT64_C(0x100080040), -3, 0, UINT64_C(0x100000000), ACLSAN_DEVICE_MEMORY_SPACE_UB, 0x28},
+        {UINT64_C(0x100080040), INT64_MIN, 1, UINT64_C(0x100000000), ACLSAN_DEVICE_MEMORY_SPACE_UB, 0x40},
+        {UINT64_C(0x10007fff8), 1, 0, UINT64_C(0x100000000), ACLSAN_DEVICE_MEMORY_SPACE_UB, 0},
+        {UINT64_C(0x100fffff8), 1, 0, UINT64_C(0x100000000), ACLSAN_DEVICE_MEMORY_SPACE_GM, UINT64_C(0x101000000)},
+        {UINT64_C(0x8000000100080040), 3, 0, UINT64_C(0x100000000), ACLSAN_DEVICE_MEMORY_SPACE_UB, 0x58},
+        {0x80040, 3, 0, 0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 0x58},
+        {UINT64_C(0x100080040), 3, 0, UINT64_C(0x200000000), ACLSAN_DEVICE_MEMORY_SPACE_GM, UINT64_C(0x100080058)},
+    };
+    const aclsan::MemoryFieldToCbdataConverter converter{{}};
+    for (const auto& test : cases) {
+        SCOPED_TRACE(::testing::Message() << "address=" << test.address << " offset=" << test.offset);
+        const auto result = converter.Convert(aclsan::ScalarGmParamField{
+            28, 64, test.address, test.offset, test.post, test.sysVaBase, aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1});
+        ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+        ASSERT_EQ(result.data.size(), 1U);
+        EXPECT_EQ(result.data[0].memorySpace, test.memorySpace);
+        EXPECT_EQ(result.data[0].address, test.resolvedAddress);
+        EXPECT_EQ(result.data[0].layout.range.bytes, 8U);
+    }
+}
+
+TEST(AclsanMemoryCbdata, ScalarUbValidatesWindowBoundsAndAddressContext)
+{
+    const aclsan::MemoryFieldToCbdataConverter converter{{}};
+    aclsan::ScalarGmParamField field{
+        24, 64, UINT64_C(0x1000ffff8), 0, 0, UINT64_C(0x100000000), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1};
+    const auto lastWord = converter.Convert(field);
+    ASSERT_EQ(lastWord.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    ASSERT_EQ(lastWord.data.size(), 1U);
+    EXPECT_EQ(lastWord.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+    EXPECT_EQ(lastWord.data[0].address, 0x7fff8U);
+    // A pair must not be silently wrapped into a different address window.
+    field.instrId = 32;
+    EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::ARITHMETIC_OVERFLOW);
+    field.instrId = 24;
+    field.offset = 8;
+    EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE);
+    field.addr = UINT64_C(0x100080000);
+    field.offset = -8;
+    EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::INVALID_ADDRESS_SPACE);
+    field.offset = 0;
+    field.addressContext = 0;
+    EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::MISSING_ADDRESS_CONTEXT);
+}
+
+TEST(AclsanMemoryCbdata, ScalarUbReadsDoNotMatchInternalGmRanges)
+{
+    aclsan::MemoryCbdataContext context{};
+    context.parameterBase = 0x40;
+    context.parameterBytes = 64;
+    const std::vector<aclsan::InternalMemoryRange> internal{{reinterpret_cast<void*>(0x40), 64}};
+    context.internalInputs = &internal;
+    context.readOnlyBinaryRanges = &internal;
+    const aclsan::MemoryFieldToCbdataConverter converter{context};
+    aclsan::ScalarGmParamField field{
+        44, 64, UINT64_C(0x100080040), 0, 0, UINT64_C(0x100000000), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1};
+    const auto ub = converter.Convert(field);
+    ASSERT_EQ(ub.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    ASSERT_EQ(ub.data.size(), 1U);
+    EXPECT_EQ(ub.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+    EXPECT_EQ(ub.data[0].address, 0x40U);
+    field.addr = 0x40;
+    EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::NO_ACCESS);
+}
+
 TEST(AclsanMemoryCbdata, ParameterFilteringUsesResolvedScalarAddressAndPairWidth)
 {
     aclsan::MemoryCbdataContext context{};
@@ -1204,12 +1281,19 @@ TEST(AclsanMemoryCbdata, ScalarAtomicValidatesAddressBeforeOrdinaryWriteFallback
         auto result = converter.Convert(field);
         ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
         ASSERT_EQ(result.data.size(), 1U);
-        for (uint64_t local : {UINT64_C(0x100080040), UINT64_C(0x100100040)}) {
-            field.addr = local;
-            result = converter.Convert(field);
-            EXPECT_EQ(result.status, aclsan::MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE);
-            EXPECT_TRUE(result.data.empty());
-        }
+        field.addr = UINT64_C(0x100080040);
+        result = converter.Convert(field);
+        ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+        ASSERT_EQ(result.data.size(), 1U);
+        EXPECT_EQ(result.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+        EXPECT_EQ(result.data[0].address, 0x40U);
+        EXPECT_EQ(
+            result.data[0].header.flags,
+            ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
+        field.addr = UINT64_C(0x100100040);
+        result = converter.Convert(field);
+        EXPECT_EQ(result.status, aclsan::MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE);
+        EXPECT_TRUE(result.data.empty());
         field.addr = UINT64_C(0x100000040);
         EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::INVALID_ADDRESS_SPACE);
         // Classification must happen after offset calculation: cross bit 24 into GM.

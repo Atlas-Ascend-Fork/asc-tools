@@ -15,8 +15,9 @@
 
 int main(int argc, char** argv)
 {
-    if (argc != 7) {
-        std::cerr << "usage: real_tool_smoke <input> <output> <arch> <toolchain-root> <work-dir> <cache-dir>\n";
+    if (argc != 7 && argc != 8) {
+        std::cerr
+            << "usage: real_tool_smoke <input> <output> <arch> <toolchain-root> <work-dir> <cache-dir> [ub-scalar]\n";
         return 2;
     }
 
@@ -29,6 +30,13 @@ int main(int argc, char** argv)
     aclsan::BinaryInstrumentationConfig config{};
     config.arch = argv[3];
     config.probeGroups = {aclsan::ProbeGroup::Mte2};
+    if (argc == 8) {
+        if (std::string(argv[7]) != "ub-scalar") {
+            std::cerr << "unknown collection mode: " << argv[7] << '\n';
+            return 2;
+        }
+        config.probeGroups = {aclsan::ProbeGroup::Scalar};
+    }
     config.toolchainRoot = argv[4];
     config.workDirectory = argv[5];
     config.cacheDirectory = argv[6];

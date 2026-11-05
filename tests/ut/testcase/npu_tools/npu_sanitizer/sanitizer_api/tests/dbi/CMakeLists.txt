@@ -123,6 +123,29 @@ add_test(NAME aclsan.full_flow_real_toolchain_zero
     -DEXPECTED_OFFSET=8
     -P ${CMAKE_CURRENT_SOURCE_DIR}/real_tool_smoke.cmake)
 
+if(NPU_CHECK_REAL_DBI_ARCH STREQUAL "dav-3510")
+  set(ub_scalar_kernel "${CMAKE_CURRENT_BINARY_DIR}/ub_scalar_collection_kernel.o")
+  add_custom_command(OUTPUT "${ub_scalar_kernel}"
+    COMMAND "${CMAKE_COMMAND}" -E env "ASCEND_HOME_PATH=${NPU_CHECK_REAL_DBI_TOOLCHAIN_ROOT}"
+      "${NPU_CHECK_REAL_bisheng}" -xcce -std=c++17 -O2 --cce-aicore-only
+      "--npu-arch=${NPU_CHECK_REAL_DBI_ARCH}"
+      -c "${CMAKE_CURRENT_SOURCE_DIR}/ub_scalar_collection_kernel.cpp" -o "${ub_scalar_kernel}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ub_scalar_collection_kernel.cpp" VERBATIM)
+  add_custom_target(aclsan_ub_scalar_collection_real_kernel ALL DEPENDS "${ub_scalar_kernel}")
+  add_dependencies(aclsan_full_flow_real_tool_smoke aclsan_ub_scalar_collection_real_kernel)
+  add_test(NAME aclsan.ub_scalar_collection_real_toolchain
+    COMMAND ${CMAKE_COMMAND}
+      -DSMOKE_EXECUTABLE=$<TARGET_FILE:aclsan_full_flow_real_tool_smoke>
+      -DINPUT_KERNEL=${ub_scalar_kernel}
+      -DOUTPUT_KERNEL=${CMAKE_CURRENT_BINARY_DIR}/ub-scalar-collection-toolchain/patched.o
+      -DARCH=${NPU_CHECK_REAL_DBI_ARCH}
+      -DTOOLCHAIN_ROOT=${NPU_CHECK_REAL_DBI_TOOLCHAIN_ROOT}
+      -DWORK_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/ub-scalar-collection-toolchain/work
+      -DCACHE_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/ub-scalar-collection-toolchain/cache
+      -DEXPECTED_OFFSET=16 -DUB_SCALAR_COLLECTION=ON
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/real_tool_smoke.cmake)
+endif()
+
 if(NPU_CHECK_ENABLE_REAL_DBI_FLOW)
   include(CheckCXXSourceCompiles)
   set(saved_required_includes "${CMAKE_REQUIRED_INCLUDES}")

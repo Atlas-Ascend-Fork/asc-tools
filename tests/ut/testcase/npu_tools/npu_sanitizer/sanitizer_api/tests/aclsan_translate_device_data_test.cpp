@@ -1026,11 +1026,11 @@ TEST(AclsanTranslateDeviceData, Main)
     TestRejectsUnknownInstruction();
 }
 
-TEST(AclsanTranslateDeviceData, ScalarAddressClassificationSkipsKnownLocalSpacesButPreservesFailures)
+TEST(AclsanTranslateDeviceData, ScalarAddressClassificationCollectsUbAndSkipsPrivate)
 {
     for (const uint32_t instructionId : {26U, 44U}) {
         SCOPED_TRACE(instructionId);
-        aclsan::ParsedTraceRecord parsed = MakeParsedTraceRecord(17, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE, 2, 3);
+        aclsan::ParsedTraceRecord parsed = MakeParsedTraceRecord(17, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR, 2, 3);
         auto& record = parsed.record;
         record.instrId = instructionId;
         record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
@@ -1048,9 +1048,22 @@ TEST(AclsanTranslateDeviceData, ScalarAddressClassificationSkipsKnownLocalSpaces
             ASSERT_TRUE(callback.has_value());
             const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
             ASSERT_NE(accesses, nullptr);
-            EXPECT_TRUE(accesses->empty());
-            EXPECT_NE(
-                capture.Text().find("skipped memory access in known UB/PRIVATE address space"), std::string::npos);
+            if (address == UINT64_C(0x100080040)) {
+                ASSERT_EQ(accesses->size(), 1U);
+                EXPECT_EQ(accesses->front().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+                EXPECT_EQ(accesses->front().address, 0x40U);
+                EXPECT_EQ(accesses->front().header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+                EXPECT_EQ(accesses->front().header.phyCoreId, 2U);
+                EXPECT_EQ(
+                    accesses->front().accessMode,
+                    instructionId == 26U ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+                EXPECT_EQ(accesses->front().layout.range.bytes, instructionId == 26U ? 2U : 8U);
+                EXPECT_EQ(capture.Text().find("skipped memory access"), std::string::npos);
+            } else {
+                EXPECT_TRUE(accesses->empty());
+                EXPECT_NE(
+                    capture.Text().find("skipped memory access in known PRIVATE address space"), std::string::npos);
+            }
             EXPECT_EQ(capture.Text().find("incomplete memory access"), std::string::npos);
         }
 

@@ -15,7 +15,7 @@
 
 namespace aclsan {
 
-// A5 ST/STI/STP/LD/LDP scalar access. REG offsets are element counts; IMM and pair offsets are bytes.
+// A5 ST/STI/STP/LD/LDP scalar GM/UB access. REG offsets are element counts; IMM and pair offsets are bytes.
 // post == 1 uses the captured base for this access without adding the offset.
 struct ScalarGmParamField {
     uint32_t instrId = 0;
