@@ -468,7 +468,8 @@ int main(int argc, char** argv)
         ACL_SUCCESS);
     CHECK(g_records.empty());
     CHECK(g_d2hCalls == 0);
-    CHECK(g_deviceInfoCalls == 2);
+    // Physical trace slots are fixed, independent of the available core counts.
+    CHECK(g_deviceInfoCalls == 0);
 
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream2, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
@@ -501,31 +502,36 @@ int main(int argc, char** argv)
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
-    CHECK(g_memoryAccesses.size() == 1);
+    CHECK(g_memoryAccesses.size() == 2);
     CHECK(g_memoryAccesses[0].address == 0x120000025000ULL);
     CHECK(g_memoryAccesses[0].bytes == 8256);
     CHECK(g_memoryAccesses[0].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM);
     CHECK(g_memoryAccesses[0].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    CHECK(g_memoryAccesses[1].address == 0);
+    CHECK(g_memoryAccesses[1].bytes == 8256);
+    CHECK(g_memoryAccesses[1].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB);
+    CHECK(g_memoryAccesses[1].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
     g_writeMemoryRecord = false;
 
+    g_memoryAccesses.clear();
     g_writeMultiMemoryRecords = true;
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
-    CHECK(g_memoryAccesses.size() == 3);
-    CHECK(g_memoryAccesses[1].address == 0x130000000000ULL);
-    CHECK(g_memoryAccesses[1].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM);
-    CHECK(g_memoryAccesses[1].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    CHECK(g_memoryAccesses.size() == 2);
+    CHECK(g_memoryAccesses[0].address == 0x130000000000ULL);
+    CHECK(g_memoryAccesses[0].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM);
+    CHECK(g_memoryAccesses[0].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    CHECK(g_memoryAccesses[0].layoutKind == ACLSAN_MEM_LAYOUT_ND_AFFINE);
+    CHECK(g_memoryAccesses[0].rank == 2);
+    CHECK(g_memoryAccesses[0].firstCount == 4);
+    CHECK(g_memoryAccesses[0].secondCount == 2);
+    CHECK(g_memoryAccesses[1].address == 0);
+    CHECK(g_memoryAccesses[1].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L1);
+    CHECK(g_memoryAccesses[1].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
     CHECK(g_memoryAccesses[1].layoutKind == ACLSAN_MEM_LAYOUT_ND_AFFINE);
-    CHECK(g_memoryAccesses[1].rank == 2);
-    CHECK(g_memoryAccesses[1].firstCount == 4);
-    CHECK(g_memoryAccesses[1].secondCount == 2);
-    CHECK(g_memoryAccesses[2].address == 0);
-    CHECK(g_memoryAccesses[2].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L1);
-    CHECK(g_memoryAccesses[2].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-    CHECK(g_memoryAccesses[2].layoutKind == ACLSAN_MEM_LAYOUT_ND_AFFINE);
-    CHECK(g_memoryAccesses[2].rank == 3);
+    CHECK(g_memoryAccesses[1].rank == 3);
     g_writeMultiMemoryRecords = false;
 
     const size_t recordsBeforeTimedOutSync = g_records.size();

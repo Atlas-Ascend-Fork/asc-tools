@@ -152,10 +152,11 @@ bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::v
 }
 Storage StorageOf(const AclsanDeviceMemoryAccessData& access)
 {
+    const auto owner = AclsanMemoryOwnerOf(&access);
     return {
         access.memorySpace, access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
                                 Domain{access.header.deviceId, 0, 0, 0} :
-                                DomainOf(access.header)};
+                                Domain{access.header.deviceId, owner.blockType, owner.blockId, owner.phyCoreId}};
 }
 
 std::map<Instruction, Instruction> RemoteFixpipeOrigins(

@@ -98,12 +98,10 @@ if grep -Eq 'ASCSAN_TRACE_BUFFER_MAGIC_V[0-9]+' "${trace_buffer_abi}"; then
 fi
 grep -Fq 'parsed.record.pc = wire.pc;' "${trace_buffer}" || Fail 'wire pc is not converted explicitly'
 grep -Fq 'parsed.record.instrId = wire.instrId;' "${trace_buffer}" || Fail 'wire instrId is not converted explicitly'
-grep -Fq 'std::memcpy(parsed.record.args, wire.args, sizeof(wire.args));' "${trace_buffer}" || \
-    Fail 'wire arguments are not converted explicitly'
-grep -Fq 'const TraceBlockKey blockKey{blockType, wire.blockId};' "${trace_buffer}" || \
-    Fail 'instruction execution identity is not keyed by block type and logical block ID'
-grep -Fq 'parsed.instrExecId = ++instructionCounts[blockKey];' "${trace_buffer}" || \
-    Fail 'instruction execution ID is not counted per logical block'
+grep -Fq 'memcpy_s(parsed.record.args, sizeof(parsed.record.args), wire.args, sizeof(wire.args)) != EOK' \
+    "${trace_buffer}" || Fail 'wire arguments are not copied with a checked bounded conversion'
+grep -Fq 'parsed.instrExecId = uint64_t(sliceIndex) * aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + index + 1U;' \
+    "${trace_buffer}" || Fail 'instruction execution ID is not stable per physical trace slot'
 if grep -Eq 'seenLogicalBlocks|sliceBlockId' "${trace_buffer}"; then
     Fail 'Host parser must not validate logical block placement'
 fi
@@ -152,14 +150,53 @@ grep -Fq 'registerState.Update(key, *value);' "${trace_runtime}" || \
     Fail 'trace runtime does not update SET_PADDING state by block type and block ID'
 
 binding_source="${dbi_source_dir}/dynamic_bind.cpp"
+probe_generator="${dbi_source_dir}/probe_source_generator.cpp"
+ctrlbin_bindings="${dbi_source_dir}/ctrlbin/ctrlbin_bindings.h"
+# Compare complete tuples independently of line wrapping and named argument constants.
+binding_catalog=$(tr -d '[:space:]' < "${binding_source}" | sed -E 's/PROBE_ARGUMENT_([0-4])/\1/g')
+probe_catalog=$(tr -d '[:space:]' < "${probe_generator}")
+# Numeric IDs now live in InstrType rather than being duplicated in BindingSpec.
+instruction_ids=$(awk '
+    /enum class InstrType/ { in_enum = 1; next }
+    in_enum && /};/ { exit }
+    in_enum {
+        sub(/\/\/.*/, "")
+        gsub(/[[:space:],]/, "")
+        if ($0 == "") next
+        if ($0 !~ /^[A-Z][A-Z0-9_]*(=[0-9]+)?$/) exit 1
+        if (index($0, "=")) {
+            split($0, fields, "=")
+            name = fields[1]
+            value = fields[2] + 0
+        } else {
+            name = $0
+        }
+        printf "%s=%d\n", name, value++
+    }
+' "${ctrlbin_bindings}") || Fail 'cannot read instruction IDs from InstrType'
+
+CheckBinding()
+{
+    local type=$1 id=$2 symbol=$3 mask=$4
+    grep -Fxq "${type}=${id}" <<< "${instruction_ids}" || Fail "incorrect instruction ID for ${type}"
+    grep -Fq "{InstrType::${type},\"${symbol}\",{${mask}}}" <<< "${binding_catalog}" || \
+        Fail "incorrect binding symbol or argument mask for ${type}"
+}
+
+CheckProbe()
+{
+    local type=$1 group=$2 symbol=$3
+    grep -Fq "{static_cast<uint16_t>(InstrType::${type}),ProbeGroup::${group},\"${symbol}\"," \
+        <<< "${probe_catalog}" || Fail "incorrect probe group or symbol for ${type}"
+}
 
 scalar_dev_id=64
 for scalar_dev_op in st ld; do
     for scalar_dev_bits in 64 32 16 8; do
         scalar_dev_type="${scalar_dev_op^^}_DEV_B${scalar_dev_bits}"
         scalar_dev_symbol="__sanitizer_report_${scalar_dev_op}_dev_b${scalar_dev_bits}"
-        grep -Fq "{InstrType::${scalar_dev_type}, ${scalar_dev_id}, \"${scalar_dev_symbol}\", {1, 2}}" \
-            "${binding_source}" || Fail "incorrect address/offset binding for ${scalar_dev_symbol}"
+        CheckBinding "${scalar_dev_type}" "${scalar_dev_id}" "${scalar_dev_symbol}" '1,2'
+        CheckProbe "${scalar_dev_type}" Scalar "${scalar_dev_symbol}"
         scalar_dev_id=$((scalar_dev_id + 1))
     done
 done
@@ -169,34 +206,22 @@ for scalar_atomic_spec in 'ST_ATOMIC_B32:st_atomic_b32' 'ST_ATOMIC_B16:st_atomic
     'STI_ATOMIC_B32:sti_atomic_b32' 'STI_ATOMIC_B16:sti_atomic_b16' 'STI_ATOMIC_B8:sti_atomic_b8'; do
     scalar_atomic_type="${scalar_atomic_spec%%:*}"
     scalar_atomic_symbol="__sanitizer_report_${scalar_atomic_spec##*:}"
-    grep -Fq "{InstrType::${scalar_atomic_type}, ${scalar_atomic_id}, \"${scalar_atomic_symbol}\", {1, 2, 3}}" \
-        "${binding_source}" || Fail "incorrect address/offset/post binding for ${scalar_atomic_symbol}"
+    CheckBinding "${scalar_atomic_type}" "${scalar_atomic_id}" "${scalar_atomic_symbol}" '1,2,3'
+    CheckProbe "${scalar_atomic_type}" Scalar "${scalar_atomic_symbol}"
     scalar_atomic_id=$((scalar_atomic_id + 1))
 done
 
-probe_generator="${dbi_source_dir}/probe_source_generator.cpp"
-ctrlbin_bindings="${dbi_source_dir}/ctrlbin/ctrlbin_bindings.h"
-binding_catalog=$(tr '\n\r\t' ' ' < "${binding_source}" | tr -s ' ')
-probe_catalog=$(tr '\n\r\t' ' ' < "${probe_generator}" | tr -s ' ')
 grep -Fq 'enum class InstrType' "${ctrlbin_bindings}" || Fail 'ctrlbin instruction type is not named InstrType'
 if rg -n '\bCtrlbinInstructionType\b' "${binding_source}" "${ctrlbin_bindings}"; then
     Fail 'CtrlbinInstructionType alias remains in the binding path'
 fi
-grep -Fq '{InstrType::SET_PADDING, 392, "__sanitizer_report_set_padding", {0}}' \
-    <<< "${binding_catalog}" || \
-    Fail 'DBI does not bind SET_PADDING argument 0 to instruction ID 392'
-grep -Fq 'return ProbeGroup::Matrix;' "${binding_source}" || Fail 'PIPE_M instruction IDs are not assigned to the Matrix group'
-grep -Fq 'return ProbeGroup::Vector;' "${binding_source}" || Fail 'PIPE_V instruction IDs are not assigned to the Vector group'
-grep -Fq '{392, ProbeGroup::Scalar, "__sanitizer_report_set_padding"' "${probe_generator}" || \
-    Fail 'Scalar SET_PADDING ProbeDefinition is missing'
-grep -Fq '"RegisterState", "PIPE_S"' <<< "${probe_catalog}" || \
-    Fail 'SET_PADDING ProbeDefinition does not record PIPE_S'
-grep -Fq 'R"ARGS(value, 0UL, 0UL, 0UL, 0UL)ARGS"' <<< "${probe_catalog}" || \
-    Fail 'SET_PADDING ProbeDefinition does not preserve value in raw argument 0'
-grep -Fq '{149, ProbeGroup::Mte2, "__sanitizer_report_set_l1_2d_b16"' "${probe_generator}" || \
-    Fail 'MTE2 SET_L1_2D.b16 ProbeDefinition is missing'
-grep -Fq '{150, ProbeGroup::Mte2, "__sanitizer_report_set_l1_2d_b32"' "${probe_generator}" || \
-    Fail 'MTE2 SET_L1_2D.b32 ProbeDefinition is missing'
+CheckBinding SET_PADDING 392 __sanitizer_report_set_padding 0
+grep -Eq '\{static_cast<uint16_t>\(InstrType::SET_PADDING\),ProbeGroup::Scalar,"__sanitizer_report_set_padding",[^}]*"RegisterState","PIPE_S",R"ARGS\(value,0UL,0UL,0UL,0UL\)ARGS"\}' \
+    <<< "${probe_catalog}" || Fail 'SET_PADDING must record PIPE_S and preserve value in raw argument 0'
+CheckBinding SET_L1_2D_B16 149 __sanitizer_report_set_l1_2d_b16 '0,1'
+CheckProbe SET_L1_2D_B16 Mte2 __sanitizer_report_set_l1_2d_b16
+CheckBinding SET_L1_2D_B32 150 __sanitizer_report_set_l1_2d_b32 '0,1'
+CheckProbe SET_L1_2D_B32 Mte2 __sanitizer_report_set_l1_2d_b32
 required_scalar_probes=(
     'LOOP3_PARA|90|__sanitizer_report_set_loop3_para'
     'LOOP_SIZE_UBTOOUT|125|__sanitizer_report_set_loop_size_ubtoout'
@@ -212,22 +237,15 @@ required_scalar_probes=(
 )
 for specification in "${required_scalar_probes[@]}"; do
     IFS='|' read -r instruction_type instruction_id probe_symbol <<< "${specification}"
-    grep -Fq "{InstrType::${instruction_type}, ${instruction_id}, \"${probe_symbol}\", {0}}" \
-        <<< "${binding_catalog}" || \
-        Fail "DBI binding is missing for instruction ID ${instruction_id}"
-    grep -Fq "{${instruction_id}, ProbeGroup::Scalar, \"${probe_symbol}\"" "${probe_generator}" || \
-        Fail "Scalar ProbeDefinition is missing for instruction ID ${instruction_id}"
+    CheckBinding "${instruction_type}" "${instruction_id}" "${probe_symbol}" 0
+    CheckProbe "${instruction_type}" Scalar "${probe_symbol}"
 done
-grep -Fq '{InstrType::MAD_S8, 400, "__sanitizer_report_mad_s8", {0, 1, 2, 3}}' \
-    <<< "${binding_catalog}" || \
-    Fail 'PIPE_M MAD binding is missing or has the wrong argument mask'
-grep -Fq '{InstrType::SCATTER_VNCHWCONV_B8, 177, "__sanitizer_report_scatter_vnchwconv_b8", {0, 1, 2, 3, 4}}' \
-    <<< "${binding_catalog}" || Fail 'PIPE_V VNCHWCONV binding is missing or has the wrong argument mask'
-grep -Fq '{InstrType::ST_ATOMIC_B8, 58, "__sanitizer_report_st_atomic_b8", {1, 2, 3}}' \
-    <<< "${binding_catalog}" || Fail 'Scalar ST_ATOMIC binding is missing or has the wrong argument mask'
-grep -Fq '{InstrType::PIPE_BARRIER, 439, "__sanitizer_report_pipe_barrier", {0}}' \
-    <<< "${binding_catalog}" || \
-    Fail 'Sync PIPE_BARRIER binding is missing or has the wrong argument mask'
+CheckBinding MAD_S8 400 __sanitizer_report_mad_s8 '0,1,2,3'
+CheckProbe MAD_S8 Matrix __sanitizer_report_mad_s8
+CheckBinding SCATTER_VNCHWCONV_B8 177 __sanitizer_report_scatter_vnchwconv_b8 '0,1,2,3,4'
+CheckProbe SCATTER_VNCHWCONV_B8 Vector __sanitizer_report_scatter_vnchwconv_b8
+CheckBinding PIPE_BARRIER 439 __sanitizer_report_pipe_barrier 0
+CheckProbe PIPE_BARRIER Sync __sanitizer_report_pipe_barrier
 
 hook_source="${api_dir}/aclsan_hook_aclrt.cpp"
 grep -Fq 'InstrumentRuntimeBinary' "${hook_source}" || \

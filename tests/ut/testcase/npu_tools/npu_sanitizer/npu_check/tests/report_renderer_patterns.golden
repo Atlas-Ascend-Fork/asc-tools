@@ -15,6 +15,14 @@
 =========     by aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>)
 =========     Address 0x<base>
 
+===== memcheck.host_invalid_access =====
+========= ERROR:[MEMCHECK] Invalid <space> <access> by <apiName>
+=========     Address 0x<address>, size <accessBytes> bytes is out of bounds
+
+===== memcheck.host_use_after_free =====
+========= ERROR:[MEMCHECK] Invalid <space> <access> by <apiName>
+=========     Address 0x<address>, size <accessBytes> bytes is used after free
+
 ===== memcheck.invalid_access =====
 ========= ERROR:[MEMCHECK] Invalid <space> <access> of size <accessBytes> bytes
 =========     <location>
@@ -89,26 +97,26 @@
 
 ===== racecheck.atomic_semantic =====
 ========= ERROR:[RACECHECK] ATOMIC_SEMANTIC race detected.
-=========     current access: <currentAccess> by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>), range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
-=========     previous access: <previousAccess> by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>), range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
+=========     current access: <currentAccess> <currentActor>, range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
+=========     previous access: <previousAccess> <previousActor>, range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
 =========     memory: <space><memoryOwner>, overlap [0x<overlapBegin>, 0x<overlapEnd>), <overlapBytes> bytes
 
 ===== racecheck.hazard_raw =====
 ========= ERROR:[RACECHECK] RAW (read after write) race detected.
-=========     current access: <currentAccess> by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>), range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
-=========     previous access: <previousAccess> by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>), range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
+=========     current access: <currentAccess> <currentActor>, range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
+=========     previous access: <previousAccess> <previousActor>, range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
 =========     memory: <space><memoryOwner>, overlap [0x<overlapBegin>, 0x<overlapEnd>), <overlapBytes> bytes
 
 ===== racecheck.hazard_war =====
 ========= ERROR:[RACECHECK] WAR (write after read) race detected.
-=========     current access: <currentAccess> by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>), range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
-=========     previous access: <previousAccess> by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>), range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
+=========     current access: <currentAccess> <currentActor>, range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
+=========     previous access: <previousAccess> <previousActor>, range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
 =========     memory: <space><memoryOwner>, overlap [0x<overlapBegin>, 0x<overlapEnd>), <overlapBytes> bytes
 
 ===== racecheck.hazard_waw =====
 ========= ERROR:[RACECHECK] WAW (write after write) race detected.
-=========     current access: <currentAccess> by aicore (<secondCoreId>) type (<secondType>) block (<secondBlock>) pipe (<secondPipe>), range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
-=========     previous access: <previousAccess> by aicore (<firstCoreId>) type (<firstType>) block (<firstBlock>) pipe (<firstPipe>), range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
+=========     current access: <currentAccess> <currentActor>, range [0x<currentRangeBegin>, 0x<currentRangeEnd>)
+=========     previous access: <previousAccess> <previousActor>, range [0x<previousRangeBegin>, 0x<previousRangeEnd>)
 =========     memory: <space><memoryOwner>, overlap [0x<overlapBegin>, 0x<overlapEnd>), <overlapBytes> bytes
 
 ===== synccheck.deadlock =====

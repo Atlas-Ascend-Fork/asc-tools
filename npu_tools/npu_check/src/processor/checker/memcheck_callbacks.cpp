@@ -41,6 +41,12 @@ bool Memcheck::OnCallback(
             OnFree(*event);
         }
     } else if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
+        const auto* header = static_cast<const AclsanDeviceEventHeader*>(data);
+        if (header == nullptr || header->version != ACLSAN_API_VERSION ||
+            header->size < sizeof(AclsanDeviceMemoryAccessData)) {
+            ++stats_.droppedDeviceOperations;
+            return false;
+        }
         const auto* event = static_cast<const AclsanDeviceMemoryAccessData*>(data);
         QueueDeviceMemoryAccess(*event);
     } else if (domain == ACLSAN_CB_DOMAIN_LAUNCH) {

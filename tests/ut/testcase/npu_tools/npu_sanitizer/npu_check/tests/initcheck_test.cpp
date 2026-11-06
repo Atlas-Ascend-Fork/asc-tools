@@ -992,3 +992,15 @@ TEST(InitcheckTest, FpcOnlyLaunchIsPendingUntilDrained)
 }
 } // namespace
 } // namespace npucheck
+
+TEST(InitcheckCallbackSchema, RejectsShortMemoryRecordBeforeReadingOwner)
+{
+    npucheck::Initcheck checker;
+    npucheck::CheckerReportList reports;
+    AclsanDeviceMemoryAccessData access{};
+    access.header.version = ACLSAN_API_VERSION;
+    access.header.size = offsetof(AclsanDeviceMemoryAccessData, memoryOwner);
+    EXPECT_FALSE(
+        checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+    EXPECT_FALSE(checker.AnalysisComplete());
+}

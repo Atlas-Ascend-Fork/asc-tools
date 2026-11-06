@@ -213,8 +213,7 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
         return result;
     try {
         const auto& first = accesses.front().header;
-        if (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM &&
-            (scope.launchId != first.launchId || scope.blockType != first.blockType || scope.blockId != first.blockId))
+        if (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM && scope.launchId != first.launchId)
             return fail(InitCheckStatus::INVALID_RECORD);
         std::vector<bool> seen(accesses.size(), false);
         std::vector<Operand> operands;
@@ -237,6 +236,11 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
             seen[access.accessIndex] = true;
             if (access.memorySpace != scope.space)
                 continue;
+            const auto owner = AclsanMemoryOwnerOf(&access);
+            if (access.memoryOwner.valid > 1 ||
+                (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM &&
+                 (scope.blockType != owner.blockType || scope.blockId != owner.blockId)))
+                return fail(InitCheckStatus::INVALID_RECORD);
             if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) && access.predicateMask0 == 0 &&
                 access.predicateMask1 == 0)
                 continue;
@@ -604,6 +608,10 @@ void Initcheck::ReplayLaunch(
     std::map<Storage, std::vector<size_t>> writers;
     for (size_t i = 0; i < accesses.size(); ++i) {
         const auto& a = accesses[i].data;
+        // Standalone ingress retains UB operands only to validate the complete
+        // instruction in the dependency graph; UB byte checks remain disabled.
+        if (!analysis_->Managed() && a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB)
+            continue;
         const auto& h = a.header;
         if (invalidInstructions.count(
                 {h.deviceId, h.launchId, h.blockType, h.blockId, h.phyCoreId, h.instrExecId, h.pipeline, h.pc,
@@ -707,10 +715,12 @@ void Initcheck::ReplayLaunch(
             MemoryInitcheck::InitializedRanges initialized;
             for (auto range : preceding)
                 initialized.emplace_back(range.begin, range.end);
-            const auto& h = accesses[storage.second.front()].data.header;
+            const auto& data = accesses[storage.second.front()].data;
+            const auto& h = data.header;
+            const auto owner = AclsanMemoryOwnerOf(&data);
             const auto key = space == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
                                  InitStateKey{*device, 0} :
-                                 InitStateKey::Local(h.deviceId, h.launchId, h.blockType, h.blockId, space);
+                                 InitStateKey::Local(h.deviceId, h.launchId, owner.blockType, owner.blockId, space);
             MemoryInitcheck::RangeClassifier classifier;
             if (analysis_->Managed())
                 classifier = [this, launchId, device](uint64_t address, uint64_t bytes) {
@@ -753,7 +763,8 @@ void Initcheck::ReplayLaunch(
                 if (InitStateTableIndex::LocalCapacity(space) == 0 || !race::WritesMemory(access.data.accessMode))
                     continue;
                 const auto& h = access.data.header;
-                const auto key = InitStateKey::Local(h.deviceId, h.launchId, h.blockType, h.blockId, space);
+                const auto owner = AclsanMemoryOwnerOf(&access.data);
+                const auto key = InitStateKey::Local(h.deviceId, h.launchId, owner.blockType, owner.blockId, space);
                 for (const auto& range : access.ranges) {
                     const auto capacity = InitStateTableIndex::LocalCapacity(space);
                     if (range.end > capacity) {
@@ -816,8 +827,9 @@ void Initcheck::ReplayLaunch(
 
 namespace {
 
-constexpr size_t kMemoryAccessDependencySize =
-    offsetof(AclsanDeviceMemoryAccessData, regDependencyMask1) + sizeof(uint64_t);
+// Owner metadata is part of the required callback schema. Reject older,
+// shorter records before copying or consulting the appended owner extension.
+constexpr size_t kMemoryAccessDependencySize = sizeof(AclsanDeviceMemoryAccessData);
 static_assert(ACLSAN_DEVICE_REGISTER_COUNT < 64);
 constexpr uint64_t kSupportedRegisterMask = (UINT64_C(1) << static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_COUNT)) - 1;
 
@@ -1070,8 +1082,13 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     ++stats_.deviceOperations;
     if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0A || data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0B)
         ++l0Operations_;
-    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB)
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+        // UB and L1 operands now share the issuing core's instruction identity.
+        // Preserve multi-operand instructions for dependency-graph validation.
+        if (!analysis_->Managed() && data.accessCount > 1)
+            pendingMemoryAccesses_.push_back(data);
         return true;
+    }
     const CoreKey core{data.header.deviceId, data.header.launchId, data.header.blockType, data.header.blockId};
     const uint64_t initialized = initializedRegisters_[core];
     uint64_t missing = data.regDependencyMask0 & ~initialized;

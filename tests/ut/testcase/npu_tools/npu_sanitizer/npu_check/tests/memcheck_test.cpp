@@ -327,7 +327,7 @@ TEST(MemcheckTest, IgnoresHostResourceEvents)
     EXPECT_EQ(checker.Stats().frees, 0U);
 }
 
-TEST(MemcheckTest, ReportsOutOfBoundsGmAndUbWrites)
+TEST(MemcheckTest, ReportsOutOfBoundsGmWrites)
 {
     Memcheck checker;
     const auto invalidWrite = Access(DeviceSourceKind::MTE3, 0x200000, 64);
@@ -336,14 +336,19 @@ TEST(MemcheckTest, ReportsOutOfBoundsGmAndUbWrites)
     const auto reports = checker.OnSynchronization();
     ASSERT_EQ(reports.size(), 1U);
     EXPECT_EQ(reports.front().access.accessMode, NpuCheckReportAccessMode::WRITE);
+    EXPECT_EQ(reports.front().access.memorySpace, NpuCheckReportMemorySpace::GM);
+}
 
-    auto nonGm = invalidWrite;
-    nonGm.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
-    checker.QueueDeviceMemoryAccess(nonGm);
-    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 1U);
-    const auto localReports = checker.OnSynchronization();
-    ASSERT_EQ(localReports.size(), 1U);
-    EXPECT_EQ(localReports.front().access.memorySpace, NpuCheckReportMemorySpace::UB);
+TEST(MemcheckTest, IgnoresUbWritesWithoutQueuingOrMarkingAnalysisIncomplete)
+{
+    Memcheck checker;
+    auto access = Access(DeviceSourceKind::MTE3, 0x200000, 64);
+    access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    checker.QueueDeviceMemoryAccess(access);
+    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 0U);
+    EXPECT_EQ(checker.Stats().droppedDeviceOperations, 0U);
+    EXPECT_TRUE(checker.OnSynchronization().empty());
+    EXPECT_TRUE(checker.AnalysisComplete());
 }
 
 TEST(MemcheckTest, ExpandsBlockRepeatAndAffineLayouts)
@@ -686,18 +691,18 @@ TEST(MemcheckTest, EveryAtomicModeChecksTheWholeReadModifyWriteRangeOnce)
     }
 }
 
-TEST(MemcheckTest, IgnoresApiVersionWhenProcessingAccess)
+TEST(MemcheckTest, RejectsIncompatibleApiVersionWhenProcessingAccess)
 {
     auto access = Access(DeviceSourceKind::MTE3, 0x1000, 4);
     access.header.version = ACLSAN_API_VERSION + 1;
     access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
     Memcheck checker;
     CheckerReportList reports;
-    EXPECT_TRUE(
+    EXPECT_FALSE(
         checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
-    EXPECT_EQ(checker.Stats().droppedDeviceOperations, 0U);
-    EXPECT_EQ(checker.OnSynchronization().size(), 1U);
-    EXPECT_TRUE(checker.AnalysisComplete());
+    EXPECT_EQ(checker.Stats().droppedDeviceOperations, 1U);
+    EXPECT_EQ(checker.OnSynchronization().size(), 0U);
+    EXPECT_FALSE(checker.AnalysisComplete());
 }
 
 TEST(MemcheckTest, ReportsAtomicWriteOnceAndHonorsPredicate)
@@ -804,3 +809,15 @@ TEST(MemcheckTest, GroupsDerivedDataByCompleteInstructionIdentity)
 
 } // namespace
 } // namespace npucheck
+
+TEST(MemcheckCallbackSchema, RejectsShortMemoryRecordBeforeCopying)
+{
+    npucheck::Memcheck checker;
+    npucheck::CheckerReportList reports;
+    AclsanDeviceEventHeader header{};
+    header.version = ACLSAN_API_VERSION;
+    header.size = sizeof(header);
+    EXPECT_FALSE(
+        checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &header, reports));
+    EXPECT_FALSE(checker.AnalysisComplete());
+}

@@ -266,6 +266,8 @@ ReportRecord MakeRaceRecord()
             {"space", "UB"},
             {"currentAccess", "READ"},
             {"previousAccess", "WRITE"},
+            {"currentActor", "by aicore (1) type (AIV) block (8) pipe (PIPE_MTE2)"},
+            {"previousActor", "by aicore (0) type (AIV) block (8) pipe (PIPE_MTE3)"},
             {"currentRangeBegin", "2000"},
             {"currentRangeEnd", "2010"},
             {"previousRangeBegin", "2000"},
@@ -509,6 +511,10 @@ TEST(ReportRendererTest, ListsAndRendersBuiltinTemplates)
 
     EXPECT_EQ(npucheck::RenderReportRecord(MakeRaceRecord(), {}, &rendered), ReportRenderStatus::SUCCESS);
     EXPECT_NE(rendered.find("========= WARNING:[RACECHECK] RAW (read after write) race detected."), std::string::npos);
+    EXPECT_NE(
+        rendered.find("current access: READ by aicore (1) type (AIV) block (8) pipe (PIPE_MTE2)"), std::string::npos);
+    EXPECT_NE(
+        rendered.find("previous access: WRITE by aicore (0) type (AIV) block (8) pipe (PIPE_MTE3)"), std::string::npos);
 
     EXPECT_EQ(npucheck::RenderReportRecord(MakeSyncRecord(), {}, &rendered), ReportRenderStatus::SUCCESS);
     EXPECT_NE(
@@ -583,7 +589,9 @@ TEST(ReportRendererTest, CatalogOwnsCompletePatternMetadata)
     EXPECT_FALSE(unused->reportTemplate.text.empty());
 
     const auto& catalog = GetPatternCatalog();
-    EXPECT_EQ(catalog.size(), 32U);
+    EXPECT_EQ(catalog.size(), 34U);
+    EXPECT_NE(FindPatternDescriptor(ReportTemplateKey{ReportTool::MEMCHECK, "host_invalid_access"}), nullptr);
+    EXPECT_NE(FindPatternDescriptor(ReportTemplateKey{ReportTool::MEMCHECK, "host_use_after_free"}), nullptr);
     for (const char* removedPattern : {"atomic_race", "cross_pipe_race", "inter_core_race", "invalid_remote_access"}) {
         EXPECT_EQ(FindPatternDescriptor(ReportTemplateKey{ReportTool::RACECHECK, removedPattern}), nullptr)
             << removedPattern;

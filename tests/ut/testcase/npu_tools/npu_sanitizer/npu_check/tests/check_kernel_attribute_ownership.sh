@@ -51,7 +51,7 @@ if rg -q 'kCommonCallbacks' "${tool_manager}"; then
     Fail "launch callback must not be common to all tools"
 fi
 
-synccheck_callbacks=$(sed -n '/Synccheck::GetSubscribedID/,/return callbacks/p' "${sync_checker}")
+synccheck_callbacks=$(sed -n '/SyncLedger::GetSubscribedID/,/return callbacks/p' "${sync_checker}")
 if ! rg -q 'ACLSAN_CB_DOMAIN_LAUNCH.*ACLSAN_CBID_LAUNCH_KERNEL' <<< "${synccheck_callbacks}"; then
     Fail "Synccheck callbacks do not subscribe to the launch callback"
 fi

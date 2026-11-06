@@ -57,7 +57,9 @@ bool SameMemory(const AclsanDeviceMemoryAccessData& a, const AclsanDeviceMemoryA
         a.dataBits != b.dataBits || a.alignSize != b.alignSize || a.vectorMask0 != b.vectorMask0 ||
         a.vectorMask1 != b.vectorMask1 || a.predicateMask0 != b.predicateMask0 ||
         a.predicateMask1 != b.predicateMask1 || a.regDependencyMask0 != b.regDependencyMask0 ||
-        a.regDependencyMask1 != b.regDependencyMask1)
+        a.regDependencyMask1 != b.regDependencyMask1 || a.memoryOwner.valid != b.memoryOwner.valid ||
+        a.memoryOwner.phyCoreId != b.memoryOwner.phyCoreId || a.memoryOwner.blockId != b.memoryOwner.blockId ||
+        a.memoryOwner.blockType != b.memoryOwner.blockType)
         return false;
     switch (a.layoutKind) {
         case ACLSAN_MEM_LAYOUT_SCALAR:
@@ -272,8 +274,12 @@ private:
                 a.instructionId <= static_cast<uint32_t>(aclsan::InstructionId::StiAtomicB8)) {
                 reasons.insert("atomic_semantics_unknown");
             }
-            // Remote/shared owner mappings are not encoded by the current callback.
-            if (a.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR &&
+            if (a.memoryOwner.valid > 1 ||
+                (a.memoryOwner.valid && a.memoryOwner.blockType > ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
+                reasons.insert("invalid_memory_owner");
+            }
+            // Remote/shared memory must have a resolved storage owner.
+            if (AclsanMemoryOwnerOf(&a).blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR &&
                 a.memorySpace >= ACLSAN_DEVICE_MEMORY_SPACE_L1) {
                 reasons.insert("owner_mapping_unknown");
             }

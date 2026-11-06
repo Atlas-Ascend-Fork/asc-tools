@@ -879,6 +879,7 @@ void TestTranslatesLocalMemoryTransfersToOwnedAccesses()
         const uint32_t destinationSpace = instructionId == 158 || instructionId == 170 || instructionId == 171 ?
                                               ACLSAN_DEVICE_MEMORY_SPACE_UB :
                                               ACLSAN_DEVICE_MEMORY_SPACE_L1;
+        uint32_t accessIndex = 0;
         for (const auto& access : *accesses) {
             const bool read = access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ;
             const bool ub = access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
@@ -888,11 +889,27 @@ void TestTranslatesLocalMemoryTransfersToOwnedAccesses()
             EXPECT_EQ(access.header.pipeline, record.pipeline);
             EXPECT_EQ(access.memorySpace, read ? sourceSpace : destinationSpace);
             EXPECT_EQ(access.address, read ? record.args[1] : record.args[0]);
-            EXPECT_EQ(access.header.phyCoreId, ub ? AIV_CORE : AIC_CORE);
-            EXPECT_EQ(access.header.blockId, ub ? AIV_BLOCK : AIC_BLOCK);
-            EXPECT_EQ(
-                access.header.blockType,
-                ub ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+            if (instructionId == 158 || instructionId == 173) {
+                // UB/L1 operands share the issuer; storage ownership is separate.
+                EXPECT_EQ(access.header.phyCoreId, trace.phyCoreId);
+                EXPECT_EQ(access.header.blockId, trace.blockId);
+                EXPECT_EQ(access.header.blockType, trace.blockType);
+                EXPECT_EQ(access.accessCount, 2U);
+                EXPECT_EQ(access.accessIndex, accessIndex++);
+                EXPECT_EQ(access.memoryOwner.valid, 1U);
+                EXPECT_EQ(access.memoryOwner.phyCoreId, ub ? AIV_CORE : AIC_CORE);
+                EXPECT_EQ(access.memoryOwner.blockId, ub ? AIV_BLOCK : AIC_BLOCK);
+                EXPECT_EQ(
+                    access.memoryOwner.blockType,
+                    ub ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+            } else {
+                // FIX transfers retain their existing endpoint header identities.
+                EXPECT_EQ(access.header.phyCoreId, ub ? AIV_CORE : AIC_CORE);
+                EXPECT_EQ(access.header.blockId, ub ? AIV_BLOCK : AIC_BLOCK);
+                EXPECT_EQ(
+                    access.header.blockType,
+                    ub ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+            }
         }
         EXPECT_EQ(
             std::count_if(

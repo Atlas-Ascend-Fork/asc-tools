@@ -205,6 +205,14 @@ target_link_libraries(acl_san_test PRIVATE
         -DRUNTIME_ROOT=${NPU_TOOLS_TEST_CANN_ROOT}
         -DINJECTION_LIBRARY_DIR=$<TARGET_FILE_DIR:acl_san_test>
         -P ${SANITIZER_API_TEST_DIR}/run_with_fake_dbi.cmake)
+
+    # Schedule tests sharing the fake toolchain one at a time so parallel CTest
+    # runs do not exhaust the scripts' file lock timeout.
+    set_tests_properties(
+      aclsan_symbolizer_api_test aclsan_trace_d2h_hook aclsan_aclnn_runtime_hooks
+      aclsan.multi_entry.data aclsan.multi_entry.file
+      aclsan.full_flow_host_sample aclsan.file_load_trace_d2h
+      PROPERTIES RESOURCE_LOCK aclsan_fake_toolchain)
   endif()
 endif()
 if(ENABLE_TEST OR NPU_CHECK_ENABLE_REAL_DBI_FLOW OR NPU_CHECK_ENABLE_REAL_DBI_TOOLCHAIN)

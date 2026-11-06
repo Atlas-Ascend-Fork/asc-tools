@@ -425,4 +425,191 @@ TEST(RacecheckTranslation, MissingRegisterStateEstimatedCallbackMakesCoverageInc
     EXPECT_TRUE(reports.empty());
     EXPECT_NE(checker.Summary().find("skipped_memory_events=1"), std::string::npos);
 }
+// Exercise actual UB->L1 translation, not synthetic callbacks that already
+// assume the write executes on its storage owner.
+TEST(InitcheckTranslation, UbToL1FollowsIssuingVectorNotification)
+{
+    for (uint32_t sub : {0U, 1U}) {
+        for (uint32_t writeBytes : {64U, 128U}) {
+            for (bool notify : {false, true}) {
+                SCOPED_TRACE(::testing::Message() << sub << '/' << writeBytes << '/' << notify);
+                npucheck::Initcheck checker;
+                npucheck::CheckerReportList reports;
+                ParsedTraceRecord raw{};
+                raw.launchId = 2001;
+                raw.instrExecId = 10;
+                raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+                raw.blockId = sub;
+                raw.phyCoreId = 18 + sub;
+                raw.physicalCoreSlotCount = 108;
+                raw.record.instrId = 173;
+                raw.record.pipeline = ACLSAN_DEVICE_PIPE_MTE3;
+                raw.record.args[2] = (1ULL << 4) | (uint64_t(writeBytes / 32) << 16);
+                const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+                ASSERT_TRUE(decoded);
+                const auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded);
+                ASSERT_TRUE(translated);
+                const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*translated);
+                ASSERT_NE(accesses, nullptr);
+                ASSERT_EQ(accesses->size(), 2U);
+                AclsanDeviceMemoryAccessData read{};
+                read.header = accesses->front().header;
+                read.header.instrExecId = 3; // Cross-core numeric IDs do not establish order.
+                read.header.pc = 0x100;
+                read.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                read.header.blockId = 0;
+                read.header.phyCoreId = 0;
+                read.header.pipeline = ACLSAN_DEVICE_PIPE_MTE1;
+                read.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L1;
+                read.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+                read.accessCount = 1;
+                read.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
+                read.layout.range.bytes = 128;
+                ASSERT_TRUE(checker.OnCallback(
+                    ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &read, reports));
+                if (notify) {
+                    AclsanDeviceSyncData wait{};
+                    wait.header = read.header;
+                    wait.header.size = sizeof(wait);
+                    wait.header.instrExecId = 2;
+                    wait.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+                    wait.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
+                    wait.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+                    wait.mode = ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
+                    wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
+                    wait.dstPipe = ACLSAN_DEVICE_PIPE_MTE1;
+                    wait.objectId = 1 + 16 * sub;
+                    auto set = wait;
+                    set.header.instrExecId = 11;
+                    set.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+                    set.header.blockId = sub;
+                    set.header.phyCoreId = 18 + sub;
+                    set.action = ACLSAN_DEVICE_SYNC_ACTION_SET;
+                    set.srcPipe = ACLSAN_DEVICE_PIPE_MTE3;
+                    set.dstPipe = 0;
+                    set.objectId = 1;
+                    ASSERT_TRUE(checker.OnCallback(
+                        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &wait, reports));
+                    ASSERT_TRUE(checker.OnCallback(
+                        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &set, reports));
+                }
+                for (const auto& access : *accesses)
+                    ASSERT_TRUE(checker.OnCallback(
+                        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+                AclsanSynchronizeData end{};
+                end.common = {ACLSAN_API_VERSION, sizeof(end)};
+                ASSERT_TRUE(checker.OnCallback(
+                    ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+                EXPECT_EQ(checker.AnalysisComplete(), notify) << checker.Summary();
+                if (notify && writeBytes < 128) {
+                    ASSERT_EQ(reports.size(), 1U) << checker.Summary();
+                    const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(reports.front());
+                    EXPECT_EQ(report.uninitBytes, 128 - writeBytes);
+                } else {
+                    EXPECT_TRUE(reports.empty()) << checker.Summary();
+                }
+                if (!notify)
+                    EXPECT_NE(checker.Summary().find("unordered_initialization"), std::string::npos);
+            }
+        }
+    }
+}
+
+TEST(RacecheckTranslation, UbL1TransfersUseIssuerOrderAndKeepStorageOwnersIsolated)
+{
+    for (bool toL1 : {false, true}) {
+        for (uint32_t sub : {0U, 1U}) {
+            for (bool notify : {false, true}) {
+                for (bool otherOwner : {false, true}) {
+                    SCOPED_TRACE(::testing::Message() << toL1 << '/' << sub << '/' << notify << '/' << otherOwner);
+                    npucheck::Racechecker checker;
+                    npucheck::CheckerReportList reports;
+                    AclsanLaunchData launch{};
+                    launch.launchId = 2002;
+                    launch.common = {ACLSAN_API_VERSION, sizeof(launch)};
+                    ASSERT_TRUE(
+                        checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+                    ParsedTraceRecord raw{};
+                    raw.launchId = 2002;
+                    raw.instrExecId = 10;
+                    raw.physicalCoreSlotCount = 108;
+                    raw.blockType =
+                        toL1 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                    raw.blockId = toL1 ? sub : 0;
+                    raw.phyCoreId = toL1 ? 18 + sub : 0;
+                    raw.record.instrId = toL1 ? 173 : 158;
+                    raw.record.pipeline = toL1 ? ACLSAN_DEVICE_PIPE_MTE3 : ACLSAN_DEVICE_PIPE_MTE1;
+                    raw.record.args[0] = 0x100;
+                    raw.record.args[1] = 0x200;
+                    raw.record.args[2] = (1ULL << 4) | (4ULL << 16) | (toL1 ? 0 : sub);
+                    const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+                    ASSERT_TRUE(decoded);
+                    const auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded);
+                    ASSERT_TRUE(translated);
+                    const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*translated);
+                    ASSERT_NE(accesses, nullptr);
+                    ASSERT_EQ(accesses->size(), 2U);
+                    AclsanDeviceMemoryAccessData read{};
+                    read.header = accesses->front().header;
+                    read.header.instrExecId = 3;
+                    read.header.pc = 0x100;
+                    read.header.blockType =
+                        toL1 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+                    read.header.blockId = toL1 ? 0 : sub;
+                    read.header.phyCoreId = toL1 ? 0 : 18 + sub;
+                    read.header.pipeline = toL1 ? ACLSAN_DEVICE_PIPE_MTE1 : ACLSAN_DEVICE_PIPE_VECTOR;
+                    read.memorySpace = toL1 ? ACLSAN_DEVICE_MEMORY_SPACE_L1 : ACLSAN_DEVICE_MEMORY_SPACE_UB;
+                    read.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+                    read.accessCount = 1;
+                    read.address = 0x100;
+                    read.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
+                    read.layout.range.bytes = 128;
+                    const auto emit = [&](const auto& event, AclsanCallbackId id) {
+                        EXPECT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, id, &event, reports));
+                    };
+                    if (notify) {
+                        AclsanDeviceSyncData wait{};
+                        wait.header = read.header;
+                        wait.header.size = sizeof(wait);
+                        wait.header.instrExecId = 2;
+                        wait.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+                        wait.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
+                        wait.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+                        wait.mode = ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
+                        wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
+                        wait.dstPipe = read.header.pipeline;
+                        wait.objectId = toL1 ? 1 + 16 * sub : 1;
+                        auto set = wait;
+                        set.header.instrExecId = 11;
+                        set.header.blockType = raw.blockType;
+                        set.header.blockId = raw.blockId;
+                        set.header.phyCoreId = raw.phyCoreId;
+                        set.action = ACLSAN_DEVICE_SYNC_ACTION_SET;
+                        set.srcPipe = raw.record.pipeline;
+                        set.dstPipe = 0;
+                        set.objectId = toL1 ? 1 : 1 + 16 * sub;
+                        emit(wait, ACLSAN_CBID_DEVICE_SYNC);
+                        emit(set, ACLSAN_CBID_DEVICE_SYNC);
+                    }
+                    if (otherOwner) {
+                        read.header.blockId += toL1 ? 1 : 2;
+                        read.header.phyCoreId += toL1 ? 1 : 2;
+                    }
+                    // Deliberately deliver the consumer before its producer.
+                    emit(read, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
+                    for (const auto& access : *accesses)
+                        emit(access, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
+                    AclsanSynchronizeData end{};
+                    end.common = {ACLSAN_API_VERSION, sizeof(end)};
+                    ASSERT_TRUE(checker.OnCallback(
+                        ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+                    checker.Finalize(reports);
+                    EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+                    EXPECT_EQ(reports.empty(), notify || otherOwner) << checker.Summary();
+                }
+            }
+        }
+    }
+}
+
 } // namespace

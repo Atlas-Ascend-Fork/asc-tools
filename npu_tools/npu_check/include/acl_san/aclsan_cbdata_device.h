@@ -144,6 +144,15 @@ typedef struct AclsanMemNdAffineLayout {
     int64_t strides[5];
 } AclsanMemNdAffineLayout;
 
+// Storage identity is independent of the core issuing the instruction.
+// valid=0 retains the header's identity for ordinary local accesses.
+typedef struct AclsanDeviceMemoryOwner {
+    uint32_t valid;
+    uint32_t phyCoreId;
+    uint32_t blockId;
+    uint32_t blockType;
+} AclsanDeviceMemoryOwner;
+
 typedef struct AclsanDeviceMemoryAccessData {
     AclsanDeviceEventHeader header;
     uint64_t address;
@@ -169,7 +178,20 @@ typedef struct AclsanDeviceMemoryAccessData {
     uint32_t unitFlag; // Former reserved slot: 0=disabled, 2=keep, 3=update L0C unit flag.
     uint64_t regDependencyMask0;
     uint64_t regDependencyMask1;
+    // Appended extension; consumers require header.size >= sizeof(this record).
+    // header always identifies the issuer for UB <-> L1 transfers.
+    AclsanDeviceMemoryOwner memoryOwner;
 } AclsanDeviceMemoryAccessData;
+
+static inline AclsanDeviceMemoryOwner AclsanMemoryOwnerOf(const AclsanDeviceMemoryAccessData* access)
+{
+    if (access->memoryOwner.valid) {
+        return access->memoryOwner;
+    }
+    const AclsanDeviceMemoryOwner owner = {
+        1, access->header.phyCoreId, access->header.blockId, access->header.blockType};
+    return owner;
+}
 
 typedef enum AclsanDeviceRegisterId {
     ACLSAN_DEVICE_REGISTER_VECTOR_MASK = 0,

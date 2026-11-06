@@ -162,7 +162,7 @@ TEST(UbMemory, OtherVectorIdsRemainUndecoded)
     }
 }
 
-TEST(UbMemory, CbufUbCopiesUseSubBlockAndOwnerHeaders)
+TEST(UbMemory, CbufUbCopiesSeparateIssuerAndStorageOwner)
 {
     const uint64_t config0 = 1ULL | (2ULL << 4U) | (3ULL << 16U) | (1ULL << 32U) | (2ULL << 48U);
     MemoryCbdataContext context{};
@@ -180,9 +180,15 @@ TEST(UbMemory, CbufUbCopiesUseSubBlockAndOwnerHeaders)
     EXPECT_EQ(l1ToUb.data[0].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
     EXPECT_EQ(l1ToUb.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     EXPECT_EQ(l1ToUb.data[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-    EXPECT_EQ(l1ToUb.data[1].header.phyCoreId, 19u);
-    EXPECT_EQ(l1ToUb.data[1].header.blockId, 3u);
-    EXPECT_EQ(l1ToUb.data[1].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+    EXPECT_EQ(l1ToUb.data[1].header.phyCoreId, 0u);
+    EXPECT_EQ(l1ToUb.data[1].header.blockId, 1u);
+    EXPECT_EQ(l1ToUb.data[1].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+    EXPECT_EQ(l1ToUb.data[1].memoryOwner.valid, 1u);
+    EXPECT_EQ(l1ToUb.data[1].memoryOwner.phyCoreId, 19u);
+    EXPECT_EQ(l1ToUb.data[1].memoryOwner.blockId, 3u);
+    EXPECT_EQ(l1ToUb.data[1].memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+    EXPECT_EQ(l1ToUb.data[0].accessCount, 2u);
+    EXPECT_EQ(l1ToUb.data[1].accessIndex, 1u);
     EXPECT_EQ(l1ToUb.data[1].layout.blockRepeat.blockSize, 96u);
     EXPECT_EQ(l1ToUb.data[1].layout.blockRepeat.repeatStride, 160u);
 
@@ -195,9 +201,15 @@ TEST(UbMemory, CbufUbCopiesUseSubBlockAndOwnerHeaders)
     ASSERT_EQ(ubToL1.data.size(), 2u);
     EXPECT_EQ(ubToL1.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
     EXPECT_EQ(ubToL1.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-    EXPECT_EQ(ubToL1.data[0].header.phyCoreId, 0u);
-    EXPECT_EQ(ubToL1.data[0].header.blockId, 1u);
-    EXPECT_EQ(ubToL1.data[0].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+    EXPECT_EQ(ubToL1.data[0].header.phyCoreId, 19u);
+    EXPECT_EQ(ubToL1.data[0].header.blockId, 3u);
+    EXPECT_EQ(ubToL1.data[0].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+    EXPECT_EQ(ubToL1.data[0].memoryOwner.valid, 1u);
+    EXPECT_EQ(ubToL1.data[0].memoryOwner.phyCoreId, 0u);
+    EXPECT_EQ(ubToL1.data[0].memoryOwner.blockId, 1u);
+    EXPECT_EQ(ubToL1.data[0].memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+    EXPECT_EQ(ubToL1.data[0].accessCount, 2u);
+    EXPECT_EQ(ubToL1.data[1].accessIndex, 1u);
     EXPECT_EQ(ubToL1.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     EXPECT_EQ(ubToL1.data[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
     EXPECT_EQ(ubToL1.data[1].header.phyCoreId, 19u);
@@ -250,9 +262,12 @@ TEST(UbMemory, TraceIdsStayDistinctWhenVectorWritersShareL1Owner)
         const auto& l1 = result.data[0];
         const auto& ub = result.data[1];
         EXPECT_EQ(l1.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
-        EXPECT_EQ(l1.header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
-        EXPECT_EQ(l1.header.phyCoreId, 0u);
-        EXPECT_EQ(l1.header.blockId, 0u);
+        EXPECT_EQ(l1.header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+        EXPECT_EQ(l1.memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+        EXPECT_EQ(l1.header.phyCoreId, record.phyCoreId);
+        EXPECT_EQ(l1.memoryOwner.phyCoreId, 0u);
+        EXPECT_EQ(l1.header.blockId, record.blockId);
+        EXPECT_EQ(l1.memoryOwner.blockId, 0u);
         EXPECT_EQ(ub.header.phyCoreId, record.phyCoreId);
         EXPECT_EQ(l1.header.instrExecId, ub.header.instrExecId);
         l1Headers.push_back(l1.header);
@@ -436,7 +451,10 @@ TEST(UbMemory, FixedTopologyMapsOwnersWithoutCoreCount)
     EXPECT_EQ(result.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
     EXPECT_EQ(result.data[0].header.phyCoreId, 0u);
     EXPECT_EQ(result.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
-    EXPECT_EQ(result.data[1].header.phyCoreId, 18u);
+    EXPECT_EQ(result.data[1].header.phyCoreId, 0u);
+    EXPECT_EQ(result.data[1].memoryOwner.valid, 1u);
+    EXPECT_EQ(result.data[1].memoryOwner.phyCoreId, 18u);
+    EXPECT_EQ(result.data[1].memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
 }
 
 TEST(UbMemory, InvalidCoreAndReservedDualModeNeverInventUbOwners)

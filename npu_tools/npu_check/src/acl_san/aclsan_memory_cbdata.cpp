@@ -365,6 +365,7 @@ std::optional<MemoryCbdataContext> ContextForUbuf(const MemoryCbdataContext& con
     return result;
 }
 
+// Determine storage ownership only; the emitted instruction retains its issuer.
 // 仅用于 L1 <-> UB 的 L1 端访问，确定该 L1 所属的 AIC。
 // UB -> L1 的 AIV context 映射回对应 AIC；L1 -> UB 的 AIC context 直接沿用。
 // UB -> UB、GM <-> UB 不调用此函数，其他 L1 访问也直接使用其原 context。
@@ -1724,10 +1725,14 @@ public:
             if (!l1Context.has_value()) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
-            return LinearInContext(
-                *l1Context, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1,
+            auto result = LinearInContext(
+                context_, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1,
                 write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, count,
                 length * CUBE_L1_BLOCK_BYTES, (length + gap) * CUBE_L1_BLOCK_BYTES);
+            for (auto& access : result.data) {
+                access.memoryOwner = {1, l1Context->coreId, l1Context->blockId, l1Context->blockType};
+            }
+            return result;
         }
         // FIX's common fields have the same encoding. Decode through the existing
         // architecture decoder; bits 16..19 describe local destinations, not L2.
@@ -2127,10 +2132,14 @@ public:
             if (!ubContext.has_value()) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
-            return LinearInContext(
-                *ubContext, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_UB,
+            auto result = LinearInContext(
+                context_, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_UB,
                 write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, count,
                 length * CUBE_L1_BLOCK_BYTES, (length + gap) * CUBE_L1_BLOCK_BYTES);
+            for (auto& access : result.data) {
+                access.memoryOwner = {1, ubContext->coreId, ubContext->blockId, ubContext->blockType};
+            }
+            return result;
         }
         if (f.kind != LocalMemoryTransferKind::FixL0cToUbufF32 && f.kind != LocalMemoryTransferKind::FixL0cToUbufS32) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
@@ -2264,9 +2273,9 @@ MemoryCbdataResult FinalizeMemoryAccesses(MemoryCbdataResult result) noexcept
         uint32_t nextIndex = 0;
     };
 
-    // A local transfer may publish endpoints owned by different physical cores.
-    // This result covers one dynamic instruction, so phyCoreId identifies each
-    // owner. Finalize once after all merges, keeping an ordered sequence per core.
+    // UB/L1 operands retain one issuer and form one instruction transaction.
+    // Legacy FIX remote endpoints still use separate headers until migrated.
+    // Finalize once after all merges, keeping an ordered sequence per header core.
     try {
         std::unordered_map<uint32_t, Sequence> sequences;
         for (const auto& data : result.data) {
