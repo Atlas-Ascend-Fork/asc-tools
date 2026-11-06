@@ -9,11 +9,11 @@
  */
 
 #include "device_binary_registry.h"
+#include "file_io.h"
 
 #include <cstdlib>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
-#include <fstream>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -53,9 +53,8 @@ bool WriteImage(const fs::path& destination, const void* image, size_t imageByte
     if (image == nullptr || imageBytes == 0) {
         return false;
     }
-    std::ofstream output(destination.string(), std::ios::binary | std::ios::trunc);
-    output.write(static_cast<const char*>(image), static_cast<std::streamsize>(imageBytes));
-    return output.good();
+    return asctools::security::WriteFile(
+        destination.string(), std::string_view(static_cast<const char*>(image), imageBytes));
 }
 
 void RemoveDirectory(const std::string& directory) noexcept
@@ -147,11 +146,15 @@ bool DeviceBinaryRegistry::RecordBinaryLoadFromData(
             if (!error) {
                 fs::permissions(session, fs::perms::owner_all, error);
             }
-            const fs::path sourceImage = session / "original_device.elf";
-            if (!error && WriteImage(sourceImage, image, imageBytes)) {
-                entry.sessionDirectory = session.string();
+            std::string sessionDirectory;
+            const bool validSession =
+                !error && asctools::security::NormalizePath(
+                              session.string(), asctools::security::PathKind::ExistingDirectory, sessionDirectory);
+            const fs::path sourceImage = fs::path(sessionDirectory) / "original_device.elf";
+            if (validSession && WriteImage(sourceImage, image, imageBytes)) {
+                entry.sessionDirectory = sessionDirectory;
                 entry.symbolizer = std::make_unique<DeviceSymbolizer>(
-                    DeviceSymbolizerConfig{SymbolizerPath(), sourceImage.string(), session.string()});
+                    DeviceSymbolizerConfig{SymbolizerPath(), sourceImage.string(), sessionDirectory});
                 entry.symbolizerError.clear();
             } else {
                 RemoveDirectory(session.string());

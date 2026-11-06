@@ -74,19 +74,15 @@ ToolResult RunTool(const std::vector<std::string>& commandArguments)
         return result;
     }
 
-    std::vector<char*> argv;
-    argv.reserve(commandArguments.size() + 1);
-    for (const auto& commandArgument : commandArguments) {
-        argv.push_back(const_cast<char*>(commandArgument.c_str()));
-    }
-    argv.push_back(nullptr);
-    std::vector<char*> environment;
+    auto argumentStorage = commandArguments;
+    const auto argv = MakeSpawnArguments(argumentStorage);
+    std::vector<std::string> environmentStorage;
     for (char** item = environ; item != nullptr && *item != nullptr; ++item) {
         if (!IsInjectionEnvironment(*item)) {
-            environment.push_back(*item);
+            environmentStorage.emplace_back(*item);
         }
     }
-    environment.push_back(nullptr);
+    const auto environment = MakeSpawnArguments(environmentStorage);
 
     posix_spawn_file_actions_t actions;
     int spawnStatus = posix_spawn_file_actions_init(&actions);

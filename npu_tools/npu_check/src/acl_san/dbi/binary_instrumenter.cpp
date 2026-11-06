@@ -21,9 +21,8 @@
 #include <elf.h>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
-#include <fstream>
 #include "npu_tool_log.h"
-#include <iterator>
+#include "file_io.h"
 #include <limits>
 #include <sstream>
 #include <sys/stat.h>
@@ -90,7 +89,7 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
         diagnostic = "Device ELF header is missing";
         return false;
     }
-    const auto* bytes = static_cast<const uint8_t*>(data);
+    const auto* bytes = static_cast<const char*>(data);
     Elf64_Ehdr header{};
     if (memcpy_s(&header, sizeof(header), bytes, sizeof(header)) != EOK) {
         diagnostic = "cannot read device ELF header";
@@ -120,7 +119,7 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
         diagnostic = "Device ELF section-name table is out of bounds";
         return false;
     }
-    const char* names = reinterpret_cast<const char*>(bytes + sectionNames.sh_offset);
+    const char* names = bytes + sectionNames.sh_offset;
     uint32_t maximumArgumentSize = 0;
     bool hasKernelArgumentSize = false;
     for (size_t index = 0; index < header.e_shnum; ++index) {
@@ -155,7 +154,7 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
         hasKernelArgumentSize = true;
     }
 
-    const std::string kernelElf(static_cast<const char*>(data), length);
+    const std::string kernelElf(bytes, length);
     uint32_t metadataArgumentArea = 0;
     bool hasParameterMetadata = false;
     if (!GetMaximumKernelArgumentArea(kernelElf, metadataArgumentArea, hasParameterMetadata, diagnostic)) {
@@ -178,16 +177,16 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
     return true;
 }
 
-DbiResult RunPipeline(const DbiRequest& request, void*) { return RunDbiPipeline(request); }
+DbiResult RunPipeline(const DbiRequest& request, const void*) { return RunDbiPipeline(request); }
 
 bool ReadAll(const boost::filesystem::path& path, std::vector<uint8_t>& data)
 {
-    std::ifstream input(path.string(), std::ios::binary);
-    if (!input) {
+    std::string content;
+    if (!asctools::security::ReadTextFile(path.string(), content)) {
         return false;
     }
-    data.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-    return input.good() || input.eof();
+    data.assign(content.begin(), content.end());
+    return true;
 }
 
 void Cleanup(const BinaryInstrumentationConfig& config, const std::string& work)
@@ -246,7 +245,7 @@ bool BuildRuntimeInstrumentationConfig(
 
 BinaryInstrumentationResult InstrumentBinary(
     const BinaryInstrumentationConfig& config, const void* data, size_t length, DbiPipelineRunner runner,
-    void* runnerData)
+    const void* runnerData)
 {
     if (data == nullptr || length == 0 || runner == nullptr || config.arch.empty() || config.probeGroups.empty()) {
         return {};
@@ -272,14 +271,10 @@ BinaryInstrumentationResult InstrumentBinary(
             return {BinaryInstrumentationStatus::Failed, {}, "work-directory", error.message()};
         }
 
-        std::ofstream input(inputPath, std::ios::binary | std::ios::trunc);
-        input.write(static_cast<const char*>(data), static_cast<std::streamsize>(length));
-        if (!input.good()) {
+        if (!asctools::security::WriteFile(inputPath, std::string_view(static_cast<const char*>(data), length))) {
             Cleanup(config, work);
             return {BinaryInstrumentationStatus::Failed, {}, "write-input", "cannot write input binary"};
         }
-        input.close();
-
         const DbiResult pipeline =
             runner(MakeRequest(config, inputPath, outputPath, work, traceArgumentOffset), runnerData);
         if (!pipeline.success) {
@@ -310,7 +305,7 @@ BinaryInstrumentationResult InstrumentBinary(const BinaryInstrumentationConfig& 
 
 RuntimeBinaryInstrumentationResult InstrumentRuntimeBinary(
     const void* data, size_t length, uint32_t probeGroupMask, const char* socName, const char* runtimeLibrary,
-    InstrumentedBinaryConsumer consumer, void* consumerData, DbiPipelineRunner runner, void* runnerData,
+    InstrumentedBinaryConsumer consumer, void* consumerData, DbiPipelineRunner runner, const void* runnerData,
     uint32_t traceOffset, bool appendParamInfo, bool useCompleteProbeSet) noexcept
 {
     constexpr uint32_t strict = 1U;
@@ -377,8 +372,7 @@ RuntimeBinaryInstrumentationResult InstrumentRuntimeBinaryForEntry(
     InstrumentedBinaryConsumer consumer, void* consumerData, const uint64_t* entry, uint32_t traceOffset,
     bool appendParamInfo, bool useCompleteProbeSet) noexcept
 {
-    // NOLINTNEXTLINE(readability-non-const-parameter): void* is required by the DbiPipelineRunner callback type.
-    const DbiPipelineRunner selectedRunner = [](const DbiRequest& input, void* opaque) {
+    const DbiPipelineRunner selectedRunner = [](const DbiRequest& input, const void* opaque) {
         DbiRequest request = input;
         if (opaque != nullptr) {
             request.tilingKey = *static_cast<const uint64_t*>(opaque);
@@ -386,8 +380,8 @@ RuntimeBinaryInstrumentationResult InstrumentRuntimeBinaryForEntry(
         return RunDbiPipeline(request);
     };
     return InstrumentRuntimeBinary(
-        data, length, probeGroupMask, socName, runtimeLibrary, consumer, consumerData, selectedRunner,
-        const_cast<uint64_t*>(entry), traceOffset, appendParamInfo, useCompleteProbeSet);
+        data, length, probeGroupMask, socName, runtimeLibrary, consumer, consumerData, selectedRunner, entry,
+        traceOffset, appendParamInfo, useCompleteProbeSet);
 }
 
 } // namespace aclsan

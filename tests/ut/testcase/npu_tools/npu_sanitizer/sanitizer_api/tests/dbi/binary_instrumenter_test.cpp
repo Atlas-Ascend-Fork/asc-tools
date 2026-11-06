@@ -67,6 +67,10 @@ struct TestState {
     BinaryInstrumentationConfig config;
 };
 
+struct RunnerContext {
+    TestState* state;
+};
+
 int32_t CaptureInstrumentedBinary(const void* data, size_t length, void* userdata)
 {
     auto& captured = *static_cast<std::vector<uint8_t>*>(userdata);
@@ -132,9 +136,9 @@ TEST(DefaultBinaryInstrumentationConfigTest, IgnoresDbiOverridesExceptTemporaryF
     boost::filesystem::remove_all(cannRoot);
 }
 
-DbiResult FakePatch(const DbiRequest& request, void* userdata)
+DbiResult FakePatch(const DbiRequest& request, const void* userdata)
 {
-    auto& state = *static_cast<TestState*>(userdata);
+    auto& state = *static_cast<const RunnerContext*>(userdata)->state;
     ++state.runnerCalls;
     state.workDirectories.push_back(request.workDirectory);
     state.traceArgumentOffset = request.traceArgumentOffset;
@@ -225,9 +229,9 @@ std::vector<uint8_t> MakeKernelArgumentSizeElf(
     return image;
 }
 
-DbiResult ThrowingPatch(const DbiRequest& request, void* userdata)
+DbiResult ThrowingPatch(const DbiRequest& request, const void* userdata)
 {
-    auto& state = *static_cast<TestState*>(userdata);
+    auto& state = *static_cast<const RunnerContext*>(userdata)->state;
     ++state.runnerCalls;
     state.workDirectories.push_back(request.workDirectory);
     boost::filesystem::create_directories(request.workDirectory);
@@ -257,6 +261,7 @@ protected:
     }
 
     TestState state_;
+    const RunnerContext runnerContext_{&state_};
     std::string directory_;
 };
 
@@ -265,7 +270,7 @@ TEST_F(BinaryInstrumenterTest, ReturnsPatchedBytes)
     const std::string original = "kernel-data";
 
     const BinaryInstrumentationResult result =
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_);
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Instrumented);
     EXPECT_EQ(state_.runnerCalls, 1);
@@ -278,7 +283,7 @@ TEST_F(BinaryInstrumenterTest, InstrumentsWithoutKernelArgumentSizeMetadata)
     const std::string original = "kernel-without-argument-size-metadata";
 
     const BinaryInstrumentationResult result =
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_);
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Instrumented);
     EXPECT_EQ(state_.runnerCalls, 1);
@@ -290,7 +295,7 @@ TEST_F(BinaryInstrumenterTest, UsesParameterMetadataForAggregateArguments)
     const std::vector<uint8_t> original = MakeKernelArgumentSizeElf(16, {{0, 24}, {24, 24}});
 
     const BinaryInstrumentationResult result =
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_);
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Instrumented);
     EXPECT_EQ(result.traceArgumentOffset, 48U);
@@ -303,7 +308,7 @@ TEST_F(BinaryInstrumenterTest, UsesElfArgumentAreaWhenItExceedsRuntimeHint)
     const std::vector<uint8_t> original = MakeKernelArgumentSizeElf(40);
 
     const BinaryInstrumentationResult result =
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_);
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Instrumented);
     EXPECT_EQ(result.traceArgumentOffset, 40U);
@@ -316,7 +321,7 @@ TEST_F(BinaryInstrumenterTest, KeepsRuntimeHintWhenItExceedsElfArgumentArea)
     const std::vector<uint8_t> original = MakeKernelArgumentSizeElf(40);
 
     const BinaryInstrumentationResult result =
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_);
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Instrumented);
     EXPECT_EQ(result.traceArgumentOffset, 48U);
@@ -329,7 +334,7 @@ TEST_F(BinaryInstrumenterTest, SkipsIncompleteConfiguration)
     const std::string original = "kernel-data";
 
     const BinaryInstrumentationResult result =
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_);
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Skipped);
     EXPECT_EQ(state_.runnerCalls, 0);
@@ -341,11 +346,24 @@ TEST_F(BinaryInstrumenterTest, ReportsPipelineFailure)
     const std::string original = "kernel-data";
 
     const BinaryInstrumentationResult result =
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_);
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Failed);
     EXPECT_EQ(result.stage, "fake");
     EXPECT_EQ(result.diagnostic, "failed");
+    EXPECT_TRUE(result.binary.empty());
+}
+
+TEST_F(BinaryInstrumenterTest, RejectsSymbolicLinkReturnedByRunner)
+{
+    const std::string original = "kernel-data";
+    const auto runner = [](const DbiRequest& request, const void*) -> DbiResult {
+        boost::filesystem::create_symlink(request.inputKernel, request.outputKernel);
+        return {true, request.outputKernel, "complete", {}};
+    };
+    const auto result = InstrumentBinary(state_.config, original.data(), original.size(), runner);
+    EXPECT_EQ(result.status, BinaryInstrumentationStatus::Failed);
+    EXPECT_EQ(result.stage, "read-output");
     EXPECT_TRUE(result.binary.empty());
 }
 
@@ -354,7 +372,7 @@ TEST_F(BinaryInstrumenterTest, KeepTempRetainsRequestDirectoryAndPatchedOutput)
     const std::string original = "kernel-data";
 
     ASSERT_EQ(
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_).status,
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_).status,
         BinaryInstrumentationStatus::Instrumented);
 
     ASSERT_EQ(state_.workDirectories.size(), 1U);
@@ -372,7 +390,7 @@ TEST_F(BinaryInstrumenterTest, CleanupRemovesRequestDirectoryButPreservesExterna
     std::ofstream(cacheMarker.string()) << "cached";
 
     ASSERT_EQ(
-        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &state_).status,
+        InstrumentBinary(state_.config, original.data(), original.size(), &FakePatch, &runnerContext_).status,
         BinaryInstrumentationStatus::Instrumented);
 
     ASSERT_EQ(state_.workDirectories.size(), 1U);
@@ -386,7 +404,7 @@ TEST_F(BinaryInstrumenterTest, ExceptionReturnsFailureAndCleansTemporaryDirector
     const std::string original = "kernel-data";
 
     const BinaryInstrumentationResult result =
-        InstrumentBinary(state_.config, original.data(), original.size(), &ThrowingPatch, &state_);
+        InstrumentBinary(state_.config, original.data(), original.size(), &ThrowingPatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Failed);
     EXPECT_EQ(result.stage, "exception");
@@ -410,7 +428,7 @@ TEST_F(BinaryInstrumenterTest, RuntimeFacadeConsumesPatchedBytesAcrossAnAbiStabl
 
     const RuntimeBinaryInstrumentationResult result = InstrumentRuntimeBinary(
         original.data(), original.size(), PROBE_GROUP_MTE2, "Ascend950PR_9589", runtime.c_str(),
-        &CaptureInstrumentedBinary, &consumed, &FakePatch, &state_);
+        &CaptureInstrumentedBinary, &consumed, &FakePatch, &runnerContext_);
 
     EXPECT_EQ(result.status, BinaryInstrumentationStatus::Instrumented);
     EXPECT_EQ(result.strict, 1U);

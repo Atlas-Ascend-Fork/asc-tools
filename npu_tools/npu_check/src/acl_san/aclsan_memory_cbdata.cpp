@@ -1968,7 +1968,7 @@ private:
         const uint64_t columns = uint64_t(f.nSize) / CUBE_N_ALIGNMENT;
         const uint64_t tail = uint64_t(f.nSize) % CUBE_N_ALIGNMENT;
         MemoryCbdataBuilder builder(context_, {THIRTY_TWO_BIT_DATA, ACLSAN_DEVICE_SOURCE_FIXPIPE, BLOCK_TYPE_AIC});
-        const auto add = [&](uint64_t address, uint64_t groups, uint64_t bytes) {
+        const auto add = [this, &f, &rowBytes, &c0Stride, &builder](uint64_t address, uint64_t groups, uint64_t bytes) {
             auto descriptor = MemoryAccessDescriptorFactory::NdRead(
                 address, THIRTY_TWO_BIT_DATA, bytes,
                 std::array<uint64_t, SUPPORTED_NDDMA_DIMENSION_COUNT>{f.mSize, groups, state_.loop3->loopCount, 1, 1},

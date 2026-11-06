@@ -13,7 +13,8 @@
 
 #include <string>
 #include <type_traits>
-#include <algorithm>
+#include <array>
+#include <cstring>
 
 /**
  * @brief 将类型 T 的值序列化为字符串
@@ -27,8 +28,9 @@ template <
     typename = typename std::enable_if<std::is_trivially_copyable<T>::value>::type>
 inline Strings Serialize(const T& val)
 {
-    auto valPtr = static_cast<char const*>(static_cast<void const*>(&val));
-    return Strings(valPtr, valPtr + sizeof(T));
+    std::array<char, sizeof(T)> bytes{};
+    std::memcpy(bytes.data(), &val, sizeof(T));
+    return Strings(bytes.cbegin(), bytes.cend());
 }
 
 /**
@@ -62,7 +64,7 @@ inline bool Deserialize(const Strings& msg, T& val)
     if (msg.size() < size) {
         return false;
     }
-    std::copy_n(msg.data(), size, static_cast<char*>(static_cast<void*>(&val)));
+    std::memcpy(&val, msg.data(), size);
     return true;
 }
 

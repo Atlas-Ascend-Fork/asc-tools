@@ -18,13 +18,12 @@
 #include "aclsan_runtime_hook.h"
 #include "aclsan_trace_runtime.h"
 #include "injection/injection_hook.h"
+#include "file_io.h"
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cerrno>
-#include <fstream>
-#include <iterator>
 #include <list>
 #include <map>
 #include <memory>
@@ -633,13 +632,14 @@ aclError aclrtBinaryLoadFromFileHook(const char* path, aclrtBinaryLoadOptions* o
         return ACL_ERROR_INVALID_PARAM;
     }
     try {
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
+        std::string normalizedPath;
+        std::string image;
+        if (!asctools::security::NormalizePath(path, asctools::security::PathKind::ExistingFile, normalizedPath) ||
+            !asctools::security::ReadTextFile(normalizedPath, image)) {
             ASCTOOL_ERROR("acl_san: cannot read kernel file %s", path);
             return ACL_ERROR_FAILURE;
         }
-        const std::vector<uint8_t> image{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-        if (input.bad() || image.empty()) {
+        if (image.empty()) {
             return ACL_ERROR_INVALID_PARAM;
         }
         if (IsDeferredLoad(options)) {
@@ -647,7 +647,7 @@ aclError aclrtBinaryLoadFromFileHook(const char* path, aclrtBinaryLoadOptions* o
             std::map<aclrtBinHandle, std::shared_ptr<DeferredBinary>> staging;
             staging.emplace(nullptr, source);
             const BinaryLoadGuard guard;
-            const auto result = original(path, options, binary);
+            const auto result = original(normalizedPath.c_str(), options, binary);
             if (result == ACL_SUCCESS) {
                 if (*binary == nullptr) {
                     return ACL_ERROR_FAILURE;

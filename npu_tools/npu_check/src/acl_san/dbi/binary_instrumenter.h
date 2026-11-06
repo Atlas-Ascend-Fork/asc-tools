@@ -45,7 +45,7 @@ struct BinaryInstrumentationResult {
     uint32_t traceArgumentOffset = 0;
 };
 
-using DbiPipelineRunner = DbiResult (*)(const DbiRequest&, void*);
+using DbiPipelineRunner = DbiResult (*)(const DbiRequest&, const void*);
 using InstrumentedBinaryConsumer = int32_t (*)(const void*, size_t, void*);
 
 // acl_san and the DBI engine may use different libstdc++ ABIs. Keep this runtime boundary POD-only.
@@ -65,12 +65,12 @@ bool BuildRuntimeInstrumentationConfig(
     std::string& diagnostic, bool useCompleteProbeSet = false);
 BinaryInstrumentationResult InstrumentBinary(
     const BinaryInstrumentationConfig& config, const void* data, size_t length, DbiPipelineRunner runner,
-    void* runnerData = nullptr);
+    const void* runnerData = nullptr);
 BinaryInstrumentationResult InstrumentBinary(
     const BinaryInstrumentationConfig& config, const void* data, size_t length);
 RuntimeBinaryInstrumentationResult InstrumentRuntimeBinary(
     const void* data, size_t length, uint32_t probeGroupMask, const char* socName, const char* runtimeLibrary,
-    InstrumentedBinaryConsumer consumer, void* consumerData, DbiPipelineRunner runner, void* runnerData = nullptr,
+    InstrumentedBinaryConsumer consumer, void* consumerData, DbiPipelineRunner runner, const void* runnerData = nullptr,
     uint32_t traceOffset = 0, bool appendParamInfo = true, bool useCompleteProbeSet = false) noexcept;
 // Cross-target callers use this overload; the runner overload above is a same-ABI test seam.
 RuntimeBinaryInstrumentationResult InstrumentRuntimeBinary(

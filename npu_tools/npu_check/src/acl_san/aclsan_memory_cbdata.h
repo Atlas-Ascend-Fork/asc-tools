@@ -81,6 +81,7 @@ struct MemoryCbdataContext {
     const std::vector<InternalMemoryRange>* internalInputs = nullptr;
     const std::vector<InternalMemoryRange>* readOnlyBinaryRanges = nullptr;
     uint32_t instructionId = 0;
+    // 固定的物理核 ID 槽位数（108），包含禁用核留下的空洞，不表示 aclrt 返回的可用核数。
     uint32_t physicalCoreSlotCount = 0;
 };
 

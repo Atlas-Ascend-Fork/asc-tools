@@ -10,6 +10,7 @@
 
 #include "device_symbolizer.h"
 #include "dbi/tool_runner.h"
+#include "file_io.h"
 
 #include <sys/stat.h>
 #include <cerrno>
@@ -18,7 +19,6 @@
 #include <cstdint>
 #include <cstring>
 #include <fcntl.h>
-#include <fstream>
 #include <iomanip>
 #include <limits>
 #include <spawn.h>
@@ -58,12 +58,8 @@ bool RunCommand(const std::vector<std::string>& command, const std::string& logP
         error = "empty command";
         return false;
     }
-    std::vector<char*> arguments;
-    arguments.reserve(command.size() + 1);
-    for (const std::string& argument : command) {
-        arguments.push_back(const_cast<char*>(argument.c_str()));
-    }
-    arguments.push_back(nullptr);
+    auto argumentStorage = command;
+    const auto arguments = MakeSpawnArguments(argumentStorage);
 
     posix_spawn_file_actions_t actions;
     const char* failureContext = "posix_spawn_file_actions_init";
@@ -157,10 +153,11 @@ bool ParseLocation(const std::string& source, std::string& fileName, uint32_t& l
 
 bool ReadFrames(const std::string& logPath, std::vector<CallStackFrame>& frames)
 {
-    std::ifstream input(logPath);
-    if (!input) {
+    std::string content;
+    if (!asctools::security::ReadTextFile(logPath, content)) {
         return false;
     }
+    std::istringstream input(content);
 
     std::vector<std::string> lines;
     std::string line;
@@ -226,7 +223,12 @@ CallStackResult DeviceSymbolizer::ResolveCallStackWithRunner(uint64_t pc, const 
     }
 
     const std::string pcText = HexPc(pc);
-    const std::string logPath = config_.workDirectory + "/symbolizer_" + pcText + ".log";
+    std::string logPath;
+    if (!asctools::security::NormalizePath(
+            config_.workDirectory + "/symbolizer_" + pcText + ".log", asctools::security::PathKind::FileOrNew,
+            logPath)) {
+        return Unavailable(pc, "invalid_configuration");
+    }
     const std::vector<std::string> command{config_.symbolizer, "--obj=" + config_.image, "--inlines",
                                            "--demangle",       "--functions=short",      pcText};
 

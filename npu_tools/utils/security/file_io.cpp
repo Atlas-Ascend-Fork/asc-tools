@@ -46,15 +46,15 @@ private:
     int value_;
 };
 
-int OpenChecked(const std::string& path, int flags, bool directory)
+bool NormalizeParent(const std::string& path, bool directory, boost::filesystem::path& normalized)
 {
     if (path.empty() || path.find('\0') != std::string::npos) {
         errno = EINVAL;
-        return INVALID_FILE_DESCRIPTOR;
+        return false;
     }
     if (!directory && path.back() == '/') {
         errno = EISDIR;
-        return INVALID_FILE_DESCRIPTOR;
+        return false;
     }
 
     const auto last = path.find_last_not_of('/');
@@ -63,15 +63,25 @@ int OpenChecked(const std::string& path, int flags, bool directory)
     const auto parent = boost::filesystem::canonical(input.has_parent_path() ? input.parent_path() : ".", error);
     if (error) {
         errno = error.value();
+        return false;
+    }
+    normalized = parent / input.filename();
+    return true;
+}
+
+int OpenChecked(const std::string& path, int flags, bool directory, mode_t mode = 0666)
+{
+    boost::filesystem::path normalized;
+    if (!NormalizeParent(path, directory, normalized)) {
         return INVALID_FILE_DESCRIPTOR;
     }
-    const FileDescriptor parentFd(::open(parent.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+    const FileDescriptor parentFd(
+        ::open(normalized.parent_path().c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
     if (parentFd.Get() < 0) {
         return INVALID_FILE_DESCRIPTOR;
     }
-    FileDescriptor descriptor(::openat(
-        parentFd.Get(), input.filename().c_str(), flags | O_CLOEXEC | O_NOFOLLOW,
-        S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH));
+    FileDescriptor descriptor(
+        ::openat(parentFd.Get(), normalized.filename().c_str(), flags | O_CLOEXEC | O_NOFOLLOW, mode));
     if (descriptor.Get() < 0) {
         return INVALID_FILE_DESCRIPTOR;
     }
@@ -84,19 +94,6 @@ int OpenChecked(const std::string& path, int flags, bool directory)
         return INVALID_FILE_DESCRIPTOR;
     }
     return descriptor.Release();
-}
-
-bool IsValidPath(const std::string& path, bool directory)
-{
-    FileDescriptor descriptor(OpenChecked(path, O_PATH, directory));
-    return descriptor.Get() >= 0;
-}
-
-bool IsValidParent(const std::string& path)
-{
-    const auto last = path.find_last_of('/');
-    const std::string parent = last == std::string::npos ? "." : path.substr(0, last == 0 ? 1 : last);
-    return IsValidPath(parent, true);
 }
 
 bool ReadAll(int descriptor, std::size_t maxBytes, std::string& result)
@@ -143,32 +140,48 @@ bool WriteAll(int descriptor, std::string_view content)
     }
     return true;
 }
+
+bool WriteFileWithFlags(const std::string& path, std::string_view content, int flags, mode_t mode)
+{
+    FileDescriptor descriptor(OpenChecked(path, O_WRONLY | O_CREAT | O_NONBLOCK | flags, false, mode));
+    if (descriptor.Get() < 0 || ::ftruncate(descriptor.Get(), 0) != 0) {
+        return false;
+    }
+    return WriteAll(descriptor.Get(), content) && descriptor.Close();
+}
 } // namespace
 
 int OpenDirectory(const std::string& path) { return OpenChecked(path, O_RDONLY | O_DIRECTORY, true); }
 
-bool ValidatePath(const std::string& path, PathKind kind)
+int OpenFile(const std::string& path, int flags, mode_t mode)
 {
-    if (path.empty() || path.find('\0') != std::string::npos) {
+    return OpenChecked(path, flags | O_NONBLOCK, false, mode);
+}
+
+bool NormalizePath(const std::string& path, PathKind kind, std::string& normalized)
+{
+    boost::filesystem::path candidate;
+    const bool directory = kind == PathKind::ExistingDirectory;
+    if (!NormalizeParent(path, directory, candidate)) {
+        return false;
+    }
+    struct stat status {};
+    if (::lstat(candidate.c_str(), &status) != 0) {
+        if (kind != PathKind::FileOrNew || errno != ENOENT) {
+            return false;
+        }
+    } else if (directory ? !S_ISDIR(status.st_mode) : !S_ISREG(status.st_mode)) {
         errno = EINVAL;
         return false;
     }
-    switch (kind) {
-        case PathKind::ExistingFile:
-            return IsValidPath(path, false);
-        case PathKind::ExistingDirectory:
-            return IsValidPath(path, true);
-        case PathKind::FileOrNew:
-            if (IsValidPath(path, false)) {
-                return true;
-            }
-            if (errno != ENOENT) {
-                return false;
-            }
-            return IsValidParent(path);
-    }
-    errno = EINVAL;
-    return false;
+    normalized = candidate.lexically_normal().string();
+    return true;
+}
+
+bool ValidatePath(const std::string& path, PathKind kind)
+{
+    std::string normalized;
+    return NormalizePath(path, kind, normalized);
 }
 
 bool ReadTextFile(const std::string& path, std::string& content, std::size_t maxBytes)
@@ -185,15 +198,15 @@ bool ReadTextFile(const std::string& path, std::string& content, std::size_t max
     return true;
 }
 
-bool WriteFile(const std::string& path, std::string_view content)
+bool WriteFile(const std::string& path, std::string_view content) { return WriteFileWithFlags(path, content, 0, 0666); }
+
+bool WriteFile(const std::string& path, std::string_view content, mode_t mode)
 {
-    FileDescriptor descriptor(OpenChecked(path, O_WRONLY | O_CREAT | O_NONBLOCK, false));
-    if (descriptor.Get() < 0) {
-        return false;
-    }
-    if (::ftruncate(descriptor.Get(), 0) != 0) {
-        return false;
-    }
-    return WriteAll(descriptor.Get(), content) && descriptor.Close();
+    return WriteFileWithFlags(path, content, 0, mode);
+}
+
+bool WriteExclusiveFile(const std::string& path, std::string_view content, mode_t mode)
+{
+    return WriteFileWithFlags(path, content, O_EXCL, mode);
 }
 } // namespace asctools::security

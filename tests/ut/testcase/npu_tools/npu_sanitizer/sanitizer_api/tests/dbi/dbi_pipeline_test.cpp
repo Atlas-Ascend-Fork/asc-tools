@@ -225,6 +225,25 @@ std::string ReadGeneratedFile(const boost::filesystem::path& path)
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
+TEST(CtrlbinGeneratorTest, RejectsEmbeddedNullAndSymbolicLinkOutputPaths)
+{
+    const auto root = boost::filesystem::temp_directory_path() / "ctrlbin-invalid-path-test";
+    boost::filesystem::remove_all(root);
+    boost::filesystem::create_directories(root);
+    const auto target = root / "target.bin";
+    {
+        std::ofstream output(target.string());
+        output << "original";
+    }
+    boost::filesystem::create_symlink(target, root / "link.bin");
+    std::string diagnostic;
+    EXPECT_FALSE(GenerateCtrlBin(target.string() + std::string("\0suffix", 7), {ProbeGroup::Mte2}, diagnostic));
+    EXPECT_EQ(ReadGeneratedFile(target), "original");
+    EXPECT_FALSE(GenerateCtrlBin((root / "link.bin").string(), {ProbeGroup::Mte2}, diagnostic));
+    EXPECT_EQ(ReadGeneratedFile(target), "original");
+    boost::filesystem::remove_all(root);
+}
+
 TEST(CtrlbinGeneratorTest, FiltersBindingsToSelectedProbeGroups)
 {
     const auto symbols = BindingSymbols({ProbeGroup::Mte2});

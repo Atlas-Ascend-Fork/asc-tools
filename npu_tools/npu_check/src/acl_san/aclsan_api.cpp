@@ -147,7 +147,7 @@ private:
     static std::set<aclrtApiId> ComputeRequiredHooks(const std::set<CallbackKey>& enabledCallbacks);
     static uint32_t ComputeRequiredProbeGroups(const std::set<CallbackKey>& enabledCallbacks) noexcept;
 
-    bool IsActive(AclsanSubscriberHandle subscriber) const noexcept;
+    bool IsActive(const AclsanSubscriber* subscriber) const noexcept;
     void LogConfigurationState(const char* operation, const char* stage) const noexcept;
     AclsanStatus ApplyCallbackConfiguration(std::set<CallbackKey>& candidateCallbacks, const char* operation);
     AclsanStatus UpdateCallbackConfiguration(const CallbackKey& key, bool shouldEnable);
@@ -220,7 +220,7 @@ uint32_t AclsanSubscriber::ComputeRequiredProbeGroups(const std::set<CallbackKey
     return probeGroupMask;
 }
 
-bool AclsanSubscriber::IsActive(AclsanSubscriberHandle subscriber) const noexcept
+bool AclsanSubscriber::IsActive(const AclsanSubscriber* subscriber) const noexcept
 {
     return activeHandle_ != nullptr && subscriber == activeHandle_;
 }

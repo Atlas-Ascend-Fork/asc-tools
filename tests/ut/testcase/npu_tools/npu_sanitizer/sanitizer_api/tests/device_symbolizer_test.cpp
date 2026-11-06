@@ -226,3 +226,22 @@ TEST(DeviceSymbolizer, Main)
     TestRealRunnerFindsBareToolOnPath();
     TestRealRunnerReportsSpawnFailure();
 }
+
+TEST(DeviceSymbolizer, RejectsSymbolicLinkReturnedAsLog)
+{
+    const fs::path directory = TestDirectory("aclsan-symbolizer-log-link-test");
+    const auto target = directory / "target.log";
+    {
+        std::ofstream output(target.string());
+        output << "Function\n/src/kernel.asc:1:2\n";
+    }
+    DeviceSymbolizer symbolizer({"fake-symbolizer", "/work/kernel.elf", directory.string()});
+    const auto runner = [&target](const std::vector<std::string>&, const std::string& logPath, std::string&) {
+        fs::create_symlink(target, logPath);
+        return true;
+    };
+    const auto result = symbolizer.ResolveCallStackWithRunner(0x123, runner);
+    EXPECT_FALSE(result.available);
+    EXPECT_EQ(result.error, "invalid_symbolizer_output");
+    fs::remove_all(directory);
+}

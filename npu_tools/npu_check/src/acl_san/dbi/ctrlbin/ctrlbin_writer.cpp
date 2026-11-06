@@ -14,7 +14,6 @@
 #include <string>
 #include <sstream>
 #include <iostream>
-#include <fstream>
 #include <unordered_map>
 
 #include "ctrlbin_serialize.h"
@@ -61,8 +60,10 @@ struct CtrlbinBinding {
     void Serialize(std::stringstream& ss) const
     {
         FuncInfo info{instrId, injectFuncId, static_cast<uint16_t>(paraMask.size())};
-        ss << std::string(reinterpret_cast<const char*>(&info), sizeof(FuncInfo));
-        ss << std::string(reinterpret_cast<const char*>(paraMask.data()), sizeof(uint16_t) * info.paraNum);
+        ss << ::Serialize(info);
+        for (size_t index = 0; index < info.paraNum; ++index) {
+            ss << ::Serialize(paraMask[index]);
+        }
     }
 };
 
@@ -105,7 +106,7 @@ public:
 
         // series funcLists
         FuncNameList funcNameList{static_cast<uint32_t>(funcLists.size() + sizeof(FuncNameList))};
-        buffer << std::string(reinterpret_cast<const char*>(&funcNameList), sizeof(FuncNameList));
+        buffer << ::Serialize(funcNameList);
         buffer << funcLists;
         // Preserve the established ctrl.bin layout without reading beyond funcLists.data().
         buffer << std::string(sizeof(FuncNameList), '\0');
@@ -115,7 +116,7 @@ public:
         ctrlInfo.reserve[0] = 0;
         ctrlInfo.reserve[1] = 0;
 
-        ss << std::string(reinterpret_cast<const char*>(&ctrlInfo), sizeof(CtrlInfo));
+        ss << ::Serialize(ctrlInfo);
         ss << bufferStr;
     }
 
@@ -128,24 +129,12 @@ private:
     std::vector<CtrlbinBinding> injectInfo_;
 };
 
-void WriteToBin(const std::string& outputData, const std::string& filepath)
-{
-    std::string realPath = filepath;
-    if (!CheckWriteFilePathValid(realPath)) {
-        return;
-    }
-    std::ofstream writer(realPath, std::ios::binary | std::ios::out);
-    writer.write(outputData.c_str(), static_cast<std::streamsize>(outputData.size()));
-    writer.close();
-    Chmod(realPath, SAVE_DATA_FILE_AUTHORITY);
-}
-
 // 生成的数据格式是和bisheng-tune组件约定好的结构
-void WriteCtrlbin(const std::string& outputPath)
+bool WriteCtrlbin(const std::string& outputPath)
 {
     std::stringstream ss;
     CtrlbinBindingRegistry::Instance().Serialize(ss);
-    WriteToBin(ss.str(), outputPath);
+    return asctools::security::WriteFile(outputPath, ss.str(), SAVE_DATA_FILE_AUTHORITY);
 }
 } // namespace
 
@@ -158,11 +147,11 @@ void RegisterCtrlbinBinding(
 extern "C" {
 void RegisterCtrlbinBindings() { return; }
 
-void CtrlbinWriterStart(const char* output, uint16_t length)
+bool CtrlbinWriterStart(const char* output, uint16_t length)
 {
     CtrlbinBindingRegistry::Instance().Reset();
     RegisterCtrlbinBindings();
     std::string outputPath(output, length);
-    WriteCtrlbin(outputPath);
+    return WriteCtrlbin(outputPath);
 }
 }

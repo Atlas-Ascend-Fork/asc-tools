@@ -24,7 +24,6 @@
 #include <cstdlib>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <iterator>
@@ -34,9 +33,12 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "file_io.h"
 
 namespace aclsan {
 namespace {
+using asctools::security::WriteExclusiveFile;
+
 constexpr int HEX_DIGITS_PER_BYTE = 2;
 constexpr int HASH_HEX_DIGITS = sizeof(uint64_t) * HEX_DIGITS_PER_BYTE;
 constexpr int TOOLCHAIN_PARENT_SEARCH_LIMIT = 3;
@@ -70,7 +72,7 @@ public:
 
     bool Acquire(const boost::filesystem::path& path, std::string& diagnostic)
     {
-        descriptor_ = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, (S_IRUSR | S_IWUSR));
+        descriptor_ = asctools::security::OpenFile(path.string(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
         if (descriptor_ < 0) {
             diagnostic = "cannot open cache lock " + path.string() + ": " + std::strerror(errno);
             return false;
@@ -287,35 +289,13 @@ bool EnsurePrivateDirectory(const boost::filesystem::path& path, std::string& di
     return true;
 }
 
-bool WriteExclusiveFile(const boost::filesystem::path& path, const std::string& content)
-{
-    const int descriptor =
-        open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, (S_IRUSR | S_IWUSR));
-    if (descriptor < 0) {
-        return false;
-    }
-    std::size_t written = 0;
-    while (written < content.size()) {
-        const ssize_t count = write(descriptor, content.data() + written, content.size() - written);
-        if (count < 0 && errno == EINTR) {
-            continue;
-        }
-        if (count <= 0) {
-            (void)close(descriptor);
-            return false;
-        }
-        written += static_cast<std::size_t>(count);
-    }
-    return close(descriptor) == 0;
-}
-
 bool WriteReplaceFile(const boost::filesystem::path& path, const std::string& content)
 {
     const auto temporary =
         path.parent_path() / (".dbi-write-" + std::to_string(static_cast<unsigned long long>(getpid())) + "-" +
                               std::to_string(g_cacheBuildId.fetch_add(1)));
     TemporaryFile cleanup(temporary);
-    if (!WriteExclusiveFile(temporary, content)) {
+    if (!WriteExclusiveFile(temporary.string(), content)) {
         return false;
     }
     boost::system::error_code error;
@@ -329,11 +309,9 @@ bool WriteReplaceFile(const boost::filesystem::path& path, const std::string& co
 
 std::string ReadFile(const boost::filesystem::path& path)
 {
-    if (!IsNonEmptyFile(path)) {
-        return {};
-    }
-    std::ifstream input(path.string(), std::ios::binary);
-    return input ? std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()) : std::string{};
+    std::string content;
+    asctools::security::ReadTextFile(path.string(), content);
+    return content;
 }
 
 std::string FileDigest(const boost::filesystem::path& path)
@@ -688,10 +666,12 @@ bool GetOrBuildGroupArtifact(
             return false;
         }
         const auto source = sourceDirectory / ("generated-" + ProbeGroupName(group) + ".cpp");
-        if (!WriteExclusiveFile(includeDirectory / "trace_record.h", std::string(EmbeddedTraceRecordHeader())) ||
-            !WriteExclusiveFile(includeDirectory / "trace_buffer_abi.h", std::string(EmbeddedTraceBufferAbiHeader())) ||
-            !WriteExclusiveFile(source, generated.source) ||
-            !WriteExclusiveFile(sourceDirectory / (ProbeGroupName(group) + ".map"), generated.sourceMap)) {
+        if (!WriteExclusiveFile(
+                (includeDirectory / "trace_record.h").string(), std::string(EmbeddedTraceRecordHeader())) ||
+            !WriteExclusiveFile(
+                (includeDirectory / "trace_buffer_abi.h").string(), std::string(EmbeddedTraceBufferAbiHeader())) ||
+            !WriteExclusiveFile(source.string(), generated.source) ||
+            !WriteExclusiveFile((sourceDirectory / (ProbeGroupName(group) + ".map")).string(), generated.sourceMap)) {
             result.stage = "materialize-source";
             result.diagnostic = "cannot materialize generated Probe source for " + ProbeGroupName(group);
             return false;
@@ -725,7 +705,7 @@ bool GetOrBuildGroupArtifact(
         }
         const std::string manifest =
             GroupManifest(stagedObject, request.arch, request.coreType, group, generated, compilerIdentity);
-        if (manifest.empty() || !WriteExclusiveFile(staging / "manifest", manifest)) {
+        if (manifest.empty() || !WriteExclusiveFile((staging / "manifest").string(), manifest)) {
             result.stage = "publish-group-cache";
             result.diagnostic = "cannot create group manifest";
             return false;
@@ -1022,7 +1002,7 @@ DbiResult RunDbiPipeline(const DbiRequest& request)
         }
         const std::string manifest = ArtifactManifest(
             stagedProbeObject, stagedCtrlBin, request.arch, groups, resolvedRequest.coreType, artifactIdentity);
-        if (manifest.empty() || !WriteExclusiveFile(stagingDirectory / "manifest", manifest)) {
+        if (manifest.empty() || !WriteExclusiveFile((stagingDirectory / "manifest").string(), manifest)) {
             result.stage = "publish-cache";
             result.diagnostic = "cannot create Probe artifact manifest";
             return result;

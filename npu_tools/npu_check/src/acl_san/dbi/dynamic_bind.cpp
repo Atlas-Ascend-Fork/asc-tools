@@ -10,7 +10,6 @@
 
 #include <cstdint>
 #include <algorithm>
-#include <fstream>
 #include <iomanip>
 #include <initializer_list>
 #include <sstream>
@@ -20,8 +19,9 @@
 
 #include "ctrlbin_bindings.h"
 #include "dbi/ctrlbin_generator.h"
+#include "file_io.h"
 
-extern "C" void CtrlbinWriterStart(const char* output, uint16_t length);
+extern "C" bool CtrlbinWriterStart(const char* output, uint16_t length);
 
 namespace {
 
@@ -730,12 +730,6 @@ bool ValidateBindings(const std::vector<aclsan::ProbeGroup>& groups, std::string
     return true;
 }
 
-bool IsNonEmptyFile(const std::string& path)
-{
-    std::ifstream input(path, std::ios::binary | std::ios::ate);
-    return input.good() && input.tellg() > 0;
-}
-
 } // namespace
 
 extern "C" void RegisterCtrlbinBindings()
@@ -804,14 +798,20 @@ bool GenerateCtrlBin(const std::string& outputPath, const std::vector<ProbeGroup
     if (!ValidateBindings(selected, diagnostic)) {
         return false;
     }
-    if (outputPath.size() > UINT16_MAX) {
+    std::string normalizedPath;
+    if (!asctools::security::NormalizePath(outputPath, asctools::security::PathKind::FileOrNew, normalizedPath)) {
+        diagnostic = "invalid ctrl.bin output path: " + outputPath;
+        return false;
+    }
+    if (normalizedPath.size() > UINT16_MAX) {
         diagnostic = "output path is too long";
         return false;
     }
     g_selectedGroups = &selected;
-    CtrlbinWriterStart(outputPath.c_str(), static_cast<uint16_t>(outputPath.size()));
+    const bool written = CtrlbinWriterStart(normalizedPath.c_str(), static_cast<uint16_t>(normalizedPath.size()));
     g_selectedGroups = nullptr;
-    if (!IsNonEmptyFile(outputPath)) {
+    std::string content;
+    if (!written || !asctools::security::ReadTextFile(normalizedPath, content) || content.empty()) {
         diagnostic = "failed to generate a non-empty file: " + outputPath;
         return false;
     }

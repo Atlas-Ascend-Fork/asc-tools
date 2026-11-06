@@ -165,4 +165,66 @@ TEST_F(SecurityFileIo, ReadsVirtualFileWithoutRelyingOnStatSize)
     ASSERT_TRUE(security::ReadTextFile("/proc/self/status", content, 64U * 1024U));
     EXPECT_NE(content.find("Name:"), std::string::npos);
 }
+
+TEST_F(SecurityFileIo, NormalizesNewFileThroughExistingParent)
+{
+    fs::create_directory(root / "real");
+    fs::create_directory_symlink(root / "real", root / "alias");
+    const auto path = (root / "alias" / "." / "value").string();
+    std::string normalized;
+    ASSERT_TRUE(security::NormalizePath(path, security::PathKind::FileOrNew, normalized));
+    EXPECT_EQ(normalized, (fs::canonical(root / "real") / "value").string());
+    EXPECT_FALSE(fs::exists(normalized));
+    ASSERT_TRUE(security::WriteFile(normalized, "value"));
+    ASSERT_TRUE(security::NormalizePath(path, security::PathKind::ExistingFile, normalized));
+    EXPECT_EQ(normalized, (fs::canonical(root / "real") / "value").string());
+}
+
+TEST_F(SecurityFileIo, NormalizationRejectsInvalidAndSymbolicLinkTargets)
+{
+    ASSERT_TRUE(security::WriteFile((root / "target").string(), "original"));
+    fs::create_symlink(root / "target", root / "link");
+    std::string normalized = "unchanged";
+    for (const auto& path :
+         {std::string{}, (root / "link").string(), (root / "missing" / "value").string(),
+          (root / "value").string() + "/", (root / "value").string() + std::string("\0suffix", 7)}) {
+        EXPECT_FALSE(security::NormalizePath(path, security::PathKind::FileOrNew, normalized)) << path;
+        EXPECT_EQ(normalized, "unchanged");
+    }
+    EXPECT_FALSE(security::NormalizePath(root.string(), security::PathKind::ExistingFile, normalized));
+    EXPECT_TRUE(security::NormalizePath(root.string() + "/", security::PathKind::ExistingDirectory, normalized));
+    EXPECT_EQ(normalized, fs::canonical(root).string());
+}
+
+TEST_F(SecurityFileIo, ExclusiveWritePreservesExistingFileAndCreationMode)
+{
+    const auto path = (root / "manifest").string();
+    ASSERT_TRUE(security::WriteExclusiveFile(path, "original"));
+    EXPECT_FALSE(security::WriteExclusiveFile(path, "replacement"));
+    EXPECT_EQ(errno, EEXIST);
+    std::string content;
+    ASSERT_TRUE(security::ReadTextFile(path, content));
+    EXPECT_EQ(content, "original");
+    struct stat status {};
+    ASSERT_EQ(::stat(path.c_str(), &status), 0);
+    EXPECT_EQ(status.st_mode & 0777, 0600);
+    fs::create_symlink(root / "missing", root / "link");
+    EXPECT_FALSE(security::WriteExclusiveFile((root / "link").string(), "x"));
+    EXPECT_FALSE(fs::exists(root / "missing"));
+}
+
+TEST_F(SecurityFileIo, OpensCacheLockWithRestrictedPermissionsAndCloseOnExec)
+{
+    const auto path = (root / "cache.lock").string();
+    const int descriptor = security::OpenFile(path, O_CREAT | O_RDWR, 0600);
+    ASSERT_GE(descriptor, 0);
+    struct stat status {};
+    ASSERT_EQ(::fstat(descriptor, &status), 0);
+    EXPECT_TRUE(S_ISREG(status.st_mode));
+    EXPECT_EQ(status.st_mode & 0777, 0600);
+    EXPECT_NE(::fcntl(descriptor, F_GETFD) & FD_CLOEXEC, 0);
+    EXPECT_EQ(::close(descriptor), 0);
+    fs::create_symlink(root / "cache.lock", root / "link");
+    EXPECT_EQ(security::OpenFile((root / "link").string(), O_CREAT | O_RDWR, 0600), -1);
+}
 } // namespace

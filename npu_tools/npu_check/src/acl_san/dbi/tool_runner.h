@@ -16,6 +16,18 @@
 
 namespace aclsan {
 
+// POSIX spawn requires a null-terminated char* array; keep the strings alive and unchanged until it returns.
+inline std::vector<char*> MakeSpawnArguments(std::vector<std::string>& strings)
+{
+    std::vector<char*> arguments;
+    arguments.reserve(strings.size() + 1);
+    for (auto& value : strings) {
+        arguments.push_back(value.data());
+    }
+    arguments.push_back(nullptr);
+    return arguments;
+}
+
 struct ChildExitStatus {
     bool exited;
     bool signaled;
