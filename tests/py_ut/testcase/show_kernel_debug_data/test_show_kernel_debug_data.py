@@ -482,26 +482,6 @@ class TestAscendump(unittest.TestCase):
             tag=DumpType.SCALAR_TYPE.value, length=len(tlv_value), value=tlv_value
         )
 
-    def test_read_arg_long(self):
-        buffer = struct.pack("q", -12345)
-        result = PrintStruct._read_arg_long(buffer, 0)
-        self.assertEqual(result, -12345)
-
-    def test_read_arg_unsigned_long(self):
-        buffer = struct.pack("Q", 123456789)
-        result = PrintStruct._read_arg_unsigned_long(buffer, 0)
-        self.assertEqual(result, 123456789)
-
-    def test_read_arg_double(self):
-        buffer = struct.pack("d", 3.14159)
-        result = PrintStruct._read_arg_double(buffer, 0)
-        self.assertAlmostEqual(result, 3.14159, places=5)
-
-    def test_read_arg_hex(self):
-        buffer = struct.pack("Q", 3735928559)
-        result = PrintStruct._read_arg_hex(buffer, 0)
-        self.assertEqual(result, 3735928559)
-
     def test_read_string(self):
         buffer = b"hello\x00world\x00"
         result = PrintStruct._read_string(buffer, 0)
@@ -511,14 +491,6 @@ class TestAscendump(unittest.TestCase):
         buffer = b"hello"
         with self.assertRaises(RuntimeError):
             PrintStruct._read_string(buffer, 100)
-
-    def test_all_fmt_placehold(self):
-        ps = PrintStruct()
-        ps.fmt = "value=%d, hex=%x, str=%s"
-        result = ps._all_fmt_placehold()
-        self.assertIn("%d", result)
-        self.assertIn("%x", result)
-        self.assertIn("%s", result)
 
     def _merged_FifoPrintStruct__create_fifo_print_tlv(
         self, fmt, value, block_idx=0, tag=None
@@ -1372,10 +1344,59 @@ class TestAscendump(unittest.TestCase):
         ps = PrintStruct()
         args_bytes = struct.pack("q", 123)
         tlv = self._merged_PrintStructFormats__create_print_tlv_with_args(
-            "bad=%c", args_bytes
+            "bad=%n", args_bytes
         )
         with self.assertRaises(RuntimeError):
             ps.parse_from(tlv)
+
+    def test_c_printf_fields_from_fifo_slots(self):
+        cases = [
+            ("%08d", struct.pack("q", 42), "00000042"),
+            ("%+d", struct.pack("q", 42), "+42"),
+            ("%-8i", struct.pack("q", -42), "-42     "),
+            ("%#010llx", struct.pack("Q", 42), "0x0000002a"),
+            ("%.5u", struct.pack("Q", 42), "00042"),
+            ("%llu", struct.pack("Q", 2**64 - 1), str(2**64 - 1)),
+            ("%lld", struct.pack("q", -42), "-42"),
+            ("%hhd", struct.pack("q", 255), "-1"),
+            ("%8.2f", struct.pack("f", 3.25) + b"\0" * 4, "    3.25"),
+            ("%8.2lf", struct.pack("d", 3.25), "    3.25"),
+            ("%g", struct.pack("f", 3.25) + b"\0" * 4, "3.25"),
+            ("%a", struct.pack("f", 3.0) + b"\0" * 4, "0x1.8p+1"),
+            ("%c", struct.pack("q", 65), "A"),
+            ("%p", struct.pack("Q", 0x1234), "0x1234"),
+            ("%%", b"", "%"),
+            ("%*.*f", struct.pack("qqf", 8, 2, 3.25) + b"\0" * 4, "    3.25"),
+            ("%-*d", struct.pack("qq", -8, 42), "42      "),
+        ]
+        for fmt, args_bytes, expected in cases:
+            with self.subTest(fmt=fmt):
+                ps = PrintStruct()
+                tlv = self._merged_PrintStructFormats__create_print_tlv_with_args(
+                    fmt, args_bytes
+                )
+                ps.parse_from(tlv)
+                self.assertEqual(ps.content, expected)
+
+    def test_printf_string_precision_and_percent(self):
+        args_bytes = struct.pack("Q", 8) + b"hello world\0"
+        tlv = self._merged_PrintStructFormats__create_print_tlv_with_args(
+            "[%-8.5s] %%", args_bytes
+        )
+        ps = PrintStruct()
+        ps.parse_from(tlv)
+        self.assertEqual(ps.content, "[hello   ] %")
+
+    def test_printf_rejects_truncated_or_oversized_arguments(self):
+        cases = (("%*d", struct.pack("q", 8)), ("%1000001d", struct.pack("q", 1)))
+        for fmt, args_bytes in cases:
+            with self.subTest(fmt=fmt):
+                ps = PrintStruct()
+                tlv = self._merged_PrintStructFormats__create_print_tlv_with_args(
+                    fmt, args_bytes
+                )
+                with self.assertRaises(RuntimeError):
+                    ps.parse_from(tlv)
 
     def _merged_FifoDumpCoreContentWrite__build_fifo_block_info(
         self, core_id=0, length=64

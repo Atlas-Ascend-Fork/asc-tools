@@ -21,6 +21,7 @@ from enum import Enum, auto
 from typing import List, Dict, Any
 from .data_converter import decode_bfloat16
 from .dump_logger import DUMP_PARSER_LOG
+from .printf_formatter import format_printf
 
 FILE_FLAG = os.O_WRONLY | os.O_CREAT
 FILE_MODE_640 = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP
@@ -462,7 +463,6 @@ class PrintStruct:
     tag: int = 0
     length: int = 0
     fmt: str = ""
-    args: List[Any] = field(default_factory=list)
     content: str = None
 
     def parse_from(self, tlv):
@@ -470,105 +470,19 @@ class PrintStruct:
         self.length = tlv.length
 
         args_start, args_end = self._read_fmt(tlv.value)  # fmt
-        self._read_args(tlv.value, args_start, args_end)  # args
-
-        self.fmt = self._format_for_python()
-        self.content = self.fmt % tuple(self.args)
+        self.content = format_printf(self.fmt, tlv.value, args_start, args_end)
 
     def _read_fmt(self, buffer):
         self.fmt, fmt_offset = self._read_arg_str(buffer, 0)
+        if fmt_offset < 8 or fmt_offset > len(buffer):
+            raise RuntimeError("invalid printf format offset")
         return (8, fmt_offset)
-
-    def _all_fmt_placehold(self):
-        import re
-
-        pattern = r"%%|%[a-zA-Z]{1,2}"
-        matches = re.findall(pattern, self.fmt)
-        fmt_placehold_list = []
-        for x in matches:
-            if x == "%%":
-                continue
-            if not (len(x) == 3 and "%l" not in x.lower()):
-                fmt_placehold_list.append(x)
-        return fmt_placehold_list
-
-    def _format_for_python(self):
-        import re
-
-        return re.sub(
-            r"%%|%p", lambda match: "%%" if match.group() == "%%" else "0x%x", self.fmt
-        )
-
-    def _read_args(self, buffer, args_start, args_end):
-        args_plds = self._all_fmt_placehold()
-        args_num = len(args_plds)
-
-        for i in range(0, args_num):
-            offset = args_start + i * 8
-            if offset + 8 > args_end:
-                raise RuntimeError(
-                    f'arg {i} at [{offset}:{offset + 8}] over arg end({args_end}): "{self.fmt}"'
-                )
-            pld = args_plds[i]
-            self._read_arg(buffer, offset, pld)
-
-    def _read_arg(self, buffer, offset, pld):
-        if pld == "%d" or pld == "%i":
-            arg = self._read_arg_long(buffer, offset)
-        elif pld == "%ld":
-            arg = self._read_arg_long(buffer, offset)
-        elif pld == "%f" or pld == "%F":
-            arg = self._read_arg_float(buffer, offset)
-        elif pld == "%lf" or pld == "%LF":
-            arg = self._read_arg_double(buffer, offset)
-        elif pld == "%x" or pld == "%X":
-            arg = self._read_arg_hex(buffer, offset)
-        elif pld == "%s":
-            arg, _ = self._read_arg_str(buffer, offset)
-        elif pld == "%p":
-            arg = self._read_arg_point(buffer, offset)
-        elif pld == "%u":
-            arg = self._read_arg_unsigned_long(buffer, offset)
-        else:
-            raise RuntimeError(f"not support pld({pld}), fmt: {self.fmt}")
-        self.args.append(arg)
-
-    @staticmethod
-    def _read_arg_unsigned_long(buffer, offset):
-        return struct.unpack("Q", buffer[offset : offset + 8])[0]
-
-    @staticmethod
-    def _read_arg_long(buffer, offset):
-        return struct.unpack("q", buffer[offset : offset + 8])[0]
-
-    @staticmethod
-    def _read_arg_float(buffer, offset):
-        is_double = False
-        for buf_val in buffer[offset + 4 : offset + 8]:
-            if int(buf_val) != 0:
-                is_double = True
-                break
-        if is_double:
-            return struct.unpack("d", buffer[offset : offset + 8])[0]
-        return struct.unpack("f", buffer[offset : offset + 4])[0]
-
-    @staticmethod
-    def _read_arg_double(buffer, offset):
-        return struct.unpack("d", buffer[offset : offset + 8])[0]
-
-    @staticmethod
-    def _read_arg_hex(buffer, offset):
-        return struct.unpack("Q", buffer[offset : offset + 8])[0]
 
     @staticmethod
     def _read_arg_str(buffer, offset):
         relv_offset = struct.unpack("Q", buffer[offset : offset + 8])[0]
         abs_offset = offset + relv_offset
         return (PrintStruct._read_string(buffer, abs_offset), relv_offset)
-
-    @staticmethod
-    def _read_arg_point(buffer, offset):
-        return struct.unpack("P", buffer[offset : offset + 8])[0]
 
     @staticmethod
     def _read_string(buffer: bytes, offset: int):
@@ -602,10 +516,7 @@ class FifoPrintStruct(PrintStruct):
         # Skip blockIdx/resv (8 bytes) so buffer starts at fmtOffset field.
         fifo_buffer = tlv.value[8:]
         args_start, args_end = self._read_fmt(fifo_buffer)  # fmt
-        self._read_args(fifo_buffer, args_start, args_end)  # args
-
-        self.fmt = self._format_for_python()
-        self.content = self.fmt % tuple(self.args)
+        self.content = format_printf(self.fmt, fifo_buffer, args_start, args_end)
 
 
 @dataclass(repr=False)
@@ -630,10 +541,7 @@ class FifoSimtPrintStruct(PrintStruct):
         # Buffer starts from fmtOffset field.
         simt_buffer = tlv.value[40:]
         args_start, args_end = self._read_fmt(simt_buffer)  # fmt
-        self._read_args(simt_buffer, args_start, args_end)  # args
-
-        self.fmt = self._format_for_python()
-        self.content = self.fmt % tuple(self.args)
+        self.content = format_printf(self.fmt, simt_buffer, args_start, args_end)
 
 
 @dataclass
