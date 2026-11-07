@@ -59,6 +59,8 @@ Existing scripts using all-lowercase SoC names remain functional.
   optype_collector --detect-conflicts {soc_version}
   ```
 
+`--detect-conflicts` accepts exactly one SoC after the option. Do not append a positional SoC or combine it with `--builtin`, `--custom`, or `--all`.
+
 ## Return Values
 
 | Return Value | Description |

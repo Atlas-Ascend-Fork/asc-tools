@@ -721,6 +721,34 @@ class TestOpTypeCollector(unittest.TestCase):
         self.assertFalse(report.has_conflicts)
         self.assertEqual(report.custom_custom, [])
 
+    def test_detect_conflicts_rejects_extra_soc_argument(self):
+        error_output = StringIO()
+        with contextlib.redirect_stderr(error_output):
+            with self.assertRaises(SystemExit) as context:
+                self._run_main(["--detect-conflicts", "ascend910b", "ascend910c"], {})
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn(
+            "--detect-conflicts accepts only one SoC argument",
+            error_output.getvalue(),
+        )
+
+    def test_detect_conflicts_rejects_list_mode(self):
+        for list_option in ("--builtin", "--custom", "--all"):
+            with self.subTest(list_option=list_option):
+                error_output = StringIO()
+                with contextlib.redirect_stderr(error_output):
+                    with self.assertRaises(SystemExit) as context:
+                        self._run_main(
+                            ["--detect-conflicts", "ascend910b", list_option], {}
+                        )
+
+                self.assertEqual(context.exception.code, 2)
+                self.assertIn(
+                    "--detect-conflicts accepts only one SoC argument",
+                    error_output.getvalue(),
+                )
+
     def test_no_arguments_prints_help_and_returns_two(self):
         ret, output = self._run_main([], {})
 

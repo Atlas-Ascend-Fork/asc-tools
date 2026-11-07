@@ -59,6 +59,8 @@ source <CANN安装目录>/cann/set_env.sh
   optype_collector --detect-conflicts {soc_version}
   ```
 
+`--detect-conflicts` 模式只接受该选项后的一个 SoC 参数；不要再追加位置 SoC 参数，也不要与 `--builtin`、`--custom` 或 `--all` 组合。
+
 ## 返回值
 
 | 返回值 | 说明 |

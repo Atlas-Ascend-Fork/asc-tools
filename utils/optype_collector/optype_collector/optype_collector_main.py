@@ -818,6 +818,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    if args.detect_conflicts and (
+        args.soc_version is not None or args.builtin or args.custom or args.all
+    ):
+        parser.error("--detect-conflicts accepts only one SoC argument")
+
     if args.detect_conflicts:
         result = scan_optypes(
             args.detect_conflicts, need_builtin=True, need_custom=True
