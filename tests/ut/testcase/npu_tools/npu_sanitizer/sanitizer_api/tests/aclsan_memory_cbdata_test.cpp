@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <limits>
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -940,6 +941,109 @@ void TestFixpipePacked4ConversionModeUsesLoop3State()
     assert(result.data.back().address == 0x2018 && result.data.back().layout.range.bytes == 1);
 }
 
+struct SetL12DRegressionCase {
+    uint16_t repeatTimes;
+    uint16_t blockNum;
+    uint16_t repeatGap;
+    bool expectsRange;
+};
+
+bool SetL12DAccessContains(const AclsanDeviceMemoryAccessData& access, uint64_t address)
+{
+    if (access.layoutKind == ACLSAN_MEM_LAYOUT_RANGE) {
+        return address >= access.address && address - access.address < access.layout.range.bytes;
+    }
+    assert(access.layoutKind == ACLSAN_MEM_LAYOUT_BLOCK_REPEAT);
+    const uint64_t blockSize = access.layout.blockRepeat.blockSize;
+    const uint64_t repeatStride = static_cast<uint64_t>(access.layout.blockRepeat.repeatStride);
+    for (uint32_t repeat = 0; repeat < access.layout.blockRepeat.repeatTimes; ++repeat) {
+        const uint64_t start = access.address + repeat * repeatStride;
+        if (address >= start && address - start < blockSize) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SetL12DExpectedContains(const aclsan::SetL12DParamField& field, uint64_t address)
+{
+    constexpr uint64_t kL1BlockBytes = 32;
+    const uint64_t payload = static_cast<uint64_t>(field.blockNum) * kL1BlockBytes;
+    const uint64_t stride = (static_cast<uint64_t>(field.blockNum) + field.repeatGap) * kL1BlockBytes;
+    for (uint16_t repeat = 0; repeat < field.repeatTimes; ++repeat) {
+        const uint64_t start = field.dstAddr + static_cast<uint64_t>(repeat) * stride;
+        if (address >= start && address - start < payload) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void AssertSetL12DCoverage(const aclsan::SetL12DParamField& field, const AclsanDeviceMemoryAccessData& access)
+{
+    constexpr uint64_t kL1BlockBytes = 32;
+    const uint64_t payload = static_cast<uint64_t>(field.blockNum) * kL1BlockBytes;
+    const uint64_t stride = (static_cast<uint64_t>(field.blockNum) + field.repeatGap) * kL1BlockBytes;
+    const uint64_t end = field.dstAddr + (static_cast<uint64_t>(field.repeatTimes) - 1) * stride + payload;
+    for (uint64_t address = field.dstAddr; address < end; ++address) {
+        assert(SetL12DAccessContains(access, address) == SetL12DExpectedContains(field, address));
+    }
+}
+
+void TestSetL12DRegressionCase(const SetL12DRegressionCase& test, uint32_t instructionId, uint32_t dataBits)
+{
+    constexpr uint64_t kDestination = 0x1000;
+    constexpr uint64_t kL1BlockBytes = 32;
+    aclsan::SetL12DParamField field{};
+    field.instrId = instructionId;
+    field.dataBits = dataBits;
+    field.dstAddr = kDestination;
+    field.repeatTimes = test.repeatTimes;
+    field.blockNum = test.blockNum;
+    field.repeatGap = test.repeatGap;
+
+    const auto result = aclsan::MemoryFieldToCbdataConverter{{}}.Convert(field);
+    assert(result.status == aclsan::MemoryCbdataStatus::SUCCESS);
+    assert(!result.requiresIncompleteEvent);
+    assert(result.data.size() == 1);
+    const auto& access = result.data.front();
+    const uint64_t payload = static_cast<uint64_t>(test.blockNum) * kL1BlockBytes;
+    const uint64_t stride = (static_cast<uint64_t>(test.blockNum) + test.repeatGap) * kL1BlockBytes;
+    assert(access.address == kDestination);
+    assert(access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L1);
+    assert(access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    assert(access.dataBits == dataBits);
+    assert(access.accessIndex == 0);
+    assert(access.accessCount == 1);
+    if (test.expectsRange) {
+        assert(access.layoutKind == ACLSAN_MEM_LAYOUT_RANGE);
+        assert(access.layout.range.bytes == payload * test.repeatTimes);
+    } else {
+        assert(access.layoutKind == ACLSAN_MEM_LAYOUT_BLOCK_REPEAT);
+        assert(access.layout.blockRepeat.blockNum == 1);
+        assert(access.layout.blockRepeat.blockSize == payload);
+        assert(access.layout.blockRepeat.repeatTimes == test.repeatTimes);
+        assert(access.layout.blockRepeat.repeatStride == static_cast<int64_t>(stride));
+    }
+    AssertSetL12DCoverage(field, access);
+}
+
+void TestSetL12DStrideAndCoverage()
+{
+    const std::array<SetL12DRegressionCase, 5> cases{
+        SetL12DRegressionCase{5, 2, 30, false}, SetL12DRegressionCase{5, 10, 70, false},
+        SetL12DRegressionCase{4, 2, 0, true},   SetL12DRegressionCase{1, 2, 30, true},
+        SetL12DRegressionCase{3, 1, 0, true},
+    };
+    const std::array<std::pair<InstructionId, uint32_t>, 2> instructionCases{
+        std::pair{InstructionId::SetL12DB16, 16}, std::pair{InstructionId::SetL12DB32, 32}};
+    for (const auto& instruction : instructionCases) {
+        for (const auto& test : cases) {
+            TestSetL12DRegressionCase(test, RawInstructionId(instruction.first), instruction.second);
+        }
+    }
+}
+
 } // namespace
 
 TEST(AclsanMemoryCbdata, Main)
@@ -975,6 +1079,7 @@ TEST(AclsanMemoryCbdata, Main)
     TestFixpipeB8ChannelMergeUsesThirtyTwoChannelGroups();
     TestFixpipeNzRejectsUnsupportedNSizeRemainders();
     TestFixpipePacked4ConversionModeUsesLoop3State();
+    TestSetL12DStrideAndCoverage();
 }
 
 TEST(AclsanMemoryCbdata, ScalarDevRejectsInconsistentFields)

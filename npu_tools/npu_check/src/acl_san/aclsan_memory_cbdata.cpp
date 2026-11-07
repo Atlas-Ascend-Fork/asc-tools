@@ -1385,7 +1385,8 @@ public:
     {
         return Linear(
             f.dstAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, f.repeatTimes,
-            uint64_t(f.blockNum) * CUBE_L1_BLOCK_BYTES, uint64_t(f.repeatGap) * CUBE_L1_BLOCK_BYTES, f.dataBits);
+            uint64_t(f.blockNum) * CUBE_L1_BLOCK_BYTES, (uint64_t(f.blockNum) + f.repeatGap) * CUBE_L1_BLOCK_BYTES,
+            f.dataBits);
     }
 
     MemoryCbdataResult operator()(const LoadL1MxParamField& f) const noexcept
