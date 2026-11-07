@@ -249,8 +249,8 @@ TEST(ToolManagerTest, CombinedToolsReportBothAndSubscribeSharedCallbackOnce)
         {"npu-check", "--tool", "synccheck", "--tool", "memcheck", "--tool", "memcheck", "/bin/true"}, true, true);
     ASSERT_EQ(result.initialized, 0);
     ASSERT_TRUE(result.error.empty()) << result.error;
-    EXPECT_EQ(enableCalls, npucheck::MemoryAnalysis::RequiredCallbacks().size());
-    EXPECT_EQ(enabled.size(), npucheck::MemoryAnalysis::RequiredCallbacks().size());
+    EXPECT_EQ(enableCalls, 8U);
+    EXPECT_EQ(enabled.size(), 8U);
     EXPECT_NE(result.text.find("tool=memcheck"), std::string::npos);
     EXPECT_NE(result.text.find("tool=synccheck"), std::string::npos);
     EXPECT_NE(result.text.find("status=complete"), std::string::npos);
@@ -265,7 +265,7 @@ TEST(ToolManagerTest, RacecheckConfigurationReachesGraphAndRejectsMalformedObser
     const auto session = RunSession({"npu-check", "--tool", "racecheck", "/bin/true"}, false, false);
     ASSERT_EQ(session.initialized, 0);
     ASSERT_TRUE(session.error.empty()) << session.error;
-    EXPECT_EQ(enabled.size(), npucheck::MemoryAnalysis::RequiredCallbacks().size());
+    EXPECT_EQ(enabled.size(), 8U);
     EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
     EXPECT_NE(session.text.find("malformed_callback="), std::string::npos);
     EXPECT_NE(session.text.find("status=incomplete"), std::string::npos);
@@ -292,7 +292,7 @@ TEST(ToolManagerTest, RacecheckDoesNotSuppressOtherToolsReports)
         RunSession({"npu-check", "--tool", "racecheck", "--tool", "memcheck", "/bin/true"}, true, false);
     ASSERT_EQ(session.initialized, 0);
     ASSERT_TRUE(session.error.empty()) << session.error;
-    EXPECT_EQ(enabled.size(), npucheck::MemoryAnalysis::RequiredCallbacks().size());
+    EXPECT_EQ(enabled.size(), 10U);
     EXPECT_NE(session.text.find("MEMCHECK SUMMARY: 1 errors"), std::string::npos);
     EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
     EXPECT_NE(session.text.find("analysis_complete=true"), std::string::npos);
@@ -342,7 +342,7 @@ TEST(ToolManagerTest, SingleCheckerAndFailedSyncRetainIndependentState)
 {
     const auto single = RunSession({"npu-check", "--tool", "synccheck", "/bin/true"}, true, true);
     ASSERT_TRUE(single.error.empty()) << single.error;
-    EXPECT_EQ(enableCalls, npucheck::MemoryAnalysis::RequiredCallbacks().size());
+    EXPECT_EQ(enableCalls, 3U);
     EXPECT_EQ(single.text.find("tool=memcheck"), std::string::npos);
     EXPECT_NE(single.text.find("tool=synccheck"), std::string::npos);
     const auto incomplete =

@@ -72,7 +72,6 @@ public:
     size_t ResourceRecordsScanned() const { return resources_.RecordsScanned(); }
     size_t InitializationCandidates() const { return initializationCandidates_; }
     bool Complete() const { return complete_; }
-    static std::vector<CallbackSpec> RequiredCallbacks();
     RangeResult Classify(uint64_t launchId, const MemoryLocation& location);
     RangeResult ClassifyAccessRange(const AclsanDeviceMemoryAccessData& access, uint64_t address, uint64_t bytes);
     AllocationUpdateStatus ResourceUpdate() const { return resourceUpdate_; }

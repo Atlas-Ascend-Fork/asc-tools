@@ -136,10 +136,6 @@ bool ToolManager::EnableCallbacks(std::string& error)
     if (configure_.opExecuteTimeoutSec.has_value()) {
         required.emplace_back(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL_BEFORE);
     }
-    for (const auto& callback : MemoryAnalysis::RequiredCallbacks()) {
-        if (std::find(required.begin(), required.end(), callback) == required.end())
-            required.push_back(callback);
-    }
 
     for (const auto& [domain, cbid] : required) {
         const AclsanStatus status = aclsanEnableCallback(1, subscriber_, domain, cbid);
