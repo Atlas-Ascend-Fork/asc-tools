@@ -197,6 +197,7 @@ Session RunSession(
         sync.common.size = sizeof(sync);
         sync.common.result = failSync ? 1 : 0;
         Emit(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync);
+        Emit(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE, &allocation);
         manager.Finalize();
     }
     client.join();
@@ -265,7 +266,10 @@ TEST(ToolManagerTest, RacecheckConfigurationReachesGraphAndRejectsMalformedObser
     const auto session = RunSession({"npu-check", "--tool", "racecheck", "/bin/true"}, false, false);
     ASSERT_EQ(session.initialized, 0);
     ASSERT_TRUE(session.error.empty()) << session.error;
-    EXPECT_EQ(enabled.size(), 8U);
+    EXPECT_EQ(enabled.size(), 10U);
+    EXPECT_EQ(enableCalls, 10U);
+    EXPECT_EQ(enabled.count({ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC}), 1U);
+    EXPECT_EQ(enabled.count({ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE}), 1U);
     EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
     EXPECT_NE(session.text.find("malformed_callback="), std::string::npos);
     EXPECT_NE(session.text.find("status=incomplete"), std::string::npos);
@@ -282,6 +286,7 @@ TEST(ToolManagerTest, RacecheckGraphPublishesMemstateEvidenceThroughCliSession)
     EXPECT_NE(session.text.find("WARNING:[RACECHECK]"), std::string::npos);
     EXPECT_NE(session.text.find("RAW"), std::string::npos);
     EXPECT_NE(session.text.find("analysis_complete=true"), std::string::npos);
+    EXPECT_NE(session.text.find("malformed_callbacks=0"), std::string::npos);
     EXPECT_NE(session.text.find("raw=1"), std::string::npos);
     EXPECT_NE(session.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
 }

@@ -32,6 +32,8 @@ Racechecker::Racechecker(race::Limits limits, std::shared_ptr<MemoryAnalysis> an
 const std::vector<CallbackSpec>& Racechecker::GetSubscribedID() const
 {
     static const std::vector<CallbackSpec> ids{
+        {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC},
+        {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE},
         {ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END},
         {ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_TRANSFER_END},
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
@@ -45,6 +47,8 @@ const std::vector<CallbackSpec>& Racechecker::GetSubscribedID() const
 bool Racechecker::OnCallback(
     AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
 {
+    if (domain == ACLSAN_CB_DOMAIN_RESOURCE)
+        return true;
     const auto malformed = [this] {
         incomplete_ = true;
         ++reasons_["malformed_callback"];
