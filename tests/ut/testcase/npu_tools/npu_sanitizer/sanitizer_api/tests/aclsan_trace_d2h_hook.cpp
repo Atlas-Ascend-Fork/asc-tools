@@ -366,9 +366,9 @@ void Callback(void*, AclsanCallbackDomain domain, AclsanCallbackId id, const voi
     if (id == ACLSAN_CBID_DEVICE_SYNC) {
         const auto* sync = static_cast<const AclsanDeviceSyncData*>(data);
         g_records.push_back(
-            {sync->header.launchId, sync->header.instrExecId, sync->header.deviceId, sync->header.phyCoreId,
-             sync->header.blockId, sync->header.blockType, sync->header.pc, sync->srcPipe, sync->dstPipe,
-             sync->objectId});
+            {sync->header.launchId, sync->header.instrExecId, sync->header.deviceId, sync->header.executor.phyCoreId,
+             sync->header.executor.blockId, sync->header.executor.blockType, sync->header.pc, sync->srcPipe,
+             sync->dstPipe, sync->objectId});
     }
 }
 

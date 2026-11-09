@@ -97,8 +97,8 @@ void TestFieldAndContextProduceCbdata()
     context.instrExecId = 41;
     context.serialNo = 40;
     context.siteId = 7;
-    context.coreId = 2;
-    context.blockId = 3;
+    context.executor.phyCoreId = 2;
+    context.executor.blockId = 3;
     context.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
 
     const auto state = SingletonDmaState(aclsan::DmaLoopDirection::GM_TO_UBUF);
@@ -110,8 +110,8 @@ void TestFieldAndContextProduceCbdata()
     assert(access.header.instrExecId == context.instrExecId);
     assert(access.header.serialNo == context.serialNo);
     assert(access.header.siteId == context.siteId);
-    assert(access.header.phyCoreId == context.coreId);
-    assert(access.header.blockId == context.blockId);
+    assert(access.header.executor.phyCoreId == context.executor.phyCoreId);
+    assert(access.header.executor.blockId == context.executor.blockId);
     assert(access.header.pipeline == context.pipeline);
     assert(access.address == field.srcAddr);
     assert(access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM);

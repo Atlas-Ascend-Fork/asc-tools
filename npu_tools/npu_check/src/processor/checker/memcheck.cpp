@@ -239,9 +239,9 @@ NpuCheckReportExecContext ToExecContext(const AclsanDeviceMemoryAccessData& data
     exec.serialNo = data.header.serialNo;
     exec.pc = data.header.pc;
     exec.deviceId = data.header.deviceId;
-    exec.phyCoreId = data.header.phyCoreId;
-    exec.blockId = data.header.blockId;
-    exec.blockType = data.header.blockType;
+    exec.phyCoreId = data.header.executor.phyCoreId;
+    exec.blockId = data.header.executor.blockId;
+    exec.blockType = data.header.executor.blockType;
     exec.pipeId = data.header.pipeline;
     exec.siteId = data.header.siteId;
     exec.pipeName = detail::DevicePipelineName(data.header.pipeline);
@@ -513,8 +513,8 @@ std::vector<NpuCheckMemcheckReport> Memcheck::OnSynchronization()
         if (analysis_->Managed() && stats_.pendingDeviceOperations != 0)
             --stats_.pendingDeviceOperations;
         const InstructionIdentity identity{
-            access.header.deviceId, access.header.launchId, access.header.blockType, access.header.blockId,
-            access.header.instrExecId};
+            access.header.deviceId, access.header.launchId, access.header.executor.blockType,
+            access.header.executor.blockId, access.header.instrExecId};
         const auto [group, inserted] = instructionGroups.try_emplace(identity, nextGroupId_);
         if (inserted) {
             ++nextGroupId_;

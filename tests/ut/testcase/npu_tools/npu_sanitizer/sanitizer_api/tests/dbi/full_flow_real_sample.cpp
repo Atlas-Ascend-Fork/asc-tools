@@ -72,11 +72,11 @@ void PrintParameterMetadata(aclrtFuncHandle function, const char* name)
 
 bool HasValidBlockIdentity(const AclsanDeviceEventHeader& header)
 {
-    if (header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
-        return header.blockId < 2;
+    if (header.executor.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
+        return header.executor.blockId < 2;
     }
-    if (header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
-        return header.blockId < 4;
+    if (header.executor.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
+        return header.executor.blockId < 4;
     }
     return false;
 }

@@ -65,17 +65,16 @@ struct InternalMemoryRange {
     size_t bytes = 0;
 };
 
+// Core identity always describes the instruction executor, never a remote memory owner.
 struct MemoryCbdataContext {
     uint64_t pc = 0;
     uint64_t instrExecId = 0;
     uint64_t serialNo = 0;
     uint32_t siteId = 0;
-    uint32_t coreId = 0;
-    uint32_t blockId = 0;
+    AclsanCoreInfo executor{0, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE};
     uint32_t pipeline = 0;
     uint64_t launchId = 0;
     uint32_t deviceId = 0;
-    uint32_t blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
     uint64_t parameterBase = 0;
     uint64_t parameterBytes = 0;
     const std::vector<InternalMemoryRange>* internalInputs = nullptr;

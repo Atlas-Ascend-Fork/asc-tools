@@ -157,12 +157,10 @@ private:
             parsed.instrExecId,
             0,
             parsed.record.siteId,
-            parsed.phyCoreId,
-            parsed.blockId,
+            {parsed.phyCoreId, parsed.blockId, parsed.blockType},
             static_cast<uint32_t>(pipeline),
             parsed.launchId,
             parsed.deviceId,
-            parsed.blockType,
             parsed.record.parameterBase,
             parsed.parameterBytes,
             internalInputs,
@@ -197,14 +195,12 @@ private:
                         break;
                 }
             }
-            // Cross-core endpoints describe the storage owner, not a second
-            // consumer of the issuing core's configuration registers. The
-            // issuing endpoint (or its conversion-failure marker) checks them.
-            const bool issuingCore = access.header.blockType == parsed.blockType &&
-                                     access.header.blockId == parsed.blockId &&
-                                     access.header.phyCoreId == parsed.phyCoreId;
-            access.regDependencyMask0 = issuingCore ? dependencies.mask0 : 0;
-            access.regDependencyMask1 = issuingCore ? dependencies.mask1 : 0;
+            if (access.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE &&
+                access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+                access.unitFlag = 0;
+            }
+            access.regDependencyMask0 = dependencies.mask0;
+            access.regDependencyMask1 = dependencies.mask1;
         }
         // MX loads currently decode only their L1 source. Keep the missing L0
         // destination visible as incomplete coverage until its layout is decoded.

@@ -31,10 +31,11 @@ AclsanDeviceMemoryAccessData Memory(
     a.header.instrExecId = n;
     a.header.pc = 0x100 + n;
     a.header.pipeline = pipe;
-    a.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    a.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     a.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     a.address = address;
     a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
     a.accessMode = mode;
     a.accessCount = 1;
     a.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
@@ -75,6 +76,8 @@ AclsanDeviceMemoryAccessData MutexMemory(uint64_t n, uint32_t mode, uint32_t pip
 {
     auto memory = Memory(n, mode, pipe);
     memory.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    memory.memoryOwner =
+        memory.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : memory.header.executor;
     return memory;
 }
 AclsanDeviceBarrierData Barrier(uint64_t n, uint32_t pipe)
@@ -129,8 +132,9 @@ AclsanDeviceMemoryAccessData UnitMemory(
     uint64_t seq, bool write, uint32_t flag, uint64_t address = 0, uint64_t bytes = 512)
 {
     auto a = Memory(seq, write ? 2 : 1, write ? ACLSAN_DEVICE_PIPE_MATRIX : ACLSAN_DEVICE_PIPE_FIXPIPE, address, bytes);
-    a.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    a.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L0C;
+    a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
     a.unitFlag = flag;
     return a;
 }
@@ -232,12 +236,14 @@ TEST(RacecheckTest, UnitFlagBarriersCoverAllInstructionFragments)
     read.accessCount = 2;
     auto output = read;
     output.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    output.memoryOwner =
+        output.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : output.header.executor;
     output.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
     output.accessIndex = 1;
     h.Add(read);
     h.Add(output);
     auto set = Flag(3, 1, ACLSAN_DEVICE_PIPE_FIXPIPE, ACLSAN_DEVICE_PIPE_MTE2);
-    set.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    set.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     auto wait = set;
     wait.header.instrExecId = 4;
     wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
@@ -302,7 +308,7 @@ TEST(RacecheckTest, UnitFlagCannotCrossPhysicalCores)
     Harness h;
     h.Add(UnitMemory(1, true, 3));
     auto read = UnitMemory(2, false, 3);
-    read.header.phyCoreId = 1;
+    read.header.executor.phyCoreId = 1;
     h.Add(read);
     h.Sync();
     EXPECT_FALSE(h.checker.AnalysisComplete());
@@ -317,6 +323,8 @@ TEST(RacecheckTest, UnitFlagDoesNotOrderFixpipeGmOutputs)
         read.accessCount = 2;
         auto output = read;
         output.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        output.memoryOwner =
+            output.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : output.header.executor;
         output.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
         output.accessIndex = 1;
         h.Add(read);
@@ -334,12 +342,12 @@ std::pair<AclsanDeviceMemoryAccessData, AclsanDeviceMemoryAccessData> FixToUb(
     auto source = UnitMemory(seq, false, flag);
     source.instructionId = 170;
     auto target = source;
-    target.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    target.header.blockId = sub;
-    target.header.phyCoreId = 18 + sub;
     target.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    target.memoryOwner = {18 + sub, sub, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR};
     target.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
     target.unitFlag = 0;
+    source.accessCount = target.accessCount = 2;
+    target.accessIndex = 1;
     return {source, target};
 }
 
@@ -355,6 +363,9 @@ TEST(RacecheckTest, FixToUbCompletionIncludesRemoteWriteWithAndWithoutUnitFlag)
                 if (flag != 0)
                     memory.push_back(UnitMemory(1, true, flag));
                 auto read = fix.second;
+                read.header.executor = read.memoryOwner;
+                read.accessCount = 1;
+                read.accessIndex = 0;
                 read.header.instrExecId = 5;
                 read.header.pc = 0x105;
                 read.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
@@ -364,7 +375,7 @@ TEST(RacecheckTest, FixToUbCompletionIncludesRemoteWriteWithAndWithoutUnitFlag)
                 std::vector<AclsanDeviceSyncData> sync;
                 if (synchronize) {
                     auto set = Flag(3, ACLSAN_DEVICE_SYNC_ACTION_SET, ACLSAN_DEVICE_PIPE_FIXPIPE);
-                    set.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                    set.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
                     set.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
                     set.mode = ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
                     set.objectId = 8 + sub * 16;
@@ -426,17 +437,17 @@ TEST(RacecheckTest, RemoteFixToUbRequiresUnambiguousIssuingInstruction)
         if (invalid != 0)
             h.Add(fix.first);
         if (invalid == 1) {
-            ++fix.first.header.phyCoreId;
+            ++fix.first.header.executor.phyCoreId;
             h.Add(fix.first);
         } else if (invalid == 2) {
             ++fix.second.header.pc;
         } else if (invalid == 3) {
-            fix.second.header.blockId += 2;
+            fix.second.header.executor.blockId += 2;
         }
         h.Add(fix.second);
         h.Sync();
         EXPECT_FALSE(h.checker.AnalysisComplete());
-        EXPECT_NE(h.checker.Summary().find("missing_fixpipe_origin"), std::string::npos);
+        EXPECT_NE(h.checker.Summary().find("incomplete_sync_graph"), std::string::npos);
         EXPECT_TRUE(h.reports.empty());
     }
 }
@@ -445,11 +456,13 @@ TEST(RacecheckTest, RemoteFixOriginIsResolvedWithinItsIssuingBlock)
 {
     Harness h;
     for (uint32_t group : {0U, 1U}) {
-        auto fix = FixToUb(1, 0);
-        fix.first.header.blockId = group;
-        fix.first.header.phyCoreId = group;
-        fix.second.header.blockId = 2 * group;
-        fix.second.header.phyCoreId = 18 + 2 * group;
+        auto fix = FixToUb(group + 1, 0);
+        fix.first.header.executor.blockId = group;
+        fix.first.header.executor.phyCoreId = group;
+        fix.first.memoryOwner = fix.first.header.executor;
+        fix.second.header.executor = fix.first.header.executor;
+        fix.second.memoryOwner.blockId = 2 * group;
+        fix.second.memoryOwner.phyCoreId = 18 + 2 * group;
         h.Add(fix.first);
         h.Add(fix.second);
     }
@@ -466,12 +479,16 @@ TEST(RacecheckTest, AivLocalBarrierCannotCompleteAnAicIssuedRemoteFix)
     h.Add(fix.second);
     auto barrier = Flag(2, ACLSAN_DEVICE_SYNC_ACTION_UNKNOWN);
     barrier.header = fix.second.header;
+    barrier.header.executor = fix.second.memoryOwner;
     barrier.header.instrExecId = 2;
     barrier.header.size = sizeof(barrier);
     barrier.syncKind = ACLSAN_DEVICE_SYNC_KIND_UNKNOWN;
     barrier.dstPipe = ACLSAN_DEVICE_PIPE_ALL;
     h.Add(barrier);
     auto read = fix.second;
+    read.header.executor = read.memoryOwner;
+    read.accessCount = 1;
+    read.accessIndex = 0;
     read.header.instrExecId = 3;
     read.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
     read.instructionId = 0;
@@ -498,8 +515,9 @@ TEST(RacecheckTest, UnitFlagDoesNotBecomeAnOrdinaryFlagOrAnUnprovenRace)
 {
     Harness h;
     auto write = Memory(1, 2, ACLSAN_DEVICE_PIPE_MATRIX, 0);
-    write.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    write.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     write.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L0C;
+    write.memoryOwner = write.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : write.header.executor;
     auto read = write;
     read.header.instrExecId = 2;
     read.header.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
@@ -534,12 +552,14 @@ TEST(RacecheckTest, BarrierOrdersLaterSamePipeAccess)
 AclsanDeviceMemoryAccessData CrossMemory(uint64_t seq, uint32_t physical, bool cube, bool write, uint64_t addr = 0x2000)
 {
     auto a = Memory(seq, write ? 2U : 1U, write ? ACLSAN_DEVICE_PIPE_MTE3 : ACLSAN_DEVICE_PIPE_MTE2, addr);
-    a.header.blockType = cube ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    a.header.phyCoreId = physical;
-    a.header.blockId = 100U + physical;
+    a.header.executor.blockType = cube ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    a.header.executor.phyCoreId = physical;
+    a.header.executor.blockId = 100U + physical;
+    a.header.instrExecId = 1000 * (physical + 1) + seq;
     if (cube && write)
         a.header.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
     a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
     return a;
 }
 AclsanDeviceSyncData CrossSync(uint64_t seq, uint32_t physical, bool cube, bool set, uint32_t mode, uint64_t flag = 8)
@@ -845,7 +865,7 @@ TEST(RacecheckTest, CrossSetInheritsExplicitSynchronizationIntoScalar)
     set.header = CrossMemory(2, 18, false, false).header;
     set.header.size = sizeof(set);
     auto wait = set;
-    wait.header.instrExecId = 3;
+    wait.header.instrExecId = CrossMemory(3, 18, false, false).header.instrExecId;
     wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
     h.Add(set);
     h.Add(wait);
@@ -888,6 +908,7 @@ TEST(RacecheckIntegrationTest, ConcreteAtomicModesUseMemstateCompatibility)
             Harness h;
             auto a = Memory(1, first);
             a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+            a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
             auto b = a;
             b.header.instrExecId = 2;
             b.header.pipeline = ACLSAN_DEVICE_PIPE_MTE3;
@@ -912,6 +933,7 @@ TEST(RacecheckIntegrationTest, MissingAtomicConfigurationNeverCertifiesClean)
         if (marker) {
             a.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
             a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN;
+            a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
         } else {
             a.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
         }
@@ -927,6 +949,7 @@ TEST(RacecheckIntegrationTest, SynchronizationOrdersDifferentAtomicOperations)
     Harness h;
     auto a = Memory(1, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
     a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
     auto b = a;
     b.header.instrExecId = 4;
     b.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
@@ -1100,7 +1123,7 @@ TEST(RacecheckTest, InvalidAndUnknownSyncNeverProvesClean)
         if (mode == 1)
             std::swap(w.srcPipe, w.dstPipe);
         if (mode == 2)
-            w.header.blockId = 1;
+            w.header.executor.blockId = 1;
         if (mode == 3)
             s.syncKind = ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF;
         if (mode == 4) {
@@ -1240,15 +1263,17 @@ TEST(RacecheckTest, NegativeStrideNdAndInvalidArithmetic)
 TEST(RacecheckTest, PrivateOwnersIsolatedGlobalPeersStableUnderInputPermutation)
 {
     auto a = Memory(1);
-    auto b = Memory(1, 1, 1);
-    b.header.blockId = 1;
-    b.header.phyCoreId = 1;
+    auto b = Memory(2, 1, 1);
+    b.header.executor.blockId = 1;
+    b.header.executor.phyCoreId = 1;
+    b.memoryOwner = b.header.executor;
     Harness privateMemory;
     privateMemory.Add(a);
     privateMemory.Add(b);
     privateMemory.Sync();
     EXPECT_TRUE(privateMemory.reports.empty());
     a.memorySpace = b.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
     for (bool reverse : {false, true}) {
         Harness h;
         h.Add(reverse ? b : a);
@@ -1257,8 +1282,8 @@ TEST(RacecheckTest, PrivateOwnersIsolatedGlobalPeersStableUnderInputPermutation)
         ASSERT_EQ(h.reports.size(), 1U);
         const auto& r = std::get<NpuCheckRacecheckReport>(h.reports[0]);
         EXPECT_EQ(static_cast<uint32_t>(r.kind) + 1, 1U);
-        EXPECT_EQ(r.previous.header.blockId, 0U);
-        EXPECT_NE(r.previous.header.blockId, r.current.header.blockId);
+        EXPECT_EQ(r.previous.header.executor.blockId, 0U);
+        EXPECT_NE(r.previous.header.executor.blockId, r.current.header.executor.blockId);
     }
 }
 TEST(RacecheckTest, ReportsAllDistinctRangesAndDeduplicatesSameRange)
@@ -1296,8 +1321,9 @@ TEST(RacecheckTest, VectorHardwareOrderDoesNotOrderOtherDomainsOrPipes)
         auto a = Memory(1, 2, ACLSAN_DEVICE_PIPE_VECTOR);
         auto b = Memory(2, 1, otherDomain ? ACLSAN_DEVICE_PIPE_VECTOR : ACLSAN_DEVICE_PIPE_MTE3);
         a.memorySpace = b.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
         if (otherDomain)
-            b.header.blockId = 1;
+            b.header.executor.blockId = 1;
         h.Add(a);
         h.Add(b);
         h.Sync();
@@ -1582,8 +1608,9 @@ TEST(RacecheckTest, RandomExactFootprintsAgreeWithExhaustiveByteOracle)
         for (uint32_t i = 0; i < 12; ++i) {
             auto a = Memory(1, 1 + rng() % 2, 4, 0x1000 + rng() % 32, 1 + rng() % 12);
             a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
-            a.header.blockId = i;
-            a.header.phyCoreId = i;
+            a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
+            a.header.executor.blockId = i;
+            a.header.executor.phyCoreId = i;
             accesses.push_back(a);
         }
         std::set<std::pair<uint32_t, uint32_t>> expected, actual;
@@ -1602,8 +1629,8 @@ TEST(RacecheckTest, RandomExactFootprintsAgreeWithExhaustiveByteOracle)
         for (auto& v : h.reports) {
             auto r = std::get<NpuCheckRacecheckReport>(v);
             actual.emplace(
-                std::min(r.previous.header.blockId, r.current.header.blockId),
-                std::max(r.previous.header.blockId, r.current.header.blockId));
+                std::min(r.previous.header.executor.blockId, r.current.header.executor.blockId),
+                std::max(r.previous.header.executor.blockId, r.current.header.executor.blockId));
         }
         EXPECT_EQ(actual.empty(), expected.empty());
         EXPECT_LE(actual.size(), expected.size());
@@ -1622,6 +1649,7 @@ TEST(RacecheckTest, AtomicAndUnknownOwnersRemainUnsupported)
             a.instructionId = 56;
         else
             a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN;
+        a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
         h.Add(a);
         h.Add(Memory(2, 1, 1));
         h.Sync();
@@ -1636,6 +1664,8 @@ TEST(RacecheckTest, UnsupportedMemorySpaceValuesMakeAnalysisIncomplete)
         Harness h;
         auto access = Memory(1);
         access.memorySpace = space;
+        access.memoryOwner =
+            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
         h.Add(access);
         h.Sync();
         EXPECT_FALSE(h.checker.AnalysisComplete());
@@ -1894,7 +1924,7 @@ TEST(RacecheckTest, FpcResetStartsNewOwnershipWithoutCompletingOldReads)
             if (synchronize) {
                 auto set =
                     Flag(3, ACLSAN_DEVICE_SYNC_ACTION_SET, ACLSAN_DEVICE_PIPE_FIXPIPE, ACLSAN_DEVICE_PIPE_MATRIX);
-                set.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                set.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
                 auto wait = set;
                 wait.header.instrExecId = 4;
                 wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
@@ -1937,7 +1967,7 @@ TEST(RacecheckTest, FpcResetDoesNotPublishOldDataToLaterFixOrCrossCores)
         Harness h;
         auto fpc = FpcReset(2);
         if (variant == 1)
-            ++fpc.header.phyCoreId;
+            ++fpc.header.executor.phyCoreId;
         if (variant == 2)
             fpc.header.deviceId = 1;
         ASSERT_TRUE(

@@ -57,9 +57,8 @@ bool SameMemory(const AclsanDeviceMemoryAccessData& a, const AclsanDeviceMemoryA
         a.dataBits != b.dataBits || a.alignSize != b.alignSize || a.vectorMask0 != b.vectorMask0 ||
         a.vectorMask1 != b.vectorMask1 || a.predicateMask0 != b.predicateMask0 ||
         a.predicateMask1 != b.predicateMask1 || a.regDependencyMask0 != b.regDependencyMask0 ||
-        a.regDependencyMask1 != b.regDependencyMask1 || a.memoryOwner.valid != b.memoryOwner.valid ||
-        a.memoryOwner.phyCoreId != b.memoryOwner.phyCoreId || a.memoryOwner.blockId != b.memoryOwner.blockId ||
-        a.memoryOwner.blockType != b.memoryOwner.blockType)
+        a.regDependencyMask1 != b.regDependencyMask1 || a.memoryOwner.phyCoreId != b.memoryOwner.phyCoreId ||
+        a.memoryOwner.blockId != b.memoryOwner.blockId || a.memoryOwner.blockType != b.memoryOwner.blockType)
         return false;
     switch (a.layoutKind) {
         case ACLSAN_MEM_LAYOUT_SCALAR:
@@ -189,7 +188,6 @@ class DependencyGraphBuilder {
     std::map<Instruction, Event> events;
     std::vector<Access>& accesses;
     std::map<Instruction, size_t> instructionStarts;
-    std::map<Instruction, Instruction> remoteFixpipeOrigins;
     UnitResetHistory unitResets;
     // Prefix/acquire joins do not imply completion order within a pipeline.
     std::map<Pipe, std::optional<size_t>> prefix, acquired;
@@ -219,7 +217,6 @@ public:
         NormalizeEvents();
         unitResets = UnitFlagResets(registers, reasons);
         ExpandUnitFlagAccesses();
-        LinkRemoteFixpipeEndpoints();
         RouteCrossCoreNotifications();
         BuildNotificationTokens();
         BuildLocalEdges();
@@ -247,7 +244,7 @@ private:
                 continue;
             }
             if (!a.accessCount || a.accessIndex >= a.accessCount || !ValidPipe(a.header.pipeline) ||
-                a.header.blockType > ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
+                a.header.executor.blockType > ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
                 reasons.insert("invalid_access_identity");
                 continue;
             }
@@ -265,8 +262,7 @@ private:
                 node = event->second.node;
                 const auto& first = accesses[event->second.index].data;
                 if (event->second.pipe != a.header.pipeline || first.header.pc != a.header.pc ||
-                    first.header.siteId != a.header.siteId || first.instructionId != a.instructionId ||
-                    first.unitFlag != a.unitFlag)
+                    first.header.siteId != a.header.siteId || first.instructionId != a.instructionId)
                     reasons.insert("instruction_identity_mismatch");
             }
             Access access{a, node, {}};
@@ -274,13 +270,10 @@ private:
                 a.instructionId <= static_cast<uint32_t>(aclsan::InstructionId::StiAtomicB8)) {
                 reasons.insert("atomic_semantics_unknown");
             }
-            if (a.memoryOwner.valid > 1 ||
-                (a.memoryOwner.valid && a.memoryOwner.blockType > ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
-                reasons.insert("invalid_memory_owner");
-            }
-            // Remote/shared memory must have a resolved storage owner.
-            if (AclsanMemoryOwnerOf(&a).blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR &&
-                a.memorySpace >= ACLSAN_DEVICE_MEMORY_SPACE_L1) {
+            if ((a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
+                 a.memoryOwner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) ||
+                (a.memorySpace >= ACLSAN_DEVICE_MEMORY_SPACE_L1 && a.memorySpace <= ACLSAN_DEVICE_MEMORY_SPACE_L0C &&
+                 a.memoryOwner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
                 reasons.insert("owner_mapping_unknown");
             }
             if (a.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
@@ -441,7 +434,7 @@ private:
                 continue;
             }
             if ((a.unitFlag != UNIT_FLAG_MODE_START && a.unitFlag != UNIT_FLAG_MODE_END) ||
-                a.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
+                a.header.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
                 (a.header.pipeline != ACLSAN_DEVICE_PIPE_MATRIX && a.header.pipeline != ACLSAN_DEVICE_PIPE_FIXPIPE)) {
                 reasons.insert("invalid_unit_flag");
                 partition.expanded.push_back(access);
@@ -529,28 +522,6 @@ private:
         MatchUnitFlags(partition);
     }
 
-    void LinkRemoteFixpipeEndpoints()
-    {
-        remoteFixpipeOrigins = RemoteFixpipeOrigins(memory, reasons);
-        for (const auto& endpoint : remoteFixpipeOrigins) {
-            const auto origin = events.find(endpoint.second);
-            const auto remote = events.find(endpoint.first);
-            if (origin == events.end() || remote == events.end() || origin->second.sync || remote->second.sync) {
-                reasons.insert("missing_fixpipe_origin");
-                continue;
-            }
-            auto start = instructionStarts.find(endpoint.second);
-            if (start == instructionStarts.end()) {
-                start = instructionStarts.emplace(endpoint.second, graph.AddNode()).first;
-                AddEdge(start->second, origin->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
-            }
-            // Completion of FIX includes every destination, while the L0C unit
-            // release remains independent of the UB write's completion.
-            AddEdge(start->second, remote->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
-            AddEdge(remote->second.node, origin->second.node, HappensBeforeGraph::Reason::InstructionBoundary);
-        }
-    }
-
     void RecordNotification(
         const AclsanDeviceSyncData& s, const Domain& receiver, uint64_t receiverFlag, size_t node,
         const std::set<Domain>& domains)
@@ -586,7 +557,7 @@ private:
                 continue;
             const auto sender = DomainOf(s.header);
             const bool intra = s.mode == CROSS_CORE_MODE_RECEIVER_FLAG;
-            const bool cube = s.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+            const bool cube = s.header.executor.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
             const auto flag = s.objectId & (intra && cube ? 31U : 15U);
             if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE ||
                 (s.mode != CROSS_CORE_MODE_SAME_PIPE && s.mode != CROSS_CORE_MODE_VECTOR &&
@@ -666,8 +637,6 @@ private:
         for (const auto& pair : events) {
             if (graphExhausted)
                 break;
-            if (remoteFixpipeOrigins.count(pair.first) != 0)
-                continue;
             const Domain domain = std::get<0>(pair.first);
             const auto& e = pair.second;
             if (!e.sync) {

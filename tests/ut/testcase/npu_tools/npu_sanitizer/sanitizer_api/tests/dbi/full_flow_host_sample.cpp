@@ -220,13 +220,13 @@ void Callback(void*, AclsanCallbackDomain domain, AclsanCallbackId id, const voi
     if (id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
         const auto* memory = static_cast<const AclsanDeviceMemoryAccessData*>(data);
         g_state.callbacks.push_back(
-            {memory->header.blockId, memory->header.blockType, memory->header.phyCoreId, memory->header.pipeline,
-             memory->header.siteId, memory->header.pc});
+            {memory->header.executor.blockId, memory->header.executor.blockType, memory->header.executor.phyCoreId,
+             memory->header.pipeline, memory->header.siteId, memory->header.pc});
     } else if (id == ACLSAN_CBID_DEVICE_SYNC) {
         const auto* sync = static_cast<const AclsanDeviceSyncData*>(data);
         g_state.callbacks.push_back(
-            {sync->header.blockId, sync->header.blockType, sync->header.phyCoreId, ACLSAN_DEVICE_PIPE_SCALAR, 0,
-             sync->header.pc});
+            {sync->header.executor.blockId, sync->header.executor.blockType, sync->header.executor.phyCoreId,
+             ACLSAN_DEVICE_PIPE_SCALAR, 0, sync->header.pc});
     }
 }
 

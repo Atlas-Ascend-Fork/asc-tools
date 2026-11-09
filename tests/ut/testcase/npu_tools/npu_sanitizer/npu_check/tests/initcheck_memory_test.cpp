@@ -43,10 +43,11 @@ protected:
         data.header.launchId = 11;
         data.header.instrExecId = instruction;
         data.header.deviceId = 2;
-        data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         data.header.pipeline = pipe;
         data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         data.memorySpace = space;
+        data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
         data.accessMode = mode;
         data.accessCount = 1;
         data.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
@@ -247,13 +248,13 @@ TEST_F(InitcheckMemoryTest, ReverseAffineWriteKeepsStrideGapsUninitialized)
     EXPECT_EQ(report.initializedBytes, 96U);
 }
 
-TEST_F(InitcheckMemoryTest, ContextSeparatesDeviceLaunchBlockAndBlockType)
+TEST_F(InitcheckMemoryTest, ContextSeparatesDeviceLaunchAndMemoryOwner)
 {
     Launch();
     Launch(12);
     Launch(13);
     ASSERT_TRUE(Memory(Range(1, kA, kWrite)));
-    for (unsigned variation = 0; variation < 4; ++variation) {
+    for (unsigned variation = 0; variation < 3; ++variation) {
         auto read = Range(2, kA, kRead);
         if (variation == 0) {
             read.header.deviceId = 3;
@@ -261,14 +262,31 @@ TEST_F(InitcheckMemoryTest, ContextSeparatesDeviceLaunchBlockAndBlockType)
         }
         if (variation == 1)
             read.header.launchId = 12;
-        if (variation == 2)
-            read.header.blockId = 1;
-        if (variation == 3)
-            read.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
+        if (variation == 2) {
+            read.header.executor.blockId = 1;
+            read.memoryOwner = {2, 1, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE};
+        }
+        if (variation >= 2)
+            read.header.executor.phyCoreId = variation;
         ASSERT_TRUE(Memory(read));
     }
     Sync();
-    EXPECT_EQ(reports.size(), 4U);
+    EXPECT_EQ(reports.size(), 3U);
+    EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+}
+
+TEST_F(InitcheckMemoryTest, DifferentExecutorWithSameOwnerRequiresOrdering)
+{
+    Launch();
+    ASSERT_TRUE(Memory(Range(1, kA, kWrite)));
+    auto read = Range(2, kA, kRead);
+    read.header.executor = {1, 1, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE};
+    // The owner remains the writer's core; this is an unordered foreign access.
+    ASSERT_TRUE(Memory(read));
+    Sync();
+    EXPECT_TRUE(reports.empty());
+    EXPECT_FALSE(checker.AnalysisComplete());
+    EXPECT_NE(checker.Summary().find("unordered_initialization"), std::string::npos);
 }
 
 TEST_F(InitcheckMemoryTest, MatchingFlagMakesMte1WritesVisibleToMatrix)
@@ -483,9 +501,12 @@ TEST_F(InitcheckMemoryTest, MmadPreservesExistingL0CAccumulatorCheck)
     a.accessCount = 3;
     auto b = a;
     b.memorySpace = kB;
+    b.memoryOwner = b.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : b.header.executor;
     b.accessIndex = 1;
     auto accumulator = a;
     accumulator.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L0C;
+    accumulator.memoryOwner =
+        accumulator.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : accumulator.header.executor;
     accumulator.accessMode = kRead | kWrite;
     accumulator.accessIndex = 2;
     Memory(a);
@@ -516,9 +537,9 @@ TEST_F(InitcheckMemoryTest, InvalidL1SourceCannotInitializeL0Destination)
     bounds.common.flags = kNpuCheckReportCommonHasExecContext;
     bounds.common.exec.deviceId = source.header.deviceId;
     bounds.common.exec.launchId = source.header.launchId;
-    bounds.common.exec.blockType = source.header.blockType;
-    bounds.common.exec.blockId = source.header.blockId;
-    bounds.common.exec.phyCoreId = source.header.phyCoreId;
+    bounds.common.exec.blockType = source.header.executor.blockType;
+    bounds.common.exec.blockId = source.header.executor.blockId;
+    bounds.common.exec.phyCoreId = source.header.executor.phyCoreId;
     bounds.common.exec.instrExecId = source.header.instrExecId;
     bounds.common.exec.pipeId = source.header.pipeline;
     reports.emplace_back(bounds);
@@ -551,9 +572,9 @@ TEST_F(InitcheckMemoryTest, BoundsReportCannotHideIncompleteL0Write)
         bounds.common.flags = kNpuCheckReportCommonHasExecContext;
         bounds.common.exec.deviceId = write.header.deviceId;
         bounds.common.exec.launchId = write.header.launchId;
-        bounds.common.exec.blockType = write.header.blockType;
-        bounds.common.exec.blockId = write.header.blockId;
-        bounds.common.exec.phyCoreId = write.header.phyCoreId;
+        bounds.common.exec.blockType = write.header.executor.blockType;
+        bounds.common.exec.blockId = write.header.executor.blockId;
+        bounds.common.exec.phyCoreId = write.header.executor.phyCoreId;
         bounds.common.exec.instrExecId = write.header.instrExecId;
         bounds.common.exec.pipeId = write.header.pipeline;
         reports.emplace_back(bounds);

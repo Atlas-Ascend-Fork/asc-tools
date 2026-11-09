@@ -20,8 +20,8 @@ AclsanDeviceSyncData MakeSyncEvent(
 {
     AclsanDeviceSyncData data{};
     data.header.launchId = launchId;
-    data.header.phyCoreId = 3;
-    data.header.blockId = 5;
+    data.header.executor.phyCoreId = 3;
+    data.header.executor.blockId = 5;
     data.syncKind = syncKind;
     data.action = action;
     data.scope = syncKind == ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG ? ACLSAN_DEVICE_SYNC_SCOPE_BLOCK :
@@ -116,7 +116,7 @@ TEST(SynccheckTest, PreservesDeviceBlockTypeInReport)
     Synccheck synccheck;
     synccheck.OnKernelLaunch(0, {});
     AclsanDeviceSyncData data = MakeSyncEvent(ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG, ACLSAN_DEVICE_SYNC_ACTION_WAIT);
-    data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
 
     synccheck.OnDeviceSync(data);
     const auto reports = synccheck.OnSynchronization();
@@ -193,8 +193,9 @@ AclsanDeviceSyncData MakeCrossEvent(
     auto data = MakeSyncEvent(
         mode == 4 ? ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK : ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE, action, flag,
         ACLSAN_DEVICE_PIPE_MTE2, mode, launch);
-    data.header.blockType = cube ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    data.header.blockId = block;
+    data.header.executor.blockType =
+        cube ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    data.header.executor.blockId = block;
     return data;
 }
 

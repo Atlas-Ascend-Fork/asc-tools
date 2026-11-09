@@ -485,7 +485,7 @@ void TestRegisterStateCallbackPreservesPackedValue()
     assert(callback.header.size == sizeof(AclsanDeviceRegisterStateData));
     assert(callback.header.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT);
     assert(callback.header.launchId == 41);
-    assert(callback.header.blockId == 2);
+    assert(callback.header.executor.blockId == 2);
     assert(callback.regId == ACLSAN_DEVICE_REGISTER_MTE2_SOURCE);
     assert(callback.value == UINT64_C(0xfedcba9887654321));
 }
@@ -583,7 +583,7 @@ void ExpectL0CoverageMarker(const aclsan::ParsedTraceRecord& record)
     EXPECT_EQ(marker.instructionId, record.record.instrId);
     EXPECT_EQ(marker.header.launchId, record.launchId);
     EXPECT_EQ(marker.header.pc, record.record.pc);
-    EXPECT_EQ(marker.header.blockId, record.blockId);
+    EXPECT_EQ(marker.header.executor.blockId, record.blockId);
     EXPECT_EQ(marker.header.instrExecId, record.instrExecId);
     EXPECT_EQ(marker.header.flags, ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED);
     EXPECT_EQ(marker.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN);

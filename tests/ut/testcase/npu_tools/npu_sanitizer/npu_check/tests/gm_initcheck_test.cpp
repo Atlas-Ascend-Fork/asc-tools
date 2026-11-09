@@ -27,6 +27,7 @@ AclsanDeviceMemoryAccessData Access(uint64_t address, uint64_t bytes, uint32_t m
     data.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
     data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     data.accessMode = mode;
     data.accessCount = 1;
     data.address = address;
@@ -214,6 +215,7 @@ TEST(LocalInitcheckTest, CompletedWritesInitializeOnlyCoveredBytesWithoutGmAlloc
         const auto local = InitStateKey::Local(scope.deviceId, 11, 0, 0, space);
         auto read = Access(0xffe0, 96, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
         read.memorySpace = space;
+        read.memoryOwner = read.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : read.header.executor;
         auto result = checker.CheckInstruction(local, {read});
         ASSERT_EQ(result.status, InitCheckStatus::OK);
         ASSERT_EQ(result.reports.size(), 1U);
@@ -242,6 +244,7 @@ TEST(LocalInitcheckTest, InvalidWritesDoNotChangeStateAndContextsStayIsolated)
     EXPECT_EQ(checker.MarkInitialized(local, 0, 32, 16), InitCheckStatus::INVALID_RECORD);
     auto read = Access(capacity - 16, 16, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
     read.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L0C;
+    read.memoryOwner = read.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : read.header.executor;
     auto result = checker.CheckInstruction(local, {read});
     ASSERT_EQ(result.reports.size(), 1U);
     EXPECT_EQ(result.reports[0].uninitBytes, 16U);
@@ -249,7 +252,7 @@ TEST(LocalInitcheckTest, InvalidWritesDoNotChangeStateAndContextsStayIsolated)
     EXPECT_TRUE(checker.CheckInstruction(local, {read}).reports.empty());
     auto other = local;
     ++other.blockId;
-    read.header.blockId = other.blockId;
+    read.header.executor.blockId = other.blockId;
     EXPECT_EQ(checker.CheckInstruction(other, {read}).reports.size(), 1U);
 }
 
@@ -299,6 +302,7 @@ TEST(LocalInitcheckTest, ReplayRequiresBothStoredBytesAndProvenPrecedingWrites)
     const auto local = InitStateKey::Local(scope.deviceId, 11, 0, 0, ACLSAN_DEVICE_MEMORY_SPACE_L1);
     auto read = Access(0, 128, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
     read.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L1;
+    read.memoryOwner = read.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : read.header.executor;
     // A dependency interval alone must not substitute for the actual byte table.
     auto result = checker.CheckInstruction(local, {read}, {{0, 128}}, false, true);
     ASSERT_EQ(result.reports.size(), 1U);

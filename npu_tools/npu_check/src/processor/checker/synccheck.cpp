@@ -82,9 +82,9 @@ NpuCheckReportExecContext ExecContext(const AclsanDeviceSyncData& data)
     exec.instrExecId = data.header.instrExecId;
     exec.pc = data.header.pc;
     exec.deviceId = data.header.deviceId;
-    exec.phyCoreId = data.header.phyCoreId;
-    exec.blockId = data.header.blockId;
-    exec.blockType = data.header.blockType;
+    exec.phyCoreId = data.header.executor.phyCoreId;
+    exec.blockId = data.header.executor.blockId;
+    exec.blockType = data.header.executor.blockType;
     // Sync instructions execute on PIPE_S independently of their srcPipe/dstPipe pairing arguments.
     exec.pipeId = 0;
     exec.pipeName = detail::DevicePipelineName(ACLSAN_DEVICE_PIPE_SCALAR);
@@ -128,7 +128,7 @@ void SyncLedger::HashCombine(size_t& seed, uint64_t value) noexcept
 
 SyncLedger::FlagPairKey SyncLedger::FlagPairKey::FromCbdata(const AclsanDeviceSyncData& data) noexcept
 {
-    return {data.objectId, data.header.blockType, data.header.blockId, data.srcPipe, data.dstPipe};
+    return {data.objectId, data.header.executor.blockType, data.header.executor.blockId, data.srcPipe, data.dstPipe};
 }
 
 bool SyncLedger::FlagPairKey::operator==(const FlagPairKey& other) const noexcept
@@ -150,7 +150,7 @@ size_t SyncLedger::FlagPairKeyHash::operator()(const FlagPairKey& key) const noe
 
 SyncLedger::SyncBufPairKey SyncLedger::SyncBufPairKey::FromCbdata(const AclsanDeviceSyncData& data) noexcept
 {
-    return {data.objectId, data.header.blockType, data.header.blockId, data.dstPipe, data.mode};
+    return {data.objectId, data.header.executor.blockType, data.header.executor.blockId, data.dstPipe, data.mode};
 }
 
 bool SyncLedger::SyncBufPairKey::operator==(const SyncBufPairKey& other) const noexcept
@@ -290,7 +290,7 @@ void SyncLedger::OnKernelLaunch(uint64_t launchId, const LaunchTopology& topolog
 
 SyncLedger::SyncBufOccupancyKey SyncLedger::BuildSyncBufOccupancyKey(const AclsanDeviceSyncData& data)
 {
-    return {data.objectId, data.header.phyCoreId};
+    return {data.objectId, data.header.executor.phyCoreId};
 }
 
 bool SyncLedger::ResolveParticipant(
@@ -300,23 +300,24 @@ bool SyncLedger::ResolveParticipant(
         error = "cross-core topology is incomplete";
         return false;
     }
-    if (data.header.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
-        if (data.header.blockId >= topology.groupCount || topology.aicPerGroup == 0) {
+    if (data.header.executor.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
+        if (data.header.executor.blockId >= topology.groupCount || topology.aicPerGroup == 0) {
             error = "AIC blockId is outside launch topology";
             return false;
         }
-        participant = {data.header.blockId, ParticipantRole::AIC};
+        participant = {data.header.executor.blockId, ParticipantRole::AIC};
         return true;
     }
-    if (data.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR || topology.aivPerGroup == 0 ||
-        data.header.blockId >= topology.expectedAivCount) {
+    if (data.header.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR || topology.aivPerGroup == 0 ||
+        data.header.executor.blockId >= topology.expectedAivCount) {
         error = "AIV blockId or blockType is outside launch topology";
         return false;
     }
-    participant.groupId = data.header.blockId / topology.aivPerGroup;
-    participant.role = topology.aivPerGroup == MIX_1_2_AIV_COUNT && data.header.blockId % topology.aivPerGroup != 0 ?
-                           ParticipantRole::AIV1 :
-                           ParticipantRole::AIV0;
+    participant.groupId = data.header.executor.blockId / topology.aivPerGroup;
+    participant.role =
+        topology.aivPerGroup == MIX_1_2_AIV_COUNT && data.header.executor.blockId % topology.aivPerGroup != 0 ?
+            ParticipantRole::AIV1 :
+            ParticipantRole::AIV0;
     return true;
 }
 

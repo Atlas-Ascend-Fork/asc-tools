@@ -152,57 +152,14 @@ bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::v
 }
 Storage StorageOf(const AclsanDeviceMemoryAccessData& access)
 {
-    const auto owner = AclsanMemoryOwnerOf(&access);
     return {
         access.memorySpace, access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
                                 Domain{access.header.deviceId, 0, 0, 0} :
-                                Domain{access.header.deviceId, owner.blockType, owner.blockId, owner.phyCoreId}};
+                                Domain{
+                                    access.header.deviceId, access.memoryOwner.blockType, access.memoryOwner.blockId,
+                                    access.memoryOwner.phyCoreId}};
 }
 
-std::map<Instruction, Instruction> RemoteFixpipeOrigins(
-    const std::vector<AclsanDeviceMemoryAccessData>& memory, std::set<std::string>& reasons)
-{
-    using Identity = std::tuple<uint64_t, uint32_t, uint32_t, uint64_t, uint64_t, uint32_t, uint32_t>;
-    const auto identity = [](const AclsanDeviceMemoryAccessData& access) {
-        const auto& h = access.header;
-        const uint32_t aicBlock = h.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR ? h.blockId / 2U : h.blockId;
-        return Identity{h.launchId, h.deviceId, aicBlock, h.instrExecId, h.pc, h.siteId, access.instructionId};
-    };
-    const auto isFixToUb = [](const AclsanDeviceMemoryAccessData& access) {
-        return access.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE &&
-               (access.instructionId == static_cast<uint32_t>(aclsan::InstructionId::FixL0cToUbufF32) ||
-                access.instructionId == static_cast<uint32_t>(aclsan::InstructionId::FixL0cToUbufS32));
-    };
-    std::map<Identity, Instruction> origins;
-    std::set<Identity> ambiguous;
-    for (const auto& access : memory) {
-        if (!isFixToUb(access) || access.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE ||
-            access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C ||
-            access.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
-            continue;
-        }
-        const auto inserted = origins.emplace(identity(access), Key(access.header));
-        if (!inserted.second && inserted.first->second != Key(access.header)) {
-            ambiguous.insert(identity(access));
-        }
-    }
-    std::map<Instruction, Instruction> result;
-    for (const auto& access : memory) {
-        if (!isFixToUb(access) || access.header.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR ||
-            access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UB) {
-            continue;
-        }
-        const auto origin = origins.find(identity(access));
-        if (origin == origins.end() || ambiguous.count(identity(access)) != 0 ||
-            access.header.blockId / 2U != std::get<2>(std::get<0>(origin->second)) ||
-            access.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_WRITE || access.unitFlag != 0) {
-            reasons.insert("missing_fixpipe_origin");
-            continue;
-        }
-        result.emplace(Key(access.header), origin->second);
-    }
-    return result;
-}
 UnitResetHistory UnitFlagResets(
     const std::vector<AclsanDeviceRegisterStateData>& registers, std::set<std::string>& reasons)
 {
@@ -215,7 +172,7 @@ UnitResetHistory UnitFlagResets(
         const auto inserted = values.emplace(Key(h), state.value);
         if ((!inserted.second && inserted.first->second != state.value) || state.regIndex != 0 ||
             h.version != ACLSAN_API_VERSION || h.size < sizeof(state) || h.launchId == 0 || h.instrExecId == 0 ||
-            h.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE || h.pipeline != ACLSAN_DEVICE_PIPE_SCALAR ||
+            h.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE || h.pipeline != ACLSAN_DEVICE_PIPE_SCALAR ||
             (h.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT && h.flags != ACLSAN_DEVICE_EVENT_FLAG_NONE)) {
             reasons.insert("invalid_unit_flag_reset");
             continue;

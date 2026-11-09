@@ -23,7 +23,6 @@
 #include <optional>
 #include <stdexcept>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 
@@ -344,46 +343,30 @@ private:
     }
 };
 
-// 仅用于 L1 <-> UB、L0C -> UB 的 UB 端访问，确定该 UB 所属的 AIV。
-// AIC 发起的访问按 subBlockId 映射到目标 AIV；输入已经是 AIV 时直接沿用。
-// UB -> UB、GM <-> UB（含 NDDMA）直接使用原 context，不调用此函数。
-// 返回 context 的副本，仅调整 coreId/blockId/blockType，保留指令执行信息；映射失败返回 nullopt。
-std::optional<MemoryCbdataContext> ContextForUbuf(const MemoryCbdataContext& context, uint32_t subBlockId) noexcept
+// Resolve storage ownership without changing the instruction's execution context.
+std::optional<AclsanCoreInfo> ResolveUbufOwner(const MemoryCbdataContext& context, uint32_t subBlockId) noexcept
 {
-    if (context.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
-        return context;
+    if (context.executor.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
+        return context.executor;
     }
-    const uint32_t core = AivPhysicalCoreForAic(context.coreId, subBlockId);
-    const uint32_t block = AivBlockIdForAic(context.blockId, subBlockId);
+    const uint32_t core = AivPhysicalCoreForAic(context.executor.phyCoreId, subBlockId);
+    const uint32_t block = AivBlockIdForAic(context.executor.blockId, subBlockId);
     if (core == UINT32_MAX || block == UINT32_MAX) {
         return std::nullopt;
     }
-    auto result = context;
-    result.coreId = core;
-    result.blockId = block;
-    result.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    return result;
+    return AclsanCoreInfo{core, block, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR};
 }
 
-// Determine storage ownership only; the emitted instruction retains its issuer.
-// 仅用于 L1 <-> UB 的 L1 端访问，确定该 L1 所属的 AIC。
-// UB -> L1 的 AIV context 映射回对应 AIC；L1 -> UB 的 AIC context 直接沿用。
-// UB -> UB、GM <-> UB 不调用此函数，其他 L1 访问也直接使用其原 context。
-// 返回 context 的副本，仅调整 coreId/blockId/blockType，保留指令执行信息；映射失败返回 nullopt。
-std::optional<MemoryCbdataContext> ContextForL1(const MemoryCbdataContext& context) noexcept
+std::optional<AclsanCoreInfo> ResolveL1Owner(const MemoryCbdataContext& context) noexcept
 {
-    if (context.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
-        return context;
+    if (context.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
+        return context.executor;
     }
-    const uint32_t core = AicPhysicalCoreForAiv(context.coreId);
+    const uint32_t core = AicPhysicalCoreForAiv(context.executor.phyCoreId);
     if (core == UINT32_MAX) {
         return std::nullopt;
     }
-    auto result = context;
-    result.coreId = core;
-    result.blockId /= AIV_BLOCKS_PER_AIC;
-    result.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-    return result;
+    return AclsanCoreInfo{core, context.executor.blockId / AIV_BLOCKS_PER_AIC, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE};
 }
 
 class MemoryAccessDescriptorFactory final {
@@ -501,8 +484,12 @@ class MemoryCbdataBuilder final {
 public:
     MemoryCbdataBuilder(
         MemoryCbdataContext context, MemoryInstructionProfile profile,
-        uint32_t memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN) noexcept
-        : context_(context), profile_(profile), memorySpace_(memorySpace)
+        uint32_t memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN,
+        std::optional<AclsanCoreInfo> memoryOwner = std::nullopt) noexcept
+        : context_(context),
+          profile_(profile),
+          memorySpace_(memorySpace),
+          memoryOwner_(memoryOwner.value_or(context.executor))
     {}
 
     MemoryCbdataBuilder(const MemoryCbdataBuilder&) = delete;
@@ -577,7 +564,7 @@ public:
             data.reserve(descriptors_.size());
             const AclsanDeviceEventHeader header = MakeHeader();
             for (const auto& descriptor : descriptors_) {
-                data.push_back(MakeCbdata(header, descriptor, context_.instructionId));
+                data.push_back(MakeCbdata(header, descriptor, context_.instructionId, memoryOwner_));
             }
         } catch (const std::bad_alloc&) {
             return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
@@ -640,17 +627,17 @@ private:
                 context_.launchId,    context_.pc,
                 context_.siteId,      static_cast<uint32_t>(profile_.sourceKind),
                 context_.instrExecId, context_.serialNo,
-                context_.deviceId,    context_.coreId,
-                context_.blockId,     context_.blockType,
+                context_.deviceId,    context_.executor,
                 context_.pipeline,    ACLSAN_DEVICE_EVENT_FLAG_EXACT};
     }
 
     static AclsanDeviceMemoryAccessData MakeCbdata(
-        const AclsanDeviceEventHeader& header, const MemoryAccessDescriptor& descriptor,
-        uint32_t instructionId) noexcept
+        const AclsanDeviceEventHeader& header, const MemoryAccessDescriptor& descriptor, uint32_t instructionId,
+        AclsanCoreInfo memoryOwner) noexcept
     {
         AclsanDeviceMemoryAccessData data{};
         data.header = header;
+        data.memoryOwner = memoryOwner;
         if (descriptor.preloadTarget) {
             data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
         }
@@ -688,6 +675,7 @@ private:
     MemoryCbdataContext context_;
     MemoryInstructionProfile profile_;
     uint32_t memorySpace_;
+    AclsanCoreInfo memoryOwner_;
     std::vector<MemoryAccessDescriptor> descriptors_;
     MemoryCbdataStatus status_ = MemoryCbdataStatus::SUCCESS;
 };
@@ -749,8 +737,12 @@ public:
     }
     MemoryFieldVisitor(
         MemoryCbdataContext context, const MemoryRegisterState& registerState,
-        uint32_t fixOutputSpace = ACLSAN_DEVICE_MEMORY_SPACE_GM) noexcept
-        : context_(context), registerState_(registerState), fixOutputSpace_(fixOutputSpace)
+        uint32_t fixOutputSpace = ACLSAN_DEVICE_MEMORY_SPACE_GM,
+        std::optional<AclsanCoreInfo> fixOutputOwner = std::nullopt) noexcept
+        : context_(context),
+          registerState_(registerState),
+          fixOutputSpace_(fixOutputSpace),
+          fixOutputOwner_(fixOutputOwner)
     {}
 
     MemoryCbdataResult operator()(const ScalarGmParamField& field) const noexcept
@@ -789,7 +781,7 @@ public:
             return {resolved.status, {}};
         }
         const MemoryInstructionProfile profile{
-            dataBits, isStore ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD, context_.blockType};
+            dataBits, isStore ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD, context_.executor.blockType};
         MemoryCbdataBuilder builder{context_, profile, resolved.memorySpace};
         (void)builder.Add(
             {resolved.address, isStore ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, dataBits,
@@ -818,7 +810,7 @@ public:
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
         const MemoryInstructionProfile profile{
-            dataBits, isStore ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD, context_.blockType};
+            dataBits, isStore ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD, context_.executor.blockType};
         MemoryCbdataBuilder builder{context_, profile};
         (void)builder.Add(
             {static_cast<uint64_t>(address),
@@ -850,7 +842,7 @@ public:
         }
         // ST_ATOMIC_CFG 独立于 CTRL，且 ctrlbin 不会提供它。
         // 保留已知地址和位宽，供 Memcheck 按普通写检查；Racecheck 通过标记识别语义缺失。
-        const MemoryInstructionProfile profile{dataBits, ACLSAN_DEVICE_SOURCE_ST, context_.blockType};
+        const MemoryInstructionProfile profile{dataBits, ACLSAN_DEVICE_SOURCE_ST, context_.executor.blockType};
         MemoryCbdataBuilder builder{context_, profile, resolved.memorySpace};
         (void)builder.Add(
             {resolved.address, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, dataBits, RangeDescriptor{dataBits / 8U}});
@@ -976,7 +968,7 @@ public:
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
         }
 
-        MemoryCbdataBuilder builder(context_, *profile, fixOutputSpace_);
+        MemoryCbdataBuilder builder(context_, *profile, fixOutputSpace_, fixOutputOwner_);
         if (profile->dataBits == FOUR_BIT_DATA) {
             if (!field.nz2ndEnable && !field.nz2dnEnable && field.nSize % CUBE_PACKED4_ALIGNMENT != 0) {
                 return {MemoryCbdataStatus::INVALID_FIELD, {}};
@@ -1365,6 +1357,7 @@ private:
     MemoryCbdataContext context_;
     const MemoryRegisterState& registerState_;
     uint32_t fixOutputSpace_;
+    std::optional<AclsanCoreInfo> fixOutputOwner_;
 };
 
 // Local accesses are kept separate from the existing GM conversion so that enabling
@@ -1722,18 +1715,14 @@ public:
             if (count == NO_ACCESS_COUNT || length == NO_ACCESS_COUNT) {
                 return {MemoryCbdataStatus::NO_ACCESS, {}};
             }
-            const auto l1Context = ContextForL1(context_);
-            if (!l1Context.has_value()) {
+            const auto l1Owner = ResolveL1Owner(context_);
+            if (!l1Owner.has_value()) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
-            auto result = LinearInContext(
-                context_, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1,
+            return LinearWithOwner(
+                *l1Owner, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_L1,
                 write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, count,
                 length * CUBE_L1_BLOCK_BYTES, (length + gap) * CUBE_L1_BLOCK_BYTES);
-            for (auto& access : result.data) {
-                access.memoryOwner = {1, l1Context->coreId, l1Context->blockId, l1Context->blockType};
-            }
-            return result;
         }
         // FIX's common fields have the same encoding. Decode through the existing
         // architecture decoder; bits 16..19 describe local destinations, not L2.
@@ -1823,24 +1812,19 @@ private:
         return builder.Add(std::move(d));
     }
 
-    MemoryCbdataResult BuildInContext(
-        MemoryCbdataContext context, MemoryAccessDescriptor d, uint32_t space) const noexcept
+    MemoryCbdataResult Build(
+        MemoryAccessDescriptor d, uint32_t space, std::optional<AclsanCoreInfo> owner = std::nullopt) const noexcept
     {
         d.memorySpace = space;
-        const auto source = context.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE ? ACLSAN_DEVICE_SOURCE_FIXPIPE :
-                            context.pipeline == ACLSAN_DEVICE_PIPE_MTE3    ? ACLSAN_DEVICE_SOURCE_MTE3 :
-                            context.pipeline == ACLSAN_DEVICE_PIPE_MTE2    ? ACLSAN_DEVICE_SOURCE_MTE2 :
-                                                                             ACLSAN_DEVICE_SOURCE_CUBE;
-        MemoryCbdataBuilder builder(context, {d.dataBits, source, BLOCK_TYPE_AIC});
+        const auto source = context_.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE ? ACLSAN_DEVICE_SOURCE_FIXPIPE :
+                            context_.pipeline == ACLSAN_DEVICE_PIPE_MTE3    ? ACLSAN_DEVICE_SOURCE_MTE3 :
+                            context_.pipeline == ACLSAN_DEVICE_PIPE_MTE2    ? ACLSAN_DEVICE_SOURCE_MTE2 :
+                                                                              ACLSAN_DEVICE_SOURCE_CUBE;
+        MemoryCbdataBuilder builder(context_, {d.dataBits, source, BLOCK_TYPE_AIC}, space, owner);
         if (!builder.Add(std::move(d))) {
             return std::move(builder).Build();
         }
         return std::move(builder).Build();
-    }
-
-    MemoryCbdataResult Build(MemoryAccessDescriptor d, uint32_t space) const noexcept
-    {
-        return BuildInContext(context_, std::move(d), space);
     }
 
     MemoryCbdataResult Linear(
@@ -1853,15 +1837,14 @@ private:
         return Build(MemoryAccessDescriptorFactory::Linear(address, mode, bits, count, bytes, stride), space);
     }
 
-    MemoryCbdataResult LinearInContext(
-        MemoryCbdataContext context, uint64_t address, uint32_t space, uint32_t mode, uint64_t count, uint64_t bytes,
+    MemoryCbdataResult LinearWithOwner(
+        AclsanCoreInfo owner, uint64_t address, uint32_t space, uint32_t mode, uint64_t count, uint64_t bytes,
         uint64_t stride, uint32_t bits = 0) const noexcept
     {
         if (count == NO_ACCESS_COUNT || bytes == NO_ACCESS_COUNT) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
-        return BuildInContext(
-            context, MemoryAccessDescriptorFactory::Linear(address, mode, bits, count, bytes, stride), space);
+        return Build(MemoryAccessDescriptorFactory::Linear(address, mode, bits, count, bytes, stride), space, owner);
     }
 
     MemoryCbdataResult DmaWrite(
@@ -2129,18 +2112,14 @@ public:
             if (length == NO_ACCESS_COUNT || count == NO_ACCESS_COUNT) {
                 return {MemoryCbdataStatus::NO_ACCESS, {}};
             }
-            const auto ubContext = ContextForUbuf(context_, write && f.subBlockId ? 1U : 0U);
-            if (!ubContext.has_value()) {
+            const auto ubOwner = ResolveUbufOwner(context_, write && f.subBlockId ? 1U : 0U);
+            if (!ubOwner.has_value()) {
                 return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
-            auto result = LinearInContext(
-                context_, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_UB,
+            return LinearWithOwner(
+                *ubOwner, write ? f.dstAddr : f.srcAddr, ACLSAN_DEVICE_MEMORY_SPACE_UB,
                 write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, count,
                 length * CUBE_L1_BLOCK_BYTES, (length + gap) * CUBE_L1_BLOCK_BYTES);
-            for (auto& access : result.data) {
-                access.memoryOwner = {1, ubContext->coreId, ubContext->blockId, ubContext->blockType};
-            }
-            return result;
         }
         if (f.kind != LocalMemoryTransferKind::FixL0cToUbufF32 && f.kind != LocalMemoryTransferKind::FixL0cToUbufS32) {
             return {MemoryCbdataStatus::NO_ACCESS, {}};
@@ -2177,11 +2156,11 @@ public:
         }
 
         const auto emit = [this](uint32_t subBlockId, FixL0cToOutParamField target) noexcept {
-            const auto ubContext = ContextForUbuf(context_, subBlockId);
-            if (!ubContext.has_value()) {
+            const auto ubOwner = ResolveUbufOwner(context_, subBlockId);
+            if (!ubOwner.has_value()) {
                 return MemoryCbdataResult{MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
             }
-            return MemoryFieldVisitor(*ubContext, state_, ACLSAN_DEVICE_MEMORY_SPACE_UB)(target);
+            return MemoryFieldVisitor(context_, state_, ACLSAN_DEVICE_MEMORY_SPACE_UB, *ubOwner)(target);
         };
 
         if (f.dualDstCtl == DUAL_DST_MODE_NONE) {
@@ -2208,8 +2187,8 @@ private:
         return std::move(builder).Build();
     }
 
-    MemoryCbdataResult LinearInContext(
-        MemoryCbdataContext context, uint64_t address, uint32_t space, uint32_t mode, uint64_t count, uint64_t bytes,
+    MemoryCbdataResult LinearWithOwner(
+        AclsanCoreInfo owner, uint64_t address, uint32_t space, uint32_t mode, uint64_t count, uint64_t bytes,
         uint64_t stride, uint32_t bits = 0) const noexcept
     {
         if (count == NO_ACCESS_COUNT || bytes == NO_ACCESS_COUNT) {
@@ -2218,8 +2197,8 @@ private:
         auto descriptor = MemoryAccessDescriptorFactory::Linear(address, mode, bits, count, bytes, stride);
         descriptor.memorySpace = space;
         const auto source =
-            context.pipeline == ACLSAN_DEVICE_PIPE_MTE3 ? ACLSAN_DEVICE_SOURCE_MTE3 : ACLSAN_DEVICE_SOURCE_CUBE;
-        MemoryCbdataBuilder builder(context, {bits, source, BLOCK_TYPE_AIV});
+            context_.pipeline == ACLSAN_DEVICE_PIPE_MTE3 ? ACLSAN_DEVICE_SOURCE_MTE3 : ACLSAN_DEVICE_SOURCE_CUBE;
+        MemoryCbdataBuilder builder(context_, {bits, source, BLOCK_TYPE_AIV}, space, owner);
         if (!builder.Add(std::move(descriptor))) {
             return std::move(builder).Build();
         }
@@ -2269,28 +2248,9 @@ private:
 
 MemoryCbdataResult FinalizeMemoryAccesses(MemoryCbdataResult result) noexcept
 {
-    struct Sequence {
-        uint32_t count = 0;
-        uint32_t nextIndex = 0;
-    };
-
-    // UB/L1 operands retain one issuer and form one instruction transaction.
-    // Legacy FIX remote endpoints still use separate headers until migrated.
-    // Finalize once after all merges, keeping an ordered sequence per header core.
-    try {
-        std::unordered_map<uint32_t, Sequence> sequences;
-        for (const auto& data : result.data) {
-            ++sequences[data.header.phyCoreId].count;
-        }
-        for (auto& data : result.data) {
-            auto& sequence = sequences.at(data.header.phyCoreId);
-            data.accessIndex = sequence.nextIndex++;
-            data.accessCount = sequence.count;
-        }
-    } catch (const std::bad_alloc&) {
-        return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
-    } catch (const std::length_error&) {
-        return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
+    for (size_t i = 0; i < result.data.size(); ++i) {
+        result.data[i].accessIndex = static_cast<uint32_t>(i);
+        result.data[i].accessCount = static_cast<uint32_t>(result.data.size());
     }
     return result;
 }

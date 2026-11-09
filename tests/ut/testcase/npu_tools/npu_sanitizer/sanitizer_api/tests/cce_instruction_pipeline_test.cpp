@@ -127,8 +127,8 @@ TEST(CceInstructionPipeline, UbCopyProducesReadAndWriteWithSameExecutionIdentity
         EXPECT_EQ(a.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
         EXPECT_EQ(a.accessMode, i == 0 ? ACLSAN_DEVICE_MEMORY_ACCESS_READ : ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
         EXPECT_EQ(a.header.instrExecId, 11u);
-        EXPECT_EQ(a.header.phyCoreId, 4u);
-        EXPECT_EQ(a.header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+        EXPECT_EQ(a.header.executor.phyCoreId, 4u);
+        EXPECT_EQ(a.header.executor.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
         EXPECT_EQ(a.header.pipeline, ACLSAN_DEVICE_PIPE_VECTOR);
         EXPECT_EQ(a.header.sourceKind, ACLSAN_DEVICE_SOURCE_VECTOR);
         EXPECT_EQ(a.instructionId, 174u);

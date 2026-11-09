@@ -28,8 +28,8 @@ AclsanDeviceMemoryAccessData Access(
     data.header.launchId = launchId;
     data.header.instrExecId = instrExecId;
     data.header.deviceId = 2;
-    data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    data.header.blockId = blockId;
+    data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    data.header.executor.blockId = blockId;
     data.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
     data.instructionId = 72;
     data.regDependencyMask0 = dependencies;
@@ -44,8 +44,8 @@ AclsanDeviceRegisterStateData State(
     data.header.size = sizeof(data);
     data.header.launchId = launchId;
     data.header.deviceId = 2;
-    data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    data.header.blockId = blockId;
+    data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    data.header.executor.blockId = blockId;
     data.regId = registerId;
     data.value = value;
     return data;
@@ -89,6 +89,8 @@ protected:
         auto access = Access(1, 0);
         access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        access.memoryOwner =
+            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
         access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         access.accessCount = 1;
         access.address = base;
@@ -172,13 +174,15 @@ class CrossCoreInitcheckReplayTest : public InitcheckHostWriteTest,
 protected:
     AclsanDeviceMemoryAccessData Memory(uint64_t id, uint32_t physical, bool cube, bool write, uint64_t bytes = 128)
     {
-        auto data = Access(id, 0, 100U + physical);
-        data.header.phyCoreId = physical;
-        data.header.blockType = cube ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+        auto data = Access(1000 * (physical + 1) + id, 0, 100U + physical);
+        data.header.executor.phyCoreId = physical;
+        data.header.executor.blockType =
+            cube ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
         data.header.pipeline =
             write ? (cube ? ACLSAN_DEVICE_PIPE_FIXPIPE : ACLSAN_DEVICE_PIPE_MTE3) : ACLSAN_DEVICE_PIPE_MTE2;
         data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
         data.accessMode = write ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         data.accessCount = 1;
         data.address = base;
@@ -426,16 +430,16 @@ TEST(InitcheckTest, AtomicCtrlInitializationIsIsolatedByLogicalBlockIdentity)
     Initcheck checker;
     CheckerReportList reports;
     auto state = State(ACLSAN_DEVICE_REGISTER_CTRL, 64);
-    state.header.phyCoreId = 1;
+    state.header.executor.phyCoreId = 1;
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_STATE, &state, reports));
     auto access = Access(1, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CTRL);
     access.instructionId = 83;
-    access.header.phyCoreId = 1;
+    access.header.executor.phyCoreId = 1;
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
     EXPECT_TRUE(reports.empty());
     // 另一个核上的不同执行也对应不同的逻辑 block。
-    access.header.phyCoreId = 2;
-    access.header.blockId = 1;
+    access.header.executor.phyCoreId = 2;
+    access.header.executor.blockId = 1;
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
     ASSERT_EQ(reports.size(), 1U);
     const auto& report = std::get<NpuCheckInitcheckReport>(reports.front());
@@ -454,8 +458,8 @@ TEST(InitcheckTest, AtomicCtrlInitializationIsIsolatedByLogicalBlockIdentity)
         EXPECT_EQ(reports.size(), previousSize + 1);
     };
     auto other = access;
-    other.header.blockId = 0;
-    other.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    other.header.executor.blockId = 0;
+    other.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     checkScope(other);
     other = access;
     ++other.header.deviceId;
@@ -504,6 +508,8 @@ TEST_F(InitcheckHostWriteTest, MemcheckReportedInvalidReadDoesNotPoisonInitcheck
         auto access = Access(1, 0);
         access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        access.memoryOwner =
+            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
         access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         access.accessCount = 1;
         access.address = base;
@@ -528,6 +534,8 @@ TEST_F(InitcheckHostWriteTest, UnreportedInvalidReadAndLostTraceRemainIncomplete
         auto access = Access(1, 0);
         access.header.flags = lost ? ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR : ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        access.memoryOwner =
+            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
         access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         access.accessCount = 1;
         access.address = base;
@@ -552,9 +560,9 @@ NpuCheckMemcheckReport BoundsReportFor(const AclsanDeviceMemoryAccessData& acces
     const auto& h = access.header;
     exec.deviceId = h.deviceId;
     exec.launchId = h.launchId;
-    exec.blockType = h.blockType;
-    exec.blockId = h.blockId;
-    exec.phyCoreId = h.phyCoreId;
+    exec.blockType = h.executor.blockType;
+    exec.blockId = h.executor.blockId;
+    exec.phyCoreId = h.executor.phyCoreId;
     exec.instrExecId = h.instrExecId;
     exec.pipeId = h.pipeline;
     exec.pc = h.pc;
@@ -570,6 +578,8 @@ TEST_F(InitcheckHostWriteTest, BoundsReportDoesNotHideTraceLossMismatchedInstruc
         auto access = Access(1, 0);
         access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        access.memoryOwner =
+            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
         access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         access.accessCount = 1;
         access.address = base;
@@ -601,9 +611,11 @@ TEST_F(InitcheckHostWriteTest, BoundsReportDoesNotHideTraceLossMismatchedInstruc
 TEST_F(InitcheckHostWriteTest, InvalidInstructionDoesNotInitializeLocalOutputOrSuppressOtherReads)
 {
     auto access = Access(1, 0);
-    access.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    access.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    access.memoryOwner =
+        access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
     access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     access.accessCount = 2;
     access.address = base;
@@ -614,6 +626,7 @@ TEST_F(InitcheckHostWriteTest, InvalidInstructionDoesNotInitializeLocalOutputOrS
     auto local = access;
     local.accessIndex = 1;
     local.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L1;
+    local.memoryOwner = local.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : local.header.executor;
     local.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
     local.address = 0;
     local.layout.range.bytes = 128;
@@ -675,7 +688,7 @@ TEST(InitcheckTest, MissingGmToL1RegisterPlaceholderDoesNotReplayOrInitializeMem
         CheckerReportList reports;
         auto placeholder = Access(1, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_DMA_LOOP_SIZE_GM_TO_CBUF);
         placeholder.instructionId = static_cast<uint32_t>(opcode);
-        placeholder.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        placeholder.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         placeholder.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
         placeholder.accessCount = 1;
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &placeholder, reports));
@@ -693,10 +706,11 @@ TEST(InitcheckTest, MissingGmToL1RegisterPlaceholderDoesNotReplayOrInitializeMem
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &placeholder, reports));
         ASSERT_EQ(reports.size(), 2U); // Synchronization also cleared register-report deduplication.
         auto read = Access(2, 0);
-        read.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        read.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         read.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         read.accessCount = 1;
         read.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L1;
+        read.memoryOwner = read.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : read.header.executor;
         read.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         read.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
         read.layout.range.bytes = 32;
@@ -720,7 +734,7 @@ TEST(InitcheckTest, GmToL1TraceLossAndPartialAccessesRemainIncomplete)
         CheckerReportList reports;
         auto access = Access(1, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_DMA_LOOP_SIZE_GM_TO_CBUF);
         access.instructionId = static_cast<uint32_t>(aclsan::InstructionId::CopyGmToCbufAlignV2B32);
-        access.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        access.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
         access.accessCount = 1;
         if (scenario == 0)
@@ -790,10 +804,11 @@ protected:
     AclsanDeviceMemoryAccessData Memory(uint64_t id, uint32_t mode, uint64_t address = 0, uint64_t bytes = 128)
     {
         auto data = Access(id, 0);
-        data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         data.header.pipeline = ACLSAN_DEVICE_PIPE_MATRIX;
         data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         data.memorySpace = GetParam();
+        data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
         data.accessMode = mode;
         data.accessCount = 1;
         data.address = address;
@@ -893,7 +908,9 @@ TEST_P(LocalInitcheckReplayTest, BlocksAndMemorySpacesDoNotShareWrittenBytes)
         GetParam() == ACLSAN_DEVICE_MEMORY_SPACE_L1 ? ACLSAN_DEVICE_MEMORY_SPACE_L0C : ACLSAN_DEVICE_MEMORY_SPACE_L1;
     Add(otherSpace);
     auto otherBlock = Memory(3, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
-    otherBlock.header.blockId = 1;
+    otherBlock.header.executor.blockId = 1;
+    otherBlock.header.executor.phyCoreId = 1;
+    otherBlock.memoryOwner = otherBlock.header.executor;
     Add(otherBlock);
     Add(Memory(4, ACLSAN_DEVICE_MEMORY_ACCESS_READ));
     Sync();
@@ -919,6 +936,7 @@ TEST_P(LocalInitcheckReplayTest, NextLaunchStartsUndefinedWhileGmStateSurvives)
     ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, &allocation, reports));
     auto gm = Memory(1, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0x100000);
     gm.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    gm.memoryOwner = gm.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : gm.header.executor;
     Add(gm);
     Add(Memory(2, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE));
     Sync();
@@ -979,7 +997,7 @@ TEST(InitcheckTest, FpcOnlyLaunchIsPendingUntilDrained)
     Initcheck checker;
     CheckerReportList reports;
     auto state = State(ACLSAN_DEVICE_REGISTER_FPC, UINT64_C(1) << 63);
-    state.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    state.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     state.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
     state.header.instrExecId = 1;
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_STATE, &state, reports));

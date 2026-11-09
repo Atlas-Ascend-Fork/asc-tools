@@ -55,8 +55,8 @@ MemoryCbdataResult ConvertRawWithContext(
 MemoryCbdataResult ConvertUbRaw(uint32_t id, std::array<uint64_t, 4> args, MemoryRegisterState state = {})
 {
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    context.coreId = 4;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    context.executor.phyCoreId = 4;
     return ConvertRawWithContext(id, args, context, state);
 }
 
@@ -82,7 +82,7 @@ TEST(UbMemory, GmToUbVariantsWritePaddedBytesWithIndependentStride)
         for (size_t i = 0; i < r.data.size(); ++i) {
             EXPECT_EQ(r.data[i].accessIndex, i);
             EXPECT_EQ(r.data[i].accessCount, 2u);
-            EXPECT_EQ(r.data[i].header.phyCoreId, 4u);
+            EXPECT_EQ(r.data[i].header.executor.phyCoreId, 4u);
             EXPECT_EQ(r.data[i].header.instrExecId, 7u);
         }
     }
@@ -166,24 +166,23 @@ TEST(UbMemory, CbufUbCopiesSeparateIssuerAndStorageOwner)
 {
     const uint64_t config0 = 1ULL | (2ULL << 4U) | (3ULL << 16U) | (1ULL << 32U) | (2ULL << 48U);
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-    context.coreId = 0;
-    context.blockId = 1;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    context.executor.phyCoreId = 0;
+    context.executor.blockId = 1;
     context.physicalCoreSlotCount = 108;
     const auto l1ToUb = ConvertRawWithContext(158, {0x100, 0x200, config0, 0}, context);
     ASSERT_EQ(l1ToUb.status, MemoryCbdataStatus::SUCCESS);
     ASSERT_EQ(l1ToUb.data.size(), 2u);
     EXPECT_EQ(l1ToUb.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
     EXPECT_EQ(l1ToUb.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
-    EXPECT_EQ(l1ToUb.data[0].header.phyCoreId, 0u);
-    EXPECT_EQ(l1ToUb.data[0].header.blockId, 1u);
-    EXPECT_EQ(l1ToUb.data[0].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
+    EXPECT_EQ(l1ToUb.data[0].header.executor.phyCoreId, 0u);
+    EXPECT_EQ(l1ToUb.data[0].header.executor.blockId, 1u);
+    EXPECT_EQ(l1ToUb.data[0].header.executor.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
     EXPECT_EQ(l1ToUb.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     EXPECT_EQ(l1ToUb.data[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-    EXPECT_EQ(l1ToUb.data[1].header.phyCoreId, 0u);
-    EXPECT_EQ(l1ToUb.data[1].header.blockId, 1u);
-    EXPECT_EQ(l1ToUb.data[1].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
-    EXPECT_EQ(l1ToUb.data[1].memoryOwner.valid, 1u);
+    EXPECT_EQ(l1ToUb.data[1].header.executor.phyCoreId, 0u);
+    EXPECT_EQ(l1ToUb.data[1].header.executor.blockId, 1u);
+    EXPECT_EQ(l1ToUb.data[1].header.executor.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
     EXPECT_EQ(l1ToUb.data[1].memoryOwner.phyCoreId, 19u);
     EXPECT_EQ(l1ToUb.data[1].memoryOwner.blockId, 3u);
     EXPECT_EQ(l1ToUb.data[1].memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
@@ -193,18 +192,17 @@ TEST(UbMemory, CbufUbCopiesSeparateIssuerAndStorageOwner)
     EXPECT_EQ(l1ToUb.data[1].layout.blockRepeat.repeatStride, 160u);
 
     MemoryCbdataContext vectorContext = context;
-    vectorContext.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    vectorContext.coreId = 19;
-    vectorContext.blockId = 3;
+    vectorContext.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    vectorContext.executor.phyCoreId = 19;
+    vectorContext.executor.blockId = 3;
     const auto ubToL1 = ConvertRawWithContext(173, {0x200, 0x100, config0, 0}, vectorContext);
     ASSERT_EQ(ubToL1.status, MemoryCbdataStatus::SUCCESS);
     ASSERT_EQ(ubToL1.data.size(), 2u);
     EXPECT_EQ(ubToL1.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
     EXPECT_EQ(ubToL1.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-    EXPECT_EQ(ubToL1.data[0].header.phyCoreId, 19u);
-    EXPECT_EQ(ubToL1.data[0].header.blockId, 3u);
-    EXPECT_EQ(ubToL1.data[0].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
-    EXPECT_EQ(ubToL1.data[0].memoryOwner.valid, 1u);
+    EXPECT_EQ(ubToL1.data[0].header.executor.phyCoreId, 19u);
+    EXPECT_EQ(ubToL1.data[0].header.executor.blockId, 3u);
+    EXPECT_EQ(ubToL1.data[0].header.executor.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
     EXPECT_EQ(ubToL1.data[0].memoryOwner.phyCoreId, 0u);
     EXPECT_EQ(ubToL1.data[0].memoryOwner.blockId, 1u);
     EXPECT_EQ(ubToL1.data[0].memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
@@ -212,9 +210,9 @@ TEST(UbMemory, CbufUbCopiesSeparateIssuerAndStorageOwner)
     EXPECT_EQ(ubToL1.data[1].accessIndex, 1u);
     EXPECT_EQ(ubToL1.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     EXPECT_EQ(ubToL1.data[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
-    EXPECT_EQ(ubToL1.data[1].header.phyCoreId, 19u);
-    EXPECT_EQ(ubToL1.data[1].header.blockId, 3u);
-    EXPECT_EQ(ubToL1.data[1].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+    EXPECT_EQ(ubToL1.data[1].header.executor.phyCoreId, 19u);
+    EXPECT_EQ(ubToL1.data[1].header.executor.blockId, 3u);
+    EXPECT_EQ(ubToL1.data[1].header.executor.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
 }
 
 TEST(UbMemory, TraceIdsStayDistinctWhenVectorWritersShareL1Owner)
@@ -250,9 +248,9 @@ TEST(UbMemory, TraceIdsStayDistinctWhenVectorWritersShareL1Owner)
         context.instructionId = 173;
         context.launchId = record.launchId;
         context.instrExecId = record.instrExecId;
-        context.blockType = record.blockType;
-        context.blockId = record.blockId;
-        context.coreId = record.phyCoreId;
+        context.executor.blockType = record.blockType;
+        context.executor.blockId = record.blockId;
+        context.executor.phyCoreId = record.phyCoreId;
         context.pipeline = record.record.pipeline;
         context.physicalCoreSlotCount = record.physicalCoreSlotCount;
         const auto result =
@@ -262,13 +260,13 @@ TEST(UbMemory, TraceIdsStayDistinctWhenVectorWritersShareL1Owner)
         const auto& l1 = result.data[0];
         const auto& ub = result.data[1];
         EXPECT_EQ(l1.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
-        EXPECT_EQ(l1.header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+        EXPECT_EQ(l1.header.executor.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
         EXPECT_EQ(l1.memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
-        EXPECT_EQ(l1.header.phyCoreId, record.phyCoreId);
+        EXPECT_EQ(l1.header.executor.phyCoreId, record.phyCoreId);
         EXPECT_EQ(l1.memoryOwner.phyCoreId, 0u);
-        EXPECT_EQ(l1.header.blockId, record.blockId);
+        EXPECT_EQ(l1.header.executor.blockId, record.blockId);
         EXPECT_EQ(l1.memoryOwner.blockId, 0u);
-        EXPECT_EQ(ub.header.phyCoreId, record.phyCoreId);
+        EXPECT_EQ(ub.header.executor.phyCoreId, record.phyCoreId);
         EXPECT_EQ(l1.header.instrExecId, ub.header.instrExecId);
         l1Headers.push_back(l1.header);
     }
@@ -279,9 +277,9 @@ TEST(UbMemory, L0cUbFixpipeWritesSelectedAndDualVectorOwners)
 {
     const uint64_t config0 = (16ULL << 4U) | (16ULL << 16U) | (256ULL << 32U);
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-    context.coreId = 0;
-    context.blockId = 1;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    context.executor.phyCoreId = 0;
+    context.executor.blockId = 1;
     context.physicalCoreSlotCount = 108;
 
     const auto selected = ConvertRawWithContext(170, {0x400, 0x800, config0, 16ULL | (1ULL << 18U)}, context);
@@ -291,9 +289,9 @@ TEST(UbMemory, L0cUbFixpipeWritesSelectedAndDualVectorOwners)
     EXPECT_EQ(selected.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
     EXPECT_EQ(selected.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     EXPECT_EQ(selected.data[1].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-    EXPECT_EQ(selected.data[1].header.phyCoreId, 19u);
-    EXPECT_EQ(selected.data[1].header.blockId, 3u);
-    EXPECT_EQ(selected.data[1].header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+    EXPECT_EQ(selected.data[1].memoryOwner.phyCoreId, 19u);
+    EXPECT_EQ(selected.data[1].memoryOwner.blockId, 3u);
+    EXPECT_EQ(selected.data[1].memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
     EXPECT_EQ(selected.data[1].layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
     EXPECT_EQ(selected.data[1].layout.range.bytes, 1024u);
 
@@ -303,10 +301,10 @@ TEST(UbMemory, L0cUbFixpipeWritesSelectedAndDualVectorOwners)
     ASSERT_EQ(dualM.data.size(), 3u);
     EXPECT_EQ(dualM.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     EXPECT_EQ(dualM.data[2].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
-    EXPECT_EQ(dualM.data[1].header.phyCoreId, 18u);
-    EXPECT_EQ(dualM.data[1].header.blockId, 2u);
-    EXPECT_EQ(dualM.data[2].header.phyCoreId, 19u);
-    EXPECT_EQ(dualM.data[2].header.blockId, 3u);
+    EXPECT_EQ(dualM.data[1].memoryOwner.phyCoreId, 18u);
+    EXPECT_EQ(dualM.data[1].memoryOwner.blockId, 2u);
+    EXPECT_EQ(dualM.data[2].memoryOwner.phyCoreId, 19u);
+    EXPECT_EQ(dualM.data[2].memoryOwner.blockId, 3u);
 
     const uint64_t config0N = (32ULL << 4U) | (16ULL << 16U) | (256ULL << 32U);
     const auto dualN = ConvertRawWithContext(170, {0x400, 0x800, config0N, 2ULL << 16U}, context);
@@ -316,6 +314,22 @@ TEST(UbMemory, L0cUbFixpipeWritesSelectedAndDualVectorOwners)
     EXPECT_EQ(dualN.data[1].layout.range.bytes, 1024u);
     EXPECT_EQ(dualN.data[2].layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
     EXPECT_EQ(dualN.data[2].layout.range.bytes, 1024u);
+    for (const auto* result : {&selected, &dualM, &dualN}) {
+        for (size_t i = 0; i < result->data.size(); ++i) {
+            const auto& access = result->data[i];
+            EXPECT_EQ(access.header.executor.phyCoreId, context.executor.phyCoreId);
+            EXPECT_EQ(access.header.executor.blockId, context.executor.blockId);
+            EXPECT_EQ(access.header.executor.blockType, context.executor.blockType);
+            const auto& owner = access.memoryOwner;
+            EXPECT_EQ(owner.phyCoreId, i == 0 ? context.executor.phyCoreId : result == &selected ? 19u : 17u + i);
+            EXPECT_EQ(owner.blockId, i == 0 ? context.executor.blockId : result == &selected ? 3u : 1u + i);
+            EXPECT_EQ(
+                owner.blockType,
+                i == 0 ? context.executor.blockType : static_cast<uint32_t>(ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR));
+            EXPECT_EQ(access.accessIndex, i);
+            EXPECT_EQ(access.accessCount, result->data.size());
+        }
+    }
 }
 
 TEST(MemoryAccessIndexing, PackedFixAtAccessLimitIncludesGmAndLocalFragments)
@@ -381,10 +395,10 @@ TEST(UbMemory, CrossCoreTopologyRoundTripsAcrossBothDies)
 TEST(UbMemory, FixpipeUbFilteringAndQuantizedS32UseLocalDestination)
 {
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     context.physicalCoreSlotCount = 108;
-    context.coreId = 56;
-    context.blockId = 3;
+    context.executor.phyCoreId = 56;
+    context.executor.blockId = 3;
     // A numerically equal GM parameter range must not remove this UB write.
     context.parameterBase = 0x400;
     context.parameterBytes = 4096;
@@ -393,9 +407,12 @@ TEST(UbMemory, FixpipeUbFilteringAndQuantizedS32UseLocalDestination)
         context);
     ASSERT_EQ(r.status, MemoryCbdataStatus::SUCCESS);
     ASSERT_EQ(r.data.size(), 2u);
-    EXPECT_EQ(r.data[0].header.phyCoreId, 56u);
-    EXPECT_EQ(r.data[1].header.phyCoreId, 77u);
-    EXPECT_EQ(r.data[1].header.blockId, 7u);
+    EXPECT_EQ(r.data[0].header.executor.phyCoreId, 56u);
+    EXPECT_EQ(r.data[1].header.executor.phyCoreId, context.executor.phyCoreId);
+    EXPECT_EQ(r.data[1].header.executor.blockId, context.executor.blockId);
+    EXPECT_EQ(r.data[1].header.executor.blockType, context.executor.blockType);
+    EXPECT_EQ(r.data[1].memoryOwner.phyCoreId, 77u);
+    EXPECT_EQ(r.data[1].memoryOwner.blockId, 7u);
     EXPECT_EQ(r.data[1].dataBits, 8u);
     EXPECT_EQ(r.data[1].layout.range.bytes, 256u);
     EXPECT_EQ(r.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
@@ -404,7 +421,7 @@ TEST(UbMemory, FixpipeUbFilteringAndQuantizedS32UseLocalDestination)
 TEST(UbMemory, DualTargetNz2NdPreservesRowsAndMatrixStrideOnEachUb)
 {
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     context.physicalCoreSlotCount = 108;
     MemoryRegisterState state{};
     state.loop3 = Loop3ParamField{2, 64, 4096};
@@ -415,11 +432,11 @@ TEST(UbMemory, DualTargetNz2NdPreservesRowsAndMatrixStrideOnEachUb)
             context, state);
         ASSERT_EQ(r.status, MemoryCbdataStatus::SUCCESS);
         ASSERT_EQ(r.data.size(), 4u);
-        // Two batched L0C footprints belong to the AIC; each UB target has its own
-        // sequence, even though its result was merged before the outer merge.
+        // All footprints belong to one instruction, including both UB owners.
         for (size_t i = 0; i < r.data.size(); ++i) {
-            EXPECT_EQ(r.data[i].accessIndex, i < 2 ? i : 0u);
-            EXPECT_EQ(r.data[i].accessCount, i < 2 ? 2u : 1u);
+            EXPECT_EQ(r.data[i].accessIndex, i);
+            EXPECT_EQ(r.data[i].accessCount, r.data.size());
+            EXPECT_EQ(r.data[i].header.executor.phyCoreId, context.executor.phyCoreId);
         }
         size_t targets = 0;
         for (const auto& a : r.data) {
@@ -432,7 +449,7 @@ TEST(UbMemory, DualTargetNz2NdPreservesRowsAndMatrixStrideOnEachUb)
             EXPECT_EQ(a.layout.ndAffine.dims[1], 2u);
             EXPECT_EQ(a.layout.ndAffine.strides[0], 256);
             EXPECT_EQ(a.layout.ndAffine.strides[1], 16384);
-            EXPECT_EQ(a.header.phyCoreId, 18u + targets);
+            EXPECT_EQ(a.memoryOwner.phyCoreId, 18u + targets);
             ++targets;
         }
         EXPECT_EQ(targets, 2u);
@@ -442,17 +459,16 @@ TEST(UbMemory, DualTargetNz2NdPreservesRowsAndMatrixStrideOnEachUb)
 TEST(UbMemory, FixedTopologyMapsOwnersWithoutCoreCount)
 {
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     const std::array<uint64_t, 4> copy{0x400, 0x800, (1ULL << 4) | (1ULL << 16), 0};
     const auto result = ConvertRawWithContext(158, copy, context);
     ASSERT_EQ(result.status, MemoryCbdataStatus::SUCCESS);
     EXPECT_FALSE(result.requiresIncompleteEvent);
     ASSERT_EQ(result.data.size(), 2u);
     EXPECT_EQ(result.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
-    EXPECT_EQ(result.data[0].header.phyCoreId, 0u);
+    EXPECT_EQ(result.data[0].header.executor.phyCoreId, 0u);
     EXPECT_EQ(result.data[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
-    EXPECT_EQ(result.data[1].header.phyCoreId, 0u);
-    EXPECT_EQ(result.data[1].memoryOwner.valid, 1u);
+    EXPECT_EQ(result.data[1].header.executor.phyCoreId, 0u);
     EXPECT_EQ(result.data[1].memoryOwner.phyCoreId, 18u);
     EXPECT_EQ(result.data[1].memoryOwner.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
 }
@@ -460,25 +476,25 @@ TEST(UbMemory, FixedTopologyMapsOwnersWithoutCoreCount)
 TEST(UbMemory, InvalidCoreAndReservedDualModeNeverInventUbOwners)
 {
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     const std::array<uint64_t, 4> copy{0x400, 0x800, (1ULL << 4) | (1ULL << 16), 0};
-    context.coreId = ASCSAN_PHYSICAL_CORE_SLOT_COUNT;
+    context.executor.phyCoreId = ASCSAN_PHYSICAL_CORE_SLOT_COUNT;
     const auto missing = ConvertRawWithContext(158, copy, context);
     EXPECT_EQ(missing.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
     EXPECT_TRUE(missing.requiresIncompleteEvent);
     ASSERT_EQ(missing.data.size(), 1u);
     EXPECT_EQ(missing.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
     MemoryCbdataContext vectorContext{};
-    vectorContext.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    vectorContext.coreId = 4;
-    vectorContext.blockId = 7;
+    vectorContext.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    vectorContext.executor.phyCoreId = 4;
+    vectorContext.executor.blockId = 7;
     const auto ubKnown = ConvertRawWithContext(173, copy, vectorContext);
     EXPECT_EQ(ubKnown.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
     EXPECT_TRUE(ubKnown.requiresIncompleteEvent);
     ASSERT_EQ(ubKnown.data.size(), 1u);
     EXPECT_EQ(ubKnown.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     EXPECT_EQ(ubKnown.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
-    context.coreId = 0;
+    context.executor.phyCoreId = 0;
     const auto reserved = ConvertRawWithContext(
         170, {0x400, 0x800, (32ULL << 4) | (16ULL << 16) | (256ULL << 32), 16ULL | (3ULL << 16)}, context);
     EXPECT_EQ(reserved.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
@@ -490,7 +506,7 @@ TEST(UbMemory, InvalidCoreAndReservedDualModeNeverInventUbOwners)
 TEST(UbMemory, DualTargetNz2NdRequiresWholeNzColumnsWhenSplittingN)
 {
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     context.physicalCoreSlotCount = 108;
     for (uint32_t n : {2U, 16U, 30U, 48U}) {
         MemoryRegisterState state{};
@@ -648,7 +664,7 @@ TEST(UbMemory, GmOverflowPreservesKnownUbEndpointAndMarksIncomplete)
 TEST(UbMemory, GmInternalRangesCannotSuppressNumericallyEqualUbAddresses)
 {
     MemoryCbdataContext context{};
-    context.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    context.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     context.parameterBase = 0x100;
     context.parameterBytes = 256;
     const auto r =

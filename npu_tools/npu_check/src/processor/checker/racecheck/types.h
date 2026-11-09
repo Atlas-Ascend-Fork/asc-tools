@@ -26,7 +26,10 @@ namespace npucheck::race {
 inline constexpr uint32_t UNIT_FLAG_MODE_START = 2;
 inline constexpr uint32_t UNIT_FLAG_MODE_END = 3;
 using Domain = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
-inline Domain DomainOf(const AclsanDeviceEventHeader& h) { return {h.deviceId, h.blockType, h.blockId, h.phyCoreId}; }
+inline Domain DomainOf(const AclsanDeviceEventHeader& h)
+{
+    return {h.deviceId, h.executor.blockType, h.executor.blockId, h.executor.phyCoreId};
+}
 using Instruction = std::tuple<Domain, uint64_t>;
 inline Instruction Key(const AclsanDeviceEventHeader& h) { return {DomainOf(h), h.instrExecId}; }
 struct Interval {
@@ -63,9 +66,6 @@ AclsanDeviceSyncData NormalizeSync(const AclsanDeviceSyncData& data);
 
 using Storage = std::tuple<uint32_t, Domain>;
 Storage StorageOf(const AclsanDeviceMemoryAccessData& access);
-// UB storage belongs to an AIV, but L0C->UB completion belongs to the issuing AIC's FIX pipe.
-std::map<Instruction, Instruction> RemoteFixpipeOrigins(
-    const std::vector<AclsanDeviceMemoryAccessData>& memory, std::set<std::string>& reasons);
 using UnitResetHistory = std::map<Domain, std::set<uint64_t>>;
 UnitResetHistory UnitFlagResets(
     const std::vector<AclsanDeviceRegisterStateData>& registers, std::set<std::string>& reasons);

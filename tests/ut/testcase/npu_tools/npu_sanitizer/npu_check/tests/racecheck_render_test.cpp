@@ -69,13 +69,14 @@ AclsanDeviceMemoryAccessData Access(uint32_t mode, uint64_t begin, uint64_t end,
     data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     data.header.deviceId = 2;
     data.header.launchId = 42;
-    data.header.phyCoreId = 10;
-    data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    data.header.blockId = 1;
+    data.header.executor.phyCoreId = 10;
+    data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    data.header.executor.blockId = 1;
     data.header.pipeline = pipe;
     data.header.pc = pc;
     data.header.instrExecId = pc;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     data.accessMode = mode;
     data.address = begin;
     data.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
@@ -131,8 +132,8 @@ void TestGmAtomicAndLargeOverlap()
     report.current.address = report.checkRange.begin = 0;
     report.checkRange.end = 0x100000010ULL;
     report.previousRange = report.currentRange = {0, 0x100000020ULL};
-    report.current.header.phyCoreId = 21;
-    report.current.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    report.current.header.executor.phyCoreId = 21;
+    report.current.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     const auto text = Render(report);
     Contains(text, "WAW (write after write) race detected.");
     Contains(text, "previous access: ATOMIC_WRITE");
@@ -143,8 +144,11 @@ void TestGmAtomicAndLargeOverlap()
     report.current.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
     Contains(Render(report), "WAR (write after read) race detected.");
     report.previous.memorySpace = report.current.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L1;
-    report.previous.header.blockType = report.current.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-    report.current.header.phyCoreId = 10;
+    report.previous.header.executor.blockType = report.current.header.executor.blockType =
+        ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    report.current.header.executor.phyCoreId = 10;
+    report.previous.memoryOwner = report.previous.header.executor;
+    report.current.memoryOwner = report.current.header.executor;
     report.key = {2, ACLSAN_DEVICE_MEMORY_SPACE_L1, 10};
     Contains(Render(report), "memory: L1 in aicore (10) type (AIC)");
 }

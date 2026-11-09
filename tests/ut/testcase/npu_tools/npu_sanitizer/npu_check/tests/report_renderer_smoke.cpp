@@ -240,11 +240,12 @@ NpuCheckRacecheckReport MakeRaceEvidence(npucheck::ConflictKind kind = npucheck:
         data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         data.header.instrExecId = i + 1;
         data.header.launchId = 41;
-        data.header.phyCoreId = 7;
-        data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+        data.header.executor.phyCoreId = 7;
+        data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
         data.header.pipeline = i == 0 ? ACLSAN_DEVICE_PIPE_MTE3 : ACLSAN_DEVICE_PIPE_MTE2;
         data.header.pc = i == 0 ? 0x111 : 0x222;
         data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+        data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
         data.accessMode = i == 0 ? (kind == npucheck::ConflictKind::WAR ? ACLSAN_DEVICE_MEMORY_ACCESS_READ :
                                                                           ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) :
                                    (kind == npucheck::ConflictKind::RAW ? ACLSAN_DEVICE_MEMORY_ACCESS_READ :

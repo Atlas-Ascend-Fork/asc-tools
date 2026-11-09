@@ -66,15 +66,12 @@ PhysicalSpaceKey MakeKey(const AclsanDeviceMemoryAccessData& data)
         Unsupported("unknown physical memory space");
     }
     const auto space = static_cast<AclsanDeviceMemorySpace>(data.memorySpace);
-    const auto owner = AclsanMemoryOwnerOf(&data);
-    if (data.memoryOwner.valid > 1 || owner.blockType > ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
-        Invalid("invalid storage owner");
-    }
-    if ((space == ACLSAN_DEVICE_MEMORY_SPACE_UB && owner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) ||
-        (space == ACLSAN_DEVICE_MEMORY_SPACE_L1 && owner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
+    const auto ownerType = data.memoryOwner.blockType;
+    if ((space == ACLSAN_DEVICE_MEMORY_SPACE_UB && ownerType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) ||
+        (space == ACLSAN_DEVICE_MEMORY_SPACE_L1 && ownerType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
         Invalid("UB requires the actual AIV core; L1 requires the actual AIC core");
     }
-    return {data.header.deviceId, space, space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : owner.phyCoreId};
+    return {data.header.deviceId, space, space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.memoryOwner.phyCoreId};
 }
 
 AclsanDeviceMemoryAccessMode AccessMode(const AclsanDeviceMemoryAccessData& data)
@@ -246,11 +243,11 @@ bool SameInstruction(const AclsanDeviceMemoryAccessData& lhs, const AclsanDevice
         return false;
     }
     return std::tie(
-               lhs.header.deviceId, lhs.header.launchId, lhs.header.phyCoreId, lhs.header.blockId, lhs.header.blockType,
-               lhs.header.instrExecId) ==
+               lhs.header.deviceId, lhs.header.launchId, lhs.header.executor.phyCoreId, lhs.header.executor.blockId,
+               lhs.header.executor.blockType, lhs.header.instrExecId) ==
            std::tie(
-               rhs.header.deviceId, rhs.header.launchId, rhs.header.phyCoreId, rhs.header.blockId, rhs.header.blockType,
-               rhs.header.instrExecId);
+               rhs.header.deviceId, rhs.header.launchId, rhs.header.executor.phyCoreId, rhs.header.executor.blockId,
+               rhs.header.executor.blockType, rhs.header.instrExecId);
 }
 std::vector<FailedRange> FailureRanges(const std::vector<AccessPair>& conflicts)
 {
@@ -482,10 +479,10 @@ void MemStateTracker::Trace(
                 " pc=0x%" PRIx64 " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64
                 ",%" PRIu64 ") prev=%zu tables=%zu detail=%s",
                 event, d.header.launchId, launchId_.value_or(d.header.launchId), index, d.header.deviceId,
-                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : AclsanMemoryOwnerOf(&d).phyCoreId,
-                d.header.phyCoreId, d.header.blockId, d.header.blockType, d.header.pipeline, d.header.pc,
-                d.header.instrExecId, d.accessMode, d.layoutKind, d.address, begin, end, previous, tables_.size(),
-                detail);
+                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : d.memoryOwner.phyCoreId,
+                d.header.executor.phyCoreId, d.header.executor.blockId, d.header.executor.blockType, d.header.pipeline,
+                d.header.pc, d.header.instrExecId, d.accessMode, d.layoutKind, d.address, begin, end, previous,
+                tables_.size(), detail);
         } else {
             ASCTOOL_DEBUG(
                 "racecheck event=%s level=DEBUG phase=trace launch=%" PRIu64 " tracker_launch=%" PRIu64
@@ -493,10 +490,10 @@ void MemStateTracker::Trace(
                 " pc=0x%" PRIx64 " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64
                 ",%" PRIu64 ") prev=%zu tables=%zu detail=%s",
                 event, d.header.launchId, launchId_.value_or(d.header.launchId), index, d.header.deviceId,
-                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : AclsanMemoryOwnerOf(&d).phyCoreId,
-                d.header.phyCoreId, d.header.blockId, d.header.blockType, d.header.pipeline, d.header.pc,
-                d.header.instrExecId, d.accessMode, d.layoutKind, d.address, begin, end, previous, tables_.size(),
-                detail);
+                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : d.memoryOwner.phyCoreId,
+                d.header.executor.phyCoreId, d.header.executor.blockId, d.header.executor.blockType, d.header.pipeline,
+                d.header.pc, d.header.instrExecId, d.accessMode, d.layoutKind, d.address, begin, end, previous,
+                tables_.size(), detail);
         }
     } else if (error) {
         ASCTOOL_ERROR(
@@ -534,11 +531,11 @@ void MemStateTracker::TraceState(
         " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64 ",%" PRIu64
         ") state=%s writers=%zu readers=%zu ordinary=%zu add=%zu min=%zu max=%zu",
         event, data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, data.memorySpace,
-        data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : AclsanMemoryOwnerOf(&data).phyCoreId,
-        data.header.phyCoreId, data.header.blockId, data.header.blockType, data.header.pipeline, data.header.pc,
-        data.header.instrExecId, data.accessMode, data.layoutKind, data.address, state.begin, state.end, name,
-        writerCount, state.readers.size(), ordinaryCount, state.atomicWriters[0].size(), state.atomicWriters[1].size(),
-        state.atomicWriters[2].size());
+        data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.memoryOwner.phyCoreId,
+        data.header.executor.phyCoreId, data.header.executor.blockId, data.header.executor.blockType,
+        data.header.pipeline, data.header.pc, data.header.instrExecId, data.accessMode, data.layoutKind, data.address,
+        state.begin, state.end, name, writerCount, state.readers.size(), ordinaryCount, state.atomicWriters[0].size(),
+        state.atomicWriters[1].size(), state.atomicWriters[2].size());
     if (state.writer) {
         Trace(index, writerEvent, state.begin, state.end, *state.writer);
     }
@@ -559,7 +556,6 @@ void MemStateTracker::TraceTable(CbIndex index, const SegmentTable& table) const
     }
     const auto& data = records_[index];
     const auto space = data.memorySpace;
-    const auto owner = AclsanMemoryOwnerOf(&data);
     constexpr std::array<const char*, 9> names = {"UNKNOWN", "GM", "UB", "L1", "L0A", "L0B", "L0C", "BT", "FB"};
     const char* name = space < names.size() ? names[space] : "UNKNOWN";
     ASCTOOL_DEBUG(
@@ -567,9 +563,9 @@ void MemStateTracker::TraceTable(CbIndex index, const SegmentTable& table) const
         " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
         " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " memory=%s table_segments=%zu",
         data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, space,
-        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : owner.phyCoreId, data.header.phyCoreId, data.header.blockId,
-        data.header.blockType, data.header.pipeline, data.header.pc, data.header.instrExecId, data.accessMode,
-        data.layoutKind, data.address, name, table.size());
+        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.memoryOwner.phyCoreId, data.header.executor.phyCoreId,
+        data.header.executor.blockId, data.header.executor.blockType, data.header.pipeline, data.header.pc,
+        data.header.instrExecId, data.accessMode, data.layoutKind, data.address, name, table.size());
     for (const auto& entry : table) {
         TraceState(index, "memstate.segment", entry.second, "memstate.writer", "memstate.reader");
     }
@@ -578,9 +574,9 @@ void MemStateTracker::TraceTable(CbIndex index, const SegmentTable& table) const
         " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
         " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " memory=%s table_segments=%zu",
         data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, space,
-        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : owner.phyCoreId, data.header.phyCoreId, data.header.blockId,
-        data.header.blockType, data.header.pipeline, data.header.pc, data.header.instrExecId, data.accessMode,
-        data.layoutKind, data.address, name, table.size());
+        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.memoryOwner.phyCoreId, data.header.executor.phyCoreId,
+        data.header.executor.blockId, data.header.executor.blockType, data.header.pipeline, data.header.pc,
+        data.header.instrExecId, data.accessMode, data.layoutKind, data.address, name, table.size());
 }
 
 const AclsanDeviceMemoryAccessData& MemStateTracker::Record(CbIndex index) const
@@ -600,7 +596,7 @@ const AclsanDeviceMemoryAccessData& MemStateTracker::Record(CbIndex index) const
                           data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L1 ? ACLSAN_DEVICE_MEMORY_SPACE_UB :
                                                                               ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN;
     if (opposite != ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN &&
-        tables_.find({data.header.deviceId, opposite, AclsanMemoryOwnerOf(&data).phyCoreId}) != tables_.end()) {
+        tables_.find({data.header.deviceId, opposite, data.memoryOwner.phyCoreId}) != tables_.end()) {
         Invalid("physical core cannot own both UB and L1");
     }
     return data;
@@ -694,10 +690,10 @@ std::vector<AccessPair> MemStateTracker::CheckPotentialRaceImpl(
             " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " candidates=%zu ranges=%zu",
             current.header.launchId, launchId_.value_or(current.header.launchId), cbIndex, current.header.deviceId,
             current.memorySpace,
-            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : AclsanMemoryOwnerOf(&current).phyCoreId,
-            current.header.phyCoreId, current.header.blockId, current.header.blockType, current.header.pipeline,
-            current.header.pc, current.header.instrExecId, current.accessMode, current.layoutKind, current.address,
-            candidates.size(), ranges.size());
+            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : current.memoryOwner.phyCoreId,
+            current.header.executor.phyCoreId, current.header.executor.blockId, current.header.executor.blockType,
+            current.header.pipeline, current.header.pc, current.header.instrExecId, current.accessMode,
+            current.layoutKind, current.address, candidates.size(), ranges.size());
         return candidates;
     } catch (const RacecheckError& error) {
         Trace(cbIndex, "check.failed", 0, 0, static_cast<CbIndex>(-1), error.what(), true);
@@ -842,13 +838,11 @@ void MemStateTracker::UpdateMemStateImpl(
                             " range=[%" PRIu64 ",%" PRIu64 ") prev=%zu evidence_order=%zu",
                             current.header.launchId, launchId_.value_or(current.header.launchId), cbIndex,
                             current.header.deviceId, current.memorySpace,
-                            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
-                                0u :
-                                AclsanMemoryOwnerOf(&current).phyCoreId,
-                            current.header.phyCoreId, current.header.blockId, current.header.blockType,
-                            current.header.pipeline, current.header.pc, current.header.instrExecId, current.accessMode,
-                            current.layoutKind, current.address, segment.begin, segment.end, evidence.prevIndex,
-                            failures[failureIndex].evidence);
+                            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : current.memoryOwner.phyCoreId,
+                            current.header.executor.phyCoreId, current.header.executor.blockId,
+                            current.header.executor.blockType, current.header.pipeline, current.header.pc,
+                            current.header.instrExecId, current.accessMode, current.layoutKind, current.address,
+                            segment.begin, segment.end, evidence.prevIndex, failures[failureIndex].evidence);
                         TraceState(cbIndex, "race.frozen", segment);
                     } else {
                         if (mode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) {

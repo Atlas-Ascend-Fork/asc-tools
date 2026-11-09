@@ -114,9 +114,9 @@ NpuCheckReportExecContext ExecContext(const AclsanDeviceMemoryAccessData& data)
     exec.serialNo = data.header.serialNo;
     exec.pc = data.header.pc;
     exec.deviceId = data.header.deviceId;
-    exec.phyCoreId = data.header.phyCoreId;
-    exec.blockId = data.header.blockId;
-    exec.blockType = data.header.blockType;
+    exec.phyCoreId = data.header.executor.phyCoreId;
+    exec.blockId = data.header.executor.blockId;
+    exec.blockType = data.header.executor.blockType;
     exec.pipeId = data.header.pipeline;
     exec.siteId = data.header.siteId;
     exec.pipeName = detail::DevicePipelineName(data.header.pipeline);
@@ -204,9 +204,10 @@ std::vector<NpuCheckRacecheckReport> MakeRacecheckDiagnostics(
 namespace {
 std::string DeviceActor(const AclsanDeviceMemoryAccessData& access)
 {
-    return "by aicore (" + detail::FormatCoreId(access.header.phyCoreId) + ") type (" +
-           detail::FormatBlockType(access.header.blockType) + ") block (" + std::to_string(access.header.blockId) +
-           ") pipe (" + detail::DevicePipelineName(access.header.pipeline) + ")";
+    return "by aicore (" + detail::FormatCoreId(access.header.executor.phyCoreId) + ") type (" +
+           detail::FormatBlockType(access.header.executor.blockType) + ") block (" +
+           std::to_string(access.header.executor.blockId) + ") pipe (" +
+           detail::DevicePipelineName(access.header.pipeline) + ")";
 }
 void PutActor(
     const std::optional<HostAccessEvidence>& host, const AclsanDeviceMemoryAccessData& device,
@@ -295,7 +296,7 @@ ReportRenderStatus NormalizeRacecheckReport(const NpuCheckRacecheckReport& repor
         fields["memoryOwner"] = key.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
                                     "" :
                                     " in aicore (" + FormatCoreId(key.phyCoreId) + ") type (" +
-                                        detail::FormatBlockType(current.header.blockType) + ")";
+                                        detail::FormatBlockType(current.memoryOwner.blockType) + ")";
         if (!report.currentHost)
             resolved.stacks.push_back(FallbackStack(current, ReportStackRole::RELATED_ACCESS_B));
         if (!report.previousHost)

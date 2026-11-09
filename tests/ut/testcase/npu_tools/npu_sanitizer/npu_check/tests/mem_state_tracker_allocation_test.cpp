@@ -66,6 +66,7 @@ AclsanDeviceMemoryAccessData Access(
     data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     data.header.instrExecId = instruction;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     data.accessMode = static_cast<uint32_t>(mode);
     data.address = begin;
     data.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;

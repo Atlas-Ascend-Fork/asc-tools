@@ -149,9 +149,9 @@ NpuCheckInitcheckReport BuildInitcheckMemoryReportBase(
     exec.serialNo = h.serialNo;
     exec.pc = h.pc;
     exec.deviceId = h.deviceId;
-    exec.phyCoreId = h.phyCoreId;
-    exec.blockId = h.blockId;
-    exec.blockType = h.blockType;
+    exec.phyCoreId = h.executor.phyCoreId;
+    exec.blockId = h.executor.blockId;
+    exec.blockType = h.executor.blockType;
     exec.pipeId = h.pipeline;
     exec.pipeName = PipelineName(h.pipeline);
     exec.siteId = h.siteId;
@@ -221,9 +221,9 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
         for (const auto& access : accesses) {
             const auto& h = access.header;
             if (h.version != ACLSAN_API_VERSION || h.size < sizeof(access) || h.deviceId != scope.deviceId ||
-                h.launchId != first.launchId || h.instrExecId != first.instrExecId || h.blockType != first.blockType ||
-                h.blockId != first.blockId || h.pipeline > MAX_WRITER_PIPELINE ||
-                access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
+                h.launchId != first.launchId || h.instrExecId != first.instrExecId ||
+                h.executor.blockType != first.executor.blockType || h.executor.blockId != first.executor.blockId ||
+                h.pipeline > MAX_WRITER_PIPELINE || access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
                 access.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
                 access.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
                 return fail(InitCheckStatus::INVALID_RECORD);
@@ -236,9 +236,8 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
             seen[access.accessIndex] = true;
             if (access.memorySpace != scope.space)
                 continue;
-            const auto owner = AclsanMemoryOwnerOf(&access);
-            if (access.memoryOwner.valid > 1 ||
-                (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM &&
+            const auto owner = access.memoryOwner;
+            if ((scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM &&
                  (scope.blockType != owner.blockType || scope.blockId != owner.blockId)))
                 return fail(InitCheckStatus::INVALID_RECORD);
             if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) && access.predicateMask0 == 0 &&
@@ -614,8 +613,8 @@ void Initcheck::ReplayLaunch(
             continue;
         const auto& h = a.header;
         if (invalidInstructions.count(
-                {h.deviceId, h.launchId, h.blockType, h.blockId, h.phyCoreId, h.instrExecId, h.pipeline, h.pc,
-                 h.siteId}) != 0) {
+                {h.deviceId, h.launchId, h.executor.blockType, h.executor.blockId, h.executor.phyCoreId, h.instrExecId,
+                 h.pipeline, h.pc, h.siteId}) != 0) {
             // An invalid GM write has unknown effects; it must never establish
             // initialized bytes for this launch or a subsequent one.
             if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && race::WritesMemory(a.accessMode))
@@ -717,7 +716,7 @@ void Initcheck::ReplayLaunch(
                 initialized.emplace_back(range.begin, range.end);
             const auto& data = accesses[storage.second.front()].data;
             const auto& h = data.header;
-            const auto owner = AclsanMemoryOwnerOf(&data);
+            const auto owner = data.memoryOwner;
             const auto key = space == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
                                  InitStateKey{*device, 0} :
                                  InitStateKey::Local(h.deviceId, h.launchId, owner.blockType, owner.blockId, space);
@@ -763,7 +762,7 @@ void Initcheck::ReplayLaunch(
                 if (InitStateTableIndex::LocalCapacity(space) == 0 || !race::WritesMemory(access.data.accessMode))
                     continue;
                 const auto& h = access.data.header;
-                const auto owner = AclsanMemoryOwnerOf(&access.data);
+                const auto owner = access.data.memoryOwner;
                 const auto key = InitStateKey::Local(h.deviceId, h.launchId, owner.blockType, owner.blockId, space);
                 for (const auto& range : access.ranges) {
                     const auto capacity = InitStateTableIndex::LocalCapacity(space);
@@ -943,9 +942,9 @@ NpuCheckReportExecContext ToExecContext(const AclsanDeviceMemoryAccessData& data
     exec.serialNo = data.header.serialNo;
     exec.pc = data.header.pc;
     exec.deviceId = data.header.deviceId;
-    exec.phyCoreId = data.header.phyCoreId;
-    exec.blockId = data.header.blockId;
-    exec.blockType = data.header.blockType;
+    exec.phyCoreId = data.header.executor.phyCoreId;
+    exec.blockId = data.header.executor.blockId;
+    exec.blockType = data.header.executor.blockType;
     exec.pipeId = data.header.pipeline;
     exec.siteId = data.header.siteId;
     exec.pipeName = PipelineName(data.header.pipeline);
@@ -1036,7 +1035,8 @@ bool Initcheck::OnRegisterState(const AclsanDeviceRegisterStateData& data)
         memoryInvalid_ = true;
         return false;
     }
-    const CoreKey key{data.header.deviceId, data.header.launchId, data.header.blockType, data.header.blockId};
+    const CoreKey key{
+        data.header.deviceId, data.header.launchId, data.header.executor.blockType, data.header.executor.blockId};
     initializedRegisters_[key] |= UINT64_C(1) << data.regId;
     if (data.regId == ACLSAN_DEVICE_REGISTER_FPC) {
         constexpr size_t MAX_UNIT_FLAG_REGISTERS = 100000;
@@ -1089,7 +1089,8 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
             pendingMemoryAccesses_.push_back(data);
         return true;
     }
-    const CoreKey core{data.header.deviceId, data.header.launchId, data.header.blockType, data.header.blockId};
+    const CoreKey core{
+        data.header.deviceId, data.header.launchId, data.header.executor.blockType, data.header.executor.blockId};
     const uint64_t initialized = initializedRegisters_[core];
     uint64_t missing = data.regDependencyMask0 & ~initialized;
     // These transfers read GM and write UB/L1. If a required register is
@@ -1135,7 +1136,7 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
         replayReasons_[data.header.launchId].insert("uninitialized_register_dependency");
     }
     const InstructionKey instruction{
-        data.header.deviceId, data.header.launchId, data.header.blockType, data.header.blockId,
+        data.header.deviceId, data.header.launchId, data.header.executor.blockType, data.header.executor.blockId,
         data.header.instrExecId};
     const auto [group, inserted] = reportGroups_.try_emplace(instruction, nextGroupId_);
     if (inserted) {
@@ -1144,8 +1145,8 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     while (missing != 0) {
         const uint32_t registerId = static_cast<uint32_t>(__builtin_ctzll(missing));
         missing &= missing - 1;
-        const UsageKey usage{data.header.deviceId, data.header.launchId,    data.header.blockType,
-                             data.header.blockId,  data.header.instrExecId, registerId};
+        const UsageKey usage{data.header.deviceId,         data.header.launchId,    data.header.executor.blockType,
+                             data.header.executor.blockId, data.header.instrExecId, registerId};
         if (!reportedUsages_.insert(usage).second) {
             continue;
         }

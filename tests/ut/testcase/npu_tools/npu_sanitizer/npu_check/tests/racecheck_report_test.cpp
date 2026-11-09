@@ -40,15 +40,16 @@ AclsanDeviceMemoryAccessData Memory(
     data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     data.header.launchId = 7;
     data.header.pc = 0x100 + instruction * 4;
-    data.header.phyCoreId = core;
-    data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    data.header.blockId = 1;
+    data.header.executor.phyCoreId = core;
+    data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    data.header.executor.blockId = 1;
     data.header.pipeline =
         mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ ? ACLSAN_DEVICE_PIPE_VECTOR : ACLSAN_DEVICE_PIPE_MTE2;
     data.header.instrExecId = instruction;
     data.address = begin;
     data.accessMode = mode;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     data.accessCount = 1;
     data.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
     data.layout.range.bytes = end - begin;
@@ -145,6 +146,7 @@ TEST(RacecheckReportTest, GmKeepsTrueExecutionCoresAndByteWidths)
         Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 1, end, 11, 2)};
     for (auto& data : records) {
         data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     }
     AccessPair evidence{0, 1, ACLSAN_DEVICE_MEMORY_SPACE_GM, 1, end};
     const auto report = Diagnostic(evidence, records);
@@ -196,6 +198,7 @@ TEST(RacecheckReportTest, FbSpaceDoesNotAliasPrivateReportSpace)
         Memory(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32), Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 32, 10, 2)};
     for (auto& data : records) {
         data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_FB;
+        data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     }
     AccessPair evidence{0, 1, ACLSAN_DEVICE_MEMORY_SPACE_FB, 0, 32};
     const auto report = Diagnostic(evidence, records);
@@ -218,9 +221,9 @@ TEST(RacecheckReportTest, RejectsInvalidEvidenceAndOwnReadWrite)
     invalid.begin = 1;
     invalid.end = 33;
     EXPECT_THROW(Diagnostic(invalid, records), RacecheckError);
-    records[0].header.phyCoreId = 11;
+    records[0].memoryOwner.phyCoreId = 11;
     EXPECT_THROW(Diagnostic(evidence, records), RacecheckError);
-    records[0].header.phyCoreId = 10;
+    records[0].memoryOwner.phyCoreId = 10;
     records[0].header.launchId = 8;
     EXPECT_THROW(Diagnostic(evidence, records), RacecheckError);
     records[0].header.launchId = records[1].header.launchId;
@@ -352,6 +355,7 @@ AclsanDeviceMemoryAccessData GmMemory(
 {
     auto data = Memory(mode, begin, end, core, instruction);
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     return data;
 }
 

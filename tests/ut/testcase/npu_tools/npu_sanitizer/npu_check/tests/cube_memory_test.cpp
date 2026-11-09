@@ -144,9 +144,9 @@ MemoryCbdataResult ConvertRaw(
             if constexpr (std::is_constructible_v<MemoryInstructionField, T>) {
                 MemoryCbdataContext context{};
                 context.physicalCoreSlotCount = 108;
-                context.blockType =
+                context.executor.blockType =
                     id == 173 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-                context.coreId = id == 173 ? 18 : 0;
+                context.executor.phyCoreId = id == 173 ? 18 : 0;
                 return MemoryFieldToCbdataConverter{context, state}.Convert(MemoryInstructionField{f});
             }
             return {MemoryCbdataStatus::INVALID_FIELD, {}};
@@ -273,6 +273,7 @@ TEST(CubeMemory, CapacityBoundariesAndOverflowAreIndependentOfGmAllocations)
         d.header.version = ACLSAN_API_VERSION;
         d.header.size = sizeof(d);
         d.memorySpace = entry.first;
+        d.memoryOwner = d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : d.header.executor;
         d.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
         d.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
         d.layout.range.bytes = 32;

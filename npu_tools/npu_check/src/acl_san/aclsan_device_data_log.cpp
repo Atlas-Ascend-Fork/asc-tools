@@ -402,7 +402,7 @@ void LogMemoryAccessData(const AclsanDeviceMemoryAccessData& value, uint32_t ind
         index, static_cast<unsigned long long>(value.address), value.memorySpace, value.accessMode, value.accessIndex,
         value.accessCount, value.dataBits, static_cast<unsigned long long>(rangeBytes), value.layoutKind,
         static_cast<unsigned long long>(value.header.pc), value.header.siteId, value.header.deviceId,
-        value.header.phyCoreId, value.header.blockId, BlockTypeName(value.header.blockType),
+        value.header.executor.phyCoreId, value.header.executor.blockId, BlockTypeName(value.header.executor.blockType),
         static_cast<unsigned long long>(value.header.instrExecId),
         static_cast<unsigned long long>(value.header.launchId), static_cast<unsigned long long>(value.header.serialNo),
         value.header.pipeline);
@@ -432,11 +432,11 @@ void LogCallbackData(const AclsanDeviceSyncData& sync) noexcept
         "[cbdata] deviceId=%u phyCoreId=%u blockId=%u blockType=%s  instrExecId=%llu launchId=%llu  "
         "type=AclsanDeviceSyncData pc=0x%llx serialNo=%llu syncKind=%u action=%u scope=%u srcPipe=%u "
         "dstPipe=%u mode=%u objectId=%llu",
-        sync.header.deviceId, sync.header.phyCoreId, sync.header.blockId, BlockTypeName(sync.header.blockType),
-        static_cast<unsigned long long>(sync.header.instrExecId), static_cast<unsigned long long>(sync.header.launchId),
-        static_cast<unsigned long long>(sync.header.pc), static_cast<unsigned long long>(sync.header.serialNo),
-        sync.syncKind, sync.action, sync.scope, sync.srcPipe, sync.dstPipe, sync.mode,
-        static_cast<unsigned long long>(sync.objectId));
+        sync.header.deviceId, sync.header.executor.phyCoreId, sync.header.executor.blockId,
+        BlockTypeName(sync.header.executor.blockType), static_cast<unsigned long long>(sync.header.instrExecId),
+        static_cast<unsigned long long>(sync.header.launchId), static_cast<unsigned long long>(sync.header.pc),
+        static_cast<unsigned long long>(sync.header.serialNo), sync.syncKind, sync.action, sync.scope, sync.srcPipe,
+        sync.dstPipe, sync.mode, static_cast<unsigned long long>(sync.objectId));
 }
 
 } // namespace
@@ -475,10 +475,10 @@ void LogCallbackData(const AclsanDeviceRegisterStateData& cbData) noexcept
     ASCTOOL_DEBUG(
         "[cbdata] type=AclsanDeviceRegisterStateData deviceId=%u phyCoreId=%u blockId=%u blockType=%s "
         "instrExecId=%llu launchId=%llu pc=0x%llx serialNo=%llu pipeline=%u regId=%u regIndex=%u value=0x%llx",
-        h.deviceId, h.phyCoreId, h.blockId, BlockTypeName(h.blockType), static_cast<unsigned long long>(h.instrExecId),
-        static_cast<unsigned long long>(h.launchId), static_cast<unsigned long long>(h.pc),
-        static_cast<unsigned long long>(h.serialNo), h.pipeline, cbData.regId, cbData.regIndex,
-        static_cast<unsigned long long>(cbData.value));
+        h.deviceId, h.executor.phyCoreId, h.executor.blockId, BlockTypeName(h.executor.blockType),
+        static_cast<unsigned long long>(h.instrExecId), static_cast<unsigned long long>(h.launchId),
+        static_cast<unsigned long long>(h.pc), static_cast<unsigned long long>(h.serialNo), h.pipeline, cbData.regId,
+        cbData.regIndex, static_cast<unsigned long long>(cbData.value));
 }
 
 void LogCallbackData(const AclsanDeviceBarrierData& barrier) noexcept
@@ -487,8 +487,9 @@ void LogCallbackData(const AclsanDeviceBarrierData& barrier) noexcept
     ASCTOOL_DEBUG(
         "[cbdata] type=AclsanDeviceBarrierData deviceId=%u phyCoreId=%u blockId=%u blockType=%s "
         "instrExecId=%llu launchId=%llu pc=0x%llx pipeline=%u pipe=%u",
-        h.deviceId, h.phyCoreId, h.blockId, BlockTypeName(h.blockType), static_cast<unsigned long long>(h.instrExecId),
-        static_cast<unsigned long long>(h.launchId), static_cast<unsigned long long>(h.pc), h.pipeline, barrier.pipe);
+        h.deviceId, h.executor.phyCoreId, h.executor.blockId, BlockTypeName(h.executor.blockType),
+        static_cast<unsigned long long>(h.instrExecId), static_cast<unsigned long long>(h.launchId),
+        static_cast<unsigned long long>(h.pc), h.pipeline, barrier.pipe);
 }
 
 void LogCallbackData(const DeviceCallbackData& callbackData) noexcept

@@ -69,8 +69,8 @@ void CheckState(
     assert(header.version == ACLSAN_API_VERSION && header.size == sizeof(state));
     assert(header.pc == record.record.pc && header.siteId == record.record.siteId);
     assert(header.launchId == record.launchId && header.instrExecId == record.instrExecId);
-    assert(header.deviceId == record.deviceId && header.phyCoreId == record.phyCoreId);
-    assert(header.blockId == record.blockId && header.blockType == record.blockType);
+    assert(header.deviceId == record.deviceId && header.executor.phyCoreId == record.phyCoreId);
+    assert(header.executor.blockId == record.blockId && header.executor.blockType == record.blockType);
     assert(header.sourceKind == ACLSAN_DEVICE_SOURCE_SCALAR && header.pipeline == record.record.pipeline);
     assert(header.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT);
 }
@@ -258,8 +258,11 @@ void TestScalarUbCollection()
                 assert(access.accessIndex == 0 && access.accessCount == 1);
                 assert(access.header.launchId == record.launchId && access.header.pc == record.record.pc);
                 assert(access.header.instrExecId == record.instrExecId && access.header.siteId == record.record.siteId);
-                assert(access.header.deviceId == record.deviceId && access.header.phyCoreId == record.phyCoreId);
-                assert(access.header.blockId == record.blockId && access.header.blockType == record.blockType);
+                assert(
+                    access.header.deviceId == record.deviceId && access.header.executor.phyCoreId == record.phyCoreId);
+                assert(
+                    access.header.executor.blockId == record.blockId &&
+                    access.header.executor.blockType == record.blockType);
                 assert(access.header.pipeline == ACLSAN_DEVICE_PIPE_SCALAR);
                 assert(access.header.sourceKind == (store ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD));
                 const uint32_t flags =

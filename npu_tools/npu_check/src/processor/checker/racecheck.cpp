@@ -179,8 +179,9 @@ bool Racecheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
                 static_cast<unsigned long long>(data.header.instrExecId),
                 static_cast<unsigned long long>(data.header.pc), static_cast<unsigned long long>(diagnostic.reportId),
                 static_cast<unsigned long long>(evidence.prevIndex), static_cast<unsigned long long>(evidence.curIndex),
-                static_cast<unsigned long long>(previousHeader.pc), previousHeader.phyCoreId, previousHeader.pipeline,
-                static_cast<unsigned long long>(evidence.begin), static_cast<unsigned long long>(evidence.end));
+                static_cast<unsigned long long>(previousHeader.pc), previousHeader.executor.phyCoreId,
+                previousHeader.pipeline, static_cast<unsigned long long>(evidence.begin),
+                static_cast<unsigned long long>(evidence.end));
             pending.emplace_back(std::move(diagnostic));
         }
         if (!diagnostics.empty()) {

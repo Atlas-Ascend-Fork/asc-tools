@@ -234,9 +234,9 @@ void TestTranslateAllBufferVariantsToCorrectActions()
         assert(sync != nullptr);
         assert(sync->header.pc == record.pc);
         assert(sync->header.instrExecId == parsed.instrExecId);
-        assert(sync->header.blockId == parsed.blockId);
-        assert(sync->header.blockType == parsed.blockType);
-        assert(sync->header.phyCoreId == parsed.phyCoreId);
+        assert(sync->header.executor.blockId == parsed.blockId);
+        assert(sync->header.executor.blockType == parsed.blockType);
+        assert(sync->header.executor.phyCoreId == parsed.phyCoreId);
         assert(sync->syncKind == ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF);
         assert(sync->action == ACLSAN_DEVICE_SYNC_ACTION_GET);
         assert(sync->scope == ACLSAN_DEVICE_SYNC_SCOPE_PIPE);
@@ -401,13 +401,13 @@ void TestTranslateRawTraceToCallbackData()
     const AclsanDeviceMemoryAccessData& source = (*accesses)[0];
     assert(source.header.pc == record.pc);
     assert(source.header.siteId == record.siteId);
-    assert(source.header.blockId == parsed.blockId);
-    assert(source.header.blockType == parsed.blockType);
+    assert(source.header.executor.blockId == parsed.blockId);
+    assert(source.header.executor.blockType == parsed.blockType);
     assert(source.header.launchId == parsed.launchId);
     assert(source.header.instrExecId == parsed.instrExecId);
     assert(source.header.serialNo == 0);
     assert(source.header.deviceId == parsed.deviceId);
-    assert(source.header.phyCoreId == parsed.phyCoreId);
+    assert(source.header.executor.phyCoreId == parsed.phyCoreId);
     assert(source.address == record.args[1]);
     assert(source.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM);
     assert(source.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
@@ -453,9 +453,9 @@ void TestTranslateRawTraceToCallbackData()
     assert(setSync->objectId == 7);
     assert(setSync->header.instrExecId == parsed.instrExecId);
     assert(setSync->header.serialNo == 0);
-    assert(setSync->header.blockId == parsed.blockId);
-    assert(setSync->header.blockType == parsed.blockType);
-    assert(setSync->header.phyCoreId == parsed.phyCoreId);
+    assert(setSync->header.executor.blockId == parsed.blockId);
+    assert(setSync->header.executor.blockType == parsed.blockType);
+    assert(setSync->header.executor.phyCoreId == parsed.phyCoreId);
 
     record.instrId = WAIT_FLAG_ID;
     const auto waitCallback = TranslateRecordToCallbackData(record, parsed);
@@ -538,9 +538,9 @@ void TestLogsEveryMemoryAccessInVariableLengthList()
         accesses[index].accessCount = static_cast<uint32_t>(accesses.size());
     }
     accesses[0].header.deviceId = 2;
-    accesses[0].header.phyCoreId = 1;
-    accesses[0].header.blockId = 3;
-    accesses[0].header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
+    accesses[0].header.executor.phyCoreId = 1;
+    accesses[0].header.executor.blockId = 3;
+    accesses[0].header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
     accesses[0].header.instrExecId = 4;
     accesses[0].header.launchId = 5;
 
@@ -889,27 +889,16 @@ void TestTranslatesLocalMemoryTransfersToOwnedAccesses()
             EXPECT_EQ(access.header.pipeline, record.pipeline);
             EXPECT_EQ(access.memorySpace, read ? sourceSpace : destinationSpace);
             EXPECT_EQ(access.address, read ? record.args[1] : record.args[0]);
-            if (instructionId == 158 || instructionId == 173) {
-                // UB/L1 operands share the issuer; storage ownership is separate.
-                EXPECT_EQ(access.header.phyCoreId, trace.phyCoreId);
-                EXPECT_EQ(access.header.blockId, trace.blockId);
-                EXPECT_EQ(access.header.blockType, trace.blockType);
-                EXPECT_EQ(access.accessCount, 2U);
-                EXPECT_EQ(access.accessIndex, accessIndex++);
-                EXPECT_EQ(access.memoryOwner.valid, 1U);
-                EXPECT_EQ(access.memoryOwner.phyCoreId, ub ? AIV_CORE : AIC_CORE);
-                EXPECT_EQ(access.memoryOwner.blockId, ub ? AIV_BLOCK : AIC_BLOCK);
-                EXPECT_EQ(
-                    access.memoryOwner.blockType,
-                    ub ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
-            } else {
-                // FIX transfers retain their existing endpoint header identities.
-                EXPECT_EQ(access.header.phyCoreId, ub ? AIV_CORE : AIC_CORE);
-                EXPECT_EQ(access.header.blockId, ub ? AIV_BLOCK : AIC_BLOCK);
-                EXPECT_EQ(
-                    access.header.blockType,
-                    ub ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
-            }
+            EXPECT_EQ(access.accessCount, accesses->size());
+            EXPECT_EQ(access.accessIndex, accessIndex++);
+            EXPECT_EQ(access.header.executor.phyCoreId, trace.phyCoreId);
+            EXPECT_EQ(access.header.executor.blockId, trace.blockId);
+            EXPECT_EQ(access.header.executor.blockType, trace.blockType);
+            EXPECT_EQ(access.memoryOwner.phyCoreId, ub ? AIV_CORE : AIC_CORE);
+            EXPECT_EQ(access.memoryOwner.blockId, ub ? AIV_BLOCK : AIC_BLOCK);
+            EXPECT_EQ(
+                access.memoryOwner.blockType,
+                ub ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
         }
         EXPECT_EQ(
             std::count_if(
@@ -1069,8 +1058,8 @@ TEST(AclsanTranslateDeviceData, ScalarAddressClassificationCollectsUbAndSkipsPri
                 ASSERT_EQ(accesses->size(), 1U);
                 EXPECT_EQ(accesses->front().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
                 EXPECT_EQ(accesses->front().address, 0x40U);
-                EXPECT_EQ(accesses->front().header.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
-                EXPECT_EQ(accesses->front().header.phyCoreId, 2U);
+                EXPECT_EQ(accesses->front().header.executor.blockType, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
+                EXPECT_EQ(accesses->front().header.executor.phyCoreId, 2U);
                 EXPECT_EQ(
                     accesses->front().accessMode,
                     instructionId == 26U ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ);

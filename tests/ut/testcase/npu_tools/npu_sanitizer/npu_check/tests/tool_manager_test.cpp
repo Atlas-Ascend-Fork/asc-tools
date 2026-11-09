@@ -151,6 +151,8 @@ Session RunSession(
         memory.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         memory.address = memoryError ? 0x1018 : 0x1000;
         memory.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        memory.memoryOwner =
+            memory.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : memory.header.executor;
         memory.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         memory.accessCount = 1;
         memory.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;

@@ -55,11 +55,12 @@ AclsanDeviceMemoryAccessData Access(
     data.header.pipeline = sourceKind == DeviceSourceKind::MTE2 ? ACLSAN_DEVICE_PIPE_MTE2 : ACLSAN_DEVICE_PIPE_MTE3;
     data.header.sourceKind = static_cast<uint32_t>(sourceKind);
     data.header.siteId = 7;
-    data.header.blockId = 3;
+    data.header.executor.blockId = 3;
     data.header.deviceId = deviceId;
     data.header.pc = 0x170;
     data.address = address;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     data.accessMode =
         sourceKind == DeviceSourceKind::MTE2 ? ACLSAN_DEVICE_MEMORY_ACCESS_READ : ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
     data.accessCount = 1;
@@ -76,11 +77,12 @@ AclsanDeviceMemoryAccessData ScalarAccess(uint32_t instrId, uint64_t address, ui
     data.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
     data.header.sourceKind = instrId < 68 ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD;
     data.header.siteId = 7;
-    data.header.blockId = 3;
+    data.header.executor.blockId = 3;
     data.header.deviceId = deviceId;
     data.header.pc = 0x170;
     data.address = address;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     // 下面的合成原子夹具显式提供已知操作。
     data.accessMode = instrId < 68 ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     data.accessCount = 1;
@@ -102,6 +104,8 @@ TEST(MemcheckTest, CubeLocalBoundsUseDav3510CapacityAndPreserveContext)
         Memcheck checker;
         auto access = Access(DeviceSourceKind::MTE2, capacity - 32, 32);
         access.memorySpace = space;
+        access.memoryOwner =
+            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
         access.header.launchId = 42;
         checker.QueueDeviceMemoryAccess(access);
         EXPECT_TRUE(checker.OnSynchronization().empty());
@@ -131,6 +135,8 @@ TEST(MemcheckTest, CubeLocalBoundsDoNotConsultGlobalAllocationsAndDetectOverflow
     for (uint64_t address : {uint64_t{65536}, std::numeric_limits<uint64_t>::max() - 3}) {
         auto access = Access(DeviceSourceKind::MTE2, address, 16);
         access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L0A;
+        access.memoryOwner =
+            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
         checker.QueueDeviceMemoryAccess(access);
     }
     EXPECT_EQ(checker.OnSynchronization().size(), 2U);
@@ -141,6 +147,8 @@ TEST(MemcheckTest, CubeLocalBoundsDoNotRequireMemoryFlags)
     Memcheck checker;
     auto access = Access(DeviceSourceKind::MTE2, 65536, 16);
     access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L0A;
+    access.memoryOwner =
+        access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
     EXPECT_EQ(access.memoryFlags, 0U);
     checker.QueueDeviceMemoryAccess(access);
     const auto reports = checker.OnSynchronization();
@@ -154,6 +162,8 @@ TEST(MemcheckTest, CubeAffineBoundsVisitStridedSegments)
     Memcheck checker;
     auto access = Access(DeviceSourceKind::MTE2, 65536 - 64, 0);
     access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L0A;
+    access.memoryOwner =
+        access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
     access.layoutKind = ACLSAN_MEM_LAYOUT_ND_AFFINE;
     access.layout.ndAffine.rank = 1;
     access.layout.ndAffine.elementBytes = 16;
@@ -245,9 +255,9 @@ TEST(MemcheckTest, ReportsOutOfBoundsReadAtSynchronization)
     auto invalidRead = Access(DeviceSourceKind::MTE2, 0x100ff0, 64);
     invalidRead.header.sourceKind = ACLSAN_DEVICE_SOURCE_UNKNOWN;
     invalidRead.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
-    invalidRead.header.phyCoreId = 75;
-    invalidRead.header.blockId = 7;
-    invalidRead.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    invalidRead.header.executor.phyCoreId = 75;
+    invalidRead.header.executor.blockId = 7;
+    invalidRead.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     checker.QueueDeviceMemoryAccess(validRead);
     checker.QueueDeviceMemoryAccess(invalidRead);
 
@@ -770,9 +780,9 @@ TEST(MemcheckTest, GroupsDerivedDataByCompleteInstructionIdentity)
     Memcheck checker;
     auto aicRead = Access(DeviceSourceKind::MTE2, 0x700000, 64, 1);
     aicRead.header.launchId = 9;
-    aicRead.header.blockId = 0;
-    aicRead.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-    aicRead.header.phyCoreId = 3;
+    aicRead.header.executor.blockId = 0;
+    aicRead.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    aicRead.header.executor.phyCoreId = 3;
     aicRead.header.instrExecId = 1;
     aicRead.header.serialNo = 0;
     aicRead.accessIndex = 0;
@@ -785,8 +795,8 @@ TEST(MemcheckTest, GroupsDerivedDataByCompleteInstructionIdentity)
     aicWrite.accessIndex = 1;
 
     auto aivRead = aicRead;
-    aivRead.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
-    aivRead.header.phyCoreId = 4;
+    aivRead.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    aivRead.header.executor.phyCoreId = 4;
     aivRead.address = 0x720000;
 
     checker.QueueDeviceMemoryAccess(aicRead);

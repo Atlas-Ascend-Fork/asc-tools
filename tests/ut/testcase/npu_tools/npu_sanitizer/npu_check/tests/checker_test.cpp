@@ -58,6 +58,7 @@ AclsanDeviceMemoryAccessData Access()
     data.header.size = sizeof(data);
     data.address = 0x1018;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     data.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     data.accessCount = 1;
     data.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;

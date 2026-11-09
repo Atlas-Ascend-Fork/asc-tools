@@ -37,14 +37,16 @@ protected:
         data.header.size = sizeof(data);
         data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         data.header.deviceId = device;
-        data.header.phyCoreId = core;
+        data.header.executor.phyCoreId = core;
         data.header.pipeline = ACLSAN_DEVICE_PIPE_MTE3;
-        data.header.blockType = space == ACLSAN_DEVICE_MEMORY_SPACE_UB ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR :
-                                space == ACLSAN_DEVICE_MEMORY_SPACE_L1 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE :
-                                                                         ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
+        data.header.executor.blockType = space == ACLSAN_DEVICE_MEMORY_SPACE_UB ?
+                                             ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR :
+                                         space == ACLSAN_DEVICE_MEMORY_SPACE_L1 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE :
+                                                                                  ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
         data.header.instrExecId = records.size() + 1;
         data.address = begin;
         data.memorySpace = space;
+        data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
         data.accessMode = static_cast<uint32_t>(mode);
         data.dataBits = 32;
         data.alignSize = 4;
@@ -1536,7 +1538,7 @@ TEST_F(MemStateTrackerTest, V2RejectsAnotherLaunchEvenOnDisjointPhysicalTables)
     Accept(w);
     auto r = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 4096, 4100, 20, ACLSAN_DEVICE_MEMORY_SPACE_L1);
     records[r].header.launchId = 42;
-    records[r].header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    records[r].header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     EXPECT_THROW(tracker.CheckPotentialRace(r), RacecheckError);
     EXPECT_THROW(Update(r, {}), RacecheckError);
     EXPECT_EQ(tracker.Tables().size(), 1U);
@@ -1593,26 +1595,26 @@ TEST_F(MemStateTrackerTest, L1ToUbTransferUsesActualSourceAndTargetCore)
     ExpectSegment(target, 512, 1280, MemOpState::Write, {targetWrite}, {});
     ASSERT_EQ(reports.size(), 2U);
     EXPECT_EQ(reports[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
-    EXPECT_EQ(records[reports[0].curIndex].header.phyCoreId, 20U);
+    EXPECT_EQ(records[reports[0].curIndex].header.executor.phyCoreId, 20U);
     EXPECT_EQ(reports[1].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UB);
-    EXPECT_EQ(records[reports[1].curIndex].header.phyCoreId, 10U);
+    EXPECT_EQ(records[reports[1].curIndex].header.executor.phyCoreId, 10U);
 }
 
 TEST_F(MemStateTrackerTest, PrivateSpacesRejectWrongOrAmbiguousPhysicalCore)
 {
     auto ub = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16, 10, ACLSAN_DEVICE_MEMORY_SPACE_UB);
-    records[ub].header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    records[ub].memoryOwner.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     EXPECT_THROW(tracker.CheckPotentialRace(ub), RacecheckError);
     EXPECT_THROW(tracker.UpdateMemState(ub, {}), RacecheckError);
     EXPECT_TRUE(tracker.Tables().empty());
-    records[ub].header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    records[ub].memoryOwner.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     Accept(ub);
     auto l1 = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 16, 10, ACLSAN_DEVICE_MEMORY_SPACE_L1);
     EXPECT_THROW(tracker.CheckPotentialRace(l1), RacecheckError);
     EXPECT_THROW(tracker.UpdateMemState(l1, {}), RacecheckError);
     EXPECT_EQ(tracker.Tables().size(), 1U);
     auto otherCore = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 16, 20, ACLSAN_DEVICE_MEMORY_SPACE_L1);
-    records[otherCore].header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    records[otherCore].memoryOwner.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     EXPECT_THROW(tracker.CheckPotentialRace(otherCore), RacecheckError);
 }
 

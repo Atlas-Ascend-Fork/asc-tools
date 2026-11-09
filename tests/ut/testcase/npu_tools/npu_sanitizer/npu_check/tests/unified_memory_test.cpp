@@ -99,12 +99,14 @@ struct Session {
         data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         data.header.launchId = launch;
         data.header.instrExecId = exec;
-        data.header.blockType = space == ACLSAN_DEVICE_MEMORY_SPACE_UB ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR :
-                                                                         ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        data.header.executor.blockType = space == ACLSAN_DEVICE_MEMORY_SPACE_UB ?
+                                             ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR :
+                                             ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         data.header.pipeline = pipe;
         data.accessCount = 1;
         data.instructionId = 1;
         data.memorySpace = space;
+        data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
         data.accessMode = mode;
         data.address = address;
         data.dataBits = 32;
@@ -293,7 +295,7 @@ TEST(UnifiedMemoryTest, FpcHandshakeResetDoesNotEraseInitializedMemory)
     reset.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     reset.header.launchId = 1;
     reset.header.instrExecId = 2;
-    reset.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    reset.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     reset.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
     reset.value = UINT64_C(1) << 63U;
     reset.regId = ACLSAN_DEVICE_REGISTER_FPC;
@@ -444,11 +446,13 @@ TEST(UnifiedMemoryTest, StridedOperandKeepsItsKnownAllocationAcrossUnmappedFragm
     access.header.launchId = 1;
     access.header.instrExecId = 1;
     access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
-    access.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    access.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     access.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
     access.accessCount = 1;
     access.instructionId = 1;
     access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    access.memoryOwner =
+        access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : access.header.executor;
     access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     access.address = 0x10000;
     access.layoutKind = ACLSAN_MEM_LAYOUT_ND_AFFINE;
@@ -543,7 +547,7 @@ TEST(UnifiedMemoryTest, SyncCheckerReadsTheSameLedgerWithoutApplyingEventsTwice)
     flag.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     flag.header.launchId = 1;
     flag.header.instrExecId = 1;
-    flag.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    flag.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     flag.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
     flag.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
     flag.scope = ACLSAN_DEVICE_SYNC_SCOPE_BLOCK;
@@ -572,7 +576,7 @@ TEST(UnifiedMemoryTest, MissingRegisterPlaceholderIsNotAnUnknownMemoryFootprint)
     data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
     data.header.launchId = 1;
     data.header.instrExecId = 1;
-    data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     data.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
     data.instructionId = static_cast<uint32_t>(aclsan::InstructionId::NdDmaOutToUbufB8);
     data.regDependencyMask0 = UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CHANNEL_PARA;
@@ -857,12 +861,13 @@ AclsanDeviceMemoryAccessData LocalCopyOperand(uint32_t index, uint32_t space, ui
     data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
     data.header.launchId = 1;
     data.header.instrExecId = 1;
-    data.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+    data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     data.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
     data.accessCount = 2;
     data.accessIndex = index;
     data.instructionId = 1;
     data.memorySpace = space;
+    data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     data.accessMode = mode;
     data.address = address;
     data.dataBits = 32;
@@ -878,7 +883,7 @@ TEST(UnifiedMemoryTest, IgnoredUbOperandKeepsGmFragmentsComplete)
     s.Launch(1);
     auto source = LocalCopyOperand(0, ACLSAN_DEVICE_MEMORY_SPACE_GM, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0x10000);
     auto destination = LocalCopyOperand(1, ACLSAN_DEVICE_MEMORY_SPACE_UB, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0);
-    source.header.blockType = destination.header.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    source.header.executor.blockType = destination.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     s.Send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, source);
     s.Send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, destination);
     s.Sync();

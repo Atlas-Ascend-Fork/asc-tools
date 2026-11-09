@@ -84,6 +84,12 @@ typedef enum AclsanDeviceEventFlags {
     ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN = 1u << 5u
 } AclsanDeviceEventFlags;
 
+typedef struct AclsanCoreInfo {
+    uint32_t phyCoreId; // 物理核id
+    uint32_t blockId;   // 逻辑核id
+    uint32_t blockType; // AclsanDeviceBlockType
+} AclsanCoreInfo;
+
 typedef struct AclsanDeviceEventHeader {
     uint32_t version;
     uint32_t size;
@@ -94,11 +100,9 @@ typedef struct AclsanDeviceEventHeader {
     uint64_t instrExecId; // Launch 内唯一的动态指令 ID；同条指令的所有访问共享，跨核大小不表示时序。
     uint64_t serialNo; //       例如：指令DataCopy中的第一(read) / 第二条 (write)
     uint32_t deviceId;
-    uint32_t phyCoreId;
-    uint32_t blockId;
-    uint32_t blockType; // AclsanDeviceBlockType
-    uint32_t pipeline;  // AclsanDevicePipeline
-    uint32_t flags;     // AclsanDeviceEventFlags
+    AclsanCoreInfo executor; // 发射指令的核，例如说AIC发射L1->UB的搬运指令，那么对应的是AIC的信息
+    uint32_t pipeline;       // AclsanDevicePipeline
+    uint32_t flags;          // AclsanDeviceEventFlags
 } AclsanDeviceEventHeader;
 
 // Delivered only through ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION.
@@ -144,15 +148,6 @@ typedef struct AclsanMemNdAffineLayout {
     int64_t strides[5];
 } AclsanMemNdAffineLayout;
 
-// Storage identity is independent of the core issuing the instruction.
-// valid=0 retains the header's identity for ordinary local accesses.
-typedef struct AclsanDeviceMemoryOwner {
-    uint32_t valid;
-    uint32_t phyCoreId;
-    uint32_t blockId;
-    uint32_t blockType;
-} AclsanDeviceMemoryOwner;
-
 typedef struct AclsanDeviceMemoryAccessData {
     AclsanDeviceEventHeader header;
     uint64_t address;
@@ -178,20 +173,10 @@ typedef struct AclsanDeviceMemoryAccessData {
     uint32_t unitFlag; // Former reserved slot: 0=disabled, 2=keep, 3=update L0C unit flag.
     uint64_t regDependencyMask0;
     uint64_t regDependencyMask1;
-    // Appended extension; consumers require header.size >= sizeof(this record).
-    // header always identifies the issuer for UB <-> L1 transfers.
-    AclsanDeviceMemoryOwner memoryOwner;
+    // 数据所存储的核。例如说AIC
+    // L1->UB的搬运指令，L1部分的读owner是AIC核，UB部分的写owner是AIV核。如果为GM，那么忽略该信息
+    AclsanCoreInfo memoryOwner;
 } AclsanDeviceMemoryAccessData;
-
-static inline AclsanDeviceMemoryOwner AclsanMemoryOwnerOf(const AclsanDeviceMemoryAccessData* access)
-{
-    if (access->memoryOwner.valid) {
-        return access->memoryOwner;
-    }
-    const AclsanDeviceMemoryOwner owner = {
-        1, access->header.phyCoreId, access->header.blockId, access->header.blockType};
-    return owner;
-}
 
 typedef enum AclsanDeviceRegisterId {
     ACLSAN_DEVICE_REGISTER_VECTOR_MASK = 0,
