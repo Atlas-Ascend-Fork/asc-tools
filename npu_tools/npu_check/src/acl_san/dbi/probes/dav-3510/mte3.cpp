@@ -11,7 +11,7 @@
 #include "trace_record.h"
 
 // MOV_UB_TO_L1, API ID 173.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_ubuf_to_cbuf(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_ubuf_to_cbuf(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __ubuf__ void* src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -20,7 +20,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_UB_TO_OUT_ALIGN_V2, API ID 83.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_ubuf_to_gm_align_v2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_ubuf_to_gm_align_v2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __gm__ void* dst, __ubuf__ void* src, uint64_t config0,
     uint64_t config1)
 {

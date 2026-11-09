@@ -104,12 +104,12 @@ if(UB_SCALAR_COLLECTION)
       foreach(probe IN ITEMS ld_b8_reg ld_b16_imm ld_b32_imm ld_b64_imm
           st_b8_reg st_b16_imm st_b32_imm st_b64_imm)
         string(REGEX MATCH
-          "__sanitizer_report_${probe}[^>]*[.]vector[.]org[.]0>:\n[^\n]*\n[^\n]*"
+          "__npu_check_probe_${probe}[^>]*[.]vector[.]org[.]0>:\n[^\n]*\n[^\n]*"
           trampoline "${disassembly}")
         adrp_target("${trampoline}" X0 target)
         list(FIND call_targets "${target}" call_position)
         if(call_position EQUAL -1)
-          message(FATAL_ERROR "bisheng-tune did not insert a call to __sanitizer_report_${probe}")
+          message(FATAL_ERROR "bisheng-tune did not insert a call to __npu_check_probe_${probe}")
         endif()
       endforeach()
     endif()

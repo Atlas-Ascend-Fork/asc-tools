@@ -13,7 +13,7 @@
 // SET/WAIT FLAG instructions.
 
 // SET_FLAG, API ID 440.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_flag(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_flag(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, pipe_t dstPipe, uint64_t eventId)
 {
     aclsan::WriteTraceRecord(
@@ -22,7 +22,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // SET_FLAGI, API ID 441.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_flagi(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_flagi(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, pipe_t dstPipe, uint64_t eventId)
 {
     aclsan::WriteTraceRecord(
@@ -31,7 +31,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // WAIT_FLAG, API ID 442.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_flag(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_flag(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, pipe_t dstPipe, uint64_t eventId)
 {
     aclsan::WriteTraceRecord(
@@ -40,7 +40,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // WAIT_FLAGI, API ID 443.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_flagi(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_flagi(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, pipe_t dstPipe, uint64_t eventId)
 {
     aclsan::WriteTraceRecord(
@@ -49,7 +49,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // WAIT_FLAG_DEV, API ID 445.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_flag_dev_pipe(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_flag_dev_pipe(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, int64_t flagId)
 {
     aclsan::WriteTraceRecord(
@@ -58,7 +58,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // WAIT_FLAG_DEVI, API ID 446.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_flag_devi_pipe(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_flag_devi_pipe(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t flagId)
 {
     aclsan::WriteTraceRecord(
@@ -67,7 +67,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // FFTS_CROSS_CORE_SYNC, API ID 447.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_ffts_cross_core_sync(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ffts_cross_core_sync(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -76,7 +76,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // SET_FLAG_V, API ID 456.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_flag_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_flag_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t dstPipe, uint64_t eventId)
 {
     aclsan::WriteTraceRecord(
@@ -85,7 +85,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // SET_FLAGI_V, API ID 457.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_flagi_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_flagi_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t dstPipe, uint64_t eventId)
 {
     aclsan::WriteTraceRecord(
@@ -94,7 +94,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // WAIT_FLAG_V, API ID 458.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_flag_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_flag_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, uint64_t eventId)
 {
     aclsan::WriteTraceRecord(
@@ -103,7 +103,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // WAIT_FLAGI_V, API ID 459.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_flagi_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_flagi_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, uint64_t eventId)
 {
     aclsan::WriteTraceRecord(
@@ -112,7 +112,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // WAIT_FLAG_DEV_V, API ID 469.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_flag_dev_pipe_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_flag_dev_pipe_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, int64_t flagId)
 {
     aclsan::WriteTraceRecord(
@@ -121,7 +121,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // WAIT_FLAG_DEVI_V, API ID 470.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_flag_devi_pipe_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_flag_devi_pipe_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint8_t flagId)
 {
     aclsan::WriteTraceRecord(
@@ -130,7 +130,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // HSET_FLAG, API ID 471.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_hset_flag(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_hset_flag(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, pipe_t dstPipe, uint64_t eventId, mem_t memory,
     bool isVirtual)
 {
@@ -141,7 +141,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // HSET_FLAGI, API ID 472.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_hset_flagi(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_hset_flagi(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, pipe_t dstPipe, uint64_t eventId, mem_t memory,
     bool isVirtual)
 {
@@ -152,7 +152,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // HWAIT_FLAG, API ID 473.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_hwait_flag(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_hwait_flag(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, pipe_t dstPipe, uint64_t eventId, mem_t memory,
     bool isVirtual)
 {
@@ -163,7 +163,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // HWAIT_FLAGI, API ID 474.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_hwait_flagi(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_hwait_flagi(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t srcPipe, pipe_t dstPipe, uint64_t eventId, mem_t memory,
     bool isVirtual)
 {
@@ -176,7 +176,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 // GET/RLS BUF instructions.
 
 // GET_BUF, API ID 448.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_get_buf(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_get_buf(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t bufId, bool mode)
 {
     aclsan::WriteTraceRecord(
@@ -185,7 +185,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // GET_BUFI, API ID 449.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_get_bufi(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_get_bufi(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t bufId, bool mode)
 {
     aclsan::WriteTraceRecord(
@@ -194,7 +194,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // RLS_BUF, API ID 450.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_rls_buf(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_rls_buf(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t bufId, bool mode)
 {
     aclsan::WriteTraceRecord(
@@ -203,7 +203,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // RLS_BUFI, API ID 451.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_rls_bufi(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_rls_bufi(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t bufId, bool mode)
 {
     aclsan::WriteTraceRecord(
@@ -212,7 +212,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // GET_BUF_V, API ID 460.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_get_buf_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_get_buf_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint8_t bufId, bool mode)
 {
     aclsan::WriteTraceRecord(
@@ -221,7 +221,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // GET_BUFI_V, API ID 461.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_get_bufi_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_get_bufi_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t bufId, bool mode)
 {
     aclsan::WriteTraceRecord(
@@ -230,7 +230,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // RLS_BUF_V, API ID 462.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_rls_buf_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_rls_buf_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint8_t bufId, bool mode)
 {
     aclsan::WriteTraceRecord(
@@ -239,7 +239,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // RLS_BUFI_V, API ID 463.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_rls_bufi_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_rls_bufi_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t bufId, bool mode)
 {
     aclsan::WriteTraceRecord(
@@ -247,7 +247,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(PIPE_V), bufId, static_cast<uint64_t>(mode), 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_pipe_barrier(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_pipe_barrier(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe)
 {
     aclsan::WriteTraceRecord(
@@ -255,7 +255,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), 0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_intra_block(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_intra_block(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t syncId)
 {
     aclsan::WriteTraceRecord(
@@ -263,7 +263,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), syncId, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_intra_blocki(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_intra_blocki(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t syncId)
 {
     aclsan::WriteTraceRecord(
@@ -271,7 +271,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_intra_block(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_intra_block(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t syncId)
 {
     aclsan::WriteTraceRecord(
@@ -279,7 +279,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), syncId, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_intra_blocki(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_intra_blocki(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t syncId)
 {
     aclsan::WriteTraceRecord(
@@ -287,7 +287,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_intra_block_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_intra_block_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t syncId)
 {
     aclsan::WriteTraceRecord(
@@ -295,7 +295,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), syncId, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_intra_blocki_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_intra_blocki_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t syncId)
 {
     aclsan::WriteTraceRecord(
@@ -303,7 +303,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_intra_block_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_intra_block_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t syncId)
 {
     aclsan::WriteTraceRecord(
@@ -311,7 +311,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), syncId, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_wait_intra_blocki_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_intra_blocki_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t syncId)
 {
     aclsan::WriteTraceRecord(
@@ -319,7 +319,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(pipe), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_ffts_cross_core_sync_v(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ffts_cross_core_sync_v(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(

@@ -11,7 +11,7 @@
 #include "trace_record.h"
 
 // MOV_OUT_TO_L1_ALIGN_V2.b8, API ID 74.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_gm_to_cbuf_align_v2_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_gm_to_cbuf_align_v2_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -21,7 +21,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_OUT_TO_L1_ALIGN_V2.b16, API ID 75.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_gm_to_cbuf_align_v2_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_gm_to_cbuf_align_v2_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -31,7 +31,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_OUT_TO_L1_ALIGN_V2.b32, API ID 76.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_gm_to_cbuf_align_v2_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_gm_to_cbuf_align_v2_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -42,7 +42,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 
 // MOV_OUT_TO_L1_MULTI_DN2NZ.b8, API ID 80.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_copy_gm_to_cbuf_multi_dn2nz_d_b8(
+__npu_check_probe_copy_gm_to_cbuf_multi_dn2nz_d_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -53,7 +53,7 @@ __sanitizer_report_copy_gm_to_cbuf_multi_dn2nz_d_b8(
 
 // MOV_OUT_TO_L1_MULTI_DN2NZ.b16, API ID 81.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_copy_gm_to_cbuf_multi_dn2nz_d_b16(
+__npu_check_probe_copy_gm_to_cbuf_multi_dn2nz_d_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -64,7 +64,7 @@ __sanitizer_report_copy_gm_to_cbuf_multi_dn2nz_d_b16(
 
 // MOV_OUT_TO_L1_MULTI_DN2NZ.b32, API ID 82.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_copy_gm_to_cbuf_multi_dn2nz_d_b32(
+__npu_check_probe_copy_gm_to_cbuf_multi_dn2nz_d_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -75,7 +75,7 @@ __sanitizer_report_copy_gm_to_cbuf_multi_dn2nz_d_b32(
 
 // MOV_OUT_TO_L1_MULTI_ND2NZ.b8, API ID 77.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_copy_gm_to_cbuf_multi_nd2nz_d_b8(
+__npu_check_probe_copy_gm_to_cbuf_multi_nd2nz_d_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -86,7 +86,7 @@ __sanitizer_report_copy_gm_to_cbuf_multi_nd2nz_d_b8(
 
 // MOV_OUT_TO_L1_MULTI_ND2NZ.b16, API ID 78.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_copy_gm_to_cbuf_multi_nd2nz_d_b16(
+__npu_check_probe_copy_gm_to_cbuf_multi_nd2nz_d_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -97,7 +97,7 @@ __sanitizer_report_copy_gm_to_cbuf_multi_nd2nz_d_b16(
 
 // MOV_OUT_TO_L1_MULTI_ND2NZ.b32, API ID 79.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_copy_gm_to_cbuf_multi_nd2nz_d_b32(
+__npu_check_probe_copy_gm_to_cbuf_multi_nd2nz_d_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -107,7 +107,7 @@ __sanitizer_report_copy_gm_to_cbuf_multi_nd2nz_d_b32(
 }
 
 // MOV_OUT_TO_L1_V2, API ID 73.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_gm_to_cbuf_v2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_gm_to_cbuf_v2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -117,7 +117,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_OUT_TO_UB_ALIGN_V2.b8, API ID 84.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_gm_to_ubuf_align_v2_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_gm_to_ubuf_align_v2_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -127,7 +127,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_OUT_TO_UB_ALIGN_V2.b16, API ID 85.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_gm_to_ubuf_align_v2_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_gm_to_ubuf_align_v2_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -137,7 +137,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_OUT_TO_UB_ALIGN_V2.b32, API ID 86.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_gm_to_ubuf_align_v2_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_gm_to_ubuf_align_v2_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -147,7 +147,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_OUT_TO_L1_2DV2, API ID 72.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_gm_to_cbuf_2dv2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_gm_to_cbuf_2dv2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __gm__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -157,7 +157,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ND_DMA_OUT_TO_UB.b8, API ID 87.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_nd_copy_gm_to_ubuf_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_nd_copy_gm_to_ubuf_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __gm__ void* src, uint64_t config,
     uint64_t secConfig)
 {
@@ -167,7 +167,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ND_DMA_OUT_TO_UB.b16, API ID 88.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_nd_copy_gm_to_ubuf_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_nd_copy_gm_to_ubuf_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __gm__ void* src, uint64_t config,
     uint64_t secConfig)
 {
@@ -177,7 +177,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ND_DMA_OUT_TO_UB.b32, API ID 89.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_nd_copy_gm_to_ubuf_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_nd_copy_gm_to_ubuf_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __gm__ void* src, uint64_t config,
     uint64_t secConfig)
 {
@@ -187,7 +187,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // SET_L1_2D.b16, API ID 149.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_l1_2d_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_l1_2d_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -196,7 +196,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // SET_L1_2D.b32, API ID 150.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_l1_2d_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_l1_2d_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, uint64_t config)
 {
     aclsan::WriteTraceRecord(

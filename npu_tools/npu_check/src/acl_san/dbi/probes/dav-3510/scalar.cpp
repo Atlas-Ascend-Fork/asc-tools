@@ -11,7 +11,7 @@
 #include "trace_record.h"
 
 // SET_PADDING, API ID 392.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_padding(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_padding(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -20,7 +20,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // SET_MTE2_NZ_PARA, API ID 399.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_mte2_nz_para(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_mte2_nz_para(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -29,7 +29,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MTE2_SRC_PARA, API ID 124.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_mte2_src_para(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_mte2_src_para(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -38,7 +38,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP0_STRIDE_NDDMA, API ID 132.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop0_stride_nddma(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop0_stride_nddma(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -47,7 +47,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP1_STRIDE_NDDMA, API ID 133.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop1_stride_nddma(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop1_stride_nddma(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -56,7 +56,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP2_STRIDE_NDDMA, API ID 134.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop2_stride_nddma(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop2_stride_nddma(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -65,7 +65,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP3_STRIDE_NDDMA, API ID 135.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop3_stride_nddma(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop3_stride_nddma(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -74,7 +74,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP4_STRIDE_NDDMA, API ID 136.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop4_stride_nddma(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop4_stride_nddma(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -82,7 +82,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_st_atomic_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_st_atomic_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset, uint64_t post)
 {
     aclsan::WriteTraceRecord(
@@ -91,7 +91,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ST_ATOMIC.b32, API ID 56. Offset is an element count; post=1 uses the captured base without adding offset.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_st_atomic_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_st_atomic_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset, uint64_t post)
 {
     aclsan::WriteTraceRecord(
@@ -100,7 +100,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ST_ATOMIC.b16, API ID 57. Offset is an element count.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_st_atomic_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_st_atomic_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset, uint64_t post)
 {
     aclsan::WriteTraceRecord(
@@ -109,7 +109,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // STI_ATOMIC.b32, API ID 59. Offset is a byte count.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_sti_atomic_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_sti_atomic_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset, uint64_t post)
 {
     aclsan::WriteTraceRecord(
@@ -118,7 +118,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // STI_ATOMIC.b16, API ID 60. Offset is a byte count.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_sti_atomic_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_sti_atomic_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset, uint64_t post)
 {
     aclsan::WriteTraceRecord(
@@ -127,7 +127,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // STI_ATOMIC.b8, API ID 61. Offset is a byte count.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_sti_atomic_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_sti_atomic_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset, uint64_t post)
 {
     aclsan::WriteTraceRecord(
@@ -136,7 +136,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ST_DEV.b64, API ID 64. Offset is in bytes.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_st_dev_b64(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_st_dev_b64(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -145,7 +145,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ST_DEV.b32, API ID 65. Offset is in bytes.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_st_dev_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_st_dev_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -154,7 +154,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ST_DEV.b16, API ID 66. Offset is in bytes.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_st_dev_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_st_dev_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -163,7 +163,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // ST_DEV.b8, API ID 67. Offset is in bytes.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_st_dev_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_st_dev_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -172,7 +172,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LD_DEV.b64, API ID 68. Offset is in bytes.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_ld_dev_b64(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ld_dev_b64(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -181,7 +181,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LD_DEV.b32, API ID 69. Offset is in bytes.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_ld_dev_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ld_dev_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -190,7 +190,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LD_DEV.b16, API ID 70. Offset is in bytes.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_ld_dev_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ld_dev_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -199,7 +199,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LD_DEV.b8, API ID 71. Offset is in bytes.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_ld_dev_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ld_dev_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t addr, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -207,7 +207,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         static_cast<uint64_t>(offset), 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_dc_preload(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_dc_preload(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __gm__ uint64_t* address, int64_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -215,7 +215,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(address), static_cast<uint64_t>(offset), 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_dc_preloadi(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_dc_preloadi(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __gm__ uint64_t* address, int16_t offset)
 {
     aclsan::WriteTraceRecord(
@@ -224,7 +224,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP3_PARA, API ID 90.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop3_para(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop3_para(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -232,7 +232,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_channel_para(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_channel_para(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -241,7 +241,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP_SIZE_UBTOOUT, API ID 125.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop_size_ubtoout(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop_size_ubtoout(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -250,7 +250,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP1_STRIDE_UBTOOUT, API ID 126.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop1_stride_ubtoout(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop1_stride_ubtoout(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -259,7 +259,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP2_STRIDE_UBTOOUT, API ID 127.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop2_stride_ubtoout(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop2_stride_ubtoout(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -268,7 +268,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP_SIZE_OUTTOUB, API ID 128.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop_size_outtoub(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop_size_outtoub(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -277,7 +277,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP1_STRIDE_OUTTOUB, API ID 129.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop1_stride_outtoub(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop1_stride_outtoub(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -286,7 +286,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP2_STRIDE_OUTTOUB, API ID 130.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop2_stride_outtoub(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop2_stride_outtoub(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -295,7 +295,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // PAD_CNT_NDDMA, API ID 131.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_pad_cnt_nddma(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_pad_cnt_nddma(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -304,7 +304,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // SET_CTRL，API ID 159。捕获源操作数，用于原子配置变更和完整 CTRL 恢复。
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_ctrl(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_ctrl(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -312,7 +312,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_ffts_base_addr(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_ffts_base_addr(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -320,7 +320,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_fpc(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_fpc(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -328,7 +328,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_quant_pre(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_quant_pre(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -336,7 +336,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_quant_post(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_quant_post(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -344,7 +344,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_lrelu_alpha(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_lrelu_alpha(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -352,7 +352,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_fmatrix(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_fmatrix(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -360,7 +360,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_fmatrix_b(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_fmatrix_b(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -368,7 +368,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_l3d_rpt(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_l3d_rpt(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -376,7 +376,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_l3d_rpt_b(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_l3d_rpt_b(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -384,7 +384,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL, 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_padding_b(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_padding_b(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -393,7 +393,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP_SIZE_OUTTOL1, API ID 394.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop_size_outtol1(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop_size_outtol1(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -402,7 +402,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP1_STRIDE_OUTTOL1, API ID 395.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop1_stride_outtol1(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop1_stride_outtol1(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -411,7 +411,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOOP2_STRIDE_OUTTOL1, API ID 396.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_set_loop2_stride_outtol1(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_loop2_stride_outtol1(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t config)
 {
     aclsan::WriteTraceRecord(

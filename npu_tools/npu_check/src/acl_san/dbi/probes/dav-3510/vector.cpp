@@ -10,7 +10,7 @@
 
 #include "trace_record.h"
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_ubuf_to_ubuf(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_ubuf_to_ubuf(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __ubuf__ void* src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -18,7 +18,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), config, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_scatter_vnchwconv_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scatter_vnchwconv_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, uint64_t src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -26,7 +26,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         config, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_scatter_vnchwconv_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scatter_vnchwconv_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, uint64_t src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -34,7 +34,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         config, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_scatter_vnchwconv_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scatter_vnchwconv_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, uint64_t src, uint64_t config,
     uint64_t dstHighHalf, uint64_t srcHighHalf)
 {
@@ -43,7 +43,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         config, dstHighHalf, srcHighHalf);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_vtranspose(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_vtranspose(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __ubuf__ void* src)
 {
     aclsan::WriteTraceRecord(
@@ -51,7 +51,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), 0UL, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_ldva(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ldva(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, uint64_t src, uint64_t h)
 {
     aclsan::WriteTraceRecord(
@@ -59,7 +59,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         h, 0UL, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_vbs32_f16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_vbs32_f16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __ubuf__ void* src0, __ubuf__ void* src1,
     uint64_t config)
 {
@@ -69,7 +69,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_vbs32_f32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_vbs32_f32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __ubuf__ void* src0, __ubuf__ void* src1,
     uint64_t config)
 {
@@ -79,7 +79,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_vmrgsort4_f16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_vmrgsort4_f16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __ubuf__ void* src, uint64_t xm, uint64_t xt)
 {
     aclsan::WriteTraceRecord(
@@ -87,7 +87,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), xm, xt, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_vmrgsort4_f32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_vmrgsort4_f32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __ubuf__ void* src, uint64_t xm, uint64_t xt)
 {
     aclsan::WriteTraceRecord(

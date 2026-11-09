@@ -10,7 +10,7 @@
 
 #include "trace_record.h"
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_s8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_s8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -18,7 +18,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_f16_f32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_f16_f32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -26,7 +26,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_bf16_f32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_bf16_f32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -34,7 +34,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_f32_f32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_f32_f32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -42,7 +42,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_e4m3_e4m3(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_e4m3_e4m3(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -50,7 +50,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_e4m3_e5m2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_e4m3_e5m2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -58,7 +58,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_e5m2_e4m3(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_e5m2_e4m3(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -66,7 +66,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_e5m2_e5m2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_e5m2_e5m2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -74,7 +74,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_mx_e1m2_e1m2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_mx_e1m2_e1m2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -82,7 +82,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_mx_e1m2_e2m1(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_mx_e1m2_e2m1(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -90,7 +90,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_mx_e2m1_e1m2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_mx_e2m1_e1m2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -98,7 +98,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_mx_e2m1_e2m1(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_mx_e2m1_e2m1(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -106,7 +106,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_mx_e4m3_e4m3(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_mx_e4m3_e4m3(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -114,7 +114,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_mx_e4m3_e5m2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_mx_e4m3_e5m2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -122,7 +122,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_mx_e5m2_e4m3(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_mx_e5m2_e4m3(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -130,7 +130,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(c), reinterpret_cast<uint64_t>(a), reinterpret_cast<uint64_t>(b), config, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_mad_mx_e5m2_e5m2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_mad_mx_e5m2_e5m2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cc__ void* c, __ca__ void* a, __cb__ void* b, uint64_t config)
 {
     aclsan::WriteTraceRecord(

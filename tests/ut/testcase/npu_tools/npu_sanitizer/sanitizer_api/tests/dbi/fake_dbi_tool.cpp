@@ -21,7 +21,7 @@ namespace {
 
 std::set<std::string> ExtractReportSymbols(const std::string& input)
 {
-    constexpr std::string_view kPrefix = "__sanitizer_report_";
+    constexpr std::string_view kPrefix = "__npu_check_probe_";
     std::set<std::string> symbols;
     for (size_t begin = input.find(kPrefix); begin != std::string::npos; begin = input.find(kPrefix, begin)) {
         size_t end = begin + kPrefix.size();

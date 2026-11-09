@@ -62,41 +62,41 @@ bool RendersNewPipelineDefinitions()
 {
     const GeneratedProbeSource matrix = GenerateProbeSource("dav-3510", ProbeGroup::Matrix);
     CHECK(matrix.success);
-    CHECK(matrix.source.find("__sanitizer_report_mad_mx_e5m2_e5m2") != std::string::npos);
+    CHECK(matrix.source.find("__npu_check_probe_mad_mx_e5m2_e5m2") != std::string::npos);
     CHECK(matrix.source.find("static_cast<uint16_t>(PIPE_M), 415") != std::string::npos);
-    CHECK(matrix.sourceMap.find("apiId=400 symbol=__sanitizer_report_mad_s8") != std::string::npos);
+    CHECK(matrix.sourceMap.find("apiId=400 symbol=__npu_check_probe_mad_s8") != std::string::npos);
 
     const GeneratedProbeSource vector = GenerateProbeSource("dav-3510", ProbeGroup::Vector);
     CHECK(vector.success);
-    CHECK(vector.source.find("__sanitizer_report_scatter_vnchwconv_b8") != std::string::npos);
+    CHECK(vector.source.find("__npu_check_probe_scatter_vnchwconv_b8") != std::string::npos);
     CHECK(vector.source.find("static_cast<uint16_t>(PIPE_V), 177") != std::string::npos);
     CHECK(vector.source.find("config, dstHighHalf, srcHighHalf") != std::string::npos);
 
     const GeneratedProbeSource scalar = GenerateProbeSource("dav-3510", ProbeGroup::Scalar);
     CHECK(scalar.success);
-    CHECK(scalar.source.find("__sanitizer_report_st_atomic_b8") != std::string::npos);
-    CHECK(scalar.source.find("__sanitizer_report_st_b64_imm") != std::string::npos);
-    CHECK(scalar.source.find("__sanitizer_report_stp_b8") != std::string::npos);
-    CHECK(scalar.source.find("__sanitizer_report_ldp_b64") != std::string::npos);
+    CHECK(scalar.source.find("__npu_check_probe_st_atomic_b8") != std::string::npos);
+    CHECK(scalar.source.find("__npu_check_probe_st_b64_imm") != std::string::npos);
+    CHECK(scalar.source.find("__npu_check_probe_stp_b8") != std::string::npos);
+    CHECK(scalar.source.find("__npu_check_probe_ldp_b64") != std::string::npos);
     CHECK(
         scalar.source.find("addr, static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), "
                            "aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1") != std::string::npos);
-    const std::string_view stp = FindProbeDefinition(scalar.source, "__sanitizer_report_stp_b64");
+    const std::string_view stp = FindProbeDefinition(scalar.source, "__npu_check_probe_stp_b64");
     CHECK(stp.find("uint64_t addr, int64_t offset)") != std::string_view::npos);
     CHECK(stp.find("uint64_t post") == std::string_view::npos);
     CHECK(
         stp.find("addr, static_cast<uint64_t>(offset), 0UL, __cce_scalar::get_sys_va_base(), ") !=
         std::string_view::npos);
-    const std::string_view ldp = FindProbeDefinition(scalar.source, "__sanitizer_report_ldp_b64");
+    const std::string_view ldp = FindProbeDefinition(scalar.source, "__npu_check_probe_ldp_b64");
     CHECK(ldp.find("uint64_t addr, int64_t offset)") != std::string_view::npos);
     CHECK(ldp.find("uint64_t post") == std::string_view::npos);
-    const std::string_view mte2Nz = FindProbeDefinition(scalar.source, "__sanitizer_report_set_mte2_nz_para");
+    const std::string_view mte2Nz = FindProbeDefinition(scalar.source, "__npu_check_probe_set_mte2_nz_para");
     CHECK(!mte2Nz.empty());
     CHECK(mte2Nz.find("config, 0UL, 0UL, 0UL, 0UL") != std::string_view::npos);
 
     const GeneratedProbeSource sync = GenerateProbeSource("dav-3510", ProbeGroup::Sync);
     CHECK(sync.success);
-    CHECK(sync.source.find("__sanitizer_report_pipe_barrier") != std::string::npos);
+    CHECK(sync.source.find("__npu_check_probe_pipe_barrier") != std::string::npos);
     CHECK(sync.source.find("static_cast<uint16_t>(PIPE_S), 439") != std::string::npos);
     return true;
 }
@@ -110,7 +110,7 @@ bool RendersControlledMte2Definition()
     CHECK(generated.source.find("NPU_CHECK_PROBE_VECTOR_ONLY") != std::string::npos);
     CHECK(generated.source.find("defined(__DAV_CUBE__)") != std::string::npos);
     CHECK(generated.source.find("defined(__DAV_VEC__)") != std::string::npos);
-    CHECK(generated.source.find("__sanitizer_report_copy_gm_to_cbuf_align_v2_b8") != std::string::npos);
+    CHECK(generated.source.find("__npu_check_probe_copy_gm_to_cbuf_align_v2_b8") != std::string::npos);
     CHECK(generated.source.find("static_cast<uint16_t>(PIPE_MTE2), 74") != std::string::npos);
     CHECK(generated.source.find("// probe-definition: 0074") != std::string::npos);
     CHECK(generated.sourceMap.find("apiId=74") != std::string::npos);
@@ -137,22 +137,20 @@ bool RendersNormalizedVectorSyncDefinitions()
     CHECK(generated.success);
 
     const std::vector<std::pair<std::string_view, std::string_view>> expected{
-        {"__sanitizer_report_set_flag_v",
+        {"__npu_check_probe_set_flag_v",
          "static_cast<uint64_t>(PIPE_V), static_cast<uint64_t>(dstPipe), eventId, 0UL, 0UL"},
-        {"__sanitizer_report_set_flagi_v",
+        {"__npu_check_probe_set_flagi_v",
          "static_cast<uint64_t>(PIPE_V), static_cast<uint64_t>(dstPipe), eventId, 0UL, 0UL"},
-        {"__sanitizer_report_wait_flag_v",
+        {"__npu_check_probe_wait_flag_v",
          "static_cast<uint64_t>(srcPipe), static_cast<uint64_t>(PIPE_V), eventId, 0UL, 0UL"},
-        {"__sanitizer_report_wait_flagi_v",
+        {"__npu_check_probe_wait_flagi_v",
          "static_cast<uint64_t>(srcPipe), static_cast<uint64_t>(PIPE_V), eventId, 0UL, 0UL"},
-        {"__sanitizer_report_get_buf_v",
+        {"__npu_check_probe_get_buf_v",
          "static_cast<uint64_t>(PIPE_V), static_cast<uint64_t>(bufId), static_cast<uint64_t>(mode), 0UL, 0UL"},
-        {"__sanitizer_report_get_bufi_v",
-         "static_cast<uint64_t>(PIPE_V), bufId, static_cast<uint64_t>(mode), 0UL, 0UL"},
-        {"__sanitizer_report_rls_buf_v",
+        {"__npu_check_probe_get_bufi_v", "static_cast<uint64_t>(PIPE_V), bufId, static_cast<uint64_t>(mode), 0UL, 0UL"},
+        {"__npu_check_probe_rls_buf_v",
          "static_cast<uint64_t>(PIPE_V), static_cast<uint64_t>(bufId), static_cast<uint64_t>(mode), 0UL, 0UL"},
-        {"__sanitizer_report_rls_bufi_v",
-         "static_cast<uint64_t>(PIPE_V), bufId, static_cast<uint64_t>(mode), 0UL, 0UL"},
+        {"__npu_check_probe_rls_bufi_v", "static_cast<uint64_t>(PIPE_V), bufId, static_cast<uint64_t>(mode), 0UL, 0UL"},
     };
     for (const auto& [symbol, arguments] : expected) {
         const std::string_view definition = FindProbeDefinition(generated.source, symbol);
@@ -201,11 +199,11 @@ TEST(ProbeSourceGenerator, VectorGroupIncludesUbufTransfer)
     EXPECT_EQ(generated.symbols.size(), 15U);
     EXPECT_EQ(generated.symbols, aclsan::BindingSymbols({aclsan::ProbeGroup::Vector}));
     EXPECT_NE(
-        std::find(generated.symbols.begin(), generated.symbols.end(), "__sanitizer_report_copy_ubuf_to_ubuf"),
+        std::find(generated.symbols.begin(), generated.symbols.end(), "__npu_check_probe_copy_ubuf_to_ubuf"),
         generated.symbols.end());
     EXPECT_NE(generated.source.find("static_cast<uint16_t>(PIPE_V), 174"), std::string::npos);
-    EXPECT_NE(generated.source.find("__sanitizer_report_vtranspose"), std::string::npos);
-    EXPECT_NE(generated.source.find("__sanitizer_report_ldva"), std::string::npos);
+    EXPECT_NE(generated.source.find("__npu_check_probe_vtranspose"), std::string::npos);
+    EXPECT_NE(generated.source.find("__npu_check_probe_ldva"), std::string::npos);
 }
 
 TEST(ProbeSourceGeneratorScalarDev, IncludesAllWidthsAndByteOffsets)
@@ -216,7 +214,7 @@ TEST(ProbeSourceGeneratorScalarDev, IncludesAllWidthsAndByteOffsets)
     uint32_t id = 64;
     for (const char* op : {"st", "ld"}) {
         for (uint32_t bits : {64U, 32U, 16U, 8U}) {
-            const std::string symbol = std::string("__sanitizer_report_") + op + "_dev_b" + std::to_string(bits);
+            const std::string symbol = std::string("__npu_check_probe_") + op + "_dev_b" + std::to_string(bits);
             SCOPED_TRACE(symbol);
             EXPECT_NE(std::find(bindings.begin(), bindings.end(), symbol), bindings.end());
             EXPECT_NE(
@@ -236,17 +234,17 @@ TEST(ProbeSourceGeneratorCtrl, CapturesFullCtrlOperandForScalarAndDmaGroups)
     using namespace aclsan;
     for (const auto group : {ProbeGroup::Scalar, ProbeGroup::Mte3, ProbeGroup::Fixpipe}) {
         const auto bindings = BindingSymbols({group});
-        EXPECT_NE(std::find(bindings.begin(), bindings.end(), "__sanitizer_report_set_ctrl"), bindings.end());
+        EXPECT_NE(std::find(bindings.begin(), bindings.end(), "__npu_check_probe_set_ctrl"), bindings.end());
     }
     const auto generated = GenerateProbeSource("dav-3510", ProbeGroup::Scalar);
     ASSERT_TRUE(generated.success);
-    const auto definition = FindProbeDefinition(generated.source, "__sanitizer_report_set_ctrl");
+    const auto definition = FindProbeDefinition(generated.source, "__npu_check_probe_set_ctrl");
     ASSERT_FALSE(definition.empty());
     EXPECT_NE(definition.find("uint64_t config)"), std::string_view::npos);
     EXPECT_NE(definition.find("DeviceInstructionCategory::RegisterState"), std::string_view::npos);
     EXPECT_NE(definition.find("static_cast<uint16_t>(PIPE_S), 159,"), std::string_view::npos);
     EXPECT_NE(definition.find("config, 0UL, 0UL, 0UL, 0UL"), std::string_view::npos);
-    EXPECT_NE(generated.sourceMap.find("apiId=159 symbol=__sanitizer_report_set_ctrl"), std::string::npos);
+    EXPECT_NE(generated.sourceMap.find("apiId=159 symbol=__npu_check_probe_set_ctrl"), std::string::npos);
 }
 
 TEST(ProbeSourceGeneratorScalarAtomic, IncludesAllWidthsAndPostArgument)
@@ -259,9 +257,9 @@ TEST(ProbeSourceGeneratorScalarAtomic, IncludesAllWidthsAndPostArgument)
         const char* symbol;
     };
     const Case cases[] = {
-        {56, "__sanitizer_report_st_atomic_b32"},  {57, "__sanitizer_report_st_atomic_b16"},
-        {58, "__sanitizer_report_st_atomic_b8"},   {59, "__sanitizer_report_sti_atomic_b32"},
-        {60, "__sanitizer_report_sti_atomic_b16"}, {61, "__sanitizer_report_sti_atomic_b8"},
+        {56, "__npu_check_probe_st_atomic_b32"},  {57, "__npu_check_probe_st_atomic_b16"},
+        {58, "__npu_check_probe_st_atomic_b8"},   {59, "__npu_check_probe_sti_atomic_b32"},
+        {60, "__npu_check_probe_sti_atomic_b16"}, {61, "__npu_check_probe_sti_atomic_b8"},
     };
     for (const auto& test : cases) {
         SCOPED_TRACE(test.symbol);
@@ -284,12 +282,12 @@ TEST(ProbeSourceGenerator, CapturesPushPbAndVfOperands)
 {
     const auto vector = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Vector);
     ASSERT_TRUE(vector.success);
-    EXPECT_NE(vector.source.find("__sanitizer_report_push_pb"), std::string::npos);
+    EXPECT_NE(vector.source.find("__npu_check_probe_push_pb"), std::string::npos);
     EXPECT_NE(vector.source.find("PIPE_S), 482,"), std::string::npos);
-    EXPECT_NE(vector.sourceMap.find("apiId=482 symbol=__sanitizer_report_push_pb"), std::string::npos);
-    EXPECT_EQ(vector.sourceMap.find("apiId=480 symbol=__sanitizer_report_push_pb"), std::string::npos);
+    EXPECT_NE(vector.sourceMap.find("apiId=482 symbol=__npu_check_probe_push_pb"), std::string::npos);
+    EXPECT_EQ(vector.sourceMap.find("apiId=480 symbol=__npu_check_probe_push_pb"), std::string::npos);
     EXPECT_NE(vector.source.find("x1, x2, x3, x4, 0UL"), std::string::npos);
-    EXPECT_NE(vector.source.find("__sanitizer_report_vf"), std::string::npos);
+    EXPECT_NE(vector.source.find("__npu_check_probe_vf"), std::string::npos);
     EXPECT_NE(vector.source.find("entryPc, instructionCount, 0UL, 0UL, 0UL"), std::string::npos);
 }
 
@@ -300,7 +298,7 @@ TEST(ProbeSourceGenerator, CapturesVectorMasksWithoutSelectingScalarGroup)
     ASSERT_TRUE(generated.success);
     const auto bindings = BindingSymbols({ProbeGroup::Vector});
     for (unsigned index = 0; index < 2; ++index) {
-        const auto symbol = "__sanitizer_report_move_mask_" + std::to_string(index);
+        const auto symbol = "__npu_check_probe_move_mask_" + std::to_string(index);
         EXPECT_NE(std::find(bindings.begin(), bindings.end(), symbol), bindings.end());
         const auto definition = FindProbeDefinition(generated.source, symbol);
         ASSERT_FALSE(definition.empty());
@@ -319,9 +317,9 @@ TEST(ProbeSourceGenerator, IncludesMovemask93Binding)
     const auto generated = GenerateProbeSource("dav-3510", ProbeGroup::Vector);
     ASSERT_TRUE(generated.success);
     const auto bindings = BindingSymbols({ProbeGroup::Vector});
-    EXPECT_NE(std::find(bindings.begin(), bindings.end(), "__sanitizer_report_movemask"), bindings.end());
-    EXPECT_NE(generated.sourceMap.find("apiId=93 symbol=__sanitizer_report_movemask\n"), std::string::npos);
-    const auto definition = FindProbeDefinition(generated.source, "__sanitizer_report_movemask");
+    EXPECT_NE(std::find(bindings.begin(), bindings.end(), "__npu_check_probe_movemask"), bindings.end());
+    EXPECT_NE(generated.sourceMap.find("apiId=93 symbol=__npu_check_probe_movemask\n"), std::string::npos);
+    const auto definition = FindProbeDefinition(generated.source, "__npu_check_probe_movemask");
     ASSERT_FALSE(definition.empty());
     EXPECT_NE(definition.find("uint64_t maskHigh, uint64_t maskLow)"), std::string_view::npos);
     EXPECT_NE(definition.find("DeviceInstructionCategory::RegisterState"), std::string_view::npos);

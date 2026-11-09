@@ -260,24 +260,24 @@ TEST(CtrlbinGeneratorTest, FiltersBindingsToSelectedProbeGroups)
     boost::filesystem::remove(path);
 
     const auto mte1Symbols = BindingSymbols({ProbeGroup::Mte1});
-    EXPECT_EQ(std::find(mte1Symbols.begin(), mte1Symbols.end(), "__sanitizer_report_set_padding"), mte1Symbols.end());
+    EXPECT_EQ(std::find(mte1Symbols.begin(), mte1Symbols.end(), "__npu_check_probe_set_padding"), mte1Symbols.end());
 
     const auto scalarSymbols = BindingSymbols({ProbeGroup::Scalar});
     ASSERT_FALSE(scalarSymbols.empty());
     EXPECT_NE(
-        std::find(scalarSymbols.begin(), scalarSymbols.end(), "__sanitizer_report_set_padding"), scalarSymbols.end());
+        std::find(scalarSymbols.begin(), scalarSymbols.end(), "__npu_check_probe_set_padding"), scalarSymbols.end());
     EXPECT_NE(
-        std::find(scalarSymbols.begin(), scalarSymbols.end(), "__sanitizer_report_set_pad_cnt_nddma"),
+        std::find(scalarSymbols.begin(), scalarSymbols.end(), "__npu_check_probe_set_pad_cnt_nddma"),
         scalarSymbols.end());
     EXPECT_EQ(
-        std::find(scalarSymbols.begin(), scalarSymbols.end(), "__sanitizer_report_set_l1_2d_b16"), scalarSymbols.end());
-    EXPECT_NE(std::find(symbols.begin(), symbols.end(), "__sanitizer_report_set_l1_2d_b16"), symbols.end());
+        std::find(scalarSymbols.begin(), scalarSymbols.end(), "__npu_check_probe_set_l1_2d_b16"), scalarSymbols.end());
+    EXPECT_NE(std::find(symbols.begin(), symbols.end(), "__npu_check_probe_set_l1_2d_b16"), symbols.end());
 
     EXPECT_EQ(BindingSymbols({ProbeGroup::Matrix}).size(), 16U);
     const auto vectorSymbols = BindingSymbols({ProbeGroup::Vector});
     EXPECT_EQ(vectorSymbols.size(), 15U);
     EXPECT_NE(
-        std::find(vectorSymbols.begin(), vectorSymbols.end(), "__sanitizer_report_copy_ubuf_to_ubuf"),
+        std::find(vectorSymbols.begin(), vectorSymbols.end(), "__npu_check_probe_copy_ubuf_to_ubuf"),
         vectorSymbols.end());
 }
 
@@ -285,12 +285,12 @@ TEST(CtrlbinGeneratorTest, IncludesScalarStateBindingsForMte3AndFixpipeConsumers
 {
     const auto mte3Symbols = BindingSymbols({ProbeGroup::Mte3});
     EXPECT_NE(
-        std::find(mte3Symbols.begin(), mte3Symbols.end(), "__sanitizer_report_set_loop_size_ubtoout"),
+        std::find(mte3Symbols.begin(), mte3Symbols.end(), "__npu_check_probe_set_loop_size_ubtoout"),
         mte3Symbols.end());
 
     const auto fixpipeSymbols = BindingSymbols({ProbeGroup::Fixpipe});
     EXPECT_NE(
-        std::find(fixpipeSymbols.begin(), fixpipeSymbols.end(), "__sanitizer_report_set_loop3_para"),
+        std::find(fixpipeSymbols.begin(), fixpipeSymbols.end(), "__npu_check_probe_set_loop3_para"),
         fixpipeSymbols.end());
 }
 

@@ -11,7 +11,7 @@
 #include "trace_record.h"
 
 // MOV_L1_TO_FB, API ID 167.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_cbuf_to_fbuf(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_cbuf_to_fbuf(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __fbuf__ void* dst, __cbuf__ void* src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -20,7 +20,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // FIX_L0C_TO_L1.f32, API ID 168.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_matrix_cc_to_cbuf_f32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_matrix_cc_to_cbuf_f32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __cc__ float* src, uint64_t config0,
     uint64_t config1)
 {
@@ -30,7 +30,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // FIX_L0C_TO_L1.s32, API ID 169.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_matrix_cc_to_cbuf_s32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_matrix_cc_to_cbuf_s32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cbuf__ void* dst, __cc__ int32_t* src, uint64_t config0,
     uint64_t config1)
 {
@@ -40,7 +40,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // FIX_L0C_TO_OUT.f32, API ID 91.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_matrix_cc_to_gm_f32_a5(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_matrix_cc_to_gm_f32_a5(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __gm__ void* dst, __cc__ float* src, uint64_t config0,
     uint64_t config1)
 {
@@ -50,7 +50,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // FIX_L0C_TO_OUT.s32, API ID 92.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_matrix_cc_to_gm_s32_a5(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_matrix_cc_to_gm_s32_a5(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __gm__ void* dst, __cc__ int32_t* src, uint64_t config0,
     uint64_t config1)
 {
@@ -60,7 +60,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // FIX_L0C_TO_UB.f32, API ID 170.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_matrix_cc_to_ubuf_f32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_matrix_cc_to_ubuf_f32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __cc__ float* src, uint64_t config0,
     uint64_t config1)
 {
@@ -70,7 +70,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // FIX_L0C_TO_UB.s32, API ID 171.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_matrix_cc_to_ubuf_s32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_matrix_cc_to_ubuf_s32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __cc__ int32_t* src, uint64_t config0,
     uint64_t config1)
 {

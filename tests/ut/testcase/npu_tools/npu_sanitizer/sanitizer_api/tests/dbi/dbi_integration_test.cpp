@@ -48,13 +48,13 @@ if [ "$name" = llvm-objdump ]; then
   printf 'SYMBOL TABLE:\n'
   case "$2" in
     *group.o)
-      for symbol in $(sed -n 's/.*void \(__sanitizer_report_[A-Za-z0-9_]*\)(.*/\1/p' "$(dirname "$2")"/src/*.cpp); do
+      for symbol in $(sed -n 's/.*void \(__npu_check_probe_[A-Za-z0-9_]*\)(.*/\1/p' "$(dirname "$2")"/src/*.cpp); do
         if [ "$symbol" != "$DBI_FAKE_DROP_SYMBOL" ]; then
           printf '00000000 w F .text.probe 00000010 %s\n' "$symbol"
         fi
       done
       ;;
-    *probe.o) printf '00000000 w F .text.probe 00000010 __sanitizer_report_probe\n' ;;
+    *probe.o) printf '00000000 w F .text.probe 00000010 __npu_check_probe_probe\n' ;;
     *)
       if [ -n "$DBI_FAKE_KERNEL_SYMBOLS" ]; then
         printf '%b' "$DBI_FAKE_KERNEL_SYMBOLS"
@@ -516,7 +516,7 @@ TEST(DbiIntegrationTest, RejectsGeneratedGroupWithMissingWeakSymbol)
     WriteFile(root / "input.o", "kernel\n");
     WriteFile(root / "commands.log", "");
     ASSERT_EQ(setenv("DBI_FAKE_LOG", (root / "commands.log").c_str(), 1), 0);
-    ASSERT_EQ(setenv("DBI_FAKE_DROP_SYMBOL", "__sanitizer_report_copy_ubuf_to_cbuf", 1), 0);
+    ASSERT_EQ(setenv("DBI_FAKE_DROP_SYMBOL", "__npu_check_probe_copy_ubuf_to_cbuf", 1), 0);
 
     DbiRequest request{};
     request.inputKernel = (root / "input.o").string();

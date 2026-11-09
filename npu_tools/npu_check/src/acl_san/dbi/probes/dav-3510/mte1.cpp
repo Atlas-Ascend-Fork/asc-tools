@@ -10,7 +10,7 @@
 
 #include "trace_record.h"
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_ca_mx_2dv2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_ca_mx_2dv2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -19,7 +19,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
         reinterpret_cast<uint64_t>(src), config0, config1, 0UL);
 }
 
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_cb_mx_2dv2(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_cb_mx_2dv2(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -29,7 +29,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_L1_TO_BT.bf16, API ID 426.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_cbuf_to_bt_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_cbuf_to_bt_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, __cbuf__ void* src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -38,7 +38,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_L1_TO_BT.f16, API ID 425.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_cbuf_to_bt_f16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_cbuf_to_bt_f16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, __cbuf__ void* src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -47,7 +47,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_L1_TO_BT.s32, API ID 424.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_cbuf_to_bt_s32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_cbuf_to_bt_s32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, __cbuf__ void* src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -56,7 +56,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_L1_TO_BT.f32, API ID 423.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_cbuf_to_bt_f32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_cbuf_to_bt_f32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, __cbuf__ void* src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -65,7 +65,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // MOV_L1_TO_UB, API ID 158.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_copy_cbuf_to_ubuf(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_copy_cbuf_to_ubuf(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __cbuf__ void* src, uint64_t config)
 {
     aclsan::WriteTraceRecord(
@@ -74,7 +74,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0A_3DV2.b8, API ID 154.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_img2colv2_cbuf_to_ca_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_img2colv2_cbuf_to_ca_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -84,7 +84,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0A_3DV2.b16, API ID 153.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_img2colv2_cbuf_to_ca_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_img2colv2_cbuf_to_ca_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -94,7 +94,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0A_3DV2.b32, API ID 422.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_img2colv2_cbuf_to_ca_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_img2colv2_cbuf_to_ca_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -104,7 +104,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0B_3DV2.b8, API ID 156.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_img2colv2_cbuf_to_cb_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_img2colv2_cbuf_to_cb_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -114,7 +114,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0B_3DV2.b16, API ID 155.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_img2colv2_cbuf_to_cb_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_img2colv2_cbuf_to_cb_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -124,7 +124,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0B_3DV2.b32, API ID 157.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_img2colv2_cbuf_to_cb_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_img2colv2_cbuf_to_cb_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
@@ -134,7 +134,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0A_2DV2.b8, API ID 143.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_ca_2dv2_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_ca_2dv2_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1, uint64_t transpose)
 {
@@ -144,7 +144,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0A_2DV2.b16, API ID 142.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_ca_2dv2_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_ca_2dv2_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1, uint64_t transpose)
 {
@@ -154,7 +154,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0A_2DV2.b32, API ID 144.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_ca_2dv2_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_ca_2dv2_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1, uint64_t transpose)
 {
@@ -164,7 +164,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0A_2DV2.b4, API ID 141.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_ca_2dv2_b4(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_ca_2dv2_b4(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1, uint64_t transpose)
 {
@@ -174,7 +174,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0B_2DV2.b4, API ID 146.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_cb_2dv2_b4(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_cb_2dv2_b4(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1, uint64_t transpose)
 {
@@ -184,7 +184,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0B_2DV2.b8, API ID 147.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_cb_2dv2_b8(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_cb_2dv2_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1, uint64_t transpose)
 {
@@ -194,7 +194,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0B_2DV2.b16, API ID 145.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_cb_2dv2_b16(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_cb_2dv2_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1, uint64_t transpose)
 {
@@ -204,7 +204,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 }
 
 // LOAD_L1_TO_L0B_2DV2.b32, API ID 148.
-extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitizer_report_load_cbuf_to_cb_2dv2_b32(
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_cb_2dv2_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1, uint64_t transpose)
 {
@@ -215,7 +215,7 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __sanitiz
 
 // LOAD_L1_TO_L0B_2D_TRANSPOSE.b4, API ID 140.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_load_cbuf_to_cb_2d_transpose_b4(
+__npu_check_probe_load_cbuf_to_cb_2d_transpose_b4(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config,
     uint64_t fracStride)
 {
@@ -226,7 +226,7 @@ __sanitizer_report_load_cbuf_to_cb_2d_transpose_b4(
 
 // LOAD_L1_TO_L0B_2D_TRANSPOSE.b8, API ID 137.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_load_cbuf_to_cb_2d_transpose_b8(
+__npu_check_probe_load_cbuf_to_cb_2d_transpose_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config,
     uint64_t fracStride)
 {
@@ -237,7 +237,7 @@ __sanitizer_report_load_cbuf_to_cb_2d_transpose_b8(
 
 // LOAD_L1_TO_L0B_2D_TRANSPOSE.b16, API ID 138.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_load_cbuf_to_cb_2d_transpose_b16(
+__npu_check_probe_load_cbuf_to_cb_2d_transpose_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config,
     uint64_t fracStride)
 {
@@ -248,7 +248,7 @@ __sanitizer_report_load_cbuf_to_cb_2d_transpose_b16(
 
 // LOAD_L1_TO_L0B_2D_TRANSPOSE.b32, API ID 139.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void
-__sanitizer_report_load_cbuf_to_cb_2d_transpose_b32(
+__npu_check_probe_load_cbuf_to_cb_2d_transpose_b32(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __cb__ void* dst, __cbuf__ void* src, uint64_t config,
     uint64_t fracStride)
 {
