@@ -158,7 +158,7 @@ target_include_directories(npu_check_dbi_ctrlbin
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/dbi/ctrlbin
 )
 target_compile_options(npu_check_dbi_ctrlbin PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(npu_check_dbi_ctrlbin PUBLIC npu_check_dbi_probe_group Boost::filesystem)
+target_link_libraries(npu_check_dbi_ctrlbin PUBLIC npu_check_dbi_probe_group c_sec_static Boost::filesystem)
 set_source_files_properties(dbi/ctrlbin/ctrlbin_writer.cpp PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers)
 set_target_properties(npu_check_dbi_ctrlbin PROPERTIES
   POSITION_INDEPENDENT_CODE ON

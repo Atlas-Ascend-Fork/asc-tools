@@ -14,7 +14,8 @@
 #include <string>
 #include <type_traits>
 #include <array>
-#include <cstring>
+
+#include "securec.h"
 
 /**
  * @brief 将类型 T 的值序列化为字符串
@@ -29,7 +30,9 @@ template <
 inline Strings Serialize(const T& val)
 {
     std::array<char, sizeof(T)> bytes{};
-    std::memcpy(bytes.data(), &val, sizeof(T));
+    if (memcpy_s(bytes.data(), bytes.size(), &val, sizeof(T)) != EOK) {
+        return Strings(bytes.cbegin(), bytes.cbegin());
+    }
     return Strings(bytes.cbegin(), bytes.cend());
 }
 
@@ -64,8 +67,7 @@ inline bool Deserialize(const Strings& msg, T& val)
     if (msg.size() < size) {
         return false;
     }
-    std::memcpy(&val, msg.data(), size);
-    return true;
+    return memcpy_s(&val, sizeof(val), msg.data(), size) == EOK;
 }
 
 #endif // NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DBI_CTRLBIN_CTRLBIN_SERIALIZE_H

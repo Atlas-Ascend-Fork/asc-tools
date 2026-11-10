@@ -10,6 +10,7 @@
 
 #include "device_binary_registry.h"
 #include "file_io.h"
+#include "securec.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -73,7 +74,9 @@ bool ParseLoadSegments(const void* image, size_t imageBytes, std::vector<BinaryS
     }
     const auto* bytes = static_cast<const uint8_t*>(image);
     Elf64_Ehdr header{};
-    std::memcpy(&header, bytes, sizeof(header));
+    if (memcpy_s(&header, sizeof(header), bytes, sizeof(header)) != EOK) {
+        return false;
+    }
     if (std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0 || header.e_ident[EI_CLASS] != ELFCLASS64 ||
         header.e_ident[EI_DATA] != ELFDATA2LSB || header.e_ident[EI_VERSION] != EV_CURRENT ||
         (header.e_machine != EM_AARCH64 && header.e_machine != kAscendDeviceElfMachine) || header.e_phnum == 0 ||
@@ -85,7 +88,10 @@ bool ParseLoadSegments(const void* image, size_t imageBytes, std::vector<BinaryS
     }
     for (uint16_t index = 0; index < header.e_phnum; ++index) {
         Elf64_Phdr program{};
-        std::memcpy(&program, bytes + header.e_phoff + index * sizeof(program), sizeof(program));
+        if (memcpy_s(&program, sizeof(program), bytes + header.e_phoff + index * sizeof(program), sizeof(program)) !=
+            EOK) {
+            return false;
+        }
         if (program.p_type != PT_LOAD) {
             continue;
         }
