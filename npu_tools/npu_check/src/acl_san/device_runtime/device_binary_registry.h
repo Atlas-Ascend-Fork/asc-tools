@@ -18,8 +18,17 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
-namespace aclsan::device_runtime {
+namespace aclsan {
+
+struct BinarySegment {
+    uint64_t offset = 0;
+    uint64_t bytes = 0;
+    uint32_t flags = 0;
+};
+
+namespace device_runtime {
 
 class DeviceBinaryRegistry final {
 public:
@@ -36,6 +45,8 @@ public:
     bool RecordLoadedImage(uintptr_t binary, const void* image, size_t bytes) noexcept;
     bool GetFunctionReadOnlySections(
         uintptr_t function, uintptr_t& binary, std::vector<BinarySectionRange>& sections) const;
+    bool GetFunctionActualBinary(
+        uintptr_t function, uintptr_t& binary, std::vector<BinarySegment>& segments) const noexcept;
     void RecordBinaryFunctionLookup(uintptr_t binary, uintptr_t function, const char* functionName = nullptr) noexcept;
     void RecordLatestBinaryFunctionLookup(uintptr_t function) noexcept;
     bool GetFunctionTraceArgumentOffset(uintptr_t function, uint32_t& traceArgumentOffset) const noexcept;
@@ -50,6 +61,8 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace aclsan::device_runtime
+} // namespace device_runtime
+
+} // namespace aclsan
 
 #endif // NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_RUNTIME_DEVICE_BINARY_REGISTRY_H

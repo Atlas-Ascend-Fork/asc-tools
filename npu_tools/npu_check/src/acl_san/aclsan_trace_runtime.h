@@ -30,6 +30,8 @@ class Dav3510RegisterStateManager;
 
 namespace aclsan {
 
+struct BinarySegment;
+
 namespace device_runtime {
 struct CallStackResult;
 }
@@ -83,6 +85,15 @@ void DispatchTraceRecords(
     const std::vector<InternalMemoryRange>* readOnlyBinaryRanges = nullptr) noexcept;
 
 void RecordTraceLoadedImage(aclrtBinHandle binary, const void* image, size_t bytes) noexcept;
+// 登记运行时为已加载 device ELF 实际占用的 GM 区间（公共 RESOURCE 事件），并在每次 launch 上计数。
+// 同一 binary 只登记一次；stream 同步后扣减在途计数，计数归零时释放。
+void AcquireTraceLaunchResources(
+    const PreparedTraceLaunch& prepared, const void* function, const void* stream) noexcept;
+bool RegisterTraceLoadedImageResources(
+    uint32_t deviceId, uintptr_t binary, uintptr_t base, const std::vector<BinarySegment>& segments,
+    const void* stream) noexcept;
+void ReleaseTraceStreamResources(const void* stream) noexcept;
+void ReleaseTraceDeviceResources(uint32_t deviceId) noexcept;
 
 void RecordTraceBinaryLoadFromData(
     aclrtBinHandle binary, bool instrumented, uint32_t traceArgumentOffset, const void* image,

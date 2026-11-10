@@ -11,7 +11,11 @@
 #include "device_binary_registry.h"
 #include "file_io.h"
 
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <elf.h>
+#include <limits>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <mutex>
@@ -57,6 +61,71 @@ bool WriteImage(const fs::path& destination, const void* image, size_t imageByte
         destination.string(), std::string_view(static_cast<const char*>(image), imageBytes));
 }
 
+bool ParseLoadSegments(const void* image, size_t imageBytes, std::vector<BinarySegment>& segments)
+{
+    constexpr size_t kMaxElfProgramHeaders = 4096;
+    // Observed Ascend device ELF machine ID; current binutils does not name it.
+    constexpr uint16_t kAscendDeviceElfMachine = 0x1029;
+    segments.clear();
+    std::vector<BinarySegment> parsed;
+    if (image == nullptr || imageBytes < sizeof(Elf64_Ehdr)) {
+        return false;
+    }
+    const auto* bytes = static_cast<const uint8_t*>(image);
+    Elf64_Ehdr header{};
+    std::memcpy(&header, bytes, sizeof(header));
+    if (std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0 || header.e_ident[EI_CLASS] != ELFCLASS64 ||
+        header.e_ident[EI_DATA] != ELFDATA2LSB || header.e_ident[EI_VERSION] != EV_CURRENT ||
+        (header.e_machine != EM_AARCH64 && header.e_machine != kAscendDeviceElfMachine) || header.e_phnum == 0 ||
+        header.e_phnum > kMaxElfProgramHeaders || header.e_phentsize != sizeof(Elf64_Phdr)) {
+        return false;
+    }
+    if (header.e_phoff > imageBytes || header.e_phnum > (imageBytes - header.e_phoff) / sizeof(Elf64_Phdr)) {
+        return false;
+    }
+    for (uint16_t index = 0; index < header.e_phnum; ++index) {
+        Elf64_Phdr program{};
+        std::memcpy(&program, bytes + header.e_phoff + index * sizeof(program), sizeof(program));
+        if (program.p_type != PT_LOAD) {
+            continue;
+        }
+        if (program.p_filesz > program.p_memsz || program.p_offset > imageBytes ||
+            program.p_filesz > imageBytes - program.p_offset ||
+            program.p_vaddr > std::numeric_limits<uint64_t>::max() - program.p_memsz) {
+            return false;
+        }
+        if (program.p_memsz == 0) {
+            continue;
+        }
+        parsed.push_back({program.p_vaddr, program.p_memsz, program.p_flags});
+    }
+    if (parsed.empty()) {
+        return false;
+    }
+    std::sort(parsed.begin(), parsed.end(), [](const BinarySegment& left, const BinarySegment& right) {
+        return left.offset < right.offset || (left.offset == right.offset && left.bytes < right.bytes);
+    });
+    for (size_t index = 1; index < parsed.size(); ++index) {
+        const auto& previous = parsed[index - 1];
+        const auto& current = parsed[index];
+        const uint64_t previousEnd = previous.offset + previous.bytes;
+        const uint64_t currentEnd = current.offset + current.bytes;
+        if (current.offset < previousEnd &&
+            (current.offset != previous.offset || currentEnd != previousEnd || current.flags != previous.flags)) {
+            return false;
+        }
+    }
+    parsed.erase(
+        std::unique(
+            parsed.begin(), parsed.end(),
+            [](const BinarySegment& left, const BinarySegment& right) {
+                return left.offset == right.offset && left.bytes == right.bytes && left.flags == right.flags;
+            }),
+        parsed.end());
+    segments = std::move(parsed);
+    return true;
+}
+
 void RemoveDirectory(const std::string& directory) noexcept
 {
     if (directory.empty()) {
@@ -76,6 +145,11 @@ struct DeviceBinaryRegistry::Impl {
         std::string sessionDirectory;
         std::unique_ptr<DeviceSymbolizer> symbolizer;
         std::string symbolizerError = "invalid_state";
+        std::vector<BinarySegment> actualSegments;
+    };
+
+    struct LoadedImage {
+        std::vector<BinarySegment> segments;
     };
 
     mutable std::mutex mutex;
@@ -85,14 +159,14 @@ struct DeviceBinaryRegistry::Impl {
     std::unordered_map<uintptr_t, uintptr_t> functionBinaries;
     std::unordered_map<uintptr_t, std::string> functionNames;
     std::unordered_map<uintptr_t, std::vector<BinarySectionRange>> readOnlySections;
+    std::unordered_map<uintptr_t, LoadedImage> actualSegments;
 
     uint64_t AllocateBinaryId() noexcept
     {
-        const uint64_t id = nextBinaryId++;
         if (nextBinaryId == 0) {
-            nextBinaryId = 1;
+            return 0;
         }
-        return id;
+        return nextBinaryId++;
     }
 
     void RemoveOwnedFunctions(uintptr_t binary) noexcept
@@ -126,10 +200,20 @@ bool DeviceBinaryRegistry::RecordBinaryLoadFromData(
     }
     try {
         std::lock_guard<std::mutex> lock(impl_->mutex);
+        const auto actual = impl_->actualSegments.find(binary);
         Impl::BinaryEntry entry;
         entry.binaryId = impl_->AllocateBinaryId();
+        if (entry.binaryId == 0) {
+            return false;
+        }
         entry.instrumented = instrumented;
         entry.traceArgumentOffset = traceArgumentOffset;
+        if (instrumented && actual != impl_->actualSegments.end()) {
+            entry.actualSegments = std::move(actual->second.segments);
+        }
+        if (actual != impl_->actualSegments.end()) {
+            impl_->actualSegments.erase(actual);
+        }
         if (instrumented) {
             const fs::path workRoot = WorkRoot();
             const fs::path session =
@@ -161,10 +245,12 @@ bool DeviceBinaryRegistry::RecordBinaryLoadFromData(
                 entry.symbolizerError = "source_image_unavailable";
             }
         }
-
-        const auto existing = impl_->binaries.find(binary);
-        if (existing != impl_->binaries.end()) {
-            RemoveDirectory(existing->second.sessionDirectory);
+        if (!instrumented) {
+            (void)ParseLoadSegments(image, imageBytes, entry.actualSegments);
+        }
+        const auto replaced = impl_->binaries.find(binary);
+        if (replaced != impl_->binaries.end()) {
+            RemoveDirectory(replaced->second.sessionDirectory);
             impl_->RemoveOwnedFunctions(binary);
         }
         impl_->binaries[binary] = std::move(entry);
@@ -185,8 +271,9 @@ void DeviceBinaryRegistry::RecordBinaryUnload(uintptr_t binary) noexcept
     }
     try {
         std::lock_guard<std::mutex> lock(impl_->mutex);
-        impl_->readOnlySections.erase(binary);
         const auto found = impl_->binaries.find(binary);
+        impl_->readOnlySections.erase(binary);
+        impl_->actualSegments.erase(binary);
         if (found == impl_->binaries.end()) {
             return;
         }
@@ -241,16 +328,22 @@ bool DeviceBinaryRegistry::RecordLoadedImage(uintptr_t binary, const void* image
     try {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         impl_->readOnlySections.erase(binary);
+        impl_->actualSegments.erase(binary);
         if (binary == 0 || image == nullptr || bytes == 0) {
             return false;
         }
         std::vector<BinarySectionRange> sections;
         std::string diagnostic;
-        if (!GetReadOnlyBinarySections(std::string(static_cast<const char*>(image), bytes), sections, diagnostic)) {
-            return false;
+        const bool sectionsValid =
+            GetReadOnlyBinarySections(std::string(static_cast<const char*>(image), bytes), sections, diagnostic);
+        if (sectionsValid) {
+            impl_->readOnlySections[binary] = std::move(sections);
         }
-        impl_->readOnlySections[binary] = std::move(sections);
-        return true;
+        std::vector<BinarySegment> actual;
+        if (ParseLoadSegments(image, bytes, actual)) {
+            impl_->actualSegments[binary] = {std::move(actual)};
+        }
+        return sectionsValid;
     } catch (...) {
         return false;
     }
@@ -273,6 +366,32 @@ bool DeviceBinaryRegistry::GetFunctionReadOnlySections(
     binary = owner->second;
     sections = found->second;
     return true;
+}
+
+bool DeviceBinaryRegistry::GetFunctionActualBinary(
+    uintptr_t function, uintptr_t& binary, std::vector<BinarySegment>& segments) const noexcept
+{
+    binary = 0;
+    segments.clear();
+    if (function == 0) {
+        return false;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        const auto owner = impl_->functionBinaries.find(function);
+        if (owner == impl_->functionBinaries.end()) {
+            return false;
+        }
+        const auto loaded = impl_->binaries.find(owner->second);
+        if (loaded == impl_->binaries.end() || loaded->second.actualSegments.empty()) {
+            return false;
+        }
+        binary = owner->second;
+        segments = loaded->second.actualSegments;
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 bool DeviceBinaryRegistry::GetFunctionName(uintptr_t function, std::string& functionName) const noexcept
@@ -329,6 +448,7 @@ void DeviceBinaryRegistry::Reset() noexcept
         }
         impl_->binaries.clear();
         impl_->readOnlySections.clear();
+        impl_->actualSegments.clear();
         impl_->functionBinaries.clear();
         impl_->latestBinary = 0;
     } catch (...) {

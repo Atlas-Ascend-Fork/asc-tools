@@ -12,7 +12,9 @@
 
 #include "device_runtime/device_binary_registry.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <cstring>
 #include <elf.h>
 #include <boost/filesystem.hpp>
@@ -30,6 +32,67 @@ namespace {
 const std::vector<uint8_t>& DeviceImage()
 {
     static const std::vector<uint8_t> image{0x7f, 'E', 'L', 'F', 1, 2, 3, 4};
+    return image;
+}
+
+struct PtLoadSpec {
+    uint64_t offset;
+    uint64_t fileBytes;
+    uint64_t memoryBytes;
+    uint64_t address;
+    bool alias = false;
+};
+
+// 构造带 PT_LOAD 段的 synthetic ELF64 镜像；镜像大小为所有段文件末端的最大值。
+std::vector<uint8_t> PtLoadImage(
+    uint16_t machine = 0x1029, uint64_t fileBytes = 0x100, uint64_t memoryBytes = 0x140, uint64_t address = 0x3000,
+    bool addAlias = false)
+{
+    const std::vector<PtLoadSpec> loads{
+        {0x0, fileBytes, memoryBytes, address, false},
+        {0x100, 0x80, 0x80, address + 0x2000, false},
+    };
+    size_t phnum = loads.size();
+    size_t imageBytes = sizeof(Elf64_Ehdr) + phnum * sizeof(Elf64_Phdr);
+    for (const auto& load : loads) {
+        imageBytes = std::max<size_t>(imageBytes, static_cast<size_t>(load.offset + load.fileBytes));
+    }
+    if (addAlias) {
+        imageBytes = std::max<size_t>(imageBytes, sizeof(Elf64_Ehdr) + (phnum + 1) * sizeof(Elf64_Phdr));
+    }
+    std::vector<uint8_t> image(imageBytes, 0);
+    Elf64_Ehdr header{};
+    std::memcpy(header.e_ident, ELFMAG, SELFMAG);
+    header.e_ident[EI_CLASS] = ELFCLASS64;
+    header.e_ident[EI_DATA] = ELFDATA2LSB;
+    header.e_ident[EI_VERSION] = EV_CURRENT;
+    header.e_machine = machine;
+    header.e_version = EV_CURRENT;
+    header.e_ehsize = sizeof(header);
+    header.e_phoff = sizeof(header);
+    header.e_phentsize = sizeof(Elf64_Phdr);
+    header.e_phnum = static_cast<uint16_t>(addAlias ? phnum + 1 : phnum);
+    std::memcpy(image.data(), &header, sizeof(header));
+    for (size_t index = 0; index < phnum; ++index) {
+        Elf64_Phdr program{};
+        program.p_type = PT_LOAD;
+        program.p_flags = PF_R | PF_X;
+        program.p_offset = loads[index].offset;
+        program.p_vaddr = loads[index].address;
+        program.p_filesz = loads[index].fileBytes;
+        program.p_memsz = loads[index].memoryBytes;
+        std::memcpy(image.data() + header.e_phoff + index * sizeof(program), &program, sizeof(program));
+    }
+    if (addAlias) {
+        Elf64_Phdr alias{};
+        alias.p_type = PT_LOAD;
+        alias.p_flags = PF_R | PF_X;
+        alias.p_offset = loads[0].offset;
+        alias.p_vaddr = loads[0].address;
+        alias.p_filesz = loads[0].fileBytes;
+        alias.p_memsz = loads[0].memoryBytes;
+        std::memcpy(image.data() + header.e_phoff + phnum * sizeof(alias), &alias, sizeof(alias));
+    }
     return image;
 }
 
@@ -214,6 +277,78 @@ TEST(DeviceBinaryRegistry, ReadOnlySectionsRemainLaunchScopedAcrossUnloadAndReus
     ASSERT_TRUE(registry.RecordLoadedImage(1, image.data(), image.size()));
     registry.Reset();
     EXPECT_FALSE(registry.GetFunctionReadOnlySections(2, binary, next));
+}
+
+TEST(DeviceBinaryRegistry, ActualSegmentsExposePtLoadMemoryRanges)
+{
+    // 第三个 PT_LOAD 与首段完全相同，需去重；首段 p_memsz 覆盖 bss。
+    const auto image = PtLoadImage(0x1029, 0x100, 0x140, 0x3000, true);
+    aclsan::device_runtime::DeviceBinaryRegistry registry;
+    constexpr uintptr_t binary = 0x501;
+    constexpr uintptr_t function = 0x5010;
+    ASSERT_TRUE(registry.RecordBinaryLoadFromData(binary, false, 0, image.data(), image.size()));
+    registry.RecordBinaryFunctionLookup(binary, function, "segments_kernel");
+
+    uintptr_t resolvedBinary = 0;
+    std::vector<aclsan::BinarySegment> segments;
+    ASSERT_TRUE(registry.GetFunctionActualBinary(function, resolvedBinary, segments));
+    EXPECT_EQ(resolvedBinary, binary);
+    ASSERT_EQ(segments.size(), 2U);
+    EXPECT_EQ(segments[0].offset, 0x3000U);
+    EXPECT_EQ(segments[0].bytes, 0x140U); // p_memsz 覆盖 .bss
+    EXPECT_EQ(segments[0].flags, static_cast<uint32_t>(PF_R | PF_X));
+    EXPECT_EQ(segments[1].offset, 0x5000U);
+    EXPECT_EQ(segments[1].bytes, 0x80U);
+
+    registry.RecordBinaryUnload(binary);
+    EXPECT_FALSE(registry.GetFunctionActualBinary(function, resolvedBinary, segments));
+    EXPECT_EQ(resolvedBinary, 0U);
+    EXPECT_TRUE(segments.empty());
+}
+
+namespace {
+
+bool ActualSegmentsRejected(const std::vector<uint8_t>& image)
+{
+    aclsan::device_runtime::DeviceBinaryRegistry registry;
+    constexpr uintptr_t binary = 0x502;
+    constexpr uintptr_t function = 0x5020;
+    if (!registry.RecordBinaryLoadFromData(binary, false, 0, image.data(), image.size())) {
+        return true;
+    }
+    registry.RecordBinaryFunctionLookup(binary, function);
+    uintptr_t resolvedBinary = 0;
+    std::vector<aclsan::BinarySegment> segments;
+    EXPECT_FALSE(registry.GetFunctionActualBinary(function, resolvedBinary, segments));
+    return segments.empty();
+}
+
+} // namespace
+
+TEST(DeviceBinaryRegistry, ActualSegmentsRejectInvalidGeometry)
+{
+    const auto wrongMachine = PtLoadImage(EM_X86_64);
+    aclsan::device_runtime::DeviceBinaryRegistry registry;
+    constexpr uintptr_t binary = 0x503;
+    ASSERT_TRUE(registry.RecordBinaryLoadFromData(binary, false, 0, wrongMachine.data(), wrongMachine.size()));
+    EXPECT_FALSE(registry.RecordLoadedImage(binary, wrongMachine.data(), wrongMachine.size()));
+
+    EXPECT_TRUE(ActualSegmentsRejected(wrongMachine));                          // 非 device ELF 机器码
+    EXPECT_TRUE(ActualSegmentsRejected(PtLoadImage(0x1029, 0x180, 0x140)));     // p_filesz > p_memsz
+    EXPECT_TRUE(ActualSegmentsRejected(PtLoadImage(0x1029, 0x40, UINT64_MAX))); // p_memsz 溢出
+
+    auto overlapping = PtLoadImage(0x1029, 0x100, 0x140, 0x3000, true);
+    Elf64_Phdr partial{};
+    partial.p_type = PT_LOAD;
+    partial.p_flags = PF_R;
+    partial.p_offset = 0x0;
+    partial.p_vaddr = 0x3020; // 与首段部分重叠，不允许
+    partial.p_filesz = 0x40;
+    partial.p_memsz = 0x40;
+    const size_t partialOffset = sizeof(Elf64_Ehdr) + 2 * sizeof(Elf64_Phdr);
+    ASSERT_GE(overlapping.size(), partialOffset + sizeof(partial));
+    std::memcpy(overlapping.data() + partialOffset, &partial, sizeof(partial));
+    EXPECT_TRUE(ActualSegmentsRejected(overlapping));
 }
 
 TEST(DeviceBinaryRegistry, Main)

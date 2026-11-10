@@ -31,6 +31,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -60,10 +61,27 @@ struct PendingTrace {
     std::vector<InternalMemoryRange> readOnlyBinaryRanges;
 };
 
+struct LoadedImageRegion {
+    void* address = nullptr;
+    uint64_t bytes = 0;
+    uint64_t resourceId = 0;
+};
+
+// 运行时为已加载 device ELF 占用的 GM 区间，通过公共 RESOURCE 事件登记给分析侧。
+struct LoadedImageResource {
+    uint32_t deviceId = 0;
+    uintptr_t binary = 0;
+    std::vector<LoadedImageRegion> regions;
+};
+
 struct TraceRuntimeState {
     std::mutex mutex;
     uint64_t nextLaunchId = 1;
     std::vector<PendingTrace> pending;
+    std::map<uintptr_t, LoadedImageResource> loadedImages;
+    std::map<uintptr_t, size_t> loadedImageLaunches;
+    std::map<uintptr_t, std::map<uintptr_t, size_t>> streamLoadedImageLaunches;
+    uint64_t nextResourceId = 1;
 };
 
 TraceRuntimeState& State()
@@ -78,6 +96,94 @@ device_runtime::DeviceBinaryRegistry& DeviceBinaries()
     return binaries;
 }
 
+constexpr const char* kLoadedImageApiName = "aclsanLoadedImage";
+
+AclsanResourceData MakeLoadedImageResourceData(
+    const LoadedImageResource& image, const LoadedImageRegion& region) noexcept
+{
+    AclsanResourceData data{};
+    data.common.version = ACLSAN_API_VERSION;
+    data.common.size = static_cast<uint32_t>(sizeof(AclsanResourceData));
+    data.common.apiName = kLoadedImageApiName;
+    data.common.result = ACL_SUCCESS;
+    data.common.correlationId = 0;
+    data.ptr = region.address;
+    data.bytes = region.bytes;
+    data.memorySpace = ACLSAN_MEMORY_SPACE_DEVICE;
+    data.deviceId = image.deviceId;
+    data.resourceId = region.resourceId;
+    return data;
+}
+
+void AppendLoadedImageEvents(const LoadedImageResource& image, std::vector<AclsanResourceData>& events)
+{
+    events.reserve(events.size() + image.regions.size());
+    for (const LoadedImageRegion& region : image.regions) {
+        events.push_back(MakeLoadedImageResourceData(image, region));
+    }
+}
+
+void DispatchLoadedImageEvents(AclsanCallbackId callbackId, const std::vector<AclsanResourceData>& events)
+{
+    for (const AclsanResourceData& event : events) {
+        AclsanCallbackDispatcher::DispatchResource(callbackId, event);
+    }
+}
+
+bool ValidateLoadedImageSegments(uintptr_t base, const std::vector<BinarySegment>& segments) noexcept
+{
+    for (const BinarySegment& segment : segments) {
+        if (segment.offset > std::numeric_limits<uintptr_t>::max() - base ||
+            segment.bytes > std::numeric_limits<uint64_t>::max() - segment.offset) {
+            return false;
+        }
+    }
+    return true;
+}
+
+using BinaryAddressQuery = aclError (*)(aclrtBinHandle, void**, size_t*);
+
+bool QueryBinaryAddress(uintptr_t binary, uintptr_t& base, uint64_t& runtimeBytes) noexcept
+{
+    base = 0;
+    runtimeBytes = 0;
+    if (binary == 0) {
+        return false;
+    }
+    const auto invoke = [binary](BinaryAddressQuery query, void*& address, size_t& bytes) noexcept {
+        address = nullptr;
+        bytes = 0;
+        if (query == nullptr) {
+            return ACL_ERROR_FAILURE;
+        }
+        return query(reinterpret_cast<aclrtBinHandle>(binary), &address, &bytes);
+    };
+    void* address = nullptr;
+    size_t bytes = 0;
+    aclError status = ACL_ERROR_FAILURE;
+    const auto exported = reinterpret_cast<BinaryAddressQuery>(dlsym(RTLD_DEFAULT, "aclrtBinaryGetDevAddress"));
+    if (exported != nullptr) {
+        status = invoke(exported, address, bytes);
+    } else {
+        // 兼容旧版 runtime 未导出该符号：从已加载的 libacl_rt.so 中解析。
+        void* library = dlopen("libacl_rt.so", RTLD_NOW | RTLD_NOLOAD);
+        if (library != nullptr) {
+            status = invoke(
+                reinterpret_cast<BinaryAddressQuery>(dlsym(library, "aclrtBinaryGetDevAddress")), address, bytes);
+            dlclose(library);
+        }
+    }
+    const auto addressValue = reinterpret_cast<uintptr_t>(address);
+    if (status != ACL_SUCCESS || addressValue == 0 || bytes > UINTPTR_MAX - addressValue) {
+        ASCTOOL_DEBUG(
+            "acl_san binary mapping unavailable: binary=%p result=%d", reinterpret_cast<void*>(binary), status);
+        return false;
+    }
+    base = addressValue;
+    runtimeBytes = bytes;
+    return true;
+}
+
 std::vector<InternalMemoryRange> ResolveReadOnlyBinaryRanges(aclrtFuncHandle function)
 {
     uintptr_t binary = 0;
@@ -87,21 +193,9 @@ std::vector<InternalMemoryRange> ResolveReadOnlyBinaryRanges(aclrtFuncHandle fun
         return {};
     }
     // This read-only query is not hooked and needs no public callback/API-table entry.
-    void* library = dlopen("libacl_rt.so", RTLD_NOW | RTLD_NOLOAD);
-    using GetAddress = aclError (*)(aclrtBinHandle, void**, size_t*);
-    const auto query =
-        library == nullptr ? nullptr : reinterpret_cast<GetAddress>(dlsym(library, "aclrtBinaryGetDevAddress"));
-    void* address = nullptr;
-    size_t bytes = 0;
-    const aclError status =
-        query == nullptr ? ACL_ERROR_FAILURE : query(reinterpret_cast<aclrtBinHandle>(binary), &address, &bytes);
-    if (library != nullptr) {
-        dlclose(library);
-    }
-    const auto base = reinterpret_cast<uintptr_t>(address);
-    if (status != ACL_SUCCESS || base == 0 || bytes > UINTPTR_MAX - base) {
-        ASCTOOL_WARNING(
-            "acl_san binary ranges unavailable: binary=%p result=%d", reinterpret_cast<void*>(binary), status);
+    uintptr_t base = 0;
+    uint64_t bytes = 0;
+    if (!QueryBinaryAddress(binary, base, bytes)) {
         return {};
     }
     std::vector<InternalMemoryRange> ranges;
@@ -114,7 +208,8 @@ std::vector<InternalMemoryRange> ResolveReadOnlyBinaryRanges(aclrtFuncHandle fun
         ranges.push_back({reinterpret_cast<void*>(base + section.offset), static_cast<size_t>(section.bytes)});
         ASCTOOL_DEBUG(
             "acl_san read-only section: binary=%p base=%p offset=%llu bytes=%llu", reinterpret_cast<void*>(binary),
-            address, static_cast<unsigned long long>(section.offset), static_cast<unsigned long long>(section.bytes));
+            reinterpret_cast<void*>(base), static_cast<unsigned long long>(section.offset),
+            static_cast<unsigned long long>(section.bytes));
     }
     return ranges;
 }
@@ -131,6 +226,170 @@ uint64_t AllocateLaunchId()
     }
     return id;
 }
+
+} // namespace
+
+// 首次成功 launch 后登记 loaded-image 区间；重复 launch 只增加在途计数，不重复发 alloc。
+bool RegisterTraceLoadedImageResources(
+    uint32_t deviceId, uintptr_t binary, uintptr_t base, const std::vector<BinarySegment>& segments,
+    const void* stream) noexcept
+{
+    if (binary == 0 || base == 0 || segments.empty() || !ValidateLoadedImageSegments(base, segments)) {
+        return false;
+    }
+    const uintptr_t streamKey = reinterpret_cast<uintptr_t>(stream);
+    std::vector<AclsanResourceData> allocated;
+    bool insertedImage = false;
+    try {
+        TraceRuntimeState& state = State();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        const auto existing = state.loadedImages.find(binary);
+        if (existing != state.loadedImages.end()) {
+            ++state.loadedImageLaunches[binary];
+            ++state.streamLoadedImageLaunches[streamKey][binary];
+            return true;
+        }
+        LoadedImageResource image;
+        image.deviceId = deviceId;
+        image.binary = binary;
+        image.regions.reserve(segments.size());
+        for (const BinarySegment& segment : segments) {
+            if (state.nextResourceId == 0) {
+                state.nextResourceId = 1;
+            }
+            image.regions.push_back(
+                {reinterpret_cast<void*>(base + static_cast<uintptr_t>(segment.offset)), segment.bytes,
+                 state.nextResourceId++});
+        }
+        const auto inserted = state.loadedImages.emplace(binary, std::move(image)).first;
+        insertedImage = true;
+        state.loadedImageLaunches[binary] = 1;
+        state.streamLoadedImageLaunches[streamKey][binary] = 1;
+        AppendLoadedImageEvents(inserted->second, allocated);
+    } catch (...) {
+        if (insertedImage) {
+            // 事件生成失败时不保留登记，避免后续 release 找不到配对 alloc 而漏报。
+            TraceRuntimeState& state = State();
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.loadedImages.erase(binary);
+            state.loadedImageLaunches.erase(binary);
+            const auto streamEntry = state.streamLoadedImageLaunches.find(streamKey);
+            if (streamEntry != state.streamLoadedImageLaunches.end()) {
+                streamEntry->second.erase(binary);
+                if (streamEntry->second.empty()) {
+                    state.streamLoadedImageLaunches.erase(streamEntry);
+                }
+            }
+        }
+        ASCTOOL_ERROR("acl_san loaded image registration failed: binary=%p", reinterpret_cast<void*>(binary));
+        return false;
+    }
+    DispatchLoadedImageEvents(ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, allocated);
+    return true;
+}
+
+void AcquireTraceLaunchResources(const PreparedTraceLaunch& prepared, const void* function, const void* stream) noexcept
+{
+    // 只有插桩 launch 才会产生设备侧分析记录，因此只在该分析窗口内登记 loaded-image 区间。
+    if (!prepared.instrumented || function == nullptr) {
+        return;
+    }
+    try {
+        uintptr_t binary = 0;
+        std::vector<BinarySegment> segments;
+        if (!DeviceBinaries().GetFunctionActualBinary(reinterpret_cast<uintptr_t>(function), binary, segments)) {
+            ASCTOOL_DEBUG("acl_san loaded image unavailable: function=%p", function);
+            return;
+        }
+        uintptr_t base = 0;
+        uint64_t runtimeBytes = 0;
+        if (!QueryBinaryAddress(binary, base, runtimeBytes)) {
+            return;
+        }
+        for (const BinarySegment& segment : segments) {
+            if (segment.offset > runtimeBytes || segment.bytes > runtimeBytes - segment.offset) {
+                ASCTOOL_WARNING(
+                    "acl_san loaded image segment exceeds binary mapping: binary=%p", reinterpret_cast<void*>(binary));
+                return;
+            }
+        }
+        (void)RegisterTraceLoadedImageResources(prepared.deviceId, binary, base, segments, stream);
+    } catch (...) {
+        ASCTOOL_ERROR("acl_san loaded image acquire failed: function=%p", function);
+    }
+}
+
+// stream 同步后按 stream 扣减在途计数；某个 binary 计数归零时发 free，下次 launch 重新 alloc。
+void ReleaseTraceStreamResources(const void* stream) noexcept
+{
+    const uintptr_t streamKey = reinterpret_cast<uintptr_t>(stream);
+    std::vector<AclsanResourceData> released;
+    try {
+        TraceRuntimeState& state = State();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        const auto streamEntry = state.streamLoadedImageLaunches.find(streamKey);
+        if (streamEntry == state.streamLoadedImageLaunches.end()) {
+            return;
+        }
+        for (const auto& entry : streamEntry->second) {
+            const uintptr_t binary = entry.first;
+            const auto total = state.loadedImageLaunches.find(binary);
+            if (total == state.loadedImageLaunches.end()) {
+                continue;
+            }
+            total->second -= std::min(entry.second, total->second);
+            if (total->second != 0) {
+                continue;
+            }
+            const auto image = state.loadedImages.find(binary);
+            if (image == state.loadedImages.end()) {
+                continue;
+            }
+            AppendLoadedImageEvents(image->second, released);
+            state.loadedImages.erase(image);
+            state.loadedImageLaunches.erase(total);
+        }
+        state.streamLoadedImageLaunches.erase(streamEntry);
+    } catch (...) {
+        ASCTOOL_ERROR("acl_san loaded image release failed: stream=%p", stream);
+    }
+    DispatchLoadedImageEvents(ACLSAN_CBID_RESOURCE_MEMORY_FREE, released);
+}
+
+// reset 兜底：设备内存整体失效时释放该 device 上所有 loaded-image 登记。
+void ReleaseTraceDeviceResources(uint32_t deviceId) noexcept
+{
+    std::vector<AclsanResourceData> released;
+    try {
+        TraceRuntimeState& state = State();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        for (auto image = state.loadedImages.begin(); image != state.loadedImages.end();) {
+            if (image->second.deviceId != deviceId) {
+                ++image;
+                continue;
+            }
+            const uintptr_t binary = image->first;
+            AppendLoadedImageEvents(image->second, released);
+            state.loadedImageLaunches.erase(binary);
+            for (auto& stream : state.streamLoadedImageLaunches) {
+                stream.second.erase(binary);
+            }
+            image = state.loadedImages.erase(image);
+        }
+        for (auto stream = state.streamLoadedImageLaunches.begin(); stream != state.streamLoadedImageLaunches.end();) {
+            if (stream->second.empty()) {
+                stream = state.streamLoadedImageLaunches.erase(stream);
+            } else {
+                ++stream;
+            }
+        }
+    } catch (...) {
+        ASCTOOL_ERROR("acl_san loaded image device release failed: device=%u", deviceId);
+    }
+    DispatchLoadedImageEvents(ACLSAN_CBID_RESOURCE_MEMORY_FREE, released);
+}
+
+namespace {
 
 // 为已经DBI插桩的kernel扩展HostArgs，在原始参数中插入隐藏的device trace buffer指针
 aclError ExpandArguments(
@@ -786,6 +1045,9 @@ void ResetTraceRuntimeState() noexcept
         TraceRuntimeState& state = State();
         std::lock_guard<std::mutex> lock(state.mutex);
         state.pending.clear();
+        state.loadedImages.clear();
+        state.loadedImageLaunches.clear();
+        state.streamLoadedImageLaunches.clear();
     }
     DeviceBinaries().Reset();
 }

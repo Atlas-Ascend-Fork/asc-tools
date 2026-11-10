@@ -261,6 +261,9 @@ set_tests_properties(npu_tools_utest PROPERTIES LABELS "npu_compute_ci_host" TIM
 target_link_options(npu_tools_utest PRIVATE
   -Wl,--export-dynamic-symbol=rtFunctionGetMetaInfo
   -Wl,--export-dynamic-symbol=rtFunctionGetMetaInfoSize
+  # loaded-image 区间 UT 用 asm 标签桩符号替代真实 aclrtBinaryGetDevAddress；
+  # 产品侧以 dlsym(RTLD_DEFAULT) 解析，需导出到动态符号表（先例见 npu_compute 测试）。
+  -Wl,--export-dynamic-symbol=aclrtBinaryGetDevAddress
   -Wl,--disable-new-dtags
   -Wl,--allow-shlib-undefined
   -Wl,--as-needed

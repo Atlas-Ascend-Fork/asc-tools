@@ -1019,19 +1019,24 @@ aclError aclrtLaunchKernelWithHostArgsHook(
                                 placeHolderArray;
     const size_t launchPlaceholderCount = prepared.instrumented ? prepared.placeholders.size() : placeHolderNum;
     const uint64_t launchId = prepared.launchId;
-    AclsanLaunchData beforeCallback = MakeLaunchData(
-        launchId, funcHandle, stream, "aclrtLaunchKernelWithHostArgs", numBlocks, ACL_SUCCESS,
-        "aclrtLaunchKernelWithHostArgs");
-    aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(beforeCallback);
     ASCTOOL_DEBUG(
         "aclrtLaunchKernelWithHostArgs: launch=%llu function=%p blocks=%u originalArgs=%zu traceOffset=%u "
         "originalPlaceholders=%zu materializedInputs=%zu launchArgs=%zu launchPlaceholders=%zu",
         static_cast<unsigned long long>(launchId), funcHandle, numBlocks, argsSize, prepared.traceArgumentOffset,
         placeHolderNum, prepared.hostInputs.size(), launchArgumentBytes, launchPlaceholderCount);
+    AclsanLaunchData beforeCallback = MakeLaunchData(
+        launchId, funcHandle, stream, "aclrtLaunchKernelWithHostArgs", numBlocks, ACL_SUCCESS,
+        "aclrtLaunchKernelWithHostArgs");
+    aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(beforeCallback);
     const aclError result = original(
         funcHandle, numBlocks, stream, config, launchArguments, launchArgumentBytes, launchPlaceholders,
         launchPlaceholderCount);
     deferred.Release();
+    // loaded-image 区间只有 launch 之后才能取到 base；登记发生在同一 stream 的 LAUNCH 事件
+    // 分发之前，因此 ALLOC 仍满足普通 allocation 的 HostOrder。
+    if (result == ACL_SUCCESS) {
+        aclsan::AcquireTraceLaunchResources(prepared, funcHandle, stream);
+    }
     ASCTOOL_DEBUG(
         "aclrtLaunchKernelWithHostArgs: function=%p blocks=%u stream=%p instrumented=%u result=%d", funcHandle,
         numBlocks, stream, static_cast<unsigned>(prepared.instrumented), result);
@@ -1099,6 +1104,9 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
         result = ACL_ERROR_FAILURE;
     }
     deferred.Release();
+    if (result == ACL_SUCCESS) {
+        aclsan::AcquireTraceLaunchResources(prepared, func, stream);
+    }
     std::string functionName;
     (void)aclsan::GetTraceFunctionName(func, functionName);
     const AclsanLaunchData callbackData = MakeLaunchData(
@@ -1129,6 +1137,7 @@ aclError aclrtSynchronizeStreamHook(aclrtStream stream) noexcept
         static_cast<unsigned long long>(collection.droppedRecordCount), static_cast<unsigned>(dbiCompletion));
     const AclsanSynchronizeData callbackData = MakeSynchronizeData("aclrtSynchronizeStream", stream, result);
     aclsan::AclsanCallbackDispatcher::DispatchSynchronizeEnd(callbackData);
+    aclsan::ReleaseTraceStreamResources(stream);
     return result;
 }
 
@@ -1153,6 +1162,7 @@ aclError aclrtSynchronizeStreamWithTimeoutHook(aclrtStream stream, int32_t timeo
         static_cast<unsigned long long>(collection.droppedRecordCount), static_cast<unsigned>(dbiCompletion));
     const AclsanSynchronizeData callbackData = MakeSynchronizeData("aclrtSynchronizeStreamWithTimeout", stream, result);
     aclsan::AclsanCallbackDispatcher::DispatchSynchronizeEnd(callbackData);
+    aclsan::ReleaseTraceStreamResources(stream);
     return result;
 }
 
@@ -1207,6 +1217,7 @@ aclError aclrtResetDeviceHook(int32_t deviceId) noexcept
         GetOriginalRuntimeFunction<aclrtResetDeviceFunc>(ACL_RT_API_aclrtResetDevice, "aclrtResetDevice");
     const aclError result = original(deviceId);
     if (result == ACL_SUCCESS) {
+        aclsan::ReleaseTraceDeviceResources(static_cast<uint32_t>(deviceId));
         aclsan::ResetTraceRuntimeState();
         ResetDeferredDevice(deviceId);
     }

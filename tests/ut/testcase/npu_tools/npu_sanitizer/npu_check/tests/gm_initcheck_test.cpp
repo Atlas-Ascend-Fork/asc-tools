@@ -253,6 +253,7 @@ TEST(LocalInitcheckTest, InvalidWritesDoNotChangeStateAndContextsStayIsolated)
     auto other = local;
     ++other.blockId;
     read.header.executor.blockId = other.blockId;
+    read.memoryOwner = read.header.executor;
     EXPECT_EQ(checker.CheckInstruction(other, {read}).reports.size(), 1U);
 }
 
