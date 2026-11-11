@@ -1,0 +1,2212 @@
+{
+  "skill_name": "tool-compile-debug",
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "title": "did-you-mean局部路径与反证",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\nLinux CANN 9.0工程当前问题已有诊断：fast_path.kind=compiler_suggested_rename。A：报错处实参、目标声明及接口要求都已吻合候选。B：目标声明显示候选接受另一种dtype，用户要求保留当前dtype。分别给出下一步和完成标准。可加载技能文档，不执行工程命令。",
+      "expected_output": "A可按replace局部修改并用run_verify或原构建命令真实编译验证，不强制追加无助于区分假设的搜索。B的声明反证要求撤销当前fast_path假设，查适用声明/调用关系，保留用户及已确认改动。compile_failure_fixed是编译层结论，仍核目标覆盖和接口/功能；有数值要求时独立验收。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "撤销",
+          "description": "需要识别并处理候选被声明否定"
+        },
+        {
+          "type": "contains",
+          "pattern": "真实编译",
+          "description": "不能把编过当完整任务验收"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "title": "kb_known_symbol与当前声明冲突",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n已有同问题诊断fast_path.kind=kb_known_symbol；修改后报参数不匹配。附带signature未列出的重载出现在当前9.0目标头，实参在子namespace定义。下一步如何取证和处理旧建议？可加载技能文档，不执行工程命令。",
+      "expected_output": "核当前目标头文件中的声明、namespace、实参类型与目标条件；附带signature只是候选证据，冲突时用当前有效声明反证并撤回旧假设。当前声明、消费方和任务要求足以选定修法时局部修改并沿原配方编译，保持dtype与功能契约；还有定位或适用性缺口时，再按该缺口调用diagnose或查对应材料，不因错误文本变化固定增加一次脚本调用。原生命令和run_verify均可取得构建证据，不要求两者重复执行。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "title": "needs_localization不预设改名方向",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n跨文件编译失败，诊断kind=needs_localization，编译器建议名以V2结尾。接口规格明确公共名称必须保留V2，但另一个调用点仍用旧名。根据现有证据该改哪侧？若规格没有给出，又怎么办？可加载技能文档，不执行工程命令。",
+      "expected_output": "先核定义、调用和接口契约；已给规格时保留V2并修旧调用，后缀不能证明定义被改坏。规格缺失时查双方定义/使用关系，仍有会改变公共接口的未决选择才询问，不固定把定义改回原名。修改后沿原构建配方验证并检查接口保持；需要结构化收据时可用run_verify。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "title": "首诊、同问题复用、新问题重新诊断",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n在修复 Linux 上 Ascend C 自定义算子（CANN 9.0）的编译错误过程中，当前会话遇到五种状态：A只有首次build.log；B已有同工程/目标/问题状态diagnose且刚做编辑；C verify字段仍叫same_error_remaining，但完整日志出现全新符号及另一编译单元的错误；D只有原报错行号平移；E同一调用点的一次猜测改名失败，虽然verify报new_compile_error，但当前声明和完整日志已确认仍是原诊断定位的同一成员名错误，正确成员及其语义已明确。每种下一步是什么？可加载技能文档，不执行工程命令。",
+      "expected_output": "A默认以已有完整日志做一次不带探针或验证的诊断；仅首错、有效声明/使用方、原配方和保留契约的局部修法均明确无冲突才快路径。B沿原配方真实编译（可用run_verify）验证当前工作副本，无需重跑同一诊断。C依据新日志而非same_error_remaining字段判断：新单元/问题不满足足证快路径时重新诊断，不套旧fast_path。D复用适用诊断，行号平移本身不足以表明新错误。E复用仍适用的诊断，用实际声明纠正被证伪的试探并验证，不因文本或transition变化追加诊断。无法确认仍为同一问题时按新日志诊断后继续取证；无适用前态保持变化未知，不虚构before。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "title": "副本验证、必要回归与编译修复范围",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n在修复 Linux 上 Ascend C 自定义算子（CANN 9.0，Ascend910B1 工程）的编译错误后，修改当前工程准备验证，不另有patch文件。A：verify输出compile_passed，构建证据只证实Host编译参与，原任务另要求Kernel和数值正确；B：用户只要求修复编译，目标Kernel的编译证据完整，源码与声明足以确认接口和功能保持，没有未决补丁风险，输出compile_passed且无可比失败基线；C：验证启动后中断且无完整日志；D：有旧失败foo.cpp，但本次只编了无关helper，compile_passed且prior_failure_coverage=unconfirmed；E：另一个工程已编译通过，用户只问运行崩溃或精度偏差，没有编译失败。应如何报告与继续？B是否需要另做诊断、构建、NPU运行或数值测试？可加载技能文档，不执行工程命令。",
+      "expected_output": "验证最终源码，可沿原构建配方执行，也可通过run_verify在独占副本中执行；不要求额外patch文件，不把write_back当构建前提。A的Host通过不能证明目标Kernel参与或数值正确（故只判compile_passed），继续取得目标编译单元/依赖闭包；原任务另有数值验收时交回原流程，不把本skill扩成独立精度修复。B的compile_passed只确认本次编译层；缺可比失败基线时保留该工具状态，不改写成compile_failure_fixed。不为凑fixed标签追加诊断或构建，结合已有上下文判断编译修复完成；无未决补丁风险时无需追加NPU或数值测试——数值测试不是每个编译修复的固定门槛。C中断保持未确认，不用旧before判同错。D只证明本次所观测编译通过，prior_failure_coverage=unconfirmed表示旧失败文件覆盖未确认，不能声称旧失败已修复，按完整工程归属路径核依赖闭包，不拿别的同名文件抵充。E没有编译失败，纯运行或精度问题属于本技能范围外，由调用方处理。工具不自修复循环；完成后按编译修复的局部完成交回调用方（补丁、失败指纹、构建配方及证据索引）。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "compile_passed",
+          "description": "准确说明本次编译通过与原失败已修复的区别"
+        },
+        {
+          "type": "contains",
+          "pattern": "prior_failure_coverage",
+          "description": "旧失败文件覆盖未确认时不得声称原错误已修复"
+        },
+        {
+          "type": "contains",
+          "pattern": "无需",
+          "description": "数值测试不是每个编译修复的固定门槛（无未决补丁风险时不附加）"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 6,
+      "title": "未命中时按当前证据分流",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\nA只有首次原始编译日志；B同问题已有diagnose，category=template_error，没有fast_path；C diagnose输出error且category为空。分别说明处理顺序，避免把工具故障当未知编译类别。可加载技能文档，不执行工程命令。",
+      "expected_output": "A默认用已有完整失败日志单次diagnose，不加--run-probes或--verify；只有满足入口的足证快路径才直接修复。B复用已有诊断，按当前缺口读对应类别页或完整模板链，不为缺fast_path重复诊断或加载全KB。C依据error/stderr/退出码区分工具故障与工程失败，不把缺失category当未命中；明确路径/参数问题可修正一次，仍受环境或权限阻断时记录缺失能力并依原日志和源码继续。不为恢复工具绕权限、自动装依赖或反复换入口，也不让诊断工具故障阻止已有证据支持的原生修复验证。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 7,
+      "title": "短名未命中不能证明API本体不存在",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n9.0目标工程报no member named，聚合头没有导出这个名称，但低层头中可见同短名。怎样判断是namespace/入口/类型问题、目标门控，还是幻觉API？可加载技能文档，不执行工程命令。",
+      "expected_output": "核当前目标、完整namespace、声明头入口和实参类型，区分高层/低层调用及架构门控。近名、后缀或聚合头未导出都不是API本体不存在的充分证据。按需读references/knowledge/hallucinated-api.md、api-version-drift.md、soc-arch-gating.md，目标版本资料仍有缺口且宿主提供时，调用 CANNBOT `ascendc-docs-search` 技能核对声明与示例；已有本地证据足够时不追加协作，不能盲改为近名或删除功能。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 8,
+      "title": "版本域三分叉：9.1已核实、9.2-beta观察、8.x低于下限",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n用户分别报来三个 Ascend C 工程：甲的构建日志与 env 都指向 CANN 9.1.0；乙明确要求 CANN 9.2.0-beta.2；丙要求保留 CANN 8.0.RC1 的现有部署，日志也显示该版本。对这三个工程，本包知识分别能用到什么程度？哪些条目要按版本过滤、哪些只能作参考、哪些属于知识覆盖范围以外？结合 version_compatibility 的 status、resolution 与版本域登记表说明处置；是否必须让用户再次确认或升级后才能继续？可加载技能文档，不执行工程命令。",
+      "expected_output": "甲（9.1.0）：resolution=supported，status=match，域内已核实（verified_live，ceiling=9.1.0）；建议仍须按 since/until 过滤并核对当前声明与目标，不能外推为所有 API 或 SKU 都已验证。乙（9.2.0-beta.2）：resolution=ahead（watch，超 ceiling），即使 status=match，版本敏感知识仍只作参考，以目标版本 toolkit 头文件、调用契约和编译证据核实；保留用户明确目标，不擅自降级或重复确认。丙（8.0.RC1）：below_floor，status=mismatch，低于知识覆盖下限 9.0.0；保留通用日志定位和宿主基于实际 SDK 的修复能力，不把 9.0/9.1 的版本敏感建议直接套到 8.x，不强制升级。用户已明确保留 8.x 时继续按该版本资料与原配方排查；迁移只是需要现有授权支持的可选方案。仅当目标或接口、功能取舍无法由现有证据和授权确定时请求确认。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "9.1",
+          "description": "9.1.0 域内已核实，仍按 since/until 过滤并核对目标声明"
+        },
+        {
+          "type": "contains",
+          "pattern": "9.2",
+          "description": "ahead（如 9.2-beta）知识按软降级作参考"
+        },
+        {
+          "type": "contains",
+          "pattern": "below_floor",
+          "description": "低于下限（8.x）判 mismatch，版本敏感建议只作参考"
+        },
+        {
+          "type": "contains",
+          "pattern": "不强制升级",
+          "description": "低于知识下限不应阻断宿主依据实际 SDK 继续修复"
+        },
+        {
+          "type": "contains",
+          "pattern": "resolution",
+          "description": "match 不等于已核实，必须结合 resolution 判读"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 9,
+      "title": "标识符保留契约检查violated的判读",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n带前态的run_verify返回：本次编译通过，但transition是compile_passed而非compile_failure_fixed，reason=functionality_identifiers_removed，contract_check.status=violated，missing列出标识符MxScalePair（prior_error_sites=3），validation_scope.contract=violated。另一场景：missing为空，tolerated列出一个仅在单处报错后消失的标识符，status=ok。分别说明两个场景的语义与下一步处置。可加载技能文档，不执行工程命令。",
+      "expected_output": "第一场景说明本次观测到编译通过，但功能保留仍未确认：violated 是多处报错标识符消失的风险线索，不能直接判定删功能，也不能只记 old→new 映射就判修复完成。须结合修改前后源码、实际 SDK 声明和调用关系，区分合法全局改名与删除使用点两种形态；旧名是否在工程内声明仅是线索，不是充分判据。合法改名需证实新符号的参数、类型、调用路径、数据契约与用户所需功能一致，并确认最终源码进入目标编译。若发现删调用或 stub，恢复必要功能后正确修复并重验；若有补充修改、覆盖缺口或未决语义风险，补对应验证或相关既有回归。已有完整构建和功能保留证据时可说明人工复核结论并保留工具原始 violated，不为更改标签重复编译。第二场景的 tolerated 只说明单处标识符消失未触发该词法启发式，status=ok 不证明合法重命名或语义等价；仍核对差异、实际声明与必要契约，按本次编译证据和残留风险判断完成。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "tolerated",
+          "description": "tolerated 只表示词法检查未触发，不证明语义等价"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 10,
+      "title": "SoC门控与SIMT报错的技能协同",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\nAscend950 目标工程，SIMT kernel 代码报 SimtBlock 相关类型未声明；诊断给出 soc_arch_gate 裁决卡：换目标 --npu-arch=dav-3510 或按门控改实现，两者选一。此时应加载哪些可用技能来收集决策事实？给出技能名与各自用途，并说明本技能 diagnose/verify 的 --soc 参数应传什么、不能传什么。可加载技能文档，不执行工程命令。",
+      "expected_output": "宿主提供且架构事实有缺口时，调用 CANNBOT `npu-arch` 技能来确认芯片型号、NpuArch 与 __NPU_ARCH__ 的对应关系和代际特性，判断该类型在目标代际是否可用；SIMT调用契约仍有缺口且宿主提供时，调用 CANNBOT `ascendc-simt-best-practices` 技能来查 SIMT API 分类索引与线程排布范式，确认正确入口头；需要核声明且本地证据不足、宿主提供时，调用 CANNBOT `ascendc-docs-search` 技能来查目标版本声明与示例。--soc 传准确 SKU（如 Ascend950），不能填架构号 3510。用户已确定 Ascend950，先核真实编译参数是否偏离目标、入口和声明是否适用；裁决卡不授权改变既定目标或功能。仅现有证据与授权仍无法决定目标或接口取舍时请求确认，改后沿原配方验证，可用run_verify；协作技能不可用时继续根据当前SDK、源码与实际构建处理。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 11,
+      "title": "停滞时围绕未决问题取证与交接",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n同一首错已经过两轮「修改+run_verify」仍失败（transition=same_error_remaining），当前没有能区分假设的新证据，且怀疑是 API 用法/存在性知识不足。tool-compile-debug 此时必须做什么？动作顺序、报告内容、由谁执行、不应该做什么？可加载技能文档，不执行工程命令。",
+      "expected_output": "同一首错经两轮真实修改和构建仍无新证据，应停止同路径盲试；结构化诊断应在第一次直接修复仍同错时已触发，此时复用适用结果，未执行过且无工具阻断记录则先补诊断。核改动是否进入失败编译单元、影子定义和生成源，再明确能改变修法的API声明或调用契约问题。由修复agent带上已验证事实、尝试与反证、未决问题和证据位置继续查证；需要持久化或转交时保存交接报告，不把新建报告文件作为查本地SDK或协同的前置。宿主提供且确有资料缺口时，可调用 CANNBOT `ascendc-docs-search` 技能或 CANNBOT `ascendc-api-best-practices` 技能；不可得时继续查本地源码、SDK和适用资料。带回的新证据足以选修法时修改并按原配方编译，新问题使原诊断失效时按入口规则重新诊断。可用路线耗尽且必要证据仍缺失时，将事实、阻碍和下一项所需证据交回调用方；不能仅因两轮失败就终止可继续的修复，也不靠报告或技能切换次数证明进展。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 12,
+      "title": "CMake 构建配置错误首诊（正向）",
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\nLinux CANN 9.0 的 Ascend C 自定义算子工程执行 cmake 构建时报错：No rule to make target，CMakeLists 里已注册该算子。首先应该怎么做？可加载技能文档，不执行工程命令。",
+      "expected_output": "读取完整日志与原命令，必要时用诊断补定位线索；核对首错里的目标名与 CMakeLists 的算子注册、产物命名、依赖规则是否一致，检查构建目录与配置参数。No rule to make target 是构建工具错误，结合完整日志判断配置、生成或构建阶段，不仅凭短语固定为 CMake 配置失败；不臆改 kernel 源码。定位到具体原因后修复并沿原构建配方重新编译验证。",
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "CMake",
+          "description": "命中构建配置触发场景"
+        },
+        {
+          "type": "contains",
+          "pattern": "首错",
+          "description": "先定位首错再行动"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Tiling/Schema 结构一致性报错（正向）",
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n9.0 工程 host 侧编译报 TILING_DATA_FIELD_DEF 相关的结构不一致/tiling 报错，BuiltinTilingContainer 与工程 TilingData 定义对不上。应如何定位？可加载技能文档。",
+      "expected_output": "按 tiling 一致性类别处理：对照工程的 TilingData 结构定义与注册侧使用是否同源，核对字段名/类型/顺序及生产方和消费方的数据契约，不因名字带 tiling 就改 Schema。涉及结构重构且宿主可用时，调用 CANNBOT `ascendc-tiling-design` 技能核对设计方法；技能不可得时依据当前声明和生产方/消费方源码评估，不臆造字段。修改后沿原构建配方重新编译验证。",
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "tiling",
+          "description": "命中 Tiling 触发场景"
+        },
+        {
+          "type": "contains",
+          "pattern": "结构",
+          "description": "核对结构一致性"
+        },
+        {
+          "type": "contains",
+          "pattern": "字段名",
+          "description": "字段修复须核对真实定义，禁止臆造由 expected_output 的语义评审检查"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "链接期未定义符号错误（正向）",
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\nAscend C 工程编译到链接阶段报 undefined symbol / undefined reference，涉及自定义算子 host 侧入口。这类链接错误应怎么排查？可加载技能文档。",
+      "expected_output": "按链接错误类别定位：确认符号的定义文件是否参与编译、命名空间/ extern 声明与定义是否一致、库查找路径与链接顺序。区分是声明缺失、定义未编译还是查找路径问题，再按证据修复并真实编译验证。",
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "链接",
+          "description": "命中链接触发场景"
+        },
+        {
+          "type": "contains",
+          "pattern": "符号",
+          "description": "围绕符号定义与查找取证"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "打包/产物装配错误（正向）",
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n工程构建在打包阶段报错：自定义算子的 so/产物装配失败，提示缺少目标文件或清单不匹配。应如何处理？可加载技能文档。",
+      "expected_output": "按打包错误类别定位：核对产物清单与前序编译产物是否对应、目标文件是否生成、安装/打包配置是否引用了正确产物。先确认前序阶段真实成功，再修打包配置并按原配方复验。",
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "打包",
+          "description": "命中打包触发场景"
+        },
+        {
+          "type": "contains",
+          "pattern": "产物",
+          "description": "围绕产物清单取证"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Host/Kernel 侧错误分层（正向）",
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n同一个 Ascend C 工程里，怎么区分报错属于 host 侧还是 kernel 侧编译问题？分别该看什么证据？可加载技能文档。",
+      "expected_output": "按首错所在函数、声明和实际编译上下文区分 Host/Kernel：结合编译命令、目标、函数修饰、条件宏以及日志关联的声明判定，C++ 语义错误也可能发生在 kernel。文件后缀、目录名或编译器名称只作线索；混合编译单元和证据不足时保留 unknown，不凭 .asc 或 ccec/bisheng 名称直接定域。确认当前调用域后定位并沿原构建配方验证，避免混修。",
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "Host",
+          "description": "命中 Host/Kernel 分层场景"
+        },
+        {
+          "type": "contains",
+          "pattern": "kernel",
+          "description": "覆盖 kernel 侧"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "编译技能对独立精度请求的职责判读",
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n请查阅 tool-compile-debug 指引，评审该技能在以下请求下的处理范围：9.0 工程能正常编译通过，但算子输出全为 0、rtol/atol 不达标，需要排查精度。该技能应如何处理并结束或继续？只说明该技能的下一步，不实际执行排查工具。",
+      "expected_output": "这是独立精度问题，属于编译修复范围外。已有编译成功证据不需要重新诊断或重编，本技能不接管精度排查，也不指定接管技能；由调用方按原任务处理。",
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-env-check"
+        ]
+      },
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "精度",
+          "description": "识别当前是独立精度问题"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "编译技能对独立运行请求的职责判读",
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n请查阅 tool-compile-debug 指引，评审该技能在以下请求下的处理范围：工程编译已通过，运行时报 ACL_ERROR_RT_* 错误码，需要排查运行时环境与调用。该技能应如何处理并结束或继续？只说明该技能的下一步，不实际执行排查工具。",
+      "expected_output": "这是独立运行期错误，属于编译修复范围外。保留已有编译成功证据，由调用方按原任务处理，本技能不接管运行故障、不指定接管技能。只有后续取得新的编译失败证据或发现编译补丁回归，才进入相应的编译诊断或补丁验证。",
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-env-check"
+        ]
+      },
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "运行",
+          "description": "识别为运行期问题"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "本地命名证据充分时进入修补验证",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\nCANN 9.0工程编译失败：Host引用SharedTiling未声明，编译器建议SharedTilingV2。共享头只定义SharedTilingV2，两个实际消费方都用SharedTiling；该类型仅属本项目，无外部使用。字段为两个uint32_t，任务要求字段布局、Host/Kernel数据契约与计算不变。诊断已定位共享头，但fast_path=needs_localization、applicability=unknown。现在要怎么修和验证？是否还必须查完整SDK宏实现或调用其他技能？只说明下一步。",
+      "expected_output": "对照已给定义、两个消费方和任务要求，可直接以一致命名做最小修复（例如共享定义改回SharedTiling），保持字段、布局和计算不变，随后沿原配方真实编译并核对目标参与及产物。unknown不否定已充分的本地证据，无须先展开完整SDK宏、搜索上游历史或调用外技能。若发现实际外部契约冲突，再补对应声明或调用适用的CANNBOT技能；不能仅凭名字相似改类型或删使用点。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 20,
+      "title": "多目标配方与重复target参数拒绝",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n现有Ascend C工程无build.sh，原配方使用Release配置并构建add_float和add_int32，二者同一源文件但宏不同。你准备调用run_verify.sh并连续传--target add_float --target add_int32。CLI返回参数错误，本次没有新JSON；报告目录还有上次仅add_int32的compile_passed。如何继续原任务？请给出目标与参数处理方式、完成标准，不实际构建。",
+      "expected_output": "每次--target只接收一个目标，重复参数错误不是源码编译失败；旧JSON不代表本次执行。可分别验证add_float和add_int32，各传--cmake-arg=-DCMAKE_BUILD_TYPE=Release，分别保存本次结果并核对实际target/arch/宏配置；也可直接执行保留两目标的原配方，保存完整日志、返回码及产物。若项目本来有覆盖全部目标的脚本，则保留该脚本。不能删去一个目标、让默认all代替明确配方，或因工具参数限制停止任务；两种实例最终源码都经过真实编译才完成。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 21,
+      "title": "未确认状态按现有编译证据收口",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n补丁只改本项目内部类型名且定义与使用全部一致。run_verify JSON的transition=case_not_reproducible、after.returncode=0、built_arch=null，reason说明编译执行记录不足。A：本次隔离目录全新构建日志保存了原配方全部目标、最终Host和Device源的实际编译命令、明确dav-2201参数、真实编译退出0和新产物，满足任务且无数值要求。B：只执行Host打包，原任务要求的Device目标没有编译。分别怎样处理？另一次JSON为transition=compile_passed，但读取顶层compile_passed得到null，应怎样解释？",
+      "expected_output": "A先核已有日志和产物是否足以绑定最终源码、全部原目标与架构；题面证据完整可据其报告实际编译通过与局部修复结论，保留工具case_not_reproducible和记录缺口，不为改标签重复构建，不声称数值已验证。B不能以Host打包退出0证明Device通过，补执行原Device目标并保留证据。case_not_reproducible不等于原错修好后不复现。成功状态读transition，compile_passed不是顶层布尔字段，同名键为null不代表构建失败。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 22,
+      "title": "数值结果与明确实现约束分别验收",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n一个Ascend C工程的整数分支发生API参数编译错误。任务要求保留当前整数类型、逐元素标量实现和分支结构，仅修编译；浮点分支继续使用原有向量实现。候选补丁把整个整数循环替换成向量接口，原构建通过，现有输入的结果比对也通过。请审查这个补丁能否交付，给出下一步修改方向和需要保留的验收证据。另一个独立任务已明确允许替换计算实现，只要求相同输入域、数值语义和外部接口；同样的改法应怎样评估？可加载技能文档，仅根据题面作判断，不修改源码或执行工程命令。",
+      "expected_output": "第一个任务不能因编译和现有数值测试通过而接受向量替代：用户对标量实现、整数类型和分支结构的明确要求也是验收条件。恢复被替换的实现结构，依据当前声明修复局部参数或调用，不把简单删除循环、分支合并或转换dtype作为修复。验收应审查最终差异是否保留这些约束，并保存修改后的原配方编译命令、返回码和目标参与证据；数值通过记录只能支持被测试输入的结果，不能授权实现变更。第二个任务已有实现替换授权，可以据完整输入域、数值语义、接口和实际目标支持情况评估替代及必要验证，不把保留标量循环机械套用到没有该约束的任务。语义评审应分别检查两项结论、建议修改范围和证据需求，不以出现某个措辞代替行为判断。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 23,
+      "title": "声明缺失与生成链故障按证据分流",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n两个已有Ascend C工程都在Host编译时报共享Tiling类型未声明。甲：手写共享头中定义该类型，Host和Kernel按同一字段布局交换数据；实际预处理结果显示报错编译单元没有包含该头，构建中没有生成该类型的步骤。乙：Host按项目约定包含生成头；干净构建的完整日志显示生成命令在Host编译前已失败，输出头不存在，而工作区旧目录留有一份过期生成头。分别给出排查、修改范围和验收方式，说明是否需要引入新的注册/序列化机制或追查生成步骤。可加载技能文档，不执行工程命令。",
+      "expected_output": "甲优先修复当前头文件的包含或可见性问题，核对当前类型作用域与实际编译参数，保留现有共享布局及Host/Kernel传输方式；没有依据时不引入新的Tiling注册宏、序列化框架或生成管线。乙不能把旧生成头复制进来或仅补include就宣布修复，先以当前完整日志做一次诊断，再追查失败生成命令的实际输入、依赖、工具返回和输出路径，修复已被证实的生成链故障。两者均按原工程配方验证最终相关目标；乙须证明从有效输入重新生成头且当前消费者使用了新产物。语义评审检查分支是否正确、拟修改文件和数据契约是否与证据匹配，不要求固定修法或关键词。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 24,
+      "title": "搜索由未决问题驱动并及时进入验证",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n正在修复本项目内部类型名导致的编译错误。已读取报错点、唯一定义、全部调用点以及公共接口声明；该类型不导出，字段和使用关系一致，原构建命令与目标已知，当前证据能确定一个局部命名修复且没有相互冲突的声明。你还可以搜索完整SDK、下载上游仓库或阅读其他技能。请决定下一步做什么，说明还需要哪些证据才结束。反过来，如果实际报错调用位于条件宏控制的分支，尚不确定哪份声明在目标编译中生效，该怎样继续？只给出操作决策和预期验收产物，不实际搜索或修改。",
+      "expected_output": "第一种情况应进入局部修补和原配方编译验证，保留差异、最终源码的实际编译证据及约束复核；不把完整SDK检索、下载上游或调用外部技能列为完成前的固定动作，因为它们当前没有需要解决的未决问题。若验证出现新证据再按需要补查。第二种情况仍有会改变修法的声明选择问题，应先运行或复用当前问题的诊断，再核该编译单元的目标、宏和实际预处理或声明可见性，必要时再查与该缺口直接相关的资料；不能为了减少搜索而直接猜名。评审看是否在证据充分时实际选择修补验证，并在证据不足时提出能区分候选的查询，而非按搜索次数或回答关键词评分。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 25,
+      "title": "最终源码编译证据复用与变更后失效",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译修复接近结束，有三组待交付记录。甲：原配方的完整成功日志记录全部要求目标及Host/Device编译命令，源码摘要、工具链、目标、宏配置与当前最终版本一致，产物存在，补丁契约已核且没有其他任务要求；但未再用本技能的验证包装脚本生成JSON。乙：有相同完备记录，但随后修改了Device模板参数，尚未再次构建。丙：只有一次增量构建的no work to do和退出0，没有可绑定当前源码及原失败目标的先前记录。分别决定能否交付、是否需要再编译及应保留什么证据。可加载技能文档，不实际构建。",
+      "expected_output": "甲可以复用已绑定最终源码和原配方的真实构建证据，输出简洁的补丁与证据索引，不为获得特定JSON、标签或报告格式再次编译。乙的旧记录不能证明改动后的Device实例通过，须重新构建受变更影响的原目标及必要依赖，确认原任务全部目标的最终状态并保存新证据；不能拿旧日志覆盖新源码。丙的增量空跑不足以证明原失败目标修复，应取得能绑定当前源码和相关目标的实际编译证据；按缺口决定强制重编或新构建目录，不将全量清理规定成所有任务的固定动作。语义评审分别核对三个交付判断、证据身份和所需构建范围，不以调用包装脚本的次数评分。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 26,
+      "title": "编译器建议符号须符合实际调用域",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n一个同时包含Host与Device函数的Ascend C源文件报未声明标识符，编译器给出近名建议。当前报错位于Device函数；本机实际头文件显示建议符号属于Host数据对象，参数涉及Host内存，而原调用处理Device局部张量。另一个独立错误的建议符号已在当前目标的有效Device声明中找到，参数、类型和原计算目的全部匹配。分别评估是否采用建议、需要检查的证据与后续验证；不能仅凭文件后缀或编译器程序名判调用域。只给操作决策，不执行工程命令。",
+      "expected_output": "第一个建议不能仅凭名称接近采用：实际声明和函数调用域已提供反证。应沿Device函数的真实类型、内存位置、当前目标与可见声明寻找合法调用，保留原张量处理语义，不用Host对象代换Device局部张量，也不把改名后的新报错当成继续盲试的理由。第二个建议具备适用证据，可局部修正并按原配方验证，无需因第一个反例而强制搜索全部SDK。两者的完成依据都应绑定最终源、实际参与编译的目标和接口/计算约束；若调用域仍不能判定则说明缺口并定向取证。语义评审关注拒绝跨域替换、接受已证实局部修复以及验证范围，不要求具体API名或固定答句。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 27,
+      "title": "返回值改引用参数须核跨调用对象状态",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n现有设备工程因一个对象获取API重载不适用而编译失败，有两个候选现场。甲：准备函数把资源分配到局部Buffer中，随后返回；消费函数新建同名Buffer再调用引用重载。当前SDK实现显示该消费重载只读取传入对象的Handle并等待事件，不写入Handle；默认构造未分配资源。候选修改已编译通过。乙：当前SDK的另一传出参数重载保证完整初始化空输出对象，写入有效Handle；该对象一直传递到消费者且在最后使用后释放。没有禁止替换重载的任务约束。分别判断候选是否可接受、还需查什么和怎样验证。只作证据与修改决策，不实际运行工程。",
+      "expected_output": "甲不能用编译成功接受补丁：跨函数新建同名对象没有接到生产方的有效句柄，消费API也不提供初始化。应依据现有设计修正对象/句柄传递、分配生命周期或选择符合契约的实例与API；不预设唯一改法，也不把赋零/强转当资源初始化。不声称已经实测运行失败。乙已证明是完整输出初始化且资源有效传递，可保留该重载并按原配方验证，无需因甲的失败拒绝所有引用参数API。两者按剩余语义风险和任务需要决定针对性运行，编译和运行结果分开，不固定要求每题运行NPU。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 28,
+      "title": "保留实现要求与修正错误配置分别决策",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n两个编译失败工程均有模板配置与现有生产/消费调用不相容。甲：用户未固定该配置；项目契约、实际缓冲分配及同一路径的调用证明配置值意外改变，恢复相容配置即可继续原算法。另一候选保持该值、重写多个调用并扩大对象生命周期。乙：配置明确用于用户要求的特定同步方式，改值会改变必需行为；已有替代API能满足要求，但必须把生产方建立的对象传到消费者。分别决定修改方向，并说明最小修改如何理解。只分析，不实际编译。",
+      "expected_output": "甲优先采用有证据支持的配置恢复，保留原算法和接口；不能把每个当前字面量当不可改变约束，也不因能编译就扩大调用链。乙保留明确要求的同步语义，核替代API的数据流及生命周期后作连贯修改，不能为了少改几行破坏必需实现。允许不同但同样有证据、满足任务的方案；比较的是行为与契约，不是固定要求改配置或固定禁止改配置。验证沿实际原目标配置并覆盖最终修改。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 29,
+      "title": "第一次构建收据与缺失状态的恢复",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n计划按原配方修复已有编译错误。甲尚未启动构建，宿主允许等待，也支持后台任务；请给出能保留完整日志和真实退出码的执行方式，说明怎样处理管道、后台和日志写入失败。乙已后台完成，日志有Built target，PID已消失，没有持久退出收据；原宿主任务记录仍可查询。丙的同一最终源码已有完整原配方日志和退出收据，范围一致，只缺摘要JSON。分别给下一动作，不实际执行命令。",
+      "expected_output": "甲优先同次等待并从第一次执行保存stdout/stderr与构建自身状态；使用管道时立即取各PIPESTATUS，区分编译器和tee状态；后台由同一执行包装进程向该次唯一记录写完成状态，未完成不能出现成功收据，不能以PID消失或前台启动命令0代替原退出码。可用等价且可靠的宿主任务结果机制，不要求某一个固定shell脚本。乙先查询同一次任务记录及原日志，能恢复可靠状态则复用；恢复不了且缺口影响验收才补相应构建，不自动并发重启。丙复用，不为了JSON格式再编。日志或收据写入失败保留记录缺口，不能虚构完整证据。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 30,
+      "title": "数值样例状态由实际比对证据决定",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译修复已通过，补丁涉及对象状态，现按已有用例做必要运行检查。甲：进程返回0，但日志先有设备初始化错误，随后有Compare failed；没有有效结果记录。乙：框架记录目标设备执行完成、独立参考比对通过且错误会传播为失败状态，进程0；框架不打印Compare success字样。丙：只要求编译的局部名称修复，源码、接口与完整原配方证据已核，未有其他功能风险。分别报告可确认结果与下一动作，不运行测试。",
+      "expected_output": "甲只能保留编译通过，运行/数值不能判通过；核实际设备映射和首个运行错误，不改golden、容差或退出逻辑制造通过。若任务范围允许再做针对性运行，否则报告未确认；不能仅凭0或最后输出判成功。乙可依据框架有效执行与比对记录报告该用例通过，无需固定成功字符串或重复运行，仍不扩大为所有输入正确。丙可按已有编译证据交付，不因其它题有状态风险就固定加运行检查。需要额外技能时显式写提供方CANNBOT和对应精确技能名，并以宿主可用及任务缺口为条件。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 31,
+      "title": "缺失声明的局部修复与错误编译路由",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n两个工程的编译首错都表现为头或类型不可见。甲：真实编译命令已走正确设备工具链；SDK公开入口头覆盖该源码实际使用的类型、队列及运算声明，当前源未包含它。只补第一个类型的窄头会遗漏其余已用声明。乙：实际失败单元走普通CXX，源码使用设备调用约定；所需SDK头确实存在，源语言属性被误设，公共Host单元仍应走CXX。已知所有原目标和构建配方。分别给出最小有据修复与下一验证步骤，说明何时继续调查宏框架或上游版本。只作决策，不执行工程命令。",
+      "expected_output": "甲根据当前源码和声明入口补足覆盖实际使用符号的公开头，先运行受影响原目标/阶段，不逐个猜窄头，也不把整套宏或上游历史调查当前置；构建新错或现有反证需要时才扩查。乙修受影响设备翻译单元的语言/工具链路由，不用全局include模拟设备编译，也不把纯Host一起改成设备语言。阶段验证不代替最终全部原目标验收；允许按新首错继续连贯修复。公开总头只是甲条件下的有据选择，不推广为所有缺头错误的唯一答案。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 32,
+      "title": "Tiling传参表示与解包方式相容",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n正在修复两个Ascend C工程的编译失败，均在READ_TILING(cfg, payload)附近报未声明。甲：入口第三形参是共享结构体Config的值对象，Host构造同一Config并按值传入；没有中间wrapper或序列化，cfg只用于读取该结构体两个字段。多轮SDK宏名搜索没有新证据，拟自建同名兼容宏来复制该值。乙：入口第三形参是GM_ADDR，Host通过现有序列化函数写入缓冲区，格式包含长度头和非平凡字段；该函数及配套解码实现已经存在于项目生成文件，设备构建漏掉其include路径。网上一个例子使用另一个SDK版本的解包宏。分别给出修法依据、还需读取的材料和验收范围，不实际操作工程。",
+      "expected_output": "甲应沿已给出的声明和调用链保留值对象语义，可直接使用其字段或作合法局部值复制；先核字段及实际使用即可，不需要把值对象改成GM地址或另建序列化。持续宏搜索没有改变判断时，应据调用链进入局部修改和原配方编译；不必自建与框架同名的宏，避免新增含义不明的兼容层。乙保留生产方既有表示，修正有证据的生成头可见性/构建依赖并核配套解码；不能直接把GM_ADDR赋给Config，不能只凭sizeof或强转绕过长度头和格式。外部宏样例不能覆盖本工程契约。两者按原目标编译，并按变更涉及的数据解释风险决定相关运行回归；不预设所有Tiling问题采用同一修法。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 33,
+      "title": "缺失include的用途证据与生成依赖",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译报缺失项目头。甲：本地相关编译单元及受支持配置的符号和条件宏已追踪，所有使用都由已有公共头提供；项目构建与注册链不消费缺失头，不需要其副作用。乙：缺失头由同一次构建的schema生成器产出，提供注册对象和宏，源码没有直接点名引用那些注册对象，日志显示编译先于生成完成。两个文件在在线主分支搜索均未找到。请分别修复决策并说明验收方法，不实际执行。",
+      "expected_output": "甲已有用途与副作用证据，可以移除无用途的include后验证原配方及受影响配置，而不是仅因搜索未命中就删。乙要恢复生成步骤、依赖顺序和消费可见性，不能用未直接引用作为删除依据，也不能手写空头或改为跳过注册。在线主分支缺失不证明目标版本不需要；如取在线文件，应确认是该文件正文和适用版本而非HTML错误页。验收关心最终diff、生成产物的消费和原目标覆盖，不以删头或保留头本身评分。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 34,
+      "title": "位置参数与生成输入不一致时的比较归因",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译补丁已沿原目标通过。为检查功能，程序约定argv[1..6]=N,C,H,W,pad,device，argc不足7时device默认0；没有参数范围检查。输入生成记录是N=1,C=3,H=8,W=8,pad=0。实际执行为./sample 1 3 8 8 2，进程退出0，比较日志有26/288不一致。一份独立大输入文件被同命令读取时另报file larger than buffer但显示Compare success。当前只有不一致总数，没有索引；其中18个位置是任务要求验证的有效元素。请分析能够确认的事实和下一步，不能实际运行。",
+      "expected_output": "按解析映射现有命令，2进入pad而不是device，device为0；运行padding与生成器不一致，需补齐参数并绑定相同dtype/shape/layout的数据后才获得适用比较。大文件警告下的success不能覆盖失败或作为有效通过。26大于18至多说明差异不全位于该有效集合，不能证明18个都正确，也不能归因所有差异为padding；需索引、布局映射和有效/填充分区的具体结果。已确认原目标编译通过，但运行证据配置不适用；不据此断定补丁语义正确或错误，不改golden/容差迎合结果。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 35,
+      "title": "质量收益由新增覆盖而非成本决定",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n用户要求某算子保留float向量路径和int标量路径。编译修复后，两条路径都按要求保留。甲只编译float目标通过；乙构建两目标且两份输入均有有效设备执行及比较通过，乙工具调用和token明显更多；丙构建两目标通过，又同参数反复运行但都在设备初始化失败处结束，没有比较记录。请分别判断可交付的范围、质量证据及仍需处理的事。不执行命令。",
+      "expected_output": "甲仅证实float构建，仍需int目标和任务/补丁风险所要求的验证。乙两目标和两份输入增加了实际覆盖，在该范围具有质量证据，更多成本有具体用途；不能推成所有输入或所有算子正确，也不应为了成本退回只测一条路径。丙保留两目标编译通过，运行仍未确认；重复初始化失败没有增加数值证据，应分析可见设备与资源可用性等阻断，条件改善再验证。评审分别核编译、指定实现和样本比较，不能只以token高低或报告篇幅打分。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 36,
+      "title": "编译探针的环境与退出码证据",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n原工程在设备模板实例化时报错，已有真实编译命令包含目标架构、强制include和生成目录。额外探针手写了另一条命令，遗漏这些参数，输出fatal error: generated_types.h file not found；它通过tail管道返回0。原工程日志仍为模板实参拒绝，完整stdout/stderr和编译器退出1已落盘，源码与配置尚未变化；有人建议再次原样编译，只为换成grep查看候选声明。请判断探针证明了什么并给下一步，不实际执行。",
+      "expected_output": "探针未建立原失败环境，缺头是探针自身失败，不能证明模板修法有效或原工程根因是缺头；管道末端0不能作编译器成功。先从现有完整失败日志提取模板候选及上下文，不为改变展示方式原样重编。若仍需该探针，应沿实际失败单元参数建立可比条件并保存编译器自身状态；也可回到原项目配方验证有依据的修改，不重复猜include。修改后仍应验证受影响原目标，日志复用不豁免新源码验收。只将覆盖原失败目标及最终状态的证据用于交付，诊断目标或探针通过都不替代原工程。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 37,
+      "title": "设备忙的受控重试与有效运行证据",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译目标通过后，修复涉及缓冲区状态而需要运行回归。两次同参数尝试均在初始化阶段报告device busy；没有算子执行或比较。共享机器上还有其他用户任务，当前会话不能确认其所有权。另一个场景中，调度器已确认本任务分配的设备空闲，逻辑设备映射、输入文件和运行参数均核过。分别说明下一步和当前结论，不实际执行。",
+      "expected_output": "前者保留已证实的编译结论，功能验证未完成；调查本任务可见设备和调度状态，资源条件不变时盲目增加重试不能证明正确，不杀未知所有者进程或擅自换用户目标。后者条件已变化，可在已分配设备上重试相关原用例并检查实际执行及比较，不能以旧失败永久停止验证。无论重试次数多少，都不把launcher退出0或初始化错误当作比较通过；必要验证开销应保留。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 38,
+      "title": "首次编译前的调查收敛与真实歧义",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n某Ascend C工程报Host类型未声明。已看到项目共享头定义该类型，Host缺少包含；任务要求保留原Host/Kernel接口，现有构建配方会覆盖全部必需目标。尚未修改，搜索多个SDK目录中的其他注册宏都没有新结果。另一个工程的共享类型可见，但生成调用和Kernel参数数量不同，尚未取得生成器输入。两个工程分别应做什么、何时继续扩大查询？不实际执行。",
+      "expected_output": "第一例按实际声明和使用方补可见性并运行原配方，不等到经历两轮失败才停止未报错宏的扩搜；不预先改变注册形式。第二例存在会改变修法的真实ABI/生成契约歧义，应先用已有日志运行一次静态诊断，再读对应资料并核生成器输入、实际调用和形参角色后修改，不能套用第一例的补头结论或以调用预算截断查证。若原配方随后暴露新首错，继续新的必要调查，不把它记成无进展重试。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 39,
+      "title": "首次收据与等价证据复用",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n用户要求原build.sh的configure、all、binary阶段均通过。一次后台执行日志末行是built target，进程已消失，没有退出收据，binary目标也未记录。另一次执行的最终源码及相关依赖、工具链、全部目标和参数均有绑定，完整日志与真实退出0、fresh构建及必要产物已核；其副本目录名和常用目录名不同，已确认路径变化不改变有效配置，用户未要求指定产物位置。分别说明如何补证或复用，并描述下一次首次执行如何避免重做。不实际执行。",
+      "expected_output": "第一例不能用进程消失或末行成功证明完整构建，应核已有子任务记录和产物；缺少的binary阶段或退出证据按实际缺口补验，不必无条件推翻所有已证阶段。第二例可复用，目录名不同不要求重编。首次执行固定实际工作目录和相对参数基准，使用宿主允许的独占输出，完整保存构建自身退出码，后台留下对应任务完成收据；管道尾端状态不能代替构建状态。必要产物/源码改变或证据不完整时仍应补验，不能为了省调用跳过。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 40,
+      "title": "逻辑设备与运行前提",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译修复已完成，现在需要核缓冲区改动的运行行为。系统能看到物理设备节点/dev/davinci3，当前运行时查询到一个可见逻辑设备。程序接收device位置参数，未给时默认0；之前传3出现设备初始化失败，同时打印Compare success并退出0，没有确认输入文件存在。请给出下一步和可以报告的结果。另一场景已经核定逻辑设备、数据和参数一致，实际执行无致命错误且比较通过，是否仍需重新遍历所有设备？不执行命令。",
+      "expected_output": "不能把物理节点3当运行时逻辑设备编号，应依据本进程可见映射/分配选择允许的逻辑设备，核实际参数位置、输入文件及原参考生成数据后重验受影响行为。失败初始化伴成功文本和退出0不构成数值通过，编译结论单独保留。第二例在给定输入上已有有效证据，无需仅为证明严谨再遍历设备；用户目标或补丁风险要求其他范围时另行验证。共享资源仍按授权使用，不干预其他任务。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 41,
+      "title": "可信参考受阻与允许输出目录",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n用户只要求修复生成头依赖并按原配方编译，完整编译和产物已验证，未改计算。追加运行时，原CPU参考生成器的合法项目路径被宿主解析器拒绝。宿主只允许本次工作区写入，不允许全局临时目录；没有权限修改宿主规则。给出下一步，说明是否应反复复制/编码脚本或重写一份golden算法。另一个场景同样受阻，但任务明确要求运行回归且补丁改变布局，应如何交付？不执行。",
+      "expected_output": "先核公开允许范围、实际工作目录与被拒操作，保持安装目录只读；需要输出时选允许范围的独占目录，工程内输出应避免参与源码收集。合法路径仍受阻就记录宿主兼容问题，不反复换编码/复制形式试探权限，不将重写golden算法或改变判定规则作为完成方式。第一例可交付已证实编译及未完成可选运行范围；第二例必需功能回归仍未确认，不能称任务全部完成，需恢复授权的原验证路径后续验。可以使用宿主明确允许且等价的正常入口，不把一次拒绝推广成禁止一切恢复。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 42,
+      "title": "验证覆盖比较应绑定输入组合",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n同一shape和同一独立参考下，上一版实际通过float16/mask1、bfloat16/mask0；新补丁实际通过float16/mask1、bfloat16/mask1、float16/mask0。新补丁改变mask处理，任务要求支持这两种dtype和两种mask组合。新会话还包含一次缺文件、ACL错误与Compare success并存的记录。请评估覆盖、下一步和新增调用是否均为质量收益，不执行。",
+      "expected_output": "新结果有三个有效组合，但不是旧两组合的严格超集，缺少bfloat16/mask0；按任务和mask改动风险应补该组合，复用其余适用的最终状态证据，不因次数已更多就交付全覆盖。缺文件/ACL错误的记录不计有效运行或比较。只将真实新增相关覆盖作为质量收益，重复失败/状态补采等另外说明；不能由调用数高推出更严谨，也不能为省成本取消任务要求的组合。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 43,
+      "title": "知识页按未决症状及时使用",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n已有三个编译失败任务，需要依据当前tool-compile-debug入口评审。甲的首错是Tiling解包宏未声明，入口形参和Host调用尚未读过，搜索SDK宏名两次没有结果。乙的设备命令正确，多个相关声明缺失，只找到一个类型的窄头，尚不清楚其余声明由谁提供。丙的单处拼写错误已由当前有效声明、调用域、参数和实现要求共同确认。分别列出现在应读取哪些材料、何时修改和编译；不实际操作。",
+      "expected_output": "甲在继续广搜或猜宏前先运行或复用当前问题的结构化诊断，再核实际形参、Host调用和生成/序列化链，先按入口给出的值、设备指针和序列化缓冲区别判断；仍不能区分表示或读法时读取本技能Tiling判别页，不能按搜索次数才决定是否取证。乙也先以已有日志诊断，不将多个声明来源未决当作单一足证快路径；按缺头/声明症状读取头文件判别页，核当前源码实际使用声明与SDK入口、生成关系，避免仅补首个窄头后逐个追错；不能仅凭知识页就断定所有缺头均需聚合头。丙可直接局部修改并按原配方编译，不强制读所有知识页或调用诊断脚本。对应知识无法解决实际歧义时继续查本地声明、生成器或适用版本资料，知识不能覆盖源码反证。协作技能仅在有实际缺口且可用时调用，须同时注明CANNBOT来源。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 44,
+      "title": "工具缺失与实际运行前提分开判断",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n补丁改变生成头的数据布局；应用补丁后，生成算子工程已按原配方完整编译通过，产物对应当前源码，任务还要求原样例比较。容器缺少file和npu-smi，系统只显示一个非零编号物理节点；已加载的ACL运行时能返回一个可见设备，样例device参数默认0。之前传物理编号初始化失败，ASCEND_CUSTOM_OPP_PATH指向安装后的vendors父目录；可读取的安装清单列出具体vendor根及其op_api、op_impl内容。用于运行的输入文件由独立数据生成脚本产出，记录mask=1；mask是程序运行时解析的参数，不参与源码、头文件生成或编译配置，本次任务指定运行mask=0，可信原数据生成器支持该组合，无需修改参考算法或比较阈值。请给出下一动作及目前可以报告的结果，不实际执行。",
+      "expected_output": "工具缺失只表明辅助命令不可用，不能证明没有NPU或编译产物；有必要时使用可用的ELF读取方式，不要求为确认已有编译证据安装file。按本进程可见映射和分配核逻辑设备，不能把物理节点号直接当device；依据安装清单及本工程加载规则核实际vendor根和产物路径，不能停在vendors父目录或混用另一安装版本。使用原可信生成器为本次mask、dtype和shape生成适用输入，核参数位置后运行并检查真实执行及比较；不改参考结果或判定阈值。原编译通过单独保留，必要运行尚未确认；前提已核仍失败时记录实际阻断或调用可用的CANNBOT相关技能，不反复盲试设备。此处额外运行来自任务和布局风险，不推广成每个编译修复的固定步骤。同一回归同时属于原任务要求和未决布局补丁验证，输入准备、执行与结果核对仍由宿主在本技能闭环内推进；不能只保留准备工作却把执行整体交回原流程，也不先退出再等新的回归证据。缺权限或资源时仅请求协调缺失前提，保留未完成义务；本题只给方案，不实际执行。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 45,
+      "title": "值对象调用链充分时的修复边界",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n修复一个Linux CANN 9.0项目的编译失败。用户要求保留Host/Kernel接口、字段含义和现有算法，完成原build.sh中的all与binary目标。共享头定义struct LaunchShape { uint32_t tiles; uint32_t tail; }; Host构造该对象，直接按值传给Kernel第三参数LaunchShape shape，中间没有wrapper或序列化。首错为未声明LOAD_SHAPE(local, shape)；local仅用于读取tiles和tail。共享头已在当前编译单元可见，真实命令和调用方均已核对。SDK宏名搜索没有结果，尚未修改。说明下一次具体行动、可能改变选择的证据和完成依据。只按材料作判断，不执行命令。",
+      "expected_output": "已给材料支持按值对象直接读字段或做保持类型的局部复制，先作这组修改并沿原配方覆盖all与binary。宏名搜不到不证明缺少框架，不需自建同名兼容宏、改成地址或引入注册/序列化链；不强制先运行诊断脚本或展开SDK。若实际消费者另有地址/布局要求或新首错出现，再针对新证据查证。检查最终diff与原目标构建，验证按实际数据解释变化的风险和任务选择；不能仅因含Tiling而默认要求设备运行，也不能在未执行时宣称通过。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 46,
+      "title": "不透明地址与生成ABI的取证选择",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n修复另一个Linux CANN 9.0项目。Kernel第三参数是GM_ADDR packet，首错同样是LOAD_SHAPE未声明。项目中有两条Host生产路径：一条复制一个平凡结构体，另一条EncodePacket写入版本号、长度和变长表。入口选择由生成wrapper决定，wrapper来自构建生成目录；目前只看过Kernel文件和结构体头，尚未读生成wrapper及其输入。Kernel需要长度和表元素，用户要求兼容当前生产方格式。有人计划直接强转packet为结构体指针，理由是已经查了四轮。说明下一次具体行动和当前可以确认的结论。只按材料作判断，不执行命令。",
+      "expected_output": "GM_ADDR只表明地址入口，不能证明实际内容是该结构体。当前生产路径与生成ABI未决，应先以已有失败日志运行或复用结构化诊断，不附加编译探针或重复构建。随后沿当前构建实际消费的wrapper及生成输入确定生产分支、版本和布局，核配套解码/加载方式及设备可访问性；这项证据会决定是合法设备结构体访问还是序列化解码。四轮调查不是强行修改的理由，不能只凭结构体头、sizeof或强转跳过版本/长度。确定后修改对应消费或生成可见性并按原配方编译，数据解释有风险时做针对性验证；当前尚无修复成功证据。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 47,
+      "title": "结构化比较记录与完成范围",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译补丁修正了缓冲区长度类型。用户要求原两个目标构建以及一个既有513元素float16样例。最终源码、依赖和目标架构已绑定到本次构建，all与binary真实退出0且产物新鲜。任务结果记录为{\"input_bytes\":1026,\"expected_input_bytes\":1026,\"processed_elements\":513,\"device_completed\":true,\"comparison\":{\"reference\":\"project_cpu_reference\",\"compared_elements\":513,\"mismatches\":0},\"process_exit\":0}；它对应最终二进制、用户要求的输入与独立参考，完整日志没有致命错误。框架没有输出Compare success字符串。请给出现在的交付结论及下一步，只作判断。",
+      "expected_output": "该记录支持指定两个目标编译通过和指定513元素float16样例的执行/比较通过；缺少固定成功字符串不否定结构化证据。核明对应关系已完整可直接复用并交付，无需为获得特定格式、再走一次run_verify或遍历设备而重跑。实现要求还应以最终diff核对；已有样例成功只覆盖该输入和范围，不能扩大为所有shape或完整数值正确性。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 48,
+      "title": "输入失败与旧比较结果混入",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n本次编译修复任务要求原两个目标和513元素float16样例。最终源码和两目标编译证据完整。运行日志依次为open input failed、processed_elements=0、Compare success，进程退出0。目录中还有comparison.json，记录513元素且mismatches=0，但其二进制摘要是补丁前的值、时间早于本次构建。当前没有其他执行记录。请给出现在的交付结论及下一步，只作判断。",
+      "expected_output": "保留已证实的两目标编译通过，但本次输入失败且处理零元素，退出0和成功字符串不构成有效运行/比较；旧文件不绑定最终二进制，不能补作当前通过证据。核当前工作目录、参数和原输入生成/读取规则，恢复用户样例所需输入后运行对应最终产物并查实际执行与独立比较。此次必要样例仍未完成，不能报任务全部完成，也不把运行证据缺失改写成编译失败或无证据断言补丁算法错误。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 49,
+      "title": "后台阶段仍进行时的证据归属",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n原build.sh要求configure、all、binary。当前任务J17已经完成configure和all，日志正在执行binary，宿主查询结果state=running；启动shell退出0。输出目录有一份exit_code=0的旧收据，但job_id=J16且源码摘要属于修改前。用户询问这次是否完成。应怎样处理现有执行、证据与回复？只作判断，不操作进程。",
+      "expected_output": "当前J17仍在执行，启动shell的0只证明启动过程，J16收据不属于最终源码。本次configure/all的已确认阶段可以保留，binary和整体完成状态待J17结束后获取同次完整日志、构建自身退出码和产物绑定。继续等待或查询J17，不并发启动重复构建，不把PID消失/尾行文字替代完成证据；只有现有执行无法恢复且缺口影响验收才按缺口补验。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 50,
+      "title": "完成收据可复用及依赖变化的界限",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n原build.sh要求configure、all、binary。独占副本的任务J28已结束，最终源码和完整相关依赖内容、有效配置、工具链、架构与原配方一致，三阶段日志、构建自身退出0和必要新产物均齐全。已核副本路径不改变include解析或有效配置，用户没有要求产物必须在原目录。没有运行回归要求，补丁只纠正已核实的局部命名，接口与功能保持。另设一种变化：准备交付前生成器输入修改了字段布局，此后没有新构建。请分别说明可复用什么及下一步，只作判断。",
+      "expected_output": "无后续变化的场景可复用J28，核最终diff后交付编译修复范围；副本目录不同不是重编理由，无额外风险时不固定加设备运行或脚本。生成器输入改变后，旧J28不能证明新布局相关消费者通过，应重新生成并构建受影响原目标/依赖，确认全部必需目标最终状态；根据布局变更风险选择必要的数据解释验证。不能仅因主源文件摘要不变就复用全部旧证据，也不无条件推翻未受影响证据或清空整个工程。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 51,
+      "title": "契约文件未改与实现路径验收",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n用户明确要求整数分支保留逐元素标量GetValue/SetValue路径和int32类型，用于后续行为对照；浮点分支使用向量实现。当前补丁修复了编译错误，但把整数分支循环替换为int32向量调用。两目标编译通过，少量数值样例通过，验收工具报告contract_intact=true，因为任务文件摘要未变。请判断补丁是否满足要求以及下一步，不实际操作。",
+      "expected_output": "任务文件未变只说明验收描述完整，不能证明源码满足指定实现；少量数值通过也不授权替换整数标量路径。当前最终diff违反明确约束，应恢复要求的int32标量实现并依据实际声明解决原编译问题，重验受影响原目标，按补丁风险处理必要样例。可保留已确认且未受影响的浮点证据，不以工具contract_intact覆盖源码审查，也不无依据声明数值算法错误。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 52,
+      "title": "已授权实现替换的验收",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n另一个整数分支编译修复任务明确允许标量或向量实现，要求保持int32输入输出、完整输入域的溢出规则及接口。当前补丁改用已在目标SDK声明中核实的int32向量调用；实现审查已确认其计算、溢出规则、尾块处理与原要求一致。最终两目标构建和任务规定的边界/尾块用例均有真实执行及比较通过，未改golden或容差。请判断是否还应恢复标量路径、追加固定验证或交付，说明结论覆盖范围。只作判断。",
+      "expected_output": "用户已经授权实现选择，且题面给出的声明、语义、最终构建及必要用例证据支持当前补丁，无需为保留原形式恢复标量路径，也不机械增加脚本或全量运行。可按已审查约束与实际覆盖交付；边界样例通过本身并不证明完整输入域，完整域语义依据来自明确给出的实现审查，二者分开说明。后续发现目标支持、溢出或尾块反证时再处理相应缺口，不能把另一任务的指定路径约束强加于此。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 53,
+      "title": "搜索替换文本不能充当源码",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n修复已有算子的编译错误：Host引用PacketMeta，设备侧声明疑似不一致。调查命令是rg -rn 'PacketMeta|PacketData' project，输出struct n与GetData<n>()；随后另一条搜索命令失败并提示缺少replacement参数。尚未回读原文件。有人据此判断类型一致且SDK没有Packet接口。请决定下一步及可以确认的事实，不执行命令。",
+      "expected_output": "这些结果不能证明类型一致或API缺失。rg的-r是替换而非递归，匹配内容可能被改写，后一次命令失败也不等于零命中。读取原始声明与消费点，或用不替换匹配内容且范围正确的搜索取得线索；分别检查命令状态和stderr。以真实类型关系确定修复，不把输出的n写回源码，也不在未决前猜改公共SDK。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 54,
+      "title": "兼容入口零命中与有效声明",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n一个编译修复任务中，rg在SDK兼容include目录返回1且无匹配。日志指向的该目录其实含指向实际安装目录的链接，本次工具没有遍历其中的目标目录。当前真实编译命令包含对应路径，文件和权限均可访问。另一个候选函数已在当前编译器note中给出声明位置。如何继续，有必要声称API移除或克隆最新仓库吗？",
+      "expected_output": "零命中仅覆盖本次实际遍历范围；先读编译器指定的当前声明，必要时定位兼容入口的真实目录再作定向搜索。核声明、实参与任务要求决定修法，不把未遍历区域当不存在，不因这次零命中克隆上游或无条件扫描全SDK。若当前声明已足够支持修改就沿原配方验证。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 55,
+      "title": "构建修复保留配置传播",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n现有CMake工程公开变量DEVICE_TARGET，由用户配方设置为archA，target_compile_options却误写--target=broken。源码已有按DEVICE_TARGET选择头文件和实现的分支。当前任务只要求在archA修编译错误，但须保留工程已有可配置入口。编译器已证实--target=archA合法。应如何修改，以及本次成功能证明什么？",
+      "expected_output": "恢复target选项对DEVICE_TARGET的正确引用，核实际命令没有其他覆盖并保留已有分支，不能只写死archA让配置与源码分支脱节。按当前archA原配方验证；可以说明配置传播保留，但不宣称未实测的其他架构构建通过。不为了可配置性新增支持目标或固定跑跨架构矩阵。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 56,
+      "title": "固定目标无需新建配置接口",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n另一个已有工程明确只支持archA，用户要求继续固定这一目标，没有公开目标选择变量或其他实现分支。唯一编译错误是--target=archTypo，当前安装已证实正确值archA；其他配置和数据契约完整。是否必须新增可配置目标变量并改所有构建文件？给出修复与验证范围。",
+      "expected_output": "无需新增配置接口或扩展目标支持。按固定目标契约修正字面量为archA，核真实编译命令并沿原配方构建。配置传播规则不能强迫固定目标工程引入抽象；保留已有有效验证，不额外要求不相关设备或矩阵。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 57,
+      "title": "命名选项落入位置参数解析",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译修复后需要验证原128×256×64输入。运行器实际用atoi(argv[1..3])读取M/N/K位置参数。当前命令是./check --m=128 --n=256 --k=64，日志打印M=0,N=0,K=0，随后分配失败、ACL错误和Compare success，进程返回0。未取得真正128×256×64执行记录。应先做什么，能否据此排查库损坏或宣布修复完成？",
+      "expected_output": "本次命令与解析契约错配，成功文字和退出0不能证实必要输入通过。先按当前解析形式恢复128 256 64及正确设备，核生成数据/参考与实际解析值一致，再验证最终产物的受影响路径。保留已完成的编译范围、运行未完成，不先通过改库/容差解释由无效输入产生的结果；有效输入仍失败时继续对应根因调查。零尺寸若本来合法也不能替代本题指定非零输入。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 58,
+      "title": "失败查询与自设运行环境",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n编译已通过，补丁仍需一次设备回归。代理在运行前自行前置了一个devlib目录并把可见设备设成2，此后初始化失败。探针先把count=0，再调用枚举接口，API返回非零错误，探针main却返回0并打印count=0。工程同一安装原来提供set_env.sh和有效启动配置，但尚未比较。现有哪些证据，下一步如何推进？",
+      "expected_output": "API失败时count初值不能证明枚举结果为零，main的0也不是内部查询成功。失败只绑定本次修改的环境，不能推断原环境无NPU或机器忙。先核手工注入路径/可见设备与受支持配置，按当前安装脚本在同一进程环境启动原检查；不把链接桩库目录当运行库。后续以实际状态继续判断，不能保证恢复脚本必然解决，也不能取消仍必要的回归。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 59,
+      "title": "存储宽度与公共模板修复",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n修复一个epilogue模板类型冲突。任务要求输入和输出为16位浮点；Host按每元素2字节分配、拷贝，最终Kernel输出别名OutType却是float并按4字节写回。累加器float是任务允许的独立中间精度。一个候选补丁放宽公共模板，使当前float输出实例及另一示例均能编译，但不改Host或OutType。另一个候选恢复输出16位并保留原合法转换和累加精度。应选何种方向、检查哪些证据？",
+      "expected_output": "先修与既定存储/输出契约冲突的局部装配，保留合法float累加及已有转换，核分配、复制、元素解释、转换和写回整条路径。公共模板编过和另一消费者编过不能消除2/4字节冲突。不能把所有类型统一为16位或靠指针强转掩盖。按最终变更验证原目标及未排除的写回/数值风险；静态发现冲突不等于已观察运行越界。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 60,
+      "title": "合法混合精度不应同类型化",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n另一个编译修复任务明确要求16位输入、32位累加与32位输出。Host输出按4字节分配和复制，Kernel写回类型、步长及独立参考均一致。唯一报错是局部helper名称与已给声明不同，修正名称后原目标和既有必要用例有完整通过证据。因为输入是16位，是否还应把输出和累加器改成16位以保持一致？",
+      "expected_output": "不应改变合法混合精度；一致指各阶段满足各自契约，不是所有类型相同。已有名称修复及最终证据足够时按覆盖交付，不新增类型改动、全库调查或固定运行。保留用户指定32位累加与输出。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 61,
+      "title": "tile断言修复同时核容量",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n修复tile编译断言。实际实现要求L1.M>=L0.M且L1.M能被L0.M整除。用户固定L0.M=128，当前L1.M=64、N=256、K=256。已读分配实现：L1中A/B各有2个同时存活stage，元素2字节，另预留64KiB；总占用严格为2*(M*K+K*N)*2+64KiB，容量512KiB，无其他隐藏占用。候选L1.M是128或256，其他相关对齐/循环条件均已满足。如何选，是否可以称更快？",
+      "expected_output": "128时总占用448KiB且断言满足，256时576KiB超512KiB，选128方向；不能只因256满足整除就采用，也不能缩小被用户固定的L0.M或删断言。按原目标编译并针对仍未排除的流水/边界风险选择能到达该路径的用例；没有性能测试不声称更快。预算来自题面实际分配条件，不推广为所有框架的统一公式。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 62,
+      "title": "宏表面标点与真实第二错误",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n当前编译日志明确只有类型名WrongOptions未声明，正确声明Options已给出。另看到CHECK(work(););，宏定义为#define CHECK(expr) do { int err = expr; use(err); } while (0)，work返回int且use声明有效。有人要同时删参数里的分号，并在报告称修复了两个必然发生的编译bug。如何处理连贯修改和最终描述？",
+      "expected_output": "恢复已确认名称错误即可进入原配方验证。当前宏展开中多出的分号是空语句，给定证据不支持第二语法bug；可不作无关清理，不能把可疑标点计为必然下一错误或额外修复成果。若真实展开/声明另有可证明错误，允许有依据的连贯修复，不要求每个已证问题分别失败一次。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 63,
+      "title": "配置阶段加载失败与跨单元签名",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n原cmake配置会编译Host插件再由生成器加载。当前.so已生成，但dlopen报SetFields(const Meta&)未定义；符号检查显示请求为const Meta&、定义为Meta&。两个翻译单元声明分别如此，定义确实会修改Meta。探针随后第二个无关调用因脚本重复参数抛TypeError。如何定位和修复、保留哪些探针结果、验收需要到哪一步？",
+      "expected_output": "保留第一项真实加载失败证据，第二项TypeError是探针本身问题；不相互覆盖。外层CMake失败的具体原因是跨单元签名错配，结合可写语义统一声明定义并用共享声明约束，不能盲加extern C或重装库。验证原配置/生成及任务要求的后续目标，单独生成.so不等于加载契约成立；若const只读要求与修改语义冲突需先解开真实契约。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 64,
+      "title": "移除依赖的消费与副作用边界",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n两个独立编译修复情形：甲的缺失符号InstallRegistry()返回值未使用，但启动前其他目标读取它应填充的注册表，任务要求这些目标保留。乙的CMake源列表有不存在的extra_kernel.cpp，当前入口已显式include真实kernel实现，完整引用关系已证实该不存在条目不是生成输出、无独立实现或注册职责。如何分别处理，是否能统一删掉让构建通过？",
+      "expected_output": "甲不能凭返回值未用删除初始化，应恢复所需实现或正确链接并验必要目标，不能用stub。乙在题面完整消费/生成/副作用证据下可以移除无用途残留源项，保留实际实现并沿原配方验证。不把名字可疑、搜索无结果当删除权限，也不因某类文件曾有副作用就禁止一切合理删除。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 65,
+      "title": "已有日志下的静态诊断与足证快路径",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n两个Linux CANN工程已有完整失败日志和原构建配方，随包工具可用。甲的报错调用与唯一有效声明只差一个拼写，参数、调用域、全部消费点和任务契约已核对，没有条件宏或生成步骤。乙同样报未声明标识符，但存在两个条件头和生成wrapper，实际生效声明及数据表示未确定，尚未修改。分别给出下一步；不要执行命令。",
+      "expected_output": "甲满足足证快路径，作保持契约的局部修改再原配方验证，不为统计工具调用补诊断。乙不满足，应先用现有日志调用run.py diagnose或对应shell入口，提供工程、日志、独占输出及已知准确SKU，使用--json-stdout，不带--run-probes或--verify；再由摘要及源码核实际声明和生成消费链。不能先长期广搜后倒推最初跳过合理，诊断也不代替声明和验收。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 66,
+      "title": "首次直接修复仍同错即重新分流",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n你凭局部命名证据直接修改后，原配方第一次真实构建仍出现同一首错。此前没有运行诊断，日志完整，工具可用。有人建议再尝试另一名字，等两次失败才分析。请决定下一步和需保存的证据，不执行。",
+      "expected_output": "第一次直接修复仍同错已经退出快路径，不能再盲改或等待第二轮。先核改动是否进入真实编译单元，再对本次完整失败日志运行一次结构化诊断，读取首错、定位候选和机制证据，再查影子定义/生成输入等实际缺口。保留第一次失败和本次日志、原配方与修改；不回退补造失败，不在diagnose中附加验证或无目的探针。两轮门槛是停滞升级条件，不是首次诊断条件。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 67,
+      "title": "复用诊断与新问题分别判断",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n同一工程有适用诊断D1。甲只因源码插入注释改变行号，当前声明、目标、首错根因均未变。乙修改后通过原阶段，链接时报另一编译单元的未定义符号，尚不清楚缺实现还是签名不同。丙已按原配方完成全部目标并有最终源码和有效产物证据，任务无额外风险。分别如何处理，不执行。",
+      "expected_output": "甲复用D1，不为行号或分类标签重复诊断。乙是新的未决问题，应使用新完整日志诊断并核当前调用和定义/链接输入，不能套用D1或把新阶段记成同错盲试。丙复用完成证据并核最终diff后交付，不为诊断或结构化验证标签再次构建。新错误若已有完整且无冲突的局部修法可走快路径，但乙题面尚不满足。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 68,
+      "title": "诊断工具失败不伪装成已分析",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n复杂模板错误有完整日志，已尝试运行本技能诊断，进程明确报缺PyYAML；宿主只允许当前会话目录写入，无安装依赖授权。SDK声明与工程源码仍可读。是否换编码调用、创建新全局环境或反复重跑？如何继续并报告？只说明。",
+      "expected_output": "记录实际命令、缺PyYAML错误和未取得结构化诊断的状态；不把空类别当未知源码原因，不绕保护或自动安装依赖。该明确依赖故障不靠相同重跑解决，继续从已有完整错误块、候选声明和实际使用方取证并沿允许的原配方验证；若缺失能力真正阻断必要判断，说明具体未确认范围。不能假称已诊断，也不能因工具故障停止已有证据支持的修复。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 69,
+      "title": "摘要中的未知不触发重复调用",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n诊断已成功落盘，category为unknown且未给可用fast_path候选；primary_error给出具体调用，编译器note指出当前SDK候选。读取声明后已证明是本地实参类型与使用语义冲突，形成保留契约的修法。是否应重跑直到分类命中，或直接改SDK以符合建议？只作决策。",
+      "expected_output": "复用此次诊断和实际声明，不为unknown重复同输入调用，也不把候选或类别当修改SDK权限。核实本地类型、值域、生命周期与任务要求后修改正确一侧，按原配方验证最终源码；必要风险验证按补丁影响选择。报告工具定位/未命中与源码确认分别得到什么，不把脚本完成当修复成功或强迫结果为已知类别。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 70,
+      "title": "缺日志时取证不新增重复构建",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n准备处理生成链编译失败，聊天仅有最后十行make错误，但同一失败任务已保存完整build.log，尚未读取；原目标源码未变。工具可用。另一个工程确实没有任何失败日志，也没有执行中的构建。分别说明取得首诊输入的方法，是否给diagnose加--verify。只说明。",
+      "expected_output": "第一种读取已有完整日志及直接指向源码，默认以此单次诊断，不为换筛选方式重跑构建。第二种先沿原配方真实构建一次并保存完整输出、实际退出码和目标，再判断足证快路径或调用诊断。首诊不加--verify或--run-probes，诊断与修复后必要构建职责分开；无日志、未复现、诊断受阻和编译失败分别陈述，不能用聊天末尾摘要证明首错已定位。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 71,
+      "title": "模板推导与非依赖引用转换",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\nLinux CANN 9.0工程的三个Host辅助模板已完成首诊。甲：候选为 template<class T> void f(Tensor<T>, const int32_t&)，调用 f(x, n)，x为Tensor<float>、n为uint32_t；只保留了no matching function的摘要，候选拒绝note未取得，有人建议因为引用不接受隐式转换所以把n强转int32_t。乙：template<class T> void g(T, const T&)，实参uint32_t u=16与int64_t w=16，note为deduced conflicting types；两值按工程契约统一在int64_t域计算且不会溢出。丙：template<class T> void h(T, int32_t&)，第二实参为uint32_t左值，note说不能绑定int32_t&；该形参用于回写调用方状态。分别判断上述证据及修法约束。",
+      "expected_output": "甲末参不含T，不从n推导模板参数；普通整数转换可以产生临时int32_t再绑定const引用，因此给定类型差异不能证明该报错，不能直接建议窄化cast，需核实际声明、调用、属性和完整拒绝note。乙从两个参数推导T产生冲突，既定int64_t域和值域允许时可以显式给int64_t实例或对齐调用类型，不应反过来禁止所有显式转换。丙非const引用不能绑定转换临时值，强转或临时变量也不自动保留回写语义；应核调用者存储类型和回写契约再修。三者区分推导、转换、引用绑定，不把标准C++推理冒充原CANN目标已验证；修后原配方编译和必要状态验证仍需真实执行。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 72,
+      "title": "缺少调用证据时的重载诊断边界",
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text",
+        "max_tokens_by_model": {
+          "glm-5": 250000,
+          "glm-5.2": 250000,
+          "glm-5.3": 250000
+        },
+        "distractor_skills": [
+          "ascendc-runtime-debug",
+          "ascendc-env-check"
+        ]
+      },
+      "prompt": "请使用宿主的技能工具加载 tool-compile-debug，评审以下 Ascend C 编译修复场景。允许读取技能文档；只分析题面材料，不执行工程命令、修改源码或实际构建。说明证据支持的结论、下一步及其责任范围。\n\n已有Ascend C算子调用AscendC::Add失败，聊天摘要只有no matching function以及四参数和六参数候选。工程目录尚未提供源码或完整日志，本机SDK版本和目标也未登记。随包9.0快照列出三个候选，四参数候选末参是const int32_t&；另一个知识分片的分类列表没有Add。现在可以得出哪些结论，下一步如何继续？",
+      "expected_output": "只确认存在待查的重载匹配问题，区分随包快照与实际SDK声明。不能臆测调用侧参数个数、类型、值域，不把引用或uint32_t/int64_t猜测直接当根因，不在缺证时给窄化cast修法；三个收录候选不是完整SDK集合，分类未出现Add不能证明高层重载不存在。指出所需源码调用、完整首错与候选拒绝note、实际SDK/目标等最小证据；取得已有日志后按首诊条件解析，再针对实际签名排查。不能到未授权父目录或宿主缓存寻找本来未提供的工程，不能宣称读取了实际SDK、改了代码或编译已通过。",
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-compile-debug"
+        }
+      ],
+      "files": []
+    }
+  ]
+}

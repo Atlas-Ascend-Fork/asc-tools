@@ -1,0 +1,55 @@
+- id: fix_cmake_find_package_asc
+  applies_to: ["cmake_missing_find_package_asc", "cmake_config"]
+  patch_kind: cmake
+  template: |
+    find_package(ASC REQUIRED)
+
+- id: fix_language_asc
+  applies_to: ["cmake_missing_language_asc"]
+  patch_kind: cmake
+  template: |
+    project(<name> LANGUAGES ASC CXX)
+
+- id: fix_header_missing
+  applies_to: ["header_missing", "kernel_operator_header_missing"]
+  patch_kind: source_patch
+  template: |
+    Restore the missing include or add the correct include directory. For Ascend C kernel APIs, include "kernel_operator.h".
+
+- id: fix_link_library
+  applies_to: ["link_error"]
+  patch_kind: cmake
+  template: |
+    Add the missing target_link_libraries entry or correct CMAKE_PREFIX_PATH / LD_LIBRARY_PATH.
+
+- id: fix_jump_range
+  applies_to: ["kernel_jump_range", "compiler_limit"]
+  patch_kind: cmake_compile_option
+  template: |
+    add_ops_compile_options(<OpType> OPTIONS -mllvm -cce-aicore-jump-expand=true)
+
+- id: fix_tiling_field_mismatch
+  applies_to: ["tiling_field_mismatch"]
+  patch_kind: source_or_regenerate
+  template: |
+    Align TilingData field names between Host tiling and Kernel GET_TILING_DATA usage, or regenerate the operator project.
+
+- id: fix_namespace_ascendc
+  applies_to: ["api_incompatible", "wrong_namespace_ascendc"]
+  patch_kind: source_patch
+  template: |
+    Use the AscendC namespace exactly as provided by CANN headers.
+
+
+# Packaging-stage templates, split by the two common artifact failure families.
+# Provenance: Ascend SDK FAQ and the matching error-signature families.
+- id: fix_package_stage
+  applies_to: ["package_error"]
+  patch_kind: project_config
+  template: |
+    Packaging-stage failure. Branch on the log:
+    (a) tar "file name is too long" -> shorten the generated names: reduce the OpType
+        length (op_kernel/op_host file names derive from it), the operator group name
+        set via Comment, or the vendor_name configured in CMakePresets.json.
+    (b) json not generated / kernel artifact missing -> the packaging step did not see
+        the upstream build outputs; fix the earlier build step first, then re-package.

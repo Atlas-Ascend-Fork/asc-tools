@@ -1,0 +1,62 @@
+# Version-domain registry — the single source for supported CANN version
+# domains.  The engine and package metadata read this file at runtime.
+# Statuses distinguish live validation, static validation, registration,
+# observation, and frozen domains.  User-facing guidance only treats verified
+# domains as supported.
+schema_version: 1
+
+floor: "9.0.0"        # 支持下限；低于此版本域时版本敏感结论降级为参考
+ceiling: "9.1.0"      # 最高已核实版本域
+
+versions:
+  - version: "9.0.0"
+    domain: [9, 0]
+    status: verified_live
+    devkit_tag: v9.0.0
+    devkit_commit: c8c1b9df        # source revision
+    toolkit_build: "20260428_134817545"
+    verified:
+      static: "SDK headers and rule comparison"
+      live: "compiler and toolkit smoke checks"
+    notes: 9.0 版本域是当前知识库的基础域；条目的适用范围由各自的版本边界字段决定。
+
+  - version: "9.1.0"
+    domain: [9, 1]
+    status: verified_live          # static and live checks completed
+    devkit_tag: v9.1.0
+    devkit_commit: e5451c7f        # source revision
+    announce_date: "2026-07-31"
+    toolkit_build: "20260730_231653901"
+    verified:
+      static: "SDK headers and rule comparison"
+      live: "compiler and toolkit smoke checks"
+    notes: >-
+      Formal release domain. Entries include inherited declarations, version
+      mappings, and diagnostics introduced in this domain.  A small set of
+      compiler-diagnostic changes is represented by version-aware signatures.
+
+  - version: "9.2.0-beta.2"
+    domain: [9, 2]
+    status: watch                  # beta observation; formal support awaits a release
+    devkit_tag: v9.2.0-beta.2
+    devkit_commit: 2d1d7682        # source revision
+    announce_date: "2026-09-01"
+    toolkit_build: "20260826_163105218"
+    notes: >-
+      The beta line is observed for installation and exploratory checks.  It
+      remains outside the supported domain until a formal release is validated.
+
+domain_semantics:
+  granularity: major.minor         # 9.0.1 归 (9,0)、9.1.1 归 (9,1)；patch 不另立条目（随域继承）
+  beta_policy: beta versions remain watch until a formal release is validated
+  compare_note: engine compares major and minor domains; patch versions inherit the domain
+
+# Optional toolkit download coordinates.  Consumers should verify checksums
+# and installer integrity before use.
+toolkit_downloads:
+  "9.1.0":
+    toolkit: https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.1.0/Ascend-cann-toolkit_9.1.0_linux-x86_64.run
+    ops_950: https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.1.0/Ascend-cann-950-ops_9.1.0_linux-x86_64.run
+  "9.2.0-beta.2":
+    toolkit: https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.2.T3/Ascend-cann-toolkit_9.2.0-beta.2_linux-x86_64.run   # 注意：OBS 目录用 T 系列代号 9.2.T3
+    ops_950: https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.2.T3/Ascend-cann-950-ops_9.2.0-beta.2_linux-x86_64.run

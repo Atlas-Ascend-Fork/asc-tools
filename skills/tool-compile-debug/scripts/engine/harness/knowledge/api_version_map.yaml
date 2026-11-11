@@ -1,0 +1,653 @@
+# KB — AscendC API version migration map
+#
+# 用途：为诊断和修复提供可核对的版本迁移线索。调用方只在撞到
+# `use of undeclared identifier 'X'` / `no member named 'X'` 且 X 是**已知废弃/改名**的 AscendC
+# 符号时，由 cause_tree 出示 old→new 历史候选；短名或 deprecated 字样不证明迁移适用。
+#
+# 来源记录（若缺少完整构建信息或对象契约，不作当前支持结论）：
+#   /usr/local/Ascend/ascend-toolkit/latest/asc/include 里的 `[[deprecated("...use X instead...")]]`
+#   标记。每条 `provenance` 字段记录来源头文件。
+#
+# Schema（list of dict）：
+#   old_name:      报错里出现的旧/错名（编译器报 undeclared/no-member 的符号；ops 包
+#                  迁移对用「仓/路径」形态——REG_OP 名不变，错的是打包路径）
+#   replacement:   本版本应改用的真实名（来自 deprecated 消息的 "use X instead"）
+#   kind:          renamed | deprecated_pending_removal | typo_fixed | api_redesign | relocated
+#   since:         新名/新路径出现的版本（Version-specific 起；改名对缺省视为 kb_floor 域内已知）
+#   removed_in:    自哪个版本起移除/不可用（"unknown" = 头只标 deprecated 未给确切版本）
+#   namespace:     符号所属命名空间（多为 AscendC / AscendC::Hccl）
+#   arch_gate:     可选；该符号仅在这些 __NPU_ARCH__ 下存在（见 harness/knowledge/soc_feature_matrix.yaml）
+#   note:          一行修复方向
+#   provenance:    可核对的头文件路径与 deprecated 原文
+#
+# The map contains SDK facts, not case-specific source literals.
+
+- old_name: GetLayerNormNDTillingInfo
+  replacement: GetLayerNormNDTilingInfo
+  kind: typo_fixed
+  removed_in: unknown
+  namespace: AscendC
+  note: 旧名拼写错误（Tilling→Tiling），改用修正后的名字即可。
+  provenance: asc/include 头 [[deprecated("GetLayerNormNDTillingInfo is deprecated,
+    please use GetLayerNormNDTilingInfo instead!")]]
+- old_name: SetCcTiling
+  replacement: SetCcTilingV2
+  kind: api_redesign
+  removed_in: unknown
+  namespace: AscendC::Hccl
+  replacement_signature: __aicore__ inline int32_t SetCcTilingV2(uint64_t offset)
+  old_signature: __aicore__ inline int32_t SetCcTiling(__gm__ void *ccOpTilingData)
+  note: HCCL 通信切分接口升级到 V2；旧 SetCcTiling 收 GM 指针，新 SetCcTilingV2 收 uint64_t offset——改名并改传参。
+  provenance: asc/include/adv_api/hccl/hccl.h:255,265 [[deprecated("It is obsoleted
+    and use SetCcTilingV2 instead.")]] + 两签名已核对
+- old_name: SetReduceDataTypeAbility
+  replacement: Tiling Api
+  kind: api_redesign
+  removed_in: unknown
+  namespace: AscendC::Hccl
+  note: 该能力已迁移到 Tiling Api（host 侧 tiling 配置），不再有对应 kernel 侧调用。
+  provenance: asc/include/adv_api/hccl/hccl.h:410 [[deprecated("It is obsoleted and
+    use Tiling Api instead.")]]
+- old_name: GetDumpWorkSpacePtr
+  replacement: ''
+  kind: deprecated_pending_removal
+  removed_in: next_version
+  namespace: AscendC
+  arch_gate:
+  - '2002'
+  - '2201'
+  - '3002'
+  note: 已废弃将移除；dump workspace 改由框架管理，移除此调用或改用当前 dump 机制。
+  provenance: 'asc/include 头 [[deprecated("NOTICE: GetDumpWorkSpacePtr has been deprecated
+    and will be removed in the next version.")]]'
+- old_name: SetDumpWorkSpacePtr
+  replacement: ''
+  kind: deprecated_pending_removal
+  removed_in: next_version
+  namespace: AscendC
+  arch_gate:
+  - '2002'
+  - '2201'
+  - '3002'
+  note: 已废弃将移除（且仅 __NPU_ARCH__ 2002/2201/3002 下存在）；移除此调用或改用当前 dump 机制。
+  provenance: 'asc/include 头 #if (__NPU_ARCH__==2201||2002||3002) ... [[deprecated("NOTICE:
+    SetDumpWorkSpacePtr has been deprecated and will be removed in the next version.")]]'
+- old_name: GetLength
+  replacement: GetSize
+  replacement_confidence: inferred
+  kind: deprecated_pending_removal
+  removed_in: next_version
+  namespace: AscendC
+  note: 已废弃将移除；编译器只报"deprecated"不给替换名——本表据 kernel_tensor.h 相邻的 GetSize()（同返回 uint32_t
+    的长度查询）推断为等价替换。
+  provenance: basic_api/kernel_tensor.h:179-181 [[deprecated("GetLength has been deprecated...")]]；替换名
+    GetSize 系相邻声明(kernel_tensor.h:178 GetSize)推断，非消息明示
+- old_name: SetAddrWithOffset
+  replacement: operator[](offset)
+  replacement_confidence: inferred
+  kind: deprecated_pending_removal
+  removed_in: next_version
+  namespace: AscendC
+  note: 已废弃将移除；编译器只报"deprecated"不给替换——本表据 kernel_tensor.h 相邻的 operator[](offset) 推断，用
+    tensor[offset] 取代 SetAddrWithOffset。
+  provenance: basic_api/kernel_tensor.h:167-169 [[deprecated("SetAddrWithOffset has
+    been deprecated...")]]；替换 operator[] 系相邻声明(kernel_tensor.h:164)推断，非消息明示
+# ── Version migration entries: package relocations and API renames ───────────
+# Entries are additive. Sources: versioned cann-ops-nn/cann-ops-math trees,
+# SDK snapshots for v9.0.0/v9.1.0/v9.2.0-beta.2, and official documentation.
+# interface_change_description.md（8.5→当前 / 9.1.0 两张表）。
+# since = 新名/新路径出现的版本（devkit 双 tag 逐对核实）；处置全表见
+# Each entry records its own provenance and applicability.
+
+# —— Version migration. ops-nn → ops-math 五算子迁移（REG_OP 名不变，纯包路径迁移）──────────
+- old_name: cann-ops-nn/control/identity/op_graph/identity_proto.h
+  replacement: cann-ops-math/conversion/identity/op_graph/identity_proto.h
+  kind: relocated
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: ge
+  note: Identity 算子从 ops-nn 包迁到 ops-math 包（control/ → conversion/）；REG_OP 名不变。x/y
+    dtype 由显式 14 类型列表放宽为 TensorType::ALL()——旧工程按显式列表校验的适配代码可能行为变化。
+  provenance: references/cann-ops-nn v9.0.0 有 control/identity/op_graph/identity_proto.h、v9.1.0
+    树已删；references/cann-ops-math v9.0.0 无、v9.1.0 conversion/identity/op_graph/identity_proto.h
+    新增（identity_proto.h:36-39 TensorType::ALL() 已读取）
+- old_name: cann-ops-nn/control/identity_n/op_graph/identity_n_proto.h
+  replacement: cann-ops-math/conversion/identity_n/op_graph/identity_n_proto.h
+  kind: relocated
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: ge
+  note: IdentityN 同 Identity 从 ops-nn 迁 ops-math（control/ → conversion/）；DYNAMIC_INPUT/OUTPUT
+    形态不变。
+  provenance: cann-ops-nn v9.1.0 树无 control/identity_n；cann-ops-math v9.1.0 conversion/identity_n/op_graph/identity_n_proto.h:37-42
+    已读取
+- old_name: cann-ops-nn/control/rank/op_graph/rank_proto.h
+  replacement: cann-ops-math/math/rank/op_graph/rank_proto.h
+  kind: relocated
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: ge
+  note: Rank 从 ops-nn control/ 迁 ops-math math/ 顶层；proto 形态不变（y=DT_INT32）。
+  provenance: cann-ops-nn v9.1.0 树无 control/rank；cann-ops-math v9.1.0 math/rank/op_graph/rank_proto.h:34-38
+    已读取
+- old_name: cann-ops-nn/control/shape/op_graph/shape_proto.h
+  replacement: cann-ops-math/math/shape/op_graph/shape_proto.h
+  kind: relocated
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: ge
+  note: Shape 从 ops-nn control/ 迁 ops-math math/；x dtype 由显式列表放宽为 TensorType::ALL()（y
+    仍 DT_INT32/DT_INT64）——放宽点写修复提示时须带上。
+  provenance: cann-ops-nn v9.1.0 树无 control/shape；cann-ops-math v9.1.0 math/shape/op_graph/shape_proto.h:38-42
+    TensorType::ALL() 已读取
+- old_name: cann-ops-nn/control/shape_n/op_graph/shape_n_proto.h
+  replacement: cann-ops-math/math/shape_n/op_graph/shape_n_proto.h
+  kind: relocated
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: ge
+  note: ShapeN 从 ops-nn control/ 迁 ops-math math/；proto 形态不变。
+  provenance: cann-ops-nn v9.1.0 树无 control/shape_n；cann-ops-math v9.1.0 math/shape_n/op_graph/shape_n_proto.h:38-43
+    已读取
+# —— Version migration. 9.1.0 归一化改名（文档接口变更表第二张表 + devkit 双 tag 实证）──────
+# 旧名在 v9.1.0 include/ 全树零命中（真移除）；新名 = 9.1 新归一化接口。
+# 共同语义：操作类型从函数名（Block/Whole/Pair/Repeat + Sum/Max/Min）收进
+# ReduceType 模板参数；实参序 repeatTime,mask → mask,repeatTime。
+- old_name: BlockReduceSum
+  replacement: ReduceDataBlock
+  kind: api_redesign
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: AscendC
+  replacement_signature: template <ReduceType reduceType, typename T, typename U,
+    bool isSetMask = true> __aicore__ inline void ReduceDataBlock(const LocalTensor<T>&
+    dst, const LocalTensor<U>& src, const int32_t mask, const int32_t repeatTime,
+    const int32_t dstRepStride, const int32_t srcBlkStride, const int32_t srcRepStride)
+  old_signature: template <typename T, bool isSetMask = true> __aicore__ inline void
+    BlockReduceSum(const LocalTensor<T>& dst, const LocalTensor<T>& src, const int32_t
+    repeatTime, const int32_t mask, const int32_t dstRepStride, const int32_t srcBlkStride,
+    const int32_t srcRepStride)
+  note: 只改名字编不过：归并进 ReduceDataBlock 且用 ReduceType 模板参选归约操作；mask 与 repeatTime 实参顺序对调（旧
+    repeatTime 在前）。
+  provenance: v9.0.0 include/basic_api/kernel_operator_vec_reduce_intf.h:46-49（旧声明）；v9.1.0
+    同文件 :36-46 ReduceDataBlock 新声明、旧名全树零命中；文档站 extracted/interface_change_description.md
+    9.1.0 表
+- old_name: BlockReduceMax
+  replacement: ReduceDataBlock
+  kind: api_redesign
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: AscendC
+  replacement_signature: template <ReduceType reduceType, typename T, typename U,
+    bool isSetMask = true> __aicore__ inline void ReduceDataBlock(const LocalTensor<T>&
+    dst, const LocalTensor<U>& src, const int32_t mask, const int32_t repeatTime,
+    const int32_t dstRepStride, const int32_t srcBlkStride, const int32_t srcRepStride)
+  note: BlockReduceMax 同族归并：ReduceDataBlock + ReduceType::REDUCE_MAX；mask/repeatTime
+    顺序对调。
+  provenance: v9.0.0 kernel_operator_vec_reduce_intf.h:62-65；v9.1.0 旧名零命中 + ReduceDataBlock
+    :36-46；interface_change_description.md 9.1.0 表
+- old_name: BlockReduceMin
+  replacement: ReduceDataBlock
+  kind: api_redesign
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: AscendC
+  replacement_signature: template <ReduceType reduceType, typename T, typename U,
+    bool isSetMask = true> __aicore__ inline void ReduceDataBlock(const LocalTensor<T>&
+    dst, const LocalTensor<U>& src, const int32_t mask, const int32_t repeatTime,
+    const int32_t dstRepStride, const int32_t srcBlkStride, const int32_t srcRepStride)
+  note: BlockReduceMin 同族归并：ReduceDataBlock + ReduceType::REDUCE_MIN；mask/repeatTime
+    顺序对调。
+  provenance: v9.0.0 kernel_operator_vec_reduce_intf.h:78-81；v9.1.0 旧名零命中 + ReduceDataBlock
+    :36-46；interface_change_description.md 9.1.0 表
+- old_name: WholeReduceSum
+  replacement: ReduceRepeat
+  kind: api_redesign
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: AscendC
+  replacement_signature: template <ReduceType reduceType, typename T, typename U,
+    bool isSetMask = true> __aicore__ inline void ReduceRepeat(const LocalTensor<T>&
+    dst, const LocalTensor<U>& src, const uint64_t mask[], const int32_t repeatTime,
+    const int32_t dstRepStride, const int32_t srcBlkStride, const int32_t srcRepStride,
+    ReduceOrder order = ReduceOrder::ORDER_VALUE_INDEX)
+  old_signature: template <typename T, bool isSetMask = true, typename U = T> __aicore__
+    inline void WholeReduceSum(const LocalTensor<U>& dst, const LocalTensor<T>& src,
+    const uint64_t mask[], const int32_t repeatTime, const int32_t dstRepStride, const
+    int32_t srcBlkStride, const int32_t srcRepStride)
+  note: WholeReduceSum 归并进 ReduceRepeat + ReduceType::REDUCE_SUM（保留 mask[] 形态与模板参
+    order）。
+  provenance: v9.0.0 kernel_operator_vec_reduce_intf.h:144-148（3510/5102/3003/3113
+    门控块内）；v9.1.0 旧名零命中 + ReduceRepeat :59-72；interface_change_description.md 9.1.0
+    表
+- old_name: WholeReduceMax
+  replacement: ReduceRepeat
+  kind: api_redesign
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: AscendC
+  replacement_signature: template <ReduceType reduceType, typename T, typename U,
+    bool isSetMask = true> __aicore__ inline void ReduceRepeat(const LocalTensor<T>&
+    dst, const LocalTensor<U>& src, const uint64_t mask[], const int32_t repeatTime,
+    const int32_t dstRepStride, const int32_t srcBlkStride, const int32_t srcRepStride,
+    ReduceOrder order = ReduceOrder::ORDER_VALUE_INDEX)
+  note: WholeReduceMax 归并进 ReduceRepeat + ReduceType::REDUCE_MAX。
+  provenance: v9.0.0 kernel_operator_vec_reduce_intf.h:166-170；v9.1.0 旧名零命中 + ReduceRepeat
+    :59-72；interface_change_description.md 9.1.0 表
+- old_name: WholeReduceMin
+  replacement: ReduceRepeat
+  kind: api_redesign
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: AscendC
+  replacement_signature: template <ReduceType reduceType, typename T, typename U,
+    bool isSetMask = true> __aicore__ inline void ReduceRepeat(const LocalTensor<T>&
+    dst, const LocalTensor<U>& src, const uint64_t mask[], const int32_t repeatTime,
+    const int32_t dstRepStride, const int32_t srcBlkStride, const int32_t srcRepStride,
+    ReduceOrder order = ReduceOrder::ORDER_VALUE_INDEX)
+  note: WholeReduceMin 归并进 ReduceRepeat + ReduceType::REDUCE_MIN。
+  provenance: v9.0.0 kernel_operator_vec_reduce_intf.h:182-186；v9.1.0 旧名零命中 + ReduceRepeat
+    :59-72；interface_change_description.md 9.1.0 表
+- old_name: RepeatReduceSum
+  replacement: ReduceRepeat
+  kind: api_redesign
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: AscendC
+  replacement_signature: template <ReduceType reduceType, typename T, typename U,
+    bool isSetMask = true> __aicore__ inline void ReduceRepeat(const LocalTensor<T>&
+    dst, const LocalTensor<U>& src, const uint64_t mask[], const int32_t repeatTime,
+    const int32_t dstRepStride, const int32_t srcBlkStride, const int32_t srcRepStride,
+    ReduceOrder order = ReduceOrder::ORDER_VALUE_INDEX)
+  old_signature: template <typename T, bool isSetMask = true, typename U = T> __aicore__
+    inline void RepeatReduceSum(const LocalTensor<U>& dst, const LocalTensor<T>& src,
+    const int32_t repeatTime, const int32_t mask, const int32_t dstBlkStride, const
+    int32_t srcBlkStride, const int32_t dstRepStride, const int32_t srcRepStride)
+  note: RepeatReduceSum 归并进 ReduceRepeat + ReduceType::REDUCE_SUM；三处签名差：mask/repeatTime
+    对调、dstBlkStride 删除、模板参收 ReduceType。
+  provenance: v9.0.0 kernel_operator_vec_reduce_intf.h:119-124（3510/5102/3003/3113
+    门控块内）；v9.1.0 旧名零命中 + ReduceRepeat :59-72；interface_change_description.md 9.1.0
+    表
+- old_name: PairReduceSum
+  replacement: ReducePairElem
+  kind: api_redesign
+  since: 9.1.0
+  removed_in: 9.1.0
+  namespace: AscendC
+  replacement_signature: template <ReduceType reduceType, typename T, typename U,
+    bool isSetMask = true> __aicore__ inline void ReducePairElem(const LocalTensor<T>&
+    dst, const LocalTensor<U>& src, const int32_t mask, const int32_t repeatTime,
+    const int32_t dstRepStride, const int32_t srcBlkStride, const int32_t srcRepStride)
+  old_signature: template <typename T, bool isSetMask = true> __aicore__ inline void
+    PairReduceSum(const LocalTensor<T>& dst, const LocalTensor<T>& src, const int32_t
+    repeatTime, const int32_t mask, const int32_t dstRepStride, const int32_t srcBlkStride,
+    const int32_t srcRepStride)
+  note: PairReduceSum 改名 ReducePairElem（Pair 元素成对归约）；ReduceType 模板参选操作 + mask/repeatTime
+    对调。
+  provenance: v9.0.0 kernel_operator_vec_reduce_intf.h:94-98；v9.1.0 旧名零命中 + ReducePairElem
+    :48-59；interface_change_description.md 9.1.0 表
+# —— Version migration. 8.5→当前的改名对（文档表一未标版本；since=新名在 v9.0.0 在场，devkit 推断）──
+# 旧名在 9.0/9.1 头内仍保留（带 "has been updated, please use X instead" 注释）——
+# removed_in: unknown；等真移除后再补。（version update：本节 13 对 + B2c 2 对已逐对在
+# devkit v9.1.0 tag read核验，replacement_confidence 升级 verified。）
+- old_name: ScalarGetCountOfValue
+  replacement: GetBitCount
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified   # version update：devkit v9.1.0 tag 逐对已读取（git grep）
+  note: 标量位计数接口改名；旧名 9.0/9.1 头内仍保留（deprecated 注释形态），新代码用 GetBitCount。
+  provenance: kernel_operator_scalar_intf.h:35-37 "ScalarGetCountOfValue has been
+    updated, please use GetBitCount instead."；devkit v9.1.0 tag include/basic_api/kernel_operator_scalar_intf.h:35（注释）+:37（旧声明）+:33（GetBitCount 在场）已读取；interface_change_description.md
+    表一（未标版本）
+- old_name: ScalarCountLeadingZero
+  replacement: CountLeadingZero
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 前导零计数改名；旧名仍保留于 9.0/9.1 头，新代码用 CountLeadingZero。
+  provenance: kernel_operator_scalar_intf.h:40-42 update 注释；devkit v9.1.0 tag include/basic_api/kernel_operator_scalar_intf.h:41（注释）+:39（CountLeadingZero 在场）已读取；interface_change_description.md
+    表一
+- old_name: ScalarGetSFFValue
+  replacement: GetSFFValue
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: SFF 值读取改名；旧名仍保留于 9.0/9.1 头，新代码用 GetSFFValue。
+  provenance: kernel_operator_scalar_intf.h:52-54 update 注释；devkit v9.1.0 tag include/basic_api/kernel_operator_scalar_intf.h:52（注释）+:50（GetSFFValue 在场）已读取；interface_change_description.md
+    表一
+- old_name: ScalarCast
+  replacement: Cast
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 标量转换改名并入 Cast（float→half/int32 重载族）；旧名仍保留于 9.0/9.1 头。
+  provenance: kernel_operator_scalar_intf.h:59-61 update 注释；devkit v9.1.0 tag include/basic_api/kernel_operator_scalar_intf.h:59（注释）已读取；interface_change_description.md
+    表一
+- old_name: FusedMulAddRelu
+  replacement: MulAddRelu
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 融合乘加 ReLU 改名 MulAddRelu；旧名仍保留于 9.0/9.1 头。
+  provenance: kernel_operator_vec_binary_intf.h:647,655,675 "FusedMulAddRelu has been
+    updated, please use MulAddRelu instead."；devkit v9.1.0 tag include/basic_api/kernel_operator_vec_binary_intf.h:647,655,675 已读取；interface_change_description.md 表一
+- old_name: CastDeq
+  replacement: CastDequant
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 反量化转换改名 CastDequant；旧名仍保留于 9.0/9.1 头。
+  provenance: kernel_operator_vec_vconv_intf.h:101,107 "CastDeq has been updated,
+    please use CastDequant instead."；devkit v9.1.0 tag include/basic_api/kernel_operator_vec_vconv_intf.h:101,107,124 已读取；interface_change_description.md 表一
+- old_name: CompareScalar
+  replacement: Compares
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 标量比较改名 Compares；旧名仍保留于 9.0/9.1 头。
+  provenance: kernel_operator_vec_cmpsel_intf.h:126,134 "CompareScalar has been updated,
+    please use Compares instead."；devkit v9.1.0 tag include/basic_api/kernel_operator_vec_cmpsel_intf.h:126,134,154 已读取；interface_change_description.md 表一
+- old_name: GetAccVal
+  replacement: GetReduceRepeatSumSpr
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 归约累加值读取改名 GetReduceRepeatSumSpr；旧名仍保留于 9.0/9.1 头。
+  provenance: kernel_operator_vec_reduce_intf.h:188-190 "GetAccVal has been updated,
+    please use GetReduceRepeatSumSpr instead."；devkit v9.1.0 tag include/basic_api/kernel_operator_vec_reduce_intf.h:188 已读取；interface_change_description.md 表一
+- old_name: GetReduceMaxMinCount
+  replacement: GetReduceRepeatMaxMinSpr
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 归约最大最小计数改名 GetReduceRepeatMaxMinSpr；旧名仍保留于 9.0/9.1 头。
+  provenance: kernel_operator_vec_reduce_intf.h:177-181 update 注释；devkit v9.1.0 tag include/basic_api/kernel_operator_vec_reduce_intf.h:177,181（注释）+:179（旧声明）已读取；interface_change_description.md
+    表一
+- old_name: SetAtomicNone
+  replacement: DisableDmaAtomic
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 关闭 DMA 原子改名 DisableDmaAtomic；旧名仍保留于 9.0/9.1 头。
+  provenance: kernel_operator_set_atomic_intf.h:38 "SetAtomicNone has been updated,
+    please use DisableDmaAtomic instead."；devkit v9.1.0 tag include/basic_api/kernel_operator_set_atomic_intf.h:38（注释）+:39（旧声明）已读取；interface_change_description.md 表一
+- old_name: InitConstValue
+  replacement: Fill
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 常量初始化改名 Fill；旧名仍保留于 9.0/9.1 头（InitConstValueParams 形参）。
+  provenance: kernel_operator_mm_intf.h:370 "InitConstValue has been updated, please
+    use Fill instead." + :372-373 旧声明；devkit v9.1.0 tag include/basic_api/kernel_operator_mm_intf.h:370 已读取；interface_change_description.md 表一
+- old_name: SetMMLayoutTransform
+  replacement: SetMMRowMajor
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 布尔布局开关拆成两个命名接口：SetMMLayoutTransform(true)→SetMMRowMajor()、SetMMLayoutTransform(false)→SetMMColumnMajor()；旧名仍保留于
+    9.0/9.1 头。
+  provenance: kernel_operator_mm_intf.h:500 "SetMMLayoutTransform has been updated,
+    please use SetMMRowMajor/SetMMColumnMajor instead." + :501 旧声明；devkit v9.1.0 tag include/basic_api/kernel_operator_mm_intf.h:500,501 已读取；interface_change_description.md
+    表一
+- old_name: CalcTschBlockDim
+  replacement: CalcTschNumBlocks
+  kind: renamed
+  since: 9.0.0
+  removed_in: unknown
+  namespace: AscendC
+  replacement_confidence: verified
+  note: 调度 block 数计算改名 CalcTschNumBlocks（PlatformAscendC 成员）；旧名 9.0/9.1 头内与新版并存。
+  provenance: utils/tiling/platform/platform_ascendc.h CalcTschBlockDim/CalcTschNumBlocks
+    并存；devkit v9.1.0 tag include/utils/tiling/platform/platform_ascendc.h:128（旧）+:137（新）已读取；interface_change_description.md 表一
+# —— Version migration. 8.5→当前、旧名已真移除（v9.0.0 include/ 零命中）──────────────────
+- old_name: ToBfloat16
+  replacement: Cast
+  kind: renamed
+  since: 9.0.0
+  removed_in: 9.0.0
+  namespace: AscendC
+  replacement_confidence: verified   # version update：devkit v9.1.0 tag 复核零命中
+  note: float→bfloat16_t 转换并入 Cast 重载族；旧名 ToBfloat16 在 9.0.0 起的头内已不存在——8.x 代码原样上 9.0
+    报 undeclared，改用 Cast<float, bfloat16_t> 对应重载。
+  provenance: v9.0.0/v9.1.0 include/ 全树 ToBfloat16 零命中（递归文本搜索；v9.1.0 = devkit tag e5451c7f 复核零命中）；interface_change_description.md
+    表一（Cast float转bfloat16_t 页）
+- old_name: ToFloat
+  replacement: Cast
+  kind: renamed
+  since: 9.0.0
+  removed_in: 9.0.0
+  namespace: AscendC
+  replacement_confidence: verified   # version update：devkit v9.1.0 tag 复核零命中
+  note: 多类型→float 转换并入 Cast 重载族（其中一个重载返回值由 float 改为模板 U，U=float）；旧名在 9.0.0 起已移除——8.x
+    代码报 undeclared，改用对应 Cast 重载。
+  provenance: v9.0.0/v9.1.0 include/ 全树 ToFloat 零命中（递归文本搜索；v9.1.0 = devkit tag e5451c7f 复核零命中）；interface_change_description.md
+    表一（Cast 多类型转float 页，备注返回值改模板 U）
+# ── 版本特有（2026-09-18）：9.1.0 Release Notes C API 断签名/改名/废弃 + 头路径迁移 ──
+# 真源 = the release notes；
+# 逐条在 devkit v9.1.0 tag（the SDK source e5451c7f）git grep 核验新签名在场、
+# 旧名零命中；v9.0.0 对照面 = devkit v9.0.0 include 抽取树（the SDK comparison）。
+# C API（asc_* 系）为全局命名空间（c_api 头无 namespace 包裹）→ 条目省略 namespace 字段。
+# 基建类修复（头文件引用路径统一 impl/c_api/...、cache_ctrl.h 保护宏）无符号级
+# old→new 对，不入本表。include/driver→pkg_inc/driver 迁移裁决在
+# harness/knowledge/static_rules.yaml（include_driver_path_migration）+ error_signatures header_missing
+# 注记——非符号改名，放本表无法被 undeclared 匹配（version update 裁决）。
+
+- old_name: asc_sync_block_arrive
+  replacement: asc_sync_block_arrive
+  kind: api_redesign
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  replacement_signature: '#define asc_sync_block_arrive(pipe, flag_id) asc_sync_block_arrive_impl((pipe), (flag_id))'
+  old_signature: 'asc_sync_block_arrive(pipe, mode, flagID)  # 9.0.0 三参形态（mode 参数）'
+  note: 9.1.0 删除 mode 参数并统一事件标号命名（flagID→flag_id）——旧三参调用报参数不匹配，删第二实参即可。
+  provenance: 'v9.1.0 include/c_api/sync/sync.h:44 宏定义 (pipe, flag_id)；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_sync_block_wait
+  replacement: asc_sync_block_wait
+  kind: api_redesign
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  replacement_signature: '#define asc_sync_block_wait(pipe, flag_id) wait_flag_dev((pipe), (flag_id))  # 3510 形态；2201 为 wait_flag_dev((flag_id))'
+  old_signature: 'asc_sync_block_wait(flagID)  # 9.0.0 单参形态'
+  note: 9.1.0 新增首参 pipe（流水线）并统一事件标号命名——旧单参调用报参数不匹配，需在首位补 pipe 实参。
+  provenance: 'v9.1.0 include/c_api/sync/sync.h:56,70 宏定义 (pipe, flag_id)；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_half2int4x2_rd
+  replacement: asc_half2int4x2_ru / asc_half2int4x2_rz / asc_half2int4x2_rn / asc_half2int4x2_rna
+  kind: renamed
+  since: "9.1.0"
+  removed_in: unknown
+  note: 舍入族名修正警报（语义变更，非 undeclared 对）：9.0.0 把 half→int4x2 的 ru/rz/rn/rna 四种舍入接口全部误声明为 _rd 名（reg_convert.h:386-468 同名 5 块）；9.1.0 起后四块改回真实模式名 _ru/_rz/_rn/_rna（含 _sat/_v2/_v3/_v4 变体），真 _rd（:386）保留。9.0.0 代码用 _rd 名实际拿到非向下舍入行为的，升级 9.1 后同名调用变为真向下舍入——按实际舍入模式改用对应后缀。
+  provenance: 'v9.0.0 reg_convert.h:386/403/420/437/454 五块同名 _rd 声明（SDK v9.0 头文件快照）；v9.1.0 include/c_api/reg_compute/reg_convert.h:386(rd)/403(ru)/420(rz)/437(rn)/454(rna)；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_int162half_rc
+  replacement: asc_int162half_rz
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: int16→half 舍入命名修正：_rc 非标准舍入语义，9.1.0 同位改为向零舍入 _rz；旧名 9.1.0 头内零命中，报 undeclared 直接改名。
+  provenance: 'v9.0.0 reg_convert.h:539 asc_int162half_rc；v9.1.0 include/c_api/reg_compute/reg_convert.h:539 同位改名 asc_int162half_rz（_rc 全树零命中）；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_reduce_min_datablock_
+  replacement: asc_reduce_min_datablock
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: 去除多余尾部下划线；旧名（带尾下划线）9.1.0 头内零命中，报 undeclared 直接改名。
+  provenance: 'v9.0.0 reg_vector.h:339-348 尾下划线形态；v9.1.0 include/c_api/reg_compute/reg_vector.h:381-390 无下划线（git grep 尾下划线形态零命中）；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_half2uint8_rd_sat_v2_impl
+  replacement: asc_half2uint8_rd_sat_v2
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: 去除误带 _impl 后缀（实现名当公开名声明）；同族 rn/rna/ru/rz 四个 _sat_v2_impl 同改。旧名 9.1.0 零命中。
+  provenance: 'v9.0.0 reg_convert.h:496 asc_half2uint8_rd_sat_v2_impl；v9.1.0 include/c_api/reg_compute/reg_convert.h:496 无 _impl；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_half2uint8_rn_sat_v2_impl
+  replacement: asc_half2uint8_rn_sat_v2
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: 去除误带 _impl 后缀（同 rd 条目族）。
+  provenance: 'v9.0.0 reg_convert.h:504；v9.1.0 include/c_api/reg_compute/reg_convert.h:504；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_half2uint8_rna_sat_v2_impl
+  replacement: asc_half2uint8_rna_sat_v2
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: 去除误带 _impl 后缀（同 rd 条目族）。
+  provenance: 'v9.0.0 reg_convert.h:512；v9.1.0 include/c_api/reg_compute/reg_convert.h:512；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_half2uint8_ru_sat_v2_impl
+  replacement: asc_half2uint8_ru_sat_v2
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: 去除误带 _impl 后缀（同 rd 条目族）。
+  provenance: 'v9.0.0 reg_convert.h:520；v9.1.0 include/c_api/reg_compute/reg_convert.h:520；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_half2uint8_rz_sat_v2_impl
+  replacement: asc_half2uint8_rz_sat_v2
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: 去除误带 _impl 后缀（同 rd 条目族）。
+  provenance: 'v9.0.0 reg_convert.h:528；v9.1.0 include/c_api/reg_compute/reg_convert.h:528；CANN_9_1_0.md Bug修复节'
+
+- old_name: vector_f4e1m2x2
+  replacement: vector_fp4x2_e1m2_t
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: bfloat16→fp4x2_e1m2 转换族（asc_bfloat162e1m2x2_* 20 重载，rd/rn/rna/ru/rz × v1-v4）的非标目的类型名修正；旧类型名 9.1.0 头内零命中，报 unknown type name 时改新名。
+  provenance: 'v9.0.0 reg_convert.h:920-958 vector_f4e1m2x2&（24 处）；v9.1.0 include/c_api/reg_compute/reg_convert.h:920-958 全部改 vector_fp4x2_e1m2_t&（旧名零命中）；CANN_9_1_0.md Bug修复节'
+
+- old_name: vector_u8
+  replacement: vector_uint8_t
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: 非标矢量类型别名修正（asc_half2uint8 转换族的目的类型）；旧别名 9.1.0 include/c_api 内零命中。
+  provenance: 'v9.0.0 reg_convert.h:490-528 vector_u8&（asc_half2uint8 全族目的类型）；v9.1.0 同区段全部改 vector_uint8_t&；CANN_9_1_0.md Bug修复节'
+
+- old_name: vector_f16
+  replacement: vector_half
+  kind: renamed
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  note: 非标矢量类型别名修正（asc_half2uint8 源类型 + asc_min_scalar half 重载源类型，v9.0.0 reg_vector.h:948 vector_half& dst/vector_f16 src 混用）；旧别名 9.1.0 零命中。
+  provenance: 'v9.0.0 reg_convert.h:490-528 + reg_vector.h:948 vector_f16；v9.1.0 include/c_api 内 vector_f16 零命中（git grep 已核对）；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_loadalign_postupdate
+  replacement: asc_loadalign_postupdate
+  kind: api_redesign
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  replacement_signature: '__simd_callee__ inline void asc_loadalign_postupdate(vector_int8_t& dst, __ubuf__ int8_t*& src, int32_t offset)'
+  old_signature: '__simd_callee__ inline void asc_loadalign_postupdate(vector_int8_t& dst, __ubuf__ int8_t* src, int32_t offset)  # 9.0.0'
+  note: UB 源指针参数由指针改指针引用（*&），确保调用后地址自更新对调用方可见；同族 asc_loadalign_brc(_v2)/upsample/downsample/unpack(_v2)/deintlv 的 *_postupdate 全部同改。传右值/临时指针的旧调用编不过；依赖地址回写的调用须以指针变量传入。
+  provenance: 'v9.0.0 reg_load.h:668 指针形态 → v9.1.0 include/c_api/reg_compute/reg_load.h:721 __ubuf__ int8_t*& src（brc :760、deintlv :1012-1013 同族同改）；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_storealign_postupdate
+  replacement: asc_storealign_postupdate
+  kind: api_redesign
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  replacement_signature: '__simd_callee__ inline void asc_storealign_postupdate(__ubuf__ int8_t*& dst_align32b, vector_int8_t src, int32_t offset, ...)'
+  old_signature: '__simd_callee__ inline void asc_storealign_postupdate(__ubuf__ int8_t* dst_align32b, vector_int8_t src, int32_t offset, ...)  # 9.0.0'
+  note: UB 目的指针参数由指针改指针引用（*&），地址自更新对调用方可见；同族 asc_storealign_1st/asc_storealign_pack(_v2) 的 *_postupdate 全部同改。
+  provenance: 'v9.0.0 reg_store.h:336 指针形态 → v9.1.0 include/c_api/reg_compute/reg_store.h:371 __ubuf__ int8_t*& dst_align32b（1st :399 同）；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_storeunalign
+  replacement: asc_storeunalign
+  kind: api_redesign
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  replacement_signature: '__simd_callee__ inline void asc_storeunalign(__ubuf__ int8_t* dst, vector_store_unalign& src0, ...)'
+  old_signature: '__simd_callee__ inline void asc_storeunalign(__ubuf__ int8_t*& dst, vector_store_unalign& src0, ...)  # 9.0.0（不更新地址却收引用）'
+  note: 反向修正：不更新地址的 asc_storeunalign 目的参数由指针引用改回普通指针；需要地址回写的场景改用 9.1.0 补齐的 asc_storeunalign_postupdate 重载。
+  provenance: 'v9.0.0 reg_store.h:580 __ubuf__ int8_t*& dst → v9.1.0 include/c_api/reg_compute/reg_store.h:623 普通指针；asc_storeunalign_postupdate 重载 v9.1.0 在场（reg_store.h:676 起）；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_get_arch_ver
+  replacement: asc_get_arch_ver
+  kind: api_redesign
+  since: "9.1.0"
+  removed_in: "9.1.0"
+  replacement_signature: '__aicore__ inline void asc_get_arch_ver(uint32_t& core_version)'
+  note: 参数名统一（asc_get_arch_ver coreVersion→core_version；asc_arange/asc_arange_descend index→value；asc_update_mask_b8/b16/b32 scalar→value）——位置传参源码兼容，仅命名实参调用/文档引用需改。
+  provenance: 'v9.1.0 include/c_api/sys_var/sys_var.h:79,91 core_version；CANN_9_1_0.md Bug修复节'
+
+- old_name: asc_set_gm2ub_pad
+  replacement: asc_set_copy_pad_val
+  kind: deprecated_pending_removal
+  since: "9.1.0"
+  removed_in: unknown
+  note: 9.1.0 标记废弃：改用通用搬运填充值配置接口 asc_set_copy_pad_val（按 dtype 重载 int8_t..float 直传；fp4x2/hifloat8/fp8 系需先转 int8_t 再传入）。
+  provenance: 'v9.1.0 include/c_api/vector_datamove/vector_datamove.h:485-487 [[deprecated("...Please use asc_set_copy_pad_val instead...")]]；新接口同文件 :31 起；CANN_9_1_0.md 接口废弃节'
+
+- old_name: asc_get_store_atomic_config
+  replacement: asc_atomic_add
+  kind: deprecated_pending_removal
+  since: "9.1.0"
+  removed_in: unknown
+  arch_gate: ['3510']
+  note: 仅 3510（Ascend 950PR/950DT）分支废弃（2201 分支 atomic.h:43 不受影响）：标量原子加改为直接调 asc_atomic_add（int32/uint32/float/int64/uint64 重载、返回操作前值），无需预先配置/查询搬运原子状态。
+  provenance: 'v9.1.0 include/c_api/atomic/atomic.h:79-81 [[deprecated("...use asc_atomic_add instead...")]]（3510 分支内）；新接口 include/c_api/scalar_compute/scalar_compute.h:79-87；CANN_9_1_0.md 接口废弃节'
+
+- old_name: asc_set_store_atomic_config_v2
+  replacement: asc_atomic_add
+  kind: deprecated_pending_removal
+  since: "9.1.0"
+  removed_in: unknown
+  note: 原子累加改直接调 asc_atomic_add；配置式接口（set_store_atomic_config_v2）废弃，不再走"先配置后搬运"路径。
+  provenance: 'v9.1.0 include/c_api/atomic/atomic.h:83-85 [[deprecated("...use asc_atomic_add instead...")]]；CANN_9_1_0.md 接口废弃节'
+
+- old_name: asc_scatter
+  replacement: asc_scatter
+  kind: deprecated_pending_removal
+  since: "9.1.0"
+  removed_in: unknown
+  note: 仅"源矢量寄存器在前、目的 UB 地址在后"的旧参数序重载族（int8..float 9 组）9.1.0 标记废弃——改为"目的地址在前、源矢量寄存器在后"的新序重载（9.1.0 新增，dtype 面不变）；重载仍在场仅告警，新代码勿再写旧序。
+  provenance: 'v9.1.0 include/c_api/reg_compute/reg_load.h:1589-1599 起 [[deprecated("...asc_scatter(__ubuf__ T* dst, vector_T src, ...) instead.")]] 旧序重载逐条标注；CANN_9_1_0.md 接口废弃节'
+
+- old_name: asc_exp_sub_v2
+  replacement: asc_exp_sub
+  kind: deprecated_pending_removal
+  since: "9.1.0"
+  removed_in: unknown
+  note: 仅 float 输入重载 (vector_float&, vector_float, vector_float, vector_bool) 废弃——改用 asc_exp_sub 同形；half 输入的 asc_exp_sub_v2（读源操作数奇数索引）保留，勿动。
+  provenance: 'v9.1.0 include/c_api/reg_compute/reg_vector.h:961-963 [[deprecated("...use asc_exp_sub instead.")]]（:959 half 重载紧邻不废弃）；CANN_9_1_0.md 接口废弃节'
+
+- old_name: c_api/vector_reg/reg_compute.h
+  replacement: c_api/vector_compute/vector_compute.h
+  kind: relocated
+  since: "9.0.0"
+  removed_in: "9.1.0"
+  note: 9.1.0 移除 c_api/vector_reg/ 目录（3510 扁平声明头 reg_compute.h，其头文件保护宏本就叫 ..._VECTOR_COMPUTE_H）；权威路径为 c_api/vector_compute/vector_compute.h（按 __NPU_ARCH__ 2201/3510 门控 include 对应 impl）。该新路径 v9.0.0 起已在场（9.0.0 双路径并存，9.1.0 删旧），直接 include 旧路径在 9.1.0 报 fatal error「No such file or directory」。
+  provenance: 'v9.0.0 tag 树 include/c_api/vector_reg/reg_compute.h 在场且 include/c_api/vector_compute/vector_compute.h 并存（SDK v9.0 头文件快照）；v9.1.0 tag 全树无 vector_reg 目录、vector_compute/vector_compute.h 在场（guard INCLUDE_C_API_VECTOR_COMPUTE_VECTOR_COMPUTE_H）；CANN_9_1_0.md 头文件引用路径统一条目'

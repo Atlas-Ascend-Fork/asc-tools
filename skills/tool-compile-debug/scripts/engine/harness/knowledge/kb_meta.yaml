@@ -1,0 +1,29 @@
+# Shared metadata for the bundled knowledge bases and their version contract.
+# The version registry remains the authoritative declaration of supported
+# domains; this file supplies defaults and entry-level field semantics.
+schema_version: 1
+
+kb_floor: "9.0.0"          # Unversioned entries apply from the knowledge-base floor.
+default_since: "9.0.0"     # Default lower bound for entries without an explicit since.
+default_until: null        # Null means no declared upper bound.
+reverify_on_upgrade: true  # Recheck unanchored entries when the SDK domain changes.
+
+registry_ref: harness/knowledge/versions.yaml   # Authoritative supported-version registry.
+
+# Optional entry-level version fields. Entries without them use the defaults above.
+# The engine applies version and architecture constraints together:
+#   since / until —— half-open applicable interval [since, until). Explicit
+#                    contradictions remove an entry from the candidates.
+#   arch_scope    —— 芯片适用范围（引擎既有消费点；版本/芯片两维同一函数收口）。
+#   superseded_by —— optional pointer to a replacement entry when a later SDK
+#                    changes a declaration; retain the older entry for its domain.
+entry_version_fields: [since, until, arch_scope, superseded_by]
+
+# 版本敏感条目的来源纪律（由版本域 KB 约束测试强制）：
+#   带 since/until 的条目必须同时带完整 source_provenance 四要素
+#   （cann_version / package_timestamp / header_sha256 / line）——版本字段标错 =
+#   跨版本的错误建议，比芯片标错更隐蔽；exempt_markers 列出的标记字段在场时豁免
+#   （beta 观察态知识如实标注，不伪装已核实）。
+version_sensitive_provenance:
+  required: true
+  exempt_markers: [beta_observed]

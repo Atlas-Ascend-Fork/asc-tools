@@ -1,0 +1,450 @@
+- id: filename_too_long
+  regex: CMake Error at .*makeself\.cmake|file name is too long \(cannot be split\)|file
+    name is too long \(max 256\)
+  phase: package
+  category: package_error
+  claims_cmake_envelope: true
+  example_message: 'CMake Error at /work/proj/makeself.cmake:12 (message): file name
+    is too long (cannot be split)'
+- id: cmake_error
+  regex: 'CMake Error at|CMake Error:'
+  phase: cmake_configure
+  category: cmake_config
+  example_message: 'CMake Error at /work/proj/CMakeLists.txt:5 (find_package): Could
+    not find ASCENDCL'
+- id: header_missing
+  regex: 'fatal error: .*: No such file or directory|fatal error C1083:'
+  phase: unknown_compile
+  category: header_missing
+  # Version-specific header-path（2026-09-18）路径迁移裁决：include/driver/* 头文件 CANN 9.1.0 起迁移到
+  # pkg_inc/driver/*，旧路径 2027-06-30 下线。报错文本含 include/driver 路径段时，
+  # 先核对 toolkit 版本：>=9.1.0 改用新路径；9.0 域旧路径仍合法（另有原因）。
+  # 裁决令主体在 harness/knowledge/static_rules.yaml（include_driver_path_migration）。
+  note: 'include/driver/* -> pkg_inc/driver/* since CANN 9.1.0 (old path offline 2027-06-30): fatal error
+    under include/driver on a >=9.1.0 toolkit means rewrite the include path, not a missing dependency.'
+  example_message: 'fatal error: ascendc/kernel_runtime.h: No such file or directory'
+- id: undefined_reference
+  regex: undefined reference to
+  phase: link
+  category: link_error
+  example_message: undefined reference to `AddCustom'
+- id: cannot_find_library
+  regex: cannot find -l|No such file or directory.*\.so
+  phase: link
+  category: link_error
+  example_message: cannot find -lascendcl
+- id: no_rule_to_make_target
+  regex: No rule to make target
+  phase: cmake_generate
+  category: cmake_config
+  example_message: No rule to make target 'proj/kernel.cpp', needed by 'proj/CMakeFiles/tgt.dir/kernel.cpp.o'
+- id: error_opening_object_file
+  regex: 'error opening ''.*\.o(\.d)?'': No such file'
+  phase: cmake_generate
+  category: cmake_config
+  example_message: 'error opening ''CMakeFiles/tgt.dir/kernel.cpp.o.d'': No such file
+    or directory'
+- id: template_depth_limit
+  regex: recursive template instantiation exceeded maximum depth|template instantiation
+    depth exceeds
+  phase: kernel_compile
+  category: compiler_limit
+  example_message: 'fatal error: recursive template instantiation exceeded maximum
+    depth of 1024'
+- id: bare_is_same_in_kernel
+  regex: no template named 'is_same'; did you mean 'std::is_same'
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: 裸 is_same 未解析；若原意是标准类型比较且当前声明与实参匹配，使用 `std::is_same<T,U>::value`，并显式包含
+    `<type_traits>`。仅补头不会把 std 中的名字引入当前作用域，也不能由此报错推定函数域。
+  example_message: no template named 'is_same'; did you mean 'std::is_same'
+  claims_compiler_diagnostic: true
+- id: matmulimpl_not_visible
+  regex: no template named 'MatmulImpl' in namespace 'AscendC'; did you mean 'MulImpl'\?
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: MatmulImpl 未在当前 AscendC 声明面找到。原意若是矩阵乘，核当前安装 matmul_intf 入口的 `AscendC::Matmul`
+    别名、模板参数与 cube/vector 调用配置，再补入口或修限定名；9.0 的该别名可随编译配置选择不同实现。MulImpl 近名候选不能替代矩阵乘计算。
+  example_message: no template named 'MatmulImpl' in namespace 'AscendC'; did you
+    mean 'MulImpl'?
+- id: tbuf_dtype_template_rejected
+  regex: too many template arguments for class template 'TBuf'
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: 若实际声明为 AscendC 的 `template<TPosition pos> TBuf` 且多传了元素类型，保留原缓冲位置，把元素类型放到
+    `Get<T>()` 或 `Get<T>(len)`。先核完整限定声明、实际模板实参和已分配字节容量；不要把示例位置或 dtype 强加给当前缓冲区。
+  example_message: too many template arguments for class template 'TBuf'
+- id: template_error
+  regex: template|instantiation|required from|no matching function|ambiguous|invalid
+    conversion|no type named
+  phase: unknown_compile
+  category: template_error
+  example_message: no matching function for call to 'Compute(int&, int&)'
+- id: jump_range
+  regex: out of jump/jumpc imm range|jump.*range
+  phase: kernel_compile
+  category: compiler_limit
+  example_message: 'fatal error: out of jump/jumpc imm range'
+- id: compiler_unsupported_arch_or_option
+  regex: Unsupported NPU architecture|no aicore arch specified|Cannot find option
+    named|No valid NPU architecture or soc is specified
+  phase: kernel_compile
+  category: unfriendly_error_code
+  example_message: 'error: Unsupported NPU architecture 3510'
+  # Version-specific（2026-09-17）：No valid NPU architecture 分支=9.1 行为改善形态（version comparison
+  # 架构参数无效时优先输出可读诊断，不依赖编译器内部崩溃栈。
+- id: internal_compiler_error
+  regex: internal compiler error|Segmentation fault|compiler.*crash|Stack dump
+  phase: kernel_compile
+  category: compiler_internal
+  example_message: 'internal compiler error: in finish_function at ../../gcc/cp/semantics.c:1234'
+- id: cann_error_code_generic
+  regex: \b[EWIZ1-9A-Z][0-9A-Z][0-9]{4}\b
+  phase: unknown
+  category: cann_error_code
+  example_message: 'EI0001: operator params check failed'
+- id: cann_internal_code
+  regex: \b[EWIZ1-9A-Z][0-9A-Z]9[0-9]{3}\b
+  phase: unknown
+  category: compiler_internal_or_cann_internal
+  action: start_minimize_and_probe_workflow
+  example_message: 'EI9001: internal compiler assertion failed'
+- id: schema_consistency
+  regex: generated code is stale|prototype .*schema|opcheck|host[_ -]?kernel.*arg|input_desc
+    missing|required dtype|schema_consistency
+  phase: host_compile
+  category: schema_consistency
+  example_message: generated code is stale, please regenerate tiling json
+- id: package_artifact_missing
+  regex: msobjdump:.*no .*kernel|kernel metadata missing|package failed
+  phase: package
+  category: package_error
+  example_message: 'msobjdump: error: no custom kernel found in the package'
+- id: json_not_generated
+  regex: \.json.*not generated|not generated.*\.json|failed to generate.*json
+  phase: package
+  category: package_error
+  example_message: 'error: kernel_meta.json not generated'
+- id: make_downstream
+  regex: 'g?make(\[[0-9]+\])?: \*\*\* .* Error [0-9]+|ninja: build stopped'
+  category: downstream_error
+  example_message: 'gmake[1]: *** [CMakeFiles/tgt.dir/all] Error 2'
+- id: host_fn_from_aicore
+  regex: calling a __host__ function\(\"?\w+"?\) from a __aicore__ function
+  phase: kernel_compile
+  category: kernel_compile_error
+  example_message: 'error: calling a __host__ function("printf") from a __aicore__
+    function("Compute") is not allowed'
+- id: aclrtlaunch_undefined_reference
+  regex: undefined reference to .aclrtlaunch_\w+
+  phase: link
+  category: link_error
+  example_message: undefined reference to `aclrtlaunch_add_custom'
+- id: gm_addr_type_mismatch
+  regex: cannot initialize a variable of type '__gm__ \w+ ?\*' with an lvalue of type
+    'GM_ADDR'
+  phase: kernel_compile
+  category: kernel_compile_error
+  example_message: 'error: cannot initialize a variable of type ''__gm__ half *''
+    with an lvalue of type ''GM_ADDR'''
+- id: half_type_unknown
+  regex: unknown type name 'half'; did you mean 'half2'\?
+  phase: kernel_compile
+  category: kernel_compile_error
+  example_message: 'error: unknown type name ''half''; did you mean ''half2''?'
+- id: vec_scope_induction_type
+  regex: Induction variable must have a type uint16_t
+  phase: kernel_compile
+  category: kernel_compile_error
+  example_message: 'error: Induction variable must have a type uint16_t'
+- id: tque_depth_zero_static_assert
+  regex: static assertion failed.*tque's depth is zero
+  phase: kernel_compile
+  category: kernel_compile_error
+  conditional_advice: 该断言要求 depth=0 时使用 AllocTensor 的 LocalTensor 引用式调用；depth=0 本身并非非法。先核当前安装声明、队列对象、AllocTensor
+    调用形式和资源/流水契约，再选择保留深度零的引用式调用，或在原资源契约支持时调整队列深度；不能只为编过把深度改为 >=1。
+  applicability_reasons:
+  - call_form_and_resource_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'static assertion failed due to requirement ''0 != 0'': must use
+    AllocTensor<LocalTensor&> api while tque''s depth is zero'
+- id: initbuffer_no_matching_form
+  regex: no matching member function for call to 'InitBuffer'
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: InitBuffer 无匹配不代表只传了一参。按当前对象与候选重载区分：TBuf 常用两参 `(buf, lenBytes)`，队列常用三参
+    `(que, num, lenBytes)`，共享地址另有 tuple 形式。核实际参数类型、缓冲数量、字节容量和生命周期，再局部补/修参数；不猜 num
+    或长度。
+  example_message: no matching member function for call to 'InitBuffer'
+- id: event_id_host_undefined
+  regex: use of undeclared identifier 'EVENT_ID\d+'
+  phase: host_compile
+  category: host_compile_error
+  deterministic_fix: 当前 EVENT_ID 名称不可见，不能据此推定 host 函数或删掉同步。先核所在函数、当前事件声明与原同步用途：device
+    侧保留所需事件方向和 Set/Wait 关系，host 侧按已有 stream/event 生命周期使用运行时接口。只有已有证据证明引用无功能用途时才删除。
+  example_message: use of undeclared identifier 'EVENT_ID4'
+- id: sqrtf_did_you_mean_global_sqrt
+  regex: use of undeclared identifier 'sqrtf'; did you mean 'sqrt'
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: '若当前原始声明 note 或安装头给出全局 device `float sqrt(float)`，且原调用是符合其契约的
+    float 平方根，可使用全局 `sqrt`，不加 AscendC:: 前缀。先核参数/返回类型和调用域；其他类型或精度需求不能由近名建议直接替换。'
+  example_message: use of undeclared identifier 'sqrtf'; did you mean 'sqrt'
+  claims_compiler_diagnostic: true
+- id: simt_namespace_not_visible
+  regex: use of undeclared identifier 'Simt'
+  phase: kernel_compile
+  category: kernel_compile_error
+  conditional_advice: 未声明 Simt 只说明当前调用上下文未解析该名，不能证明整套 SIMT API 不可用或要求删行。先核实际目标、当前声明入口、namespace、名称大小写、指针地址空间与调用层；C++
+    SIMT 接口和编译器 built-in 候选需分别验证，声明存在也不保证可从当前 kernel 入口调用。保留原计算语义，用最小 device 入口探针确认适用形式。
+  applicability_reasons:
+  - target_namespace_entrypoint_and_call_layer_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: use of undeclared identifier 'Simt'
+  claims_compiler_diagnostic: true
+- id: fixpipeparams_member_form_unavailable
+  regex: no member named '\w+' in 'AscendC::FixpipeParams<
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: 该 FixpipeParams 实例缺报错成员，不说明成员赋值语法不可用。9.0 的 `FixpipeParamsV220`
+    有公开成员及 `(nSize, mSize, srcStride, dstStride, reluEn)` 构造函数，五参花括号调用不是聚合字段顺序。先匹配当前目标的
+    Fixpipe 重载与参数类型，再按声明填成员或构造；保留 dtype、布局、量化和步长单位，不把 V220 强套到另一目标。
+  example_message: no member named 'nSize' in 'AscendC::FixpipeParams<unsigned int,
+    false>'
+  claims_compiler_diagnostic: true
+- id: pipe_barrier_pipe_s_not_member
+  regex: no member named 'PIPE_S' in namespace 'AscendC'
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: AscendC 中未找到 PIPE_S；若原始 note 或安装头确立全局 pipe_t 枚举 `::PIPE_S`，使用该准确限定名并保留屏障。先排除同名遮蔽；未见声明时不能假装已有
+    did-you-mean 证据，也不能仅按消息删屏障。
+  example_message: no member named 'PIPE_S' in namespace 'AscendC'; did you mean simply
+    'PIPE_S'?
+- id: mte_enum_not_in_namespace
+  regex: no member named 'MTE[0-9]_\w+' in namespace 'AscendC'
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: 核报错 MTE 名称的准确枚举声明和调用所需类型：若为全局枚举，用准确全局名；若为 `AscendC::HardEvent`
+    成员，按该枚举的限定名使用。保留事件方向和 Set/Wait 配对，不能仅按 MTE 前缀统一剥离 namespace。
+  example_message: no member named 'MTE2_V' in namespace 'AscendC'
+  claims_compiler_diagnostic: true
+- id: sortconfig_not_on_target
+  regex: no member named 'SortConfig' in namespace 'AscendC'
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: SortConfig 未解析不证明目标是非950。先核目标、安装版本及高阶 Sort 的声明入口和 guard；9.0 的
+    Host tiling 配置与 Device 配置字段不同，不能混用。目标支持时修声明可见性；只有支持面确实排除原接口时，才按原排序方向、索引、dtype
+    和工作区契约选择受支持的基础 Sort 形态。
+  example_message: no member named 'SortConfig' in namespace 'AscendC'
+- id: localtensor_no_member_load
+  regex: no member named 'Load' in 'AscendC::LocalTensor<
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: 当前 LocalTensor 声明无 Load。按原调用意图区分：批量搬运匹配 DataCopy 的源/目的、内存域和长度；单元素读取在声明支持时匹配
+    `GetValue(i)` 及实际索引。保留 dtype、数据范围与同步，不能把批量搬运改成单个标量读取。
+  example_message: no member named 'Load' in 'AscendC::LocalTensor<half>'
+- id: simt_compat_header_absent
+  regex: 'fatal error: ''simt_compat\.h'' file not found'
+  phase: kernel_compile
+  category: header_missing
+  example_message: 'fatal error: ''simt_compat.h'' file not found'
+- id: ops_wrapper_absent
+  regex: no member named 'ops' in namespace 'AscendC'
+  phase: kernel_compile
+  category: api_incompatible
+  example_message: no member named 'ops' in namespace 'AscendC'
+- id: gm_pointer_to_scalar_deref_missing
+  regex: cannot initialize a variable of type '(u?int(8|16|32|64)_t|half|float|double)'
+    \(aka [^)]+\) with an lvalue of type '\1 \*__gm__'
+  phase: kernel_compile
+  category: kernel_compile_error
+  deterministic_fix: __gm__ 指针与标量类型不匹配。若原意取该地址中的值且现有数据访问契约支持，使用 `*ptr`；若后续需要地址，修变量/形参为相符的
+    __gm__ 指针类型。不能仅凭诊断断言漏了解引用，也不能用强转掩盖地址空间或接口错误。
+  example_message: cannot initialize a variable of type 'uint32_t' (aka 'unsigned
+    int') with an lvalue of type 'uint32_t *__gm__' (aka 'unsigned int *__gm__')
+- id: type_alias_redefinition_conflict
+  regex: type alias redefinition with different types
+  phase: kernel_compile
+  category: kernel_compile_error
+  example_message: type alias redefinition with different types ('TileAliasX<a>' vs
+    'TileAliasX<b>')
+- id: l1_tile_shape_exceeds_limit
+  regex: static assertion failed due to requirement .*<= .*::L1_SIZE
+  phase: kernel_compile
+  category: compiler_limit
+  deterministic_fix: 当前表达式未满足 L1 容量约束。核完整断言、已解析目标容量、tile/dtype 字节、stage 和额外缓冲，再按原形状与流水要求选择满足预算的局部修订；不能由消息猜
+    GemmShape 原值或直接减少 L1_STAGES。仅在真实重复定义及当前需求证明哪份过期时处理重定义，不恢复隐藏旧值或删除所谓注入代码。
+  example_message: 'static assertion failed due to requirement ''(L1A_TILE_SIZE +
+    L1B_TILE_SIZE) * L1_STAGES <= AtlasA2::L1_SIZE'': L1TileShape exceeding L1'
+- id: mx_scale_dtype_assert
+  regex: only support RowMajor, ColumnMajor, zZ, nN in fp8_e8m0_t dtype
+  phase: kernel_compile
+  category: kernel_compile_error
+  conditional_advice: 先核 static_assert 两侧的实际类型、别名和 namespace，再读当前依赖版本的 MxScale/布局约束。float8_e8m0_t
+    与 fp8_e8m0_t 只能作为检索候选，不能据短名判等价或断言在整个3510上固定解析成 unsigned char。按准确声明和原始数值契约确定 scale
+    类型，不擅改数据/scale dtype、布局或 golden。
+  applicability_reasons:
+  - resolved_type_dependency_version_and_layout_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'static assertion failed due to requirement ''std::is_same_v<unsigned
+    char, bisheng::__BISHENG_BUILTIN_TYPE_PROXY_Float8_E8M0>'': only support RowMajor,
+    ColumnMajor, zZ, nN in fp8_e8m0_t dtype'
+- id: l1_l0_tile_mn_mismatch
+  regex: L1_TILE_M == L0_TILE_M && L1_TILE_N == L0_TILE_N
+  phase: kernel_compile
+  category: compiler_limit
+  conditional_advice: >-
+    当前 L1/L0 tile 断言要求该实例的 M、N 两轴分别相等。沿模板实例化链核 L1/L0
+    shape（tile plan）的真实定义、别名、实参和配置来源，确认哪一侧偏离原始分块及运算契约后再局部修订。
+    仅此断言不能证明定义曾被删除，不能给出原始常量或判断其他维度；不要删除断言、换目标或缩减问题规模来绕过失败。
+  applicability_reasons:
+  - resolved_tile_shapes_and_original_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'static assertion failed due to requirement ''L1_TILE_M == L0_TILE_M
+    && L1_TILE_N == L0_TILE_N'': The situation where the basic blocks of L1 and L0
+    differ on the m and n axes is not supported yet'
+- id: catlass_specialization_not_found
+  regex: requirement 'DEPENDENT_FALSE<
+  phase: kernel_compile
+  category: api_incompatible
+  conditional_advice: >-
+    DEPENDENT_FALSE 只说明当前模板实例触发了静态拒绝；若消息同时报告找不到特化，分别核两条路径：
+    实参是否满足已有特化的参数契约，以及所需特化是否因声明入口、include 或条件宏而不可见。
+    按报错模板名（如 TileCopyTla）沿实例化链比较类型、布局、tile 和目标标签，并读本次依赖中的实际特化。
+    不据此断言整个 SDK 不支持目标，不换 arch/dtype 或删除静态断言来绕过失败。
+  applicability_reasons:
+  - template_arguments_specialization_visibility_and_target_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'static assertion failed due to requirement ''DEPENDENT_FALSE<Catlass::Arch::Ascend950>'':
+    Unsupported TileCopyTla, can not find the specialization.'
+- id: asc_package_config_not_found
+  regex: Could not find a package configuration file provided by .ASC.
+  category: environment
+  phase: cmake_configure
+  claims_cmake_envelope: true
+  example_message: 'Could not find a package configuration file provided by "ASC"
+    with any of the following names:'
+- id: soc_version_unsupported
+  regex: SOC_VERSION \S+ is unsupported
+  category: environment
+  phase: cmake_configure
+  claims_cmake_envelope: true
+  example_message: SOC_VERSION UnsupportedSocName is unsupported, support list is
+    Ascend910B1
+# Additional conditional signatures for architecture-gated APIs. These rules
+# require target, template, and declaration evidence; they intentionally emit
+# conditional advice rather than an unconditional patch.
+
+# f1 MX group constant is unavailable when the 3510-gated declaration is not
+# visible before the use site.
+- id: mx_scale_group_num_undeclared
+  regex: 'use of undeclared identifier ''MX_SCALE_GROUP_NUM'''
+  phase: kernel_compile
+  category: kernel_compile_error
+  conditional_advice: '该常量在 Catlass 头里按 arch 门控定义（3510 面），未声明不等于可在本地自造同名常量。先核当前目标与 CATLASS_ARCH/include
+    面：常量可见时用准确限定名或既有 using 引入（did-you-mean 给出的 Catlass:: 候选只是检索线索，不证明语义等价）；当前安装确实不含它时，按当前依赖版本的 MX 契约核
+    scale dtype、组大小与布局约束后再定常量来源，不改数据/scale dtype 与 golden。'
+  applicability_reasons:
+  - arch_gated_constant_visibility_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'use of undeclared identifier ''MX_SCALE_GROUP_NUM''; did you mean ''Catlass::MX_SCALE_GROUP_NUM''?'
+
+# f2 CopyL0CToUBMode has a target-gated member set; an unknown split-axis member
+# usually indicates an incorrect template argument or target.
+- id: copy_l0c_to_ub_mode_misuse
+  regex: 'no member named ''\w+'' in ''Catlass::Gemm::Tile::CopyL0CToUBMode''|use of undeclared identifier ''CopyL0CToUBMode'''
+  phase: kernel_compile
+  category: kernel_compile_error
+  conditional_advice: CopyL0CToUBMode 是按 arch 门控的 L0C→UB 搬运模式枚举，成员集合以当前安装头为准。报 no member 说明枚举类型已解析而成员名不在集合内：先读该枚举完整成员与各分裂轴语义，再按原搬运的分裂需求选已存在成员；不凭
+    M/N/K 轴直觉造不存在的成员名，也不为编过改用 NO_SPLIT 等改变输出布局语义的成员。
+  applicability_reasons:
+  - enum_member_set_and_axis_semantics_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'no member named ''SPLIT_K'' in ''Catlass::Gemm::Tile::CopyL0CToUBMode'''
+
+# f3 PackedTileCopyTlaToUB requires the target-gated template and its declared
+# layout argument order; a near-name suggestion is not an equivalent template.
+- id: packed_tile_copy_tla_to_ub_misuse
+  regex: 'no viable conversion from ''[^'']+'' to ''[^'']*PackedTileCopyTlaToUB<|no template named ''PackedTileCopyTlaToUB'''
+  phase: kernel_compile
+  category: api_incompatible
+  conditional_advice: 该族多为 PackedTileCopyTlaToUB 模板实参错位（元素类型与布局标签位置互换）或目标面不含此模板。先按当前安装头核模板形参序列与各参语义，再逐参比对元素类型/布局标签；诊断若建议近名
+    PackedTileCopyTla（无 ToUB 后缀），注意那是另一模板，替换前须核其搬运目标面；确属目标面门控缺失时核 CATLASS_ARCH/目标，而不是删搬运或改 tile 形状迁就错误实参。
+  applicability_reasons:
+  - template_parameter_mapping_and_target_face_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'no viable conversion from ''Layout<tla::tuple<unsigned int, unsigned int>, tla::tuple<long, tla::C<1>>, tla::tuple<unsigned int, unsigned int>>'' to ''Catlass::Gemm::Kernel::QuantMatmulPerGroupPerBlockTla<Catlass::GemmCoord, Catlass::Gemm::Block::BlockMmadTla<Catlass::Gemm::MmadPingpongPertile<Catlass::Arch::Ascend950, false>, tla::tuple<tla::C<256>, tla::C<128>, tla::C<128>>, tla::tuple<tla::C<256>, tla::C<128>, tla::C<128>>, signed char, signed char, int, void, Catlass::Gemm::Tile::PackedTileCopyTlaToUB<Catlass::Arch::Ascend950, signed char, Catlass::layout::RowMajor, signed char, Catlass::layout::RowMajor, Catlass::layout::RowMajor, int, void, Catlass::Gemm::Tile::CopyL0CToUBMode::SPLIT_M, false, Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT>, Catlass::Gemm::Tile::TileMmadTla<Catlass::Arch::Ascend950, signed char, Catlass::layout::zN>>, Catlass::Epilogue::Block::BlockEpilogue<Catlass::Epilogue::BlockEpiloguePertile, tla::tuple<tla::C<256>, tla::C<128>, tla::C<128>>, half, int, void, float, float, Catlass::layout::RowMajor, Catlass::layout::RowMajor>, Catlass::Gemm::Block::BlockSchedulerAswt<tla::tuple<tla::C<256>, tla::C<128>, tla::C<128>>, tla::tuple<tla::C<256>, tla::C<128>, tla::C<128>>, false>>::LayoutC'' (aka ''int'')'
+
+# f4 MicroAPI is visible only on its device-compilation architecture branches in
+# kernel_macros.h; compiling a register-mask helper as host code hides it.
+- id: microapi_namespace_gated
+  regex: 'no member named ''MicroAPI'' in namespace ''AscendC'''
+  phase: kernel_compile
+  category: kernel_compile_error
+  conditional_advice: MicroAPI 是 AscendC 下按目标 arch 建立的命名空间别名，仅设备编译面可见。该名不可达时分两层核：①使用点是否设备代码——缺 __vector__/__aicore__
+    等属性的工具函数按 host 代码编译，别名与寄存器类型天然不可见；②当前目标 arch 是否在别名门控清单内。两层确认后再修限定名或把函数移回设备侧；不能把寄存器/掩码 API 改写成标量循环或删除掩码逻辑。
+  applicability_reasons:
+  - device_context_and_arch_gate_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'no member named ''MicroAPI'' in namespace ''AscendC'''
+
+# f5 VECTOR_REG_WIDTH is defined per architecture branch; using it from host
+# code or a different branch makes the name unavailable.
+- id: vector_reg_width_not_visible
+  regex: 'no member named ''VECTOR_REG_WIDTH(_2XVL)?'' in namespace ''AscendC'''
+  phase: kernel_compile
+  category: kernel_compile_error
+  conditional_advice: VECTOR_REG_WIDTH 是 AscendC 命名空间内按 __NPU_ARCH__ 门控的常量（设备编译面）。no member 形态说明命名空间可见而该常量在当前编译上下文未定义：先核使用点是否设备代码、当前目标是否定义该常量、以及需要的是向量位宽还是
+    2XVL 变体；host 侧需要的宽度应经参数或 host 可见声明传入，不在 host 代码硬编码数值冒充门控常量，也不据此改向量处理结构。
+  applicability_reasons:
+  - device_context_and_arch_gate_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'no member named ''VECTOR_REG_WIDTH'' in namespace ''AscendC'''
+- id: throw_in_aicore_function
+  regex: cannot use 'throw' in __global__ __aicore__ function|exception specification
+    is not allowed in __aicore__
+  phase: kernel_compile
+  category: kernel_compile_error
+  example_message: "error: cannot use 'throw' in __global__ __aicore__ function"
+  conditional_advice: 设备函数里不允许异常——改错误码/返回值处理，去 throw 与 try/catch
+  applicability_reasons:
+  - diagnostic_regex_only
+  # 版本相关形态：9.1 新增诊断模式，按版本字段限制适用范围。
+  # since: "9.1.0"——9.0 抽样未见此文本形态）
+  since: "9.1.0"
+
+# ── FP8/MX architecture-gating mismatch ─────────────────────────────────────
+# Evidence combines SDK static assertions with declaration and definition
+# guards; this family is conditional rather than a deterministic source fix.
+#   · "MmadMx not support data type on current device!"——v9.1.0
+#     impl/basic_api/dav_3510/kernel_operator_mm_impl.h:608/627/653/675；
+#     v9.0.0 无 MmadMx（9.1 新 API）。
+#   · "LoadData 2dv2 with scale matrix only support fp4/fp8 dtype on current
+#     device!"——v9.0.0 dav_c310:320/395 与 v9.1.0 dav_3510:312/362 同文。
+#   · 2201 面 MmadMx「声明无条件可见、定义 3510 门控」（intf 声明 vs
+#     kernel_operator_mm_intf_impl.h:386 #if 3510）→ 实例化即
+#     implicit instantiation of undefined template（clang 形态）。
+#   · 在已核版本的设备编译分支，fp8_e4m3fn_t 可退化为 uint8_t
+#     （impl/utils/common_types.h）；Host/CPU_DEBUG 分支须分别核实，别名可见不证明 FP8 运算语义。
+# 只提供条件核验线索；修复须保留用户已确定的目标、dtype 与 scale 契约。
+- id: mx_fp8_arch_scope_mismatch
+  regex: 'MmadMx not support data type on current device|LoadData 2dv2 with scale
+    matrix only support fp4/fp8 dtype on current device|implicit instantiation
+    of undefined template ''(?:void )?AscendC::MmadMx(?:<[^'']*|'')'
+  phase: kernel_compile
+  category: kernel_compile_error
+  conditional_advice: >-
+    FP8/MX 断言或未定义模板不能单独证明 arch 不匹配。先固定失败编译单元的真实编译 argv、SDK版本、目标及相关宏，
+    分别核 TypeFromId 映射、实际类型别名/builtin、MX 重载的声明与实现门控。已核 9.0/9.1 头中的 TypeFromId
+    门控不等于类型名不可见；部分设备分支中的 FP8/FP4 别名可退化为 uint8_t，Host/CPU_DEBUG 分支需另核，
+    名称可见不证明 FP8 数值语义或 MX 运算能力。v9.1 的 MmadMx 实现受 3510 门控，不把它泛化为所有版本或所有 FP8 入口。
+    对当前目标可用的入口，按实际 SupportType/重载声明核 mx_ L0 标签、存储 dtype 与 scale 配对
+    （如 mx_fp8_e4m3_t 与 fp8_e4m3fn_t），不能互换。保留用户已确定的目标、dtype、布局与 scale 语义，
+    不把换目标或换类型当默认修法；先修有证据的声明、参数或构建配置偏差。只有用户授权改变任务约束后才评估替代方案。
+    若无保持原语义的可用实现，明确能力缺口；不虚构类型、不删 scale 或改 golden 来换取编译通过。
+  applicability_reasons:
+  - build_target_arch_flags_unverified
+  - mx_dtype_pairing_and_arch_gate_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'static assertion failed: MmadMx not support data type on current
+    device!'

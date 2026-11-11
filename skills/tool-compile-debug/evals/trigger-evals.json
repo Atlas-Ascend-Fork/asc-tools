@@ -1,0 +1,326 @@
+{
+  "skill_name": "tool-compile-debug",
+  "eval_mode": "skill_trigger",
+  "cases": [
+    {
+      "id": "positive_missing_header",
+      "context": "",
+      "prompt": "Linux 上已有的 Ascend C 自定义算子构建失败：fatal error: 'kernel_operator.h' file not found。CANN 是 9.0，请帮我定位头文件搜索路径并修复。",
+      "should_trigger": true,
+      "reason": "已明确 Ascend C 工程及正在发生的编译失败，需要诊断并沿原构建配方修复。",
+      "category": "header_lookup"
+    },
+    {
+      "id": "positive_cmake_configuration",
+      "context": "",
+      "prompt": "已有 Ascend C 算子在 CMake 配置时失败，提示找不到 ASCConfig.cmake，还没进入源码编译。帮我核对当前 CANN 环境和原配置命令。",
+      "should_trigger": true,
+      "reason": "算子构建的配置失败属于本技能范围，不要求错误必须来自编译器。",
+      "category": "configuration"
+    },
+    {
+      "id": "positive_undeclared_identifier",
+      "context": "",
+      "prompt": "Ascend C 内核编译报 use of undeclared identifier 'tilingData'。参数名看起来相近，但我不确定是不是改名遗漏，请结合首错和实际声明排查。",
+      "should_trigger": true,
+      "reason": "请求排查已发生的源码编译错误；符号名称本身不预设 tiling 注册根因。",
+      "category": "source_compilation"
+    },
+    {
+      "id": "positive_api_overload",
+      "context": "",
+      "prompt": "已有 Ascend C 算子调用 AscendC::Add 时编译失败，日志说 no matching function for call，还列出了四参数和六参数候选。帮我核对实际 SDK 声明与调用。",
+      "should_trigger": true,
+      "reason": "正在发生的 API 重载匹配错误需要结合候选和当前声明诊断。",
+      "category": "api_contract"
+    },
+    {
+      "id": "positive_target_option",
+      "context": "",
+      "prompt": "Ascend C 算子构建时 bisheng 拒绝 --npu-arch 的值，后面还有一段 Stack dump。先帮我找真正首错，保留我指定的目标芯片。",
+      "should_trigger": true,
+      "reason": "构建已失败且需要区分驱动参数错误与后续诊断，属于编译失败定位。",
+      "category": "target_configuration"
+    },
+    {
+      "id": "positive_link_failure",
+      "context": "",
+      "prompt": "Ascend C 自定义算子的源码已编译，但链接阶段报 ld.lld: error: undefined symbol。请根据完整链接命令查缺失定义或库，别直接换构建目标。",
+      "should_trigger": true,
+      "reason": "源码编译后的链接失败仍是算子构建失败，需要沿实际链接配方取证。",
+      "category": "linking"
+    },
+    {
+      "id": "positive_package_generation",
+      "context": "",
+      "prompt": "已有 Ascend C 自定义算子的 build.sh 在生成安装包时退出 1，提示预期内核产物不存在。请从整段构建日志检查是不是前面的编译失败被打包错误掩盖了。",
+      "should_trigger": true,
+      "reason": "请求诊断算子构建链中的打包失败及其前序编译证据，不是安装包使用咨询。",
+      "category": "packaging"
+    },
+    {
+      "id": "positive_host_source_failure",
+      "context": "",
+      "prompt": "Ascend C 工程的 host 侧 tiling 源文件编译报 unknown type name，kernel 还没开始编译。帮我核对当前编译单元的头文件和类型声明。",
+      "should_trigger": true,
+      "reason": "已有算子的 host 侧源码编译失败在范围内，不限于 device 内核错误。",
+      "category": "source_compilation"
+    },
+    {
+      "id": "positive_missing_build_log",
+      "context": "",
+      "prompt": "Linux 上这个已有 Ascend C 算子编译失败了，我现在手边还没有完整日志。帮我开始定位，先告诉我需要补哪些构建命令和现场信息。",
+      "should_trigger": true,
+      "reason": "领域和编译失败意图已明确，证据不足影响后续诊断，不应阻止加载相关指导。",
+      "category": "incomplete_evidence"
+    },
+    {
+      "id": "positive_only_terminal_error",
+      "context": "",
+      "prompt": "已有 Ascend C 算子这次构建只给我留下 make: *** Error 2，CANN 版本和前面的日志我还没整理。请帮我找首错，需要更多信息就具体列出来。",
+      "should_trigger": true,
+      "reason": "末尾汇总不足以确定根因，但当前请求明确是算子构建失败诊断。",
+      "category": "incomplete_evidence"
+    },
+    {
+      "id": "positive_context_continuation",
+      "context": "用户正在修复 Linux 上已有 Ascend C 算子的编译失败，已提供原构建命令和含模板候选的首错日志，尚未解决。",
+      "prompt": "继续核对第一条错误对应的声明，先别追后面的连锁报错。",
+      "should_trigger": true,
+      "reason": "省略表达继承明确且未结束的编译修复上下文。",
+      "category": "context"
+    },
+    {
+      "id": "positive_offline_log_analysis",
+      "context": "",
+      "prompt": "我有 Ascend C 算子在 Linux、CANN 9.1 上构建失败的完整日志和源码，现在这台机器没有 CANN 或 NPU。先离线分析首错和下一步核对项，不需要现在编译。",
+      "should_trigger": true,
+      "reason": "已有明确编译失败证据，当前机器缺工具链不妨碍离线诊断请求。",
+      "category": "offline_evidence"
+    },
+    {
+      "id": "positive_english_build_failure",
+      "context": "",
+      "prompt": "My existing Ascend C custom operator fails to build on Linux with CANN 9.1. The first error is a template argument mismatch. Please diagnose it using the original build command and compiler candidates.",
+      "should_trigger": true,
+      "reason": "英文表达仍明确包含已有 Ascend C 算子、构建失败和诊断意图。",
+      "category": "language_variant"
+    },
+    {
+      "id": "positive_compile_blocks_precision_work",
+      "context": "",
+      "prompt": "这个 Ascend C 算子最终要做精度验收，但现在改完源码根本编译不过，日志报模板参数不匹配。先只解决这次编译失败。",
+      "should_trigger": true,
+      "reason": "虽然提到精度，当前明确要求处理的阻碍是编译失败。",
+      "category": "mixed_intent"
+    },
+    {
+      "id": "positive_verify_existing_repair",
+      "context": "用户刚修改了已有 Ascend C 算子的源码以修复链接错误，原失败日志和原构建命令均已保留，修改后尚未重新构建。",
+      "prompt": "请沿原配方验证这次修改是否真正修复了原来的编译失败。",
+      "should_trigger": true,
+      "reason": "验证已知编译失败的修复结果属于同一修复任务，无需先制造新的错误。",
+      "category": "repair_verification"
+    },
+    {
+      "id": "negative_runtime_aicore_error",
+      "context": "",
+      "prompt": "这个 Ascend C 算子已经编译和链接成功，执行时出现 AICore Error，帮我定位运行期访问错误。",
+      "should_trigger": false,
+      "reason": "当前明确是编译成功后的运行故障，没有编译修复需求。",
+      "category": "runtime"
+    },
+    {
+      "id": "negative_precision_mismatch",
+      "context": "",
+      "prompt": "Ascend C 算子可以编译运行，但结果与参考实现不一致。帮我分析数值误差，不需要处理构建。",
+      "should_trigger": false,
+      "reason": "请求仅为数值精度排查，不能因为同属 Ascend C 就加载编译修复技能。",
+      "category": "precision"
+    },
+    {
+      "id": "negative_performance_optimization",
+      "context": "",
+      "prompt": "已有 Ascend C 算子编译运行都正常，想优化 Tiling 和流水并行以降低延迟。",
+      "should_trigger": false,
+      "reason": "Tiling 词语出现在性能优化请求中，没有发生编译失败。",
+      "category": "performance"
+    },
+    {
+      "id": "negative_new_operator_development",
+      "context": "",
+      "prompt": "从零实现一个 Ascend C 自定义算子，完成接口设计、tiling、kernel 和测试。我还没有工程或编译错误。",
+      "should_trigger": false,
+      "reason": "完整算子开发不是已有算子编译失败诊断；后续实际出现错误时再判断。",
+      "category": "development"
+    },
+    {
+      "id": "negative_cmake_usage_question",
+      "context": "",
+      "prompt": "学习 Ascend C 工程构建时，cmake --build 与配置阶段有什么区别？现在没有构建失败，只想了解命令含义。",
+      "should_trigger": false,
+      "reason": "CMake 术语和 Ascend C 背景不足以将一般用法咨询变成编译修复。",
+      "category": "tool_consultation"
+    },
+    {
+      "id": "negative_objdump_usage_question",
+      "context": "",
+      "prompt": "已有 Ascend 算子 ELF，想知道 npu-objdump 如何列出内嵌 device ELF。文件没有编译问题，先解释用法。",
+      "should_trigger": false,
+      "reason": "请求查看已有编译产物的工具用法，不是失败诊断。",
+      "category": "tool_consultation"
+    },
+    {
+      "id": "negative_compute_collection_question",
+      "context": "",
+      "prompt": "这个 Ascend C 算子已能运行，npu-compute 应该怎样选择 Section 来采集性能指标？",
+      "should_trigger": false,
+      "reason": "当前需要性能采集工具知识，没有编译错误或修复验证需求。",
+      "category": "tool_consultation"
+    },
+    {
+      "id": "negative_native_cpp_compile",
+      "context": "",
+      "prompt": "普通 x86 C++ 服务用 GCC 编译时找不到头文件，项目没有 Ascend、CANN 或 NPU 代码，帮我修复 include 路径。",
+      "should_trigger": false,
+      "reason": "虽然是编译失败，但项目明确不属于 Ascend C 领域。",
+      "category": "other_domain"
+    },
+    {
+      "id": "negative_cuda_compile",
+      "context": "",
+      "prompt": "CUDA kernel 在 nvcc 下编译失败，提示模板参数不匹配。目标是 NVIDIA GPU，不涉及 Ascend C。",
+      "should_trigger": false,
+      "reason": "模板和 kernel 等共同术语不改变 CUDA 工程的领域边界。",
+      "category": "other_domain"
+    },
+    {
+      "id": "negative_python_package_build",
+      "context": "",
+      "prompt": "pip 安装普通 Python 扩展时提示 Failed building wheel，扩展只有 CPU 代码，与 Ascend 无关。帮我查这个 build error。",
+      "should_trigger": false,
+      "reason": "build error 和打包失败关键词不构成 Ascend C 编译修复请求。",
+      "category": "other_domain"
+    },
+    {
+      "id": "negative_ci_packaging_workflow",
+      "context": "",
+      "prompt": "为文档站点配置 CI Pipeline，把 Markdown 校验和静态网页打包并行执行。项目不包含算子源码。",
+      "should_trigger": false,
+      "reason": "这是持续集成流程配置，打包和校验术语没有指向算子编译失败。",
+      "category": "generic_term"
+    },
+    {
+      "id": "negative_quoted_compile_log",
+      "context": "",
+      "prompt": "把旧工作记录“Ascend C 编译失败，后来已修复”翻译成英文。只翻译这句话，不诊断工程。",
+      "should_trigger": false,
+      "reason": "编译失败仅在待翻译的历史文本中，当前任务不是修复。",
+      "category": "incidental_mention"
+    },
+    {
+      "id": "negative_context_switched_to_runtime",
+      "context": "上一轮 Ascend C 编译错误已修复，并已确认重新编译成功；用户现在提供的是执行超时日志。",
+      "prompt": "接下来只分析这个运行超时，构建不用再查。",
+      "should_trigger": false,
+      "reason": "当前请求已明确转向运行故障，历史编译失败不能维持自动触发。",
+      "category": "context"
+    },
+    {
+      "id": "negative_skill_name_in_document",
+      "context": "",
+      "prompt": "把下面这行目录清单里的 tool-compile-debug 这个名称用行内代码标记包起来，保留其他文字不变，返回修改后的文本。原文：目录：tool-compile-debug / cases。",
+      "should_trigger": false,
+      "reason": "技能名只是编辑对象，不是调用其编译诊断能力的请求。",
+      "category": "incidental_mention"
+    },
+    {
+      "id": "negative_ascend_context_generic_question",
+      "context": "用户在学习 Ascend C 算子开发，尚未创建工程，也没有发生构建失败。",
+      "prompt": "解释一下模板实例化和链接分别发生在什么阶段。",
+      "should_trigger": false,
+      "reason": "领域上下文明确，但当前只问通用构建概念，不需要失败修复流程。",
+      "category": "context"
+    },
+    {
+      "id": "negative_original_text_case_17",
+      "context": "",
+      "prompt": "9.0 工程能正常编译通过，但算子输出全为 0、rtol/atol 不达标，需要排查精度。应如何分流并继续？只说明下一步，不实际执行工具。",
+      "should_trigger": false,
+      "reason": "保留原回答题17的自然请求，检查是否错误触发编译技能；宿主自身的精度答复不冒充已加载技能的执行结果。",
+      "category": "precision"
+    },
+    {
+      "id": "negative_original_text_case_18",
+      "context": "",
+      "prompt": "工程编译已通过，运行时报 ACL_ERROR_RT_* 错误码，需要排查运行时环境与调用。应如何分流并继续？只说明下一步，不实际执行工具。",
+      "should_trigger": false,
+      "reason": "保留原回答题18的自然请求，检查是否错误触发编译技能；宿主自身的运行排查不冒充已加载技能的执行结果。",
+      "category": "runtime"
+    },
+    {
+      "id": "positive_read_only_header_plan",
+      "context": "",
+      "prompt": "Ascend C 工程编译首错是头文件缺失。已核当前设备编译命令正确，公开入口头覆盖所有实际使用声明，源文件漏了它。请评审最小修复方案和原目标验证范围；可以查阅技能文档，不要修改源码或构建。",
+      "should_trigger": true,
+      "reason": "方案评审仍是当前编译修复；禁止工程操作不等于禁止加载指导。",
+      "category": "repair_plan"
+    },
+    {
+      "id": "positive_build_coverage_review",
+      "context": "",
+      "prompt": "请评审一次 Ascend C 编译修复的交付材料：任务要求 float 和 int 两目标，当前只保存 float 的构建通过记录。补丁保留两条实现路径。现在能交付什么，还有哪些证据缺口？只评审材料，不重新运行。",
+      "should_trigger": true,
+      "reason": "正在审查编译目标覆盖，不能把材料评审错判为独立运行问题。",
+      "category": "repair_verification"
+    },
+    {
+      "id": "positive_background_receipt_review",
+      "context": "当前工作是核验 Ascend C 编译补丁的原 build.sh，必须完成 configure、all、binary。",
+      "prompt": "这次 J17 还在执行 binary；旧的 J16 收据是退出0。请判断本次编译修复验收是否完成，只分析记录，不操作进程。",
+      "should_trigger": true,
+      "reason": "明确继承当前编译验收上下文，检查收据归属而非通用进程咨询。",
+      "category": "repair_verification"
+    },
+    {
+      "id": "positive_template_capacity_review",
+      "context": "",
+      "prompt": "Ascend C 算子编译遇到 tile 静态断言，已拿到实际分配公式和两个候选参数。请帮我评审修法，保持用户固定的 L0 形状，核 L1 容量和原目标验证要求；只给方案，不运行编译。",
+      "should_trigger": true,
+      "reason": "实际模板编译失败的方案评审，即使可以口算仍属于产品范围。",
+      "category": "repair_plan"
+    },
+    {
+      "id": "positive_configurable_target_review",
+      "context": "",
+      "prompt": "Ascend C 工程公开 DEVICE_TARGET 配置，但编译参数被写死成无效值。当前目标已知合法。请评审怎么修编译错误并保留配置传播，只给方案，不修改文件。",
+      "should_trigger": true,
+      "reason": "明确的 Ascend C 构建配置修复，而不是一般 CMake 教程。",
+      "category": "repair_plan"
+    },
+    {
+      "id": "negative_postrepair_independent_runtime",
+      "context": "Ascend C 编译修复和补丁契约验收已经完成，当前没有未决补丁风险。",
+      "prompt": "现在只处理共享机器的 device busy，请查资源调度原因；不要重新评审编译修复。",
+      "should_trigger": false,
+      "reason": "已结束编译任务后明确转向独立运行故障，不因历史补丁维持触发。",
+      "category": "runtime"
+    },
+    {
+      "id": "negative_general_cmake_repair",
+      "context": "",
+      "prompt": "普通 CPU 服务的 CMake 变量没有传到 target_compile_options，导致编译失败。项目不使用 Ascend C 或 CANN，请解释变量引用应该怎么写。",
+      "should_trigger": false,
+      "reason": "保留通用 CMake 修复与 Ascend C 专项的领域边界。",
+      "category": "other_domain"
+    },
+    {
+      "id": "negative_formula_only",
+      "context": "",
+      "prompt": "只计算 2*(128*256+256*256)*2+65536 是多少 KiB；这是算术练习，不涉及任何工程、编译或修复。",
+      "should_trigger": false,
+      "reason": "算术与某道题相似也不能触发编译修复。",
+      "category": "generic_term"
+    }
+  ]
+}

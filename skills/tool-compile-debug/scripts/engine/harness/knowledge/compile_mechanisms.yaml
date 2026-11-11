@@ -1,0 +1,122 @@
+schema_version: "1.0"
+scope: compile_repair
+# These are mechanism queries, not case answers or automatic patch rules.
+mechanisms:
+  - id: build_route
+    checks:
+      - question: Does the failing unit use the intended host/device language and target?
+        evidence_roles: [failure_unit, effective_command, required_target]
+        probe: Inspect the selected compile record; if stale, capture the original failing invocation.
+        outcomes:
+          wrong_route: Correct the authoritative target language or per-source flags.
+          correct_route: Investigate declaration visibility before changing language.
+          unknown: Preserve command alternatives; do not infer routing from the extension.
+    symptom: Device-language diagnostics or declarations differ from the expected compilation domain.
+    discriminate:
+      - Bind the failing source to its actual target, compiler argv, language and architecture.
+      - Compare CXX, ASC host and device invocations separately; a filename extension is only a clue.
+    constraints:
+      - Preserve host/device boundaries and required targets; never force every source into ASC.
+    verify: Reconfigure if language or flags changed, then rebuild all affected original targets.
+    cannbot: [ascendc-env-check, ascendc-blaze-best-practice, npu-arch]
+    applicability: {cann_floor: "9.0", domain: generic_build_relation, target: contextual}
+    evidence: {kind: mechanism_design, sdk_validation: required_for_version_specific_flags}
+  - id: template_visibility
+    checks:
+      - question: Is the required definition visible for the exact failing instantiation?
+        evidence_roles: [failure_unit, effective_command, declaration, instantiation]
+        probe: Read the compiler note chain and definition; preprocess the same command only if visibility remains ambiguous.
+        outcomes:
+          absent_definition: Restore the authoritative definition or required explicit instantiation.
+          visible_definition: Check type, constraint and overload requirements in the current SDK.
+          link_only: Investigate object and library closure.
+    symptom: A template is declared but its definition or intended instantiation is unavailable.
+    discriminate:
+      - Read the caller, declaration and definition in the same effective translation unit.
+      - Distinguish preprocessing visibility from a missing linked instantiation.
+      - Keep alternative definitions when configuration or include order is unresolved.
+    constraints:
+      - Do not add fake declarations, erase template constraints or stub the implementation.
+    verify: Compile the actual instantiation and link the original consumers.
+    cannbot: [ascendc-docs-search, ascendc-api-best-practices]
+    applicability: {cann_floor: "9.0", domain: generic_cpp_relation, target: contextual}
+    evidence: {kind: mechanism_design, sdk_validation: required_for_api_signatures}
+  - id: header_origin
+    checks:
+      - question: Which header and macro branch does the failing command actually consume?
+        evidence_roles: [effective_command, consumed_header, declaration]
+        probe: Inspect include order and dependency records; request an include trace with the same command if unresolved.
+        outcomes:
+          shadow_header: Repair include provenance without editing the installed SDK.
+          excluded_branch: Check the intended configuration before changing macros.
+          correct_header: Investigate the API contract rather than adding another include.
+    symptom: A declaration exists but the failing command sees a missing or different definition.
+    discriminate:
+      - Check actual include order, local quoted includes, macros and generated header provenance.
+      - Use a same-command include trace or preprocessing probe only when static evidence is insufficient.
+    constraints:
+      - Do not modify installed SDK headers or borrow an unrelated historical source copy.
+    verify: Rebuild using the selected SDK and original target; confirm the intended header is consumed.
+    cannbot: [ascendc-docs-search, ascendc-env-check, ascendc-blaze-best-practice]
+    applicability: {cann_floor: "9.0", domain: generic_include_relation, target: contextual}
+    evidence: {kind: mechanism_design, sdk_validation: required_for_header_exports}
+  - id: generated_contract
+    checks:
+      - question: Do generated declarations match their authoritative input and all required consumers?
+        evidence_roles: [generator_input, generation_rule, generated_output, consumers]
+        probe: Trace input to output and host/device use; compare a regeneration through the original recipe if needed.
+        outcomes:
+          stale_output: Repair regeneration dependencies and rerun the original generator.
+          wrong_schema: Repair the authoritative input and preserve shared layout.
+          consumer_mismatch: Correct the mismatched consumer and validate the other consumers.
+    symptom: Generated declarations disagree with producers or consumers.
+    discriminate:
+      - Trace generator input, generated output and each host/device consumer.
+      - Separate stale output from incorrect source schema and missing build dependency.
+    constraints:
+      - Repair the authoritative input or dependency; do not only patch regenerable output.
+      - Preserve layout, addresses, dtype and required registration semantics.
+    verify: Regenerate through the original recipe and compile affected consumers; test behavior if layout changed.
+    cannbot: [ascendc-tiling-design, ascendc-docs-search]
+    applicability: {cann_floor: "9.0", domain: generation_and_shared_layout, target: contextual}
+    evidence: {kind: mechanism_design, sdk_validation: required_for_generator_contract}
+  - id: version_target
+    checks:
+      - question: Is this API variant supported by the precise SDK and requested compile target?
+        evidence_roles: [sdk_identity, required_target, effective_command, declaration]
+        probe: Read the current declaration guards; ask the relevant CANNBOT skill for the precise unresolved constraint.
+        outcomes:
+          supported: Investigate call domain, type and configuration mismatch.
+          unsupported: Find a contract-preserving implementation or report the exact unmet requirement.
+          unknown: Keep version-sensitive conclusions open; a search miss is not absence.
+    symptom: API or language support conflicts with the selected SDK or architecture.
+    discriminate:
+      - Separate requested target, project settings, actual compiler arguments and physical device.
+      - Verify precise SDK version and local declaration before adopting version-sensitive guidance.
+      - A search result or same minor-version domain does not prove availability on a precise build.
+    constraints:
+      - Do not change target, algorithm or implementation family merely to compile.
+      - Unknown version, unavailable 950 and search misses remain explicit gaps.
+    verify: Rebuild with the original supported target and precise SDK; retain untested matrix entries.
+    cannbot: [npu-arch, ascendc-docs-search, ascendc-simt-best-practices, ascendc-regbase-best-practice]
+    applicability: {cann_floor: "9.0", domain: version_sensitive, target: contextual}
+    evidence: {kind: mechanism_design, sdk_validation: required}
+  - id: link_closure
+    checks:
+      - question: Is the required definition present with the expected ABI in the actual link inputs?
+        evidence_roles: [link_command, unresolved_symbol, defining_object, library_inputs]
+        probe: Inspect the exact signature and object/archive symbols before editing link order or libraries.
+        outcomes:
+          missing_object: Restore the source or generation dependency in the original target.
+          incompatible_symbol: Reconcile declarations and definitions without deleting callers.
+          available_symbol: Check archive order, visibility and host/device linkage.
+    symptom: Host or device linking cannot resolve an implementation.
+    discriminate:
+      - Bind the failing link command, symbol, object and library inputs.
+      - Check definition inclusion, archive membership, order and host/device qualification separately.
+    constraints:
+      - Do not delete calls, add stubs or invent libraries based only on a symbol name.
+    verify: Link the original required target and confirm its implementation remains present.
+    cannbot: [ascendc-docs-search, ascendc-blaze-best-practice]
+    applicability: {cann_floor: "9.0", domain: generic_link_relation, target: contextual}
+    evidence: {kind: mechanism_design, sdk_validation: required_for_device_qualifiers}

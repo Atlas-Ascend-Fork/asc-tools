@@ -1,0 +1,158 @@
+# KB — AscendC intrinsic to SoC and architecture visibility map
+#
+# 用途：提供可核对的架构可见性线索。当调用方生成或改造算子时
+# 调用了一个 **本目标 arch 上被 #if 摘除** 的 intrinsic，编译器只报裸 `use of undeclared
+# identifier 'X'`（零线索：不会说"此 API 仅 910B 存在"）。无工具辅助的调用方会当拼写/缺 include 瞎找；
+# 当前 feature 记录是头入口可见性线索，不能据短名推定整个 API 不可用。
+# cause_tree 保留目标条件并要求核 namespace、API 层、实参、准确 build 和设备实例。
+#
+# 来源：CANN 9.0 头文件扫描记录，部分缺准确 build/hash；不是完整支持矩阵——
+#   __NPU_ARCH__ ↔ SoC（tools/tikcpp/ascendc_kernel_cmake/ascend_modules/CMakeASCInformation.cmake
+#   + fwk_modules/util/const_var.py）；intrinsic 的 #if (__NPU_ARCH__ ...) 门控块
+#   （basic_api/kernel_operator_intf.h）。
+#
+# The entries below describe header visibility, not complete device support.
+
+# ── arch_codes: __NPU_ARCH__ number to SoC mapping ────────────────────────────
+arch_codes:
+  '2002': { soc: Ascend310P1, family: Ascend310P, dav: dav-2002 }
+  '2201': { soc: Ascend910B1, family: Ascend910B, dav: dav-2201 }
+  '3510': { soc: Ascend950PR_9599, family: Ascend950, dav: dav-3510 }
+  # 头里另见 5102/3113/3003/3002/1001 等门控码（确切 SoC 名以目标版本文档为准）。
+  # 3102/3103/2103 have explicit entries below.
+  # Version migration 升级（2026-09-17，beta 观察态）：v9.2.0-beta.2 devkit 实证 dav 代号=dav_m510
+  # （impl/basic_api/dav_m510/ 全树 + classify_rule.yaml），__NPU_ARCH__==5102 门控在
+  # 9.2-beta include/ 命中 146 头（gelu/sigmoid/reglu/logsoftmax 等）；SoC 商品名在 include/ 未见
+  # ——soc 保持 unknown 待正式版核实。9.0→9.1 门控演进：kernel_operator_intf.h 的
+  # simt 聚合入口 9.0 为 (3510||5102)、9.1 收窄为仅 3510、9.2-beta 恢复 (3510||5102)。
+  # soc_aliases 无需增删：KIRINX90/KIRIN9030 枚举在 v9.1.0↔v9.2.0-beta.2 的
+  # platform_ascendc.h 零 diff（x90/9030 移除发生在文档站配置，不在平台头）。
+  '5102': { soc: unknown, family: Ascend950_series, dav: dav_m510 }   # 9.2.0-beta.2 观察；非正式支持声明
+  # Version migration L0 补全（2026-08-30）：reference cann-9.0.0 platform_ascendc.h 枚举注释 +
+  # aarch64-linux/data/platform_config/*.ini（SoC_version/dav 字段）核实。
+  '3002': { soc: Ascend310B1, family: Ascend310B, dav: dav-3002 }
+  '3113': { soc: Kirin9030, family: Kirin, dav: dav-3113 }
+  '3003': { soc: KirinX90, family: Kirin, dav: dav-3003 }
+  '1001': { soc: Ascend910, family: Ascend910, dav: dav-1001 }
+  # ── 版本补全（2026-09-18）：3102/3103/2103（devkit v9.1.0 tag 实证）─────────
+  # 3102 等式链（构建链推断，非 devkit 文档直书，用前按目标版本文档复核）：
+  #   Ascend610Lite ↔ dav-m310（tools/build/asc_op_compile_base/adapter/compile_op.py:2101
+  #   soc_arch_map{"Ascend610Lite": "dav-m310"}）+ dav_m310 impl 树在场
+  #   （impl/basic_api/CMakeLists.txt:166 安装链接 + classify_rule.yaml:56-57,142-148）；
+  #   __NPU_ARCH__==3102 门控在场（include/basic_api/kernel_common.h:79-130、
+  #   impl/basic_api/kernel_event.h:405、kernel_macros.h:99）；SoC 枚举
+  #   ASCEND610/ASCEND610Lite 在场（include/utils/tiling/platform/platform_ascendc.h:72-73）。
+  '3102': { soc: Ascend610Lite, family: Ascend610, dav: dav_m310 }   # soc 名=构建链推断；非正式支持声明
+  # 3103/2103：devkit v9.1.0 门控在场、SoC 名未见——保持 unknown 观察态。
+  #   3103: impl/basic_api/reg_compute/kernel_reg_compute_membar_intf_impl.h:26,31、
+  #         include/basic_api/reg_compute/kernel_reg_compute_addrreg_intf.h:26、
+  #         impl/basic_api/kernel_operator_block_sync_intf_impl.h:116
+  #   2103: impl/basic_api/kernel_scalar.h:215、kernel_reg_compute_membar_intf_impl.h:25,27、
+  #         include/basic_api/reg_compute/kernel_reg_compute_struct_intf.h:26
+  '3103': { soc: unknown_3103, family: unknown, dav: unknown }   # 门控在场；SoC 待正式版核实
+  '2103': { soc: unknown_2103, family: unknown, dav: unknown }   # 门控在场；SoC 待正式版核实
+
+# ── soc_aliases：日志/CMake 里出现的 SOC_VERSION 名 → __NPU_ARCH__ 码 ───────────
+# 用于从 build.log 的 `SOC_VERSION=...` / `--npu-arch=...` 文本反解目标 arch。
+soc_aliases:
+  Ascend310P1: '2002'
+  Ascend310P3: '2002'
+  Ascend310P: '2002'
+  Ascend910A: '1001'
+  Ascend910B: '2201'
+  Ascend910B1: '2201'
+  Ascend910B2: '2201'
+  Ascend910B3: '2201'
+  Ascend910B4: '2201'
+  # Version migration L0 修正：Ascend910_93 系属 ASCEND910B（2201）——platform_ascendc.h:62
+  # `ASCEND910B, // Ascend910B1~4, Ascend910B2C, Ascend910_93 Serials`。
+  # 旧映射 3003 会让 A3 目标上的高层 math API 被误判 arch 门控。
+  Ascend910_9391: '2201'
+  Ascend910_93: '2201'
+  Ascend950PR_9599: '3510'
+  Ascend950: '3510'
+  # Version migration L0 增补（同上来源）：产品映射表 + platform_config ini。
+  Ascend950DT: '3510'
+  Ascend950PR: '3510'
+  Ascend310B: '3002'
+  Ascend310B1: '3002'
+  Ascend310B2: '3002'
+  Ascend310B3: '3002'
+  Ascend310B4: '3002'
+  Kirin9030: '3113'
+  KirinX90: '3003'
+  Ascend910: '1001'
+  # Ascend610Lite → 3102（arch_codes '3102' 条目同源；构建链推断链见上）。
+  Ascend610Lite: '3102'
+
+# ── features：intrinsic / intrinsic 族 → 仅这些 arch 码可用 ─────────────────────
+# Schema（list of dict）：
+#   names:          受门控的 API 名（一组，同一 #if 块共享门控）
+#   available_arch: 这些 __NPU_ARCH__ 码下存在（缺则报 undeclared）
+#   group:          人类可读的族名
+#   note:           修复方向
+#   provenance:     header and #if source
+features:
+  - group: math_activation_norm_high_level
+    evidence_scope: header_visibility
+    names:
+      [Power, Log, Ln, Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Asinh, Acosh, Atanh,
+       Erf, Erfc, Clamp, Exp, Frac, Round, Trunc, Ceil, Floor, Sign, Lgamma, Digamma, Xor, Axpy,
+       Tanh, Silu, Gelu, Swish, Geglu, Swiglu, Reglu, GeGLU, SwiGLU,
+       SoftMax, LogSoftMax, SimpleSoftMax, SoftmaxFlash,
+       LayerNorm, RmsNorm, BatchNorm, DeepNorm, LayerNormGrad, LayerNormGradBeta,
+       ReduceSum, Sum, Mean, TopK, Pad, Broadcast, ConfusionTranspose, SelectWithBytesMask,
+       AscendQuant, AscendDequant, AscendAntiQuant, Cumsum, ReduceXorSum, ArithProgression]
+    available_arch: ['1001', '2002', '2201']
+    note: >-
+      此记录仅描述 basic_api/kernel_operator_intf.h 的一组 include 条件，未证明
+      各完整符号在全部入口或API层的可用性。目标为3510等新arch时，先核准确9.0
+      安装中的逐头入口、namespace、实参及模板参数；同名基础/Tensor/MicroAPI接口
+      不继承本组高阶入口条件。不能据此要求更换目标或重写数学计算。
+    provenance: 'basic_api/kernel_operator_intf.h:78 #if (__NPU_ARCH__<=1001)||(==2002)||(==2201) { ... 全部 adv_api math/activation/norm include ... }'
+
+  - group: softmax_family_excluded_on_some_new_arch
+    evidence_scope: header_visibility
+    names: [SoftMax, SimpleSoftMax, LogSoftMax, SoftmaxFlash, Sigmoid, Dropout, SoftmaxGrad, SoftmaxFlashV2]
+    available_arch_excludes: ['3102', '3510', '5102']
+    note: >-
+      softmax/sigmoid/dropout 系经 basic_api 聚合入口（kernel_operator.h 一揽子）在
+      __NPU_ARCH__ 3102/3510/5102 上不进。此条件只针对聚合导出，不覆盖整组API本体。
+      SoftMax已有9.0机器逐头正向门记录：adv_api/activation/softmax.h的条件含3510；
+      先核当前安装的该头与具体调用。其它族成员须分别查证，不能从SoftMax外推。
+      缺声明先查入口与namespace；没有完整适用性证据时不建议换SoC或重写算法。
+    provenance: >-
+      basic_api/kernel_operator_intf.h:71 #if ((__NPU_ARCH__!=3102)&&(!=3510))&&(!=5102)
+      { dropout/sigmoid/softmax... }（聚合入口摘除）+
+      9.0.0 安装逐头实挖（adv_api/activation/softmax.h:27 include 式门含
+      3510——双入口差异）
+
+  # 950 arch 面（2026-09-03 实挖装填）：新代专属 API 族（9.0.0 安装实挖 new_only，
+  # 已剔除与 ≤2201 聚合面同名的两代共有名字——Gelu/Silu/Swiglu/Axpy/ArithProgression/
+  # AscendAntiQuant/LayerNormGradBeta 等两代都有，不能标 new_only）。102 个 new_only
+  # 头的完整清单见实挖记录（D 段，文件印 20 代表）。
+  - group: new_gen_only_adv_headers
+    evidence_scope: header_visibility
+    names: [BitwiseAnd, BitwiseOr, BitwiseNot, BitwiseXor, Fma, Hypot, InitGlobalMemory, KernelApi]
+    available_arch: ['3510', '5102']
+    note: >-
+      历史逐头扫描记录这些 adv_api 入口的目标条件含3510/5102；它不是同名函数的
+      完整支持矩阵。先区分 namespace、Tensor/Reg/SIMT 层和实参，再核准确安装版本的
+      逐头声明及实例探针。不得仅凭短名判旧目标不存在，也不得据此删除语义调用。
+    provenance: '9.0.0 安装逐头实挖（D 段 new_only 20 代表头，2026-09-03）'
+
+  - group: cube_group_roc
+    evidence_scope: header_visibility
+    names: [kernel_operator_cube_group, kernel_operator_group_barrier, CubeGroupHandle, GroupBarrier]
+    available_arch: ['2201', '3510']
+    note: >-
+      历史聚合入口记录 cube_group / group_barrier 的 include 条件为2201/3510；
+      先核当前build的真实入口和相同同步契约的目标实例，不从include条件推定全部接口支持面。
+    provenance: 'basic_api/kernel_operator_intf.h:65 #if __NPU_ARCH__==2201||==3510 { core_mng/roc/... }'
+
+  - group: simt_api
+    evidence_scope: header_visibility
+    names: [kernel_simt, SimtBlock, SimtThread]
+    available_arch: ['3510', '5102']
+    note: 历史聚合入口的SIMT头受3510/5102条件控制；核当前build的设备入口、目标宏及实际SIMT调用。头入口证据不能独立证明所有同名接口或计算契约不可移植。
+    provenance: 'basic_api/kernel_operator_intf.h:138 #if (__NPU_ARCH__==3510)||(==5102) { simt_api/... }'

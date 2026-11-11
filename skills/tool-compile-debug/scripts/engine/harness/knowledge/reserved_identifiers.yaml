@@ -1,0 +1,59 @@
+# CANN reserved identifiers that can collide with kernel translation units.
+# cce_aicore_intrinsics.h 的全局枚举成员。两种症状形态，领域知识都在本表：
+#   T1 全局重定义：`error: redefinition of 'X' as different kind of symbol`
+#     ——报错点名符号，note 还会指 previous definition（答案在场，易/中档）。
+#   T3 宏先于 include：`#define UB ...` 出现在 #include "kernel_operator.h" 之前
+#     （常在共享 tiling 头）→ 头内同名标识符被宏展开改写 → 错误群发在
+#     CANN 安装树**自己的头文件**里（expected identifier / expected unqualified-id），
+#     宏展开不可见、根因文件与症状文件分离、多点（修一个还剩其余）——难档。
+#
+# Provenance: inspected CANN 9.0.0 headers and a clean kernel baseline.
+#   头 = tools/bisheng_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h
+#   kernel_operator.h includes this header transitively; another arm64-linux copy
+#   has the same definitions. The previous-definition note points to :338.
+#   The six members in `typedef enum mem_t { L1=0, L0A, L0B, L0C, UB, BT }` collide.
+#   AT/CT/WT are not present in the 9.0.0 declaration.
+#
+# ⚠ 版本敏感：保留名清单随 CANN 版本变（对齐 skill 分支单版本负责制）——
+#   升级分支须重验本表（见 meta.reverify_on_upgrade）。
+meta:
+  kb_baseline: CANN 9.0.0
+  provenance: remote-observation:2026-08-30
+  header: tools/bisheng_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h
+  header_enum: mem_t
+  reverify_on_upgrade: true
+
+identifiers:
+  - name: L1
+    value: 0
+    natural_use: L1 cache 容量/层级常量（matmul 语境自然）
+  - name: L0A
+    value: 1
+    natural_use: L0A buffer 相关常量
+  - name: L0B
+    value: 2
+    natural_use: L0B buffer 相关常量
+  - name: L0C
+    value: 3
+    natural_use: L0C buffer 容量（cube/tiling 语境自然）
+  - name: UB
+    value: 4
+    natural_use: upper bound（上界常量）——最自然踩雷
+  - name: BT
+    value: 5
+    natural_use: batch/table 类缩写
+
+topologies:
+  t1_global_redefinition:
+    error_shape: "error: redefinition of 'X' as different kind of symbol"
+    leak: note 指向 cce_aicore_intrinsics.h 的 previous definition（答案在场）
+    fix: 改名让出保留名（定义+使用点同步）
+  t3_macro_before_include:
+    error_shape: "error: expected identifier / expected unqualified-id 群发于 CANN 安装树头"
+    mechanism: 宏先于 kernel_operator.h 引入 → 头内同名标识符被展开改写
+    multipoint: true
+    fix: 找到 TU 引入链里撞名的 #define 改名；不要改 CANN 头
+
+silent_usage:
+  fact: 不重定义而直接使用（如 int a[UB];）会静默解析为枚举值（UB=4）——编过但语义错
+  axis: semantic

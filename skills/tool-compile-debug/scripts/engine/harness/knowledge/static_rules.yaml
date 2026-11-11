@@ -1,0 +1,111 @@
+# Optional version fields for actionable rules:
+#   Each rule may declare since / until (for example, "9.1.0"); an omitted bound
+#   uses the defaults in harness/knowledge/kb_meta.yaml. A version conflict suppresses the
+#   rule's deterministic suggestion.
+rules:
+  - id: cmake_missing_find_package_asc
+    severity: error
+    category: cmake_config
+    file_glob: "CMakeLists.txt"
+    must_contain: "find_package(ASC"
+    message: "CMakeLists.txt does not contain find_package(ASC REQUIRED)."
+    suggested_fix: "Add find_package(ASC REQUIRED) before declaring Ascend C targets."
+
+  - id: cmake_missing_language_asc
+    severity: error
+    category: cmake_config
+    file_glob: "CMakeLists.txt"
+    # ASC 可经 project(... LANGUAGES ASC) / enable_language(ASC) 直接启用，
+    # 也可经 msopgen 包宏（npu_op_package / npu_op_kernel_library，由 find_package(ASC) 提供）间接启用。
+    # Checking only the first form would flag msopgen projects that use the package
+    # macros instead.
+    must_match: "project\\([^\\)]*LANGUAGES[^\\)]*ASC|enable_language\\(\\s*ASC|npu_op_package|npu_op_kernel_library"
+    message: "CMake project does not enable the ASC language."
+    suggested_fix: "Declare project(<name> LANGUAGES ASC CXX) or enable_language(ASC)."
+
+  - id: cmake_missing_compile_commands
+    severity: warning
+    category: observability
+    file_glob: "CMakeLists.txt"
+    must_contain_any:
+      - "CMAKE_EXPORT_COMPILE_COMMANDS"
+      - "compile_commands.json"
+    message: "Build does not explicitly request compile_commands.json."
+    suggested_fix: "Configure with -DCMAKE_EXPORT_COMPILE_COMMANDS=ON for easier diagnosis."
+
+  - id: kernel_operator_header_missing
+    severity: error
+    category: header_missing
+    file_glob: "**/*.{asc,cpp,cxx,cc,h,hpp}"
+    should_contain_any:
+      - "kernel_operator.h"
+    message: "No source file includes kernel_operator.h."
+    suggested_fix: "Include kernel_operator.h in files that use AscendC kernel APIs."
+
+  - id: suspicious_host_only_feature_in_kernel
+    severity: warning
+    category: kernel_language_risk
+    file_glob: "**/*.{asc,cpp,cxx,cc,h,hpp}"
+    forbidden_patterns:
+      - "\\bthrow\\b"
+      - "\\btry\\b"
+      - "\\bcatch\\b"
+      - "\\bnew\\b"
+      - "\\bdelete\\b"
+      - "std::vector"
+      - "std::map"
+      - "\\btypeid\\b"
+      - "\\bdynamic_cast\\b"
+    message: "Kernel-like source contains host-only C++ features that may not be supported by the Ascend C compiler."
+    suggested_fix: "Keep kernel code to supported Ascend C language features and move host-only constructs outside __aicore__ code."
+
+  - id: kernel_code_size_risk
+    severity: warning
+    category: compiler_limit_risk
+    file_glob: "**/*.{asc,cpp,cxx,cc,h,hpp}"
+    forbidden_patterns:
+      - "switch\\s*\\("
+    message: "Large switch/unroll patterns can trigger compiler code-size limits."
+    suggested_fix: "Split large kernels or reduce generated branch expansion."
+
+  # 跨文件 define/use 规则类（type: cross_file，由 static_rule_checker._check_cross_file 解释）。
+  # 符号在某文件被引用、但项目内无定义 → 跨文件契约断裂。按定义位置判 category：
+  # TilingData 类型/共享常量 → tiling_consistency；kernel 入口符号 → api_incompatible。
+  # clean 工程定义齐全则全部沉默（0 误报）。category 仅为占位，_check_cross_file 按 case 覆盖。
+  - id: crossfile_define_use
+    type: cross_file
+    severity: error
+    category: tiling_consistency
+    settings:
+      enable_shared_const: true
+      extern_prefix_whitelist:
+        - "ACL_"
+        - "ASCEND"
+        - "AICORE"
+        - "GM_"
+        - "DT_"
+        - "OP_"
+        - "FORMAT_"
+        - "VECIN"
+        - "VECOUT"
+        - "VECCALC"
+        - "DOUBLE_BUFFER"
+    message: "A symbol is referenced across host/kernel files but defined nowhere in the project (cross-file contract break)."
+    suggested_fix: "Align definition and use sites across tiling.h / kernel / host, or regenerate the project."
+
+  # CANN 9.1.0 header-path migration:
+  # include/driver/* headers moved to
+  # pkg_inc/driver/*，旧路径 2027-06-30 下线。引用旧路径的工程在 9.1.0+ toolkit 上
+  # 编译报 header_missing（fatal error No such file or directory）。
+  # since: "9.1.0" = 迁移生效版本。注：static_rule_checker 当前不按版本域过滤本类
+  # 规则（接线待 M5 判据），故 severity 取 warning、message 自带版本条件——
+  # 9.0 目标工程命中本规则属预期（旧路径在 9.0 域仍合法，勿改）。
+  - id: include_driver_path_migration
+    severity: warning
+    category: header_missing
+    file_glob: "**/*.{asc,cpp,cxx,cc,h,hpp,txt,sh,cmake}"
+    since: "9.1.0"
+    forbidden_patterns:
+      - "include/driver"
+    message: "Reference to the legacy include/driver header path. CANN 9.1.0 migrated include/driver/* headers to pkg_inc/driver/*; the old path is scheduled for removal on 2027-06-30. On CANN >= 9.1.0 toolkits this reference fails with a missing-header error; on 9.0 targets the old path is still valid (do not rewrite)."
+    suggested_fix: "Point the include directory / #include prefix at pkg_inc/driver/* (new path since 9.1.0). Keep include/driver/* only for pinned 9.0.x toolkits; it goes offline 2027-06-30."

@@ -1,0 +1,21 @@
+{
+  "schema_version": "api-signatures-shards-v1",
+  "entry_count": 1877,
+  "parts": [
+    {
+      "name": "part-0001.yaml",
+      "entry_count": 574,
+      "sha256": "91793fcefd4fb49088f774a56283c06472f913a584ba19359a23f9c9bf2e58ee"
+    },
+    {
+      "name": "part-0002.yaml",
+      "entry_count": 687,
+      "sha256": "aabbd7626f4ddbc55dd4297f94d02d531237382d18cbb325c6b38b8e2af6fc32"
+    },
+    {
+      "name": "part-0003.yaml",
+      "entry_count": 616,
+      "sha256": "3966bee81211fc7085802074360fc0b6cda545feaf8815bee99402d383805226"
+    }
+  ]
+}

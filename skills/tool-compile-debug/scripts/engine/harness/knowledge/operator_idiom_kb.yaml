@@ -1,0 +1,110 @@
+# Common decompositions for high-level operator intents.
+#
+# 用途：为诊断提供可核对的分解知识。自动生成的 AscendC 算子常见
+# 失败是引用不存在的高层 intrinsic（例如大小写错误的 API 名）。
+# 典型症状是 `no member named`，例如错误大小写的 `AscendC::Softmax`。当 cause_tree 判定某符号
+# 不在 api_signatures.yaml 且没有近名时，本库给出 AscendC 的惯用分解配方。
+# ——用真实存在的基础 intrinsic 组合实现它。修复由调用方执行；本文件只提供配方数据。
+#
+# 数据依据：配方里引用的基础 intrinsic（ReduceMax/Sub/Exp/ReduceSum/Div/Muls/
+#   Adds/Max/Maxs/Duplicate 等）已在 CANN 9.0 头文件中核对存在。
+#   高层名（SoftMax 大写M / Silu / Gelu / RmsNorm / LayerNorm）的真实 casing 也经头确认——
+#   这本身就是幻觉纠偏的一部分（`Softmax` 小写是错的）。
+#
+# Schema（list of dict）：
+#   intent:        算子语义意图（小写关键字，用于从幻觉符号名/上下文匹配）
+#   aliases:       常见错误或别名写法，用于匹配
+#   real_high_level: 可选；AscendC 若**确有**对应高层 API，给真名（注意 casing）+ 头
+#   decomposition: 用真实基础 intrinsic 的惯用分解步骤（当高层 API 不可用/被 arch 门控时）
+#   uses:          分解用到的基础 intrinsic（全部真实存在）
+#   note:          一行修复方向
+#
+# API names in this file refer to SDK declarations rather than test fixtures.
+
+- intent: softmax
+  aliases: [Softmax, softmax, AscendC::Softmax, SoftMaxCompute, DoSoftmax]
+  real_high_level:
+    name: SoftMax
+    casing_note: 真实名是 SoftMax（大写 M）；Softmax/softmax 是常见幻觉写法。
+    header: include/adv_api/activation/softmax.h
+    arch_note: 聚合入口和逐头入口条件不同；准确9.0安装的adv_api/activation/softmax.h已有含3510的门控记录，仍须核当前调用、dtype与模板条件。
+  decomposition:
+    - 'rowmax = ReduceMax(x, axis=last)        # 每行最大值，数值稳定'
+    - 'x = Sub(x, rowmax)                       # 减最大值防溢出'
+    - 'e = Exp(x)'
+    - 'rowsum = ReduceSum(e, axis=last)'
+    - 'y = Div(e, rowsum)'
+  uses: [ReduceMax, Sub, Exp, ReduceSum, Div]
+  note: 名称先核SoftMax及其真实入口；下面是数学参考，不因聚合头缺声明就要求分解。
+
+- intent: layernorm
+  aliases: [LayerNorm, layernorm, LayerNormCompute, AscendC::LayerNorm]
+  real_high_level:
+    name: LayerNorm
+    casing_note: 真实名 LayerNorm。
+    header: include/adv_api/normalization/layernorm.h
+    arch_note: 既有证据主要来自聚合头include条件，逐头及具体重载可用性须按准确版本与目标核验。
+  decomposition:
+    - 'mean = ReduceSum(x, axis=last) * (1/N)        # Muls 乘标量 1/N'
+    - 'xc = Sub(x, mean)'
+    - 'var = ReduceSum(Mul(xc, xc), axis=last) * (1/N)'
+    - 'inv = 1 / Sqrt(Adds(var, eps))               # Adds 加 eps，Sqrt+Div 求逆标准差'
+    - 'y = Add(Mul(Mul(xc, inv), gamma), beta)'
+  uses: [ReduceSum, Muls, Sub, Mul, Adds, Sqrt, Div, Add]
+  note: LayerNorm = 减均值/除标准差/仿射；仅在真实API入口与实现需求查清后评估分解。
+
+- intent: rmsnorm
+  aliases: [RmsNorm, RMSNorm, rmsnorm, AscendC::RMSNorm]
+  real_high_level:
+    name: RmsNorm
+    casing_note: 真实名 RmsNorm。
+    header: include/adv_api/normalization/rmsnorm.h
+    arch_note: 聚合头条件不等于全部入口可用集；核当前版本逐头声明与调用条件。
+  decomposition:
+    - 'ms = ReduceSum(Mul(x, x), axis=last) * (1/N)'
+    - 'inv = 1 / Sqrt(Adds(ms, eps))               # Div 求逆'
+    - 'y = Mul(Mul(x, inv), gamma)'
+  uses: [Mul, ReduceSum, Muls, Adds, Sqrt, Div]
+  note: RMSNorm 无减均值；= 均方根归一 + 仿射，用 Mul+ReduceSum+Sqrt+Div 分解。
+
+- intent: silu
+  aliases: [Silu, SiLU, silu, SwishBeta1, AscendC::SiLU]
+  real_high_level:
+    name: Silu
+    casing_note: 当前签名索引收录名为Silu；SiLU是数学名称写法，须核当前工具链声明。
+    header: include/adv_api/activation/silu.h
+    arch_note: 9.0机器记录存在新旧两种头入口；需分别核adv_api/activation/silu.h与adv_api/silu/silu.h，不从聚合条件推断950不可用。
+  decomposition:
+    - 'sig = 1 / (Adds(Exp(Muls(x, -1)), 1))   # sigmoid(x)'
+    - 'y = Mul(x, sig)'
+  uses: [Muls, Exp, Adds, Div, Mul]
+  note: SiLU(x) = x * sigmoid(x)；用 Exp+Adds+Div+Mul 手写 sigmoid 再相乘。
+
+- intent: gelu
+  aliases: [Gelu, GeLU, gelu, AscendC::GeLU]
+  real_high_level:
+    name: Gelu
+    casing_note: 真实名 Gelu。
+    header: include/adv_api/activation/gelu.h
+    arch_note: 既有聚合头条件不足以判定逐头接口；按当前版本、目标、dtype核声明。
+  decomposition:
+    - '# tanh近似与Erf精确式属于不同精度契约；先固定需求，再核实际调用支持面。'
+    - 'x3 = Mul(Mul(x, x), x)'
+    - 'inner = Muls(Add(x, Muls(x3, 0.044715)), 0.7978845608)'
+    - 'y = Muls(Mul(x, Adds(Tanh(inner), 1)), 0.5)'
+    - '# 是否存在其他实现未知；不能由索引缺Tanh/Erf推出无纯SIMD实现或要求换SoC。'
+    - 'y_exact = Muls(Mul(x, Adds(Erf(Muls(x, 0.7071067811)), 1)), 0.5)'
+  uses: [Mul, Muls, Add, Adds, Tanh, Erf]
+  note: GELU有tanh近似与Erf精确两式；两者不能未经误差/输入域验证互换，API可用性与数学可实现性分别核实。
+
+- intent: reduce_mean
+  aliases: [ReduceMean, reducemean, Mean, AscendC::ReduceMean]
+  real_high_level:
+    name: ReduceMean
+    casing_note: 签名索引已有ReduceMean；先核当前版本完整声明，不能把数学名称差异当API不存在。
+    header: highlevel_api/lib/reduce/reduce.h
+    arch_note: 当前目标、dtype、shape和入口条件需核验。
+  decomposition:
+    - 'y = ReduceSum(x, axis) * (1/N)   # Muls 乘标量'
+  uses: [ReduceSum, Muls]
+  note: ReduceMean是否适用于当前调用先查真实声明；ReduceSum乘1/N仅作数学参考。

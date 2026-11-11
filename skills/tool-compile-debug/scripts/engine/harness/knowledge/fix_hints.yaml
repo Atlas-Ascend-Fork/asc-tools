@@ -1,0 +1,189 @@
+# KB-03 fix_hint 实体库（手工维护 + 脚本反向注入）
+#
+# 每条 hint 给出一类错误的修复建议；与 harness/knowledge/cann_error_codes.yaml 的
+# `fix_hint_id` 字段反向关联（一个 hint 可被多个错误码引用）。
+#
+# Schema:
+#   id: 短 slug，引用键
+#   title: 一行标题（用于 UI 短摘要）
+#   description: 多行人话解释（用户面向）
+#   suggested_actions: 有序操作清单（命令 / 检查项 / 配置）
+#   typical_error_codes: 反向索引样例（不强求完备，重在示范）
+#   reference_doc: 仓内或外链
+#   severity: info | warn | error（默认 error）
+
+- id: invalid_param_general
+  title: ACL/RT 接口入参非法
+  description: |
+    调用方传入了语义不合法的参数（typically NULL pointer / 越界值 / 错误枚举）。
+    多见于 aclInit/aclrtSetDevice/aclrtCreateStream/aclrtMalloc 等基础接口。
+    Ascend C 算子工程内若由 kernel launch 报出，常因 host 端组织 tiling/workspace
+    地址时漏算 device id 或 stream handle。
+  suggested_actions:
+    - 检查报错前的 acl* / rt* / aclnn* 调用，定位首个返回非 0 的 API
+    - 用 `aclGetRecentErrMsg()` 抓详细 message（CANN 8.x 起官方推荐）
+    - 确认指针非空、size 非负、enum 在合法范围
+    - 对 Ascend C kernel：检查 host 端 GM 地址、tiling 结构体填充是否正确
+  typical_error_codes: [ACL_ERROR_INVALID_PARAM, ACLDVPP_ERR_PARAM_INVALID, ACLNN_ERR_PARAM_INVALID, ACL_ERROR_INVALID_DEVICE, ACL_ERROR_INVALID_QUEUE_ID]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
+
+- id: uninitialize
+  title: 运行时未初始化
+  description: |
+    在调用 acl/rt API 前未先调用 aclInit() 完成运行时初始化，或在 aclFinalize()
+    之后又调用了运行时接口。`aclrtSetDevice` 也算"初始化"阶段。
+  suggested_actions:
+    - 进程主入口先调 `aclInit(nullptr)` 并检查返回 0
+    - 销毁顺序：流→上下文→设备→aclFinalize
+    - 多线程：每个线程使用前 `aclrtSetCurrentContext`
+  typical_error_codes: [ACL_ERROR_UNINITIALIZE, ACLDVPP_ERR_UNINITIALIZE, ACLNN_ERR_UNINITIALIZED, ACL_ERROR_RT_REPEATED_INIT]
+  reference_doc: https://www.hiascend.com/document/detail/zh/canncommercial/63RC1/inferapplicationdev/aclcppdevg/aclcppdevg_03_0010.html
+  severity: error
+
+- id: file_io
+  title: 模型/配置/dump 文件读写失败
+  description: |
+    打开/写入/解析模型文件、profiling 配置、dump 文件等失败。常见根因：
+    路径错误、权限不足、磁盘满、文件被改坏（CRC mismatch）、跨用户写
+    `/usr/local/Ascend` 等只读区。
+  suggested_actions:
+    - 用 `ls -la <path>` 确认文件存在且当前用户有读/写权限
+    - 检查磁盘空间 `df -h`
+    - 写产物路径迁到 `workspace/` 而非系统目录
+    - 模型 .om 解析失败：尝试用 ATC 重新转换
+  typical_error_codes: [ACL_ERROR_INVALID_FILE, ACL_ERROR_WRITE_FILE, ACL_ERROR_INVALID_FILE_SIZE, ACL_ERROR_PARSE_FILE, ACL_ERROR_FILE_MISSING_ATTR, ACL_ERROR_FILE_ATTR_INVALID]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
+
+- id: device_resource
+  title: 设备/上下文/资源句柄无效
+  description: |
+    Device id 越界、context 未创建或已销毁、资源句柄（queue/event/stream）
+    在错误时机被使用。多卡部署时尤其要确认 `aclrtSetDevice(deviceId)` 已成功。
+  suggested_actions:
+    - "`npu-smi info` 确认目标 device 在线"
+    - 检查 `aclrtSetDevice` / `aclrtCreateContext` 返回值
+    - 资源销毁顺序：用完即销毁；不要在销毁后引用 handle
+  typical_error_codes: [ACL_ERROR_INVALID_DEVICE, ACL_ERROR_INVALID_RESOURCE_HANDLE, ACL_ERROR_INVALID_QUEUE_ID, ACL_ERROR_RT_INVALID_DEVICEID, ACL_ERROR_RT_CONTEXT_NULL]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
+
+- id: memory_address
+  title: 内存地址未对齐 / 越界
+  description: |
+    设备内存地址不符合对齐要求（如 32B / 64B / 512B），或 kernel 内读写
+    超出分配范围。Ascend C 算子里常因 tiling 计算时 blockLen × elementSize
+    与硬件对齐不一致触发。
+  suggested_actions:
+    - 检查 `aclrtMalloc` 返回的地址是否仍按 32B 对齐
+    - kernel 内 DataCopy/Compute 的 stride、blockLen、repeatTime 与对齐约束匹配
+    - 启用 CPU debug 模式（`ASCENDC_CPU_DEBUG`）跑一遍模拟
+    - 用 `msdebug` / dump tensor 缩小越界点
+  typical_error_codes: [ACL_ERROR_MEMORY_ADDRESS_UNALIGNED, ACL_ERROR_RT_MEMORY_ADDRESS_UNALIGNED, ACL_ERROR_RT_OUT_OF_BOUND]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
+
+- id: stream
+  title: Stream 相关错误（订阅/捕获/任务组）
+  description: |
+    Stream 状态机被打破：未先 subscribe 就用 callback、capture begin/end
+    嵌套不一致、task group 中断或状态错。
+  suggested_actions:
+    - callback 路径：调用 `aclrtSubscribeReport` 后再发送任务
+    - 多流并发：确认 stream 创建/销毁配对
+    - 若用 stream capture，begin/end 必须严格平衡，不可与同步操作交叉
+  typical_error_codes: [ACL_ERROR_STREAM_NOT_SUBSCRIBE, ACL_ERROR_STREAM_CAPTURE_CONFLICT, ACL_ERROR_STREAM_TASK_GROUP_STATUS, ACL_ERROR_STREAM_TASK_GROUP_INTR]
+  reference_doc: https://www.hiascend.com/document/detail/zh/canncommercial/63RC1
+  severity: error
+
+- id: timeout
+  title: 等待/回调/Wait 超时
+  description: |
+    等待 host callback 或 device 事件超时。多见于死锁（kernel 内死循环）、
+    上一笔任务 hang、CPU 端 callback 处理过慢。
+  suggested_actions:
+    - 检查 kernel 是否有可能死循环（tiling 边界 / mask 计算错）
+    - 用 `npu-smi info -t topo` 查 AICore 占用，是否上一个任务卡死
+    - 适当延长超时阈值；但根因优先排查
+  typical_error_codes: [ACL_ERROR_WAIT_CALLBACK_TIMEOUT, ACL_ERROR_RT_TIMEOUT, ACL_ERROR_RT_WAIT_TIMEOUT]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
+
+- id: not_found
+  title: 算子/Kernel/模型未找到
+  description: |
+    调用方请求的 op/kernel/model 在当前 OPP 或加载的模型库中不存在。
+    Ascend C 算子开发场景下，常见原因：算子未编译进当前 op_proj、
+    `op_type` 拼写错、`set_env.sh` 未 source 导致 OPP 路径未指向构建产物。
+  suggested_actions:
+    - 检查 `$ASCEND_OPP_PATH` 是否指向你刚刚 msopgen 的工程
+    - 用 `msopgen list-op <type>` 看算子是否注册
+    - 重跑 `bash build.sh && bash install.sh` 把 op kernel 部署到 OPP
+  typical_error_codes: [ACL_ERROR_OP_NOT_FOUND, ACL_ERROR_KERNEL_NOT_FOUND, ACL_ERROR_INVALID_MODEL_ID, ACL_ERROR_MODEL_SIZE_INVALID, ACL_ERROR_INVALID_BUNDLE_MODEL_ID]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
+
+- id: oom_device_memory
+  title: NPU 显存不足
+  description: |
+    `aclrtMalloc` / `rtMalloc` 失败，HBM 已被占满或单次分配超过单算子允许的
+    最大块。多卡训练时常因 PyTorch 缓存未释放。
+  suggested_actions:
+    - "`npu-smi info` 看 HBM 占用；必要时 `aclrtResetDevice` 释放"
+    - 缩小 batch / tiling block，分多次 DataCopy
+    - 同进程多次 alloc/free 后跑 `aclrtMemPoolInfo`
+  typical_error_codes: [ACL_ERROR_RT_MEMORY_ALLOCATION, ACL_ERROR_RT_NO_MEMORY, ACL_ERROR_RT_FEATURE_NOT_SUPPORT]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
+
+- id: feature_not_supported
+  title: 当前 SoC / CANN 版本不支持该特性
+  description: |
+    Ascend 算子或 ACL 调用在当前硬件代际 / CANN 版本不支持。Ascend C 里
+    多见于 cube/vec 特性版本依赖（如 `__inout_pipe__(MTE2)` 不支持某些 SoC）。
+  suggested_actions:
+    - "确认 SOC version: `cat /usr/local/Ascend/.../scene.info` 或 `npu-smi info`"
+    - 查 CANN 文档版本兼容矩阵（KB-05 维护中）
+    - 临时绕开：禁用该特性或降级算法
+  typical_error_codes: [ACL_ERROR_RT_FEATURE_NOT_SUPPORT, ACL_ERROR_RT_PARAM_INVALID]
+  reference_doc: https://www.hiascend.com/document
+  severity: warn
+
+- id: dump_profiling_config
+  title: dump/profiling 配置非法
+  description: |
+    aclmdlSetDump / aclprofConfig 的配置 JSON 解析失败、字段越界或与算子状态冲突。
+  suggested_actions:
+    - 参考官方 sample 的 dump.json / profiling.json
+    - 路径必须存在且可写
+    - dump 模式与 model 状态对应：load 前设置，run 时启用
+  typical_error_codes: [ACL_ERROR_INVALID_DUMP_CONFIG, ACL_ERROR_INVALID_PROFILING_CONFIG, ACL_ERROR_INVALID_MAX_OPQUEUE_NUM_CONFIG]
+  reference_doc: https://www.hiascend.com/document/detail/zh/canncommercial/63RC1
+  severity: warn
+
+- id: opp_path
+  title: OPP 包路径无效
+  description: |
+    `$ASCEND_OPP_PATH` 未设置或指向错误目录。Ascend C 自定义算子工程
+    依赖 OPP 加载 op 信息库。
+  suggested_actions:
+    - "`source /usr/local/Ascend/ascend-toolkit/set_env.sh`"
+    - 自定义算子部署后：`source build_out/op_install/set_env.sh`
+    - 检查 `echo $ASCEND_OPP_PATH` 非空且目录存在
+  typical_error_codes: [ACL_ERROR_INVALID_OPP_PATH]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
+
+- id: rt_internal
+  title: RT 运行时内部错误（驱动/HCCL/调度）
+  description: |
+    rt_error_codes.h 报出的内部错误。通常由设备驱动、HCCL 通信、任务调度
+    异常导致；多需要重启进程或重置设备。
+  suggested_actions:
+    - 重启 ModelArts notebook 或 `aclrtResetDevice`
+    - 检查 driver 版本与 CANN runtime 匹配
+    - 多机 HCCL 场景：检查 RDMA 网络、rank table、节点防火墙
+  typical_error_codes: [ACL_ERROR_RT_INTERNAL_ERROR, ACL_ERROR_RT_DRV_INTERNAL_ERROR, ACL_ERROR_RT_TSFW_INTERNAL_ERROR, ACL_ERROR_RT_AICORE_TRAP_READ_OVERFLOW, ACL_ERROR_RT_AICORE_TRAP_WRITE_OVERFLOW]
+  reference_doc: https://www.hiascend.com/document
+  severity: error
