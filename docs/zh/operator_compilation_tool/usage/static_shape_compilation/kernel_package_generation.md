@@ -10,7 +10,7 @@
 
             训练结束后，Dump的算子信息统计文件默认在`{worker_name}_{时间戳}_ascend_pt_op_args/{pid}`目录下。
 
-    - **使用acl接口编程时**，可通过aclopStartDumpArgs和aclopStopDumpArgs接口将算子信息统计文件Dump到指定目录下。接口的详细介绍请参考《[Runtime运行时API](https://gitcode.com/cann/runtime/blob/master/docs/zh/api_ref/README.md)》。
+    - **使用acl接口编程时**，可通过aclopStartDumpArgs和aclopStopDumpArgs接口将算子信息统计文件Dump到指定目录下。接口的详细介绍请参考《[Runtime运行时API](https://gitcode.com/cann/runtime/blob/9.3.0-beta.1/docs/zh/api_ref/README.md)》。
 
 2. 在任意目录下，以运行用户（如HwHiAiUser）身份执行如下命令，进行算子编译：
 

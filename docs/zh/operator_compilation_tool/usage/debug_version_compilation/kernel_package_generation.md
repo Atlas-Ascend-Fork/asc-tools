@@ -28,7 +28,7 @@ op_compiler -k <kernel_name>  -d gm_debug.cfg -v <soc_version> -l info -j 128 -o
 
 - --op\_params\_dir和--kernel\_name，两个参数只能使用一个，为必选参数。在报错日志中能够获取到明确的算子kernel\_name时，建议使用kernel\_name参数。
     - --op\_params\_dir：简写为-p，Dump工具导出的统计数据所在的文件夹路径，支持绝对和相对路径。目前支持两种方式Dump算子json文件，请根据实际情况选择合适的方式。
-        - **使用PyTorch的Python接口编程时**，可通过Ascend PyTorch Profiler接口dump算子json文件，具体请参考《[Ascend Pytorch调优工具](https://www.hiascend.com/document/detail/zh/mindstudio/latest/msTT_msIT/ascend_pytorch_profiler/docs/zh/developer_notes/ascend_pytorch_profiler_user_guide.md)》。
+        - **使用PyTorch的Python接口编程时**，可通过Ascend PyTorch Profiler接口dump算子json文件，具体请参考《[Ascend Pytorch调优工具](https://www.hiascend.com/document/detail/zh/mindstudio/2620/msTT_msIT/ascend_pytorch_profiler/docs/zh/developer_notes/ascend_pytorch_profiler_user_guide.md)》。
             1. 使用Ascend PyTorch Profiler接口开启PyTorch训练时的性能数据采集。
 
                 在训练前，开启扩展参数experimental\_config中“算子信息统计功能”，即参数record\_op\_args置为True。
@@ -37,7 +37,7 @@ op_compiler -k <kernel_name>  -d gm_debug.cfg -v <soc_version> -l info -j 128 -o
 
                 训练结束后，Dump的算子信息统计文件默认在`{worker_name}_{时间戳}_ascend_pt_op_args/{pid}_debug`目录下。
 
-        - **用acl接口编程时**，可通过aclopStartDumpArgs和aclopStopDumpArgs接口将算子信息统计文件Dump到指定目录下。接口的详细介绍请参考《[Runtime运行时API](https://gitcode.com/cann/runtime/blob/master/docs/zh/api_ref/README.md)》。
+        - **用acl接口编程时**，可通过aclopStartDumpArgs和aclopStopDumpArgs接口将算子信息统计文件Dump到指定目录下。接口的详细介绍请参考《[Runtime运行时API](https://gitcode.com/cann/runtime/blob/9.3.0-beta.1/docs/zh/api_ref/README.md)》。
 
     - --kernel\_name：简写为-k，在算子执行的报错日志中获取kernel\_name。
 

@@ -6,7 +6,7 @@
 
 - **静态shape编译功能**：通过单算子API执行的方式调用算子，算子shape固定时，可以使用该工具编译静态Kernel包并安装，提升算子调用的性能。
 
-    本文档仅介绍算子编译工具的使用方法，具体的场景样例请参见《[算子库](https://gitcode.com/cann/docs/blob/master/docs/zh/ops-lib/0_README.md)》中的[使用静态Kernel提升算子执行性能](https://gitcode.com/cann/docs/blob/master/docs/zh/ops-lib/appendix/performance_improve_by_staticKernel.md)章节。
+    本文档仅介绍算子编译工具的使用方法，具体的场景样例请参见《[算子库](https://gitcode.com/cann/docs/blob/9.3.0-beta.1/docs/zh/ops-lib/0_README.md)》中的[使用静态Kernel提升算子执行性能](https://gitcode.com/cann/docs/blob/9.3.0-beta.1/docs/zh/ops-lib/appendix/performance_improve_by_staticKernel.md)章节。
 
 - **调试版本编译功能**。定位算子问题时，可以使用该工具编译调试版本的二进制，用于问题复现和定位。
 

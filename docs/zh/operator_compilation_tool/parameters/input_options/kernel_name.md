@@ -4,7 +4,7 @@
 
 和[--op\_params\_dir](op_params_dir.md)二选一必选，设置需要编译的调试版本的算子kernel\_name。简写为-k。
 
-kernel\_name的获取方式如下：算子执行过程中出现报错，根据报错日志可以获取到出错算子的kernel\_name（搜索kernel\_name关键字）。报错日志的获取方式请参考《[日志参考](https://gitcode.com/cann/runtime/blob/master/docs/zh/log_ref/README.md)》。
+kernel\_name的获取方式如下：算子执行过程中出现报错，根据报错日志可以获取到出错算子的kernel\_name（搜索kernel\_name关键字）。报错日志的获取方式请参考《[日志参考](https://gitcode.com/cann/runtime/blob/9.3.0-beta.1/docs/zh/log_ref/README.md)》。
 
 ## 关联参数
 
