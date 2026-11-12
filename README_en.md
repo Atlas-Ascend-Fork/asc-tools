@@ -30,6 +30,10 @@ Ascend C Tools is a debugging toolkit provided by [CANN](https://hiascend.com/so
 
     tool-exception-dump is a systematic AI Core Error diagnosis skill for Ascend NPUs. Built on the msaicerr/asys tool pipeline, it guides AI assistants through scenario classification, error line location, error type decoding, single-operator reproduction, and evidence-chain convergence with fix suggestions, producing a six-section diagnosis report to help developers locate AI Core Error root causes along a standard path.
 
+- **tool-npu-rep-html**
+
+    tool-npu-rep-html is an offline HTML report generation skill for Ascend NPU profiling archives. Powered by the zero-dependency CLI `npu-rep-html.mjs`, it guides AI assistants on Linux, macOS, and Windows to resolve, generate, and cache interactive HTML reports openable directly via browser `file://` (supporting the `.npu-rep` format and installing Node ≥ 20 when needed), helping developers inspect performance data offline, share analysis results, or archive outputs as CI build artifacts.
+
 ## 🔍 Directory Structure
 
 The directory structure of this repository is as follows:
@@ -54,6 +58,7 @@ The directory structure of this repository is as follows:
 │   ├── tool-npu-check                 // Ascend C Tools tool-npu-check实现源代码
 │   ├── tool-npu-compute               // Ascend C Tools tool-npu-compute实现源代码
 │   ├── tool-npu-objdump               // Ascend C Tools tool-npu-objdump实现源代码
+│   ├── tool-npu-rep-html              // Ascend C Tools tool-npu-rep-html offline HTML report skill
 │   └── tool-precision-debug           // Ascend C Tools tool-precision-debug实现源代码
 ├── tests                               // Ascend C Tools UT test cases
 ├── third_party                         // Third-party library files that Ascend C Tools depends on

@@ -1,0 +1,74 @@
+{
+  "skill_name": "tool-npu-rep-html",
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "title": "latest-release-get-and-shebang-cache",
+      "prompt": "要把一份 .npu-rep 转成 HTML，本机没有设置 NPU_REP_HTML，也没有缓存。Agent 应该怎样拿到 npu-rep-html.mjs？能不能用 HEAD 探测下载地址？缓存命中要满足什么条件？",
+      "expected_output": "用 GET 请求 GitCode releases/latest API（curl -fsSL），读取 tag_name 与名为 npu-rep-html.mjs 的 asset 的 browser_download_url，再 GET 跟随重定向下载到标签目录临时文件，校验非空且首行为 #!/usr/bin/env node 后才落到缓存。不要用 HEAD，会返回 401。仅当缓存路径存在、非空且首行是 shebang 时才跳过下载。不要在本仓构建该脚本。",
+      "expectations": [
+        {"type": "contains", "pattern": "releases/latest", "description": "解析最新 release"},
+        {"type": "contains", "pattern": "npu-rep-html.mjs", "description": "定位脚本资产名"},
+        {"type": "contains", "pattern": "GET", "description": "用 GET 下载"},
+        {"type": "contains", "pattern": "401", "description": "说明 HEAD 会 401"},
+        {"type": "contains", "pattern": "#!/usr/bin/env node", "description": "缓存命中要求 shebang"},
+        {"type": "not_contains", "pattern": "npm run build", "description": "不走本仓构建路径"},
+        {"type": "skill_activated", "pattern": "tool-npu-rep-html", "description": "激活 HTML 报告 Skill"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "windows-powershell-node-install",
+      "prompt": "在 Windows PowerShell 上 node 缺失，需要安装 Node 20 才能跑 npu-rep-html。应该用哪套安装路径和校验步骤？能不能装 Linux tarball？",
+      "expected_output": "使用 PowerShell 块安装到 %LOCALAPPDATA%\\npu-rep-node，先下载 SHASUMS256.txt，按架构选 win-x64（AMD64）或 win-arm64（ARM64）zip，校验 SHA-256 后再 Expand-Archive，确认暂存目录有 node.exe 后先把旧 live 挪到备份再 Move-Item 就位。调用 curl.exe，不要用 PowerShell 的 curl 别名。不要安装 Linux 归档。",
+      "expectations": [
+        {"type": "contains", "pattern": "LOCALAPPDATA", "description": "Windows 安装前缀"},
+        {"type": "contains", "pattern": "npu-rep-node", "description": "Node 缓存目录名"},
+        {"type": "contains", "pattern": "curl.exe", "description": "PowerShell 用 curl.exe"},
+        {"type": "contains", "pattern": "SHASUMS256", "description": "提取前校验和"},
+        {"type": "contains", "pattern": "win-", "description": "Windows 平台前缀"},
+        {"type": "contains", "pattern": "SHA", "description": "校验哈希"},
+        {"type": "not_contains", "pattern": "apt install", "description": "不用 Linux 包管理器装 Node"},
+        {"type": "skill_activated", "pattern": "tool-npu-rep-html", "description": "激活 HTML 报告 Skill"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "success-absolute-path-and-file-url",
+      "prompt": "成功生成 HTML 报告后，应该怎样回复用户？",
+      "expected_output": "告知输出文件的绝对路径，并说明可用浏览器打开；file:// 可用。",
+      "expectations": [
+        {"type": "contains", "pattern": "绝对路径", "description": "报告绝对输出路径"},
+        {"type": "contains", "pattern": "浏览器", "description": "说明可打开"},
+        {"type": "contains", "pattern": "file://", "description": "离线打开方式"},
+        {"type": "skill_activated", "pattern": "tool-npu-rep-html", "description": "激活 HTML 报告 Skill"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "npu-rep-html-env-override",
+      "prompt": "用户已经设置了 NPU_REP_HTML=/opt/bin/npu-rep-html.mjs，还需要从 GitCode 下载最新脚本吗？",
+      "expected_output": "不需要下载。使用 NPU_REP_HTML 指向的路径；若该路径缺失或不是文件，停止并报告该路径。",
+      "expectations": [
+        {"type": "contains", "pattern": "NPU_REP_HTML", "description": "识别环境变量覆盖"},
+        {"type": "contains", "pattern": "不要下载", "description": "跳过 release 下载"},
+        {"type": "not_contains", "pattern": "build:report-shell", "description": "不走本仓构建路径"},
+        {"type": "skill_activated", "pattern": "tool-npu-rep-html", "description": "激活 HTML 报告 Skill"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "generate-cli-and-boundary",
+      "prompt": "脚本和 Node 都就绪后，如何生成 HTML？这和 tool-perf-analysis 的报告有什么区别？",
+      "expected_output": "运行 node <script> <input.npu-rep> -o <output.html> [--name <title>] [--en|--zh]。本技能产出离线泳道 HTML 用于分享/CI；性能诊断报告走 tool-perf-analysis，不要混用。不要在本仓构建该脚本。",
+      "expectations": [
+        {"type": "contains", "pattern": "-o", "description": "输出参数"},
+        {"type": "contains", "pattern": "tool-perf-analysis", "description": "区分性能诊断技能"},
+        {"type": "contains", "pattern": "分享", "description": "说明本技能用途"},
+        {"type": "not_contains", "pattern": "npm run build", "description": "不走本仓构建"},
+        {"type": "skill_activated", "pattern": "tool-npu-rep-html", "description": "激活 HTML 报告 Skill"}
+      ]
+    }
+  ]
+}

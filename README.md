@@ -30,6 +30,10 @@ Ascend C Tools是[CANN](https://hiascend.com/software/cann) （Compute Architect
 
     tool-exception-dump是面向昇腾NPU的AI Core Error系统化诊断技能（skill），基于msaicerr/asys工具管线执行与判读，以知识工作流形式指导AI助手完成场景判定、报错行定位、错误类型解码、单算子复现与证据链汇聚，输出六段式诊断报告，帮助开发者按标准路径定位算子运行中的AI Core Error根因。
 
+- **tool-npu-rep-html**
+
+    tool-npu-rep-html是面向昇腾NPU的Profiling报告离线HTML生成技能（skill），基于零依赖CLI工具npu-rep-html.mjs，指导AI助手在Linux、macOS和Windows上解析、生成并缓存可由浏览器file://直接打开的交互式HTML报告（支持.npu-rep格式，必要时自动安装Node ≥ 20），帮助开发者离线查看性能数据、分享分析结果或归档为CI构建产物。
+
 ## 🔍目录结构说明
 
 本代码仓目录结构如下:
@@ -54,6 +58,7 @@ Ascend C Tools是[CANN](https://hiascend.com/software/cann) （Compute Architect
 │   ├── tool-npu-check                 // Ascend C Tools tool-npu-check实现源代码
 │   ├── tool-npu-compute               // Ascend C Tools tool-npu-compute实现源代码
 │   ├── tool-npu-objdump               // Ascend C Tools tool-npu-objdump实现源代码
+│   ├── tool-npu-rep-html              // Ascend C Tools tool-npu-rep-html 离线 HTML 报告技能
 │   └── tool-precision-debug           // Ascend C Tools tool-precision-debug实现源代码
 ├── tests                               // Ascend C Tools的UT用例
 ├── third_party                         // Ascend C Tools依赖的第三方库文件
