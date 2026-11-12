@@ -13,6 +13,7 @@
 #include "dbi/embedded_probe_resources.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -191,6 +192,48 @@ TEST(ProbeSourceGenerator, Main)
     ASSERT_TRUE(aclsan::RejectsUnsupportedRequests());
     ASSERT_TRUE(aclsan::EmbedsPrivateProbeHeaders());
 }
+
+namespace {
+struct IntraBlockProbeCase {
+    uint16_t instruction;
+    const char* symbol;
+    const char* operands;
+    const char* recordArguments;
+};
+
+class IntraBlockProbeTest : public ::testing::TestWithParam<IntraBlockProbeCase> {};
+
+TEST_P(IntraBlockProbeTest, PreservesPipeAndFlagLayout)
+{
+    const auto& expected = GetParam();
+    SCOPED_TRACE(expected.symbol);
+    const auto generated = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Sync);
+    ASSERT_TRUE(generated.success) << generated.diagnostic;
+    const auto definition = aclsan::FindProbeDefinition(generated.source, std::string(expected.symbol) + "(");
+    ASSERT_FALSE(definition.empty());
+    EXPECT_NE(definition.find(std::string("uint32_t bid, ") + expected.operands + ")"), std::string_view::npos);
+    EXPECT_NE(
+        definition.find("static_cast<uint16_t>(PIPE_S), " + std::to_string(expected.instruction) + ","),
+        std::string_view::npos);
+    EXPECT_NE(definition.find(expected.recordArguments), std::string_view::npos);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Mode4Forms, IntraBlockProbeTest,
+    ::testing::Values(
+        IntraBlockProbeCase{
+            464, "__npu_check_probe_set_intra_block_v", "uint64_t syncId",
+            "static_cast<uint64_t>(PIPE_V), syncId, 0UL, 0UL, 0UL"},
+        IntraBlockProbeCase{
+            465, "__npu_check_probe_set_intra_blocki_v", "uint8_t syncId",
+            "static_cast<uint64_t>(PIPE_V), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL"},
+        IntraBlockProbeCase{
+            466, "__npu_check_probe_wait_intra_block_v", "uint64_t syncId",
+            "static_cast<uint64_t>(PIPE_V), syncId, 0UL, 0UL, 0UL"},
+        IntraBlockProbeCase{
+            467, "__npu_check_probe_wait_intra_blocki_v", "uint8_t syncId",
+            "static_cast<uint64_t>(PIPE_V), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL"}));
+} // namespace
 
 TEST(ProbeSourceGenerator, VectorGroupIncludesUbufTransfer)
 {

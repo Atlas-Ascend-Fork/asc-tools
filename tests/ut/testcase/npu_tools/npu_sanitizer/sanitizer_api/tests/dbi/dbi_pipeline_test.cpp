@@ -13,13 +13,17 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <sstream>
 #include <sys/stat.h>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -223,6 +227,63 @@ std::string ReadGeneratedFile(const boost::filesystem::path& path)
 {
     std::ifstream input(path.string(), std::ios::binary);
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+void ReadCtrlbinOperandMasks(const std::string& data, std::map<uint16_t, std::vector<uint16_t>>& masks)
+{
+    // ctrl.bin starts with a 12-byte CtrlInfo header; splitOffset1 is at byte 6.
+    constexpr std::size_t kHeaderBytes = 12;
+    constexpr std::size_t kSplitOffsetPosition = 6;
+    constexpr std::size_t kBindingHeaderBytes = 3 * sizeof(uint16_t);
+    ASSERT_GE(data.size(), kHeaderBytes);
+    std::istringstream input(data, std::ios::in | std::ios::binary);
+    const auto readWord = [&input]() {
+        uint16_t value = 0;
+        input.read(reinterpret_cast<char*>(&value), sizeof(value));
+        EXPECT_TRUE(input.good()) << "truncated ctrl.bin";
+        return value;
+    };
+    input.seekg(kSplitOffsetPosition);
+    const std::size_t bindingBytes = readWord();
+    ASSERT_LE(bindingBytes, data.size() - kHeaderBytes);
+    input.seekg(kHeaderBytes);
+    for (std::size_t offset = 0; offset < bindingBytes;) {
+        ASSERT_GE(bindingBytes - offset, kBindingHeaderBytes);
+        const uint16_t instruction = readWord();
+        readWord(); // The injected symbol index does not affect operand positions.
+        const uint16_t count = readWord();
+        offset += kBindingHeaderBytes;
+        ASSERT_LE(count, (bindingBytes - offset) / sizeof(uint16_t));
+        std::vector<uint16_t> operands;
+        for (uint16_t index = 0; index < count; ++index) {
+            operands.push_back(readWord());
+        }
+        ASSERT_TRUE(masks.emplace(instruction, std::move(operands)).second) << instruction;
+        offset += count * sizeof(uint16_t);
+    }
+}
+
+TEST(CtrlbinGeneratorTest, SyncInstructionBindingsPreserveOperandPositions)
+{
+    const auto path =
+        boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("sync-operands-%%%%-%%%%.ctrl.bin");
+    std::string diagnostic;
+    ASSERT_TRUE(GenerateCtrlBin(path.string(), {ProbeGroup::Sync}, diagnostic)) << diagnostic;
+    const auto data = ReadGeneratedFile(path);
+    boost::filesystem::remove(path);
+    std::map<uint16_t, std::vector<uint16_t>> actual;
+    ASSERT_NO_FATAL_FAILURE(ReadCtrlbinOperandMasks(data, actual));
+    // Ordinary forms have explicit pipe/flag operands; V forms take only flag/config.
+    const std::map<uint16_t, std::vector<uint16_t>> expected{
+        {445, {0, 1}}, {446, {0, 1}}, {447, {0, 1}}, {452, {0, 1}}, {453, {0, 1}}, {454, {0, 1}}, {455, {0, 1}},
+        {464, {0}},    {465, {0}},    {466, {0}},    {467, {0}},    {468, {0}},    {469, {0}},    {470, {0}},
+    };
+    for (const auto& [instruction, operands] : expected) {
+        SCOPED_TRACE(instruction);
+        const auto found = actual.find(instruction);
+        ASSERT_NE(found, actual.end());
+        EXPECT_EQ(found->second, operands);
+    }
 }
 
 TEST(CtrlbinGeneratorTest, RejectsEmbeddedNullAndSymbolicLinkOutputPaths)

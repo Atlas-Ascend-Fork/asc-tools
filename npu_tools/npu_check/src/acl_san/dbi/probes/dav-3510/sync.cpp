@@ -288,35 +288,35 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
 }
 
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_intra_block_v(
-    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t syncId)
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t syncId)
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::Synchronization, static_cast<uint16_t>(PIPE_S), 464,
-        static_cast<uint64_t>(pipe), syncId, 0UL, 0UL, 0UL);
+        static_cast<uint64_t>(PIPE_V), syncId, 0UL, 0UL, 0UL);
 }
 
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_set_intra_blocki_v(
-    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t syncId)
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint8_t syncId)
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::Synchronization, static_cast<uint16_t>(PIPE_S), 465,
-        static_cast<uint64_t>(pipe), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL);
+        static_cast<uint64_t>(PIPE_V), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL);
 }
 
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_intra_block_v(
-    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint64_t syncId)
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t syncId)
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::Synchronization, static_cast<uint16_t>(PIPE_S), 466,
-        static_cast<uint64_t>(pipe), syncId, 0UL, 0UL, 0UL);
+        static_cast<uint64_t>(PIPE_V), syncId, 0UL, 0UL, 0UL);
 }
 
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_wait_intra_blocki_v(
-    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t syncId)
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint8_t syncId)
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::Synchronization, static_cast<uint16_t>(PIPE_S), 467,
-        static_cast<uint64_t>(pipe), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL);
+        static_cast<uint64_t>(PIPE_V), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL);
 }
 
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ffts_cross_core_sync_v(
