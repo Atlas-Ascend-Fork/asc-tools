@@ -97,6 +97,7 @@ const PatternCatalog& Catalog()
         MakePattern(
             ReportTool::INITCHECK, NpuCheckReportPattern::INITCHECK_UNINITIALIZED_READ, "uninitialized_read",
             "========= {{Severity}}:[INITCHECK] Uninitialized {{space}} memory read\n"
+            "{{paddingNote}}"
             "=========     Read size: {{accessBytes}} bytes; uninitialized: {{uninitBytes}} bytes\n"
             "=========     Access start: 0x{{address}}; first uninitialized byte: 0x{{firstUninitAddress}}\n"
             "=========     Allocation base: 0x{{base}}; initialized bytes: {{allocationInitializedBytes}}; allocation "
@@ -108,6 +109,7 @@ const PatternCatalog& Catalog()
             ReportTool::INITCHECK, NpuCheckReportPattern::INITCHECK_PARTIAL_UNINITIALIZED_READ,
             "partial_uninitialized_read",
             "========= {{Severity}}:[INITCHECK] Partially uninitialized {{space}} memory read\n"
+            "{{paddingNote}}"
             "=========     Read size: {{accessBytes}} bytes; uninitialized: {{uninitBytes}} bytes\n"
             "=========     Access start: 0x{{address}}; first uninitialized byte: 0x{{firstUninitAddress}}\n"
             "=========     Allocation base: 0x{{base}}; initialized bytes: {{allocationInitializedBytes}}; allocation "

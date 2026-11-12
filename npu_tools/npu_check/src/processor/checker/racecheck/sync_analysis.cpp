@@ -150,7 +150,8 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
         ++memoryEvents_;
         const auto& a = *static_cast<const AclsanDeviceMemoryAccessData*>(data);
         const bool exact = h.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT && !a.vectorMask0 && !a.vectorMask1 &&
-                           !a.predicateMask0 && !a.predicateMask1 && !a.memoryFlags;
+                           !a.predicateMask0 && !a.predicateMask1 &&
+                           !(a.memoryFlags & ~ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING);
         if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN) != 0)
             state.reasons.insert("atomic_configuration_unknown");
         if (!exact) {

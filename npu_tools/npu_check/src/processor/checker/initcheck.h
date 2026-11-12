@@ -77,6 +77,7 @@ struct InitcheckStats {
     uint64_t registerWrites = 0;
     uint64_t deviceOperations = 0;
     uint64_t errors = 0;
+    uint64_t warnings = 0;
     uint64_t synchronizations = 0;
     uint64_t malformedEvents = 0;
     uint64_t failedLaunches = 0;

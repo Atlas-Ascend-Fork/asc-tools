@@ -95,6 +95,12 @@ ReportRecord ToReportRecord(const NpuCheckInitcheckReport& report)
     fields["firstUninitAddress"] = Hex(report.firstUninitAddress);
     fields["firstUninitOffset"] = Hex(report.firstUninitOffset);
     fields["uninitBytes"] = std::to_string(report.uninitBytes);
+    fields["paddingNote"] =
+        report.common.severity == ReportSeverity::WARNING &&
+                (report.common.pattern == NpuCheckReportPattern::INITCHECK_UNINITIALIZED_READ ||
+                 report.common.pattern == NpuCheckReportPattern::INITCHECK_PARTIAL_UNINITIALIZED_READ) ?
+            "=========     Severity reduced: all uninitialized bytes are in ignored hardware padding.\n" :
+            "";
     fields["initializedBytes"] = std::to_string(report.initializedBytes);
     fields["allocationInitializedBytes"] = std::to_string(report.allocationInitializedBytes);
     fields["unusedBytes"] = std::to_string(report.unusedBytes);

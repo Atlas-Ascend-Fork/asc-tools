@@ -72,6 +72,10 @@ typedef enum AclsanDeviceMemoryAccessMode {
     ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX = 5
 } AclsanDeviceMemoryAccessMode;
 
+// Initcheck replay proof: all missing bytes are ignored padding. A rounded
+// instruction shape alone is not sufficient to set this flag.
+typedef enum AclsanDeviceMemoryFlags { ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING = 1u << 1u } AclsanDeviceMemoryFlags;
+
 // TODO: 先留着，不确定可靠性有没有必要
 typedef enum AclsanDeviceEventFlags {
     ACLSAN_DEVICE_EVENT_FLAG_NONE = 0,
@@ -148,6 +152,18 @@ typedef struct AclsanMemNdAffineLayout {
     int64_t strides[5];
 } AclsanMemNdAffineLayout;
 
+// Optional valid-data footprint inside an Nz read (Zn is Nz after transposing
+// the logical axes). Zero rowBytes means no padding evidence. This metadata
+// never changes the physical access or initializes padding bytes.
+typedef struct AclsanMemValidNzLayout {
+    uint64_t rows;
+    uint64_t rowDataBytes;
+    uint64_t blockStride;
+    uint32_t rowBytes;
+    uint32_t reserved;
+    uint64_t baseAddress; // Original Nz origin, preserved when reads are split.
+} AclsanMemValidNzLayout;
+
 typedef struct AclsanDeviceMemoryAccessData {
     AclsanDeviceEventHeader header;
     uint64_t address;
@@ -176,6 +192,7 @@ typedef struct AclsanDeviceMemoryAccessData {
     // 数据所存储的核。例如说AIC
     // L1->UB的搬运指令，L1部分的读owner是AIC核，UB部分的写owner是AIV核。如果为GM，那么忽略该信息
     AclsanCoreInfo memoryOwner;
+    AclsanMemValidNzLayout validNz;
 } AclsanDeviceMemoryAccessData;
 
 typedef enum AclsanDeviceRegisterId {

@@ -118,6 +118,7 @@ TEST_F(InitcheckMemoryTest, UntouchedL0AReadReportsAllBytes)
     EXPECT_EQ(report.firstUninitAddress, 0U);
     EXPECT_EQ(report.uninitBytes, 512U);
     EXPECT_EQ(report.initializedBytes, 0U);
+    EXPECT_EQ(report.common.severity, ReportSeverity::ERROR);
     EXPECT_TRUE(checker.HasErrors());
     EXPECT_TRUE(checker.AnalysisComplete());
 }
@@ -135,7 +136,20 @@ TEST_F(InitcheckMemoryTest, PartialL0BReadReportsExactMissingBytes)
     EXPECT_EQ(report.firstUninitAddress, 512U);
     EXPECT_EQ(report.uninitBytes, 512U);
     EXPECT_EQ(report.initializedBytes, 512U);
+    EXPECT_EQ(report.common.severity, ReportSeverity::ERROR);
     EXPECT_TRUE(checker.AnalysisComplete());
+}
+
+TEST_F(InitcheckMemoryTest, NonMmadUninitializedReadRemainsError)
+{
+    Launch();
+    auto read = Range(1, kA, kRead);
+    read.instructionId = static_cast<uint32_t>(aclsan::InstructionId::LoadCbufToCaB16);
+    ASSERT_TRUE(Memory(read));
+    Sync();
+    ASSERT_EQ(reports.size(), 1U);
+    const auto& report = std::get<NpuCheckInitcheckReport>(reports.front());
+    EXPECT_EQ(report.common.severity, ReportSeverity::ERROR);
 }
 
 TEST_F(InitcheckMemoryTest, FullSamePipelineWriteInitializesRead)

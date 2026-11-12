@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "checker/initcheck_padding.h"
 #include "checker/initcheck.h"
 #include "checker/initcheck_report.h"
 #include "checker/memory_access_layout.h"
@@ -140,7 +141,9 @@ NpuCheckInitcheckReport BuildInitcheckMemoryReportBase(
 {
     NpuCheckInitcheckReport report{};
     report.common.tool = ReportTool::INITCHECK;
-    report.common.severity = ReportSeverity::ERROR;
+    report.common.severity = (data.memoryFlags & ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING) != 0 ?
+                                 ReportSeverity::WARNING :
+                                 ReportSeverity::ERROR;
     report.common.flags = kNpuCheckReportCommonHasExecContext;
     auto& exec = report.common.exec;
     const auto& h = data.header;
@@ -334,6 +337,13 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
                 auto& report = it->second;
                 if (inserted) {
                     report = MakeMemoryReport(*operand.access, allocation);
+                    // rowBytes 非零表示读取携带 NZ 有效数据布局，先暂定为 WARNING。
+                    // 若物理读范围内只有对齐填充字节未初始化，则最终报告 WARNING；
+                    // 若有效数据未初始化，或布局无效且存在未初始化字节，后续检查会升级为 ERROR；
+                    // 全部初始化则不报告。
+                    if (operand.access->validNz.rowBytes != 0) {
+                        report.common.severity = ReportSeverity::WARNING;
+                    }
                     report.access.rangeBegin = range.address;
                 }
                 report.access.rangeEnd = range.address + range.bytes;
@@ -344,6 +354,13 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
                     report.firstUninitOffset = query.firstUninitializedAddress - allocation.base;
                 }
                 report.uninitBytes += query.uninitializedBytes;
+                if (operand.access->validNz.rowBytes != 0 && query.uninitializedBytes != 0 &&
+                    !RequiredReadInitialized(
+                        *operand.access, range.address, range.address + range.bytes, [&](uint64_t begin, uint64_t end) {
+                            return queryInitialized(begin, end - begin).uninitializedBytes == 0;
+                        })) {
+                    report.common.severity = ReportSeverity::ERROR;
+                }
             }
             for (auto& entry : reports) {
                 auto& report = entry.second;
@@ -395,6 +412,145 @@ bool Overlap(const std::vector<race::Interval>& a, const std::vector<race::Inter
             ++j;
     }
     return false;
+}
+
+// Axis order of the ND/DN-to-Nz producer's affine layout.
+struct L1PaddingLayout {
+    static constexpr uint32_t kRank = 3;
+    static constexpr size_t kRowAxis = 0;
+    static constexpr size_t kColumnBlockAxis = 1;
+    static constexpr size_t kMatrixAxis = 2;
+    static constexpr uint64_t kBiasAlignmentBytes = 64;
+};
+
+uint64_t L1PaddingReadAlignment(const AclsanDeviceMemoryAccessData& read)
+{
+    using aclsan::InstructionId;
+    constexpr uint64_t kFractalRowAlignment = 16;
+    constexpr uint64_t kTransposeB8RowAlignment = 32;
+    if (read.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ || read.header.pipeline != ACLSAN_DEVICE_PIPE_MTE1) {
+        return 0;
+    }
+    const auto id = static_cast<InstructionId>(read.instructionId);
+    switch (id) {
+        case InstructionId::CopyCbufToBtF32:
+        case InstructionId::CopyCbufToBtS32:
+            return L1PaddingLayout::kBiasAlignmentBytes;
+        case InstructionId::LoadCbufToCbTransposeB8:
+            return kTransposeB8RowAlignment; // Two adjacent 16-row fractals.
+        case InstructionId::LoadCbufToCbTransposeB4:
+            return 0; // ND/DN-to-Nz does not expose a packed 4-bit producer here.
+        default:
+            return id >= InstructionId::LoadCbufToCbTransposeB16 && id <= InstructionId::LoadCbufToCbB32 ?
+                       kFractalRowAlignment :
+                       0;
+    }
+}
+
+void AppendSingleL1Padding(
+    const race::DependencyGraph::Access& read, uint64_t alignment, const AclsanDeviceMemoryAccessData& write,
+    std::vector<race::Interval>& padding, size_t limit)
+{
+    using aclsan::InstructionId;
+    constexpr uint32_t kBiasDataBits = 32;
+    constexpr uint64_t blockBytes = 32;
+    constexpr uint64_t kBlocksPerBiasAlignment = L1PaddingLayout::kBiasAlignmentBytes / blockBytes;
+    constexpr uint64_t capacity = L1InitStateTable::kCapacity;
+    const auto id = static_cast<InstructionId>(write.instructionId);
+    if (id < InstructionId::CopyGmToCbufMultiNd2NzB8 || id > InstructionId::CopyGmToCbufMultiDn2NzB32 ||
+        write.layoutKind != ACLSAN_MEM_LAYOUT_ND_AFFINE || write.address >= capacity || read.ranges.empty()) {
+        return;
+    }
+    const auto& nz = write.layout.ndAffine;
+    if (nz.rank != L1PaddingLayout::kRank || nz.elementBytes != blockBytes ||
+        nz.dims[L1PaddingLayout::kMatrixAxis] != 1 || nz.strides[L1PaddingLayout::kRowAxis] != blockBytes ||
+        nz.dims[L1PaddingLayout::kRowAxis] == 0 || nz.dims[L1PaddingLayout::kRowAxis] > capacity / blockBytes ||
+        nz.dims[L1PaddingLayout::kColumnBlockAxis] == 0) {
+        return;
+    }
+
+    const uint64_t available = capacity - write.address;
+    if (alignment == L1PaddingLayout::kBiasAlignmentBytes) {
+        // 32-bit Bias is one dense Nz row. BT requires its trailing length rounded to 64B.
+        if (write.dataBits != kBiasDataBits || nz.dims[L1PaddingLayout::kRowAxis] != 1 ||
+            nz.strides[L1PaddingLayout::kColumnBlockAxis] != blockBytes ||
+            nz.dims[L1PaddingLayout::kColumnBlockAxis] % kBlocksPerBiasAlignment == 0 ||
+            nz.dims[L1PaddingLayout::kColumnBlockAxis] >= available / blockBytes ||
+            read.data.address != write.address) {
+            return;
+        }
+        const uint64_t end = write.address + nz.dims[L1PaddingLayout::kColumnBlockAxis] * blockBytes;
+        padding.push_back({end, end + blockBytes});
+        return;
+    }
+
+    // Only the rounded row tail is padding. A larger column stride may leave
+    // additional gaps, which are never included in the inferred padding.
+    const uint64_t rows = nz.dims[L1PaddingLayout::kRowAxis];
+    const uint64_t tileBytes = ((rows + alignment - 1) / alignment) * alignment * blockBytes;
+    const uint64_t writtenBytes = rows * blockBytes;
+    if (write.dataBits != read.data.dataBits || tileBytes == writtenBytes ||
+        nz.strides[L1PaddingLayout::kColumnBlockAxis] < static_cast<int64_t>(tileBytes) ||
+        nz.dims[L1PaddingLayout::kColumnBlockAxis] >
+            available / static_cast<uint64_t>(nz.strides[L1PaddingLayout::kColumnBlockAxis])) {
+        return;
+    }
+    const uint64_t columnStride = static_cast<uint64_t>(nz.strides[L1PaddingLayout::kColumnBlockAxis]);
+    const uint64_t readBegin = read.ranges.front().begin, readEnd = read.ranges.back().end;
+    if (readEnd <= write.address ||
+        readBegin >= write.address + nz.dims[L1PaddingLayout::kColumnBlockAxis] * columnStride) {
+        return;
+    }
+    const uint64_t first = readBegin <= write.address ? 0 : (readBegin - write.address) / columnStride;
+    const uint64_t last =
+        std::min(nz.dims[L1PaddingLayout::kColumnBlockAxis] - 1, (readEnd - 1 - write.address) / columnStride);
+    for (uint64_t i = first; i <= last && padding.size() < limit; ++i) {
+        const uint64_t base = write.address + i * columnStride;
+        padding.push_back({base + writtenBytes, base + tileBytes});
+    }
+}
+
+// Each matrix has an independent logical tail; gaps between matrices are not padding.
+void AppendL1Padding(
+    const race::DependencyGraph::Access& read, uint64_t alignment, const AclsanDeviceMemoryAccessData& write,
+    std::vector<race::Interval>& padding, size_t limit)
+{
+    if (write.layoutKind != ACLSAN_MEM_LAYOUT_ND_AFFINE || write.layout.ndAffine.rank != L1PaddingLayout::kRank) {
+        return;
+    }
+    const auto& nz = write.layout.ndAffine;
+    if (nz.dims[L1PaddingLayout::kMatrixAxis] == 1) {
+        AppendSingleL1Padding(read, alignment, write, padding, limit);
+        return;
+    }
+    constexpr uint64_t capacity = L1InitStateTable::kCapacity;
+    if (nz.dims[L1PaddingLayout::kMatrixAxis] == 0 || nz.strides[L1PaddingLayout::kMatrixAxis] <= 0 ||
+        nz.strides[L1PaddingLayout::kColumnBlockAxis] <= 0 || nz.dims[L1PaddingLayout::kColumnBlockAxis] == 0 ||
+        write.address >= capacity) {
+        return;
+    }
+    const uint64_t matrixStride = static_cast<uint64_t>(nz.strides[L1PaddingLayout::kMatrixAxis]);
+    const __int128 occupied = static_cast<__int128>(nz.dims[L1PaddingLayout::kColumnBlockAxis]) *
+                              nz.strides[L1PaddingLayout::kColumnBlockAxis];
+    if (occupied > matrixStride || nz.dims[L1PaddingLayout::kMatrixAxis] > (capacity - write.address) / matrixStride) {
+        return;
+    }
+    auto matrix = write;
+    matrix.layout.ndAffine.dims[L1PaddingLayout::kMatrixAxis] = 1;
+    for (uint64_t i = 0; i < nz.dims[L1PaddingLayout::kMatrixAxis] && padding.size() < limit; ++i) {
+        matrix.address = write.address + i * matrixStride;
+        AppendSingleL1Padding(read, alignment, matrix, padding, limit);
+    }
+}
+
+bool CoveredBy(const std::vector<race::Interval>& ranges, const std::vector<race::Interval>& coverage)
+{
+    return std::all_of(ranges.begin(), ranges.end(), [&coverage](const auto& range) {
+        const auto after = std::upper_bound(
+            coverage.begin(), coverage.end(), range.begin,
+            [](uint64_t address, const auto& item) { return address < item.begin; });
+        return after != coverage.begin() && std::prev(after)->end >= range.end;
+    });
 }
 } // namespace
 
@@ -553,8 +709,10 @@ void Initcheck::ReplayLaunch(
     for (const auto& a : memory) {
         checkDevice(a.header);
         if (a.header.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT || a.vectorMask0 != 0 || a.vectorMask1 != 0 ||
-            a.predicateMask0 != 0 || a.predicateMask1 != 0 || a.memoryFlags != 0)
+            a.predicateMask0 != 0 || a.predicateMask1 != 0 ||
+            (a.memoryFlags & ~ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING) != 0) {
             reasons.insert("memory_coverage_unknown");
+        }
         // Fragment handshakes require per-fragment initialization transactions;
         // never promote their partial completion to a whole-instruction write.
 
@@ -639,7 +797,7 @@ void Initcheck::ReplayLaunch(
         if (race::WritesMemory(accesses[i].data.accessMode))
             writers[StorageOf(accesses[i].data)].push_back(i);
     }
-    CheckerReportList staged;
+    std::vector<NpuCheckInitcheckReport> staged;
     size_t comparisons = 0, candidates = 0;
     for (auto node : graph.Order()) {
         if (!reasons.empty())
@@ -648,6 +806,7 @@ void Initcheck::ReplayLaunch(
         if (instruction == instructions.end())
             continue;
         std::vector<AclsanDeviceMemoryAccessData> operands;
+        std::vector<size_t> operandSources;
         std::map<Storage, std::vector<size_t>> byStorage;
         for (auto i : instruction->second) {
             // The graph has already validated complete raw instructions. Replay
@@ -659,6 +818,7 @@ void Initcheck::ReplayLaunch(
                 projected.layout = {};
                 projected.layout.range.bytes = range.end - range.begin;
                 operands.push_back(projected);
+                operandSources.push_back(i);
             }
             byStorage[StorageOf(accesses[i].data)].push_back(i);
         }
@@ -675,10 +835,17 @@ void Initcheck::ReplayLaunch(
             std::vector<Interval> preceding;
             if (analysis_->Managed())
                 preceding = analysis_->PrecedingWrites(launchId, node, storage.first, reasons);
+            std::map<size_t, std::vector<Interval>> paddingByRead;
+            if (space == ACLSAN_DEVICE_MEMORY_SPACE_L1) {
+                for (auto i : storage.second)
+                    if (L1PaddingReadAlignment(accesses[i].data)) {
+                        paddingByRead.emplace(i, std::vector<Interval>{});
+                    }
+            }
             const bool hasRead = std::any_of(storage.second.begin(), storage.second.end(), [&accesses](size_t i) {
                 return race::ReadsMemory(accesses[i].data.accessMode);
             });
-            if (hasRead && !analysis_->Managed())
+            if (hasRead && (!analysis_->Managed() || !paddingByRead.empty())) {
                 for (auto w : writers[storage.first]) {
                     if (++candidates > limits.comparisons) {
                         reasons.insert("candidate_budget");
@@ -696,7 +863,59 @@ void Initcheck::ReplayLaunch(
                         break;
                     }
                     if (relation == HappensBeforeGraph::Relation::Before) {
-                        preceding.insert(preceding.end(), accesses[w].ranges.begin(), accesses[w].ranges.end());
+                        if (!analysis_->Managed()) {
+                            preceding.insert(preceding.end(), accesses[w].ranges.begin(), accesses[w].ranges.end());
+                        }
+                        for (auto& evidence : paddingByRead) {
+                            auto& padding = evidence.second;
+                            const auto& l1Read = accesses[evidence.first];
+                            if (padding.size() >= limits.segments) {
+                                reasons.insert("segment_budget");
+                                break;
+                            }
+                            std::vector<Interval> inferred;
+                            AppendL1Padding(
+                                l1Read, L1PaddingReadAlignment(l1Read.data), accesses[w].data, inferred,
+                                limits.segments - padding.size());
+                            bool superseded = false;
+                            if (!inferred.empty() && !accesses[w].ranges.empty()) {
+                                const uint64_t begin = accesses[w].ranges.front().begin;
+                                const uint64_t end = std::max(accesses[w].ranges.back().end, inferred.back().end);
+                                for (auto newer : writers[storage.first]) {
+                                    if (++candidates > limits.comparisons) {
+                                        reasons.insert("candidate_budget");
+                                        break;
+                                    }
+                                    if (newer == w || accesses[newer].node == node ||
+                                        !std::any_of(
+                                            accesses[newer].ranges.begin(), accesses[newer].ranges.end(),
+                                            [begin, end](const auto& r) { return r.begin < end && begin < r.end; })) {
+                                        continue;
+                                    }
+                                    // Compare the newer write against both the producer and the read.
+                                    constexpr size_t kComparisonsPerOverwriteCheck = 2;
+                                    if ((comparisons += kComparisonsPerOverwriteCheck) > limits.comparisons) {
+                                        reasons.insert("comparison_budget");
+                                        break;
+                                    }
+                                    const auto afterProducer = graph.Compare(accesses[w].node, accesses[newer].node);
+                                    const auto beforeRead = graph.Compare(accesses[newer].node, node);
+                                    if (afterProducer == HappensBeforeGraph::Relation::Unknown ||
+                                        beforeRead == HappensBeforeGraph::Relation::Unknown) {
+                                        reasons.insert("graph_query_budget");
+                                        break;
+                                    }
+                                    if (beforeRead == HappensBeforeGraph::Relation::Before &&
+                                        afterProducer != HappensBeforeGraph::Relation::After) {
+                                        superseded = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!superseded) {
+                                padding.insert(padding.end(), inferred.begin(), inferred.end());
+                            }
+                        }
                     } else if (relation == HappensBeforeGraph::Relation::Unordered) {
                         for (auto r : storage.second)
                             if (race::ReadsMemory(accesses[r].data.accessMode) &&
@@ -708,9 +927,25 @@ void Initcheck::ReplayLaunch(
                         break;
                     }
                 }
+            }
             if (!reasons.empty())
                 break;
             MergeIntervals(preceding);
+            for (auto& evidence : paddingByRead) {
+                auto& padding = evidence.second;
+                if (padding.empty()) {
+                    continue;
+                }
+                padding.insert(padding.end(), preceding.begin(), preceding.end());
+                MergeIntervals(padding);
+                // Padding changes severity only; it never initializes the bytes.
+                if (CoveredBy(accesses[evidence.first].ranges, padding)) {
+                    for (size_t i = 0; i < operands.size(); ++i)
+                        if (operandSources[i] == evidence.first) {
+                            operands[i].memoryFlags |= ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING;
+                        }
+                }
+            }
             MemoryInitcheck::InitializedRanges initialized;
             for (auto range : preceding)
                 initialized.emplace_back(range.begin, range.end);
@@ -815,8 +1050,12 @@ void Initcheck::ReplayLaunch(
         return;
     }
     for (auto& report : staged) {
+        if (report.common.severity == ReportSeverity::WARNING) {
+            ++stats_.warnings;
+        } else {
+            ++stats_.errors;
+        }
         reports.emplace_back(std::move(report));
-        ++stats_.errors;
     }
     if (degradedInstructions != 0) {
         degradedInstructions_ += degradedInstructions;
@@ -1249,8 +1488,8 @@ std::string Initcheck::Summary() const
     std::ostringstream output;
     output << "tool=initcheck register_writes=" << stats_.registerWrites
            << " device_operations=" << stats_.deviceOperations << " synchronizations=" << stats_.synchronizations
-           << " errors=" << stats_.errors << " malformed_events=" << stats_.malformedEvents
-           << " failed_launches=" << stats_.failedLaunches
+           << " errors=" << stats_.errors << " warnings=" << stats_.warnings
+           << " malformed_events=" << stats_.malformedEvents << " failed_launches=" << stats_.failedLaunches
            << " failed_synchronizations=" << stats_.failedSynchronizations
            << " pending_memory_operations=" << pendingMemoryAccesses_.size()
            << " failed_host_writes=" << stats_.failedHostWrites

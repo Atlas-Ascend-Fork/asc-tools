@@ -1403,10 +1403,12 @@ public:
             return {MemoryCbdataStatus::NO_ACCESS, {}};
         }
         const uint32_t bits = MmadDataBits(instructionId);
+        const uint64_t kAlignment = CUBE_K_BYTES / bits;
         const uint64_t m = CeilDiv(f.m, CUBE_M_DIMENSION), n = CeilDiv(f.n, CUBE_M_DIMENSION),
-                       k = CeilDiv(f.k, CUBE_K_BYTES / bits);
+                       k = CeilDiv(f.k, kAlignment);
+        const bool gemv = f.m == 1 && !f.disableGemv;
         uint64_t aFractals = m * k;
-        if (f.m == 1 && !f.disableGemv) {
+        if (gemv) {
             // The reference packs GEMV's A into 16-row fractals. Do not silently
             // truncate a partial fractal where the instruction constraints are unknown.
             if (aFractals % CUBE_M_DIMENSION != 0) {
@@ -1432,7 +1434,41 @@ public:
                 m * n * CUBE_OUTPUT_FRACTAL_BYTES, 0, THIRTY_TWO_BIT_DATA)) {
             return std::move(builder).Build();
         }
-        return std::move(builder).Build();
+        auto result = std::move(builder).Build();
+        // dav-3510 A is Nz; B's Zn is Nz with logical axes (N,K).
+        // Preserve the physical footprint and describe required bytes separately.
+        // MX uses the passed (already padded) K: its K padding must be initialized.
+        for (auto& access : result.data) {
+            if (access.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
+                continue;
+            }
+            if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0A && !gemv) {
+                access.validNz = {
+                    f.m,
+                    CeilDiv(uint64_t(f.k) * bits, BITS_PER_BYTE),
+                    m * CUBE_M_DIMENSION * CUBE_L1_BLOCK_BYTES,
+                    CUBE_L1_BLOCK_BYTES,
+                    0,
+                    access.address};
+            } else if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0B) {
+                access.validNz = {
+                    f.n,
+                    CeilDiv(uint64_t(f.k) * bits, BITS_PER_BYTE),
+                    n * CUBE_M_DIMENSION * CUBE_L1_BLOCK_BYTES,
+                    CUBE_L1_BLOCK_BYTES,
+                    0,
+                    access.address};
+            } else if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C && !gemv) {
+                access.validNz = {
+                    f.m,
+                    uint64_t(f.n) * (THIRTY_TWO_BIT_DATA / BITS_PER_BYTE),
+                    m * CUBE_M_DIMENSION * CUBE_ROW_BYTES,
+                    CUBE_ROW_BYTES,
+                    0,
+                    access.address};
+            }
+        }
+        return result;
     }
 
     MemoryCbdataResult operator()(const LoadCbufToL0ParamField& f) const noexcept
@@ -1676,7 +1712,24 @@ public:
 
     MemoryCbdataResult operator()(const FixL0cToOutParamField& f) const noexcept
     {
-        return FixRead(f, TWO_ACCESS_COUNT * CUBE_L1_BLOCK_BYTES);
+        auto read = FixRead(f, TWO_ACCESS_COUNT * CUBE_L1_BLOCK_BYTES);
+        // F32 Channel Split can write an 8-column tail to GM, while the
+        // corresponding L0C source read still spans a full 16-column tile.
+        if (f.instrId == static_cast<uint32_t>(InstructionId::FixL0cToOutF32) && f.splitEnable && !f.nz2ndEnable &&
+            !f.nz2dnEnable && f.nSize % CUBE_N_ALIGNMENT == CUBE_N_ALIGNMENT / TWO_ACCESS_COUNT) {
+            for (auto& access : read.data) {
+                if (access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
+                    access.validNz = {
+                        f.mSize,
+                        uint64_t(f.nSize) * (THIRTY_TWO_BIT_DATA / BITS_PER_BYTE),
+                        uint64_t(f.loopSrtStride) * CUBE_ROW_BYTES,
+                        CUBE_ROW_BYTES,
+                        0,
+                        access.address};
+                }
+            }
+        }
+        return read;
     }
 
     MemoryCbdataResult operator()(const LocalMemoryTransferParamField& f) const noexcept

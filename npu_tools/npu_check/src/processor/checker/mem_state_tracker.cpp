@@ -101,7 +101,8 @@ std::vector<ByteRange> ExpandRanges(const AclsanDeviceMemoryAccessData& data)
             RacecheckErrorKind::IncompleteTrace, "racecheck requires an exact, complete memory access");
     }
     constexpr uint32_t knownFlags = ACLSAN_DEVICE_EVENT_FLAG_EXACT | incomplete | ACLSAN_DEVICE_EVENT_FLAG_PREDICATED;
-    if ((data.header.flags & ~knownFlags) != 0 || data.memoryFlags != 0) {
+    if ((data.header.flags & ~knownFlags) != 0 ||
+        (data.memoryFlags & ~ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING) != 0) {
         Unsupported("unknown memory flags");
     }
     if (data.vectorMask0 != 0 || data.vectorMask1 != 0) {

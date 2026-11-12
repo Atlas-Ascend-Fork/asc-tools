@@ -34,7 +34,7 @@ TEST(CubeMemoryInitcheck, DecodedFp16LoadsAndMmadCheckBothOperandSpaces)
             AclsanLaunchData launch{};
             launch.launchId = 17;
             ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
-            uint64_t instruction = 0;
+            uint64_t instruction = 1;
             const auto emit = [&](uint32_t id, std::array<uint64_t, 4> args, uint32_t pipe) {
                 ParsedTraceRecord parsed{};
                 parsed.record.instrId = id;
@@ -255,10 +255,413 @@ TEST(CubeMemory, MmadFractalRoundingAndConditionalAccumulatorRead)
     EXPECT_EQ(r.data[0].layout.range.bytes, 2048u);
     EXPECT_EQ(r.data[2].layout.range.bytes, 4096u);
     EXPECT_EQ(r.data[3].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    EXPECT_EQ(r.data[0].memoryFlags, 0U);
+    EXPECT_EQ(r.data[0].validNz.rows, 17U);
+    EXPECT_EQ(r.data[0].validNz.rowDataBytes, 36U);
     for (auto d : r.data) {
         checker.QueueDeviceMemoryAccess(d);
     }
     EXPECT_EQ(checker.OnSynchronization().size(), 2u);
+}
+
+TEST(CubeMemoryInitcheck, MmadPaddingDoesNotHideUninitializedValidOperands)
+{
+    using npucheck::ReportSeverity;
+    struct Case {
+        InstructionId id;
+        uint64_t m, k, n;
+        bool disableGemv;
+    };
+    for (const auto& c : {
+             Case{InstructionId::MadS8, 30, 70, 64, true}, // MMAD sample, scenario 1 dimensions.
+             Case{InstructionId::MadS8, 32, 64, 64, true},
+             Case{InstructionId::MadBf16F32, 32, 70, 48, true},
+             Case{InstructionId::MadF32F32, 32, 72, 40, true},
+             Case{InstructionId::MadF16F32, 1, 256, 32, false},
+             Case{InstructionId::MadF16F32, 1, 256, 32, true},
+         }) {
+        SCOPED_TRACE(testing::Message() << c.m << "x" << c.k << "x" << c.n << " disableGemv=" << c.disableGemv);
+        ParsedTraceRecord parsed{};
+        parsed.record.instrId = static_cast<uint32_t>(c.id);
+        parsed.record.pipeline = ACLSAN_DEVICE_PIPE_MATRIX;
+        parsed.record.args[3] = c.m | (c.k << 12) | (c.n << 24) | (uint64_t(c.disableGemv) << 61);
+        parsed.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        parsed.launchId = 17;
+        parsed.instrExecId = 1;
+        const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
+        ASSERT_TRUE(decoded);
+        const auto callback = TranslateDecodedTraceToCallbackData(parsed, *decoded);
+        ASSERT_TRUE(callback);
+
+        npucheck::Initcheck checker;
+        npucheck::CheckerReportList reports;
+        AclsanLaunchData launch{};
+        launch.launchId = parsed.launchId;
+        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+        for (const auto& access : std::get<DeviceMemoryAccessDataList>(*callback)) {
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+        }
+        AclsanSynchronizeData sync{};
+        ASSERT_TRUE(
+            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        ASSERT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+        ASSERT_EQ(reports.size(), 3U); // Uninitialized A, B, and L0C accumulator.
+        for (const auto& record : reports) {
+            const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(record);
+            EXPECT_EQ(report.common.severity, ReportSeverity::ERROR);
+        }
+        EXPECT_TRUE(checker.HasErrors());
+        EXPECT_EQ(checker.Stats().warnings, 0U);
+    }
+}
+
+// Feed writes and the decoded read on one pipeline, so visibility is explicit.
+// Offsets are supplied independently of the converter's logical metadata.
+npucheck::CheckerReportList CheckReadAfterWrites(
+    AclsanDeviceMemoryAccessData read, const std::vector<std::pair<uint64_t, uint64_t>>& writes)
+{
+    npucheck::Initcheck checker;
+    npucheck::CheckerReportList reports;
+    read.header.version = ACLSAN_API_VERSION;
+    read.header.size = sizeof(read);
+    read.header.launchId = 71;
+    read.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
+    read.accessIndex = 0;
+    read.accessCount = 1;
+    read.regDependencyMask0 = read.regDependencyMask1 = 0;
+    AclsanLaunchData launch{};
+    launch.launchId = read.header.launchId;
+    EXPECT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+    uint64_t sequence = 0;
+    for (const auto& range : writes) {
+        auto write = read;
+        write.header.instrExecId = ++sequence;
+        write.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+        write.address = read.address + range.first;
+        write.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
+        write.layout = {};
+        write.layout.range.bytes = range.second;
+        write.validNz = {};
+        write.memoryFlags = 0;
+        EXPECT_TRUE(
+            checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &write, reports));
+    }
+    read.header.instrExecId = ++sequence;
+    EXPECT_TRUE(
+        checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &read, reports));
+    AclsanSynchronizeData sync{};
+    EXPECT_TRUE(
+        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+    EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+    return reports;
+}
+
+TEST(CubeMemoryInitcheck, MmadRequiresValidBytesInEachNzOperand)
+{
+    // M=17, N=21, K=19, fp16. Distinct axes cross a tile boundary.
+    const auto converted =
+        ConvertRaw(uint32_t(InstructionId::MadF16F32), {4096, 1024, 2048, 17 | (19ULL << 12) | (21ULL << 24)});
+    ASSERT_EQ(converted.status, MemoryCbdataStatus::SUCCESS);
+    for (const auto& read : converted.data) {
+        if (read.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
+            continue;
+        }
+        const bool c = read.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C;
+        const uint64_t rowBytes = c ? 64 : 32;
+        const uint64_t validBytes = c ? 84 : 38;
+        const uint64_t rows = read.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0B ? 21 : 17;
+        std::vector<std::pair<uint64_t, uint64_t>> writes;
+        for (uint64_t block = 0; block < 2; ++block)
+            for (uint64_t row = 0; row < rows; ++row)
+                writes.emplace_back(
+                    block * 32 * rowBytes + row * rowBytes, std::min(rowBytes, validBytes - block * rowBytes));
+        for (bool omitValidByte : {false, true}) {
+            auto initialized = writes;
+            if (omitValidByte) {
+                --initialized.back().second; // Last valid byte, not the first uninitialized byte.
+            }
+            const auto reports = CheckReadAfterWrites(read, initialized);
+            ASSERT_EQ(reports.size(), 1U);
+            const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(reports.front());
+            EXPECT_EQ(
+                report.common.severity,
+                omitValidByte ? npucheck::ReportSeverity::ERROR : npucheck::ReportSeverity::WARNING);
+            EXPECT_EQ(report.uninitBytes, 64 * rowBytes - rows * validBytes + uint64_t(omitValidByte));
+        }
+        EXPECT_TRUE(CheckReadAfterWrites(read, {{0, 64 * rowBytes}}).empty());
+    }
+}
+
+TEST(CubeMemoryInitcheck, InvalidPaddingMetadataNeverDowngradesMissingValidData)
+{
+    const auto converted =
+        ConvertRaw(uint32_t(InstructionId::MadF16F32), {0, 0, 0, 17 | (19ULL << 12) | (21ULL << 24)});
+    ASSERT_EQ(converted.status, MemoryCbdataStatus::SUCCESS);
+    for (auto invalid :
+         {AclsanMemValidNzLayout{0, 38, 1024, 32, 0}, AclsanMemValidNzLayout{17, 0, 1024, 32, 0},
+          AclsanMemValidNzLayout{17, 38, 16, 32, 0}, AclsanMemValidNzLayout{17, 38, 1024, 32, 1}}) {
+        auto read = converted.data.front();
+        read.validNz = invalid;
+        const auto reports = CheckReadAfterWrites(read, {});
+        ASSERT_EQ(reports.size(), 1U);
+        EXPECT_EQ(
+            std::get<npucheck::NpuCheckInitcheckReport>(reports.front()).common.severity,
+            npucheck::ReportSeverity::ERROR);
+    }
+}
+
+TEST(CubeMemoryInitcheck, MxKPaddingRemainsRequiredEvenWhenMNeedsPadding)
+{
+    const auto converted = ConvertRaw(
+        uint32_t(InstructionId::MadMxE4m3E4m3), {0, 0, 0, 30 | (128ULL << 12) | (32ULL << 24) | (1ULL << 63)});
+    ASSERT_EQ(converted.status, MemoryCbdataStatus::SUCCESS);
+    const auto& read = converted.data.front();
+    for (uint64_t initializedK : {96U, 128U}) {
+        std::vector<std::pair<uint64_t, uint64_t>> writes;
+        for (uint64_t block = 0; block < initializedK / 32; ++block)
+            writes.emplace_back(block * 1024, 30 * 32);
+        const auto reports = CheckReadAfterWrites(read, writes);
+        ASSERT_EQ(reports.size(), 1U);
+        EXPECT_EQ(
+            std::get<npucheck::NpuCheckInitcheckReport>(reports.front()).common.severity,
+            initializedK == 128 ? npucheck::ReportSeverity::WARNING : npucheck::ReportSeverity::ERROR);
+    }
+}
+
+TEST(CubeMemoryInitcheck, ChannelSplitOnlyDowngradesMissingInvalidHalfColumns)
+{
+    for (uint64_t sourceRows : {16U, 32U}) {
+        SCOPED_TRACE(sourceRows);
+        const auto converted = ConvertRaw(
+            uint32_t(InstructionId::FixL0cToOutF32),
+            {0x100000, 4096, (24ULL << 4) | (16ULL << 16) | (256ULL << 32), sourceRows | (1ULL << 42)});
+        ASSERT_EQ(converted.status, MemoryCbdataStatus::SUCCESS);
+        const auto read = *std::find_if(converted.data.begin(), converted.data.end(), [](const auto& d) {
+            return d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C;
+        });
+        for (bool omitValidByte : {false, true}) {
+            std::vector<std::pair<uint64_t, uint64_t>> writes{{0, 1024}};
+            for (uint64_t row = 0; row < 16; ++row)
+                writes.emplace_back(sourceRows * 64 + row * 64, 32);
+            if (omitValidByte) {
+                --writes.back().second;
+            }
+            const auto reports = CheckReadAfterWrites(read, writes);
+            ASSERT_EQ(reports.size(), 1U);
+            const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(reports.front());
+            EXPECT_EQ(
+                report.common.severity,
+                omitValidByte ? npucheck::ReportSeverity::ERROR : npucheck::ReportSeverity::WARNING);
+            EXPECT_EQ(report.uninitBytes, 512 + uint64_t(omitValidByte));
+            std::string rendered;
+            ASSERT_EQ(
+                npucheck::RenderNpuCheckReportRecord(npucheck::NpuCheckReportRecord::From(report), {}, &rendered),
+                npucheck::ReportRenderStatus::SUCCESS);
+            EXPECT_EQ(rendered.find("ignored hardware padding") != std::string::npos, !omitValidByte);
+        }
+    }
+}
+
+TEST(CubeMemoryInitcheck, Mte1WarnsForL1PaddingAndErrorsForReadsBeyondThePaddedLayout)
+{
+    struct Case {
+        uint32_t writeId, readId;
+        uint64_t rows, columns, paddedRows, elementBytes, readOffset, config0, config1, missing;
+        npucheck::ReportSeverity severity;
+        uint16_t matrices = 1;
+        bool reuse = false;
+    };
+    using npucheck::ReportSeverity;
+    for (bool managed : {false, true}) {
+        for (const auto& c : {
+                 Case{
+                     77, 143, 30, 70, 32, 1, 0, (2ULL << 32) | (3ULL << 40), 2 | (2ULL << 16), 192,
+                     ReportSeverity::WARNING},
+                 Case{
+                     77, 137, 70, 40, 96, 1, 2048, (2ULL << 16) | (6ULL << 24) | (1ULL << 44), 0, 1664,
+                     ReportSeverity::WARNING},
+                 Case{79, 424, 1, 40, 1, 4, 0, (1ULL << 4) | (6ULL << 16), 0, 32, ReportSeverity::WARNING},
+                 Case{
+                     77, 143, 30, 70, 32, 1, 0, (2ULL << 32) | (3ULL << 40), 2 | (2ULL << 16), 192,
+                     ReportSeverity::ERROR, 1, true},
+                 Case{
+                     77, 143, 30, 70, 48, 1, 0, (2ULL << 32) | (3ULL << 40), 3 | (2ULL << 16), 192,
+                     ReportSeverity::WARNING}, // Column gaps are skipped by the read.
+                 Case{
+                     77, 143, 30, 70, 48, 1, 0, (3ULL << 32) | (3ULL << 40), 3 | (3ULL << 16), 1728,
+                     ReportSeverity::ERROR}, // Reading the extra gap is not padding.
+                 Case{
+                     78, 142, 30, 70, 32, 2, 0, (2ULL << 32) | (5ULL << 40), 2 | (2ULL << 16), 320,
+                     ReportSeverity::WARNING},
+                 Case{
+                     78, 145, 40, 70, 48, 2, 0, (3ULL << 32) | (5ULL << 40), 3 | (3ULL << 16), 1280,
+                     ReportSeverity::WARNING},
+                 Case{
+                     79, 148, 40, 70, 48, 4, 0, (3ULL << 32) | (9ULL << 40), 3 | (3ULL << 16), 2304,
+                     ReportSeverity::WARNING},
+                 Case{
+                     77, 143, 30, 70, 32, 1, 3072, (2ULL << 32) | (3ULL << 40), 2 | (2ULL << 16), 192,
+                     ReportSeverity::WARNING, 2},
+                 Case{79, 424, 1, 40, 1, 4, 192, (1ULL << 4) | (6ULL << 16), 0, 32, ReportSeverity::WARNING, 2},
+                 Case{
+                     77, 143, 30, 70, 32, 1, 0, (2ULL << 32) | (4ULL << 40), 2 | (2ULL << 16), 1216,
+                     ReportSeverity::ERROR},
+             }) {
+            SCOPED_TRACE(c.readId);
+            SCOPED_TRACE(managed);
+            constexpr uint64_t GM = 0x100000;
+            auto analysis = std::make_shared<npucheck::MemoryAnalysis>(managed);
+            npucheck::Initcheck checker(analysis);
+            const auto send = [&](auto domain, auto id, const auto* data, auto& output) {
+                if (managed && !analysis->BeginCallback(domain, id, data)) {
+                    return false;
+                }
+                const bool ok = checker.OnCallback(domain, id, data, output);
+                if (managed) {
+                    analysis->EndCallback();
+                }
+                return ok;
+            };
+            npucheck::CheckerReportList reports;
+            AclsanResourceData allocation{};
+            allocation.common = {ACLSAN_API_VERSION, sizeof(allocation), nullptr, 0, 0};
+            allocation.ptr = reinterpret_cast<void*>(GM);
+            allocation.bytes = 16384;
+            allocation.resourceId = 1;
+            allocation.memorySpace = ACLSAN_MEMORY_SPACE_DEVICE;
+            ASSERT_TRUE(send(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, &allocation, reports));
+            AclsanMemoryWriteData hostWrite{};
+            hostWrite.common.version = ACLSAN_API_VERSION;
+            hostWrite.common.size = sizeof(hostWrite);
+            hostWrite.destination = allocation.ptr;
+            hostWrite.bytes = allocation.bytes;
+            ASSERT_TRUE(send(ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END, &hostWrite, reports));
+            AclsanLaunchData launch{};
+            launch.common = {ACLSAN_API_VERSION, sizeof(launch), nullptr, 0, 0};
+            launch.launchId = 17;
+            ASSERT_TRUE(send(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+            MemoryRegisterState state{};
+            const uint16_t matrixStride =
+                c.rows == 1 && c.elementBytes == 4 ? 6 : c.paddedRows * ((c.columns * c.elementBytes + 31) / 32);
+            state.mte2Nz = Mte2NzParamField{c.matrices, 1, static_cast<uint16_t>(c.paddedRows), matrixStride};
+            AclsanDeviceRegisterStateData nz{};
+            nz.header.version = ACLSAN_API_VERSION;
+            nz.header.size = sizeof(nz);
+            nz.header.launchId = launch.launchId;
+            nz.header.instrExecId = 1;
+            nz.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+            nz.regId = ACLSAN_DEVICE_REGISTER_MTE2_NZ;
+            ASSERT_TRUE(send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &nz, reports));
+            uint64_t instruction = 1;
+            const auto emit = [&](uint32_t id, uint32_t pipe, std::array<uint64_t, 4> args) {
+                ParsedTraceRecord parsed{};
+                parsed.record.instrId = id;
+                parsed.record.pipeline = pipe;
+                std::copy(args.begin(), args.end(), parsed.record.args);
+                parsed.launchId = launch.launchId;
+                parsed.instrExecId = ++instruction;
+                parsed.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
+                ASSERT_TRUE(decoded);
+                const auto callback = TranslateDecodedTraceToCallbackData(parsed, *decoded, state);
+                ASSERT_TRUE(callback);
+                if (const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*callback)) {
+                    for (const auto& access : *accesses)
+                        ASSERT_TRUE(send(
+                            ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+                } else {
+                    const auto& sync = std::get<AclsanDeviceSyncData>(*callback);
+                    ASSERT_TRUE(send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &sync, reports));
+                }
+            };
+            emit(
+                c.writeId, ACLSAN_DEVICE_PIPE_MTE2,
+                {0, GM, (c.rows << 48) | (c.columns * c.elementBytes << 4), c.columns});
+            if (c.reuse) {
+                emit(c.writeId, ACLSAN_DEVICE_PIPE_MTE2, {0, GM, (1ULL << 48) | (32ULL << 4), 32});
+            }
+            emit(440, ACLSAN_DEVICE_PIPE_SCALAR, {ACLSAN_DEVICE_PIPE_MTE2, ACLSAN_DEVICE_PIPE_MTE1, 0, 0});
+            emit(442, ACLSAN_DEVICE_PIPE_SCALAR, {ACLSAN_DEVICE_PIPE_MTE2, ACLSAN_DEVICE_PIPE_MTE1, 0, 0});
+            emit(c.readId, ACLSAN_DEVICE_PIPE_MTE1, {0, c.readOffset, c.config0, c.config1});
+            AclsanSynchronizeData sync{};
+            sync.common = {ACLSAN_API_VERSION, sizeof(sync), nullptr, 0, 0};
+            ASSERT_TRUE(send(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+            ASSERT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+            ASSERT_FALSE(reports.empty());
+            uint64_t missing = 0;
+            for (const auto& record : reports) {
+                const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(record);
+                EXPECT_EQ(report.access.memorySpace, npucheck::NpuCheckReportMemorySpace::L1);
+                missing += report.uninitBytes;
+                if (c.severity == ReportSeverity::WARNING) {
+                    EXPECT_EQ(report.common.severity, ReportSeverity::WARNING);
+                }
+            }
+            EXPECT_EQ(missing, c.missing);
+            EXPECT_EQ(checker.HasErrors(), c.severity == ReportSeverity::ERROR);
+        }
+    }
+}
+
+TEST(CubeMemoryInitcheck, ChannelSplitDoesNotHideEntirelyUninitializedSource)
+{
+    for (const uint64_t n : {16U, 24U, 32U}) {
+        SCOPED_TRACE(n);
+        constexpr uint64_t GM_ADDRESS = 0x100000;
+        ParsedTraceRecord parsed{};
+        parsed.record.instrId = static_cast<uint32_t>(InstructionId::FixL0cToOutF32);
+        parsed.record.args[0] = GM_ADDRESS;
+        parsed.record.args[2] = (n << 4) | (16ULL << 16) | (256ULL << 32);
+        parsed.record.args[3] = 16 | (1ULL << 42); // F32 Channel Split into Nz.
+        parsed.record.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
+        parsed.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        parsed.launchId = 17;
+        parsed.instrExecId = 1;
+        MemoryRegisterState state{};
+        state.ctrl = CtrlRegisterParamField{0};
+        const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
+        ASSERT_TRUE(decoded);
+        const auto callback = TranslateDecodedTraceToCallbackData(parsed, *decoded, state);
+        ASSERT_TRUE(callback);
+        const auto& accesses = std::get<DeviceMemoryAccessDataList>(*callback);
+        ASSERT_EQ(accesses.size(), 2U);
+
+        npucheck::Initcheck checker;
+        npucheck::CheckerReportList reports;
+        AclsanResourceData allocation{};
+        allocation.ptr = reinterpret_cast<void*>(GM_ADDRESS);
+        allocation.bytes = 16384;
+        allocation.resourceId = 1;
+        allocation.memorySpace = ACLSAN_MEMORY_SPACE_DEVICE;
+        ASSERT_TRUE(
+            checker.OnCallback(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, &allocation, reports));
+        AclsanLaunchData launch{};
+        launch.launchId = parsed.launchId;
+        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+        AclsanDeviceRegisterStateData ctrl{};
+        ctrl.header = accesses.front().header;
+        ctrl.header.size = sizeof(ctrl);
+        ctrl.regId = ACLSAN_DEVICE_REGISTER_CTRL;
+        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &ctrl, reports));
+        for (const auto& access : accesses) {
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+        }
+        AclsanSynchronizeData sync{};
+        ASSERT_TRUE(
+            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        ASSERT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+        ASSERT_EQ(reports.size(), 1U);
+        const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(reports.front());
+        const bool warning = false; // Valid L0C data is also entirely uninitialized.
+        EXPECT_EQ(report.access.memorySpace, npucheck::NpuCheckReportMemorySpace::L0_C);
+        EXPECT_EQ(report.access.accessBytes, n == 16 ? 1024U : 2048U);
+        EXPECT_EQ(
+            report.common.severity, warning ? npucheck::ReportSeverity::WARNING : npucheck::ReportSeverity::ERROR);
+        EXPECT_EQ(checker.HasErrors(), !warning);
+        EXPECT_EQ(checker.Stats().warnings, warning ? 1U : 0U);
+    }
 }
 
 TEST(CubeMemory, CapacityBoundariesAndOverflowAreIndependentOfGmAllocations)
