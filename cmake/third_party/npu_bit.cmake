@@ -89,10 +89,7 @@ install(FILES "${NPU_BIT_LIB_PATH}/lib/libnpu_bit.so"
     PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
     COMPONENT asc-tools
 )
-install(FILES "${NPU_BIT_LIB_PATH}/lib/libnpu_bit.a"
-    DESTINATION tools/npu_bit/lib64
-    COMPONENT asc-tools
-)
+
 install(DIRECTORY "${NPU_BIT_LIB_PATH}/include/"
     DESTINATION tools/npu_bit/include
     COMPONENT asc-tools

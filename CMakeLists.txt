@@ -16,17 +16,9 @@ init_cann_project(PREPEND_MODULE_PATH)
 
 add_compile_options(-Werror)
 
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_LIST_DIR)
-  message(STATUS "compile project asc-tools with library")
-  option(BUILD_WITH_INSTALLED_DEPENDENCY_CANN_PKG "Build asc-tools with cann pkg" ON)
-else()
-  message(STATUS "compile project asc-tools with src")
-  option(BUILD_WITH_INSTALLED_DEPENDENCY_CANN_PKG "Build asc-tools with cann source" OFF)
-endif()
-
-# BUILD_OPEN_PROJECT用于控制部分legacy包的编译，ENABLE_MOD_EXT用于控制MDC等芯片的编译
+# BUILD_OPEN_PROJECT用于控制部分legacy ops包的编译，ENABLE_MOD_EXT用于控制MDC等芯片的编译
 set(ENABLE_NPU_TOOLS OFF)
-if(BUILD_OPEN_PROJECT AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_LIST_DIR AND NOT ENABLE_MOD_EXT)
+if(BUILD_OPEN_PROJECT AND NOT ENABLE_MOD_EXT)
   set(ENABLE_NPU_TOOLS ON)
 endif()
 
