@@ -1,0 +1,34 @@
+# Copyright (c) 2026 AProf contributors.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aprof-runtime"
+version = "0.8.3"
+description = "Machine-authoritative runtime contracts for AProf SkillGraph training"
+requires-python = ">=3.11"
+dependencies = ["jsonschema>=4.18", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "jsonschema>=4.18", "numpy>=1.24", "pytest-xdist>=3"]
+
+[project.scripts]
+aprofctl = "aprof_runtime.cli:main"
+aprof-runtime = "aprof_runtime.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

@@ -12,10 +12,13 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^skills/tool-ops-optimize/(?:sources/|skills/[^/]+/(?:sources/|graph/|knowledge/)|workflows/(?:migration/|references/[^/]+/)|runtime/src/aprof_runtime/(?:_diagnosis_v1|_knowledge_v1)\.py$|schemas/|skills/[^/]+/(?:LICENSE|NOTICE\.md)$)
       - id: end-of-file-fixer
+        exclude: ^skills/tool-ops-optimize/(?:sources/|skills/[^/]+/(?:sources/|graph/|knowledge/)|workflows/(?:migration/|references/[^/]+/)|runtime/src/aprof_runtime/(?:_diagnosis_v1|_knowledge_v1)\.py$|schemas/|skills/[^/]+/(?:LICENSE|NOTICE\.md)$)
       - id: check-yaml
         args: ["--allow-multiple-documents"]
       - id: check-added-large-files
+        exclude: (?:^skills/tool-ops-optimize/(?:sources/|skills/[^/]+/(?:sources/|graph/|knowledge/)|workflows/(?:migration/|references/[^/]+/)|runtime/src/aprof_runtime/(?:_diagnosis_v1|_knowledge_v1)\.py$|schemas/|skills/[^/]+/(?:LICENSE|NOTICE\.md)$))|^skills/tool-ops-optimize/tools/frozen-files.json$
       - id: check-merge-conflict
       - id: detect-private-key
       - id: check-json
@@ -27,7 +30,7 @@ repos:
     hooks:
       - id: clang-format
         files: \.(c|h|cpp|hpp|cc|hh|cxx|hxx|asc)$
-        exclude: ^build/|tests/third_party/
+        exclude: (?:^build/|tests/third_party/)|(?:^skills/tool-ops-optimize/(?:sources/|skills/[^/]+/(?:sources/|graph/|knowledge/)|workflows/(?:migration/|references/[^/]+/)|runtime/src/aprof_runtime/(?:_diagnosis_v1|_knowledge_v1)\.py$|schemas/|skills/[^/]+/(?:LICENSE|NOTICE\.md)$))
         args:
           - "--style=file"
           - "--verbose"
@@ -38,9 +41,11 @@ repos:
     rev: v0.14.14
     hooks:
       - id: ruff-check
+        exclude: ^skills/tool-ops-optimize/(?:sources/|skills/[^/]+/(?:sources/|graph/|knowledge/)|workflows/(?:migration/|references/[^/]+/)|runtime/src/aprof_runtime/(?:_diagnosis_v1|_knowledge_v1)\.py$|schemas/|skills/[^/]+/(?:LICENSE|NOTICE\.md)$)
         args: ["--output-format", "github", "--fix"]
         types: [python]
       - id: ruff-format
+        exclude: ^skills/tool-ops-optimize/(?:sources/|skills/[^/]+/(?:sources/|graph/|knowledge/)|workflows/(?:migration/|references/[^/]+/)|runtime/src/aprof_runtime/(?:_diagnosis_v1|_knowledge_v1)\.py$|schemas/|skills/[^/]+/(?:LICENSE|NOTICE\.md)$)
         types: [python]
 
   # 拼写检查
@@ -48,6 +53,7 @@ repos:
     rev: v2.4.1
     hooks:
       - id: codespell
+        exclude: ^skills/tool-ops-optimize/(?:sources/|skills/[^/]+/(?:sources/|graph/|knowledge/)|workflows/(?:migration/|references/[^/]+/)|runtime/src/aprof_runtime/(?:_diagnosis_v1|_knowledge_v1)\.py$|schemas/|skills/[^/]+/(?:LICENSE|NOTICE\.md)$)
         args: [
             "--write-changes",
             "-L",
@@ -62,5 +68,16 @@ repos:
     hooks:
       - id: oat-check
         pass_filenames: true
+        exclude: (?:^skills/tool-ops-optimize/LICENSE$)|(?:^skills/tool-ops-optimize/(?:sources/|skills/[^/]+/(?:sources/|graph/|knowledge/)|workflows/(?:migration/|references/[^/]+/)|runtime/src/aprof_runtime/(?:_diagnosis_v1|_knowledge_v1)\.py$|schemas/|skills/[^/]+/(?:LICENSE|NOTICE\.md)$))
         stages: [pre-commit]
         verbose: true
+
+  # Byte-frozen sources and versioned compilers are validated rather than rewritten.
+  - repo: local
+    hooks:
+      - id: graph-base-payload
+        name: Verify AProf frozen sources and workflow entries
+        entry: python3 skills/tool-ops-optimize/tools/check_import.py
+        language: system
+        files: ^skills/tool-ops-optimize/
+        pass_filenames: false

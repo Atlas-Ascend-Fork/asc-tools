@@ -1,0 +1,3 @@
+# Preserve exact source and snapshot bytes for SHA-256 validation.
+* -text
+sources/document-originals/** -whitespace

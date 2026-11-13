@@ -42,6 +42,13 @@ jobs:
             ${{ env.obs_path }}/update_file_detail.txt
             ${{ env.obs_path }}/gitdiff.txt
           path: ${{ steps.process_checkout.outputs.path }}
+      - name: filter_frozen_markdown
+        run: |
+          set -e
+          filter_script="${{ steps.process_checkout.outputs.path }}/skills/tool-ops-optimize/tools/filter_md_inputs.py"
+          if [ -f "$filter_script" ]; then
+            python3 "$filter_script" "${{ steps.process_checkout.outputs.path }}/pr_filelist.txt"
+          fi
       -
         name: staticcheck
         identifier: staticcheck

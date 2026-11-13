@@ -1,0 +1,25 @@
+# Copyright (c) 2026 AProf contributors.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+class AProfRuntimeError(Exception):
+    """Base class for expected runtime failures."""
+
+
+class ContractError(AProfRuntimeError, ValueError):
+    """A serialized object did not satisfy its contract."""
+
+
+class GateError(AProfRuntimeError):
+    """A candidate gate request was invalid."""
+
+
+class StoreError(AProfRuntimeError):
+    """An append-only store invariant was violated."""
+
+
+class GraphError(AProfRuntimeError):
+    """A graph snapshot was invalid or could not be routed."""
