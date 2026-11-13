@@ -58,10 +58,10 @@ MsprofRawData RawData(const std::array<std::byte, Size>& bytes, RawDataType type
 
 std::array<std::byte, 32> TaskLog(
     uint8_t funcType, uint16_t taskId, uint16_t streamId, uint64_t systemCounter, uint16_t blockId, uint16_t subBlockId,
-    aclptiCoreType coreType, uint8_t coreTypeId)
+    aclptiCoreType coreType, uint8_t coreTypeId, uint8_t sqeType = 0)
 {
     std::array<std::byte, 32> bytes{};
-    StoreWord(bytes.data(), 0, 0x6bd30000U | funcType);
+    StoreWord(bytes.data(), 0, 0x6bd30000U | (uint32_t(sqeType) << 10U) | funcType);
     StoreWord(bytes.data(), 1, (uint32_t(taskId) << 16U) | streamId);
     StoreWord(bytes.data(), 2, static_cast<uint32_t>(systemCounter));
     StoreWord(bytes.data(), 3, static_cast<uint32_t>(systemCounter >> 32U));
@@ -178,6 +178,22 @@ bool MakeGuardedRawData(std::size_t chunkSize, RawDataType type, GuardedRawData*
     guarded->raw->chunkSize = chunkSize;
     std::memset(guarded->raw->chunk, 0, RAW_DATA_MAXSIZE);
     return true;
+}
+
+TEST(NpuComputePtiDataModule, TaskLogSqeTypePreservesAllHeaderBits)
+{
+    // The count occupies bits [9:6] and must not affect either function or SQE type.
+    for (uint32_t sqeType = 0; sqeType < 64; ++sqeType) {
+        for (uint8_t function : {0, 1}) {
+            auto bytes = TaskLog(function, 0, 6, 123, 0, 0, ACLPTI_CORE_TYPE_AIC, 0);
+            StoreWord(bytes.data(), 0, 0x6bd30000U | (sqeType << 10U) | (15U << 6U) | function);
+            const auto decoded = data::DecodeRawRecord(bytes.data(), bytes.size(), 0);
+            ASSERT_TRUE(decoded.Ok());
+            const auto& log = std::get<data::TaskLog32>(decoded.Value().payload);
+            EXPECT_EQ(log.funcType, function);
+            EXPECT_EQ(log.sqeType, sqeType);
+        }
+    }
 }
 
 TEST(NpuComputePtiDataModule, RawDataDecoder)
@@ -946,7 +962,7 @@ TEST(NpuComputePtiDataModule, CrossReplayAggregate)
     StoreWord(firstPmu.data(), 28, 0x1111);
     StoreWord(firstPmu.data(), 30, 0x2222);
     auto firstRaw = RawData(firstPmu, PMU_DATA_TYPE);
-    auto taskStart = RawData(TaskLog(0x00, 7, 8, 1, 0, 0, ACLPTI_CORE_TYPE_AIC, 0), LOG_DATA_TYPE);
+    auto taskStart = RawData(TaskLog(0x00, 7, 8, 1, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 1), LOG_DATA_TYPE);
     auto blockStart = RawData(TaskLog(0x24, 7, 8, 2, 2, 3, ACLPTI_CORE_TYPE_AIC, 1), LOG_DATA_TYPE);
     ASSERT_TRUE(module.GetRawDataCallback()(&firstRaw) == 0);
     ASSERT_TRUE(module.GetRawDataCallback()(&taskStart) == 0);
@@ -978,6 +994,7 @@ TEST(NpuComputePtiDataModule, CrossReplayAggregate)
     ASSERT_TRUE(result->status == ACLPTI_SUCCESS);
     ASSERT_TRUE(result->taskLogs.at(7).size() == 1);
     ASSERT_TRUE(result->taskLogs.at(7).at(0).replayId == 201);
+    EXPECT_EQ(result->taskLogs.at(7).at(0).sqeType, 1);
     ASSERT_TRUE(result->blockLogs.at(aclptiBlockKey{2, 3}).size() == 2);
     ASSERT_TRUE(result->pmuLogs.size() == 2);
     const auto& aicRow = result->pmuLogs.at(aclptiBlockKey{2, 3, ACLPTI_CORE_TYPE_AIC, 1});

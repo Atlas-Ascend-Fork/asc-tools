@@ -713,7 +713,9 @@ static int RunSuiteMain()
                 aclptiBlockKey{blockId, blockId, ACLPTI_CORE_TYPE_AIV, static_cast<uint8_t>(blockId)}, row);
         }
         pureAivResult.taskLogs.emplace(
-            1, std::vector<aclptiTaskLogRow>{{1, 0x00U, 1, 2, 1000}, {1, 0x01U, 1, 2, 5000}});
+            1, std::vector<aclptiTaskLogRow>{
+                   {1, 0x00U, 1, 2, 1000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0},
+                   {1, 0x01U, 1, 2, 5000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}});
 
         npucompute::test::ReportFileConfig config;
         config.outputDirectory = pureAivDir.string();
@@ -745,7 +747,9 @@ static int RunSuiteMain()
                 aclptiBlockKey{blockId, blockId, ACLPTI_CORE_TYPE_AIC, static_cast<uint8_t>(blockId)}, row);
         }
         pureAicResult.taskLogs.emplace(
-            1, std::vector<aclptiTaskLogRow>{{1, 0x00U, 1, 2, 1000}, {1, 0x01U, 1, 2, 5000}});
+            1, std::vector<aclptiTaskLogRow>{
+                   {1, 0x00U, 1, 2, 1000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0},
+                   {1, 0x01U, 1, 2, 5000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}});
 
         npucompute::test::ReportFileConfig config;
         config.outputDirectory = pureAicDir.string();
@@ -872,11 +876,17 @@ static int RunSuiteMain()
         CHECK(CsvValue(formulaDir / "PipeUtilization.csv", "vector7", "aiv_mte3_active_bw(GB/s)") == "NA");
 
         formulaResult.taskLogs.emplace(
-            1, std::vector<aclptiTaskLogRow>{{1, 0x00U, 1, 2, 1000}, {1, 0x01U, 1, 2, 3000}});
+            1, std::vector<aclptiTaskLogRow>{
+                   {1, 0x00U, 1, 2, 1000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0},
+                   {1, 0x01U, 1, 2, 3000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}});
         formulaResult.taskLogs.emplace(
-            2, std::vector<aclptiTaskLogRow>{{2, 0x00U, 1, 2, 1000}, {2, 0x01U, 1, 2, 5000}});
+            2, std::vector<aclptiTaskLogRow>{
+                   {2, 0x00U, 1, 2, 1000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0},
+                   {2, 0x01U, 1, 2, 5000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}});
         formulaResult.taskLogs.emplace(
-            3, std::vector<aclptiTaskLogRow>{{3, 0x00U, 1, 2, 1000}, {3, 0x01U, 1, 2, 7000}});
+            3, std::vector<aclptiTaskLogRow>{
+                   {3, 0x00U, 1, 2, 1000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0},
+                   {3, 0x01U, 1, 2, 7000, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}});
         const boost::filesystem::path taskDurationDir = formulaDir.string() + "_task_duration";
         formulaConfig.outputDirectory = taskDurationDir.string();
         CHECK(

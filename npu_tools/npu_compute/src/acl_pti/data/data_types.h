@@ -56,6 +56,8 @@ struct ReplayResult {
     CallbackStats callbackStats;
 };
 
+constexpr uint8_t kTaskStartFunctionType = 0x00U;
+constexpr uint8_t kTaskEndFunctionType = 0x01U;
 constexpr uint8_t kBlockPmuFunctionType = 0x29U;
 constexpr uint8_t kTaskPmuFunctionType = 0x2aU;
 
@@ -69,6 +71,7 @@ struct TaskLog32 {
     uint16_t subBlockId;
     aclptiCoreType coreType;
     uint8_t coreTypeId;
+    uint8_t sqeType = ACLPTI_SQE_TYPE_UNAVAILABLE;
 };
 
 // Counter values stay in hardware units here; frequency conversion occurs downstream.

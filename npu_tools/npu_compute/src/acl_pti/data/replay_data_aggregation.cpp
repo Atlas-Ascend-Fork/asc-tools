@@ -184,8 +184,8 @@ void DataProcessor::AddDecodedRecord(uint64_t replayId, const DecodedRecord& rec
     auto& replay = replays_.at(replayId);
     if (const auto* log = std::get_if<TaskLog32>(&record.payload)) {
         aclptiTaskLogRow row{replayId,     log->funcType,   log->taskId,   log->rtStreamId, log->systemCounter,
-                             log->blockId, log->subBlockId, log->coreType, log->coreTypeId};
-        if (log->funcType == 0 || log->funcType == 1) {
+                             log->blockId, log->subBlockId, log->coreType, log->coreTypeId, log->sqeType};
+        if (log->funcType == kTaskStartFunctionType || log->funcType == kTaskEndFunctionType) {
             replay.taskLogs[log->taskId].push_back(row);
         } else {
             replay.blockLogs[{log->blockId, log->subBlockId}].push_back(row);

@@ -176,7 +176,7 @@ static int RunSuiteMain()
     averageMetadata.kind = npucompute::KernelKind::Vector;
     averageMetadata.blockDim = 2;
     result.taskLogs[1] = {
-        {0, 0, 1, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIV, 0}, {0, 1, 1, 0, 10100, 0, 0, ACLPTI_CORE_TYPE_AIV, 0}};
+        {0, 0, 1, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIV, 0, 1}, {0, 1, 1, 0, 10100, 0, 0, ACLPTI_CORE_TYPE_AIV, 0, 1}};
     CHECK(npucompute::WritePmuReport(result, {"PipeUtilization"}, config, averageMetadata) == ACLPTI_SUCCESS);
     records = ReadSummary(config.outputDirectory);
     CHECK(records[0].get<double>("aiv_total_cycles") == 3000);
@@ -191,7 +191,7 @@ static int RunSuiteMain()
     cube.values = {{0x422, 16}, {0x423, 8}};
     result.taskPmuData.aic = aclptiTaskPmuCoreData{cube.totalCycles, false, cube.values};
     result.taskLogs[1] = {
-        {0, 0, 1, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0}, {0, 1, 1, 0, 10100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0}};
+        {0, 0, 1, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}, {0, 1, 1, 0, 10100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}};
     config.aicFrequencyMhz = 1200;
     config.aivFrequencyMhz = 1000;
     CHECK(npucompute::WritePmuReport(result, {"Memory"}, config) == ACLPTI_SUCCESS);

@@ -15,6 +15,8 @@ namespace aclpti::data {
 namespace {
 constexpr uint32_t RAW_BYTE_BITS = 8;
 constexpr uint32_t FUNCTION_BITS = 6;
+constexpr uint32_t SQE_TYPE_SHIFT = 10;
+constexpr uint32_t SQE_TYPE_MASK = 0x3fU;
 constexpr uint32_t CORE_TYPE_BIT = 0;
 constexpr uint32_t CORE_ID_SHIFT = 8;
 constexpr uint32_t CORE_TYPE_MASK = 1;
@@ -45,8 +47,6 @@ constexpr std::size_t TASK_END_COUNTER_WORD = 30;
 constexpr std::size_t COUNTER_WORDS = sizeof(uint64_t) / sizeof(uint32_t);
 
 constexpr uint32_t PMU_MAGIC = 0x6bd3U;
-constexpr uint32_t TASK_START_FUNCTION = 0x00U;
-constexpr uint32_t TASK_END_FUNCTION = 0x01U;
 constexpr uint32_t BLOCK_START_FUNCTION = 0x24U;
 constexpr uint32_t BLOCK_END_FUNCTION = 0x25U;
 
@@ -81,19 +81,21 @@ DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t r
         return DecodeResult(ACLPTI_ERROR_INVALID_RAW_DATA);
     }
 
-    const uint32_t function = Word(data, 0) & ((1U << FUNCTION_BITS) - 1U);
+    const uint32_t header = Word(data, 0);
+    const uint32_t function = header & ((1U << FUNCTION_BITS) - 1U);
     const uint32_t taskAndStream = Word(data, 1);
     const auto taskId = static_cast<uint16_t>(taskAndStream >> 16U);
     const auto streamId = static_cast<uint16_t>(taskAndStream);
     if (size == TASK_LOG_BYTES) {
-        if ((Word(data, 0) >> MAGIC_SHIFT) != PMU_MAGIC ||
-            (function != TASK_START_FUNCTION && function != TASK_END_FUNCTION && function != BLOCK_START_FUNCTION &&
-             function != BLOCK_END_FUNCTION)) {
+        if ((header >> MAGIC_SHIFT) != PMU_MAGIC ||
+            (function != kTaskStartFunctionType && function != kTaskEndFunctionType &&
+             function != BLOCK_START_FUNCTION && function != BLOCK_END_FUNCTION)) {
             return DecodeResult(ACLPTI_ERROR_DECODE);
         }
 
         TaskLog32 record{};
         record.funcType = static_cast<uint8_t>(function);
+        record.sqeType = static_cast<uint8_t>((header >> SQE_TYPE_SHIFT) & SQE_TYPE_MASK);
         record.taskId = taskId;
         record.rtStreamId = streamId;
         record.systemCounter = Counter(data, CYCLE_COUNTER_WORD);
@@ -107,7 +109,7 @@ DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t r
         return DecodeResult(DecodedRecord{recordIndex, record});
     }
 
-    if ((Word(data, 0) >> MAGIC_SHIFT) != PMU_MAGIC ||
+    if ((header >> MAGIC_SHIFT) != PMU_MAGIC ||
         (function != kBlockPmuFunctionType && function != kTaskPmuFunctionType)) {
         return DecodeResult(ACLPTI_ERROR_DECODE);
     }

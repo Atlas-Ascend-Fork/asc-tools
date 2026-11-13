@@ -31,10 +31,11 @@ void LogDecodedRecord(uint64_t replayId, uint64_t index, const DecodeResult& dec
     }
     if (const auto* log = std::get_if<TaskLog32>(&decoded.Value().payload)) {
         ASCTOOL_DEBUG(
-            "[aclpti-data] task-log function=%u task=%u stream=%u counter=%llu block=%u subBlock=%u coreType=%d "
-            "core=%u",
-            log->funcType, log->taskId, log->rtStreamId, static_cast<unsigned long long>(log->systemCounter),
-            log->blockId, log->subBlockId, static_cast<int>(log->coreType), log->coreTypeId);
+            "[aclpti-data] task-log function=%u sqeType=%hhu task=%u stream=%u counter=%llu block=%u subBlock=%u "
+            "coreType=%d core=%u",
+            log->funcType, log->sqeType, log->taskId, log->rtStreamId,
+            static_cast<unsigned long long>(log->systemCounter), log->blockId, log->subBlockId,
+            static_cast<int>(log->coreType), log->coreTypeId);
     } else {
         const auto& pmu = std::get<PmuRecord128>(decoded.Value().payload);
         ASCTOOL_DEBUG(

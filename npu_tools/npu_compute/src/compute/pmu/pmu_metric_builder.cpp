@@ -9,7 +9,9 @@
  */
 #include "pmu/pmu_metric_builder.h"
 
+#include "acl_pti/data/data_types.h"
 #include "acl_pti/data/pmu_events.h"
+#include "npu_compute_log.h"
 
 #include <algorithm>
 #include <cmath>
@@ -294,55 +296,65 @@ std::optional<double> Time(const TypeMetrics& metrics, double frequencyMhz)
 }
 
 struct TaskLogCounterPair {
-    uint16_t taskId = 0;
-    uint16_t streamId = 0;
-    bool hasIdentity = false;
     bool invalid = false;
     std::optional<uint64_t> start;
     std::optional<uint64_t> end;
 };
 
-Metric TaskLogDurationUs(const aclptiProfilingDataResult& result)
+// {taskId, rtStreamId, sqeType}. On Ascend 950 the first two key fields are the high/low halves of taskSn.
+using TaskLogKey = std::tuple<uint16_t, uint16_t, uint8_t>;
+using TaskLogPairsByReplay = std::map<uint64_t, std::map<TaskLogKey, TaskLogCounterPair>>;
+
+TaskLogPairsByReplay PairTaskLogCounters(const aclptiProfilingDataResult& result)
 {
-    std::map<uint64_t, TaskLogCounterPair> pairs;
-    for (const auto& [taskId, logs] : result.taskLogs) {
-        static_cast<void>(taskId);
-        for (const aclptiTaskLogRow& log : logs) {
-            TaskLogCounterPair& pair = pairs[log.replayId];
-            if (!pair.hasIdentity) {
-                pair.taskId = log.taskId;
-                pair.streamId = log.rtStreamId;
-                pair.hasIdentity = true;
-            } else if (pair.taskId != log.taskId || pair.streamId != log.rtStreamId) {
-                pair.invalid = true;
+    TaskLogPairsByReplay pairs;
+    for (const auto& taskLogs : result.taskLogs) {
+        for (const aclptiTaskLogRow& log : taskLogs.second) {
+            const bool isStart = log.funcType == aclpti::data::kTaskStartFunctionType;
+            if ((!isStart && log.funcType != aclpti::data::kTaskEndFunctionType) ||
+                log.sqeType == static_cast<uint8_t>(aclptiDavidSqeType::Placeholder)) {
+                continue;
             }
-            if (log.funcType == 0x00U) {
-                if (pair.start.has_value()) {
-                    pair.invalid = true;
-                } else {
-                    pair.start = log.systemCounter;
-                }
-            } else if (log.funcType == 0x01U) {
-                if (pair.end.has_value()) {
-                    pair.invalid = true;
-                } else {
-                    pair.end = log.systemCounter;
-                }
+            auto& pair = pairs[log.replayId][{log.taskId, log.rtStreamId, log.sqeType}];
+            auto& counter = isStart ? pair.start : pair.end;
+            if (counter.has_value()) {
+                pair.invalid = true;
+            } else {
+                counter = log.systemCounter;
             }
         }
     }
+    return pairs;
+}
 
+Metric TaskLogDurationUs(const aclptiProfilingDataResult& result)
+{
+    const auto pairs = PairTaskLogCounters(result);
     std::vector<double> durations;
     constexpr double kMicrosecondsPerMillisecond = 1000.0;
-    for (const auto& [replayId, pair] : pairs) {
-        static_cast<void>(replayId);
-        if (pair.invalid || !pair.start.has_value() || !pair.end.has_value() || *pair.end <= *pair.start) {
-            continue;
+    for (const auto& [replayId, tasks] : pairs) {
+        std::optional<double> replayDuration;
+        std::size_t validTasks = 0;
+        for (const auto& [key, pair] : tasks) {
+            static_cast<void>(key);
+            if (pair.invalid || !pair.start.has_value() || !pair.end.has_value() || *pair.end <= *pair.start) {
+                continue;
+            }
+            const double durationUs = static_cast<double>(*pair.end - *pair.start) * kMicrosecondsPerMillisecond /
+                                      A5_TASK_SCHEDULER_FREQUENCY_KHZ;
+            if (std::isfinite(durationUs) && durationUs > 0.0) {
+                ++validTasks;
+                replayDuration = durationUs;
+            }
         }
-        const double durationUs = static_cast<double>(*pair.end - *pair.start) * kMicrosecondsPerMillisecond /
-                                  A5_TASK_SCHEDULER_FREQUENCY_KHZ;
-        if (std::isfinite(durationUs) && durationUs > 0.0) {
-            durations.push_back(durationUs);
+        if (validTasks > 1U) {
+            ASCTOOL_WARNING(
+                "[npu-compute] Task Duration unavailable: replay=%llu has %zu valid non-placeholder tasks",
+                static_cast<unsigned long long>(replayId), validTasks);
+            return std::nullopt;
+        }
+        if (replayDuration.has_value()) {
+            durations.push_back(*replayDuration);
         }
     }
     if (durations.empty()) {

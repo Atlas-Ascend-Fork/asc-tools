@@ -107,6 +107,7 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/kernel_metadata_collector_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_metadata_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_metrics_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/pmu_task_duration_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/performance_hints_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/performance_hint_analyzer_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/pipe_trace_finalizer_test.cpp"

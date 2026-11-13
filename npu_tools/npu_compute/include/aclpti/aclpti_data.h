@@ -105,6 +105,34 @@ struct aclptiBlockKey {
     }
 };
 
+// Hardware SQE values from runtime rtDavidStarsSqeType (stars_david.hpp).
+enum class aclptiDavidSqeType : uint8_t {
+    Aic = 0U,
+    Aiv = 1U,
+    Fusion = 2U,
+    Placeholder = 3U,
+    AicpuH = 4U,
+    AicpuD = 5U,
+    NotifyRecord = 6U,
+    NotifyWait = 7U,
+    WriteValue = 8U,
+    Ubdma = 9U,
+    AsyncDma = 10U,
+    Sdma = 11U,
+    Vpc = 12U,
+    Jpege = 13U,
+    Jpegd = 14U,
+    Cmo = 15U,
+    Ccu = 16U,
+    Nsc = 18U,
+    Dss = 19U,
+    Cond = 20U,
+    End = 21U,
+    Invalid = 63U,
+};
+
+inline constexpr uint8_t ACLPTI_SQE_TYPE_UNAVAILABLE = 0xffU;
+
 struct aclptiTaskLogRow {
     uint64_t replayId;
     uint8_t funcType;
@@ -115,6 +143,8 @@ struct aclptiTaskLogRow {
     uint16_t subBlockId;
     aclptiCoreType coreType;
     uint8_t coreTypeId;
+    // Task-log header bits [15:10]; see aclptiDavidSqeType.
+    uint8_t sqeType = ACLPTI_SQE_TYPE_UNAVAILABLE;
 };
 
 struct aclptiRawDataChunk {

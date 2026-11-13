@@ -72,8 +72,8 @@ KernelMetadata Metadata(KernelKind kind, uint64_t blocks, uint64_t mixed = 0)
 void Duration(aclptiProfilingDataResult& result, double us = 10)
 {
     result.taskLogs[1] = {
-        {0, 0, 1, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0},
-        {0, 1, 1, 0, 100 + static_cast<uint64_t>(us * 1000), 0, 0, ACLPTI_CORE_TYPE_AIC, 0}};
+        {0, 0, 1, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0},
+        {0, 1, 1, 0, 100 + static_cast<uint64_t>(us * 1000), 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}};
 }
 void Row(
     aclptiProfilingDataResult& result, uint16_t block, uint16_t sub, aclptiCoreType side, double cycles,
