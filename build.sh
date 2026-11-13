@@ -25,7 +25,6 @@ THREAD_NUM=${CPU_NUM}
 CUSTOM_OPTION="-DCMAKE_INSTALL_PREFIX=${OUTPUT_DIR} -DBUILD_OPEN_PROJECT=ON"
 CANN_3RD_LIB_PATH=${CURRENT_DIR}/third_party
 BUILD_TYPE="Release"
-ENABLE_BUILD_DEVICE=ON
 PACKAGE_TYPE="run"
 
 dotted_line="----------------------------------------------------------------"
@@ -131,9 +130,9 @@ parse_cmake_extra_args() {
         local value="${kv_pair#*=}"
 
         case "$key" in
-            "ENABLE_BUILD_DEVICE")
-                ENABLE_BUILD_DEVICE="$value"
-                echo "Set ENABLE_BUILD_DEVICE to ${ENABLE_BUILD_DEVICE}."
+            "ENABLE_MOD_EXT")
+                ENABLE_MOD_EXT="$value"
+                echo "Set ENABLE_MOD_EXT to ${ENABLE_MOD_EXT}."
                 ;;
             *)
                 echo "invalid parameter key: $key"
@@ -150,6 +149,13 @@ function copy_deps_file() {
   if ls ${BUILD_DIR}/cann-asc-tools-cpudebug-deps*.tar.gz 1> /dev/null 2>&1; then
     cp -r ${BUILD_DIR}/cann-asc-tools-cpudebug-deps*.tar.gz ${CANN_3RD_LIB_PATH}
   fi
+
+  local dep_file
+  for dep_file in "${BUILD_DIR}"/cann-asc-tools-deps_*.tar.gz "${BUILD_DIR}"/cann_asc_tools_deps_*_pkg_compile.rar; do
+    if [[ -f "${dep_file}" ]]; then
+      cp "${dep_file}" "${CANN_3RD_LIB_PATH}/"
+    fi
+  done
 }
 
 function clean()
@@ -910,7 +916,11 @@ main() {
     CUSTOM_OPTION="${CUSTOM_OPTION} -DPACKAGE_OPEN_PROJECT=ON"
   fi
 
-  CUSTOM_OPTION="${CUSTOM_OPTION} -DASCEND_CANN_PACKAGE_PATH=${ASCEND_CANN_PACKAGE_PATH} -DCANN_3RD_LIB_PATH=${CANN_3RD_LIB_PATH} -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DPACKAGE_TYPE=${PACKAGE_TYPE} -DENABLE_BUILD_DEVICE=${ENABLE_BUILD_DEVICE}"
+  CUSTOM_OPTION="${CUSTOM_OPTION} -DASCEND_CANN_PACKAGE_PATH=${ASCEND_CANN_PACKAGE_PATH}"
+  CUSTOM_OPTION+=" -DCANN_3RD_LIB_PATH=${CANN_3RD_LIB_PATH}"
+  CUSTOM_OPTION+=" -DCMAKE_BUILD_TYPE=${BUILD_TYPE}"
+  CUSTOM_OPTION+=" -DPACKAGE_TYPE=${PACKAGE_TYPE}"
+  CUSTOM_OPTION+=" -DENABLE_MOD_EXT=${ENABLE_MOD_EXT}"
 
   if [[ ! -d "${BUILD_DIR}" ]]; then
     mkdir -p "${BUILD_DIR}"

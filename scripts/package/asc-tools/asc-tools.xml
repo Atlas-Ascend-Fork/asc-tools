@@ -64,6 +64,17 @@
         <file value="npu-compute"/>
     </file_info>
 
+    <dir_info value="npu_bit" install_mod="550">
+        <path value="tools/npu_bit"/>
+        <path value="tools/npu_bit/lib64"/>
+    </dir_info>
+    <file_info value="npu_bit_lib64" copy_type="delivery" src_path="" dst_path="tools/npu_bit/lib64" install_path="tools/npu_bit/lib64" install_mod="550">
+        <file value="libnpu_bit.so"/>
+    </file_info>
+    <file_info value="npu_bit_headers" copy_type="delivery" src_path="" dst_path="tools/npu_bit" install_path="tools/npu_bit" install_mod="550">
+        <file value="include"/>
+    </file_info>
+
     <block_info dependtree="false" dst_path="" install_path="" block_conf_path="ascend" install_mod="550">
         <block name="TIKCppSim"/>
         <block name="AscendCToolkits" feature="ascendc"/>

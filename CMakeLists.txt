@@ -24,13 +24,9 @@ else()
   option(BUILD_WITH_INSTALLED_DEPENDENCY_CANN_PKG "Build asc-tools with cann source" OFF)
 endif()
 
-option(ENABLE_BUILD_DEVICE "Enable building device-related components" ON)
-
-# npu_tools is a host-side tool. Standalone builds (including MDC) keep using
-# ENABLE_BUILD_DEVICE as the external switch, while the open-source superbuild
-# still builds npu_tools in its host project even when its device phase is off.
-set(ENABLE_NPU_TOOLS "${ENABLE_BUILD_DEVICE}")
-if(BUILD_OPEN_PROJECT AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_LIST_DIR)
+# BUILD_OPEN_PROJECT用于控制部分legacy包的编译，ENABLE_MOD_EXT用于控制MDC等芯片的编译
+set(ENABLE_NPU_TOOLS OFF)
+if(BUILD_OPEN_PROJECT AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_LIST_DIR AND NOT ENABLE_MOD_EXT)
   set(ENABLE_NPU_TOOLS ON)
 endif()
 
@@ -75,7 +71,9 @@ if(BUILD_OPEN_PROJECT AND NOT ENABLE_TEST)
   add_subdirectory(third_party)
 endif()
 add_subdirectory(utils/show_kernel_debug_data)
+
 if(ENABLE_NPU_TOOLS)
+  include(cmake/third_party/npu_bit.cmake)
   add_subdirectory(npu_tools)
 endif()
 
