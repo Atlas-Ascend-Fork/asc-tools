@@ -220,7 +220,7 @@ npu-compute: directory= <parent-directory>/report_<timestamp-ms>_<8-lowercase-he
 | `HardwareInfo.jsonl` | 每次采集时生成 | 主机和NPU硬件信息。 |
 | `summary.jsonl` | 执行Kernel时生成 | 性能汇总、[性能提示](appendix/npu_compute_performance_data.md#performancehints)及算子概览。 |
 | `PipeTrace.json` | 选择`Pipeline`时生成 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
-| `summary.db` | 存在有效CSV或PmSampling采样数据时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)。 |
+| `summary.db` | 有效CSV成功入库，或完成`PmSampling`采集时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)。 |
 | `objdump.txt` | 选择`PmSampling`时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
 | `symbolizer.json` | 选择`PmSampling`时生成 | 采样地址对应的函数和内联调用信息。 |
 | `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`和`PmSampling`除外） | 该Section的指标数据。 |
@@ -277,7 +277,7 @@ npu-compute --import ./reports/profile.npu-rep --export ./restored
 - 算子调用方式：当前支持通过`<<<>>>`或aclnn方式进行单算子单次调用。
 - `Pipeline`采集受硬件限制：同一Device上只能有一个进程采集`Pipeline`；多个进程同时采集时，只有一个进程能正常输出，其他进程采集失败。
 - `PmSampling`采集受硬件限制：同一Device上，`PmSampling`不能与其他进程的`PmSampling`或`Pipeline`采集同时执行；并发采集可能导致采样数据缺失或采集失败。
-- `PmSampling`仅支持对SIMT指令进行采样；仅使用SIMD指令的算子无法生成`PcSampling`表，其他采集项的成功结果仍保留。
+- `PmSampling`用于分析算子运行时SIMT指令的阻塞情况。未采集到有效样本时，`PcSampling`表可能为空。其他采集项的成功结果仍会保留。
 - 采集SIMT算子的`Pipeline`或`PmSampling`数据时，不支持使用`noinline`的`__aicore__`函数，比如`printf`和`asc_dump`。
 - 目标程序必须具有执行权限，可以是可执行文件或脚本，能够在未使用`npu-compute`时独立运行，并在运行过程中至少成功执行一次NPU核函数。
 - 一条采集命令只运行一个目标程序；需要采集多个程序时，分别执行多条命令。目标程序及其启动的脚本不能再次运行`npu-compute`，检测到嵌套采集时本次采集失败且不会生成报告。

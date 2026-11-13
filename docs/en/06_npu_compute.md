@@ -220,7 +220,7 @@ A report can contain the following files:
 | `HardwareInfo.jsonl` | Every collection | Host and NPU hardware information. |
 | `summary.jsonl` | A kernel is executed | Performance summary, [performance hints](appendix/npu_compute_performance_data.md#performancehints), and operator overview. |
 | `PipeTrace.json` | `Pipeline` is selected | Pipeline timeline data in Chrome Trace format, viewable with Chrome Trace-compatible tools. |
-| `summary.db` | Valid CSV or PmSampling data is available | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database). |
+| `summary.db` | Valid CSV data is imported successfully, or `PmSampling` collection completes | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database). |
 | `objdump.txt` | When `PmSampling` is selected | Original operator disassembly. Compile with `-lineinfo` to include source line information. |
 | `symbolizer.json` | When `PmSampling` is selected | Function and inline information for sampled addresses. |
 | `<Section-name>.csv` | Metric data is collected (except for `Pipeline` and `PmSampling`) | Metric data for the Section. |
@@ -277,7 +277,7 @@ The result directory contains the collected files listed in [Report Files](#repo
 - Operator invocation: currently, a single invocation of a single operator using `<<<>>>` or aclnn is supported.
 - `Pipeline` collection is limited by hardware: only one process on the same device can collect `Pipeline` at a time. If multiple processes collect `Pipeline` concurrently, only one produces output normally; the others fail.
 - `PmSampling` collection is limited by hardware: on the same device, `PmSampling` cannot run concurrently with `PmSampling` or `Pipeline` collection in other processes. Concurrent collection may leave samples missing or cause collection to fail.
-- `PmSampling` supports sampling only SIMT instructions. Operators that use only SIMD instructions cannot generate the `PcSampling` table; successful results from other Sections are retained.
+- `PmSampling` helps analyze stalls in SIMT instructions during operator execution. If no valid samples are collected, the `PcSampling` table may be empty. Successful results from other Sections are retained.
 - When collecting `Pipeline` or `PmSampling` data for a SIMT operator, `noinline` `__aicore__` functions are not supported, including `printf` and `asc_dump`.
 - The target program must have execute permission, can be an executable or a script, must run independently without `npu-compute`, and must successfully execute at least one NPU kernel during its run.
 - One collection command runs one target program; run separate commands to collect multiple programs. The target program and scripts started by it must not start another `npu-compute` collection. When nested collection is detected, the collection fails and no report is produced.
