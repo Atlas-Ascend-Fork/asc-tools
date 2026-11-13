@@ -277,7 +277,7 @@ npu-compute --import ./reports/profile.npu-rep --export ./restored
 - 算子调用方式：当前支持通过`<<<>>>`或aclnn方式进行单算子单次调用。
 - `Pipeline`采集受硬件限制：同一Device上只能有一个进程采集`Pipeline`；多个进程同时采集时，只有一个进程能正常输出，其他进程采集失败。
 - `PmSampling`采集受硬件限制：同一Device上，`PmSampling`不能与其他进程的`PmSampling`或`Pipeline`采集同时执行；并发采集可能导致采样数据缺失或采集失败。
-- `PmSampling`用于分析算子运行时SIMT指令的阻塞情况。未采集到有效样本时，`PcSampling`表可能为空。其他采集项的成功结果仍会保留。
+- `PmSampling`用于分析算子运行时SIMT指令的阻塞情况。硬件按周期采样，当算子中的SIMT代码执行时间过短时，可能因未命中采样时刻而无法获得有效样本，导致`PcSampling`表为空。其他采集项的成功结果仍会保留。
 - 采集SIMT算子的`Pipeline`或`PmSampling`数据时，不支持使用`noinline`的`__aicore__`函数，比如`printf`和`asc_dump`。
 - 目标程序必须具有执行权限，可以是可执行文件或脚本，能够在未使用`npu-compute`时独立运行，并在运行过程中至少成功执行一次NPU核函数。
 - 一条采集命令只运行一个目标程序；需要采集多个程序时，分别执行多条命令。目标程序及其启动的脚本不能再次运行`npu-compute`，检测到嵌套采集时本次采集失败且不会生成报告。
