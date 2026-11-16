@@ -1349,6 +1349,16 @@ class TestAscendump(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             ps.parse_from(tlv)
 
+        for fmt in ("bad=%q", "bad=%Lf"):
+            with self.subTest(fmt=fmt):
+                ps = PrintStruct()
+                with self.assertRaises(RuntimeError):
+                    ps.parse_from(
+                        self._merged_PrintStructFormats__create_print_tlv_with_args(
+                            fmt, args_bytes
+                        )
+                    )
+
     def test_c_printf_fields_from_fifo_slots(self):
         cases = [
             ("%08d", struct.pack("q", 42), "00000042"),
@@ -1359,6 +1369,9 @@ class TestAscendump(unittest.TestCase):
             ("%llu", struct.pack("Q", 2**64 - 1), str(2**64 - 1)),
             ("%lld", struct.pack("q", -42), "-42"),
             ("%hhd", struct.pack("q", 255), "-1"),
+            ("%d", struct.pack("q", 0x100000001), "1"),
+            ("%u", struct.pack("Q", 0x100000001), "1"),
+            ("%Zu", struct.pack("Q", 0x100000001), "4294967297"),
             ("%8.2f", struct.pack("f", 3.25) + b"\0" * 4, "    3.25"),
             ("%8.2lf", struct.pack("d", 3.25), "    3.25"),
             ("%g", struct.pack("f", 3.25) + b"\0" * 4, "3.25"),
@@ -1387,16 +1400,34 @@ class TestAscendump(unittest.TestCase):
         ps.parse_from(tlv)
         self.assertEqual(ps.content, "[hello   ] %")
 
-    def test_printf_rejects_truncated_or_oversized_arguments(self):
-        cases = (("%*d", struct.pack("q", 8)), ("%1000001d", struct.pack("q", 1)))
-        for fmt, args_bytes in cases:
+    def test_printf_rejects_truncated_arguments_and_string_boundary(self):
+        for fmt, args_bytes in (
+            ("x=%*d", struct.pack("q", 8)),
+            ("x=%s", struct.pack("Q", 1000)),
+            ("x=%s", struct.pack("Q", 0)),
+        ):
             with self.subTest(fmt=fmt):
                 ps = PrintStruct()
-                tlv = self._merged_PrintStructFormats__create_print_tlv_with_args(
-                    fmt, args_bytes
-                )
                 with self.assertRaises(RuntimeError):
-                    ps.parse_from(tlv)
+                    ps.parse_from(
+                        self._merged_PrintStructFormats__create_print_tlv_with_args(
+                            fmt, args_bytes
+                        )
+                    )
+
+        from show_kernel_debug_data.printf_formatter import format_printf
+
+        buffer = struct.pack("Q", 8) + b"abc\0"
+        with self.assertRaisesRegex(RuntimeError, "not null terminated"):
+            format_printf("x=%s", buffer, 0, 8, record_end=11)
+
+    def test_printf_rejects_oversized_field(self):
+        ps = PrintStruct()
+        tlv = self._merged_PrintStructFormats__create_print_tlv_with_args(
+            "x=%1000001d", struct.pack("q", 1)
+        )
+        with self.assertRaises(RuntimeError):
+            ps.parse_from(tlv)
 
     def _merged_FifoDumpCoreContentWrite__build_fifo_block_info(
         self, core_id=0, length=64

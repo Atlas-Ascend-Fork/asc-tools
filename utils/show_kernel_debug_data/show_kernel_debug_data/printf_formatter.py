@@ -20,7 +20,7 @@ import struct
 _CONVERSION = re.compile(
     r"%(?P<flags>[-+ #0]*)(?P<width>\d+|\*)?"
     r"(?:\.(?P<precision>\d*|\*))?"
-    r"(?P<length>hh|ll|h|l|j|z|t|L)?"
+    r"(?P<length>hh|ll|h|l|j|z|Z|t|L)?"
     r"(?P<specifier>[diuoxXfFeEgGaAcsp%])"
 )
 _INTEGER = "diuoxX"
@@ -48,8 +48,12 @@ def _format_one(conversion, value):
     return output.raw[:size].decode("utf-8", errors="replace")
 
 
-def format_printf(fmt, buffer, args_start, args_end):
+def format_printf(fmt, buffer, args_start, args_end, record_end=None):
     """Render a FIFO printf payload using only validated C conversions."""
+    if record_end is None:
+        record_end = len(buffer)
+    if not (0 <= args_start <= args_end <= record_end <= len(buffer)):
+        raise RuntimeError("invalid printf record bounds")
     pieces = []
     cursor = 0
     offset = args_start
@@ -68,6 +72,8 @@ def format_printf(fmt, buffer, args_start, args_end):
             "flags", "width", "precision", "length", "specifier"
         )
         length = length or ""
+        if length == "Z":
+            length = "z"
         if specifier == "%":
             if match.group(0) != "%%":
                 raise RuntimeError("only %% is supported for a literal percent")
@@ -110,14 +116,22 @@ def format_printf(fmt, buffer, args_start, args_end):
                 bits = 16 if length == "h" else 8
                 raw = raw & ((1 << bits) - 1)
                 raw -= (1 << bits) if raw & (1 << (bits - 1)) else 0
-            value = ctypes.c_longlong(raw)
-            output_length = "ll"
+            if length in ("", "h", "hh"):
+                value = ctypes.c_int(raw)
+                output_length = ""
+            else:
+                value = ctypes.c_longlong(raw)
+                output_length = "ll"
         elif specifier in "uoxX":
             raw = struct.unpack("Q", slot)[0]
             if length in ("h", "hh"):
                 raw &= 0xFFFF if length == "h" else 0xFF
-            value = ctypes.c_ulonglong(raw)
-            output_length = "ll"
+            if length in ("", "h", "hh"):
+                value = ctypes.c_uint(raw)
+                output_length = ""
+            else:
+                value = ctypes.c_ulonglong(raw)
+                output_length = "ll"
         elif specifier in _FLOAT:
             if length == "l" or any(slot[4:]):
                 raw = struct.unpack("d", slot)[0]
@@ -128,11 +142,13 @@ def format_printf(fmt, buffer, args_start, args_end):
         elif specifier == "s":
             relative = struct.unpack("Q", slot)[0]
             start = offset + relative
-            if start >= len(buffer):
+            if relative < 8 or start >= record_end:
                 raise RuntimeError("printf string offset exceeds FIFO record")
-            end = buffer.find(b"\0", start)
+            end = buffer.find(b"\0", start, record_end)
             if end < 0:
-                raise RuntimeError("printf string is not null terminated")
+                raise RuntimeError(
+                    "printf string is not null terminated within FIFO record"
+                )
             value = ctypes.c_char_p(buffer[start:end])
             output_length = ""
         elif specifier == "p":
