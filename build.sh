@@ -714,21 +714,17 @@ function create_thirdparty_symlinks() {
             log "[INFO] Created ${makeself_src}/${tar_name}"
 
             # 创建固定格式的 patch 文件
-            # makeself.sh 文件内容固定，使用硬编码的空操作 patch
-            cat > "${makeself_src}/${patch_name}" << 'PATCH_EOF'
-diff --git a/makeself.sh b/makeself.sh
-index aa55dc0..302f96a 100755
---- a/makeself.sh
-+++ b/makeself.sh
-@@ -1,5 +1,6 @@
- #!/bin/sh
- #
-+#
- # Makeself version 2.5.x
- #  by Stephane Peter <megastep@megastep.org>
- #
+            {
+              printf '%s\n' \
+                'diff --git a/makeself.sh b/makeself.sh' \
+                '--- a/makeself.sh' \
+                '+++ b/makeself.sh' \
+                '@@ -1,5 +1,6 @@'
 
-PATCH_EOF
+              head -n 5 "${makeself_src}/makeself.sh" |
+                sed -e 's/^/ /' -e '2a\+#'
+            } > "${makeself_src}/${patch_name}"
+
             log "[INFO] Created ${makeself_src}/${patch_name}"
 
             # 复制 tar.gz 和 patch 到目标目录
