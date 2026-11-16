@@ -417,7 +417,7 @@ TEST(ToolManagerTest, TimeoutSetupAndLookupFailuresLeaveLaunchResultUnchanged)
 
 TEST(ToolManagerTest, StreamSyncTimeoutStillAllowsFinalResult)
 {
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    ::testing::GTEST_FLAG(death_test_style) = "threadsafe";
     EXPECT_EXIT(
         {
             const auto session = RunSession(

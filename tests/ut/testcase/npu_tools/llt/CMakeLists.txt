@@ -253,6 +253,15 @@ add_test(NAME npu_tools_utest COMMAND npu_tools_utest
   "--gtest_output=xml:${NPU_TOOLS_GTEST_XML}")
 set_tests_properties(npu_tools_utest PROPERTIES LABELS "npu_compute_ci_host" TIMEOUT 300)
 
+set(NPU_TOOLS_UTEST_DYNAMIC_LIST "${CMAKE_CURRENT_BINARY_DIR}/npu_tools_utest.dynamic-list")
+file(WRITE "${NPU_TOOLS_UTEST_DYNAMIC_LIST}"
+"{
+  rtFunctionGetMetaInfo;
+  rtFunctionGetMetaInfoSize;
+  aclrtBinaryGetDevAddress;
+};
+")
+
 # 桩库（unified_dlog/runtime/profapi）与 CANN 真实库同名；用 DT_RPATH（优先于
 # LD_LIBRARY_PATH）让构建树里的桩目录稳定抢占，POST_BUILD/ctest 环境无关。
 # aclsan C API 与 aclsan::InvokeCallback 的真实实现在 aclsan_api.cpp（本二进制内），
@@ -260,11 +269,7 @@ set_tests_properties(npu_tools_utest PROPERTIES LABELS "npu_compute_ci_host" TIM
 # 与产品库闭包里的真实 libacl_rt 同名互斥，--as-needed 使未被引用的 libacl_san.so
 # 及其真实 runtime 链整体剥离；--allow-shlib-undefined 放宽剩余共享库闭包校验。
 target_link_options(npu_tools_utest PRIVATE
-  -Wl,--export-dynamic-symbol=rtFunctionGetMetaInfo
-  -Wl,--export-dynamic-symbol=rtFunctionGetMetaInfoSize
-  # loaded-image 区间 UT 用 asm 标签桩符号替代真实 aclrtBinaryGetDevAddress；
-  # 产品侧以 dlsym(RTLD_DEFAULT) 解析，需导出到动态符号表（先例见 npu_compute 测试）。
-  -Wl,--export-dynamic-symbol=aclrtBinaryGetDevAddress
+  -Wl,--dynamic-list=${NPU_TOOLS_UTEST_DYNAMIC_LIST}
   -Wl,--disable-new-dtags
   -Wl,--allow-shlib-undefined
   -Wl,--as-needed

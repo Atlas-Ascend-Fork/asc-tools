@@ -31,7 +31,8 @@ def filter_filelist(root, filelist):
     }
     original = filelist.read_text(encoding="utf-8").splitlines(keepends=True)
     retained = [line for line in original if line.strip() not in frozen]
-    filelist.write_text("".join(retained), encoding="utf-8", newline="\n")
+    with filelist.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write("".join(retained))
     print(
         "MD inputs: excluded {} verified snapshots; retained {} entries.".format(
             len(original) - len(retained), len(retained)
