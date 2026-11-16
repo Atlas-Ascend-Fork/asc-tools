@@ -115,6 +115,7 @@ public:
                     AclsanDeviceBarrierData barrier{};
                     barrier.header = MakeDeviceEventHeader(parsed, pipeline, 0, sizeof(barrier));
                     barrier.pipe = value.pipe;
+                    barrier.barrierKind = ACLSAN_DEVICE_BARRIER_PIPE;
                     return DeviceCallbackData{barrier};
                 } else if constexpr (IsSyncParamField<ParamField>()) {
                     return MakeDeviceSyncData(parsed, decoded.kind, pipeline, value);
@@ -183,20 +184,16 @@ private:
                     case aclsan::LocalMemoryTransferKind::FixL0cToCbufS32:
                     case aclsan::LocalMemoryTransferKind::FixL0cToUbufF32:
                     case aclsan::LocalMemoryTransferKind::FixL0cToUbufS32:
-                        // The unit flag belongs to the Cube-side handshake.
-                        // UB endpoints carry the destination Vector owner.
-                        access.unitFlag =
-                            access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB ?
-                                0 :
-                                static_cast<uint32_t>(
-                                    (params.config1 >> LOCAL_TRANSFER_UNIT_FLAG_SHIFT) & LOCAL_TRANSFER_UNIT_FLAG_MASK);
+                        // The unit release describes the L0C source, not destination completion.
+                        access.unitFlag = static_cast<uint32_t>(
+                            (params.config1 >> LOCAL_TRANSFER_UNIT_FLAG_SHIFT) & LOCAL_TRANSFER_UNIT_FLAG_MASK);
                         break;
                     default:
                         break;
                 }
             }
             if (access.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE &&
-                access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+                access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C) {
                 access.unitFlag = 0;
             }
             access.regDependencyMask0 = dependencies.mask0;

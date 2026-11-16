@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_TOOLS_NPU_CHECK_REPORT_ASSEMBLER_H
-#define NPU_TOOLS_NPU_CHECK_REPORT_ASSEMBLER_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_REPORT_REPORT_ASSEMBLER_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_REPORT_REPORT_ASSEMBLER_H
 
 #include "checker/checker.h"
 #include "diagnostic/report_renderer.h"
@@ -25,4 +25,4 @@ struct ReportAssemblyResult {
 ReportAssemblyResult AssembleReport(CheckerReport& report);
 } // namespace npucheck
 
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_REPORT_REPORT_ASSEMBLER_H

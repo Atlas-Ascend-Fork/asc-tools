@@ -73,6 +73,8 @@ static_assert(static_cast<std::uint32_t>(ACLSAN_CBID_SYNCHRONIZE_DEVICE_SYNC_END
 static_assert(static_cast<std::uint32_t>(ACLSAN_CBID_SYNCHRONIZE_INVALID) == 0x7fffffffU);
 static_assert(static_cast<std::uint32_t>(ACLSAN_CBID_DEVICE_MEMORY_ACCESS) == 1);
 static_assert(static_cast<std::uint32_t>(ACLSAN_CBID_DEVICE_SYNC) == 2);
+static_assert(ACLSAN_CBID_DEVICE_PIPE_BARRIER == 4);
+static_assert(ACLSAN_CBID_DEVICE_VF == 5);
 static_assert(static_cast<std::uint32_t>(ACLSAN_CBID_DEVICE_INSTRUCTION_INVALID) == 0x7fffffffU);
 static_assert(static_cast<std::uint32_t>(ACLSAN_CBID_LAUNCH_KERNEL) == 1);
 static_assert(static_cast<std::uint32_t>(ACLSAN_CBID_LAUNCH_INVALID) == 0x7fffffffU);
@@ -92,12 +94,43 @@ static_assert(!HasAicRatio<AclsanLaunchData>::value);
 static_assert(!HasAivRatio<AclsanLaunchData>::value);
 static_assert(!HasKernelSchedMode<AclsanLaunchData>::value);
 static_assert(std::is_standard_layout_v<AclsanDeviceMemoryAccessData>);
+static_assert(sizeof(AclsanCoreInfo) == 12 && alignof(AclsanCoreInfo) == 4);
+static_assert(offsetof(AclsanDeviceEventHeader, executor) == 52);
+static_assert(sizeof(AclsanDeviceEventHeader) == 72);
+static_assert(
+    offsetof(AclsanDeviceMemoryAccessData, memoryOwner) == offsetof(AclsanDeviceMemoryAccessData, vfInstrValid) + 8);
+static_assert(
+    offsetof(AclsanDeviceMemoryAccessData, vfInstrExecSeq) ==
+    offsetof(AclsanDeviceMemoryAccessData, regDependencyMask1) + sizeof(uint64_t));
 static_assert(std::is_standard_layout_v<AclsanDeviceSyncData>);
+static_assert(std::is_standard_layout_v<AclsanDeviceBarrierData>);
+static_assert(std::is_standard_layout_v<AclsanDeviceVfData>);
+static_assert(
+    offsetof(AclsanDeviceMemoryAccessData, vfInstrValid) ==
+    offsetof(AclsanDeviceMemoryAccessData, vfInstrExecSeq) + sizeof(uint64_t));
+static_assert(offsetof(AclsanDeviceBarrierData, vfInstrExecSeq) == 88);
+static_assert(sizeof(AclsanDeviceVfData) == 96);
 static_assert(std::is_standard_layout_v<AclsanDeviceRegisterStateData>);
 static_assert(offsetof(AclsanDeviceRegisterStateData, regId) == 72);
 static_assert(offsetof(AclsanDeviceRegisterStateData, regIndex) == 76);
 static_assert(offsetof(AclsanDeviceRegisterStateData, value) == 80);
 static_assert(sizeof(AclsanDeviceRegisterStateData) == 88);
+static_assert(ACLSAN_DEVICE_MEMORY_ACCESS_READ == 1);
+static_assert(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX == 5);
+static_assert(ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ == 6);
+static_assert(ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE == 7);
+static_assert(ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_READ == 8);
+static_assert(ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE == 9);
+static_assert(ACLSAN_DEVICE_BARRIER_PIPE == 0);
+static_assert(
+    ACLSAN_DEVICE_LOCAL_MEM_VEC_ALL == (ACLSAN_DEVICE_LOCAL_MEM_VEC_LOAD | ACLSAN_DEVICE_LOCAL_MEM_VEC_STORE));
+static_assert(
+    ACLSAN_DEVICE_LOCAL_MEM_SCALAR_ALL == (ACLSAN_DEVICE_LOCAL_MEM_SCALAR_LOAD | ACLSAN_DEVICE_LOCAL_MEM_SCALAR_STORE));
+static_assert(offsetof(AclsanDeviceBarrierData, pipe) == sizeof(AclsanDeviceEventHeader));
+static_assert(offsetof(AclsanDeviceBarrierData, barrierKind) == 76);
+static_assert(offsetof(AclsanDeviceBarrierData, srcMemType) == 80);
+static_assert(offsetof(AclsanDeviceBarrierData, dstMemType) == 84);
+static_assert(sizeof(AclsanDeviceBarrierData) == 96);
 static_assert(ACLSAN_DEVICE_PIPE_INVALID == 100);
 static_assert(ACLSAN_DEVICE_PIPE_SCALAR == 0);
 static_assert(ACLSAN_DEVICE_PIPE_VECTOR == 1);

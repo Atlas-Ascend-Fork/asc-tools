@@ -159,4 +159,4 @@ bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
 }
 
 } // namespace npucheck::memory_layout
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_ACCESS_LAYOUT_H

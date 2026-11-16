@@ -10,15 +10,19 @@
 
 #include "checker/racecheck.h"
 #include "checker/racecheck_reports.h"
+#include "checker/racecheck/vf_subgraph.h"
 #include <optional>
 #include "checker/racecheck/happens_before_graph.h"
 #include "checker/mem_state_tracker.h"
+#include "checker/memory_access_mode.h"
 #include "npu_tool_log.h"
 #include "device_instr/common/instruction_id.h"
 #include <algorithm>
+#include <cstddef>
 #include <limits>
 #include <set>
 #include <sstream>
+#include <type_traits>
 #include <utility>
 
 namespace npucheck {
@@ -41,6 +45,7 @@ const std::vector<CallbackSpec>& Racechecker::GetSubscribedID() const
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF},
         {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END}};
     return ids;
 }
@@ -121,6 +126,7 @@ bool Racechecker::OnCallback(
     }
     const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
     const size_t size = cbid == ACLSAN_CBID_DEVICE_STATE        ? sizeof(AclsanDeviceRegisterStateData) :
+                        cbid == ACLSAN_CBID_DEVICE_VF           ? sizeof(AclsanDeviceVfData) :
                         cbid == ACLSAN_CBID_DEVICE_SYNC         ? sizeof(AclsanDeviceSyncData) :
                         cbid == ACLSAN_CBID_DEVICE_PIPE_BARRIER ? sizeof(AclsanDeviceBarrierData) :
                                                                   sizeof(AclsanDeviceMemoryAccessData);
@@ -136,14 +142,36 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
 {
     const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
     auto& state = GetLaunch(h.launchId);
+    const auto eventCount = [&state] {
+        return state.memory.size() + state.sync.size() + state.registers.size() + state.localBarriers.size() +
+               state.vfs.size();
+    };
     if (id == ACLSAN_CBID_DEVICE_STATE) {
         const auto& reg = *static_cast<const AclsanDeviceRegisterStateData*>(data);
         if (reg.regId != ACLSAN_DEVICE_REGISTER_FPC)
             return true;
-        if (state.memory.size() + state.sync.size() + state.registers.size() >= limits_.events)
+        if (eventCount() >= limits_.events) {
             state.reasons.insert("event_budget");
-        else if (!analysis_->Managed())
+        } else if (!analysis_->Managed()) {
             state.registers.push_back(reg);
+        }
+        return true;
+    }
+    if (id == ACLSAN_CBID_DEVICE_VF) {
+        const auto& vf = *static_cast<const AclsanDeviceVfData*>(data);
+        if (eventCount() >= limits_.events) {
+            state.reasons.insert("event_budget");
+            return true;
+        }
+        if (!analysis_->Managed()) {
+            state.vfs.push_back(vf);
+        }
+        if (vf.status != ACLSAN_DEVICE_VF_SUCCESS || vf.header.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT) {
+            state.reasons.insert("vf_expansion_incomplete");
+        }
+        if ((vf.warningFlags & ~ACLSAN_DEVICE_VF_MASK_NOT_REFRESHED) != 0) {
+            state.reasons.insert("unknown_vf_warning");
+        }
         return true;
     }
     if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
@@ -161,12 +189,23 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
             ++skippedMemoryEvents_;
             ++state.skippedMemory;
             if (a.accessCount != 0 && a.accessIndex < a.accessCount && state.skippedMemory <= limits_.events)
-                state.skippedFragments[race::Key(h)].insert(a.accessIndex);
+                state.skippedFragments[race::Key(a)].insert(a.accessIndex);
             return true;
         }
     } else if (id == ACLSAN_CBID_DEVICE_PIPE_BARRIER) {
         ++syncEvents_;
-        if (h.flags != ACLSAN_DEVICE_EVENT_FLAG_NONE && h.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT) {
+        const auto& barrier = *static_cast<const AclsanDeviceBarrierData*>(data);
+        if (barrier.barrierKind == ACLSAN_DEVICE_BARRIER_LOCAL_MEM && h.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT &&
+            h.size >= sizeof(AclsanDeviceBarrierData)) {
+            if (eventCount() >= limits_.events) {
+                state.reasons.insert("event_budget");
+            } else if (!analysis_->Managed()) {
+                state.localBarriers.push_back(barrier);
+            }
+            return true;
+        }
+        if (barrier.barrierKind != ACLSAN_DEVICE_BARRIER_PIPE ||
+            (h.flags != ACLSAN_DEVICE_EVENT_FLAG_NONE && h.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT)) {
             ++skippedSyncEvents_;
             state.reasons.insert("sync_coverage_unknown");
             return true;
@@ -190,7 +229,7 @@ bool Racechecker::StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId
             return true;
         }
     }
-    if (state.memory.size() + state.sync.size() + state.registers.size() >= limits_.events) {
+    if (eventCount() >= limits_.events) {
         state.reasons.insert("event_budget");
         return true;
     }
@@ -238,8 +277,9 @@ void Racechecker::Finish(uint64_t id, Launch& l, CheckerReportList& reports)
     ++launchesCount_;
     if (!l.registered)
         l.reasons.insert("missing_launch");
-    if (l.memory.empty() && !l.skippedMemory)
+    if (l.memory.empty() && !l.skippedMemory && l.vfs.empty()) {
         l.reasons.insert("empty_memory_observation");
+    }
     std::optional<uint32_t> device;
     const auto checkHeader = [&](const AclsanDeviceEventHeader& h) {
         if (device && *device != h.deviceId)
@@ -250,6 +290,12 @@ void Racechecker::Finish(uint64_t id, Launch& l, CheckerReportList& reports)
         checkHeader(a.header);
     for (const auto& a : l.sync)
         checkHeader(a.header);
+    for (const auto& a : l.vfs) {
+        checkHeader(a.header);
+    }
+    for (const auto& a : l.localBarriers) {
+        checkHeader(a.header);
+    }
     try {
         Analyze(id, l, reports);
     } catch (const RacecheckError& error) {
@@ -267,39 +313,73 @@ void Racechecker::Finish(uint64_t id, Launch& l, CheckerReportList& reports)
 // Per-launch analysis state. It is discarded after replay and never shared
 // across launches; the graph is sealed before any memory-state comparison.
 class Racechecker::LaunchProcessor {
+    using Access = DependencyGraph::Access;
     Racechecker& checker;
     Launch& launch;
-    CheckerReportList& reports;
+    CheckerReportList& published;
+    CheckerReportList reports;
     const Limits& limits_;
     std::unique_ptr<DependencyGraph> ownedDependency;
     DependencyGraph& dependency;
     HappensBeforeGraph& graph;
-    std::vector<DependencyGraph::Access>& accesses;
+    std::vector<Access>& accesses;
     size_t comparisons = 0;
 
 public:
     LaunchProcessor(Racechecker& owner, Launch& data, CheckerReportList& output)
         : checker(owner),
           launch(data),
-          reports(output),
+          published(output),
           limits_(owner.limits_),
-          ownedDependency(owner.analysis_->Managed() ? nullptr : std::make_unique<DependencyGraph>(limits_)),
+          ownedDependency(!owner.analysis_->Managed() ? std::make_unique<DependencyGraph>(limits_) : nullptr),
           dependency(ownedDependency ? *ownedDependency : owner.analysis_->Graph(data.id, limits_, data.reasons)),
           graph(dependency.graph),
           accesses(dependency.accesses)
     {}
+
     void Run()
     {
-        if (ownedDependency)
+        if (ownedDependency) {
             BuildDependencyGraph(
                 launch.memory, launch.sync, launch.skippedFragments, limits_, launch.reasons, dependency,
-                launch.registers);
+                launch.registers, launch.vfs, launch.localBarriers);
+        }
+        checker.warnings_ += dependency.warnings;
         checker.graphNodesPeak_ = std::max(checker.graphNodesPeak_, graph.Order().size());
         checker.graphEdgesPeak_ = std::max(checker.graphEdgesPeak_, graph.EdgeCount());
         checker.graphChainsPeak_ = std::max(checker.graphChainsPeak_, graph.ChainCount());
         graph.BeginAnalysis(limits_.analysisWork);
-        if (launch.reasons.empty())
-            ReplayMemory();
+        if (!launch.reasons.empty()) {
+            return;
+        }
+        struct Publication {
+            Racechecker& checker;
+            uint64_t raw, war, waw, atomic;
+            bool committed = false;
+            ~Publication()
+            {
+                if (!committed) {
+                    checker.raw_ = raw;
+                    checker.war_ = war;
+                    checker.waw_ = waw;
+                    checker.atomic_ = atomic;
+                }
+            }
+        } publication{checker, checker.raw_, checker.war_, checker.waw_, checker.atomic_};
+        // A FIX execution can span topological positions due to L0C unit release.
+        // Keep every launch result private until all endpoints have replayed successfully.
+        if (!ReplayMemory()) {
+            return;
+        }
+        if (reports.size() > published.max_size() - published.size()) {
+            throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "race report capacity exceeded");
+        }
+        published.reserve(published.size() + reports.size());
+        static_assert(std::is_nothrow_move_constructible_v<CheckerReport>);
+        for (auto& report : reports) {
+            published.emplace_back(std::move(report));
+        }
+        publication.committed = true;
     }
 
 private:
@@ -326,14 +406,30 @@ private:
         LaunchProcessor& processor;
         const std::vector<AclsanDeviceMemoryAccessData>& records;
         MemStateTracker& memory;
+        MemStateTracker vfMemory;
+        bool vfEnabled;
         size_t stateBytes = 0;
         size_t stateSegments = 0;
+
+        MemoryReplay(
+            LaunchProcessor& owner, const std::vector<AclsanDeviceMemoryAccessData>& input, MemStateTracker& ordinary,
+            bool enableVf)
+            : processor(owner),
+              records(input),
+              memory(ordinary),
+              vfMemory(input, racecheck::MemStateTrackerMode::VfExternal),
+              vfEnabled(enableVf)
+        {}
 
         struct ConflictBatch {
             std::vector<AccessPair> confirmed;
             std::vector<NpuCheckRacecheckReport> reports;
             std::set<std::pair<uint64_t, uint64_t>> ranges;
+            std::set<std::tuple<CbIndex, CbIndex, uint64_t, uint64_t>> pairs;
         };
+
+        using VfSummary = std::map<size_t, racecheck::PreparedAccess>;
+        using VfSummaries = std::map<size_t, VfSummary>;
 
         racecheck::PreparedAccess PrepareAccess(size_t index) const
         {
@@ -348,18 +444,29 @@ private:
         static size_t StateStorageBytes(const MemState& state)
         {
             size_t history = state.readers.capacity();
+            size_t groupBytes = 0;
             for (const auto& writers : state.atomicWriters)
                 history += writers.capacity();
-            return sizeof(MemState) + SEGMENT_NODE_ALLOWANCE + history * sizeof(CbIndex);
+            history += state.externalReaders.capacity() + state.externalWriters.capacity();
+            for (const auto& writers : state.externalAtomicWriters)
+                history += writers.capacity();
+            for (const auto& group : state.vfGroups) {
+                groupBytes += sizeof(decltype(state.vfGroups)::value_type) + SEGMENT_NODE_ALLOWANCE;
+                history += group.second.readers.capacity() + group.second.writers.capacity();
+                for (const auto& writers : group.second.atomicWriters)
+                    history += writers.capacity();
+            }
+            return sizeof(MemState) + SEGMENT_NODE_ALLOWANCE + groupBytes + history * sizeof(CbIndex);
         }
 
         // Account only touched intervals and their merge neighbours. This avoids a
         // full-table scan on every access while retaining history-capacity costs.
-        std::pair<size_t, size_t> MeasureUsage(const PhysicalSpaceKey& key, const std::vector<Interval>& windows) const
+        std::pair<size_t, size_t> MeasureUsage(
+            const MemStateTracker& tracker, const PhysicalSpaceKey& key, const std::vector<Interval>& windows) const
         {
             std::pair<size_t, size_t> result{};
-            const auto table = memory.Tables().find(key);
-            if (table == memory.Tables().end())
+            const auto table = tracker.Tables().find(key);
+            if (table == tracker.Tables().end())
                 return result;
             for (const auto window : windows) {
                 auto it = table->second.lower_bound(window.begin);
@@ -373,78 +480,135 @@ private:
             return result;
         }
 
-        void CommitConflicts(size_t current, const racecheck::PreparedAccess& prepared, ConflictBatch& batch)
+        void PublishConflicts(ConflictBatch& batch)
         {
+            static_assert(std::is_nothrow_move_constructible_v<CheckerReport>);
+            static_assert(std::is_nothrow_constructible_v<CheckerReport, NpuCheckRacecheckReport&&>);
             if (batch.confirmed.empty())
                 return;
-            // Allocate the complete batch before mutating MemStateTracker. If
-            // report construction fails, neither reports nor memory state change.
-            auto pending = processor.reports;
-            for (auto& evidence : batch.reports)
-                pending.emplace_back(std::move(evidence));
-            memory.UpdateMemState(current, batch.confirmed, prepared);
-            processor.reports.swap(pending);
-            for (const auto& evidence : batch.reports) {
-                if (evidence.kind == ConflictKind::RAW)
+            auto& output = processor.reports;
+            for (auto& evidence : batch.reports) {
+                evidence.reportId = processor.checker.raw_ + processor.checker.war_ + processor.checker.waw_ +
+                                    processor.checker.atomic_ + 1;
+                const auto kind = evidence.kind;
+                output.emplace_back(std::move(evidence));
+                if (kind == ConflictKind::RAW) {
                     ++processor.checker.raw_;
-                else if (evidence.kind == ConflictKind::WAR)
+                } else if (kind == ConflictKind::WAR) {
                     ++processor.checker.war_;
-                else if (evidence.kind == ConflictKind::WAW)
+                } else if (kind == ConflictKind::WAW) {
                     ++processor.checker.waw_;
-                else
+                } else {
                     ++processor.checker.atomic_;
+                }
             }
         }
 
-        bool CheckAccess(size_t current)
+        bool CheckAccess(
+            MemStateTracker& tracker, size_t current, const racecheck::PreparedAccess& prepared, ConflictBatch& batch,
+            bool pairwise)
         {
-            const auto prepared = PrepareAccess(current);
-            const auto candidates = memory.CheckPotentialRace(current, prepared);
-            ConflictBatch batch;
+            const auto candidates = tracker.CheckPotentialRace(current, prepared);
+            std::optional<racecheck::PreparedAccess> reportAccess;
             for (const auto& candidate : candidates) {
                 const auto relation = processor.CompareAccesses(candidate.prevIndex, current);
                 if (relation == HappensBeforeGraph::Relation::Unordered) {
                     batch.confirmed.push_back(candidate);
-                    // A single current access can have multiple historical
-                    // candidates for the same range. Keep one user-facing
-                    // report for that memory range, while submitting every
-                    // candidate to the tracker so the range is frozen safely.
-                    if (batch.ranges.emplace(candidate.begin, candidate.end).second) {
-                        auto evidence = MakeRacecheckDiagnostics({candidate}, records, current, prepared);
-                        evidence.front().reportId = processor.checker.raw_ + processor.checker.war_ +
-                                                    processor.checker.waw_ + processor.checker.atomic_ +
-                                                    batch.reports.size() + 1;
+                    const bool newReport =
+                        pairwise ?
+                            batch.pairs.emplace(candidate.prevIndex, candidate.curIndex, candidate.begin, candidate.end)
+                                .second :
+                            batch.ranges.emplace(candidate.begin, candidate.end).second;
+                    if (newReport) {
+                        if (race::DynamicVfKey(records[current]) && !reportAccess)
+                            reportAccess.emplace(PrepareAccess(current));
+                        auto evidence = MakeRacecheckDiagnostics(
+                            {candidate}, records, current, reportAccess ? *reportAccess : prepared);
                         batch.reports.push_back(std::move(evidence.front()));
                     }
                     continue;
                 }
                 if (relation != HappensBeforeGraph::Relation::Before) {
-                    CommitConflicts(current, prepared, batch);
                     return false;
                 }
             }
-            CommitConflicts(current, prepared, batch);
             return true;
         }
 
-        bool CheckInstruction(const std::vector<size_t>& indices)
+        bool CheckInstruction(
+            const std::vector<size_t>& indices, const std::map<size_t, racecheck::PreparedAccess>* summary = nullptr)
         {
-            // Check every operand against the prior instruction state before any
-            // operand updates it. Overlapping source/destination fragments cannot
-            // hide an earlier inter-instruction hazard or create a self-race.
-            for (auto current : indices)
-                if (!CheckAccess(current))
+            std::vector<ConflictBatch> ordinaryBatches(indices.size());
+            std::vector<ConflictBatch> vfBatches(indices.size());
+            std::vector<racecheck::PreparedAccess> prepared;
+            prepared.reserve(indices.size());
+            for (const auto index : indices) {
+                prepared.push_back(summary ? summary->at(index) : PrepareAccess(index));
+            }
+            size_t reportCount = 0;
+            for (size_t i = 0; i < indices.size(); ++i) {
+                const auto index = indices[i];
+                const bool vfAccess = race::DynamicVfKey(records[index]).has_value();
+                const bool vfMemoryAccess = vfEnabled && records[index].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
+                if (!vfAccess && !CheckAccess(memory, index, prepared[i], ordinaryBatches[i], false)) {
                     return false;
+                }
+                if (vfMemoryAccess && !CheckAccess(vfMemory, index, prepared[i], vfBatches[i], true)) {
+                    return false;
+                }
+                reportCount += ordinaryBatches[i].reports.size() + vfBatches[i].reports.size();
+            }
+            auto& output = processor.reports;
+            if (reportCount > output.max_size() - output.size()) {
+                throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "race report capacity exceeded");
+            }
+            const size_t required = output.size() + reportCount;
+            if (required > output.capacity()) {
+                const size_t grown =
+                    output.capacity() > output.max_size() / 2 ? output.max_size() : output.capacity() * 2;
+                output.reserve(std::max(required, grown));
+            }
+            std::vector<size_t> order(indices.size());
+            for (size_t i = 0; i < order.size(); ++i) {
+                order[i] = i;
+            }
+            std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+                return NormalizeMemoryAccessMode(records[indices[a]].accessMode) == ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
+                       NormalizeMemoryAccessMode(records[indices[b]].accessMode) != ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+            });
+            const auto savedBytes = stateBytes, savedSegments = stateSegments;
+            for (auto i : order) {
+                const auto index = indices[i];
+                const bool vfAccess = race::DynamicVfKey(records[index]).has_value();
+                const bool vfMemoryAccess = vfEnabled && records[index].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
+                if (!vfAccess && !UpdateAccess(memory, index, ordinaryBatches[i].confirmed, prepared[i])) {
+                    stateBytes = savedBytes;
+                    stateSegments = savedSegments;
+                    return false;
+                }
+                if (vfMemoryAccess && !UpdateAccess(vfMemory, index, vfBatches[i].confirmed, prepared[i])) {
+                    stateBytes = savedBytes;
+                    stateSegments = savedSegments;
+                    return false;
+                }
+            }
+            for (auto& batch : ordinaryBatches) {
+                PublishConflicts(batch);
+            }
+            for (auto& batch : vfBatches) {
+                PublishConflicts(batch);
+            }
             return true;
         }
 
-        std::vector<Interval> AffectedWindows(const racecheck::PreparedAccess& prepared) const
+        std::vector<Interval> AffectedWindows(
+            const MemStateTracker& tracker, const racecheck::PreparedAccess& prepared) const
         {
             std::vector<Interval> windows;
-            const auto table = memory.Tables().find(prepared.key);
+            const auto table = tracker.Tables().find(prepared.key);
             for (const auto range : prepared.ranges) {
                 Interval window{range.begin, range.end};
-                if (table != memory.Tables().end() && !table->second.empty()) {
+                if (table != tracker.Tables().end() && !table->second.empty()) {
                     auto first = table->second.lower_bound(range.begin);
                     if (first != table->second.begin())
                         window.begin = std::prev(first)->first;
@@ -460,21 +624,27 @@ private:
             return windows;
         }
 
-        bool UpdateAccess(size_t current)
+        bool UpdateAccess(
+            MemStateTracker& tracker, size_t current, const std::vector<AccessPair>& conflicts,
+            const racecheck::PreparedAccess& prepared)
         {
-            const auto prepared = PrepareAccess(current);
             if (prepared.ranges.empty())
                 return true;
             if (processor.limits_.stateBytes < sizeof(MemState) + SEGMENT_NODE_ALLOWANCE) {
                 processor.launch.reasons.insert("state_plan_budget");
                 return false;
             }
-            const auto windows = AffectedWindows(prepared);
-            const auto before = MeasureUsage(prepared.key, windows);
-            memory.UpdateMemState(current, {}, prepared);
-            const auto after = MeasureUsage(prepared.key, windows);
+            const auto windows = AffectedWindows(tracker, prepared);
+            const auto before = MeasureUsage(tracker, prepared.key, windows);
+            tracker.UpdateMemState(current, conflicts, prepared);
+            const auto after = MeasureUsage(tracker, prepared.key, windows);
             stateSegments = stateSegments - before.first + after.first;
             stateBytes = stateBytes - before.second + after.second;
+            return CheckStateBudget();
+        }
+
+        bool CheckStateBudget()
+        {
             processor.checker.stateBytesPeak_ = std::max(processor.checker.stateBytesPeak_, stateBytes);
             processor.checker.stateSegmentsPeak_ = std::max(processor.checker.stateSegmentsPeak_, stateSegments);
             if (stateSegments > processor.limits_.stateSegments || stateBytes > processor.limits_.stateBytes) {
@@ -484,23 +654,68 @@ private:
             return true;
         }
 
-        bool UpdateInstruction(const std::vector<size_t>& indices)
+        bool BuildVfSummaries(VfSummaries& summaries)
         {
-            // Source reads commit before ordinary destination writes. This retains
-            // the destination writer when an in-place instruction has both operands.
-            auto updates = indices;
-            std::stable_sort(updates.begin(), updates.end(), [this](size_t a, size_t b) {
-                return records[a].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
-                       records[b].accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ;
-            });
-            for (auto current : updates)
-                if (!UpdateAccess(current))
+            // External edges meet the VF at its boundaries, so all internal accesses
+            // have the same ordering against an external instruction.
+            MemStateTracker summary(records, racecheck::MemStateTrackerMode::VfExternal);
+            for (size_t index = 0; index < records.size(); ++index) {
+                if (!race::DynamicVfKey(records[index]))
+                    continue;
+                const auto prepared = PrepareAccess(index);
+                if (!UpdateAccess(summary, index, {}, prepared))
                     return false;
+            }
+            const auto trackerBytes = stateBytes, trackerSegments = stateSegments;
+            for (const auto& table : summary.Tables()) {
+                for (const auto& segment : table.second) {
+                    for (const auto& group : segment.second.vfGroups) {
+                        const auto& representatives =
+                            group.second.writers.empty() ? group.second.readers : group.second.writers;
+                        if (representatives.empty())
+                            continue;
+                        const auto index = representatives.front();
+                        const auto entry = processor.dependency.vfEntries.at(group.first);
+                        size_t addedBytes = 0;
+                        auto groupEntry = summaries.try_emplace(entry);
+                        if (groupEntry.second)
+                            addedBytes += sizeof(VfSummaries::value_type) + SEGMENT_NODE_ALLOWANCE;
+                        auto inserted = groupEntry.first->second.try_emplace(
+                            index, racecheck::PreparedAccess{table.first, racecheck::AccessMode(records[index]), {}});
+                        if (inserted.second)
+                            addedBytes += sizeof(VfSummary::value_type) + SEGMENT_NODE_ALLOWANCE;
+                        auto& ranges = inserted.first->second.ranges;
+                        const auto oldCapacity = ranges.capacity();
+                        if (!ranges.empty() && ranges.back().end == segment.second.begin) {
+                            ranges.back().end = segment.second.end;
+                        } else {
+                            ranges.push_back({segment.second.begin, segment.second.end});
+                            ++stateSegments;
+                        }
+                        addedBytes += (ranges.capacity() - oldCapacity) * sizeof(racecheck::ByteRange);
+                        stateBytes += addedBytes;
+                        if (!CheckStateBudget())
+                            return false;
+                    }
+                }
+            }
+            stateBytes -= trackerBytes;
+            stateSegments -= trackerSegments;
             return true;
+        }
+
+        void ReleaseVfSummary(const VfSummary& summary)
+        {
+            stateBytes -= sizeof(VfSummaries::value_type) + SEGMENT_NODE_ALLOWANCE;
+            for (const auto& access : summary) {
+                stateBytes -= sizeof(VfSummary::value_type) + SEGMENT_NODE_ALLOWANCE +
+                              access.second.ranges.capacity() * sizeof(racecheck::ByteRange);
+                stateSegments -= access.second.ranges.size();
+            }
         }
     };
 
-    void ReplayMemory()
+    bool ReplayMemory()
     {
         // Freeze before querying: a missing path is meaningful only after all
         // supported synchronization edges have been collected and validated.
@@ -512,18 +727,36 @@ private:
         std::map<size_t, std::vector<size_t>> instructions;
         for (size_t i = 0; i < accesses.size(); ++i) {
             records.push_back(accesses[i].data);
-            instructions[accesses[i].node].push_back(i);
+            if (!race::DynamicVfKey(records.back()))
+                instructions[accesses[i].node].push_back(i);
         }
-        MemoryReplay replay{*this, records, history->tracker};
+        const bool hasVf = std::any_of(records.begin(), records.end(), [](const auto& record) {
+            return record.vfInstrValid != 0 && record.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
+        });
+        MemoryReplay replay{*this, records, history->tracker, hasVf};
+        MemoryReplay::VfSummaries summaries;
+        if (hasVf && !replay.BuildVfSummaries(summaries))
+            return false;
         for (auto node : graph.Order()) {
+            auto summary = summaries.find(node);
+            if (summary != summaries.end()) {
+                std::vector<size_t> indices;
+                indices.reserve(summary->second.size());
+                for (const auto& entry : summary->second)
+                    indices.push_back(entry.first);
+                if (!replay.CheckInstruction(indices, &summary->second))
+                    return false;
+                replay.ReleaseVfSummary(summary->second);
+                summaries.erase(summary);
+                continue;
+            }
             auto instruction = instructions.find(node);
             if (instruction == instructions.end())
                 continue;
             if (!replay.CheckInstruction(instruction->second))
-                return;
-            if (!replay.UpdateInstruction(instruction->second))
-                return;
+                return false;
         }
+        return true;
     }
 };
 
@@ -531,7 +764,7 @@ void Racechecker::Analyze([[maybe_unused]] uint64_t id, Launch& launch, CheckerR
 {
     LaunchProcessor processor(*this, launch, reports);
     processor.Run();
-    if (analysis_->Managed()) {
+    if (analysis_->Managed() && launch.reasons.empty()) {
         PublishConflicts(analysis_->CrossLaunchConflicts(id, limits_, launch.reasons), reports);
         if (launch.reasons.empty())
             PublishConflicts(analysis_->CrossLaunchHostConflicts(id, limits_, launch.reasons), reports);
@@ -569,8 +802,8 @@ std::string Racechecker::Summary() const
       << " graph_edges_peak=" << graphEdgesPeak_ << " graph_chains_peak=" << graphChainsPeak_
       << " graph_query_work_peak=" << graphQueryWorkPeak_ << " state_accounted_bytes_peak=" << stateBytesPeak_
       << " state_segments_peak=" << stateSegmentsPeak_ << " pending_launches=" << launches_.size()
-      << " analysis_complete=" << (AnalysisComplete() ? "true" : "false")
-      << " errors=" << (raw_ + war_ + waw_ + atomic_) << " warnings=0";
+      << " analysis_complete=" << (AnalysisComplete() ? "true" : "false") << " warnings=" << warnings_
+      << " errors=" << (raw_ + war_ + waw_ + atomic_);
     for (const auto& reason : reasons_)
         s << " " << reason.first << "=" << reason.second;
     return s.str();

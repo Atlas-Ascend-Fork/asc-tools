@@ -145,6 +145,7 @@ void RemoveDirectory(const std::string& directory) noexcept
 
 struct DeviceBinaryRegistry::Impl {
     struct BinaryEntry {
+        std::shared_ptr<NpubitUbHandle> hibit;
         uint64_t binaryId = 0;
         bool instrumented = false;
         uint32_t traceArgumentOffset = 0;
@@ -158,6 +159,7 @@ struct DeviceBinaryRegistry::Impl {
         std::vector<BinarySegment> segments;
     };
 
+    std::vector<std::weak_ptr<NpubitUbHandle>> hibitObjects;
     mutable std::mutex mutex;
     uint64_t nextBinaryId = 1;
     uintptr_t latestBinary = 0;
@@ -221,6 +223,24 @@ bool DeviceBinaryRegistry::RecordBinaryLoadFromData(
             impl_->actualSegments.erase(actual);
         }
         if (instrumented) {
+            for (auto it = impl_->hibitObjects.begin(); it != impl_->hibitObjects.end();) {
+                auto handle = it->lock();
+                if (!handle) {
+                    it = impl_->hibitObjects.erase(it);
+                    continue;
+                }
+                if (handle->Matches(image, imageBytes)) {
+                    entry.hibit = std::move(handle);
+                    break;
+                }
+                ++it;
+            }
+            if (!entry.hibit) {
+                entry.hibit = NpubitUbHandle::Create(image, imageBytes);
+                if (entry.hibit) {
+                    impl_->hibitObjects.push_back(entry.hibit);
+                }
+            }
             const fs::path workRoot = WorkRoot();
             const fs::path session =
                 workRoot / ("aclsan-symbolizer-" + std::to_string(static_cast<unsigned long long>(getpid())) + "-" +
@@ -441,6 +461,21 @@ bool DeviceBinaryRegistry::GetFunctionTraceArgumentOffset(
         return true;
     } catch (...) {
         return false;
+    }
+}
+
+std::shared_ptr<NpubitUbHandle> DeviceBinaryRegistry::GetFunctionHibitHandle(uintptr_t function) const noexcept
+{
+    try {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        const auto owner = impl_->functionBinaries.find(function);
+        if (owner == impl_->functionBinaries.end()) {
+            return {};
+        }
+        const auto binary = impl_->binaries.find(owner->second);
+        return binary == impl_->binaries.end() ? nullptr : binary->second.hibit;
+    } catch (...) {
+        return {};
     }
 }
 

@@ -224,9 +224,8 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
         for (const auto& access : accesses) {
             const auto& h = access.header;
             if (h.version != ACLSAN_API_VERSION || h.size < sizeof(access) || h.deviceId != scope.deviceId ||
-                h.launchId != first.launchId || h.instrExecId != first.instrExecId ||
-                h.executor.blockType != first.executor.blockType || h.executor.blockId != first.executor.blockId ||
-                h.pipeline > MAX_WRITER_PIPELINE || access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
+                race::Key(access) != race::Key(accesses.front()) || h.pipeline > MAX_WRITER_PIPELINE ||
+                access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
                 access.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
                 access.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
                 return fail(InitCheckStatus::INVALID_RECORD);
@@ -659,16 +658,20 @@ void Initcheck::FlushMemoryAccesses(void* stream, CheckerReportList& reports)
                 it = initializedRegisters_.erase(it);
             else
                 ++it;
-        for (auto it = reportedUsages_.begin(); it != reportedUsages_.end();)
-            if (std::get<1>(*it) == entry.first)
+        for (auto it = reportedUsages_.begin(); it != reportedUsages_.end();) {
+            if (std::get<3>(std::get<0>(*it)) == entry.first) {
                 it = reportedUsages_.erase(it);
-            else
+            } else {
                 ++it;
-        for (auto it = reportGroups_.begin(); it != reportGroups_.end();)
-            if (std::get<1>(it->first) == entry.first)
+            }
+        }
+        for (auto it = reportGroups_.begin(); it != reportGroups_.end();) {
+            if (std::get<3>(it->first) == entry.first) {
                 it = reportGroups_.erase(it);
-            else
+            } else {
                 ++it;
+            }
+        }
     }
 }
 
@@ -734,8 +737,10 @@ void Initcheck::ReplayLaunch(
     } else {
         ownedDependency = std::make_unique<DependencyGraph>(limits);
         dependency = ownedDependency.get();
-        if (reasons.empty())
-            BuildDependencyGraph(memory, sync, {}, limits, reasons, *dependency, unitFlagRegisters_[launchId]);
+        if (reasons.empty()) {
+            std::vector<AclsanDeviceVfData> vfs;
+            BuildDependencyGraph(memory, sync, {}, limits, reasons, *dependency, unitFlagRegisters_[launchId], vfs, {});
+        }
     }
     auto& graph = dependency->graph;
     graph.BeginAnalysis(limits.analysisWork);
@@ -765,9 +770,8 @@ void Initcheck::ReplayLaunch(
     std::map<Storage, std::vector<size_t>> writers;
     for (size_t i = 0; i < accesses.size(); ++i) {
         const auto& a = accesses[i].data;
-        // Standalone ingress retains UB operands only to validate the complete
-        // instruction in the dependency graph; UB byte checks remain disabled.
-        if (!analysis_->Managed() && a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB)
+        // UB operands remain in the dependency graph, but initcheck does not check UB bytes.
+        if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB)
             continue;
         const auto& h = a.header;
         if (invalidInstructions.count(
@@ -1374,9 +1378,7 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     if (data.accessCount != 0 && !missingRegisterPlaceholder) {
         replayReasons_[data.header.launchId].insert("uninitialized_register_dependency");
     }
-    const InstructionKey instruction{
-        data.header.deviceId, data.header.launchId, data.header.executor.blockType, data.header.executor.blockId,
-        data.header.instrExecId};
+    const InstructionKey instruction = race::Key(data);
     const auto [group, inserted] = reportGroups_.try_emplace(instruction, nextGroupId_);
     if (inserted) {
         ++nextGroupId_;
@@ -1384,8 +1386,7 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     while (missing != 0) {
         const uint32_t registerId = static_cast<uint32_t>(__builtin_ctzll(missing));
         missing &= missing - 1;
-        const UsageKey usage{data.header.deviceId,         data.header.launchId,    data.header.executor.blockType,
-                             data.header.executor.blockId, data.header.instrExecId, registerId};
+        const UsageKey usage{instruction, registerId};
         if (!reportedUsages_.insert(usage).second) {
             continue;
         }

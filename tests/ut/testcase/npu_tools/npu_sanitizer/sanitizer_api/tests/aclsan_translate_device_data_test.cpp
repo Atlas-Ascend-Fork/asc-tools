@@ -61,6 +61,32 @@ constexpr uint32_t LDP_B32_ID = 53;
 
 static_assert(std::is_same_v<aclsan::DeviceMemoryAccessDataList, std::vector<AclsanDeviceMemoryAccessData>>);
 
+TEST(TranslateDeviceData, PipeBarrierCarriesExplicitKind)
+{
+    aclsan::ParsedTraceRecord parsed{};
+    parsed.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+    const aclsan::DecodedInstruction decoded{
+        aclsan::DeviceInstructionKind::PipeBarrier, aclsan::PipeBarrierParamField{439, ACLSAN_DEVICE_PIPE_MTE2}};
+    const auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, decoded);
+    ASSERT_TRUE(callback.has_value());
+    const auto* barrier = std::get_if<AclsanDeviceBarrierData>(&*callback);
+    ASSERT_NE(barrier, nullptr);
+    EXPECT_EQ(barrier->header.size, sizeof(*barrier));
+    EXPECT_EQ(barrier->barrierKind, ACLSAN_DEVICE_BARRIER_PIPE);
+    EXPECT_EQ(barrier->pipe, ACLSAN_DEVICE_PIPE_MTE2);
+    EXPECT_EQ(barrier->srcMemType, ACLSAN_DEVICE_LOCAL_MEM_NONE);
+    EXPECT_EQ(barrier->dstMemType, ACLSAN_DEVICE_LOCAL_MEM_NONE);
+
+    auto local = *barrier;
+    local.pipe = ACLSAN_DEVICE_PIPE_INVALID;
+    local.barrierKind = ACLSAN_DEVICE_BARRIER_LOCAL_MEM;
+    local.srcMemType = ACLSAN_DEVICE_LOCAL_MEM_VEC_STORE;
+    local.dstMemType = ACLSAN_DEVICE_LOCAL_MEM_SCALAR_LOAD;
+    PlogCapture capture;
+    aclsan::LogCallbackData(local);
+    EXPECT_NE(capture.Text().find("barrierKind=1 srcMemType=2 dstMemType=4"), std::string::npos);
+}
+
 std::optional<aclsan::DecodedInstruction> DecodeRecord(const aclsan::AclsanRawTraceRecord& record)
 {
     const aclsan::DeviceInstructionDecoder* decoder =
@@ -514,10 +540,11 @@ void TestTranslateMultiAndFixpipeToGmCbdata()
 }
 
 std::string CaptureTranslateDebugLogs(
-    const aclsan::AclsanRawTraceRecord& record, const aclsan::ParsedTraceRecord& parsed)
+    const aclsan::AclsanRawTraceRecord& record, const aclsan::ParsedTraceRecord& parsed,
+    const aclsan::MemoryRegisterState& registerState = {})
 {
     PlogCapture capture;
-    const auto translated = TranslateRecordToCallbackData(record, parsed);
+    const auto translated = TranslateRecordToCallbackData(record, parsed, registerState);
     assert(translated.has_value());
     return capture.Text();
 }
@@ -543,15 +570,22 @@ void TestLogsEveryMemoryAccessInVariableLengthList()
     accesses[0].header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
     accesses[0].header.instrExecId = 4;
     accesses[0].header.launchId = 5;
+    accesses[0].memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    accesses[0].memoryOwner = {19, 7, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR};
+    accesses[0].vfInstrExecSeq = 9;
+    accesses[0].vfInstrValid = 1;
 
     const std::string logs = CaptureCallbackDataDebugLogs(aclsan::DeviceCallbackData{accesses});
 
-    assert(logs.find("[cbdata] type=AclsanDeviceMemoryAccessData index=0") != std::string::npos);
+    assert(logs.find("[cbdata] type=AclsanDeviceMemoryAccessData address=0x1000") != std::string::npos);
     assert(
-        logs.find("deviceId=2 phyCoreId=1 blockId=3 blockType=AICORE instrExecId=4 launchId=5") != std::string::npos);
-    assert(logs.find("index=0 address=0x1000") != std::string::npos);
-    assert(logs.find("index=1 address=0x1001") != std::string::npos);
-    assert(logs.find("index=2 address=0x1002") != std::string::npos);
+        logs.find("deviceId=2 executorPhyCoreId=1 executorBlockId=3 executorBlockType=AICORE "
+                  "memoryOwnerPhyCoreId=19 memoryOwnerBlockId=7 memoryOwnerBlockType=AIV "
+                  "instrExecId=4 launchId=5") != std::string::npos);
+    assert(logs.find("address=0x1000 memorySpace=1 accessMode=0 accessIndex=0") != std::string::npos);
+    assert(logs.find("[cbdata] vfInstrExecSeq=9 vfInstrValid=1") != std::string::npos);
+    assert(logs.find("address=0x1001 memorySpace=0 accessMode=0 accessIndex=1") != std::string::npos);
+    assert(logs.find("address=0x1002 memorySpace=0 accessMode=0 accessIndex=2") != std::string::npos);
 }
 
 void TestTranslateDebugLogsShowSyncConversion()
@@ -583,7 +617,8 @@ void TestTranslateDebugLogsShowSyncConversion()
     assert(logs.find("srcPipe=2 dstPipe=3 eventId=7") != std::string::npos);
     assert(logs.find("[cbdata]") != std::string::npos);
     assert(logs.find("type=AclsanDeviceSyncData") != std::string::npos);
-    if (logs.find("[cbdata] deviceId=3 phyCoreId=6 blockId=4 blockType=AIC  instrExecId=9 launchId=12  "
+    if (logs.find("[cbdata] deviceId=3 executorPhyCoreId=6 executorBlockId=4 executorBlockType=AIC  instrExecId=9 "
+                  "launchId=12  "
                   "type=AclsanDeviceSyncData pc=0x1234") == std::string::npos) {
         std::abort();
     }
@@ -609,7 +644,8 @@ void TestTranslateDebugLogsShowBufferConversion()
         logs.find("pipe=" + std::to_string(ACLSAN_DEVICE_PIPE_VECTOR) + " bufId=0x12345678 mode=3") !=
         std::string::npos);
     assert(
-        logs.find("[cbdata] deviceId=3 phyCoreId=7 blockId=5 blockType=AIV  instrExecId=10 launchId=0  "
+        logs.find("[cbdata] deviceId=3 executorPhyCoreId=7 executorBlockId=5 executorBlockType=AIV  instrExecId=10 "
+                  "launchId=0  "
                   "type=AclsanDeviceSyncData") != std::string::npos);
     assert(
         logs.find(
@@ -633,7 +669,8 @@ void TestTranslateDebugLogsShowUbufToGmConversion()
     const aclsan::ParsedTraceRecord parsed =
         MakeParsedTraceRecord(11, 3, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR, 5, 3, 13);
 
-    const std::string logs = CaptureTranslateDebugLogs(record, parsed);
+    const auto state = SingletonDmaState(aclsan::DmaLoopDirection::UBUF_TO_GM);
+    const std::string logs = CaptureTranslateDebugLogs(record, parsed, state);
     assert(
         logs.find("[raw] deviceId=3 phyCoreId=5 blockId=3 blockType=AIV  instrExecId=11 launchId=13  "
                   "type=AclsanRawTraceRecord") != std::string::npos);
@@ -642,8 +679,9 @@ void TestTranslateDebugLogsShowUbufToGmConversion()
         std::string::npos);
     assert(logs.find("[param] type=CopyUbufToGmAlignV2ParamField") != std::string::npos);
     assert(logs.find("burstNum=2 burstLen=64") != std::string::npos);
-    assert(logs.find("[cbdata] type=AclsanDeviceMemoryAccessData index=0") != std::string::npos);
-    assert(logs.find("deviceId=3 phyCoreId=5 blockId=3 blockType=AIV instrExecId=11 launchId=13") != std::string::npos);
+    assert(logs.find("[cbdata] type=AclsanDeviceMemoryAccessData address=0x3000") != std::string::npos);
+    assert(logs.find("deviceId=3 executorPhyCoreId=5 executorBlockId=3 executorBlockType=AIV") != std::string::npos);
+    assert(logs.find("instrExecId=11 launchId=13") != std::string::npos);
 }
 
 void TestTranslateCopyGmToCbufV2ToCallbackData()

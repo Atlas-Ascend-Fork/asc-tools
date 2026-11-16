@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include "device_runtime/device_binary_registry.h"
+#include "dbi/device_elf_fixture.h"
 
 #include <algorithm>
 #include <cassert>
@@ -253,11 +254,10 @@ TEST(DeviceBinaryRegistry, ReadOnlySectionsRemainLaunchScopedAcrossUnloadAndReus
 
     aclsan::device_runtime::DeviceBinaryRegistry registry;
     ASSERT_TRUE(registry.RecordLoadedImage(1, image.data(), image.size()));
-    auto originalImage = image;
-    rodata.sh_addr = 0x1000;
-    std::memcpy(originalImage.data() + header.e_shoff + 2 * sizeof(Elf64_Shdr), &rodata, sizeof(rodata));
+    const auto originalImage = aclsan::test::MakeDeviceElf(0x1000);
     ASSERT_TRUE(registry.RecordBinaryLoadFromData(1, true, 0, originalImage.data(), originalImage.size()));
     registry.RecordBinaryFunctionLookup(1, 2, "kernel");
+    ASSERT_NE(registry.GetFunctionHibitHandle(2), nullptr);
     uintptr_t binary = 0;
     std::vector<aclsan::BinarySectionRange> snapshot;
     ASSERT_TRUE(registry.GetFunctionReadOnlySections(2, binary, snapshot));

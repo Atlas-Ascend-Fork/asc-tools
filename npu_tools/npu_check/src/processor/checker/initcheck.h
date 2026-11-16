@@ -104,8 +104,9 @@ private:
     std::shared_ptr<MemoryAnalysis> analysis_;
     // (blockType, blockId) 唯一标识一次 device/launch 内的执行。
     using CoreKey = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t>;
-    using UsageKey = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t, uint64_t, uint32_t>;
-    using InstructionKey = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t, uint64_t>;
+    // Instruction identity and uninitialized register ID.
+    using UsageKey = std::tuple<race::Instruction, uint32_t>;
+    using InstructionKey = race::Instruction;
 
     bool OnRegisterState(const AclsanDeviceRegisterStateData& data);
     bool OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports);
@@ -144,4 +145,4 @@ private:
 
 } // namespace npucheck
 
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_INITCHECK_H

@@ -71,6 +71,11 @@ void AclsanCallbackDispatcher::DispatchDeviceSync(const AclsanDeviceSyncData& cb
     Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC, &cbData, "DEVICE_SYNC");
 }
 
+void AclsanCallbackDispatcher::DispatchDeviceVf(const AclsanDeviceVfData& cbData) noexcept
+{
+    Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF, &cbData, "DEVICE_VF");
+}
+
 void AclsanCallbackDispatcher::DispatchLaunch(const AclsanLaunchData& cbData) noexcept
 {
     Dispatch(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &cbData, cbData.common.apiName);

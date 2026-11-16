@@ -21,6 +21,8 @@
 #include <vector>
 
 namespace aclsan {
+class NpubitUbHandle;
+class VfPbState;
 struct DeviceInstructionDecoder;
 struct ParsedTraceRecord;
 namespace dav3510 {
@@ -46,6 +48,7 @@ struct PreparedTraceLaunch {
     std::vector<HostInput> hostInputs;
     std::vector<InternalMemoryRange> readOnlyBinaryRanges;
     std::shared_ptr<void> binaryLease;
+    std::shared_ptr<NpubitUbHandle> hibitHandle;
     bool instrumented = false;
     uint64_t launchId = 0;
     uint32_t blockCount = 0;
@@ -82,7 +85,8 @@ void DispatchTraceRecords(
     const std::vector<ParsedTraceRecord>& records, const DeviceInstructionDecoder& decoder,
     const std::vector<PreparedTraceLaunch::HostInput>* internalInputs = nullptr,
     dav3510::Dav3510RegisterStateManager* retainedRegisterState = nullptr,
-    const std::vector<InternalMemoryRange>* readOnlyBinaryRanges = nullptr) noexcept;
+    const std::vector<InternalMemoryRange>* readOnlyBinaryRanges = nullptr, NpubitUbHandle* hibitHandle = nullptr,
+    VfPbState* retainedPbState = nullptr) noexcept;
 
 void RecordTraceLoadedImage(aclrtBinHandle binary, const void* image, size_t bytes) noexcept;
 // 登记运行时为已加载 device ELF 实际占用的 GM 区间（公共 RESOURCE 事件），并在每次 launch 上计数。

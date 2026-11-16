@@ -130,26 +130,8 @@ void PutAccess(
     using namespace detail;
     const auto exec = ExecContext(data);
     PutPrefixedExecFields(exec, prefix, &fields);
-    const auto mode = racecheck::AccessMode(data);
-    const char* name = "UNKNOWN";
-    switch (mode) {
-        case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
-            name = "READ";
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
-            name = "WRITE";
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD:
-            name = "ATOMIC_WRITE_ADD";
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN:
-            name = "ATOMIC_WRITE_MIN";
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX:
-            name = "ATOMIC_WRITE_MAX";
-            break;
-    }
-    fields[std::string(accessPrefix) + "Access"] = name;
+    fields[std::string(accessPrefix) + "Access"] =
+        AccessModeName(static_cast<AclsanDeviceMemoryAccessMode>(data.accessMode));
     fields[std::string(accessPrefix) + "RangeBegin"] = Hex(range.begin);
     fields[std::string(accessPrefix) + "RangeEnd"] = Hex(range.end);
 }
@@ -220,7 +202,7 @@ void PutActor(
         return;
     }
     fields[name + "Actor"] = "by Host API " + host->apiName + " (device " + std::to_string(host->deviceId) + ")";
-    fields[name + "Access"] = host->mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ ? "READ" : "WRITE";
+    fields[name + "Access"] = detail::AccessModeName(static_cast<AclsanDeviceMemoryAccessMode>(host->mode));
     fields[name + "RangeBegin"] = detail::Hex(range.begin);
     fields[name + "RangeEnd"] = detail::Hex(range.end);
 }

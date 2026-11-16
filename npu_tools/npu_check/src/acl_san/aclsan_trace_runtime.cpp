@@ -10,6 +10,7 @@
 
 #include "aclsan_trace_runtime.h"
 #include "securec.h"
+#include "aclsan_vf.h"
 
 #include "device_instr/decoder_registry.h"
 #include "device_instr/arch/dav_3510/register_state_manager.h"
@@ -35,6 +36,7 @@
 #include <mutex>
 #include <new>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -59,6 +61,8 @@ struct PendingTrace {
     std::vector<uint32_t> dispatchedRecordCounts;
     uint64_t parameterBytes = 0;
     std::vector<InternalMemoryRange> readOnlyBinaryRanges;
+    std::shared_ptr<NpubitUbHandle> hibitHandle;
+    VfPbState pbState;
 };
 
 struct LoadedImageRegion {
@@ -564,7 +568,7 @@ bool DispatchTraceSnapshot(PendingTrace& pending, bool executionComplete, TraceC
     if (!newRecords.empty() && pending.decoder != nullptr) {
         DispatchTraceRecords(
             newRecords, *pending.decoder, &pending.hostInputs, pending.registerState.get(),
-            &pending.readOnlyBinaryRanges);
+            &pending.readOnlyBinaryRanges, pending.hibitHandle.get(), &pending.pbState);
     }
     if (parsed.overflowCount != 0) {
         ASCTOOL_ERROR(
@@ -612,7 +616,8 @@ void DispatchTraceRecords(
     const std::vector<PreparedTraceLaunch::HostInput>* internalInputs,
     // NOLINTNEXTLINE(readability-non-const-parameter): registerState aliases and updates the retained state.
     dav3510::Dav3510RegisterStateManager* retainedRegisterState,
-    const std::vector<InternalMemoryRange>* readOnlyBinaryRanges) noexcept
+    const std::vector<InternalMemoryRange>* readOnlyBinaryRanges, NpubitUbHandle* hibitHandle,
+    VfPbState* retainedPbState) noexcept
 {
     if (records.empty()) {
         return;
@@ -621,6 +626,8 @@ void DispatchTraceRecords(
     dav3510::Dav3510RegisterStateManager localRegisterState(records.front().launchId);
     dav3510::Dav3510RegisterStateManager& registerState =
         retainedRegisterState != nullptr ? *retainedRegisterState : localRegisterState;
+    VfPbState localPbState;
+    VfPbState& pbState = retainedPbState ? *retainedPbState : localPbState;
     for (const ParsedTraceRecord& parsed : records) {
         if (!IsDefinedInstructionId(parsed.record.instrId)) {
             continue;
@@ -650,12 +657,62 @@ void DispatchTraceRecords(
             std::holds_alternative<VfParamField>(decoded->params)) {
             LogRawRecord(parsed);
             LogParamField(decoded->params);
+            if (const auto* push = std::get_if<PushPbParamField>(&decoded->params)) {
+                bool retained = false;
+                try {
+                    retained = pbState.Push(parsed, push->values);
+                } catch (...) {
+                    ASCTOOL_ERROR("acl_san VF: cannot retain PB state");
+                }
+                if (!retained) {
+                    AclsanDeviceMemoryAccessData lost{};
+                    lost.header = MakeVfCompletion(parsed, ACLSAN_DEVICE_VF_INPUT_MISSING).header;
+                    lost.header.size = sizeof(lost);
+                    lost.header.flags = ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR;
+                    AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(lost);
+                }
+                continue;
+            }
+            auto completion = MakeVfCompletion(parsed, ACLSAN_DEVICE_VF_INPUT_MISSING);
+            const auto current = registerState.Get(key);
+            const bool maskRefreshed = current && current->vectorMask.has_value();
+            try {
+                const auto states = pbState.Consume(parsed);
+                const auto& vf = std::get<VfParamField>(decoded->params);
+                if (states && hibitHandle && vf.instructionCount != 0) {
+                    const auto masks =
+                        maskRefreshed ? *current->vectorMask : VectorMaskParamField{UINT64_MAX, UINT64_MAX};
+                    const auto events =
+                        hibitHandle->Query(parsed, *states, {masks.vectorMask0, masks.vectorMask1}, &completion);
+                    for (const auto& event : events) {
+                        std::visit(
+                            [](const auto& value) {
+                                LogCallbackData(value);
+                                if constexpr (std::is_same_v<
+                                                  std::decay_t<decltype(value)>, AclsanDeviceMemoryAccessData>) {
+                                    AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(value);
+                                } else {
+                                    AclsanCallbackDispatcher::DispatchDeviceBarrier(value);
+                                }
+                            },
+                            event);
+                    }
+                } else {
+                    ASCTOOL_ERROR("acl_san VF: unavailable handle/PB state or zero instruction count");
+                }
+            } catch (...) {
+                completion.status = ACLSAN_DEVICE_VF_QUERY_FAILED;
+                ASCTOOL_ERROR("acl_san VF: failed to expand parent VF");
+            }
+            if (!maskRefreshed) {
+                completion.warningFlags |= ACLSAN_DEVICE_VF_MASK_NOT_REFRESHED;
+            }
+            LogCallbackData(completion);
+            AclsanCallbackDispatcher::DispatchDeviceVf(completion);
             continue;
         }
         bool stateInstruction = true;
         if (const auto* value = std::get_if<CtrlRegisterParamField>(&decoded->params)) {
-            registerState.Update(key, *value);
-        } else if (const auto* value = std::get_if<VectorMaskParamField>(&decoded->params)) {
             registerState.Update(key, *value);
         } else if (const auto* value = std::get_if<VectorMaskWriteParamField>(&decoded->params)) {
             registerState.Update(key, *value);
@@ -690,12 +747,7 @@ void DispatchTraceRecords(
         if (stateInstruction) {
             LogRawRecord(parsed);
             LogParamField(decoded->params);
-            if (const auto* mask = std::get_if<VectorMaskParamField>(&decoded->params)) {
-                for (const auto& stateData : MakeRegisterStateDataForVecMask(parsed, *mask)) {
-                    LogCallbackData(stateData);
-                    AclsanCallbackDispatcher::DispatchDeviceState(stateData);
-                }
-            } else if (const auto stateData = MakeRegisterStateData(parsed, *decoded); stateData.has_value()) {
+            if (const auto stateData = MakeRegisterStateData(parsed, *decoded); stateData.has_value()) {
                 LogCallbackData(*stateData);
                 AclsanCallbackDispatcher::DispatchDeviceState(*stateData);
             }
@@ -815,6 +867,7 @@ aclError PrepareTraceLaunch(
         prepared.blockCount = blockCount;
         ACLSAN_RETURN_IF_ACL_ERROR(ResolveLaunchContext(prepared), "Failed to resolve trace launch context");
         prepared.readOnlyBinaryRanges = ResolveReadOnlyBinaryRanges(function);
+        prepared.hibitHandle = DeviceBinaries().GetFunctionHibitHandle(reinterpret_cast<uintptr_t>(function));
 
         if (argumentMode == TraceArgumentMode::HOST_ARGS) {
             ACLSAN_RETURN_IF_ACL_ERROR(
@@ -982,7 +1035,9 @@ void CompleteTraceLaunch(
             std::make_unique<dav3510::Dav3510RegisterStateManager>(prepared.launchId),
             std::vector<uint32_t>(prepared.physicalCoreSlotCount, 0U),
             parameterBytes,
-            std::move(prepared.readOnlyBinaryRanges)};
+            std::move(prepared.readOnlyBinaryRanges),
+            std::move(prepared.hibitHandle),
+            {}};
         TraceRuntimeState& state = State();
         std::lock_guard<std::mutex> lock(state.mutex);
         state.pending.push_back(std::move(pending));

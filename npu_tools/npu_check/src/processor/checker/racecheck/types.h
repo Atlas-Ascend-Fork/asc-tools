@@ -8,14 +8,15 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_CHECK_RACECHECK_TYPES_H
-#define NPU_CHECK_RACECHECK_TYPES_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_TYPES_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_TYPES_H
 #include "acl_san/aclsan_cbdata_device.h"
 #include <array>
 #include <memory>
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -25,13 +26,50 @@ namespace npucheck::race {
 // L0C unit ownership: retain ownership or hand it to the other pipeline.
 inline constexpr uint32_t UNIT_FLAG_MODE_START = 2;
 inline constexpr uint32_t UNIT_FLAG_MODE_END = 3;
+// deviceId, executor blockType, executor blockId, executor phyCoreId.
 using Domain = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
 inline Domain DomainOf(const AclsanDeviceEventHeader& h)
 {
     return {h.deviceId, h.executor.blockType, h.executor.blockId, h.executor.phyCoreId};
 }
-using Instruction = std::tuple<Domain, uint64_t>;
-inline Instruction Key(const AclsanDeviceEventHeader& h) { return {DomainOf(h), h.instrExecId}; }
+// Execution domain, outer instrExecId, optional vfInstrExecSeq, launchId.
+// An absent sequence denotes an outer trace instruction; VF sequence zero is valid.
+using Instruction = std::tuple<Domain, uint64_t, std::optional<uint64_t>, uint64_t>;
+// Parent identity of one dynamic VF invocation. The internal instruction
+// sequence is deliberately excluded: different VLD/VST/SLD/SST records with
+// the same parent belong to one VF group for external-race filtering.
+using VfKey = std::tuple<Domain, uint64_t, uint64_t>;
+inline Instruction Key(const AclsanDeviceEventHeader& h)
+{
+    return {DomainOf(h), h.instrExecId, std::nullopt, h.launchId};
+}
+inline Instruction Key(const AclsanDeviceMemoryAccessData& a)
+{
+    if (a.vfInstrValid) {
+        return {DomainOf(a.header), a.header.instrExecId, a.vfInstrExecSeq, a.header.launchId};
+    }
+    return Key(a.header);
+}
+inline std::optional<VfKey> DynamicVfKey(const AclsanDeviceMemoryAccessData& a)
+{
+    if (a.vfInstrValid == 0) {
+        return std::nullopt;
+    }
+    return VfKey{DomainOf(a.header), a.header.instrExecId, a.header.launchId};
+}
+inline bool SameDynamicVf(const AclsanDeviceMemoryAccessData& lhs, const AclsanDeviceMemoryAccessData& rhs)
+{
+    const auto left = DynamicVfKey(lhs);
+    const auto right = DynamicVfKey(rhs);
+    return left.has_value() && right.has_value() && *left == *right;
+}
+inline Instruction Key(const AclsanDeviceBarrierData& b)
+{
+    if (b.barrierKind == ACLSAN_DEVICE_BARRIER_LOCAL_MEM) {
+        return {DomainOf(b.header), b.header.instrExecId, b.vfInstrExecSeq, b.header.launchId};
+    }
+    return Key(b.header);
+}
 struct Interval {
     uint64_t begin;
     uint64_t end;
@@ -71,4 +109,4 @@ UnitResetHistory UnitFlagResets(
     const std::vector<AclsanDeviceRegisterStateData>& registers, std::set<std::string>& reasons);
 uint64_t UnitFlagEpoch(const AclsanDeviceEventHeader& header, const UnitResetHistory& resets);
 } // namespace npucheck::race
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_TYPES_H

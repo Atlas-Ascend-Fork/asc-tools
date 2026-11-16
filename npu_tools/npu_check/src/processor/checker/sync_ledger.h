@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_CHECK_SYNC_LEDGER_H
-#define NPU_CHECK_SYNC_LEDGER_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_SYNC_LEDGER_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_SYNC_LEDGER_H
 
 #include "acl_san/aclsan_cbdata_device.h"
 #include "checker/checker.h"
@@ -290,4 +290,4 @@ private:
 
 } // namespace npucheck
 
-#endif // NPU_CHECK_SYNC_LEDGER_H
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_SYNC_LEDGER_H

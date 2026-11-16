@@ -16,7 +16,6 @@
 #include "aclsan_trace_buffer.h"
 #include "device_instr/decoder.h"
 
-#include <array>
 #include <cstdint>
 #include <optional>
 
@@ -44,9 +43,6 @@ RegisterDependencyMask ResolveRegisterDependencies(
 
 std::optional<AclsanDeviceRegisterStateData> MakeRegisterStateData(
     const ParsedTraceRecord& parsed, const DecodedInstruction& decoded) noexcept;
-
-std::array<AclsanDeviceRegisterStateData, VECTOR_MASK_REGISTER_COUNT> MakeRegisterStateDataForVecMask(
-    const ParsedTraceRecord& parsed, const VectorMaskParamField& mask) noexcept;
 
 } // namespace aclsan
 

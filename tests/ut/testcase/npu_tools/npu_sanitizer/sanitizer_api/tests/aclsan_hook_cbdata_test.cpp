@@ -12,6 +12,7 @@
 
 #include "../../common/tests/plog_capture.h"
 #include "aclsan_boundary_stub.h"
+#include "dbi/device_elf_fixture.h"
 #include <cassert>
 #include <array>
 #include <csignal>
@@ -1713,8 +1714,9 @@ aclsan_test::Boundary LoadedImageBoundary()
 bool LoadInstrumentedImage(aclrtBinHandle binary, aclrtFuncHandle function)
 {
     static const std::vector<uint8_t> image = LoadedImageElf();
+    static const std::vector<uint8_t> original = aclsan::test::MakeDeviceElf(0x1000);
     aclsan::RecordTraceLoadedImage(binary, image.data(), image.size());
-    aclsan::RecordTraceBinaryLoadFromData(binary, true, 24, image.data(), image.size());
+    aclsan::RecordTraceBinaryLoadFromData(binary, true, 24, original.data(), original.size());
     aclsan::RecordTraceBinaryFunctionLookup(binary, function, "loaded_image_kernel");
     g_binaryAddressBase = kLoadedImageBase;
     g_binaryAddressBytes = kLoadedImageBytes;

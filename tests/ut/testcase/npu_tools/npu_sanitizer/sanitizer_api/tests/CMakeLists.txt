@@ -46,6 +46,7 @@ if(ENABLE_TEST)
     ${SANITIZER_API_SOURCE_DIR}/aclsan_register_dependency.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_trace_buffer.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_trace_runtime.cpp
+    ${SANITIZER_API_SOURCE_DIR}/aclsan_vf.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_api.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_dispatch.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_hook_aclrt.cpp
@@ -60,6 +61,7 @@ if(ENABLE_TEST)
   target_link_libraries(acl_san_test PRIVATE c_sec_static)
 target_link_libraries(acl_san_test PRIVATE
     acl_tool_injection_test
+    npu_bit
     npu_check_dbi_engine
     npu_sanitizer_plog
     ${CMAKE_DL_LIBS}
@@ -221,4 +223,9 @@ endif()
 
 if(ENABLE_TEST)
   add_subdirectory(vector_collection)
+endif()
+
+option(NPU_CHECK_ENABLE_NPUBIT_MOCK_TESTS "Build independent Npubit mock integration tests" OFF)
+if(ENABLE_TEST AND NPU_CHECK_ENABLE_NPUBIT_MOCK_TESTS)
+  add_subdirectory(hibit)
 endif()

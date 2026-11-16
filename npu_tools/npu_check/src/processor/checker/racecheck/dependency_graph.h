@@ -7,8 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-#ifndef NPU_CHECK_DEPENDENCY_GRAPH_H
-#define NPU_CHECK_DEPENDENCY_GRAPH_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_DEPENDENCY_GRAPH_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_DEPENDENCY_GRAPH_H
 
 #include "checker/racecheck/happens_before_graph.h"
 #include "checker/racecheck/types.h"
@@ -27,15 +27,18 @@ struct DependencyGraph {
 
     explicit DependencyGraph(const Limits& limits = {}) : graph(limits.edges, limits.queryWork, limits.queryCache) {}
 
+    uint64_t warnings = 0;
     HappensBeforeGraph graph;
     std::vector<Access> accesses;
+    std::map<VfKey, size_t> vfEntries;
 };
 
 void BuildDependencyGraph(
     std::vector<AclsanDeviceMemoryAccessData>& memory, std::vector<AclsanDeviceSyncData>& sync,
     const std::map<Instruction, std::set<uint32_t>>& skippedFragments, const Limits& limits,
     std::set<std::string>& reasons, DependencyGraph& output,
-    const std::vector<AclsanDeviceRegisterStateData>& registers = {});
+    const std::vector<AclsanDeviceRegisterStateData>& registers, std::vector<AclsanDeviceVfData>& vfs,
+    const std::vector<AclsanDeviceBarrierData>& localBarriers);
 } // namespace npucheck::race
 
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_DEPENDENCY_GRAPH_H

@@ -97,6 +97,7 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
 {
     const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
     const size_t required = id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS ? sizeof(AclsanDeviceMemoryAccessData) :
+                            id == ACLSAN_CBID_DEVICE_VF            ? sizeof(AclsanDeviceVfData) :
                             id == ACLSAN_CBID_DEVICE_STATE         ? sizeof(AclsanDeviceRegisterStateData) :
                             id == ACLSAN_CBID_DEVICE_SYNC          ? sizeof(AclsanDeviceSyncData) :
                                                                      sizeof(AclsanDeviceBarrierData);
@@ -104,21 +105,8 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
         return false;
     auto& launch = Get(h.launchId);
     constexpr size_t MAX_EVENTS = 100000;
-    if (id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS &&
-        static_cast<const AclsanDeviceMemoryAccessData*>(data)->memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
-        const auto& access = *static_cast<const AclsanDeviceMemoryAccessData*>(data);
-        if (access.accessCount > 0 && access.accessIndex < access.accessCount) {
-            const auto key = race::Key(h);
-            if (launch.skippedFragments.find(key) == launch.skippedFragments.end() &&
-                launch.skippedFragments.size() >= MAX_EVENTS) {
-                launch.reasons.insert("event_budget");
-                return true;
-            }
-            launch.skippedFragments[key].insert(access.accessIndex);
-        }
-        return true;
-    }
-    if (launch.memory.size() + launch.sync.size() + launch.registers.size() + launch.dependencyOnly.size() >=
+    if (launch.memory.size() + launch.sync.size() + launch.registers.size() + launch.dependencyOnly.size() +
+            launch.vfs.size() + launch.localBarriers.size() >=
         MAX_EVENTS) {
         launch.reasons.insert("event_budget");
         return true;
@@ -150,6 +138,8 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
             // reject incomplete observations rather than invent a footprint.
         }
         launch.memory.push_back(a);
+    } else if (id == ACLSAN_CBID_DEVICE_VF) {
+        launch.vfs.push_back(*static_cast<const AclsanDeviceVfData*>(data));
     } else if (id == ACLSAN_CBID_DEVICE_STATE) {
         const auto& state = *static_cast<const AclsanDeviceRegisterStateData*>(data);
         if (state.regId >= ACLSAN_DEVICE_REGISTER_COUNT || state.regId >= 64)
@@ -161,6 +151,10 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
         launch.sync.push_back(race::NormalizeSync(*static_cast<const AclsanDeviceSyncData*>(data)));
     } else if (id == ACLSAN_CBID_DEVICE_PIPE_BARRIER) {
         const auto& barrier = *static_cast<const AclsanDeviceBarrierData*>(data);
+        if (barrier.barrierKind == ACLSAN_DEVICE_BARRIER_LOCAL_MEM) {
+            launch.localBarriers.push_back(barrier);
+            return true;
+        }
         AclsanDeviceSyncData sync{};
         sync.header = h;
         sync.scope = ACLSAN_DEVICE_SYNC_SCOPE_PIPE;
@@ -213,7 +207,7 @@ race::DependencyGraph& MemoryAnalysis::Graph(uint64_t id, const race::Limits& li
         launch.dependency = std::make_unique<race::DependencyGraph>(limits);
         race::BuildDependencyGraph(
             launch.memory, launch.sync, launch.skippedFragments, limits, launch.reasons, *launch.dependency,
-            launch.registers);
+            launch.registers, launch.vfs, launch.localBarriers);
         ++graphBuilds_;
     }
     reasons.insert(launch.reasons.begin(), launch.reasons.end());

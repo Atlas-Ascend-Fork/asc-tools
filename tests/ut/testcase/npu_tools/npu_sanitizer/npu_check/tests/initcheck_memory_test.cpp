@@ -269,7 +269,7 @@ TEST_F(InitcheckMemoryTest, ContextSeparatesDeviceLaunchAndMemoryOwner)
     Launch(13);
     ASSERT_TRUE(Memory(Range(1, kA, kWrite)));
     for (unsigned variation = 0; variation < 3; ++variation) {
-        auto read = Range(2, kA, kRead);
+        auto read = Range(2 + variation, kA, kRead);
         if (variation == 0) {
             read.header.deviceId = 3;
             read.header.launchId = 13; // Each launch belongs to exactly one device.
@@ -278,10 +278,12 @@ TEST_F(InitcheckMemoryTest, ContextSeparatesDeviceLaunchAndMemoryOwner)
             read.header.launchId = 12;
         if (variation == 2) {
             read.header.executor.blockId = 1;
-            read.memoryOwner = {2, 1, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE};
         }
-        if (variation >= 2)
+        if (variation >= 2) {
             read.header.executor.phyCoreId = variation;
+        }
+        read.memoryOwner = read.header.executor;
+        read.memoryOwner.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         ASSERT_TRUE(Memory(read));
     }
     Sync();

@@ -10,6 +10,8 @@
 
 #include "acl_san/aclsan_api.h"
 #include "checker/mem_state_tracker.h"
+#include "checker/memory_access_mode.h"
+#include "checker/racecheck/types.h"
 #include "npu_tool_log.h"
 #include <algorithm>
 #include <array>
@@ -60,6 +62,8 @@ uint64_t End(uint64_t begin, uint64_t bytes)
 }
 } // namespace
 
+static uint32_t OwnerCore(const AclsanDeviceMemoryAccessData& data) noexcept { return data.memoryOwner.phyCoreId; }
+
 PhysicalSpaceKey MakeKey(const AclsanDeviceMemoryAccessData& data)
 {
     if (data.memorySpace < ACLSAN_DEVICE_MEMORY_SPACE_GM || data.memorySpace > ACLSAN_DEVICE_MEMORY_SPACE_FB) {
@@ -71,12 +75,12 @@ PhysicalSpaceKey MakeKey(const AclsanDeviceMemoryAccessData& data)
         (space == ACLSAN_DEVICE_MEMORY_SPACE_L1 && ownerType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
         Invalid("UB requires the actual AIV core; L1 requires the actual AIC core");
     }
-    return {data.header.deviceId, space, space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.memoryOwner.phyCoreId};
+    return {data.header.deviceId, space, space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(data)};
 }
 
 AclsanDeviceMemoryAccessMode AccessMode(const AclsanDeviceMemoryAccessData& data)
 {
-    switch (data.accessMode) {
+    switch (NormalizeMemoryAccessMode(data.accessMode)) {
         case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
             return ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
@@ -243,12 +247,7 @@ bool SameInstruction(const AclsanDeviceMemoryAccessData& lhs, const AclsanDevice
     if (lhs.header.instrExecId == 0 || rhs.header.instrExecId == 0) {
         return false;
     }
-    return std::tie(
-               lhs.header.deviceId, lhs.header.launchId, lhs.header.executor.phyCoreId, lhs.header.executor.blockId,
-               lhs.header.executor.blockType, lhs.header.instrExecId) ==
-           std::tie(
-               rhs.header.deviceId, rhs.header.launchId, rhs.header.executor.phyCoreId, rhs.header.executor.blockId,
-               rhs.header.executor.blockType, rhs.header.instrExecId);
+    return race::Key(lhs) == race::Key(rhs);
 }
 std::vector<FailedRange> FailureRanges(const std::vector<AccessPair>& conflicts)
 {
@@ -322,8 +321,9 @@ namespace {
 bool IsInstructionReadBeforeWrite(
     const AclsanDeviceMemoryAccessData& previous, const AclsanDeviceMemoryAccessData& current)
 {
-    return previous.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
-           current.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE && racecheck::SameInstruction(previous, current);
+    return NormalizeMemoryAccessMode(previous.accessMode) == ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
+           NormalizeMemoryAccessMode(current.accessMode) == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE &&
+           racecheck::SameInstruction(previous, current);
 }
 
 // 状态相关的选择遵循 V2 第 2.5 节，而不是直接套用读写矩阵：
@@ -365,12 +365,101 @@ void VisitCandidates(const MemState& segment, AclsanDeviceMemoryAccessMode curre
     }
 }
 
+template <class Visitor>
+void VisitReadWriteHistory(
+    const std::vector<CbIndex>& readers, const std::vector<CbIndex>& writers,
+    const std::array<std::vector<CbIndex>, MemState::ATOMIC_WRITER_GROUP_COUNT>& atomicWriters,
+    AclsanDeviceMemoryAccessMode current, Visitor&& visitor)
+{
+    const auto normalized = static_cast<AclsanDeviceMemoryAccessMode>(NormalizeMemoryAccessMode(current));
+    if (normalized == ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
+        for (const auto index : writers) {
+            visitor(index);
+        }
+        for (const auto& group : atomicWriters) {
+            for (const auto index : group) {
+                visitor(index);
+            }
+        }
+        return;
+    }
+    if (normalized == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) {
+        for (const auto index : readers) {
+            visitor(index);
+        }
+        for (const auto index : writers) {
+            visitor(index);
+        }
+        for (const auto& group : atomicWriters) {
+            for (const auto index : group) {
+                visitor(index);
+            }
+        }
+        return;
+    }
+    if (!racecheck::IsAtomicWrite(normalized)) {
+        return;
+    }
+    for (const auto index : readers) {
+        visitor(index);
+    }
+    for (const auto index : writers) {
+        visitor(index);
+    }
+    for (size_t group = 0; group < atomicWriters.size(); ++group) {
+        if (group == static_cast<size_t>(normalized - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD)) {
+            continue;
+        }
+        for (const auto index : atomicWriters[group]) {
+            visitor(index);
+        }
+    }
+}
+
+template <class Visitor>
+void VisitVfCandidates(const MemState& segment, const AclsanDeviceMemoryAccessData& current, Visitor&& visitor)
+{
+    const auto currentKey = race::DynamicVfKey(current);
+    const auto mode = racecheck::AccessMode(current);
+    if (currentKey) {
+        VisitReadWriteHistory(
+            segment.externalReaders, segment.externalWriters, segment.externalAtomicWriters, mode, visitor);
+    }
+    for (const auto& entry : segment.vfGroups) {
+        if (currentKey && entry.first == *currentKey) {
+            continue;
+        }
+        VisitReadWriteHistory(entry.second.readers, entry.second.writers, entry.second.atomicWriters, mode, visitor);
+    }
+}
+
 bool SameState(const MemState& lhs, const MemState& rhs)
 {
     // tracker 不保存报告身份：保留每个 Race 边界，
     // 不合并可能具有不同首次证据的子区间。
     return lhs.state != MemOpState::Race && lhs.end == rhs.begin && lhs.state == rhs.state &&
            lhs.writer == rhs.writer && lhs.atomicWriters == rhs.atomicWriters && lhs.readers == rhs.readers;
+}
+
+bool SameVfHistory(const VfHistory& lhs, const VfHistory& rhs)
+{
+    return lhs.readers == rhs.readers && lhs.writers == rhs.writers && lhs.atomicWriters == rhs.atomicWriters;
+}
+
+bool SameVfState(const MemState& lhs, const MemState& rhs)
+{
+    if (lhs.end != rhs.begin || lhs.externalReaders != rhs.externalReaders ||
+        lhs.externalWriters != rhs.externalWriters || lhs.externalAtomicWriters != rhs.externalAtomicWriters ||
+        lhs.vfGroups.size() != rhs.vfGroups.size()) {
+        return false;
+    }
+    auto right = rhs.vfGroups.begin();
+    for (auto left = lhs.vfGroups.begin(); left != lhs.vfGroups.end(); ++left, ++right) {
+        if (left->first != right->first || !SameVfHistory(left->second, right->second)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool NeedsHistory(
@@ -439,9 +528,80 @@ void AppendUnique(std::vector<CbIndex>& history, CbIndex index, bool newIndex)
     }
 }
 
+bool SplitVf(SegmentTable& segments, uint64_t address)
+{
+    auto it = segments.upper_bound(address);
+    if (it == segments.begin()) {
+        return false;
+    }
+    --it;
+    if (address <= it->second.begin || address >= it->second.end) {
+        return false;
+    }
+    auto right = it->second;
+    right.begin = address;
+    segments.emplace(address, std::move(right));
+    it->second.end = address;
+    return true;
+}
+
+void ApplyVf(MemState& segment, const AclsanDeviceMemoryAccessData& data, bool newIndex, CbIndex index)
+{
+    const auto mode = racecheck::AccessMode(data);
+    const auto vfKey = race::DynamicVfKey(data);
+    if (vfKey) {
+        auto& history = segment.vfGroups[*vfKey];
+        // One VF has one external ordering; a write witnesses every conflict a read can.
+        switch (NormalizeMemoryAccessMode(mode)) {
+            case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
+                if (history.readers.empty() && history.writers.empty()) {
+                    history.readers.push_back(index);
+                }
+                segment.state = MemOpState::Read;
+                break;
+            case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
+                if (history.writers.empty()) {
+                    history.readers.clear();
+                    for (auto& writers : history.atomicWriters) {
+                        writers.clear();
+                    }
+                    history.writers.push_back(index);
+                }
+                segment.state = MemOpState::Write;
+                break;
+            default:
+                if (racecheck::IsAtomicWrite(mode) && history.writers.empty()) {
+                    AppendUnique(
+                        history.atomicWriters[mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD], index, newIndex);
+                    segment.state = MemOpState::AtomicWrite;
+                }
+                break;
+        }
+        return;
+    }
+    switch (NormalizeMemoryAccessMode(mode)) {
+        case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
+            AppendUnique(segment.externalReaders, index, newIndex);
+            segment.state = MemOpState::Read;
+            break;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
+            AppendUnique(segment.externalWriters, index, newIndex);
+            segment.state = MemOpState::Write;
+            break;
+        default:
+            if (racecheck::IsAtomicWrite(mode)) {
+                AppendUnique(
+                    segment.externalAtomicWriters[mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD], index,
+                    newIndex);
+                segment.state = MemOpState::AtomicWrite;
+            }
+            break;
+    }
+}
+
 void Apply(MemState& segment, AclsanDeviceMemoryAccessMode mode, CbIndex index, bool newIndex)
 {
-    switch (mode) {
+    switch (NormalizeMemoryAccessMode(mode)) {
         case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
             segment.state = MemOpState::Read;
             AppendUnique(segment.readers, index, newIndex);
@@ -462,7 +622,10 @@ void Apply(MemState& segment, AclsanDeviceMemoryAccessMode mode, CbIndex index, 
 
 } // namespace
 
-MemStateTracker::MemStateTracker(const std::vector<AclsanDeviceMemoryAccessData>& records) : records_(records) {}
+MemStateTracker::MemStateTracker(
+    const std::vector<AclsanDeviceMemoryAccessData>& records, racecheck::MemStateTrackerMode mode)
+    : records_(records), mode_(mode)
+{}
 
 void MemStateTracker::Trace(
     CbIndex index, const char* event, uint64_t begin, uint64_t end, CbIndex previous, const char* detail,
@@ -480,7 +643,7 @@ void MemStateTracker::Trace(
                 " pc=0x%" PRIx64 " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64
                 ",%" PRIu64 ") prev=%zu tables=%zu detail=%s",
                 event, d.header.launchId, launchId_.value_or(d.header.launchId), index, d.header.deviceId,
-                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : d.memoryOwner.phyCoreId,
+                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(d),
                 d.header.executor.phyCoreId, d.header.executor.blockId, d.header.executor.blockType, d.header.pipeline,
                 d.header.pc, d.header.instrExecId, d.accessMode, d.layoutKind, d.address, begin, end, previous,
                 tables_.size(), detail);
@@ -491,7 +654,7 @@ void MemStateTracker::Trace(
                 " pc=0x%" PRIx64 " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64
                 ",%" PRIu64 ") prev=%zu tables=%zu detail=%s",
                 event, d.header.launchId, launchId_.value_or(d.header.launchId), index, d.header.deviceId,
-                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : d.memoryOwner.phyCoreId,
+                d.memorySpace, d.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(d),
                 d.header.executor.phyCoreId, d.header.executor.blockId, d.header.executor.blockType, d.header.pipeline,
                 d.header.pc, d.header.instrExecId, d.accessMode, d.layoutKind, d.address, begin, end, previous,
                 tables_.size(), detail);
@@ -532,7 +695,7 @@ void MemStateTracker::TraceState(
         " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64 ",%" PRIu64
         ") state=%s writers=%zu readers=%zu ordinary=%zu add=%zu min=%zu max=%zu",
         event, data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, data.memorySpace,
-        data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.memoryOwner.phyCoreId,
+        data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(data),
         data.header.executor.phyCoreId, data.header.executor.blockId, data.header.executor.blockType,
         data.header.pipeline, data.header.pc, data.header.instrExecId, data.accessMode, data.layoutKind, data.address,
         state.begin, state.end, name, writerCount, state.readers.size(), ordinaryCount, state.atomicWriters[0].size(),
@@ -564,7 +727,7 @@ void MemStateTracker::TraceTable(CbIndex index, const SegmentTable& table) const
         " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
         " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " memory=%s table_segments=%zu",
         data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, space,
-        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.memoryOwner.phyCoreId, data.header.executor.phyCoreId,
+        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(data), data.header.executor.phyCoreId,
         data.header.executor.blockId, data.header.executor.blockType, data.header.pipeline, data.header.pc,
         data.header.instrExecId, data.accessMode, data.layoutKind, data.address, name, table.size());
     for (const auto& entry : table) {
@@ -575,7 +738,7 @@ void MemStateTracker::TraceTable(CbIndex index, const SegmentTable& table) const
         " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
         " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " memory=%s table_segments=%zu",
         data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, space,
-        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : data.memoryOwner.phyCoreId, data.header.executor.phyCoreId,
+        space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(data), data.header.executor.phyCoreId,
         data.header.executor.blockId, data.header.executor.blockType, data.header.pipeline, data.header.pc,
         data.header.instrExecId, data.accessMode, data.layoutKind, data.address, name, table.size());
 }
@@ -597,7 +760,7 @@ const AclsanDeviceMemoryAccessData& MemStateTracker::Record(CbIndex index) const
                           data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L1 ? ACLSAN_DEVICE_MEMORY_SPACE_UB :
                                                                               ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN;
     if (opposite != ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN &&
-        tables_.find({data.header.deviceId, opposite, data.memoryOwner.phyCoreId}) != tables_.end()) {
+        tables_.find({data.header.deviceId, opposite, racecheck::OwnerCore(data)}) != tables_.end()) {
         Invalid("physical core cannot own both UB and L1");
     }
     return data;
@@ -624,6 +787,9 @@ std::vector<AccessPair> MemStateTracker::CheckPotentialRaceImpl(
         if (!prepared) {
             local.emplace(racecheck::PrepareAccess(current));
             prepared = &*local;
+        }
+        if (mode_ == racecheck::MemStateTrackerMode::VfExternal) {
+            return CheckVfPotentialRace(cbIndex, *prepared);
         }
         const auto& ranges = prepared->ranges;
         const auto& key = prepared->key;
@@ -691,7 +857,7 @@ std::vector<AccessPair> MemStateTracker::CheckPotentialRaceImpl(
             " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " candidates=%zu ranges=%zu",
             current.header.launchId, launchId_.value_or(current.header.launchId), cbIndex, current.header.deviceId,
             current.memorySpace,
-            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : current.memoryOwner.phyCoreId,
+            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(current),
             current.header.executor.phyCoreId, current.header.executor.blockId, current.header.executor.blockType,
             current.header.pipeline, current.header.pc, current.header.instrExecId, current.accessMode,
             current.layoutKind, current.address, candidates.size(), ranges.size());
@@ -712,6 +878,39 @@ std::vector<AccessPair> MemStateTracker::CheckPotentialRaceImpl(
         throw RacecheckError(
             RacecheckErrorKind::CapacityExceeded, "container maximum capacity exceeded while checking potential races");
     }
+}
+
+std::vector<AccessPair> MemStateTracker::CheckVfPotentialRace(
+    CbIndex cbIndex, const racecheck::PreparedAccess& prepared) const
+{
+    Trace(cbIndex, "check.vf.begin");
+    const auto& current = Record(cbIndex);
+    const auto table = tables_.find(prepared.key);
+    std::vector<AccessPair> candidates;
+    if (table == tables_.end()) {
+        return candidates;
+    }
+    for (const auto range : prepared.ranges) {
+        const auto& segments = table->second;
+        auto it = segments.lower_bound(range.begin);
+        if (it != segments.begin() && std::prev(it)->second.end > range.begin) {
+            --it;
+        }
+        for (; it != segments.end() && it->second.begin < range.end; ++it) {
+            const auto begin = std::max(range.begin, it->second.begin);
+            const auto end = std::min(range.end, it->second.end);
+            if (begin >= end) {
+                continue;
+            }
+            VisitVfCandidates(it->second, current, [&](CbIndex previous) {
+                if (previous == cbIndex || IsInstructionReadBeforeWrite(records_[previous], current)) {
+                    return;
+                }
+                candidates.push_back({previous, cbIndex, prepared.key.memorySpace, begin, end});
+            });
+        }
+    }
+    return candidates;
 }
 
 void MemStateTracker::UpdateMemState(CbIndex cbIndex, const std::vector<AccessPair>& conflicts)
@@ -752,6 +951,10 @@ void MemStateTracker::UpdateMemStateImpl(
         if (!prepared) {
             local.emplace(racecheck::PrepareAccess(current));
             prepared = &*local;
+        }
+        if (mode_ == racecheck::MemStateTrackerMode::VfExternal) {
+            UpdateVfMemState(cbIndex, conflicts, *prepared);
+            return;
         }
         const auto& key = prepared->key;
         const auto mode = prepared->mode;
@@ -839,7 +1042,7 @@ void MemStateTracker::UpdateMemStateImpl(
                             " range=[%" PRIu64 ",%" PRIu64 ") prev=%zu evidence_order=%zu",
                             current.header.launchId, launchId_.value_or(current.header.launchId), cbIndex,
                             current.header.deviceId, current.memorySpace,
-                            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : current.memoryOwner.phyCoreId,
+                            current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(current),
                             current.header.executor.phyCoreId, current.header.executor.blockId,
                             current.header.executor.blockType, current.header.pipeline, current.header.pc,
                             current.header.instrExecId, current.accessMode, current.layoutKind, current.address,
@@ -914,6 +1117,81 @@ void MemStateTracker::UpdateMemStateImpl(
     } catch (...) {
         fail("unexpected failure during memory state update", mutationStarted);
         throw;
+    }
+}
+
+void MemStateTracker::UpdateVfMemState(
+    CbIndex cbIndex, const std::vector<AccessPair>& conflicts, const racecheck::PreparedAccess& prepared)
+{
+    const auto& current = Record(cbIndex);
+    const auto& ranges = prepared.ranges;
+    for (const auto& pair : conflicts) {
+        const auto& previous = Record(pair.prevIndex);
+        const auto previousKey = racecheck::MakeKey(previous);
+        if (pair.curIndex != cbIndex || pair.prevIndex == cbIndex || pair.memorySpace != prepared.key.memorySpace ||
+            prepared.key < previousKey || previousKey < prepared.key || pair.begin >= pair.end) {
+            throw RacecheckError(RacecheckErrorKind::InvalidEvent, "VF conflict identity, space or range mismatch");
+        }
+        if (IsInstructionReadBeforeWrite(previous, current)) {
+            throw RacecheckError(
+                RacecheckErrorKind::InvalidEvent,
+                "same-instruction source read and destination write are not conflict candidates");
+        }
+        const auto range = std::upper_bound(
+            ranges.begin(), ranges.end(), pair.begin,
+            [](uint64_t begin, const racecheck::ByteRange& candidate) { return begin < candidate.begin; });
+        if (range == ranges.begin() || std::prev(range)->end < pair.end) {
+            throw RacecheckError(
+                RacecheckErrorKind::InvalidEvent, "VF conflict is not contained in an actual current access range");
+        }
+    }
+    if (ranges.empty()) {
+        return;
+    }
+    const bool newIndex = !largestUpdatedIndex_ || cbIndex > *largestUpdatedIndex_;
+    auto& working = tables_.try_emplace(prepared.key).first->second;
+    for (const auto range : ranges) {
+        SplitVf(working, range.begin);
+        SplitVf(working, range.end);
+    }
+    for (const auto range : ranges) {
+        uint64_t cursor = range.begin;
+        auto it = working.lower_bound(cursor);
+        if (it != working.begin() && std::prev(it)->second.end > cursor) {
+            --it;
+        }
+        while (cursor < range.end) {
+            if (it == working.end() || it->second.begin > cursor) {
+                const auto end = it == working.end() ? range.end : std::min(range.end, it->second.begin);
+                it = working.emplace(cursor, MemState{cursor, end, MemOpState::Read, {}, {}}).first;
+            }
+            auto& segment = it->second;
+            ApplyVf(segment, current, newIndex, cbIndex);
+            cursor = segment.end;
+            ++it;
+        }
+    }
+    for (const auto range : ranges) {
+        auto it = working.lower_bound(range.begin);
+        if (it != working.begin()) {
+            --it;
+        }
+        while (it != working.end()) {
+            auto next = std::next(it);
+            if (next == working.end() || next->second.begin > range.end) {
+                break;
+            }
+            if (SameVfState(it->second, next->second)) {
+                it->second.end = next->second.end;
+                working.erase(next);
+            } else {
+                ++it;
+            }
+        }
+    }
+    launchId_ = current.header.launchId;
+    if (newIndex) {
+        largestUpdatedIndex_ = cbIndex;
     }
 }
 } // namespace npucheck

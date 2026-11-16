@@ -27,6 +27,7 @@ using namespace aclsan;
 namespace {
 std::vector<AclsanDeviceRegisterStateData> registerStates;
 std::vector<AclsanDeviceMemoryAccessData> memoryAccesses;
+std::vector<AclsanDeviceVfData> vfCompletions;
 std::string logs;
 unsigned errorCount = 0;
 unsigned instructionCallbacks = 0;
@@ -103,24 +104,31 @@ void TestPushPbAndVfCollection()
         logs.find("[param] type=PushPbParamField values=[0x1000000003e,0x200000,0x0,0xffffffffffffffff]") !=
         std::string::npos);
     assert(logs.find("[param] type=VfParamField entryPc=0xabc00228 instructionCount=9") != std::string::npos);
-    assert(errorCount == 0 && instructionCallbacks == 0 && registerStates.empty());
+    assert(errorCount == 1 && instructionCallbacks == 0 && registerStates.empty());
+    assert(vfCompletions.size() == 1 && vfCompletions.back().status == ACLSAN_DEVICE_VF_INPUT_MISSING);
 
-    // Collection accepts individual records and does not impose PB query batch rules.
+    // Missing state and oversized PB batches are reported through the callback boundary.
     DispatchTraceRecords({vf}, decoder);
     DispatchTraceRecords({push, push, push, push, push}, decoder);
     vf.record.args[1] = 0;
     DispatchTraceRecords({vf}, decoder);
-    assert(errorCount == 0 && instructionCallbacks == 0 && registerStates.empty());
+    assert(vfCompletions.size() == 3 && vfCompletions.back().status == ACLSAN_DEVICE_VF_INPUT_MISSING);
+    assert(instructionCallbacks == 1 && memoryAccesses.size() == 1);
+    assert((memoryAccesses.back().header.flags & ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR) != 0);
+    assert(registerStates.empty());
+    errorCount = 0;
+    instructionCallbacks = 0;
+    memoryAccesses.clear();
 }
 
 void TestVectorMaskCollection()
 {
     const auto& decoder = dav3510::GetDeviceInstructionDecoder();
     dav3510::Dav3510RegisterStateManager registers(42);
-    auto high = Record(InstructionId::MoveMask1, 0x184);
+    auto high = Record(InstructionId::SetVectorMask, 0x184);
     high.record.args[0] = 1;
     high.record.args[1] = 0xfedcba9876543210;
-    auto low = Record(InstructionId::MoveMask0, 0x180);
+    auto low = Record(InstructionId::SetVectorMask, 0x180);
     low.record.args[0] = 0;
     low.record.args[1] = 0x0123456789abcdef;
     const dav3510::Dav3510CoreKey key{high.blockType, high.blockId, high.phyCoreId, high.deviceId};
@@ -161,9 +169,9 @@ void TestVectorMaskCollection()
         assert(registers.Get(key)->vectorMask->vectorMask1 == high.record.args[1]);
     }
 
-    // The selected half comes from the operand, independently of the instruction ID.
-    for (const auto id : {InstructionId::MoveMask0, InstructionId::MoveMask1}) {
-        auto operand = Record(id, 0x180);
+    // The operand selects the mask half.
+    {
+        auto operand = Record(InstructionId::SetVectorMask, 0x180);
         for (uint64_t index = 0; index < 2; ++index) {
             operand.record.args[0] = index;
             operand.record.args[1] = UINT64_MAX;
@@ -176,26 +184,35 @@ void TestVectorMaskCollection()
             operand.record.args[0] = index;
             assert(!decoder.decode(operand.record));
         }
+        operand.record.args[0] = 0;
+        for (const uint16_t legacyId : {uint16_t{165}, uint16_t{166}}) {
+            operand.record.instrId = legacyId;
+            assert(!IsDefinedInstructionId(legacyId));
+            assert(!decoder.decode(operand.record));
+        }
     }
 
-    auto complete = Record(InstructionId::SetVectorMask, 0x188);
-    complete.record.args[0] = 0x7777;
-    complete.record.args[1] = 0x8888;
+    auto high93 = Record(InstructionId::SetVectorMask, 0x188);
+    high93.record.args[0] = 1;
+    high93.record.args[1] = UINT64_MAX;
+    auto low93 = Record(InstructionId::SetVectorMask, 0x18c);
+    low93.record.args[0] = 0;
+    low93.record.args[1] = UINT64_MAX;
     registerStates.clear();
-    DispatchTraceRecords({complete}, decoder, nullptr, &registers);
+    DispatchTraceRecords({high93, low93}, decoder, nullptr, &registers);
     assert(registerStates.size() == 2);
-    CheckState(registerStates[0], complete, 0, 0x8888);
-    CheckState(registerStates[1], complete, 1, 0x7777);
-    assert(registers.Get(key)->vectorMask->vectorMask0 == 0x8888);
-    assert(registers.Get(key)->vectorMask->vectorMask1 == 0x7777);
-    assert(logs.find("[cbdata] type=AclsanDeviceRegisterStateData") != std::string::npos);
-    assert(logs.find("regId=0 regIndex=1 value=0x7777") != std::string::npos);
+    CheckState(registerStates[0], high93, 1, UINT64_MAX);
+    CheckState(registerStates[1], low93, 0, UINT64_MAX);
+    assert(registers.Get(key)->vectorMask->vectorMask0 == UINT64_MAX);
+    assert(registers.Get(key)->vectorMask->vectorMask1 == UINT64_MAX);
+    high93.record.args[1] = 0xffff;
+    low93.record.args[1] = 0;
+    DispatchTraceRecords({high93, low93}, decoder, nullptr, &registers);
+    assert(registers.Get(key)->vectorMask->vectorMask0 == 0);
+    assert(registers.Get(key)->vectorMask->vectorMask1 == 0xffff);
     auto invalid = *decoder.decode(low.record);
     std::get<VectorMaskWriteParamField>(invalid.params).index = 2;
-    const auto invalidState = MakeRegisterStateData(low, invalid);
-    assert(invalidState.has_value());
-    assert(invalidState->regIndex == 2);
-    assert(invalidState->value == low.record.args[1]);
+    assert(!MakeRegisterStateData(low, invalid));
     registers.Reset();
     assert(!registers.Get(key));
     assert(errorCount == 0 && instructionCallbacks == 0);
@@ -285,6 +302,10 @@ void AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(const AclsanDeviceMemo
 void AclsanCallbackDispatcher::DispatchDeviceState(const AclsanDeviceRegisterStateData& state) noexcept
 {
     registerStates.push_back(state);
+}
+void AclsanCallbackDispatcher::DispatchDeviceVf(const AclsanDeviceVfData& data) noexcept
+{
+    vfCompletions.push_back(data);
 }
 void AclsanCallbackDispatcher::DispatchDeviceSync(const AclsanDeviceSyncData&) noexcept { ++instructionCallbacks; }
 void AclsanCallbackDispatcher::DispatchDeviceBarrier(const AclsanDeviceBarrierData&) noexcept

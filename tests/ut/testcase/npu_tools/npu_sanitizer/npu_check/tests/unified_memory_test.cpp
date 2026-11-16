@@ -47,9 +47,11 @@ struct Session {
             checkers.push_back(&synchronization);
         if (reverse)
             std::reverse(checkers.begin(), checkers.end());
-        for (Checker* checker : checkers)
-            if (checker->IsSubscribed(domain, id))
+        for (Checker* checker : checkers) {
+            if (checker->IsSubscribed(domain, id)) {
                 ASSERT_TRUE(checker->OnCallback(domain, id, &data, reports));
+            }
+        }
         analysis->EndCallback();
     }
     void Launch(uint64_t id, void* stream = nullptr)
@@ -366,6 +368,42 @@ TEST(UnifiedMemoryTest, UbInitializationIsIgnored)
     s.Sync();
     EXPECT_TRUE(s.reports.empty());
     EXPECT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
+}
+
+TEST(UnifiedMemoryTest, VfUbAccessDoesNotHideUninitializedGmRead)
+{
+    Session s;
+    s.boundsEnabled = false;
+    s.raceEnabled = false;
+    s.Allocate();
+    s.Launch(1);
+    s.Memory(
+        1, 1, ACLSAN_DEVICE_PIPE_MTE3, ACLSAN_DEVICE_MEMORY_SPACE_GM, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0x10000, 64);
+    AclsanDeviceMemoryAccessData vf{};
+    vf.header.version = ACLSAN_API_VERSION;
+    vf.header.size = sizeof(vf);
+    vf.header.launchId = 1;
+    vf.header.instrExecId = 2;
+    vf.header.executor = {18, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR};
+    vf.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
+    vf.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
+    vf.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    vf.memoryOwner = vf.header.executor;
+    vf.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ;
+    vf.accessCount = 1;
+    vf.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
+    vf.layout.range.bytes = 64;
+    vf.vfInstrValid = 1;
+    s.Send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, vf);
+    AclsanDeviceVfData completion{};
+    completion.header = vf.header;
+    completion.header.size = sizeof(completion);
+    completion.accessCount = completion.eventCount = completion.rawEventCount = 1;
+    s.Send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF, completion);
+    s.Sync();
+    ASSERT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
+    ASSERT_EQ(s.reports.size(), 1U);
+    EXPECT_EQ(std::get<NpuCheckInitcheckReport>(s.reports.front()).firstUninitAddress, 0x10000U);
 }
 TEST(UnifiedMemoryTest, ReversedCheckersShareKernelWriteWithoutInitcheckEnabled)
 {
@@ -884,6 +922,7 @@ TEST(UnifiedMemoryTest, IgnoredUbOperandKeepsGmFragmentsComplete)
     auto source = LocalCopyOperand(0, ACLSAN_DEVICE_MEMORY_SPACE_GM, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0x10000);
     auto destination = LocalCopyOperand(1, ACLSAN_DEVICE_MEMORY_SPACE_UB, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0);
     source.header.executor.blockType = destination.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    destination.memoryOwner = destination.header.executor;
     s.Send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, source);
     s.Send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, destination);
     s.Sync();

@@ -50,7 +50,7 @@ enum class DmaLoopDirection : uint8_t {
     GM_TO_CBUF = 2,
 };
 
-// A legacy MOVE_MASK write updates one half without changing the other register.
+// An indexed mask write updates one half without changing the other register.
 struct VectorMaskWriteParamField {
     uint32_t index = 0;
     uint64_t value = 0;

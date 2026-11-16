@@ -110,14 +110,15 @@ npu-check --deadlock-timeout 5 ./my_app
 - `memcheck`支持检测指令的GM越界访问，以及L1、L0A、L0B、L0C中超出buffer边界的访问
 - `synccheck`支持检测核内同步配对问题和重复设置同步问题，以及核间同步配对问题
 - `initcheck`支持检测搬运和计算指令依赖的持久化寄存器初始化问题，以及GM、L1、L0A、L0B、L0C的内存初始化问题
-- `racecheck`支持检测GM、L1、L0A、L0B、L0C的竞争访问问题
+- `racecheck`支持检测GM、UB、L1、L0A、L0B、L0C的竞争访问问题
 - `racecheck`支持ADD/MIN/MAX原子写检查。相同原子模式的写访问之间不视为竞争冲突；不同原子模式访问重叠地址且缺少必要同步时，报告原子写语义竞争。原子写与普通读写之间也参与竞争检查。
 - 未启用原子模式的写访问按普通写检查。不支持或无法识别的原子配置会使竞争分析不完整。
 - `racecheck`在单次launch内可报告多个竞争，发现首个竞争后继续检测其他内存区间；同一内存区间仅报告首次确认的竞争，后续竞争不重复报告。
 - 目标程序必须能在未使用`npu-check`时独立运行
 - 目标程序必须是可执行文件
 - 不支持多进程和多线程运行
-- 不支持在`simt vf`和`simd vf`场景下进行`racecheck`和`initcheck`检测
+- `racecheck`支持检测`simd vf`中的UB读写与其他流水访存之间的竞争问题；不支持检测`simt vf`中的竞争问题。
+- 不支持在`simt vf`和`simd vf`场景下进行`initcheck`检测
 - 在使用`simt vf`和`simd vf`的场景下，`memcheck`只支持检测非`vf`代码产生的读写越界异常
 - 算子使用非`inline`子函数时不支持检测
 - `initcheck`内存初始化问题若属于竞争问题（例如写后读场景），则只能保证不误报；若存在竞争问题，工具会按预期报错。

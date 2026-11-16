@@ -110,22 +110,23 @@ void TestDecodesDav3510CopyInstruction()
     assert(gmToUbufParams->burstDstStride == 0x20);
 }
 
-void TestDecodesMovemask93AsCompleteVectorMask()
+void TestDecodesMovemask93AsIndexedWrite()
 {
     const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
     assert(decoder != nullptr);
     aclsan::AclsanRawTraceRecord record{};
     record.instrId = 93;
-    record.args[0] = UINT64_C(0x1122334455667788);
-    record.args[1] = UINT64_C(0x99aabbccddeeff00);
-
-    const auto decoded = decoder->decode(record);
-    assert(decoded.has_value());
-    assert(decoded->kind == aclsan::DeviceInstructionKind::MoveMask);
-    const auto* params = std::get_if<aclsan::VectorMaskParamField>(&decoded->params);
-    assert(params != nullptr);
-    assert(params->vectorMask0 == UINT64_C(0x99aabbccddeeff00));
-    assert(params->vectorMask1 == UINT64_C(0x1122334455667788));
+    for (uint64_t index = 0; index < 2; ++index) {
+        record.args[0] = index;
+        record.args[1] = UINT64_MAX;
+        const auto decoded = decoder->decode(record);
+        assert(decoded.has_value());
+        assert(decoded->kind == aclsan::DeviceInstructionKind::MoveMask);
+        const auto* params = std::get_if<aclsan::VectorMaskWriteParamField>(&decoded->params);
+        assert(params != nullptr && params->index == index && params->value == UINT64_MAX);
+    }
+    record.args[0] = 2;
+    assert(!decoder->decode(record));
 }
 
 void TestDecodesInclusiveMovAlignV2Ranges()
@@ -859,7 +860,7 @@ TEST(DeviceInstrDecoder, Main)
 {
     TestSocVersionMappingsSelectDav3510Decoder();
     TestDecodesDav3510CopyInstruction();
-    TestDecodesMovemask93AsCompleteVectorMask();
+    TestDecodesMovemask93AsIndexedWrite();
     TestDecodesInclusiveMovAlignV2Ranges();
     TestDecodesDav3510CopyUbufToGmAlignV2Instruction();
     TestDecodesDav3510CopyGmToCbufMultiInstructions();

@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_TOOLS_NPU_CHECK_PROCESSOR_DIAGNOSTIC_PIPELINE_NAME_H
-#define NPU_TOOLS_NPU_CHECK_PROCESSOR_DIAGNOSTIC_PIPELINE_NAME_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_PIPELINE_NAME_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_PIPELINE_NAME_H
 
 #include "acl_san/aclsan_cbdata_device.h"
 
@@ -43,4 +43,4 @@ inline const char* DevicePipelineName(std::uint32_t pipeline) noexcept
 
 } // namespace npucheck::detail
 
-#endif // NPU_TOOLS_NPU_CHECK_PROCESSOR_DIAGNOSTIC_PIPELINE_NAME_H
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_PIPELINE_NAME_H

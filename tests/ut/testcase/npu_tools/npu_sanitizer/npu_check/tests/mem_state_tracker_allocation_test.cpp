@@ -26,6 +26,7 @@ thread_local bool failAllAllocations = false;
 thread_local size_t trackedMinimumAllocationSize = 0;
 thread_local size_t trackedExactAllocationSize = 0;
 thread_local size_t trackedAllocations = 0;
+thread_local size_t failExactAllocationSize = 0;
 void* Allocate(size_t size)
 {
     if (failAllAllocations) {
@@ -34,6 +35,10 @@ void* Allocate(size_t size)
     if ((trackedMinimumAllocationSize != 0 && size >= trackedMinimumAllocationSize) ||
         (trackedExactAllocationSize != 0 && size == trackedExactAllocationSize)) {
         ++trackedAllocations;
+    }
+    if (failExactAllocationSize != 0 && size == failExactAllocationSize) {
+        failExactAllocationSize = 0;
+        throw std::bad_alloc();
     }
     if (allocationFailureCountdown == 0) {
         allocationFailureCountdown = -1; // fail once so the diagnostic exception can allocate
@@ -121,6 +126,114 @@ struct FailureLog {
         },
         this, DLOG_ERROR};
 };
+
+TEST(RacecheckerAllocationTest, PublishingConflictsDoesNotCopyExistingReportPayloads)
+{
+    constexpr size_t conflictCount = 64;
+    constexpr size_t frameCount = 2049;
+    Racechecker checker;
+    CheckerReportList reports;
+    reports.reserve(conflictCount + 1);
+    NpuCheckMemcheckReport existing;
+    existing.common.stacks[0].frames.resize(frameCount);
+    existing.common.stacks[0].frames.back().pc = 0x1234;
+    reports.emplace_back(std::move(existing));
+    AclsanLaunchData launch{};
+    launch.common.version = ACLSAN_API_VERSION;
+    launch.common.size = sizeof(launch);
+    launch.launchId = 1;
+    ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+    for (size_t pipe = 0; pipe < 2; ++pipe) {
+        for (size_t i = 0; i < conflictCount; ++i) {
+            auto access = Access(
+                pipe == 0 ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ, i * 64, i * 64 + 32,
+                pipe * conflictCount + i + 1);
+            access.header.launchId = 1;
+            access.header.pipeline = pipe == 0 ? ACLSAN_DEVICE_PIPE_MTE2 : ACLSAN_DEVICE_PIPE_VECTOR;
+            access.accessCount = 1;
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+        }
+    }
+    AclsanSynchronizeData sync{};
+    sync.common.version = ACLSAN_API_VERSION;
+    sync.common.size = sizeof(sync);
+    trackedAllocations = 0;
+    trackedExactAllocationSize = frameCount * sizeof(ReportFrame);
+    const bool success =
+        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports);
+    trackedExactAllocationSize = 0;
+    EXPECT_TRUE(success);
+    EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+    EXPECT_EQ(trackedAllocations, 0U);
+    ASSERT_EQ(reports.size(), conflictCount + 1);
+    const auto& frames = std::get<NpuCheckMemcheckReport>(reports.front()).common.stacks[0].frames;
+    ASSERT_EQ(frames.size(), frameCount);
+    EXPECT_EQ(frames.back().pc, 0x1234U);
+    for (size_t i = 0; i < conflictCount; ++i) {
+        const auto& report = std::get<NpuCheckRacecheckReport>(reports[i + 1]);
+        EXPECT_EQ(report.reportId, i + 1);
+        EXPECT_EQ(report.kind, ConflictKind::RAW);
+    }
+}
+
+TEST(RacecheckerAllocationTest, ReportReservationFailurePreservesPayloadAndReportIds)
+{
+    Racechecker checker;
+    CheckerReportList reports;
+    reports.reserve(1);
+    NpuCheckMemcheckReport seed;
+    seed.common.stacks[0].frames.resize(2049);
+    seed.common.stacks[0].frames.back().pc = 0x1234;
+    const auto* originalFrames = seed.common.stacks[0].frames.data();
+    reports.emplace_back(std::move(seed));
+    const auto originalCapacity = reports.capacity();
+    for (uint64_t launchId : {1U, 2U}) {
+        AclsanLaunchData launch{};
+        launch.common.version = ACLSAN_API_VERSION;
+        launch.common.size = sizeof(launch);
+        launch.launchId = launchId;
+        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+        for (bool read : {false, true}) {
+            auto access = Access(
+                read ? ACLSAN_DEVICE_MEMORY_ACCESS_READ : ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 32, read ? 2 : 1);
+            access.header.launchId = launchId;
+            access.header.pipeline = read ? ACLSAN_DEVICE_PIPE_VECTOR : ACLSAN_DEVICE_PIPE_MTE2;
+            access.accessCount = 1;
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+        }
+        AclsanSynchronizeData sync{};
+        sync.common.version = ACLSAN_API_VERSION;
+        sync.common.size = sizeof(sync);
+        // Reject only the destination vector's growth, then allow error handling to allocate.
+        if (launchId == 1) {
+            failExactAllocationSize = originalCapacity * 2 * sizeof(CheckerReport);
+        }
+        const bool success =
+            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports);
+        const bool injected = failExactAllocationSize == 0;
+        failExactAllocationSize = 0;
+        ASSERT_TRUE(success);
+        if (launchId == 1) {
+            ASSERT_TRUE(injected);
+            EXPECT_EQ(reports.size(), 1U);
+            EXPECT_EQ(reports.capacity(), originalCapacity);
+            EXPECT_FALSE(checker.AnalysisComplete());
+            EXPECT_NE(checker.Summary().find("allocation_failure=1"), std::string::npos);
+        }
+        const auto& frames = std::get<NpuCheckMemcheckReport>(reports.front()).common.stacks[0].frames;
+        EXPECT_EQ(frames.data(), originalFrames);
+        ASSERT_EQ(frames.size(), 2049U);
+        EXPECT_EQ(frames.back().pc, 0x1234U);
+    }
+    ASSERT_EQ(reports.size(), 2U);
+    const auto& race = std::get<NpuCheckRacecheckReport>(reports.back());
+    EXPECT_EQ(race.reportId, 1U);
+    EXPECT_EQ(race.kind, ConflictKind::RAW);
+    EXPECT_EQ(race.checkRange.begin, 0U);
+    EXPECT_EQ(race.checkRange.end, 32U);
+}
 
 TEST(RacecheckAllocationTest, EveryCallbackAllocationFailureStopsOnlyAffectedLaunch)
 {

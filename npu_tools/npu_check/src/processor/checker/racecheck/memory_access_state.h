@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_CHECK_MEMORY_ACCESS_STATE_H
-#define NPU_CHECK_MEMORY_ACCESS_STATE_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_MEMORY_ACCESS_STATE_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_MEMORY_ACCESS_STATE_H
 #include "checker/racecheck/types.h"
 #include <functional>
 #include <optional>
@@ -53,4 +53,4 @@ private:
     size_t segmentBudget_, byteBudget_, segments_ = 0, bytes_ = 0, peak_ = 0;
 };
 } // namespace npucheck::race
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_MEMORY_ACCESS_STATE_H

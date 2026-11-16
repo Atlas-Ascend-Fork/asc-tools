@@ -7,8 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-#ifndef NPU_CHECK_MEMORY_RESOURCES_H
-#define NPU_CHECK_MEMORY_RESOURCES_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_RESOURCES_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_RESOURCES_H
 #include "acl_san/aclsan_api.h"
 #include "checker/host_order.h"
 #include "checker/memory_state.h"
@@ -37,4 +37,4 @@ private:
     bool complete_ = true;
 };
 } // namespace npucheck
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_RESOURCES_H

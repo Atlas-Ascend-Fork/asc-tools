@@ -76,7 +76,12 @@ TEST(RacecheckTranslation, UnitFlagModesTravelWithMemoryBehavior)
             ASSERT_FALSE(accesses->empty());
             bool l0c = false;
             for (const auto& access : *accesses) {
-                EXPECT_EQ(access.unitFlag, access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB ? 0 : mode) << id;
+                EXPECT_EQ(
+                    access.unitFlag, access.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE &&
+                                             access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_L0C ?
+                                         0 :
+                                         mode)
+                    << id;
                 l0c |= access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C;
             }
             EXPECT_TRUE(l0c) << id;
@@ -216,8 +221,7 @@ TEST(RacecheckTranslation, DecodedFixToUbUsesAicSynchronizationForEveryDestinati
                             EXPECT_TRUE(
                                 checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, callback, &data, reports));
                         };
-                        size_t targets = 0;
-                        for (auto access : *accesses) {
+                        for (const auto& access : *accesses) {
                             if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0C && flag != 0) {
                                 auto publish = access;
                                 publish.header.instrExecId = 1;
@@ -226,9 +230,16 @@ TEST(RacecheckTranslation, DecodedFixToUbUsesAicSynchronizationForEveryDestinati
                                 publish.accessIndex = 0;
                                 publish.accessCount = 1;
                                 publish.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+                                publish.accessIndex = 0;
+                                publish.accessCount = 1;
                                 emit(publish, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
                             }
+                        }
+                        for (const auto& access : *accesses) {
                             emit(access, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
+                        }
+                        size_t targets = 0;
+                        for (auto access : *accesses) {
                             if (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UB)
                                 continue;
                             ++targets;
@@ -266,6 +277,8 @@ TEST(RacecheckTranslation, DecodedFixToUbUsesAicSynchronizationForEveryDestinati
                             access.accessIndex = 0;
                             access.accessCount = 1;
                             access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+                            access.accessIndex = 0;
+                            access.accessCount = 1;
                             emit(access, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
                         }
                         EXPECT_EQ(targets, destination >= 2 ? 2U : 1U);
@@ -420,7 +433,7 @@ TEST(RacecheckTranslation, GmWritesWithoutCtrlParticipateInRaceDetection)
         for (uint32_t core : {0U, 1U}) {
             ParsedTraceRecord raw{};
             raw.launchId = launch.launchId;
-            raw.instrExecId = 1;
+            raw.instrExecId = 1 + core;
             raw.phyCoreId = id == 83 ? 18 + core : core;
             raw.blockType = id == 83 ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
             raw.record.instrId = id;

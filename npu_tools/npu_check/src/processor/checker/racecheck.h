@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_TOOLS_NPU_CHECK_RACECHECK_H
-#define NPU_TOOLS_NPU_CHECK_RACECHECK_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_H
 #include "checker/checker.h"
 #include "checker/memory_analysis.h"
 #include "checker/mem_state_tracker.h"
@@ -96,6 +96,8 @@ private:
         void* stream = nullptr;
         bool registered = false;
         std::string name;
+        std::vector<AclsanDeviceBarrierData>& localBarriers;
+        std::vector<AclsanDeviceVfData>& vfs;
         uint64_t skippedMemory = 0;
         std::set<std::string> reasons;
         explicit Launch(MemoryAnalysis* analysis = nullptr, uint64_t id = 0)
@@ -104,7 +106,9 @@ private:
               memory(shared->memory),
               sync(shared->sync),
               registers(shared->registers),
-              skippedFragments(shared->skippedFragments)
+              skippedFragments(shared->skippedFragments),
+              localBarriers(shared->localBarriers),
+              vfs(shared->vfs)
         {}
     };
     Launch& GetLaunch(uint64_t id) { return launches_.try_emplace(id, analysis_.get(), id).first->second; }
@@ -121,10 +125,11 @@ private:
     std::map<std::string, uint64_t> reasons_;
     uint64_t memoryEvents_ = 0, syncEvents_ = 0, launchesCount_ = 0, hostEvents_ = 0;
     uint64_t skippedMemoryEvents_ = 0, skippedSyncEvents_ = 0;
+    uint64_t warnings_ = 0;
     uint64_t raw_ = 0, war_ = 0, waw_ = 0, atomic_ = 0;
     size_t graphNodesPeak_ = 0, graphEdgesPeak_ = 0, graphQueryWorkPeak_ = 0, graphChainsPeak_ = 0;
     size_t stateBytesPeak_ = 0, stateSegmentsPeak_ = 0;
     bool incomplete_ = false;
 };
 } // namespace npucheck
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_H

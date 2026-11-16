@@ -69,7 +69,11 @@ typedef enum AclsanDeviceMemoryAccessMode {
     ACLSAN_DEVICE_MEMORY_ACCESS_WRITE = 2,
     ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD = 3,
     ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN = 4,
-    ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX = 5
+    ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX = 5,
+    ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ = 6,
+    ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE = 7,
+    ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_READ = 8,
+    ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE = 9
 } AclsanDeviceMemoryAccessMode;
 
 // Initcheck replay proof: all missing bytes are ignored padding. A rounded
@@ -101,7 +105,10 @@ typedef struct AclsanDeviceEventHeader {
     uint64_t pc;
     uint32_t siteId;     // 插桩id
     uint32_t sourceKind; // AclsanDeviceSourceKind
-    uint64_t instrExecId; // Launch 内唯一的动态指令 ID；同条指令的所有访问共享，跨核大小不表示时序。
+    // 外层动态指令 ID 在 launch 内唯一。同一个 VF 内部的所有指令共享父 VF 的 instrExecId，
+    // 通过 vfInstrExecSeq 区分内部动态指令；racecheck 按该序号建立 VF 内访存的完成顺序。
+    // 当前 trace 的 ID 由物理核 slice 和记录位置生成，同一物理核的 ID 按记录顺序递增。
+    uint64_t instrExecId;
     uint64_t serialNo; //       例如：指令DataCopy中的第一(read) / 第二条 (write)
     uint32_t deviceId;
     AclsanCoreInfo executor; // 发射指令的核，例如说AIC发射L1->UB的搬运指令，那么对应的是AIC的信息
@@ -109,11 +116,31 @@ typedef struct AclsanDeviceEventHeader {
     uint32_t flags;          // AclsanDeviceEventFlags
 } AclsanDeviceEventHeader;
 
+typedef enum AclsanDeviceBarrierKind {
+    ACLSAN_DEVICE_BARRIER_PIPE = 0,
+    ACLSAN_DEVICE_BARRIER_LOCAL_MEM = 1
+} AclsanDeviceBarrierKind;
+
+// LocalMemBar selectors describe VF-internal UB access pipelines, not PIPE_S/PIPE_V.
+// These values are callback ABI values; translate the device encoding explicitly.
+typedef enum AclsanDeviceLocalMemType {
+    ACLSAN_DEVICE_LOCAL_MEM_NONE = 0,
+    ACLSAN_DEVICE_LOCAL_MEM_VEC_LOAD = 1u << 0u,
+    ACLSAN_DEVICE_LOCAL_MEM_VEC_STORE = 1u << 1u,
+    ACLSAN_DEVICE_LOCAL_MEM_SCALAR_LOAD = 1u << 2u,
+    ACLSAN_DEVICE_LOCAL_MEM_SCALAR_STORE = 1u << 3u,
+    ACLSAN_DEVICE_LOCAL_MEM_VEC_ALL = ACLSAN_DEVICE_LOCAL_MEM_VEC_LOAD | ACLSAN_DEVICE_LOCAL_MEM_VEC_STORE,
+    ACLSAN_DEVICE_LOCAL_MEM_SCALAR_ALL = ACLSAN_DEVICE_LOCAL_MEM_SCALAR_LOAD | ACLSAN_DEVICE_LOCAL_MEM_SCALAR_STORE
+} AclsanDeviceLocalMemType;
+
 // Delivered only through ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION.
 typedef struct AclsanDeviceBarrierData {
     AclsanDeviceEventHeader header;
-    uint32_t pipe; // Barrier target; header.pipeline is the issuing pipeline.
-    uint32_t reserved;
+    uint32_t pipe;           // PIPE target; header.pipeline is the issuing pipeline. INVALID for LOCAL_MEM.
+    uint32_t barrierKind;    // AclsanDeviceBarrierKind; former reserved slot, zero means PIPE.
+    uint32_t srcMemType;     // AclsanDeviceLocalMemType; NONE for PIPE.
+    uint32_t dstMemType;     // LOCAL_MEM waits for prior src accesses before subsequent dst accesses.
+    uint64_t vfInstrExecSeq; // 仅用于 LOCAL_MEM：HiBit 内部指令序号，可为 0，不保证连续。
 } AclsanDeviceBarrierData;
 
 // ==========================================
@@ -169,8 +196,8 @@ typedef struct AclsanDeviceMemoryAccessData {
     uint64_t address;
     uint32_t memorySpace; // AclsanDeviceMemorySpace
     uint32_t accessMode;  // AclsanDeviceMemoryAccessMode
-    uint32_t accessIndex; // TODO: 待确认作用   确认下第一条和第二条是用的哪个 serialNo
-    uint32_t accessCount; // TODO: 待确认作用
+    uint32_t accessIndex; // Range index within one dynamic instruction, or one VF-internal execution.
+    uint32_t accessCount; // Total memory ranges for that dynamic instruction or VF-internal execution.
     uint32_t dataBits;    // TODO: 看能否去掉
     uint32_t alignSize;
     uint64_t vectorMask0;
@@ -189,11 +216,37 @@ typedef struct AclsanDeviceMemoryAccessData {
     uint32_t unitFlag; // Former reserved slot: 0=disabled, 2=keep, 3=update L0C unit flag.
     uint64_t regDependencyMask0;
     uint64_t regDependencyMask1;
-    // 数据所存储的核。例如说AIC
-    // L1->UB的搬运指令，L1部分的读owner是AIC核，UB部分的写owner是AIV核。如果为GM，那么忽略该信息
+    // vfInstrValid 为 1 时，vfInstrExecSeq 是 HiBit 返回的 VF 内部指令序号，
+    // racecheck 假定较小序号的访存先完成。
+    // 序号可以为 0，也不保证连续；同次执行的多个访存片段共享序号，以 accessIndex 区分。
+    uint64_t vfInstrExecSeq;
+    uint8_t vfInstrValid;
+    uint8_t reserved[7];
+    // Local-memory storage owner; ignored for GM.
     AclsanCoreInfo memoryOwner;
     AclsanMemValidNzLayout validNz;
 } AclsanDeviceMemoryAccessData;
+
+typedef enum AclsanDeviceVfStatus {
+    ACLSAN_DEVICE_VF_SUCCESS = 0,       // VF 展开完成，包括没有 UB 访问的情况。
+    ACLSAN_DEVICE_VF_QUERY_FAILED = 1,  // HiBit 查询、返回数据转换或展开过程失败。
+    ACLSAN_DEVICE_VF_UNSUPPORTED = 2,   // HiBit 返回的数据不支持提取有效的内部指令执行序号。
+    ACLSAN_DEVICE_VF_INPUT_MISSING = 3, // 缺少有效 PB 状态或 HiBit handle，或 VF 指令数为 0。
+} AclsanDeviceVfStatus;
+
+typedef enum AclsanDeviceVfWarning { ACLSAN_DEVICE_VF_MASK_NOT_REFRESHED = 1u << 0u } AclsanDeviceVfWarning;
+
+// One completion record per observed VF, even when no memory callback is emitted.
+// header describes the parent VF and retains its original core/block identity.
+typedef struct AclsanDeviceVfData {
+    AclsanDeviceEventHeader header;
+    uint32_t status;
+    uint32_t accessCount;
+    uint32_t eventCount;    // Emitted memory + local-barrier callbacks, excluding this record.
+    uint32_t rawEventCount; // Vendor positions, including filtered zero-byte accesses.
+    uint32_t warningFlags;
+    uint32_t reserved;
+} AclsanDeviceVfData;
 
 typedef enum AclsanDeviceRegisterId {
     ACLSAN_DEVICE_REGISTER_VECTOR_MASK = 0,

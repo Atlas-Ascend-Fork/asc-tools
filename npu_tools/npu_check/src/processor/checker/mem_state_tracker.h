@@ -8,10 +8,11 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_TOOLS_NPU_CHECK_MEM_STATE_TRACKER_H
-#define NPU_TOOLS_NPU_CHECK_MEM_STATE_TRACKER_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEM_STATE_TRACKER_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEM_STATE_TRACKER_H
 
 #include "diagnostic/report_message.h"
+#include "checker/racecheck/types.h"
 #include <array>
 #include <cstddef>
 #include <exception>
@@ -53,6 +54,11 @@ struct AccessPair {
     uint64_t begin;
     uint64_t end;
 };
+struct VfHistory {
+    std::vector<CbIndex> readers;
+    std::vector<CbIndex> writers;
+    std::array<std::vector<CbIndex>, 3> atomicWriters{};
+};
 struct MemState {
     static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = 3;
 
@@ -63,12 +69,19 @@ struct MemState {
     std::vector<CbIndex> readers;
     // 分别保存 ADD、MIN、MAX，兼容原子操作可直接跳过对应分组。
     std::array<std::vector<CbIndex>, ATOMIC_WRITER_GROUP_COUNT> atomicWriters{};
+    // VF-external history keeps ordinary and dynamic-VF groups independent so
+    // one VF's write cannot erase another VF's or ordinary access evidence.
+    std::vector<CbIndex> externalReaders{};
+    std::vector<CbIndex> externalWriters{};
+    std::array<std::vector<CbIndex>, ATOMIC_WRITER_GROUP_COUNT> externalAtomicWriters{};
+    std::map<race::VfKey, VfHistory> vfGroups{};
 };
 using SegmentTable = std::map<uint64_t, MemState>;
 using PhysicalSpaceTables = std::map<PhysicalSpaceKey, SegmentTable>;
 
 // tracker 和报告准备阶段共用的字节区间算法。
 namespace racecheck {
+enum class MemStateTrackerMode { Ordinary, VfExternal };
 struct ByteRange {
     uint64_t begin;
     uint64_t end;
@@ -108,7 +121,11 @@ public:
     // records 的生命周期必须长于 tracker。已发布条目不可变，
     // 不能删除或重排。追加和调用必须串行；由于只保存下标和容器，
     // vector 扩容是安全的。
-    explicit MemStateTracker(const std::vector<AclsanDeviceMemoryAccessData>& records);
+    // VfExternal keeps ordinary and per-dynamic-VF histories without freezing
+    // a range after the first VF/ordinary conflict.
+    explicit MemStateTracker(
+        const std::vector<AclsanDeviceMemoryAccessData>& records,
+        racecheck::MemStateTrackerMode mode = racecheck::MemStateTrackerMode::Ordinary);
     // 第一次成功处理非空更新时，将此 tracker 绑定到一个 launch。
     // 集成层必须将每个 launch 路由到独立的 tracker。
     // 同一动态指令的源 READ 后接普通目标 WRITE 属于指令内在行为，
@@ -130,11 +147,15 @@ public:
 
 private:
     std::vector<AccessPair> CheckPotentialRaceImpl(CbIndex cbIndex, const racecheck::PreparedAccess* prepared) const;
+    std::vector<AccessPair> CheckVfPotentialRace(CbIndex cbIndex, const racecheck::PreparedAccess& prepared) const;
     void UpdateMemStateImpl(
         CbIndex cbIndex, const std::vector<AccessPair>& conflicts, const racecheck::PreparedAccess* prepared);
+    void UpdateVfMemState(
+        CbIndex cbIndex, const std::vector<AccessPair>& conflicts, const racecheck::PreparedAccess& prepared);
     const AclsanDeviceMemoryAccessData& Record(CbIndex index) const;
 
     const std::vector<AclsanDeviceMemoryAccessData>& records_;
+    racecheck::MemStateTrackerMode mode_;
     PhysicalSpaceTables tables_;
     std::optional<uint64_t> launchId_;
     std::optional<CbIndex> largestUpdatedIndex_;
@@ -148,4 +169,4 @@ private:
     void TraceTable(CbIndex index, const SegmentTable& table) const noexcept;
 };
 } // namespace npucheck
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEM_STATE_TRACKER_H

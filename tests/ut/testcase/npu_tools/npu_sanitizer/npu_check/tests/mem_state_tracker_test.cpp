@@ -97,6 +97,42 @@ protected:
     }
 };
 
+TEST_F(MemStateTrackerTest, VfModesUseOrdinaryReadWriteConflictSemantics)
+{
+    for (uint32_t previous = 6; previous <= 9; ++previous) {
+        for (uint32_t current = 6; current <= 9; ++current) {
+            SCOPED_TRACE(::testing::Message() << previous << "/" << current);
+            const uint64_t begin = (previous * 16 + current) * 1024;
+            const auto a =
+                Add(static_cast<AclsanDeviceMemoryAccessMode>(previous), begin, begin + 4, 10,
+                    ACLSAN_DEVICE_MEMORY_SPACE_UB);
+            ASSERT_NO_THROW(Accept(a));
+            const auto b =
+                Add(static_cast<AclsanDeviceMemoryAccessMode>(current), begin, begin + 4, 10,
+                    ACLSAN_DEVICE_MEMORY_SPACE_UB);
+            const bool bothRead = (previous == 6 || previous == 8) && (current == 6 || current == 8);
+            std::vector<AccessPair> candidates;
+            ASSERT_NO_THROW(candidates = tracker.CheckPotentialRace(b));
+            ASSERT_EQ(candidates.size(), bothRead ? 0U : 1U);
+            if (!bothRead) {
+                EXPECT_EQ(candidates.front().prevIndex, a);
+                const auto diagnostics = MakeRacecheckDiagnostics(candidates, records);
+                ASSERT_EQ(diagnostics.size(), 1U);
+                EXPECT_EQ(diagnostics.front().previous.accessMode, previous);
+                EXPECT_EQ(diagnostics.front().current.accessMode, current);
+                ReportRecord normalized;
+                ASSERT_EQ(NormalizeRacecheckReport(diagnostics.front(), &normalized), ReportRenderStatus::SUCCESS);
+                const char* names[] = {"vf vector read", "vf vector write", "vf scalar read", "vf scalar write"};
+                EXPECT_EQ(normalized.fields.at("previousAccess"), names[previous - 6]);
+                EXPECT_EQ(normalized.fields.at("currentAccess"), names[current - 6]);
+            }
+            ASSERT_NO_THROW(Update(b, {}));
+            const auto& segment = tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10}).at(begin);
+            EXPECT_EQ(segment.state, current == 6 || current == 8 ? MemOpState::Read : MemOpState::Write);
+        }
+    }
+}
+
 TEST_F(MemStateTrackerTest, FirstAccessIsReadOnlyUntilUpdate)
 {
     for (auto mode :
@@ -673,7 +709,7 @@ TEST_F(MemStateTrackerTest, DefaultTrackerAcceptsAtomicWritesAndChecksOrdinaryAc
 TEST_F(MemStateTrackerTest, UnknownModesAndInexactInputsAreRejected)
 {
     auto a = Add(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
-    for (uint32_t mode : {0U, 6U, 7U, std::numeric_limits<uint32_t>::max()}) {
+    for (uint32_t mode : {0U, 10U, 11U, std::numeric_limits<uint32_t>::max()}) {
         records[a].accessMode = mode;
         EXPECT_THROW(tracker.CheckPotentialRace(a), RacecheckError);
         EXPECT_THROW(tracker.UpdateMemState(a, {}), RacecheckError);
@@ -1114,9 +1150,8 @@ TEST_F(MemStateTrackerTest, InPlaceAddStillChecksUnorderedAccessFromAnotherCore)
     auto readA = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 16);
     auto otherRead = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 16, 11);
     auto writeA = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16);
-    // 不同核上的相同数值指令 ID 也不能标识同一次动态执行。
-    // 这条说明已合并到上一行。
-    for (auto index : {readA, otherRead, writeA}) {
+    // 同次执行的片段共享 ID；另一核的执行使用独立 ID。
+    for (auto index : {readA, writeA}) {
         records[index].header.instrExecId = 100;
     }
     Accept(readA);
@@ -1877,7 +1912,7 @@ TEST_F(MemStateTrackerTest, DiagnosticsExplainSkippedSourceReadAndRetainedExtern
     auto read = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 16);
     auto write = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 16);
     auto other = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 16, 11);
-    for (auto index : {read, write, other}) {
+    for (auto index : {read, write}) {
         records[index].header.instrExecId = 100;
     }
     observed.UpdateMemState(read, {});

@@ -9,6 +9,9 @@
  */
 
 #include "checker/racecheck/dependency_graph.h"
+#include "checker/racecheck/vf_subgraph.h"
+#include "checker/memory_access_mode.h"
+#include "npu_tool_log.h"
 #include "device_instr/common/instruction_id.h"
 #include <algorithm>
 #include <limits>
@@ -46,8 +49,8 @@ bool IsSupportedMemorySpace(AclsanDeviceMemorySpace space)
 }
 bool SameHeader(const AclsanDeviceEventHeader& a, const AclsanDeviceEventHeader& b)
 {
-    return Key(a) == Key(b) && a.launchId == b.launchId && a.pc == b.pc && a.siteId == b.siteId &&
-           a.pipeline == b.pipeline && a.flags == b.flags && a.serialNo == b.serialNo && a.sourceKind == b.sourceKind;
+    return Key(a) == Key(b) && a.pc == b.pc && a.siteId == b.siteId && a.pipeline == b.pipeline && a.flags == b.flags &&
+           a.serialNo == b.serialNo && a.sourceKind == b.sourceKind;
 }
 bool SameMemory(const AclsanDeviceMemoryAccessData& a, const AclsanDeviceMemoryAccessData& b)
 {
@@ -57,9 +60,11 @@ bool SameMemory(const AclsanDeviceMemoryAccessData& a, const AclsanDeviceMemoryA
         a.dataBits != b.dataBits || a.alignSize != b.alignSize || a.vectorMask0 != b.vectorMask0 ||
         a.vectorMask1 != b.vectorMask1 || a.predicateMask0 != b.predicateMask0 ||
         a.predicateMask1 != b.predicateMask1 || a.regDependencyMask0 != b.regDependencyMask0 ||
-        a.regDependencyMask1 != b.regDependencyMask1 || a.memoryOwner.phyCoreId != b.memoryOwner.phyCoreId ||
-        a.memoryOwner.blockId != b.memoryOwner.blockId || a.memoryOwner.blockType != b.memoryOwner.blockType)
+        a.regDependencyMask1 != b.regDependencyMask1 || a.vfInstrExecSeq != b.vfInstrExecSeq ||
+        a.vfInstrValid != b.vfInstrValid || a.memoryOwner.phyCoreId != b.memoryOwner.phyCoreId ||
+        a.memoryOwner.blockId != b.memoryOwner.blockId || a.memoryOwner.blockType != b.memoryOwner.blockType) {
         return false;
+    }
     switch (a.layoutKind) {
         case ACLSAN_MEM_LAYOUT_SCALAR:
             return a.layout.scalar.bytes == b.layout.scalar.bytes;
@@ -186,7 +191,13 @@ class DependencyGraphBuilder {
     const Limits& limits_;
     HappensBeforeGraph& graph;
     std::map<Instruction, Event> events;
+    std::map<Instruction, VfSubgraph> vfGraphs;
+    std::map<Instruction, AclsanDeviceVfData> vfMetadata;
+    std::vector<AclsanDeviceVfData>& vfs;
+    const std::vector<AclsanDeviceBarrierData>& localBarriers;
+    uint64_t& warnings;
     std::vector<Access>& accesses;
+    std::map<VfKey, size_t>& vfEntries;
     std::map<Instruction, size_t> instructionStarts;
     UnitResetHistory unitResets;
     // Prefix/acquire joins do not imply completion order within a pipeline.
@@ -201,7 +212,8 @@ public:
     DependencyGraphBuilder(
         std::vector<AclsanDeviceMemoryAccessData>& memoryData, std::vector<AclsanDeviceSyncData>& syncData,
         const std::map<Instruction, std::set<uint32_t>>& skipped, const Limits& limits, std::set<std::string>& failures,
-        DependencyGraph& output, const std::vector<AclsanDeviceRegisterStateData>& registerData)
+        DependencyGraph& output, const std::vector<AclsanDeviceRegisterStateData>& registerData,
+        std::vector<AclsanDeviceVfData>& vfData, const std::vector<AclsanDeviceBarrierData>& barriers)
         : memory(memoryData),
           sync(syncData),
           skippedFragments(skipped),
@@ -209,7 +221,11 @@ public:
           registers(registerData),
           limits_(limits),
           graph(output.graph),
-          accesses(output.accesses)
+          vfs(vfData),
+          localBarriers(barriers),
+          warnings(output.warnings),
+          accesses(output.accesses),
+          vfEntries(output.vfEntries)
     {}
 
     void Run()
@@ -220,6 +236,7 @@ public:
         RouteCrossCoreNotifications();
         BuildNotificationTokens();
         BuildLocalEdges();
+        OrderVfsOnPhysicalPipe();
         ResolveCrossCoreWaits();
         SealGraph();
     }
@@ -227,16 +244,65 @@ public:
 private:
     void NormalizeEvents()
     {
+        std::map<std::pair<uint64_t, std::optional<uint64_t>>, std::pair<AclsanDeviceEventHeader, uint32_t>> identities;
+        const auto identity = [&](const AclsanDeviceEventHeader& h, const Instruction& key, uint32_t kind) {
+            const auto [it, inserted] =
+                identities.emplace(std::make_pair(std::get<1>(key), std::get<2>(key)), std::make_pair(h, kind));
+            if (h.instrExecId == 0 ||
+                (!inserted && (it->second.second != kind || DomainOf(it->second.first) != DomainOf(h) ||
+                               it->second.first.pc != h.pc || it->second.first.siteId != h.siteId ||
+                               it->second.first.pipeline != h.pipeline))) {
+                reasons.insert("instruction_identity_mismatch");
+            }
+        };
+        for (const auto& a : memory) {
+            identity(a.header, Key(a), 0);
+        }
+        for (const auto& a : sync) {
+            identity(a.header, Key(a.header), 1);
+        }
+        for (const auto& a : vfs) {
+            identity(a.header, Key(a.header), 2);
+        }
+        for (const auto& a : localBarriers) {
+            identity(a.header, Key(a), 3);
+        }
         // Stable identities, independent of callback interleaving, determine tie breaks only.
         std::sort(memory.begin(), memory.end(), [](const auto& a, const auto& b) {
-            return std::make_pair(Key(a.header), a.accessIndex) < std::make_pair(Key(b.header), b.accessIndex);
+            return std::make_pair(Key(a), a.accessIndex) < std::make_pair(Key(b), b.accessIndex);
         });
         std::sort(sync.begin(), sync.end(), [](const auto& a, const auto& b) { return Key(a.header) < Key(b.header); });
+        std::sort(vfs.begin(), vfs.end(), [](const auto& a, const auto& b) { return Key(a.header) < Key(b.header); });
+        for (const auto& vf : vfs) {
+            const auto key = Key(vf.header);
+            const auto old = vfMetadata.find(key);
+            if (old != vfMetadata.end()) {
+                if (!SameHeader(old->second.header, vf.header) || old->second.status != vf.status ||
+                    old->second.accessCount != vf.accessCount || old->second.eventCount != vf.eventCount ||
+                    old->second.rawEventCount != vf.rawEventCount || old->second.warningFlags != vf.warningFlags) {
+                    reasons.insert("conflicting_vf_expansion");
+                }
+                continue;
+            }
+            vfMetadata.emplace(key, vf);
+            EnsureVf(key);
+            if ((vf.warningFlags & ACLSAN_DEVICE_VF_MASK_NOT_REFRESHED) != 0) {
+                ++warnings;
+                ASCTOOL_WARNING(
+                    "racecheck: VF mask never refreshed launch=%llu instr=%llu pc=0x%llx core=%u block=%u",
+                    static_cast<unsigned long long>(vf.header.launchId),
+                    static_cast<unsigned long long>(vf.header.instrExecId),
+                    static_cast<unsigned long long>(vf.header.pc), vf.header.executor.phyCoreId,
+                    vf.header.executor.blockId);
+            }
+        }
         std::map<std::pair<Instruction, uint32_t>, size_t> accessKeys;
         std::map<Instruction, std::pair<uint32_t, std::set<uint32_t>>> counts;
+        std::map<Instruction, const AclsanDeviceMemoryAccessData*> instructionMetadata;
+        std::map<Instruction, size_t> vfAccessCounts, vfBarrierCounts;
         size_t segments = 0;
         for (const auto& a : memory) {
-            const auto key = Key(a.header);
+            const auto key = Key(a);
             auto old = accessKeys.find({key, a.accessIndex});
             if (old != accessKeys.end()) {
                 if (!SameMemory(accesses[old->second].data, a))
@@ -248,22 +314,59 @@ private:
                 reasons.insert("invalid_access_identity");
                 continue;
             }
+            const auto [metadata, inserted] = instructionMetadata.emplace(key, &a);
+            if (!inserted) {
+                const auto& first = *metadata->second;
+                if (first.vfInstrValid != a.vfInstrValid ||
+                    (a.vfInstrValid &&
+                     (first.accessMode != a.accessMode || first.vfInstrExecSeq != a.vfInstrExecSeq))) {
+                    reasons.insert("vf_group_identity_mismatch");
+                }
+            }
             auto& count = counts[key];
             if (count.first != 0 && count.first != a.accessCount)
                 reasons.insert("access_count_mismatch");
             count.first = a.accessCount;
             count.second.insert(a.accessIndex);
             auto event = events.find(key);
+            const bool vfMode = a.accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ &&
+                                a.accessMode <= ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE;
             size_t node;
-            if (event == events.end()) {
+            if ((vfMode && a.vfInstrValid != 1) || (a.vfInstrValid == 1 && a.header.instrExecId == 0)) {
+                reasons.insert("missing_vf_instruction_index");
+                continue;
+            }
+            if (a.vfInstrValid != 0) {
+                const Instruction parent = Key(a.header);
+                if (!vfMode || a.vfInstrValid != 1 || a.header.pipeline != ACLSAN_DEVICE_PIPE_VECTOR ||
+                    a.header.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR ||
+                    a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UB || a.unitFlag != 0) {
+                    reasons.insert("invalid_vf_access");
+                }
+                ++vfAccessCounts[parent];
+                auto& vf = EnsureVf(parent);
+                node = vf.AddAccess(a);
+                if (a.instructionId != 0 && a.instructionId != static_cast<uint32_t>(aclsan::InstructionId::Vf)) {
+                    reasons.insert("invalid_vf_access");
+                }
+            } else if (event == events.end()) {
                 node = graph.AddNode();
                 events.emplace(key, Event{false, accesses.size(), node, a.header.pipeline});
             } else {
                 node = event->second.node;
+                if (vfGraphs.count(key) != 0) {
+                    reasons.insert("vf_group_identity_mismatch");
+                    continue;
+                }
                 const auto& first = accesses[event->second.index].data;
                 if (event->second.pipe != a.header.pipeline || first.header.pc != a.header.pc ||
-                    first.header.siteId != a.header.siteId || first.instructionId != a.instructionId)
+                    first.header.siteId != a.header.siteId || first.instructionId != a.instructionId ||
+                    (first.unitFlag != a.unitFlag && a.header.pipeline != ACLSAN_DEVICE_PIPE_FIXPIPE)) {
                     reasons.insert("instruction_identity_mismatch");
+                }
+            }
+            if (a.instructionId == static_cast<uint32_t>(aclsan::InstructionId::Vf) && a.vfInstrValid == 0) {
+                reasons.insert("missing_vf_instruction_index");
             }
             Access access{a, node, {}};
             if (a.instructionId >= static_cast<uint32_t>(aclsan::InstructionId::StAtomicB32) &&
@@ -276,8 +379,13 @@ private:
                  a.memoryOwner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
                 reasons.insert("owner_mapping_unknown");
             }
-            if (a.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
-                a.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX ||
+            const uint32_t accessMode = NormalizeMemoryAccessMode(a.accessMode);
+            if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
+                accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD) {
+                reasons.insert("atomic_semantics_unknown");
+            }
+            if (accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
+                accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX ||
                 a.memorySpace > ACLSAN_DEVICE_MEMORY_SPACE_FB ||
                 !IsSupportedMemorySpace(static_cast<AclsanDeviceMemorySpace>(a.memorySpace))) {
                 reasons.insert("access_coverage_unknown");
@@ -298,14 +406,110 @@ private:
             if (c.second.first != observed.size())
                 reasons.insert("missing_access_fragment");
         }
+        std::map<Instruction, AclsanDeviceBarrierData> uniqueBarriers;
+        for (const auto& b : localBarriers) {
+            const auto key = Key(b);
+            const auto old = uniqueBarriers.find(key);
+            if (old != uniqueBarriers.end()) {
+                if (!SameHeader(old->second.header, b.header) || old->second.srcMemType != b.srcMemType ||
+                    old->second.dstMemType != b.dstMemType || old->second.pipe != b.pipe ||
+                    old->second.vfInstrExecSeq != b.vfInstrExecSeq) {
+                    reasons.insert("conflicting_duplicate");
+                }
+                continue;
+            }
+            uniqueBarriers.emplace(key, b);
+            const Instruction parent = Key(b.header);
+            const uint32_t all = ACLSAN_DEVICE_LOCAL_MEM_VEC_ALL | ACLSAN_DEVICE_LOCAL_MEM_SCALAR_ALL;
+            if (b.header.instrExecId == 0 || b.barrierKind != ACLSAN_DEVICE_BARRIER_LOCAL_MEM || b.srcMemType == 0 ||
+                b.dstMemType == 0 || ((b.srcMemType | b.dstMemType) & ~all) != 0 ||
+                b.header.pipeline != ACLSAN_DEVICE_PIPE_VECTOR || b.pipe != ACLSAN_DEVICE_PIPE_INVALID) {
+                reasons.insert("invalid_vf_barrier");
+            }
+            ++vfBarrierCounts[parent];
+            EnsureVf(parent).AddBarrier(b);
+        }
+        for (auto& vf : vfGraphs) {
+            const auto metadata = vfMetadata.find(vf.first);
+            if (metadata == vfMetadata.end()) {
+                reasons.insert("missing_vf_expansion");
+                continue;
+            }
+            const auto& completion = metadata->second;
+            if (completion.header.pipeline != ACLSAN_DEVICE_PIPE_VECTOR ||
+                completion.header.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
+                reasons.insert("invalid_vf_identity");
+            }
+            if (completion.status != ACLSAN_DEVICE_VF_SUCCESS) {
+                reasons.insert("vf_expansion_incomplete");
+            }
+            if (completion.accessCount != vfAccessCounts[vf.first] ||
+                completion.eventCount != vfAccessCounts[vf.first] + vfBarrierCounts[vf.first] ||
+                completion.eventCount > completion.rawEventCount) {
+                reasons.insert("missing_vf_event");
+            }
+            if (reasons.empty()) {
+                vf.second.Build();
+            }
+        }
         for (size_t i = 0; i < sync.size(); ++i) {
             const auto& s = sync[i];
             auto found = events.find(Key(s.header));
             if (found != events.end()) {
                 if (!found->second.sync || !SameSync(sync[found->second.index], s))
                     reasons.insert("conflicting_duplicate");
-            } else
-                events.emplace(Key(s.header), Event{true, i, graph.AddNode(), s.header.pipeline});
+            } else {
+                const auto node = graph.AddNode();
+                events.emplace(Key(s.header), Event{true, i, node, s.header.pipeline});
+                ASCTOOL_DEBUG(
+                    "racecheck DAG graph=%p sync launch=%llu instr=%llu node=%zu pipe=%u", static_cast<void*>(&graph),
+                    static_cast<unsigned long long>(s.header.launchId),
+                    static_cast<unsigned long long>(s.header.instrExecId), node, s.header.pipeline);
+            }
+        }
+    }
+
+    VfSubgraph& EnsureVf(const Instruction& key)
+    {
+        auto found = vfGraphs.find(key);
+        if (found != vfGraphs.end()) {
+            return found->second;
+        }
+        auto& vf = vfGraphs.try_emplace(key, graph, reasons).first->second;
+        if (events.count(key) != 0) {
+            reasons.insert("vf_group_identity_mismatch");
+        }
+        events[key] = Event{false, 0, vf.Completion(), ACLSAN_DEVICE_PIPE_VECTOR};
+        instructionStarts[key] = vf.Entry();
+        vfEntries.emplace(VfKey{std::get<0>(key), std::get<1>(key), std::get<3>(key)}, vf.Entry());
+        ASCTOOL_DEBUG(
+            "racecheck DAG graph=%p VF instr=%llu entry=%zu completion=%zu", static_cast<void*>(&graph),
+            static_cast<unsigned long long>(std::get<1>(key)), vf.Entry(), vf.Completion());
+        return vf;
+    }
+
+    void OrderVfsOnPhysicalPipe()
+    {
+        using PipeVf = std::tuple<uint64_t, uint32_t, const VfSubgraph*>;
+        std::map<std::pair<uint32_t, uint32_t>, std::vector<PipeVf>> pipes;
+        for (const auto& entry : vfGraphs) {
+            const auto& domain = std::get<0>(entry.first);
+            pipes[{std::get<0>(domain), std::get<3>(domain)}].emplace_back(
+                std::get<1>(entry.first), std::get<2>(domain), &entry.second);
+        }
+        for (auto& pipe : pipes) {
+            auto& vfs = pipe.second;
+            // IDs within one physical trace slice follow its instruction order.
+            std::sort(vfs.begin(), vfs.end(), [](const auto& lhs, const auto& rhs) {
+                return std::get<0>(lhs) < std::get<0>(rhs);
+            });
+            for (size_t i = 1; i < vfs.size(); ++i) {
+                if (std::get<1>(vfs[i - 1]) != std::get<1>(vfs[i])) {
+                    AddEdge(
+                        std::get<2>(vfs[i - 1])->Completion(), std::get<2>(vfs[i])->Entry(),
+                        HappensBeforeGraph::Reason::PipelineOrder);
+                }
+            }
         }
     }
 
@@ -380,7 +584,7 @@ private:
         UnitPartition& partition, const Access& access, size_t start, const std::vector<Interval>& ranges, bool unit)
     {
         const auto& a = access.data;
-        const auto key = Key(a.header);
+        const auto key = Key(a);
         if (partition.expanded.size() >= limits_.segments || graphExhausted) {
             reasons.insert("unit_flag_budget");
             return;
@@ -430,7 +634,16 @@ private:
         for (const auto& access : accesses) {
             const auto& a = access.data;
             if (a.unitFlag == 0) {
-                partition.expanded.push_back(access);
+                if (a.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE) {
+                    const auto key = Key(a);
+                    auto start = instructionStarts.find(key);
+                    if (start == instructionStarts.end()) {
+                        start = instructionStarts.emplace(key, graph.AddNode()).first;
+                    }
+                    AddUnitFragment(partition, access, start->second, access.ranges, false);
+                } else {
+                    partition.expanded.push_back(access);
+                }
                 continue;
             }
             if ((a.unitFlag != UNIT_FLAG_MODE_START && a.unitFlag != UNIT_FLAG_MODE_END) ||
@@ -440,7 +653,7 @@ private:
                 partition.expanded.push_back(access);
                 continue;
             }
-            const auto key = Key(a.header);
+            const auto key = Key(a);
             auto start = instructionStarts.find(key);
             if (start == instructionStarts.end())
                 start = instructionStarts.emplace(key, graph.AddNode()).first;
@@ -448,7 +661,8 @@ private:
                 AddUnitFragment(partition, access, start->second, access.ranges, false);
                 continue;
             }
-            if (a.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE && a.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
+            if (a.header.pipeline == ACLSAN_DEVICE_PIPE_FIXPIPE &&
+                NormalizeMemoryAccessMode(a.accessMode) != ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
                 reasons.insert("invalid_unit_flag_access");
                 continue;
             }
@@ -909,9 +1123,11 @@ void BuildDependencyGraph(
     std::vector<AclsanDeviceMemoryAccessData>& memory, std::vector<AclsanDeviceSyncData>& sync,
     const std::map<Instruction, std::set<uint32_t>>& skippedFragments, const Limits& limits,
     std::set<std::string>& reasons, DependencyGraph& output,
-    const std::vector<AclsanDeviceRegisterStateData>& registers)
+    const std::vector<AclsanDeviceRegisterStateData>& registers, std::vector<AclsanDeviceVfData>& vfs,
+    const std::vector<AclsanDeviceBarrierData>& localBarriers)
 {
     output.graph.BeginAnalysis(limits.analysisWork);
-    DependencyGraphBuilder(memory, sync, skippedFragments, limits, reasons, output, registers).Run();
+    DependencyGraphBuilder(memory, sync, skippedFragments, limits, reasons, output, registers, vfs, localBarriers)
+        .Run();
 }
 } // namespace npucheck::race

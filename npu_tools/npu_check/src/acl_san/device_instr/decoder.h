@@ -53,7 +53,7 @@ enum class DeviceInstructionKind : uint32_t {
     FixL0cToOut,         // InstructionId::FixL0cToOutF32/S32            -> FixL0cToOutParamField
     LocalMemoryTransfer, // InstructionId::CopyCbufToFbuf/FixL0cTo*/CopyUbufToCbuf -> LocalMemoryTransferParamField
     SetPadding,          // InstructionId::SetPadding                    -> SetPaddingParamField
-    MoveMask,            // MOVEMASK -> VectorMaskParamField; legacy MoveMask0/MoveMask1 -> VectorMaskWriteParamField
+    MoveMask,            // Indexed vector mask register write.
     ChannelPara,
     SetFpc,
     SetCtrl, // InstructionId::SetCtrl                       -> CtrlRegisterParamField
@@ -91,8 +91,8 @@ using DeviceInstructionParamField = std::variant<
     FftsSyncParamField, DeviceFlagParamField, SyncBufParamField, ScalarDevParamField, ScalarPreloadParamField,
     ScalarAtomicParamField, MmadParamField, LoadL1MxParamField, LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField,
     Img2ColParamField, FmatrixParamField, L3dRptParamField, ScalarGmParamField, PipeBarrierParamField,
-    CrossCoreParamField, CtrlRegisterParamField, CopyUbufToUbufParamField, VectorMaskParamField,
-    VectorMaskWriteParamField, PushPbParamField, VfParamField, ChannelParaParamField, FpcParamField>;
+    CrossCoreParamField, CtrlRegisterParamField, CopyUbufToUbufParamField, VectorMaskWriteParamField, PushPbParamField,
+    VfParamField, ChannelParaParamField, FpcParamField>;
 
 struct DecodedInstruction {
     DeviceInstructionKind kind = DeviceInstructionKind::InvalidInstruction;

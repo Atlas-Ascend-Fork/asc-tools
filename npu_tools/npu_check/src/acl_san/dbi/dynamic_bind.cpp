@@ -340,8 +340,6 @@ static const BindingSpec ALL_BINDINGS[] = {
      "__npu_check_probe_mad_mx_e5m2_e5m2",
      {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
     {InstrType::MOVEMASK, "__npu_check_probe_movemask", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
-    {InstrType::MOVE_MASK_0, "__npu_check_probe_move_mask_0", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
-    {InstrType::MOVE_MASK_1, "__npu_check_probe_move_mask_1", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
     {InstrType::COPY_UBUF_TO_UBUF,
      "__npu_check_probe_copy_ubuf_to_ubuf",
      {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
@@ -372,6 +370,7 @@ static const BindingSpec ALL_BINDINGS[] = {
     {InstrType::PUSH_PB,
      "__npu_check_probe_push_pb",
      {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
+
     // A5 scalar LD/ST instructions share the scalar GM address ABI.
     {InstrType::ST_B64_IMM, "__npu_check_probe_st_b64_imm", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
     {InstrType::ST_B32_IMM, "__npu_check_probe_st_b32_imm", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
@@ -667,8 +666,6 @@ static constexpr BindingGroupSpec BINDING_GROUPS[] = {
          InstrType::VF,
          InstrType::PUSH_PB,
          InstrType::MOVEMASK,
-         InstrType::MOVE_MASK_0,
-         InstrType::MOVE_MASK_1,
          InstrType::COPY_UBUF_TO_UBUF,
          InstrType::SCATTER_VNCHWCONV_B16,
          InstrType::SCATTER_VNCHWCONV_B32,

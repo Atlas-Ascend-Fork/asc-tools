@@ -24,7 +24,6 @@ template <typename ParamField>
 constexpr bool HasParamFieldLogger() noexcept
 {
     return std::is_same_v<ParamField, aclsan::VectorMaskWriteParamField> ||
-           std::is_same_v<ParamField, aclsan::VectorMaskParamField> ||
            std::is_same_v<ParamField, aclsan::CtrlRegisterParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToUbufAlignV2ParamField> ||
            std::is_same_v<ParamField, aclsan::CopyGmToCbufAlignV2ParamField> ||
@@ -80,13 +79,6 @@ void LogParamField(const aclsan::VectorMaskWriteParamField& value) noexcept
     ASCTOOL_DEBUG(
         "[param] type=VectorMaskWriteParamField index=%u value=0x%llx", value.index,
         static_cast<unsigned long long>(value.value));
-}
-
-void LogParamField(const aclsan::VectorMaskParamField& value) noexcept
-{
-    ASCTOOL_DEBUG(
-        "[param] type=VectorMaskParamField vectorMask0=0x%llx vectorMask1=0x%llx",
-        static_cast<unsigned long long>(value.vectorMask0), static_cast<unsigned long long>(value.vectorMask1));
 }
 
 void LogParamField(const aclsan::CtrlRegisterParamField& value) noexcept
@@ -392,44 +384,18 @@ void LogParamField(const aclsan::SyncBufParamField& value) noexcept
         static_cast<unsigned long long>(value.bufId), static_cast<uint32_t>(value.mode));
 }
 
-void LogMemoryAccessData(const AclsanDeviceMemoryAccessData& value, uint32_t index) noexcept
-{
-    const uint64_t rangeBytes = value.layoutKind == ACLSAN_MEM_LAYOUT_RANGE ? value.layout.range.bytes : 0;
-    ASCTOOL_DEBUG(
-        "[cbdata] type=AclsanDeviceMemoryAccessData index=%u address=0x%llx memorySpace=%u accessMode=%u "
-        "accessIndex=%u accessCount=%u dataBits=%u bytes=%llu layoutKind=%u pc=0x%llx siteId=%u "
-        "deviceId=%u phyCoreId=%u blockId=%u blockType=%s instrExecId=%llu launchId=%llu serialNo=%llu pipeline=%u",
-        index, static_cast<unsigned long long>(value.address), value.memorySpace, value.accessMode, value.accessIndex,
-        value.accessCount, value.dataBits, static_cast<unsigned long long>(rangeBytes), value.layoutKind,
-        static_cast<unsigned long long>(value.header.pc), value.header.siteId, value.header.deviceId,
-        value.header.executor.phyCoreId, value.header.executor.blockId, BlockTypeName(value.header.executor.blockType),
-        static_cast<unsigned long long>(value.header.instrExecId),
-        static_cast<unsigned long long>(value.header.launchId), static_cast<unsigned long long>(value.header.serialNo),
-        value.header.pipeline);
-
-    if (value.layoutKind == ACLSAN_MEM_LAYOUT_RANGE) {
-        ASCTOOL_DEBUG("[cbdata] layout=range bytes=%llu", static_cast<unsigned long long>(value.layout.range.bytes));
-    } else if (value.layoutKind == ACLSAN_MEM_LAYOUT_BLOCK_REPEAT) {
-        ASCTOOL_DEBUG(
-            "[cbdata] layout=block_repeat blockNum=%u blockSize=%u blockStride=%lld repeatTimes=%u "
-            "repeatStride=%lld",
-            value.layout.blockRepeat.blockNum, value.layout.blockRepeat.blockSize,
-            static_cast<long long>(value.layout.blockRepeat.blockStride), value.layout.blockRepeat.repeatTimes,
-            static_cast<long long>(value.layout.blockRepeat.repeatStride));
-    }
-}
-
 void LogCallbackData(const DeviceMemoryAccessDataList& memory) noexcept
 {
-    for (std::size_t index = 0; index < memory.size(); ++index) {
-        LogMemoryAccessData(memory[index], static_cast<uint32_t>(index));
+    for (const auto& value : memory) {
+        aclsan::LogCallbackData(value);
     }
 }
 
 void LogCallbackData(const AclsanDeviceSyncData& sync) noexcept
 {
     ASCTOOL_DEBUG(
-        "[cbdata] deviceId=%u phyCoreId=%u blockId=%u blockType=%s  instrExecId=%llu launchId=%llu  "
+        "[cbdata] deviceId=%u executorPhyCoreId=%u executorBlockId=%u executorBlockType=%s  instrExecId=%llu "
+        "launchId=%llu  "
         "type=AclsanDeviceSyncData pc=0x%llx serialNo=%llu syncKind=%u action=%u scope=%u srcPipe=%u "
         "dstPipe=%u mode=%u objectId=%llu",
         sync.header.deviceId, sync.header.executor.phyCoreId, sync.header.executor.blockId,
@@ -473,7 +439,8 @@ void LogCallbackData(const AclsanDeviceRegisterStateData& cbData) noexcept
 {
     const auto& h = cbData.header;
     ASCTOOL_DEBUG(
-        "[cbdata] type=AclsanDeviceRegisterStateData deviceId=%u phyCoreId=%u blockId=%u blockType=%s "
+        "[cbdata] type=AclsanDeviceRegisterStateData deviceId=%u executorPhyCoreId=%u executorBlockId=%u "
+        "executorBlockType=%s "
         "instrExecId=%llu launchId=%llu pc=0x%llx serialNo=%llu pipeline=%u regId=%u regIndex=%u value=0x%llx",
         h.deviceId, h.executor.phyCoreId, h.executor.blockId, BlockTypeName(h.executor.blockType),
         static_cast<unsigned long long>(h.instrExecId), static_cast<unsigned long long>(h.launchId),
@@ -481,15 +448,64 @@ void LogCallbackData(const AclsanDeviceRegisterStateData& cbData) noexcept
         cbData.regIndex, static_cast<unsigned long long>(cbData.value));
 }
 
+void LogCallbackData(const AclsanDeviceVfData& vf) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[vf completion] launch=%llu instr=%llu pc=0x%llx device=%u executorPhyCoreId=%u executorBlockId=%u "
+        "executorBlockType=%s "
+        "status=%u warningFlags=%u accessCount=%u eventCount=%u rawEventCount=%u",
+        static_cast<unsigned long long>(vf.header.launchId), static_cast<unsigned long long>(vf.header.instrExecId),
+        static_cast<unsigned long long>(vf.header.pc), vf.header.deviceId, vf.header.executor.phyCoreId,
+        vf.header.executor.blockId, BlockTypeName(vf.header.executor.blockType), vf.status, vf.warningFlags,
+        vf.accessCount, vf.eventCount, vf.rawEventCount);
+}
+
 void LogCallbackData(const AclsanDeviceBarrierData& barrier) noexcept
 {
     const auto& h = barrier.header;
     ASCTOOL_DEBUG(
-        "[cbdata] type=AclsanDeviceBarrierData deviceId=%u phyCoreId=%u blockId=%u blockType=%s "
-        "instrExecId=%llu launchId=%llu pc=0x%llx pipeline=%u pipe=%u",
+        "[cbdata] type=AclsanDeviceBarrierData deviceId=%u executorPhyCoreId=%u executorBlockId=%u "
+        "executorBlockType=%s "
+        "instrExecId=%llu launchId=%llu pc=0x%llx pipeline=%u pipe=%u barrierKind=%u srcMemType=%u dstMemType=%u",
         h.deviceId, h.executor.phyCoreId, h.executor.blockId, BlockTypeName(h.executor.blockType),
         static_cast<unsigned long long>(h.instrExecId), static_cast<unsigned long long>(h.launchId),
-        static_cast<unsigned long long>(h.pc), h.pipeline, barrier.pipe);
+        static_cast<unsigned long long>(h.pc), h.pipeline, barrier.pipe, barrier.barrierKind, barrier.srcMemType,
+        barrier.dstMemType);
+    ASCTOOL_DEBUG("[cbdata] barrier vfInstrExecSeq=%llu", static_cast<unsigned long long>(barrier.vfInstrExecSeq));
+}
+
+void LogCallbackData(const AclsanDeviceMemoryAccessData& value) noexcept
+{
+    const uint64_t rangeBytes = value.layoutKind == ACLSAN_MEM_LAYOUT_RANGE ? value.layout.range.bytes : 0;
+    // memoryOwner is ignored for GM; log its field values consistently for every memory space.
+    ASCTOOL_DEBUG(
+        "[cbdata] type=AclsanDeviceMemoryAccessData address=0x%llx memorySpace=%u accessMode=%u "
+        "accessIndex=%u accessCount=%u dataBits=%u bytes=%llu layoutKind=%u pc=0x%llx siteId=%u "
+        "deviceId=%u executorPhyCoreId=%u executorBlockId=%u executorBlockType=%s "
+        "memoryOwnerPhyCoreId=%u memoryOwnerBlockId=%u memoryOwnerBlockType=%s "
+        "instrExecId=%llu launchId=%llu serialNo=%llu pipeline=%u",
+        static_cast<unsigned long long>(value.address), value.memorySpace, value.accessMode, value.accessIndex,
+        value.accessCount, value.dataBits, static_cast<unsigned long long>(rangeBytes), value.layoutKind,
+        static_cast<unsigned long long>(value.header.pc), value.header.siteId, value.header.deviceId,
+        value.header.executor.phyCoreId, value.header.executor.blockId, BlockTypeName(value.header.executor.blockType),
+        value.memoryOwner.phyCoreId, value.memoryOwner.blockId, BlockTypeName(value.memoryOwner.blockType),
+        static_cast<unsigned long long>(value.header.instrExecId),
+        static_cast<unsigned long long>(value.header.launchId), static_cast<unsigned long long>(value.header.serialNo),
+        value.header.pipeline);
+    ASCTOOL_DEBUG(
+        "[cbdata] vfInstrExecSeq=%llu vfInstrValid=%u", static_cast<unsigned long long>(value.vfInstrExecSeq),
+        static_cast<unsigned int>(value.vfInstrValid));
+
+    if (value.layoutKind == ACLSAN_MEM_LAYOUT_RANGE) {
+        ASCTOOL_DEBUG("[cbdata] layout=range bytes=%llu", static_cast<unsigned long long>(value.layout.range.bytes));
+    } else if (value.layoutKind == ACLSAN_MEM_LAYOUT_BLOCK_REPEAT) {
+        ASCTOOL_DEBUG(
+            "[cbdata] layout=block_repeat blockNum=%u blockSize=%u blockStride=%lld repeatTimes=%u "
+            "repeatStride=%lld",
+            value.layout.blockRepeat.blockNum, value.layout.blockRepeat.blockSize,
+            static_cast<long long>(value.layout.blockRepeat.blockStride), value.layout.blockRepeat.repeatTimes,
+            static_cast<long long>(value.layout.blockRepeat.repeatStride));
+    }
 }
 
 void LogCallbackData(const DeviceCallbackData& callbackData) noexcept

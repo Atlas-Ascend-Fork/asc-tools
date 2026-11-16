@@ -89,6 +89,27 @@ AclsanDeviceBarrierData Barrier(uint64_t n, uint32_t pipe)
     b.pipe = pipe;
     return b;
 }
+
+AclsanDeviceMemoryAccessData VfMemory(uint64_t parent, uint64_t sequence, uint32_t mode, uint64_t address)
+{
+    auto access = Memory(parent, mode, ACLSAN_DEVICE_PIPE_VECTOR, address, 8);
+    access.vfInstrValid = 1;
+    access.vfInstrExecSeq = sequence;
+    return access;
+}
+
+AclsanDeviceVfData VfCompletion(uint64_t parent, uint32_t accessCount)
+{
+    AclsanDeviceVfData completion{};
+    completion.header = VfMemory(parent, 0, ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ, 0).header;
+    completion.header.size = sizeof(completion);
+    completion.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
+    completion.status = ACLSAN_DEVICE_VF_SUCCESS;
+    completion.accessCount = accessCount;
+    completion.eventCount = accessCount;
+    completion.rawEventCount = accessCount;
+    return completion;
+}
 struct Harness {
     Racechecker checker;
     CheckerReportList reports;
@@ -127,6 +148,98 @@ struct Harness {
             checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &s, reports));
     }
 };
+
+TEST(RacecheckTest, VfInstructionsUseExecSequenceCompletionOrder)
+{
+    const uint32_t modes[] = {
+        ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ, ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE,
+        ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_READ, ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE};
+    for (const auto firstMode : modes) {
+        for (const auto secondMode : modes) {
+            SCOPED_TRACE(::testing::Message() << firstMode << '/' << secondMode);
+            std::vector<AclsanDeviceMemoryAccessData> memory{
+                VfMemory(10, 1, secondMode, 0x1000), VfMemory(10, 0, firstMode, 0x2000)};
+            std::vector<AclsanDeviceSyncData> sync;
+            std::vector<AclsanDeviceVfData> vfs{VfCompletion(10, 2)};
+            race::DependencyGraph graph;
+            std::set<std::string> reasons;
+            race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph, {}, vfs, {});
+            ASSERT_TRUE(reasons.empty());
+            const auto first = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& access) {
+                return access.data.vfInstrExecSeq == 0;
+            });
+            const auto second = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& access) {
+                return access.data.vfInstrExecSeq == 1;
+            });
+            ASSERT_NE(first, graph.accesses.end());
+            ASSERT_NE(second, graph.accesses.end());
+            EXPECT_EQ(graph.graph.Compare(first->node, second->node), race::HappensBeforeGraph::Relation::Before);
+            EXPECT_EQ(graph.graph.Compare(second->node, first->node), race::HappensBeforeGraph::Relation::After);
+        }
+    }
+}
+
+TEST(RacecheckTest, VfFragmentsShareOneOrderedNodeAcrossSequenceGapsAndBarrier)
+{
+    auto early = VfMemory(10, 0, ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ, 0x1000);
+    early.accessCount = 2;
+    auto secondFragment = early;
+    secondFragment.accessIndex = 1;
+    secondFragment.address = 0x1100;
+    auto late = VfMemory(10, 50, ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE, 0x1200);
+    auto barrier = Barrier(10, ACLSAN_DEVICE_PIPE_INVALID);
+    barrier.header = early.header;
+    barrier.header.size = sizeof(barrier);
+    barrier.barrierKind = ACLSAN_DEVICE_BARRIER_LOCAL_MEM;
+    barrier.srcMemType = ACLSAN_DEVICE_LOCAL_MEM_VEC_LOAD;
+    barrier.dstMemType = ACLSAN_DEVICE_LOCAL_MEM_SCALAR_STORE;
+    barrier.vfInstrExecSeq = 10;
+    std::vector<AclsanDeviceMemoryAccessData> memory{late, secondFragment, early};
+    std::vector<AclsanDeviceSyncData> sync;
+    std::vector<AclsanDeviceVfData> vfs{VfCompletion(10, 3)};
+    vfs.front().eventCount = vfs.front().rawEventCount = 4;
+    race::DependencyGraph graph;
+    std::set<std::string> reasons;
+    race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph, {}, vfs, {barrier});
+    ASSERT_TRUE(reasons.empty());
+    ASSERT_EQ(graph.accesses.size(), 3U);
+    const auto first = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& access) {
+        return access.data.vfInstrExecSeq == 0 && access.data.accessIndex == 0;
+    });
+    const auto fragment = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& access) {
+        return access.data.vfInstrExecSeq == 0 && access.data.accessIndex == 1;
+    });
+    const auto last = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& access) {
+        return access.data.vfInstrExecSeq == 50;
+    });
+    ASSERT_NE(first, graph.accesses.end());
+    ASSERT_NE(fragment, graph.accesses.end());
+    ASSERT_NE(last, graph.accesses.end());
+    EXPECT_EQ(first->node, fragment->node);
+    EXPECT_EQ(graph.graph.Compare(first->node, last->node), race::HappensBeforeGraph::Relation::Before);
+}
+
+TEST(RacecheckTest, VfSequenceDoesNotOrderUnrelatedExternalPipe)
+{
+    auto external = Memory(1, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, ACLSAN_DEVICE_PIPE_MTE2, 0x1000);
+    auto first = VfMemory(10, 0, ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ, 0x1000);
+    auto second = VfMemory(10, 1, ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE, 0x1000);
+    std::vector<AclsanDeviceMemoryAccessData> memory{second, external, first};
+    std::vector<AclsanDeviceSyncData> sync;
+    std::vector<AclsanDeviceVfData> vfs{VfCompletion(10, 2)};
+    race::DependencyGraph graph;
+    std::set<std::string> reasons;
+    race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph, {}, vfs, {});
+    ASSERT_TRUE(reasons.empty());
+    const auto outside = std::find_if(
+        graph.accesses.begin(), graph.accesses.end(), [](const auto& access) { return access.data.vfInstrValid == 0; });
+    ASSERT_NE(outside, graph.accesses.end());
+    for (const auto& access : graph.accesses) {
+        if (access.data.vfInstrValid != 0) {
+            EXPECT_EQ(graph.graph.Compare(outside->node, access.node), race::HappensBeforeGraph::Relation::Unordered);
+        }
+    }
+}
 
 AclsanDeviceMemoryAccessData UnitMemory(
     uint64_t seq, bool write, uint32_t flag, uint64_t address = 0, uint64_t bytes = 512)
@@ -342,6 +455,9 @@ std::pair<AclsanDeviceMemoryAccessData, AclsanDeviceMemoryAccessData> FixToUb(
     auto source = UnitMemory(seq, false, flag);
     source.instructionId = 170;
     auto target = source;
+    source.accessCount = 2;
+    target.accessCount = 2;
+    target.accessIndex = 1;
     target.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
     target.memoryOwner = {18 + sub, sub, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR};
     target.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
@@ -397,7 +513,8 @@ TEST(RacecheckTest, FixToUbCompletionIncludesRemoteWriteWithAndWithoutUnitFlag)
                 EXPECT_EQ(h.reports.empty(), synchronize);
                 race::DependencyGraph graph;
                 std::set<std::string> reasons;
-                race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph);
+                std::vector<AclsanDeviceVfData> vfs;
+                race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph, {}, vfs, {});
                 EXPECT_TRUE(reasons.empty());
                 const auto target = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& a) {
                     return a.data.header.instrExecId == 2 && a.data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
@@ -535,6 +652,54 @@ TEST(RacecheckTest, UnitFlagDoesNotBecomeAnOrdinaryFlagOrAnUnprovenRace)
     EXPECT_TRUE(h.reports.empty());
     EXPECT_NE(h.checker.Summary().find("unit_flag_semantics_unknown=1"), std::string::npos);
     EXPECT_EQ(h.checker.Summary().find("conflicting_duplicate"), std::string::npos);
+}
+
+TEST(RacecheckTest, AcceptsAllVfRangeModes)
+{
+    for (const auto mode :
+         {ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ, ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE,
+          ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_READ, ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE}) {
+        SCOPED_TRACE(mode);
+        Harness h;
+        h.Add(Memory(1, mode, ACLSAN_DEVICE_PIPE_VECTOR));
+        h.Sync();
+        EXPECT_TRUE(h.reports.empty());
+        // A VF mode without its dynamic index/completion envelope is incomplete.
+        EXPECT_FALSE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    }
+}
+
+TEST(RacecheckTest, RejectsShortPipeBarrierPayload)
+{
+    struct OriginalBarrier {
+        AclsanDeviceEventHeader header;
+        uint32_t pipe;
+        uint32_t reserved;
+    } barrier{};
+    barrier.header = Memory(2).header;
+    barrier.header.size = sizeof(barrier);
+    barrier.pipe = ACLSAN_DEVICE_PIPE_MTE2;
+    Harness h;
+    ASSERT_FALSE(h.checker.OnCallback(
+        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER, &barrier, h.reports));
+    EXPECT_TRUE(h.reports.empty());
+    EXPECT_FALSE(h.checker.AnalysisComplete());
+    EXPECT_NE(h.checker.Summary().find("malformed_callback=1"), std::string::npos);
+}
+
+TEST(RacecheckTest, UnhandledLocalMemBarrierDoesNotOrderPipeAccesses)
+{
+    Harness h;
+    h.Add(Memory(1));
+    auto barrier = Barrier(2, ACLSAN_DEVICE_PIPE_MTE2);
+    barrier.barrierKind = ACLSAN_DEVICE_BARRIER_LOCAL_MEM;
+    barrier.srcMemType = ACLSAN_DEVICE_LOCAL_MEM_VEC_STORE;
+    barrier.dstMemType = ACLSAN_DEVICE_LOCAL_MEM_VEC_LOAD;
+    h.Add(barrier);
+    h.Add(Memory(3, ACLSAN_DEVICE_MEMORY_ACCESS_READ));
+    h.Sync();
+    EXPECT_FALSE(h.checker.AnalysisComplete());
+    EXPECT_NE(h.checker.Summary().find("sync_coverage_unknown"), std::string::npos);
 }
 
 TEST(RacecheckTest, BarrierOrdersLaterSamePipeAccess)
@@ -1606,7 +1771,7 @@ TEST(RacecheckTest, RandomExactFootprintsAgreeWithExhaustiveByteOracle)
         std::vector<AclsanDeviceMemoryAccessData> accesses;
         // Each access has a separate domain so no implicit local order can affect the oracle.
         for (uint32_t i = 0; i < 12; ++i) {
-            auto a = Memory(1, 1 + rng() % 2, 4, 0x1000 + rng() % 32, 1 + rng() % 12);
+            auto a = Memory(i + 1, 1 + rng() % 2, 4, 0x1000 + rng() % 32, 1 + rng() % 12);
             a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
             a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
             a.header.executor.blockId = i;
@@ -1852,7 +2017,7 @@ TEST(RacecheckTest, RandomSynchronizationAndFootprintsMatchAllPairsOracle)
                 prefixes[dst].insert(prefixes[src].begin(), prefixes[src].end());
             }
             const size_t pipe = rng() % 4;
-            auto a = Memory(sequence++, 1 + rng() % 3, pipes[pipe], 0x1000 + rng() % 48, 1 + rng() % 12);
+            auto a = Memory(sequence++, 1 + rng() % 2, pipes[pipe], 0x1000 + rng() % 48, 1 + rng() % 12);
             auto prior = acquired[pipe];
             if (pipe == 3)
                 prior.insert(prefixes[pipe].begin(), prefixes[pipe].end());
@@ -1942,7 +2107,8 @@ TEST(RacecheckTest, FpcResetStartsNewOwnershipWithoutCompletingOldReads)
             EXPECT_EQ(h.reports.empty(), !reset || synchronize);
             race::DependencyGraph graph;
             std::set<std::string> reasons;
-            race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph, {fpc});
+            std::vector<AclsanDeviceVfData> vfs;
+            race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph, {fpc}, vfs, {});
             EXPECT_EQ(reasons.empty(), reset);
             if (reset) {
                 const auto read = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& a) {

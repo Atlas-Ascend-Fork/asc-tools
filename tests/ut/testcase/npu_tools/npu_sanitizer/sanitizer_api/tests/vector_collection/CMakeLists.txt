@@ -16,6 +16,7 @@ set(SAN "${REPO_ROOT}/npu_tools/npu_check/src/acl_san")
 set(COMMON_TEST "${CMAKE_CURRENT_LIST_DIR}/../../../common/tests")
 set(RUNTIME_HEADERS "${REPO_ROOT}/tests/ut/testcase/npu_tools/injection/tests/stubs/runtime/include")
 add_executable(vector_collection_test integration_test.cpp
+  "${CMAKE_CURRENT_LIST_DIR}/../hibit/mock.cpp" "${SAN}/aclsan_vf.cpp"
   "${SAN}/aclsan_trace_runtime.cpp"
   "${SAN}/device_instr/arch/dav_3510/decoder.cpp"
   "${SAN}/device_instr/arch/dav_3510/register_state_manager.cpp"
@@ -25,6 +26,7 @@ add_executable(vector_collection_test integration_test.cpp
 target_compile_features(vector_collection_test PRIVATE cxx_std_17)
 target_compile_options(vector_collection_test PRIVATE
   -Wall -Wextra -Werror -UNDEBUG -ffunction-sections -fdata-sections)
+target_include_directories(vector_collection_test BEFORE PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../hibit")
 target_include_directories(vector_collection_test PRIVATE
   "${SAN}" "${SAN}/../../include" "${COMMON_TEST}" "${SAN}/../shared"
   "${RUNTIME_HEADERS}" "${REPO_ROOT}/npu_tools/injection/include")

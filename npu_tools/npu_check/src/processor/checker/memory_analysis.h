@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_CHECK_MEMORY_ANALYSIS_H
-#define NPU_CHECK_MEMORY_ANALYSIS_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_ANALYSIS_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_ANALYSIS_H
 #include "acl_san/aclsan_api.h"
 #include "acl_san/aclsan_cbdata.h"
 #include "checker/memory_state.h"
@@ -45,6 +45,8 @@ public:
         std::map<race::Domain, uint64_t> registerMasks;
         std::vector<AclsanDeviceSyncData> sync;
         std::vector<AclsanDeviceRegisterStateData> registers;
+        std::vector<AclsanDeviceVfData> vfs;
+        std::vector<AclsanDeviceBarrierData> localBarriers;
         std::map<race::Instruction, std::set<uint32_t>> skippedFragments;
         std::set<std::string> reasons;
         bool inexactMemory = false;
@@ -148,4 +150,4 @@ private:
     HostOrder::NodeId HostNode();
 };
 } // namespace npucheck
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_ANALYSIS_H

@@ -714,12 +714,6 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
             return DecodeSetL12D(record, DATA_BITS_B32);
 
         case RawId(InstructionId::SetVectorMask):
-            return DecodedInstruction{
-                DeviceInstructionKind::MoveMask,
-                // set_vector_mask takes (maskHigh, maskLow), while the state is indexed as MASK[0], MASK[1].
-                VectorMaskParamField{record.args[1], record.args[0]}};
-        case RawId(InstructionId::MoveMask0):
-        case RawId(InstructionId::MoveMask1):
             if (record.args[0] > 1) {
                 return std::nullopt;
             }

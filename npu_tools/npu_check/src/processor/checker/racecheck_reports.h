@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_TOOLS_NPU_CHECK_RACECHECK_REPORTS_H
-#define NPU_TOOLS_NPU_CHECK_RACECHECK_REPORTS_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_REPORTS_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_REPORTS_H
 #include "checker/mem_state_tracker.h"
 #include "diagnostic/report_message.h"
 #include "diagnostic/report_renderer.h"
@@ -29,4 +29,4 @@ std::vector<NpuCheckRacecheckReport> MakeRacecheckDiagnostics(
 // 校验已保存的身份、模式及连续范围，生成统一记录；不重新展开布局。
 ReportRenderStatus NormalizeRacecheckReport(const NpuCheckRacecheckReport& report, ReportRecord* out);
 } // namespace npucheck
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_REPORTS_H

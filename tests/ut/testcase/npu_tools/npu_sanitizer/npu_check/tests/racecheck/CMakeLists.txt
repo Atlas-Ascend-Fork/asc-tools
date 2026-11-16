@@ -37,6 +37,9 @@ add_executable(racecheck_memstate_allocation_tests
   ../gtest_main.cpp ../log_capture.cpp
   ../mem_state_tracker_allocation_test.cpp
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/sync_analysis.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/happens_before_graph.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/types.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/mem_state_tracker.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck_reports.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/diagnostic/report/report_fields.cpp")
@@ -44,10 +47,11 @@ target_compile_features(racecheck_memstate_allocation_tests PRIVATE cxx_std_17)
 target_compile_definitions(racecheck_memstate_allocation_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_compile_options(racecheck_memstate_allocation_tests PRIVATE -Wall -Wextra -Werror)
 target_include_directories(racecheck_memstate_allocation_tests PRIVATE
+  "${REPO_ROOT}/npu_tools/npu_check/src/acl_san"
   "${REPO_ROOT}/npu_tools/npu_check/src/shared"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor"
   "${REPO_ROOT}/npu_tools/npu_check/include")
-target_link_libraries(racecheck_memstate_allocation_tests PRIVATE GTest::gtest Threads::Threads npu_sanitizer_plog plog_test_library)
+target_link_libraries(racecheck_memstate_allocation_tests PRIVATE npu_check_core GTest::gtest Threads::Threads npu_sanitizer_plog plog_test_library)
 add_test(NAME racecheck_memstate_allocation_tests COMMAND racecheck_memstate_allocation_tests)
 
 add_executable(racecheck_report_tests
@@ -94,10 +98,15 @@ add_test(NAME racecheck_render_tests COMMAND racecheck_render_tests)
 # Exercise the production synchronization graph together with the memstate checker.
 add_executable(racecheck_integration_tests
   ../gtest_main.cpp
-  ../racecheck_test.cpp ../happens_before_graph_test.cpp ../memory_access_state_test.cpp
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/memory_analysis.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/memory_state.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/allocation_registry.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_translate_device_data.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_memory_cbdata.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_register_dependency.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_device_data_log.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/device_instr/arch/dav_3510/decoder.cpp"
+  ../racecheck_test.cpp ../vf_racecheck_test.cpp ../happens_before_graph_test.cpp ../memory_access_state_test.cpp
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/dependency_graph.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/sync_analysis.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/racecheck/happens_before_graph.cpp"

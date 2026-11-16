@@ -202,6 +202,7 @@ add_library(acl_san SHARED
   aclsan_register_dependency.cpp
   aclsan_trace_buffer.cpp
   aclsan_trace_runtime.cpp
+  aclsan_vf.cpp
   aclsan_api.cpp
   aclsan_dispatch.cpp
   aclsan_hook_aclrt.cpp
@@ -221,6 +222,7 @@ target_link_libraries(acl_san PRIVATE c_sec_static)
 target_link_libraries(acl_san
   PRIVATE
     acl_tool_injection
+    npu_bit
     npu_check_dbi_engine
     npu_sanitizer_plog
     dl

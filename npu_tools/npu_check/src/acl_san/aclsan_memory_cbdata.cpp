@@ -780,6 +780,10 @@ public:
         if (resolved.status != MemoryCbdataStatus::SUCCESS) {
             return {resolved.status, {}};
         }
+        if (resolved.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
+            context_.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) {
+            return {MemoryCbdataStatus::INVALID_ADDRESS_SPACE, {}};
+        }
         const MemoryInstructionProfile profile{
             dataBits, isStore ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD, context_.executor.blockType};
         MemoryCbdataBuilder builder{context_, profile, resolved.memorySpace};

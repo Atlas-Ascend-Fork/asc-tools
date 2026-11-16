@@ -44,12 +44,18 @@ std::vector<uint8_t> MultiElf()
     auto image = aclsan::test::MakeKernelArgumentSizeElf(16);
     Elf64_Ehdr header;
     std::memcpy(&header, image.data(), sizeof(header));
-    Elf64_Shdr original[4];
-    std::memcpy(original, image.data() + header.e_shoff, sizeof(original));
-    std::vector<Elf64_Shdr> sections{original[0], original[1], original[2]};
-    std::string names("\0.shstrtab\0__CCE_KernelArgSize\0", 31);
+    std::vector<Elf64_Shdr> sections(header.e_shnum);
+    std::memcpy(sections.data(), image.data() + header.e_shoff, sections.size() * sizeof(Elf64_Shdr));
+    std::string names(reinterpret_cast<const char*>(image.data() + sections[1].sh_offset), sections[1].sh_size);
+    const auto originalMetadata = sections[3];
+    sections.erase(sections.begin() + 3);
+    sections[4].sh_link = 3;
+    Elf64_Sym kernel{};
+    std::memcpy(&kernel, image.data() + sections[4].sh_offset + sizeof(Elf64_Sym), sizeof(kernel));
+    kernel.st_shndx = 5;
+    std::memcpy(image.data() + sections[4].sh_offset + sizeof(Elf64_Sym), &kernel, sizeof(kernel));
     for (uint64_t key : {uint64_t(0), uint64_t(1), std::numeric_limits<uint64_t>::max()}) {
-        auto section = original[3];
+        auto section = originalMetadata;
         section.sh_name = names.size();
         names += ".ascend.meta.K_" + std::to_string(key);
         names.push_back('\0');

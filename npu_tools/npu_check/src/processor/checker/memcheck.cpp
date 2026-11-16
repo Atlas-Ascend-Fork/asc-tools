@@ -503,8 +503,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::OnSynchronization()
     if (!analysis_->Managed())
         stats_.pendingDeviceOperations = pendingDeviceAccesses_.size();
 
-    using InstructionIdentity = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t, uint64_t>;
-    std::map<InstructionIdentity, uint64_t> instructionGroups;
+    std::map<race::Instruction, uint64_t> instructionGroups;
     std::vector<NpuCheckMemcheckReport> reports;
     const auto check = [&](const AclsanDeviceMemoryAccessData& access) {
         if ((access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0 ||
@@ -512,9 +511,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::OnSynchronization()
             return;
         if (analysis_->Managed() && stats_.pendingDeviceOperations != 0)
             --stats_.pendingDeviceOperations;
-        const InstructionIdentity identity{
-            access.header.deviceId, access.header.launchId, access.header.executor.blockType,
-            access.header.executor.blockId, access.header.instrExecId};
+        const race::Instruction identity = race::Key(access);
         const auto [group, inserted] = instructionGroups.try_emplace(identity, nextGroupId_);
         if (inserted) {
             ++nextGroupId_;

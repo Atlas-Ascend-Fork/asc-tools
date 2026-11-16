@@ -22,4 +22,4 @@ NpuCheckInitcheckReport BuildInitcheckMemoryReportBase(
 
 } // namespace npucheck
 
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_INITCHECK_REPORT_H

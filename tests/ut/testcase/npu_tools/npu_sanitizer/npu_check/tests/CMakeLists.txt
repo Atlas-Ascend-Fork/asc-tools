@@ -66,6 +66,9 @@ add_test(NAME npu_check_unit_tests COMMAND npu_check_unit_tests)
 add_executable(npu_check_memstate_allocation_tests
   gtest_main.cpp log_capture.cpp mem_state_tracker_allocation_test.cpp
   "${NPU_CHECK_SOURCE_DIR}/checker/racecheck.cpp"
+  "${NPU_CHECK_SOURCE_DIR}/checker/racecheck/sync_analysis.cpp"
+  "${NPU_CHECK_SOURCE_DIR}/checker/racecheck/happens_before_graph.cpp"
+  "${NPU_CHECK_SOURCE_DIR}/checker/racecheck/types.cpp"
   "${NPU_CHECK_SOURCE_DIR}/checker/mem_state_tracker.cpp"
   "${NPU_CHECK_SOURCE_DIR}/checker/racecheck_reports.cpp"
   "${NPU_CHECK_SOURCE_DIR}/diagnostic/report/report_fields.cpp")
@@ -73,8 +76,8 @@ target_compile_features(npu_check_memstate_allocation_tests PRIVATE cxx_std_17)
 target_compile_definitions(npu_check_memstate_allocation_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_compile_options(npu_check_memstate_allocation_tests PRIVATE -Wall -Wextra -Werror)
 target_include_directories(npu_check_memstate_allocation_tests PRIVATE
-  "${NPU_CHECK_SOURCE_DIR}" "${NPU_CHECK_DBI_ROOT}/../../include")
-target_link_libraries(npu_check_memstate_allocation_tests PRIVATE npu_sanitizer_plog plog_test_library GTest::gtest)
+  "${NPU_CHECK_SOURCE_DIR}" "${NPU_CHECK_DBI_ROOT}" "${NPU_CHECK_DBI_ROOT}/../../include")
+target_link_libraries(npu_check_memstate_allocation_tests PRIVATE npu_check_core npu_sanitizer_plog plog_test_library GTest::gtest)
 add_test(NAME npu_check_memstate_allocation_tests COMMAND npu_check_memstate_allocation_tests)
 
 add_executable(npu_check_cube_memory_tests

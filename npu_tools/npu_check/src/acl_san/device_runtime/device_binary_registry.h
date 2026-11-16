@@ -11,6 +11,7 @@
 #ifndef NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_RUNTIME_DEVICE_BINARY_REGISTRY_H
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_RUNTIME_DEVICE_BINARY_REGISTRY_H
 
+#include "aclsan_vf.h"
 #include "device_symbolizer.h"
 #include "dbi/kernel_param_metadata.h"
 
@@ -51,6 +52,7 @@ public:
     void RecordLatestBinaryFunctionLookup(uintptr_t function) noexcept;
     bool GetFunctionTraceArgumentOffset(uintptr_t function, uint32_t& traceArgumentOffset) const noexcept;
     bool GetFunctionName(uintptr_t function, std::string& functionName) const noexcept;
+    std::shared_ptr<NpubitUbHandle> GetFunctionHibitHandle(uintptr_t function) const noexcept;
     void Reset() noexcept;
 
     CallStackResult ResolveCallStack(uint64_t pc) const noexcept;

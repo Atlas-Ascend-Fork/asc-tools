@@ -167,7 +167,7 @@ TEST(RacecheckReportTest, AtomicModeUsesPublicAccessMode)
         Memory(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, 0, 32, 10, 2)};
     AccessPair evidence{0, 1, ACLSAN_DEVICE_MEMORY_SPACE_UB, 0, 32};
     const auto report = Diagnostic(evidence, records);
-    EXPECT_EQ(Resolve(report).fields.at("currentAccess"), "ATOMIC_WRITE_ADD");
+    EXPECT_EQ(Resolve(report).fields.at("currentAccess"), "atomic write(add)");
     EXPECT_EQ(report.kind, ConflictKind::WAR);
 }
 
@@ -179,7 +179,7 @@ TEST(RacecheckReportTest, AtomicSemanticEvidenceKeepsConcreteModesAndRejectsComp
         const auto report = Diagnostic({0, 1, ACLSAN_DEVICE_MEMORY_SPACE_UB, 0, 32}, records);
         const auto output = Resolve(report);
         EXPECT_EQ(output.key.pattern, "atomic_semantic");
-        EXPECT_EQ(output.fields.at("previousAccess"), "ATOMIC_WRITE_ADD");
+        EXPECT_EQ(output.fields.at("previousAccess"), "atomic write(add)");
         EXPECT_EQ(output.fields.at("overlapBytes"), "32");
         auto invalid = report;
         invalid.key.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_L1;
@@ -247,8 +247,8 @@ TEST(RacecheckReportTest, OwnedAccessesRemainStableAcrossSourceReallocation)
         records->push_back(Memory(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 64, 96));
     }
     records.reset();
-    EXPECT_EQ(Resolve(report).fields.at("previousAccess"), "WRITE");
-    EXPECT_EQ(Resolve(report).fields.at("currentAccess"), "READ");
+    EXPECT_EQ(Resolve(report).fields.at("previousAccess"), "write");
+    EXPECT_EQ(Resolve(report).fields.at("currentAccess"), "read");
     EXPECT_EQ(Resolve(report).fields.at("overlapBytes"), "32");
 }
 
@@ -520,7 +520,7 @@ TEST(RacecheckCheckerTest, AtomicSemanticRaceReportsEveryUnorderedPairAndSkipsRa
             EXPECT_EQ(report.kind, ConflictKind::ATOMIC_SEMANTIC);
             EXPECT_EQ(report.previous.header.instrExecId, 1U);
             EXPECT_EQ(report.current.header.instrExecId, 2U);
-            EXPECT_EQ(Resolve(report).fields.at("currentAccess"), "ATOMIC_WRITE_MIN");
+            EXPECT_EQ(Resolve(report).fields.at("currentAccess"), "atomic write(min)");
             ASSERT_TRUE(dispatch(min));
             EXPECT_EQ(reports.size(), 2U);
         } else {

@@ -171,9 +171,7 @@ enum class InstructionId : uint32_t {
     FixL0cToUbufS32 = 171, // LocalMemoryTransferParamField：L0C READ
 
     // REGISTER
-    SetVectorMask = 93,        // MOVEMASK (complete vector mask from set_vector_mask)
-    MoveMask0 = 165,           // MOVE_MASK_0 (low half of set_vector_mask)
-    MoveMask1 = 166,           // MOVE_MASK_1 (high half of set_vector_mask)
+    SetVectorMask = 93,        // MOVEMASK (indexed mask register write)
     SetCtrl = 159,             // SET_CTRL
     SetPadding = 392,          // SET_PADDING
     LoopSizeGmToCbuf = 394,    // 已完成：DmaLoopSizeParamField（状态）
@@ -346,8 +344,6 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
         case InstructionId::FixL0cToCbufS32:
         case InstructionId::FixL0cToUbufF32:
         case InstructionId::FixL0cToUbufS32:
-        case InstructionId::MoveMask0:
-        case InstructionId::MoveMask1:
         case InstructionId::SetVectorMask:
         case InstructionId::SetCtrl:
         case InstructionId::SetPadding:

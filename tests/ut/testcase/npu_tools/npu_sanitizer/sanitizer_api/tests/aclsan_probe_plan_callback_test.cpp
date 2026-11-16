@@ -93,6 +93,9 @@ TEST(AclsanProbePlanCallback, Main)
         (aclsan::ProbeGroupMaskForCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE) &
          PROBE_GROUP_VECTOR) != 0);
     CHECK(
+        (aclsan::ProbeGroupMaskForCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE) &
+         PROBE_GROUP_VECTOR) != 0);
+    CHECK(
         (aclsan::PROBE_GROUP_ALL & (PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR)) ==
         (PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR));
 
@@ -212,7 +215,7 @@ TEST(AclsanProbePlanCallback, BarrierUsesInstructionDomainAndIndependentId)
         ACLSAN_STATUS_SUCCESS);
     EXPECT_EQ(aclsan::SnapshotActiveProbePlan(), aclsan::PROBE_GROUP_SYNC);
     EXPECT_EQ(
-        aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_CONTROL),
+        aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF + 1U),
         ACLSAN_STATUS_ERROR_INVALID_PARAMETER);
     AclsanDeviceBarrierData barrier{};
     aclsan::AclsanCallbackDispatcher::DispatchDeviceBarrier(barrier);

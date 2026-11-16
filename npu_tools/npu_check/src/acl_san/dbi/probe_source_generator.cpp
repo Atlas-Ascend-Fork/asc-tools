@@ -41,7 +41,7 @@ struct ProbeDefinition {
     std::string_view recordArguments;
 };
 
-const std::array<ProbeDefinition, 198> DEFINITIONS{
+const std::array<ProbeDefinition, 196> DEFINITIONS{
     {
         {static_cast<uint16_t>(InstrType::VF), ProbeGroup::Vector, "__npu_check_probe_vf",
          "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t entryPc, uint64_t instructionCount",
@@ -50,15 +50,9 @@ const std::array<ProbeDefinition, 198> DEFINITIONS{
          "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t x1, uint64_t x2, uint64_t x3, uint64_t x4",
          "RegisterState", "PIPE_S", "x1, x2, x3, x4, 0UL"},
         // Collect scalar mask writes in the Vector group alongside PUSH_PB and VF.
-        {static_cast<uint16_t>(InstrType::MOVE_MASK_0), ProbeGroup::Vector, "__npu_check_probe_move_mask_0",
-         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t maskIndex, uint64_t mask", "RegisterState",
-         "PIPE_S", "maskIndex, mask, 0UL, 0UL, 0UL"},
-        {static_cast<uint16_t>(InstrType::MOVE_MASK_1), ProbeGroup::Vector, "__npu_check_probe_move_mask_1",
-         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t maskIndex, uint64_t mask", "RegisterState",
-         "PIPE_S", "maskIndex, mask, 0UL, 0UL, 0UL"},
         {static_cast<uint16_t>(InstrType::MOVEMASK), ProbeGroup::Vector, "__npu_check_probe_movemask",
-         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t maskHigh, uint64_t maskLow", "RegisterState",
-         "PIPE_S", "maskHigh, maskLow, 0UL, 0UL, 0UL"},
+         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t maskIndex, uint64_t mask", "RegisterState",
+         "PIPE_S", "maskIndex, mask, 0UL, 0UL, 0UL"},
         {static_cast<uint16_t>(InstrType::COPY_CBUF_TO_FBUF), ProbeGroup::Fixpipe,
          "__npu_check_probe_copy_cbuf_to_fbuf",
          R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __fbuf__ void* dst, __cbuf__ void* src, uint64_t config)PARAM",

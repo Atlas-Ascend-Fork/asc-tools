@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_CHECK_HAPPENS_BEFORE_GRAPH_H
-#define NPU_CHECK_HAPPENS_BEFORE_GRAPH_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_HAPPENS_BEFORE_GRAPH_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_HAPPENS_BEFORE_GRAPH_H
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -68,4 +68,4 @@ private:
     bool valid_ = true;
 };
 } // namespace npucheck::race
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_HAPPENS_BEFORE_GRAPH_H

@@ -239,7 +239,7 @@ TEST(ProbeSourceGenerator, VectorGroupIncludesUbufTransfer)
 {
     const auto generated = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Vector);
     ASSERT_TRUE(generated.success) << generated.diagnostic;
-    EXPECT_EQ(generated.symbols.size(), 15U);
+    EXPECT_EQ(generated.symbols.size(), 13U);
     EXPECT_EQ(generated.symbols, aclsan::BindingSymbols({aclsan::ProbeGroup::Vector}));
     EXPECT_NE(
         std::find(generated.symbols.begin(), generated.symbols.end(), "__npu_check_probe_copy_ubuf_to_ubuf"),
@@ -334,7 +334,7 @@ TEST(ProbeSourceGenerator, CapturesPushPbAndVfOperands)
     EXPECT_NE(vector.source.find("entryPc, instructionCount, 0UL, 0UL, 0UL"), std::string::npos);
 }
 
-TEST(ProbeSourceGenerator, CapturesVectorMasksWithoutSelectingScalarGroup)
+TEST(ProbeSourceGenerator, ExcludesLegacyVectorMasks)
 {
     using namespace aclsan;
     const auto generated = GenerateProbeSource("dav-3510", ProbeGroup::Vector);
@@ -342,15 +342,8 @@ TEST(ProbeSourceGenerator, CapturesVectorMasksWithoutSelectingScalarGroup)
     const auto bindings = BindingSymbols({ProbeGroup::Vector});
     for (unsigned index = 0; index < 2; ++index) {
         const auto symbol = "__npu_check_probe_move_mask_" + std::to_string(index);
-        EXPECT_NE(std::find(bindings.begin(), bindings.end(), symbol), bindings.end());
-        const auto definition = FindProbeDefinition(generated.source, symbol);
-        ASSERT_FALSE(definition.empty());
-        EXPECT_NE(definition.find("uint64_t maskIndex, uint64_t mask)"), std::string_view::npos);
-        EXPECT_NE(definition.find("DeviceInstructionCategory::RegisterState"), std::string_view::npos);
-        EXPECT_NE(
-            definition.find("static_cast<uint16_t>(PIPE_S), " + std::to_string(165 + index) + ","),
-            std::string_view::npos);
-        EXPECT_NE(definition.find("maskIndex, mask, 0UL, 0UL, 0UL"), std::string_view::npos);
+        EXPECT_EQ(std::find(bindings.begin(), bindings.end(), symbol), bindings.end());
+        EXPECT_EQ(generated.source.find(symbol), std::string::npos);
     }
 }
 
@@ -364,8 +357,8 @@ TEST(ProbeSourceGenerator, IncludesMovemask93Binding)
     EXPECT_NE(generated.sourceMap.find("apiId=93 symbol=__npu_check_probe_movemask\n"), std::string::npos);
     const auto definition = FindProbeDefinition(generated.source, "__npu_check_probe_movemask");
     ASSERT_FALSE(definition.empty());
-    EXPECT_NE(definition.find("uint64_t maskHigh, uint64_t maskLow)"), std::string_view::npos);
+    EXPECT_NE(definition.find("uint64_t maskIndex, uint64_t mask)"), std::string_view::npos);
     EXPECT_NE(definition.find("DeviceInstructionCategory::RegisterState"), std::string_view::npos);
     EXPECT_NE(definition.find("static_cast<uint16_t>(PIPE_S), 93,"), std::string_view::npos);
-    EXPECT_NE(definition.find("maskHigh, maskLow, 0UL, 0UL, 0UL"), std::string_view::npos);
+    EXPECT_NE(definition.find("maskIndex, mask, 0UL, 0UL, 0UL"), std::string_view::npos);
 }

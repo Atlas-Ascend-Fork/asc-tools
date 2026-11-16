@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef NPU_CHECK_MEMORY_STATE_H
-#define NPU_CHECK_MEMORY_STATE_H
+#ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_STATE_H
+#define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_STATE_H
 #include "checker/allocation_registry.h"
 #include "checker/mem_state_tracker.h"
 #include <array>
@@ -177,4 +177,4 @@ private:
     AllocationUpdateStatus resourceStatus_ = AllocationUpdateStatus::NOT_FOUND;
 };
 } // namespace npucheck
-#endif
+#endif // NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_STATE_H

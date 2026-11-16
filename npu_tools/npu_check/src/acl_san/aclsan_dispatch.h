@@ -27,6 +27,7 @@ public:
     static void DispatchDeviceState(const AclsanDeviceRegisterStateData& cbData) noexcept;
     static void DispatchDeviceSync(const AclsanDeviceSyncData& cbData) noexcept;
     static void DispatchDeviceBarrier(const AclsanDeviceBarrierData& cbData) noexcept;
+    static void DispatchDeviceVf(const AclsanDeviceVfData& cbData) noexcept;
     static void DispatchLaunch(const AclsanLaunchData& cbData) noexcept;
     static void DispatchLaunchBefore(const AclsanLaunchData& cbData) noexcept;
 

@@ -30,6 +30,7 @@ set(NPU_TOOLS_LLT_ACL_SAN_INTERNAL_SOURCES
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_active_probe_plan.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_trace_buffer.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_trace_runtime.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_vf.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_memory_cbdata.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_register_dependency.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_device_data_log.cpp"
@@ -233,6 +234,7 @@ target_link_libraries(npu_tools_utest PRIVATE
   npu_sanitizer_plog
   plog_test_library
   npu_check_dbi_engine
+  npu_bit
   injection_headers
   injection_test_headers
   # Some CANN packages expose this imported headers target only in the injection directory.

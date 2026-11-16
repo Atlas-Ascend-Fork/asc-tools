@@ -18,6 +18,7 @@ namespace npucheck::detail {
 std::string FieldOr(const ReportFields& fields, const std::string& key, const char* fallback);
 const char* MemorySpaceName(NpuCheckReportMemorySpace space);
 const char* AccessModeName(NpuCheckReportAccessMode mode);
+const char* AccessModeName(AclsanDeviceMemoryAccessMode mode);
 std::string Hex(std::uint64_t value);
 std::string HexWithPrefix(std::uint64_t value);
 std::string OrUnknown(const std::string& value);

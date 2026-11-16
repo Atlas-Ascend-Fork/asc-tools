@@ -96,12 +96,11 @@ typedef enum AclsanCallbackIdSynchronize {
 } AclsanCallbackIdSynchronize;
 
 typedef enum AclsanCallbackIdDeviceInstruction {
-    ACLSAN_CBID_DEVICE_MEMORY_ACCESS = 1, // 需要用到
-    ACLSAN_CBID_DEVICE_SYNC = 2,          // 需要用到
+    ACLSAN_CBID_DEVICE_MEMORY_ACCESS = 1,
+    ACLSAN_CBID_DEVICE_SYNC = 2,
     ACLSAN_CBID_DEVICE_STATE = 3,
-    ACLSAN_CBID_DEVICE_CONTROL = 4,
-    ACLSAN_CBID_DEVICE_ERROR = 5,
-    ACLSAN_CBID_DEVICE_PIPE_BARRIER = 6,
+    ACLSAN_CBID_DEVICE_PIPE_BARRIER = 4,
+    ACLSAN_CBID_DEVICE_VF = 5,
     ACLSAN_CBID_DEVICE_INSTRUCTION_INVALID = 0x7fffffff
 } AclsanCallbackIdDeviceInstruction;
 

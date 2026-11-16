@@ -93,9 +93,10 @@ NpuCheckRacecheckReport MakeRace()
 std::string Render(const NpuCheckRacecheckReport& report)
 {
     std::string text;
+    const auto status = RenderNpuCheckReportRecord(NpuCheckReportRecord::From(report), {}, &text);
     Require(
-        RenderNpuCheckReportRecord(NpuCheckReportRecord::From(report), {}, &text) == ReportRenderStatus::SUCCESS,
-        "valid race report renders");
+        status == ReportRenderStatus::SUCCESS,
+        "valid race report renders: " + std::to_string(static_cast<int>(status)));
     return text;
 }
 ReportRecord Assemble(const NpuCheckRacecheckReport& report)
@@ -110,8 +111,8 @@ void TestCurrentPreviousRanges()
 {
     const auto text = Render(MakeRace());
     Contains(text, "WARNING:[RACECHECK] RAW (read after write) race detected.");
-    Contains(text, "current access: READ by aicore (10) type (AIV) block (1) pipe (PIPE_V), range [0x200, 0x600)");
-    Contains(text, "previous access: WRITE by aicore (10) type (AIV) block (1) pipe (PIPE_MTE2), range [0x0, 0x400)");
+    Contains(text, "current access: read by aicore (10) type (AIV) block (1) pipe (PIPE_V), range [0x200, 0x600)");
+    Contains(text, "previous access: write by aicore (10) type (AIV) block (1) pipe (PIPE_MTE2), range [0x0, 0x400)");
     Contains(text, "memory: UB in aicore (10) type (AIV), overlap [0x200, 0x400), 512 bytes");
     Require(text.find("device (2) launch (42)") == std::string::npos, "race output omits device and launch");
     Contains(text, "Current Device Frames:");
@@ -119,6 +120,20 @@ void TestCurrentPreviousRanges()
     Contains(text, "pc 0x111");
     Contains(text, "pc 0x222");
     Contains(text, "unavailable");
+}
+void TestVfReportOmitsInternalIdentifiers()
+{
+    auto report = MakeRace();
+    report.current.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ;
+    report.current.vfInstrValid = 1;
+    report.current.vfInstrExecSeq = 3;
+    const auto text = Render(report);
+    Contains(text, "RAW (read after write) race detected.");
+    Contains(
+        text, "current access: vf vector read by aicore (10) type (AIV) block (1) pipe (PIPE_V), range [0x200, 0x600)");
+    for (const auto* field : {" instr=", " access=", " vf=", " vf_seq="}) {
+        Require(text.find(field) == std::string::npos, "report omits internal identifiers");
+    }
 }
 void TestGmAtomicAndLargeOverlap()
 {
@@ -136,8 +151,8 @@ void TestGmAtomicAndLargeOverlap()
     report.current.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     const auto text = Render(report);
     Contains(text, "WAW (write after write) race detected.");
-    Contains(text, "previous access: ATOMIC_WRITE");
-    Contains(text, "current access: WRITE by aicore (21) type (AIC)");
+    Contains(text, "previous access: atomic write(add)");
+    Contains(text, "current access: write by aicore (21) type (AIC)");
     Contains(text, "memory: GM, overlap [0x0, 0x100000010), 4294967312 bytes");
     report.kind = ConflictKind::WAR;
     report.previous.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
@@ -296,8 +311,8 @@ void TestAtomicSemanticRenderingAndSummary()
     std::string text;
     Require(RenderReportRecord(output, {}, &text) == ReportRenderStatus::SUCCESS, "render semantic race");
     Contains(text, "WARNING:[RACECHECK] ATOMIC_SEMANTIC race detected.");
-    Contains(text, "current access: ATOMIC_WRITE_MAX");
-    Contains(text, "previous access: ATOMIC_WRITE_ADD");
+    Contains(text, "current access: atomic write(max)");
+    Contains(text, "previous access: atomic write(add)");
     Contains(text, "overlap [0x200, 0x400), 512 bytes");
     Contains(text, "Current Device Frames:");
     Contains(text, "Previous Device Frames:");
@@ -315,6 +330,7 @@ int main()
     fb.previous.memorySpace = fb.current.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_FB;
     Contains(Render(fb), "memory: FB in aicore (10) type (AIV)");
     TestCurrentPreviousRanges();
+    TestVfReportOmitsInternalIdentifiers();
     TestGmAtomicAndLargeOverlap();
     TestInvalidRangesAndModes();
     TestUnsymbolizedStackRetainsQueriedPc();
