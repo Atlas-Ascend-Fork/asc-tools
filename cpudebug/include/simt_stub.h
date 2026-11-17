@@ -845,6 +845,21 @@ static inline int __popc(unsigned int x)
     return count;
 }
 
+static inline unsigned int __byte_perm(unsigned int x, unsigned int y, unsigned int s)
+{
+    uint64_t combined = (static_cast<uint64_t>(y) << 32) | x; // 32 : uint bit-length
+    uint32_t selector0 = s & 0x7;
+    uint32_t selector1 = (s >> 4) & 0x7;
+    uint32_t selector2 = (s >> 8) & 0x7;
+    uint32_t selector3 = (s >> 12) & 0x7;
+    uint32_t byte0 = (combined >> (selector0 * 8)) & 0xFF;
+    uint32_t byte1 = (combined >> (selector1 * 8)) & 0xFF;
+    uint32_t byte2 = (combined >> (selector2 * 8)) & 0xFF;
+    uint32_t byte3 = (combined >> (selector3 * 8)) & 0xFF;
+    // 8/16/24 : bit offsets of the 2nd/3rd/4th bytes in uint32
+    return byte0 | (byte1 << 8) | (byte2 << 16) | (byte3 << 24);
+}
+
 namespace cce {
 template <auto funcPtr, typename... Args>
 void async_invoke(const dim3& dim, Args&&... args)
