@@ -11,10 +11,10 @@
 # npu_tools 迁移模块的统一 LLT 大用例：一个 GTest 二进制收拢全部单元/组件测试，
 # 通过 run_llt_test 注册 POST_BUILD 钩子，`build.sh --test` 构建即执行。
 
-set(NPU_TOOLS_LLT_CHECK_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_sanitizer/npu_check/tests")
-set(NPU_TOOLS_LLT_CLI_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_sanitizer/npu_check_cli/tests")
-set(NPU_TOOLS_LLT_COMMON_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_sanitizer/common/tests")
-set(NPU_TOOLS_LLT_SANITIZER_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_sanitizer/sanitizer_api/tests")
+set(NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_check/processor")
+set(NPU_TOOLS_LLT_CLI_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_check/cli")
+set(NPU_TOOLS_LLT_SHARED_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_check/shared")
+set(NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_check/acl_san")
 set(NPU_TOOLS_LLT_COMPUTE_TESTS_DIR "${NPU_TOOLS_TEST_ROOT}/npu_compute/tests")
 set(NPU_TOOLS_LLT_COMPUTE_DIR "${CMAKE_SOURCE_DIR}/npu_tools/npu_compute")
 set(NPU_TOOLS_LLT_COMPUTE_CLI_DIR "${NPU_TOOLS_LLT_COMPUTE_DIR}/src/cli")
@@ -50,30 +50,30 @@ add_executable(npu_tools_utest
   gtest_main.cpp
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/security_file_io_test.cpp"
   # npu_check processor / tool manager / renderer
-  "${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/log_capture.cpp"
-  "${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/unified_memory_test.cpp"
-  "${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/mem_state_tracker_test.cpp"
-  "${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/racecheck_report_test.cpp"
+  "${NPU_TOOLS_LLT_SHARED_TESTS_DIR}/log_capture.cpp"
+  "${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/checker/unified_memory_test.cpp"
+  "${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/checker/mem_state_tracker_test.cpp"
+  "${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/checker/racecheck_report_test.cpp"
   # cli
   "${NPU_TOOLS_LLT_CLI_TESTS_DIR}/options_test.cpp"
   "${NPU_TOOLS_LLT_CLI_TESTS_DIR}/process_runner_test.cpp"
   # sanitizer api（含原"桩家族"用例：分歧桩已收敛到 aclsan_boundary_stub 可安装边界）
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_log_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_memory_cbdata_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/ub_memory_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_callback_invoke_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_probe_plan_callback_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_hook_cbdata_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_trace_buffer.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_translate_device_data_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/cce_instr_header_contract_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/cce_instruction_pipeline_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/device_instr_decoder_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/register_state_manager_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/device_symbolizer_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/device_binary_registry_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_log_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_memory_cbdata_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/ub_memory_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_callback_invoke_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_probe_plan_callback_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_hook_cbdata_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_trace_buffer.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_translate_device_data_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_instr/common/cce_instr_header_contract_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/cce_instruction_pipeline_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_instr/device_instr_decoder_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_instr/arch/dav_3510/register_state_manager_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_runtime/device_symbolizer_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_runtime/device_binary_registry_test.cpp"
   # common
-  "${NPU_TOOLS_LLT_COMMON_TESTS_DIR}/aclsan_log_test.cpp"
+  "${NPU_TOOLS_LLT_SHARED_TESTS_DIR}/aclsan_log_test.cpp"
   # injection（依赖桩版 runtime/profapi，真实 CANN 链已按需剥离）
   "${NPU_TOOLS_TEST_ROOT}/injection/tests/injection_hook_test.cpp"
   # npu_compute 纯逻辑用例（.so 边界/进程类用例保留在 npu_compute/tests 独立目标）
@@ -174,7 +174,7 @@ set_source_files_properties("${INJECTION_SOURCE_DIR}/src/injection_hook.cpp" PRO
 target_compile_features(npu_tools_utest PRIVATE cxx_std_17)
 target_compile_definitions(npu_tools_utest PRIVATE
   _GLIBCXX_USE_CXX11_ABI=0
-  NPU_CHECK_REPORT_PATTERN_SNAPSHOT="${NPU_TOOLS_LLT_CHECK_TESTS_DIR}/report_renderer_patterns.golden"
+  NPU_CHECK_REPORT_PATTERN_SNAPSHOT="${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/diagnostic/report_renderer_patterns.golden"
 )
 target_compile_options(npu_tools_utest PRIVATE -UNDEBUG)
 
@@ -186,19 +186,19 @@ set(NPU_TOOLS_LLT_WERROR_SOURCES
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/csv_reader_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/csv_sqlite_writer_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/summary_sqlite_finalizer_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_log_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_callback_invoke_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_probe_plan_callback_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_hook_cbdata_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_memory_cbdata_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_trace_buffer.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/aclsan_translate_device_data_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/cce_instr_header_contract_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/cce_instruction_pipeline_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/device_instr_decoder_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/register_state_manager_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/device_symbolizer_test.cpp"
-  "${NPU_TOOLS_LLT_SANITIZER_TESTS_DIR}/device_binary_registry_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_log_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_callback_invoke_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_probe_plan_callback_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_hook_cbdata_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_memory_cbdata_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_trace_buffer.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/aclsan_translate_device_data_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_instr/common/cce_instr_header_contract_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/cce_instruction_pipeline_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_instr/device_instr_decoder_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_instr/arch/dav_3510/register_state_manager_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_runtime/device_symbolizer_test.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_TESTS_DIR}/device_runtime/device_binary_registry_test.cpp"
 )
 set_source_files_properties(${NPU_TOOLS_LLT_WERROR_SOURCES} PROPERTIES
   COMPILE_OPTIONS "-Wall;-Wextra;-Werror"

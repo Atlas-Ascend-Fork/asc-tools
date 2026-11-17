@@ -13,6 +13,7 @@
 
 #include "acl/acl_rt.h"
 #include "aclsan_memory_cbdata.h"
+#include "aclsan_vf.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -21,8 +22,6 @@
 #include <vector>
 
 namespace aclsan {
-class NpubitUbHandle;
-class VfPbState;
 struct DeviceInstructionDecoder;
 struct ParsedTraceRecord;
 namespace dav3510 {

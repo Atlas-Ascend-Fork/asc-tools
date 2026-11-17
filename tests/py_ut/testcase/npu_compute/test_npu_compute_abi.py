@@ -70,8 +70,8 @@ def test_injection_library_declares_lifecycle_exports():
     source = LIBRARY_SOURCE.read_text(encoding="utf-8")
 
     assert '#ifdef __cplusplus\nextern "C" {' in header
-    assert "NPU_COMPUTE_EXPORT int acltoolInitialize();" in header
-    assert "NPU_COMPUTE_EXPORT int acltoolShutdown();" in header
+    assert "NPU_COMPUTE_EXPORT int acltoolInitialize(void);" in header
+    assert "NPU_COMPUTE_EXPORT int acltoolShutdown(void);" in header
 
     obsolete_exports = (
         "NpuComputeInit",
@@ -245,9 +245,11 @@ def test_replay_waits_after_msprof_start_before_launching_kernel():
         1
     ].split("aclptiResult RangeProfiler::FinishProfilingRound", 1)[0]
     assert "MsprofStart(" in start_body
-    replay_body = source.split("aclptiResult RangeProfiler::ReplayKernel", 1)[1]
-    assert replay_body.index("StartProfilingRound(") < replay_body.index(
-        "launchStatus = launchFunction(function, instrumented);"
+    replay_round_body = source.split(
+        "aclptiResult RangeProfiler::ReplayProfilingRound", 1
+    )[1].split("aclptiResult RangeProfiler::LaunchProfilingRound", 1)[0]
+    assert replay_round_body.index("StartProfilingRound(") < replay_round_body.index(
+        "LaunchProfilingRound("
     )
 
 

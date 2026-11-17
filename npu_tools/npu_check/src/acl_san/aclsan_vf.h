@@ -13,6 +13,7 @@
 
 #include "aclsan_trace_buffer.h"
 #include "acl_san/aclsan_api.h"
+#include "device_instr/common/device_instr_struct_register.h"
 #include "device_instr/common/device_instr_struct_vector.h"
 
 #include <array>
@@ -71,18 +72,21 @@ using VfCallbackData = std::variant<AclsanDeviceMemoryAccessData, AclsanDeviceBa
 
 // Vendor ABI is confined to the implementation. Object storage outlives the vendor handle.
 class NpubitUbHandle final {
+private:
+    struct Impl;
+
 public:
     static std::shared_ptr<NpubitUbHandle> Create(const void* object, size_t bytes) noexcept;
     ~NpubitUbHandle();
+    explicit NpubitUbHandle(std::unique_ptr<Impl> impl);
     bool Matches(const void* object, size_t bytes) const noexcept;
     // Preserve vendor record order across UB accesses and local-memory barriers.
     std::vector<VfCallbackData> Query(
         const ParsedTraceRecord& vf, const std::array<uint64_t, PUSH_PB_STATE_COUNT_PER_VF>& states,
-        const std::array<uint64_t, 2>& masks, AclsanDeviceVfData* completion = nullptr) noexcept;
+        const std::array<uint64_t, VECTOR_MASK_REGISTER_COUNT>& masks,
+        AclsanDeviceVfData* completion = nullptr) noexcept;
 
 private:
-    struct Impl;
-    explicit NpubitUbHandle(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> impl_;
 };
 

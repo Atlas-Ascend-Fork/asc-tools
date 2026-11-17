@@ -52,7 +52,7 @@ public:
     }
     void Build()
     {
-        std::array<std::optional<size_t>, 4> prefix{}, acquired{};
+        std::array<std::optional<size_t>, VF_LOCAL_MEM_ACCESS_CLASS_COUNT> prefix{}, acquired{};
         std::optional<size_t> lastAccess;
         std::set<uint64_t> visited;
         for (const auto& position : positions_) {
@@ -69,7 +69,7 @@ public:
                     static_cast<unsigned long long>(b.vfInstrExecSeq), node, b.srcMemType, b.dstMemType);
                 Edge(entry_, node);
                 Edge(node, completion_);
-                for (size_t c = 0; c < 4; ++c) {
+                for (size_t c = 0; c < VF_LOCAL_MEM_ACCESS_CLASS_COUNT; ++c) {
                     if ((b.srcMemType & (1u << c)) != 0 && prefix[c]) {
                         Edge(*prefix[c], node);
                     }
@@ -85,7 +85,7 @@ public:
             }
             Edge(entry_, group.node);
             Edge(group.node, completion_);
-            for (size_t c = 0; c < 4; ++c) {
+            for (size_t c = 0; c < VF_LOCAL_MEM_ACCESS_CLASS_COUNT; ++c) {
                 if ((group.classes & (1u << c)) != 0 && acquired[c]) {
                     Edge(*acquired[c], group.node);
                 }
@@ -97,7 +97,7 @@ public:
                 Edge(*lastAccess, group.node);
             }
             lastAccess = group.node;
-            for (size_t c = 0; c < 4; ++c) {
+            for (size_t c = 0; c < VF_LOCAL_MEM_ACCESS_CLASS_COUNT; ++c) {
                 if ((group.classes & (1u << c)) != 0) {
                     Join(prefix[c], group.node);
                 }
@@ -107,6 +107,8 @@ public:
     }
 
 private:
+    // Vector/scalar load/store classes represented by LocalMem access bits.
+    static constexpr size_t VF_LOCAL_MEM_ACCESS_CLASS_COUNT = 4;
     struct Group {
         size_t node;
         uint32_t classes;

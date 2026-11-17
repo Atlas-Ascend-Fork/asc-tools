@@ -85,9 +85,7 @@ add_subdirectory(npu_compute/stubs/acl_pti_callback)
 add_subdirectory(npu_compute/stubs/hardware_api)
 add_subdirectory(npu_compute/tests)
 
-add_subdirectory(npu_sanitizer/common/tests)
-add_subdirectory(npu_sanitizer/sanitizer_api/tests)
-add_subdirectory(npu_sanitizer/npu_check/tests)
+add_subdirectory(npu_check)
 
 # npu_tools 迁移模块统一 GTest 大用例（构建即运行，对齐 tikcpp_utest 的 run_llt_test 机制）
 add_subdirectory(llt)

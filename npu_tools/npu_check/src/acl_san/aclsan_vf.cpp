@@ -140,7 +140,7 @@ std::shared_ptr<NpubitUbHandle> NpubitUbHandle::Create(const void* object, size_
         auto impl = std::make_unique<Impl>();
         const auto* data = static_cast<const uint8_t*>(object);
         impl->object.assign(data, data + bytes);
-        auto result = std::shared_ptr<NpubitUbHandle>(new NpubitUbHandle(std::move(impl)));
+        auto result = std::make_shared<NpubitUbHandle>(std::move(impl));
         const auto status = NpubitCreateHandle(result->impl_->object.data(), bytes, &result->impl_->handle, V100, true);
         // Success == 0 is an integration assumption, confined to this adapter.
         if (static_cast<int>(status) != 0 || !result->impl_->handle) {
@@ -161,7 +161,7 @@ bool NpubitUbHandle::Matches(const void* object, size_t bytes) const noexcept
 
 std::vector<VfCallbackData> NpubitUbHandle::Query(
     const ParsedTraceRecord& vf, const std::array<uint64_t, PUSH_PB_STATE_COUNT_PER_VF>& states,
-    const std::array<uint64_t, 2>& masks, AclsanDeviceVfData* completion) noexcept
+    const std::array<uint64_t, VECTOR_MASK_REGISTER_COUNT>& masks, AclsanDeviceVfData* completion) noexcept
 {
     auto local = MakeVfCompletion(vf, ACLSAN_DEVICE_VF_QUERY_FAILED);
     AclsanDeviceVfData& info = completion != nullptr ? *completion : local;
@@ -196,7 +196,7 @@ std::vector<VfCallbackData> NpubitUbHandle::Query(
                 "acl_san NpubitGetUbAddressRanges input state[%u]=0x%llx", index,
                 static_cast<unsigned long long>(input.states[index]));
         }
-        for (uint32_t index = 0; index < 2; ++index) {
+        for (uint32_t index = 0; index < VECTOR_MASK_REGISTER_COUNT; ++index) {
             ASCTOOL_DEBUG(
                 "acl_san NpubitGetUbAddressRanges input mask[%u]=0x%llx", index,
                 static_cast<unsigned long long>(input.mask[index]));

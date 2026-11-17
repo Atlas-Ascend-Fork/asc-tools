@@ -659,14 +659,17 @@ void Initcheck::FlushMemoryAccesses(void* stream, CheckerReportList& reports)
             else
                 ++it;
         for (auto it = reportedUsages_.begin(); it != reportedUsages_.end();) {
-            if (std::get<3>(std::get<0>(*it)) == entry.first) {
+            const auto& [instruction, registerId] = *it;
+            const auto& [domain, instructionId, vfSequence, launchId] = instruction;
+            if (launchId == entry.first) {
                 it = reportedUsages_.erase(it);
             } else {
                 ++it;
             }
         }
         for (auto it = reportGroups_.begin(); it != reportGroups_.end();) {
-            if (std::get<3>(it->first) == entry.first) {
+            const auto& [domain, instructionId, vfSequence, launchId] = it->first;
+            if (launchId == entry.first) {
                 it = reportGroups_.erase(it);
             } else {
                 ++it;

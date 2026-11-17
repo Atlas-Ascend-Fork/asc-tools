@@ -55,12 +55,14 @@ struct AccessPair {
     uint64_t end;
 };
 struct VfHistory {
+    static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = 3;
+
     std::vector<CbIndex> readers;
     std::vector<CbIndex> writers;
-    std::array<std::vector<CbIndex>, 3> atomicWriters{};
+    std::array<std::vector<CbIndex>, ATOMIC_WRITER_GROUP_COUNT> atomicWriters{};
 };
 struct MemState {
-    static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = 3;
+    static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = VfHistory::ATOMIC_WRITER_GROUP_COUNT;
 
     uint64_t begin;
     uint64_t end;

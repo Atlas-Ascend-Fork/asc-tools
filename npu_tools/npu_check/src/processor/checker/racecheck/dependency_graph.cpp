@@ -143,6 +143,12 @@ bool CrossParticipant(uint32_t mode, const Domain& sender, const Domain& receive
 } // namespace
 class DependencyGraphBuilder {
     using Access = DependencyGraph::Access;
+    enum class InstructionKind {
+        MEMORY,
+        SYNC,
+        VF,
+        LOCAL_BARRIER,
+    };
     struct Event {
         bool sync;
         size_t index;
@@ -244,10 +250,13 @@ public:
 private:
     void NormalizeEvents()
     {
-        std::map<std::pair<uint64_t, std::optional<uint64_t>>, std::pair<AclsanDeviceEventHeader, uint32_t>> identities;
-        const auto identity = [&](const AclsanDeviceEventHeader& h, const Instruction& key, uint32_t kind) {
+        std::map<std::pair<uint64_t, std::optional<uint64_t>>, std::pair<AclsanDeviceEventHeader, InstructionKind>>
+            identities;
+        const auto identity = [this, &identities](
+                                  const AclsanDeviceEventHeader& h, const Instruction& key, InstructionKind kind) {
+            const auto& [domain, instructionId, vfSequence, launchId] = key;
             const auto [it, inserted] =
-                identities.emplace(std::make_pair(std::get<1>(key), std::get<2>(key)), std::make_pair(h, kind));
+                identities.emplace(std::make_pair(instructionId, vfSequence), std::make_pair(h, kind));
             if (h.instrExecId == 0 ||
                 (!inserted && (it->second.second != kind || DomainOf(it->second.first) != DomainOf(h) ||
                                it->second.first.pc != h.pc || it->second.first.siteId != h.siteId ||
@@ -256,16 +265,16 @@ private:
             }
         };
         for (const auto& a : memory) {
-            identity(a.header, Key(a), 0);
+            identity(a.header, Key(a), InstructionKind::MEMORY);
         }
         for (const auto& a : sync) {
-            identity(a.header, Key(a.header), 1);
+            identity(a.header, Key(a.header), InstructionKind::SYNC);
         }
         for (const auto& a : vfs) {
-            identity(a.header, Key(a.header), 2);
+            identity(a.header, Key(a.header), InstructionKind::VF);
         }
         for (const auto& a : localBarriers) {
-            identity(a.header, Key(a), 3);
+            identity(a.header, Key(a), InstructionKind::LOCAL_BARRIER);
         }
         // Stable identities, independent of callback interleaving, determine tie breaks only.
         std::sort(memory.begin(), memory.end(), [](const auto& a, const auto& b) {
@@ -481,32 +490,37 @@ private:
         }
         events[key] = Event{false, 0, vf.Completion(), ACLSAN_DEVICE_PIPE_VECTOR};
         instructionStarts[key] = vf.Entry();
-        vfEntries.emplace(VfKey{std::get<0>(key), std::get<1>(key), std::get<3>(key)}, vf.Entry());
+        const auto& [domain, instructionId, vfSequence, launchId] = key;
+        vfEntries.emplace(VfKey{domain, instructionId, launchId}, vf.Entry());
         ASCTOOL_DEBUG(
             "racecheck DAG graph=%p VF instr=%llu entry=%zu completion=%zu", static_cast<void*>(&graph),
-            static_cast<unsigned long long>(std::get<1>(key)), vf.Entry(), vf.Completion());
+            static_cast<unsigned long long>(instructionId), vf.Entry(), vf.Completion());
         return vf;
     }
 
     void OrderVfsOnPhysicalPipe()
     {
-        using PipeVf = std::tuple<uint64_t, uint32_t, const VfSubgraph*>;
+        struct PipeVf {
+            uint64_t instructionId;
+            uint32_t blockId;
+            const VfSubgraph* subgraph;
+        };
         std::map<std::pair<uint32_t, uint32_t>, std::vector<PipeVf>> pipes;
-        for (const auto& entry : vfGraphs) {
-            const auto& domain = std::get<0>(entry.first);
-            pipes[{std::get<0>(domain), std::get<3>(domain)}].emplace_back(
-                std::get<1>(entry.first), std::get<2>(domain), &entry.second);
+        for (const auto& [instruction, subgraph] : vfGraphs) {
+            const auto& [domain, instructionId, vfSequence, launchId] = instruction;
+            const auto& [deviceId, blockType, blockId, physicalCoreId] = domain;
+            pipes[{deviceId, physicalCoreId}].push_back({instructionId, blockId, &subgraph});
         }
         for (auto& pipe : pipes) {
             auto& vfs = pipe.second;
             // IDs within one physical trace slice follow its instruction order.
             std::sort(vfs.begin(), vfs.end(), [](const auto& lhs, const auto& rhs) {
-                return std::get<0>(lhs) < std::get<0>(rhs);
+                return lhs.instructionId < rhs.instructionId;
             });
             for (size_t i = 1; i < vfs.size(); ++i) {
-                if (std::get<1>(vfs[i - 1]) != std::get<1>(vfs[i])) {
+                if (vfs[i - 1].blockId != vfs[i].blockId) {
                     AddEdge(
-                        std::get<2>(vfs[i - 1])->Completion(), std::get<2>(vfs[i])->Entry(),
+                        vfs[i - 1].subgraph->Completion(), vfs[i].subgraph->Entry(),
                         HappensBeforeGraph::Reason::PipelineOrder);
                 }
             }

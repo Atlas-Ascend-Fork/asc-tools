@@ -11,6 +11,7 @@
 #include "aclsan_register_dependency.h"
 
 #include "device_instr/common/instruction_id.h"
+#include "device_instr/common/device_instr_struct_register.h"
 #include "device_instr/arch/dav_3510/dma_layout.h"
 
 #include <array>
@@ -42,7 +43,7 @@ std::optional<AclsanDeviceRegisterId> RegisterId(const DecodedInstruction& decod
         [](const auto& value) noexcept -> std::optional<AclsanDeviceRegisterId> {
             using Field = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<Field, VectorMaskWriteParamField>) {
-                if (value.index >= 2) {
+                if (value.index >= VECTOR_MASK_REGISTER_COUNT) {
                     return std::nullopt;
                 }
                 return ACLSAN_DEVICE_REGISTER_VECTOR_MASK;
