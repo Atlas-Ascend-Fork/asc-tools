@@ -80,14 +80,14 @@ std::optional<std::pair<uint32_t, uint32_t>> LocalMemBarrierTypes(NpubitUbAccess
 }
 } // namespace
 
-VfPbState::Key VfPbState::Identity(const ParsedTraceRecord& r)
+VfPbState::Key VfPbState::Identity(const ParsedTraceRecord& record)
 {
-    return {r.launchId, r.deviceId, r.phyCoreId, r.blockType, r.blockId};
+    return {record.launchId, record.deviceId, record.phyCoreId, record.blockType, record.blockId};
 }
 
-bool VfPbState::Push(const ParsedTraceRecord& r, const std::array<uint64_t, PUSH_PB_VALUE_COUNT>& values)
+bool VfPbState::Push(const ParsedTraceRecord& record, const std::array<uint64_t, PUSH_PB_VALUE_COUNT>& values)
 {
-    State& state = states_[Identity(r)];
+    State& state = states_[Identity(record)];
     if (state.consumed) {
         state = {};
     }
@@ -95,7 +95,7 @@ bool VfPbState::Push(const ParsedTraceRecord& r, const std::array<uint64_t, PUSH
         state.invalid = true;
         ASCTOOL_ERROR(
             "acl_san VF: more than %zu PUSH_PB records, pc=0x%llx", MAX_PUSH_PB_RECORDS_PER_VF,
-            static_cast<unsigned long long>(r.record.pc));
+            static_cast<unsigned long long>(record.record.pc));
         return false;
     }
     std::copy(values.begin(), values.end(), state.values.begin() + PUSH_PB_VALUE_COUNT * state.count);
@@ -103,14 +103,14 @@ bool VfPbState::Push(const ParsedTraceRecord& r, const std::array<uint64_t, PUSH
     return true;
 }
 
-std::optional<std::array<uint64_t, PUSH_PB_STATE_COUNT_PER_VF>> VfPbState::Consume(const ParsedTraceRecord& r)
+std::optional<std::array<uint64_t, PUSH_PB_STATE_COUNT_PER_VF>> VfPbState::Consume(const ParsedTraceRecord& record)
 {
-    State& state = states_[Identity(r)];
+    State& state = states_[Identity(record)];
     const bool valid = !state.invalid && !state.consumed && state.count != 0;
     state.consumed = true;
     if (!valid) {
         ASCTOOL_ERROR(
-            "acl_san VF: missing or invalid PB batch, pc=0x%llx", static_cast<unsigned long long>(r.record.pc));
+            "acl_san VF: missing or invalid PB batch, pc=0x%llx", static_cast<unsigned long long>(record.record.pc));
         return std::nullopt;
     }
     return state.values;
@@ -232,7 +232,7 @@ std::vector<VfCallbackData> NpubitUbHandle::Query(
                     static_cast<unsigned int>(range.access_type));
             }
         }
-        if (static_cast<int>(status) != 0 || (count && !output.data) || count > MAX_VF_EVENTS) {
+        if (static_cast<int>(status) != 0 || (count != 0 && output.data == nullptr) || count > MAX_VF_EVENTS) {
             ASCTOOL_ERROR(
                 "acl_san NpubitGetUbAddressRanges failed, pc=0x%llx status=%d",
                 static_cast<unsigned long long>(vf.record.pc), static_cast<int>(status));
@@ -315,7 +315,7 @@ std::vector<VfCallbackData> NpubitUbHandle::Query(
                     return {};
             }
             // Validate the type before filtering zero-byte records.
-            if (!range.processed_bytes) {
+            if (range.processed_bytes == 0) {
                 continue;
             }
             AclsanDeviceMemoryAccessData access{};

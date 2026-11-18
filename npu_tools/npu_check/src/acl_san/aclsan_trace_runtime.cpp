@@ -705,7 +705,7 @@ void DispatchTraceRecords(
                 ASCTOOL_ERROR("acl_san VF: failed to expand parent VF");
             }
             if (!maskRefreshed) {
-                completion.warningFlags |= ACLSAN_DEVICE_VF_MASK_NOT_REFRESHED;
+                completion.warningFlags |= static_cast<uint32_t>(ACLSAN_DEVICE_VF_MASK_NOT_REFRESHED);
             }
             LogCallbackData(completion);
             AclsanCallbackDispatcher::DispatchDeviceVf(completion);
