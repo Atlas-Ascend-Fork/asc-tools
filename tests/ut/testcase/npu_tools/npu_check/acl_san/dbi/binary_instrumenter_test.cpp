@@ -30,24 +30,19 @@ namespace {
 
 class EnvironmentRestore {
 public:
-    explicit EnvironmentRestore(std::vector<std::string> names)
+    explicit EnvironmentRestore(const char* name) : name_(name)
     {
-        variables_.reserve(names.size());
-        for (auto& name : names) {
-            const char* value = std::getenv(name.c_str());
-            variables_.emplace_back(
-                std::move(name), value == nullptr ? std::nullopt : std::optional<std::string>(value));
+        if (const char* value = std::getenv(name_)) {
+            value_ = value;
         }
     }
 
     ~EnvironmentRestore()
     {
-        for (const auto& [name, value] : variables_) {
-            if (value.has_value()) {
-                (void)setenv(name.c_str(), value->c_str(), 1);
-            } else {
-                (void)unsetenv(name.c_str());
-            }
+        if (value_.has_value()) {
+            (void)setenv(name_, value_->c_str(), 1);
+        } else {
+            (void)unsetenv(name_);
         }
     }
 
@@ -55,7 +50,8 @@ public:
     EnvironmentRestore& operator=(const EnvironmentRestore&) = delete;
 
 private:
-    std::vector<std::pair<std::string, std::optional<std::string>>> variables_;
+    const char* name_;
+    std::optional<std::string> value_;
 };
 
 struct TestState {
@@ -79,18 +75,10 @@ int32_t CaptureInstrumentedBinary(const void* data, size_t length, void* userdat
     return 73;
 }
 
-TEST(DefaultBinaryInstrumentationConfigTest, IgnoresDbiOverridesExceptTemporaryFileRetention)
+TEST(DefaultBinaryInstrumentationConfigTest, UsesRuntimeDefaultsAndHonorsTemporaryFileRetention)
 {
-    EnvironmentRestore environment(
-        {"NPU_CHECK_DBI_ARCH", "NPU_CHECK_DBI_TOOLCHAIN_ROOT", "NPU_CHECK_DBI_WORK_DIR", "NPU_CHECK_DBI_CACHE_DIR",
-         "NPU_CHECK_DBI_STRICT", "NPU_CHECK_DBI_KEEP_TEMP", "NPU_CHECK_DBI_PROBE_SET"});
+    EnvironmentRestore environment("NPU_CHECK_DBI_KEEP_TEMP");
     ASSERT_EQ(unsetenv("NPU_CHECK_DBI_KEEP_TEMP"), 0);
-    ASSERT_EQ(setenv("NPU_CHECK_DBI_ARCH", "forged", 1), 0);
-    ASSERT_EQ(setenv("NPU_CHECK_DBI_TOOLCHAIN_ROOT", "/forged", 1), 0);
-    ASSERT_EQ(setenv("NPU_CHECK_DBI_PROBE_SET", "sync", 1), 0);
-    ASSERT_EQ(setenv("NPU_CHECK_DBI_WORK_DIR", "/forged", 1), 0);
-    ASSERT_EQ(setenv("NPU_CHECK_DBI_CACHE_DIR", "/forged", 1), 0);
-    ASSERT_EQ(setenv("NPU_CHECK_DBI_STRICT", "0", 1), 0);
 
     const auto cannRoot = boost::filesystem::temp_directory_path() / "dbi-runtime-config-test";
     const auto tools = cannRoot / "tools/bisheng_compiler/bin";

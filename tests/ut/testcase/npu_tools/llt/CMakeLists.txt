@@ -54,6 +54,7 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/checker/unified_memory_test.cpp"
   "${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/checker/mem_state_tracker_test.cpp"
   "${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/checker/racecheck_report_test.cpp"
+  "${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/checker/racecheck/vf_racecheck_test.cpp"
   # cli
   "${NPU_TOOLS_LLT_CLI_TESTS_DIR}/options_test.cpp"
   "${NPU_TOOLS_LLT_CLI_TESTS_DIR}/process_runner_test.cpp"
@@ -172,10 +173,7 @@ set_source_files_properties("${INJECTION_SOURCE_DIR}/src/injection_hook.cpp" PRO
 )
 
 target_compile_features(npu_tools_utest PRIVATE cxx_std_17)
-target_compile_definitions(npu_tools_utest PRIVATE
-  _GLIBCXX_USE_CXX11_ABI=0
-  NPU_CHECK_REPORT_PATTERN_SNAPSHOT="${NPU_TOOLS_LLT_PROCESSOR_TESTS_DIR}/diagnostic/report_renderer_patterns.golden"
-)
+target_compile_definitions(npu_tools_utest PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_compile_options(npu_tools_utest PRIVATE -UNDEBUG)
 
 # 原单测目标显式开启 -Wall -Wextra -Werror 的源文件按原样保留，其余沿用全局选项。

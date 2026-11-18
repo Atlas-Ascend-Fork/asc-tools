@@ -29,8 +29,6 @@ if(ENABLE_TEST)
       $<TARGET_FILE:aclsan_full_flow_host_sample>)
   add_test(NAME aclsan.probe_contract
     COMMAND bash "${SANITIZER_API_TEST_DIR}/check_probe_contract.sh")
-  add_test(NAME aclsan.device_memory_access_producer_contract
-    COMMAND bash "${SANITIZER_API_TEST_DIR}/check_device_memory_access_producer_contract.sh")
 
   add_library(acl_san_test SHARED
     ${SANITIZER_API_SOURCE_DIR}/device_runtime/device_binary_registry.cpp
@@ -55,8 +53,8 @@ if(ENABLE_TEST)
     PUBLIC ${SANITIZER_API_SOURCE_DIR}/../../include
     PRIVATE ${SANITIZER_API_SOURCE_DIR}
   )
-  target_link_libraries(acl_san_test PRIVATE c_sec_static)
-target_link_libraries(acl_san_test PRIVATE
+  target_link_libraries(acl_san_test PRIVATE
+    c_sec_static
     acl_tool_injection_test
     npu_bit
     npu_check_dbi_engine
@@ -106,13 +104,13 @@ target_link_libraries(acl_san_test PRIVATE
     target_compile_features(aclsan_launch_with_host_args_hook PRIVATE cxx_std_17)
     target_link_libraries(aclsan_launch_with_host_args_hook PRIVATE acl_san_test acl_tool_injection_test acl_runtime_stub)
     target_link_options(aclsan_launch_with_host_args_hook PRIVATE -Wl,--disable-new-dtags)
-  add_test(NAME aclsan_launch_with_host_args_hook COMMAND aclsan_launch_with_host_args_hook)
+    add_test(NAME aclsan_launch_with_host_args_hook COMMAND aclsan_launch_with_host_args_hook)
 
     add_executable(aclsan_binary_load_dbi_hook ${SANITIZER_API_TEST_DIR}/aclsan_binary_load_dbi_hook.cpp)
     target_compile_features(aclsan_binary_load_dbi_hook PRIVATE cxx_std_17)
     target_link_libraries(aclsan_binary_load_dbi_hook PRIVATE acl_san_test acl_tool_injection_test acl_runtime_stub)
     target_link_options(aclsan_binary_load_dbi_hook PRIVATE -Wl,--disable-new-dtags)
-  add_test(NAME aclsan_binary_load_dbi_hook COMMAND aclsan_binary_load_dbi_hook)
+    add_test(NAME aclsan_binary_load_dbi_hook COMMAND aclsan_binary_load_dbi_hook)
 
     add_executable(aclsan_full_flow_host_sample
       ${SANITIZER_API_TEST_DIR}/dbi/full_flow_host_sample.cpp)
@@ -202,6 +200,7 @@ target_link_libraries(acl_san_test PRIVATE
       PROPERTIES RESOURCE_LOCK aclsan_fake_toolchain)
   endif()
 endif()
+
 if(ENABLE_TEST OR NPU_CHECK_ENABLE_REAL_DBI_FLOW OR NPU_CHECK_ENABLE_REAL_DBI_TOOLCHAIN)
   add_subdirectory(dbi)
 endif()

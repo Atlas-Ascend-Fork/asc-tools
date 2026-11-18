@@ -31,16 +31,11 @@ add_executable(npu_check_unit_tests
   "checker/unified_memory_test.cpp"
   "checker/allocation_registry_test.cpp"
   "checker/memcheck_test.cpp"
-  "checker/mem_state_tracker_test.cpp"
   "checker/gm_initcheck_test.cpp"
   "checker/init_state_table_test.cpp"
-  "checker/racecheck_report_test.cpp"
   "checker/initcheck_test.cpp"
   "checker/initcheck_memory_test.cpp"
-  "checker/racecheck_test.cpp"
-  "checker/racecheck/happens_before_graph_test.cpp"
   "checker/host_order_test.cpp"
-  "checker/racecheck/memory_access_state_test.cpp"
   "checker/checker_test.cpp"
   "diagnostic/report_buffer_test.cpp"
   "checker/synccheck_test.cpp"
@@ -84,7 +79,6 @@ add_executable(npu_check_cube_memory_tests
   "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp"
   "checker/cube_memory_test.cpp"
   "checker/racecheck_translation_test.cpp"
-  "${NPU_CHECK_TEST_ROOT}/acl_san/ub_memory_test.cpp"
   "${NPU_CHECK_DBI_ROOT}/aclsan_register_dependency.cpp"
   "${NPU_CHECK_DBI_ROOT}/aclsan_memory_cbdata.cpp"
   "${NPU_CHECK_DBI_ROOT}/aclsan_trace_buffer.cpp"
@@ -169,5 +163,4 @@ target_include_directories(npu_check_racecheck_render_tests PRIVATE
 target_link_libraries(npu_check_racecheck_render_tests PRIVATE npu_sanitizer_plog)
 add_test(NAME npu_check_racecheck_render_tests COMMAND npu_check_racecheck_render_tests)
 
-# Reuse the common npu_sanitizer_plog dependency for the focused racecheck tests.
 add_subdirectory(checker/racecheck)

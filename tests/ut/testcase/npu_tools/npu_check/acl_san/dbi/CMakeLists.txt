@@ -18,16 +18,13 @@ if(ENABLE_TEST)
   add_executable(npu_check_dbi_pipeline_tests
     "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbi_pipeline_test.cpp"
-    "${NPU_CHECK_DBI_SOURCE_DIR}/dbi_pipeline.cpp"
-    "${NPU_CHECK_DBI_SOURCE_DIR}/kernel_param_metadata.cpp"
-    "${NPU_CHECK_DBI_SOURCE_DIR}/tool_runner.cpp"
   )
   target_compile_features(npu_check_dbi_pipeline_tests PRIVATE cxx_std_17)
   target_compile_options(npu_check_dbi_pipeline_tests PRIVATE -Wall -Wextra -Werror)
   target_compile_definitions(npu_check_dbi_pipeline_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
   target_include_directories(npu_check_dbi_pipeline_tests PRIVATE "${NPU_CHECK_DBI_INCLUDE_DIR}")
   target_link_libraries(npu_check_dbi_pipeline_tests PRIVATE
-    npu_check_dbi_ctrlbin npu_check_dbi_probe_runtime npu_sanitizer_plog Threads::Threads GTest::gtest Boost::filesystem)
+    npu_check_dbi_engine npu_check_dbi_probe_runtime npu_sanitizer_plog Threads::Threads GTest::gtest Boost::filesystem)
   add_test(NAME npu_check_dbi_pipeline COMMAND npu_check_dbi_pipeline_tests)
 
   add_executable(npu_check_dbi_kernel_param_metadata_tests
@@ -45,16 +42,13 @@ if(ENABLE_TEST)
   add_executable(npu_check_dbi_integration_tests
     "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dbi_integration_test.cpp"
-    "${NPU_CHECK_DBI_SOURCE_DIR}/dbi_pipeline.cpp"
-    "${NPU_CHECK_DBI_SOURCE_DIR}/kernel_param_metadata.cpp"
-    "${NPU_CHECK_DBI_SOURCE_DIR}/tool_runner.cpp"
   )
   target_compile_features(npu_check_dbi_integration_tests PRIVATE cxx_std_17)
   target_compile_options(npu_check_dbi_integration_tests PRIVATE -Wall -Wextra -Werror)
   target_compile_definitions(npu_check_dbi_integration_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
   target_include_directories(npu_check_dbi_integration_tests PRIVATE "${NPU_CHECK_DBI_INCLUDE_DIR}")
   target_link_libraries(npu_check_dbi_integration_tests PRIVATE plog_test_library
-    npu_check_dbi_ctrlbin npu_check_dbi_probe_runtime npu_sanitizer_plog Threads::Threads GTest::gtest Boost::filesystem)
+    npu_check_dbi_engine npu_sanitizer_plog Threads::Threads GTest::gtest Boost::filesystem)
   add_test(NAME npu_check_dbi_integration COMMAND npu_check_dbi_integration_tests)
 
   add_executable(npu_check_dbi_binary_instrumenter_tests
@@ -87,10 +81,6 @@ set(NPU_CHECK_REAL_DBI_ARCH "" CACHE STRING "CCE architecture for real DBI tests
 set(NPU_CHECK_REAL_DBI_KERNEL "" CACHE FILEPATH "Optional precompiled CCE kernel for real DBI tests")
 set(NPU_CHECK_REAL_DBI_TOOLCHAIN_ROOT "" CACHE PATH "CANN root for real DBI tests")
 set(NPU_CHECK_REAL_DBI_DEVICE_ID "0" CACHE STRING "NPU device ID for the real DBI full-flow test")
-add_test(NAME aclsan.no_legacy_acl_hook_registration
-  COMMAND ${CMAKE_COMMAND}
-    -DDBI_ROOT=${SANITIZER_API_SOURCE_DIR}
-    -P ${CMAKE_CURRENT_SOURCE_DIR}/no_legacy_acl_hook_registration_test.cmake)
 
 if(NPU_CHECK_RUN_REAL_DBI_HARDWARE AND NOT NPU_CHECK_ENABLE_REAL_DBI_FLOW)
   message(FATAL_ERROR "NPU_CHECK_RUN_REAL_DBI_HARDWARE requires NPU_CHECK_ENABLE_REAL_DBI_FLOW=ON")

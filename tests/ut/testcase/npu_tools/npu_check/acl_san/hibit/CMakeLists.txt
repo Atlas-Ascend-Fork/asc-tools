@@ -65,7 +65,9 @@ target_link_libraries(npubit_integration_test PRIVATE npubit_mock npubit_test_ch
 target_link_options(npubit_integration_test PRIVATE -Wl,--gc-sections)
 add_test(NAME npubit_integration COMMAND npubit_integration_test)
 # Registry coverage uses the actual Boost dependency.
-find_package(Boost REQUIRED COMPONENTS filesystem)
+if(NOT TARGET Boost::filesystem)
+  find_package(Boost REQUIRED COMPONENTS filesystem)
+endif()
 target_sources(npubit_integration_test PRIVATE "${SAN}/device_runtime/device_binary_registry.cpp"
     "${SAN}/device_runtime/device_symbolizer.cpp" "${SAN}/dbi/kernel_param_metadata.cpp" "${SECURITY}/file_io.cpp")
 target_compile_definitions(npubit_integration_test PRIVATE NPUBIT_TEST_REGISTRY=1)
