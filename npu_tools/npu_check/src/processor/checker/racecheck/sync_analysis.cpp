@@ -406,30 +406,19 @@ private:
         LaunchProcessor& processor;
         const std::vector<AclsanDeviceMemoryAccessData>& records;
         MemStateTracker& memory;
-        MemStateTracker vfMemory;
-        bool vfEnabled;
         size_t stateBytes = 0;
         size_t stateSegments = 0;
 
         MemoryReplay(
-            LaunchProcessor& owner, const std::vector<AclsanDeviceMemoryAccessData>& input, MemStateTracker& ordinary,
-            bool enableVf)
-            : processor(owner),
-              records(input),
-              memory(ordinary),
-              vfMemory(input, racecheck::MemStateTrackerMode::VfExternal),
-              vfEnabled(enableVf)
+            LaunchProcessor& owner, const std::vector<AclsanDeviceMemoryAccessData>& input, MemStateTracker& ordinary)
+            : processor(owner), records(input), memory(ordinary)
         {}
 
         struct ConflictBatch {
             std::vector<AccessPair> confirmed;
             std::vector<NpuCheckRacecheckReport> reports;
             std::set<std::pair<uint64_t, uint64_t>> ranges;
-            std::set<std::tuple<CbIndex, CbIndex, uint64_t, uint64_t>> pairs;
         };
-
-        using VfSummary = std::map<size_t, racecheck::PreparedAccess>;
-        using VfSummaries = std::map<size_t, VfSummary>;
 
         racecheck::PreparedAccess PrepareAccess(size_t index) const
         {
@@ -444,19 +433,9 @@ private:
         static size_t StateStorageBytes(const MemState& state)
         {
             size_t history = state.readers.capacity();
-            size_t groupBytes = 0;
             for (const auto& writers : state.atomicWriters)
                 history += writers.capacity();
-            history += state.externalReaders.capacity() + state.externalWriters.capacity();
-            for (const auto& writers : state.externalAtomicWriters)
-                history += writers.capacity();
-            for (const auto& group : state.vfGroups) {
-                groupBytes += sizeof(decltype(state.vfGroups)::value_type) + SEGMENT_NODE_ALLOWANCE;
-                history += group.second.readers.capacity() + group.second.writers.capacity();
-                for (const auto& writers : group.second.atomicWriters)
-                    history += writers.capacity();
-            }
-            return sizeof(MemState) + SEGMENT_NODE_ALLOWANCE + groupBytes + history * sizeof(CbIndex);
+            return sizeof(MemState) + SEGMENT_NODE_ALLOWANCE + history * sizeof(CbIndex);
         }
 
         // Account only touched intervals and their merge neighbours. This avoids a
@@ -504,26 +483,39 @@ private:
             }
         }
 
+        // Checks whether both records are VF memory accesses executed by the
+        // same physical AIV on the same device. The sealed DAG has already
+        // established serial order for VFs on that AIV, so the caller may skip
+        // a redundant pairwise race-order query. This does not identify the
+        // same dynamic VF and does not skip the current memstate update.
+        bool AreVfAccessesOnSamePhysicalAiv(size_t previous, size_t current) const
+        {
+            const auto& lhs = records[previous];
+            const auto& rhs = records[current];
+            if (!race::DynamicVfKey(lhs) || !race::DynamicVfKey(rhs)) {
+                return false;
+            }
+            return lhs.header.deviceId == rhs.header.deviceId &&
+                   lhs.header.executor.phyCoreId == rhs.header.executor.phyCoreId;
+        }
+
         bool CheckAccess(
-            MemStateTracker& tracker, size_t current, const racecheck::PreparedAccess& prepared, ConflictBatch& batch,
-            bool pairwise)
+            MemStateTracker& tracker, size_t current, const racecheck::PreparedAccess& prepared, ConflictBatch& batch)
         {
             const auto candidates = tracker.CheckPotentialRace(current, prepared);
-            std::optional<racecheck::PreparedAccess> reportAccess;
             for (const auto& candidate : candidates) {
+                if (AreVfAccessesOnSamePhysicalAiv(candidate.prevIndex, current)) {
+                    ASCTOOL_DEBUG(
+                        "racecheck event=vf.candidate.skip level=DEBUG current=%zu previous=%zu "
+                        "reason=serial_same_physical_aiv",
+                        current, candidate.prevIndex);
+                    continue;
+                }
                 const auto relation = processor.CompareAccesses(candidate.prevIndex, current);
                 if (relation == HappensBeforeGraph::Relation::Unordered) {
                     batch.confirmed.push_back(candidate);
-                    const bool newReport =
-                        pairwise ?
-                            batch.pairs.emplace(candidate.prevIndex, candidate.curIndex, candidate.begin, candidate.end)
-                                .second :
-                            batch.ranges.emplace(candidate.begin, candidate.end).second;
-                    if (newReport) {
-                        if (race::DynamicVfKey(records[current]) && !reportAccess)
-                            reportAccess.emplace(PrepareAccess(current));
-                        auto evidence = MakeRacecheckDiagnostics(
-                            {candidate}, records, current, reportAccess ? *reportAccess : prepared);
+                    if (batch.ranges.emplace(candidate.begin, candidate.end).second) {
+                        auto evidence = MakeRacecheckDiagnostics({candidate}, records, current, prepared);
                         batch.reports.push_back(std::move(evidence.front()));
                     }
                     continue;
@@ -535,28 +527,19 @@ private:
             return true;
         }
 
-        bool CheckInstruction(
-            const std::vector<size_t>& indices, const std::map<size_t, racecheck::PreparedAccess>* summary = nullptr)
+        bool CheckInstruction(const std::vector<size_t>& indices)
         {
-            std::vector<ConflictBatch> ordinaryBatches(indices.size());
-            std::vector<ConflictBatch> vfBatches(indices.size());
+            std::vector<ConflictBatch> batches(indices.size());
             std::vector<racecheck::PreparedAccess> prepared;
             prepared.reserve(indices.size());
-            for (const auto index : indices) {
-                prepared.push_back(summary ? summary->at(index) : PrepareAccess(index));
-            }
+            for (const auto index : indices)
+                prepared.push_back(PrepareAccess(index));
             size_t reportCount = 0;
             for (size_t i = 0; i < indices.size(); ++i) {
-                const auto index = indices[i];
-                const bool vfAccess = race::DynamicVfKey(records[index]).has_value();
-                const bool vfMemoryAccess = vfEnabled && records[index].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
-                if (!vfAccess && !CheckAccess(memory, index, prepared[i], ordinaryBatches[i], false)) {
+                if (!CheckAccess(memory, indices[i], prepared[i], batches[i])) {
                     return false;
                 }
-                if (vfMemoryAccess && !CheckAccess(vfMemory, index, prepared[i], vfBatches[i], true)) {
-                    return false;
-                }
-                reportCount += ordinaryBatches[i].reports.size() + vfBatches[i].reports.size();
+                reportCount += batches[i].reports.size();
             }
             auto& output = processor.reports;
             if (reportCount > output.max_size() - output.size()) {
@@ -569,35 +552,22 @@ private:
                 output.reserve(std::max(required, grown));
             }
             std::vector<size_t> order(indices.size());
-            for (size_t i = 0; i < order.size(); ++i) {
+            for (size_t i = 0; i < order.size(); ++i)
                 order[i] = i;
-            }
             std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
                 return NormalizeMemoryAccessMode(records[indices[a]].accessMode) == ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
                        NormalizeMemoryAccessMode(records[indices[b]].accessMode) != ACLSAN_DEVICE_MEMORY_ACCESS_READ;
             });
             const auto savedBytes = stateBytes, savedSegments = stateSegments;
-            for (auto i : order) {
-                const auto index = indices[i];
-                const bool vfAccess = race::DynamicVfKey(records[index]).has_value();
-                const bool vfMemoryAccess = vfEnabled && records[index].memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
-                if (!vfAccess && !UpdateAccess(memory, index, ordinaryBatches[i].confirmed, prepared[i])) {
-                    stateBytes = savedBytes;
-                    stateSegments = savedSegments;
-                    return false;
-                }
-                if (vfMemoryAccess && !UpdateAccess(vfMemory, index, vfBatches[i].confirmed, prepared[i])) {
+            for (const auto i : order) {
+                if (!UpdateAccess(memory, indices[i], batches[i].confirmed, prepared[i])) {
                     stateBytes = savedBytes;
                     stateSegments = savedSegments;
                     return false;
                 }
             }
-            for (auto& batch : ordinaryBatches) {
+            for (auto& batch : batches)
                 PublishConflicts(batch);
-            }
-            for (auto& batch : vfBatches) {
-                PublishConflicts(batch);
-            }
             return true;
         }
 
@@ -653,104 +623,23 @@ private:
             }
             return true;
         }
-
-        bool BuildVfSummaries(VfSummaries& summaries)
-        {
-            // External edges meet the VF at its boundaries, so all internal accesses
-            // have the same ordering against an external instruction.
-            MemStateTracker summary(records, racecheck::MemStateTrackerMode::VfExternal);
-            for (size_t index = 0; index < records.size(); ++index) {
-                if (!race::DynamicVfKey(records[index]))
-                    continue;
-                const auto prepared = PrepareAccess(index);
-                if (!UpdateAccess(summary, index, {}, prepared))
-                    return false;
-            }
-            const auto trackerBytes = stateBytes, trackerSegments = stateSegments;
-            for (const auto& table : summary.Tables()) {
-                for (const auto& segment : table.second) {
-                    for (const auto& group : segment.second.vfGroups) {
-                        const auto& representatives =
-                            group.second.writers.empty() ? group.second.readers : group.second.writers;
-                        if (representatives.empty())
-                            continue;
-                        const auto index = representatives.front();
-                        const auto entry = processor.dependency.vfEntries.at(group.first);
-                        size_t addedBytes = 0;
-                        auto groupEntry = summaries.try_emplace(entry);
-                        if (groupEntry.second)
-                            addedBytes += sizeof(VfSummaries::value_type) + SEGMENT_NODE_ALLOWANCE;
-                        auto inserted = groupEntry.first->second.try_emplace(
-                            index, racecheck::PreparedAccess{table.first, racecheck::AccessMode(records[index]), {}});
-                        if (inserted.second)
-                            addedBytes += sizeof(VfSummary::value_type) + SEGMENT_NODE_ALLOWANCE;
-                        auto& ranges = inserted.first->second.ranges;
-                        const auto oldCapacity = ranges.capacity();
-                        if (!ranges.empty() && ranges.back().end == segment.second.begin) {
-                            ranges.back().end = segment.second.end;
-                        } else {
-                            ranges.push_back({segment.second.begin, segment.second.end});
-                            ++stateSegments;
-                        }
-                        addedBytes += (ranges.capacity() - oldCapacity) * sizeof(racecheck::ByteRange);
-                        stateBytes += addedBytes;
-                        if (!CheckStateBudget())
-                            return false;
-                    }
-                }
-            }
-            stateBytes -= trackerBytes;
-            stateSegments -= trackerSegments;
-            return true;
-        }
-
-        void ReleaseVfSummary(const VfSummary& summary)
-        {
-            stateBytes -= sizeof(VfSummaries::value_type) + SEGMENT_NODE_ALLOWANCE;
-            for (const auto& access : summary) {
-                stateBytes -= sizeof(VfSummary::value_type) + SEGMENT_NODE_ALLOWANCE +
-                              access.second.ranges.capacity() * sizeof(racecheck::ByteRange);
-                stateSegments -= access.second.ranges.size();
-            }
-        }
     };
 
     bool ReplayMemory()
     {
-        // Freeze before querying: a missing path is meaningful only after all
-        // supported synchronization edges have been collected and validated.
-        // The graph owns ordering; memstate owns physical interval history. Records
-        // remain immutable while topological replay supplies the causal commit order.
+        // The graph is sealed before replay. Each ordinary access and each
+        // expanded VF access is now committed through the same memstate.
         auto history = checker.analysis_->state->NewAccessHistory();
         auto& records = history->records;
         records.reserve(accesses.size());
         std::map<size_t, std::vector<size_t>> instructions;
         for (size_t i = 0; i < accesses.size(); ++i) {
             records.push_back(accesses[i].data);
-            if (!race::DynamicVfKey(records.back()))
-                instructions[accesses[i].node].push_back(i);
+            instructions[accesses[i].node].push_back(i);
         }
-        const bool hasVf = std::any_of(records.begin(), records.end(), [](const auto& record) {
-            return record.vfInstrValid != 0 && record.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
-        });
-        MemoryReplay replay{*this, records, history->tracker, hasVf};
-        MemoryReplay::VfSummaries summaries;
-        if (hasVf && !replay.BuildVfSummaries(summaries))
-            return false;
+        MemoryReplay replay{*this, records, history->tracker};
         for (auto node : graph.Order()) {
-            auto summary = summaries.find(node);
-            if (summary != summaries.end()) {
-                std::vector<size_t> indices;
-                indices.reserve(summary->second.size());
-                for (const auto& entry : summary->second)
-                    indices.push_back(entry.first);
-                if (!replay.CheckInstruction(indices, &summary->second))
-                    return false;
-                replay.ReleaseVfSummary(summary->second);
-                summaries.erase(summary);
-                continue;
-            }
-            auto instruction = instructions.find(node);
+            const auto instruction = instructions.find(node);
             if (instruction == instructions.end())
                 continue;
             if (!replay.CheckInstruction(instruction->second))

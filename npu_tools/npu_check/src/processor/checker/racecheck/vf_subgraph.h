@@ -53,7 +53,8 @@ public:
     void Build()
     {
         std::array<std::optional<size_t>, VF_LOCAL_MEM_ACCESS_CLASS_COUNT> prefix{}, acquired{};
-        std::optional<size_t> lastAccess;
+        // VF 顺序链上最近的 DAG 节点编号（访存或 barrier）；首个事件没有前驱时为空。
+        std::optional<size_t> lastNode;
         std::set<uint64_t> visited;
         for (const auto& position : positions_) {
             const auto serial = position.first;
@@ -68,6 +69,9 @@ public:
                     static_cast<unsigned long long>(b.header.instrExecId),
                     static_cast<unsigned long long>(b.vfInstrExecSeq), node, b.srcMemType, b.dstMemType);
                 Edge(entry_, node);
+                if (lastNode) {
+                    Edge(*lastNode, node);
+                }
                 Edge(node, completion_);
                 for (size_t c = 0; c < VF_LOCAL_MEM_ACCESS_CLASS_COUNT; ++c) {
                     if ((b.srcMemType & (1u << c)) != 0 && prefix[c]) {
@@ -77,6 +81,7 @@ public:
                         Join(acquired[c], node);
                     }
                 }
+                lastNode = node;
                 continue;
             }
             auto& group = groups_.at(index);
@@ -90,13 +95,13 @@ public:
                     Edge(*acquired[c], group.node);
                 }
             }
-            if (lastAccess) {
+            if (lastNode) {
                 ASCTOOL_DEBUG(
-                    "racecheck DAG graph=%p VF completion order edge=%zu->%zu", static_cast<void*>(&graph_),
-                    *lastAccess, group.node);
-                Edge(*lastAccess, group.node);
+                    "racecheck DAG graph=%p VF completion order edge=%zu->%zu", static_cast<void*>(&graph_), *lastNode,
+                    group.node);
+                Edge(*lastNode, group.node);
             }
-            lastAccess = group.node;
+            lastNode = group.node;
             for (size_t c = 0; c < VF_LOCAL_MEM_ACCESS_CLASS_COUNT; ++c) {
                 if ((group.classes & (1u << c)) != 0) {
                     Join(prefix[c], group.node);

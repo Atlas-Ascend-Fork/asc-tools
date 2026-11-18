@@ -254,7 +254,7 @@ TEST(VfRacecheck, ScalarAndVectorGroupsWithinOneVfAreIgnored)
     }
 }
 
-TEST(VfRacecheck, RepeatedVfAccessesProduceOneExternalConflict)
+TEST(VfRacecheck, ReplayedVfAccessesFreezeFirstExternalConflict)
 {
     Harness h;
     auto external = Access(1, 0, 0, VST, 1);
@@ -272,14 +272,14 @@ TEST(VfRacecheck, RepeatedVfAccessesProduceOneExternalConflict)
     ASSERT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
     ASSERT_EQ(h.reports.size(), 1U);
     const auto& report = std::get<NpuCheckRacecheckReport>(h.reports.front());
-    EXPECT_EQ(report.kind, ConflictKind::WAW);
+    EXPECT_EQ(report.kind, ConflictKind::RAW);
     const auto& vf = report.previous.vfInstrValid ? report.previous : report.current;
-    EXPECT_EQ(vf.vfInstrExecSeq, 1U);
+    EXPECT_EQ(vf.vfInstrExecSeq, 0U);
     EXPECT_EQ(report.checkRange.begin, 0U);
     EXPECT_EQ(report.checkRange.end, 64U);
 }
 
-TEST(VfRacecheck, CompressedVfKeepsPreciseRepresentativesForPartialWrites)
+TEST(VfRacecheck, ReplayedVfFreezesTheFirstOverlappingRange)
 {
     for (bool delayVf : {false, true}) {
         SCOPED_TRACE(delayVf);
@@ -299,23 +299,19 @@ TEST(VfRacecheck, CompressedVfKeepsPreciseRepresentativesForPartialWrites)
         h.Complete(10, 2, 2);
         h.End();
         ASSERT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
-        ASSERT_EQ(h.reports.size(), 2U);
-        std::map<uint64_t, std::pair<uint64_t, uint32_t>> evidence;
-        for (const auto& item : h.reports) {
-            const auto& report = std::get<NpuCheckRacecheckReport>(item);
-            const bool vfPrevious = report.previous.vfInstrValid != 0;
-            const auto& vf = vfPrevious ? report.previous : report.current;
-            evidence.emplace(report.checkRange.begin, std::make_pair(report.checkRange.end, vf.accessMode));
-            if (vf.accessMode == VLD) {
-                EXPECT_EQ(vfPrevious, !delayVf);
-                const auto& vfRange = vfPrevious ? report.previousRange : report.currentRange;
-                EXPECT_EQ(vfRange.begin, 0U);
-                EXPECT_EQ(vfRange.end, 64U);
-            }
-        }
-        ASSERT_EQ(evidence.size(), 2U);
-        EXPECT_EQ(evidence.at(0), std::make_pair(uint64_t{32}, VLD));
-        EXPECT_EQ(evidence.at(32), std::make_pair(uint64_t{64}, VST));
+        ASSERT_EQ(h.reports.size(), 1U);
+        const auto& report = std::get<NpuCheckRacecheckReport>(h.reports.front());
+        EXPECT_EQ(report.checkRange.begin, 0U);
+        EXPECT_EQ(report.checkRange.end, 64U);
+        const bool vfPrevious = report.previous.vfInstrValid != 0;
+        const auto& vf = vfPrevious ? report.previous : report.current;
+        const auto& externalAccess = vfPrevious ? report.current : report.previous;
+        EXPECT_EQ(vf.accessMode, VLD);
+        EXPECT_EQ(externalAccess.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+        EXPECT_EQ(report.kind, vfPrevious ? ConflictKind::WAR : ConflictKind::RAW);
+        const auto& vfRange = vfPrevious ? report.previousRange : report.currentRange;
+        EXPECT_EQ(vfRange.begin, 0U);
+        EXPECT_EQ(vfRange.end, 64U);
     }
 }
 
@@ -339,7 +335,7 @@ TEST(VfRacecheck, RepeatedVfAccessesFitOneExternalComparison)
     EXPECT_EQ(h.reports.size(), 1U);
 }
 
-TEST(VfRacecheck, PendingVfSummariesCountTowardMemoryBudget)
+TEST(VfRacecheck, UnifiedVfStateDoesNotChargeSummaryStorage)
 {
     race::Limits limits;
     limits.stateBytes = 700;
@@ -347,8 +343,8 @@ TEST(VfRacecheck, PendingVfSummariesCountTowardMemoryBudget)
     h.Add(Access(10, 0, 0, VST, 1));
     h.Complete(10, 1, 1);
     h.End();
-    EXPECT_FALSE(h.checker.AnalysisComplete()) << h.checker.Summary();
-    EXPECT_NE(h.checker.Summary().find("memory_state_budget"), std::string::npos);
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    EXPECT_EQ(h.reports.size(), 0U);
 }
 
 TEST(VfRacecheck, CompressedVfPreservesReadWriteConflictSemantics)

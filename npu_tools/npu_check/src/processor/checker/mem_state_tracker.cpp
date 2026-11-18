@@ -365,101 +365,12 @@ void VisitCandidates(const MemState& segment, AclsanDeviceMemoryAccessMode curre
     }
 }
 
-template <class Visitor>
-void VisitReadWriteHistory(
-    const std::vector<CbIndex>& readers, const std::vector<CbIndex>& writers,
-    const std::array<std::vector<CbIndex>, MemState::ATOMIC_WRITER_GROUP_COUNT>& atomicWriters,
-    AclsanDeviceMemoryAccessMode current, Visitor&& visitor)
-{
-    const auto normalized = static_cast<AclsanDeviceMemoryAccessMode>(NormalizeMemoryAccessMode(current));
-    if (normalized == ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
-        for (const auto index : writers) {
-            visitor(index);
-        }
-        for (const auto& group : atomicWriters) {
-            for (const auto index : group) {
-                visitor(index);
-            }
-        }
-        return;
-    }
-    if (normalized == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) {
-        for (const auto index : readers) {
-            visitor(index);
-        }
-        for (const auto index : writers) {
-            visitor(index);
-        }
-        for (const auto& group : atomicWriters) {
-            for (const auto index : group) {
-                visitor(index);
-            }
-        }
-        return;
-    }
-    if (!racecheck::IsAtomicWrite(normalized)) {
-        return;
-    }
-    for (const auto index : readers) {
-        visitor(index);
-    }
-    for (const auto index : writers) {
-        visitor(index);
-    }
-    for (size_t group = 0; group < atomicWriters.size(); ++group) {
-        if (group == static_cast<size_t>(normalized - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD)) {
-            continue;
-        }
-        for (const auto index : atomicWriters[group]) {
-            visitor(index);
-        }
-    }
-}
-
-template <class Visitor>
-void VisitVfCandidates(const MemState& segment, const AclsanDeviceMemoryAccessData& current, Visitor&& visitor)
-{
-    const auto currentKey = race::DynamicVfKey(current);
-    const auto mode = racecheck::AccessMode(current);
-    if (currentKey) {
-        VisitReadWriteHistory(
-            segment.externalReaders, segment.externalWriters, segment.externalAtomicWriters, mode, visitor);
-    }
-    for (const auto& entry : segment.vfGroups) {
-        if (currentKey && entry.first == *currentKey) {
-            continue;
-        }
-        VisitReadWriteHistory(entry.second.readers, entry.second.writers, entry.second.atomicWriters, mode, visitor);
-    }
-}
-
 bool SameState(const MemState& lhs, const MemState& rhs)
 {
     // tracker 不保存报告身份：保留每个 Race 边界，
     // 不合并可能具有不同首次证据的子区间。
     return lhs.state != MemOpState::Race && lhs.end == rhs.begin && lhs.state == rhs.state &&
            lhs.writer == rhs.writer && lhs.atomicWriters == rhs.atomicWriters && lhs.readers == rhs.readers;
-}
-
-bool SameVfHistory(const VfHistory& lhs, const VfHistory& rhs)
-{
-    return lhs.readers == rhs.readers && lhs.writers == rhs.writers && lhs.atomicWriters == rhs.atomicWriters;
-}
-
-bool SameVfState(const MemState& lhs, const MemState& rhs)
-{
-    if (lhs.end != rhs.begin || lhs.externalReaders != rhs.externalReaders ||
-        lhs.externalWriters != rhs.externalWriters || lhs.externalAtomicWriters != rhs.externalAtomicWriters ||
-        lhs.vfGroups.size() != rhs.vfGroups.size()) {
-        return false;
-    }
-    auto right = rhs.vfGroups.begin();
-    for (auto left = lhs.vfGroups.begin(); left != lhs.vfGroups.end(); ++left, ++right) {
-        if (left->first != right->first || !SameVfHistory(left->second, right->second)) {
-            return false;
-        }
-    }
-    return true;
 }
 
 bool NeedsHistory(
@@ -528,77 +439,6 @@ void AppendUnique(std::vector<CbIndex>& history, CbIndex index, bool newIndex)
     }
 }
 
-bool SplitVf(SegmentTable& segments, uint64_t address)
-{
-    auto it = segments.upper_bound(address);
-    if (it == segments.begin()) {
-        return false;
-    }
-    --it;
-    if (address <= it->second.begin || address >= it->second.end) {
-        return false;
-    }
-    auto right = it->second;
-    right.begin = address;
-    segments.emplace(address, std::move(right));
-    it->second.end = address;
-    return true;
-}
-
-void ApplyVf(MemState& segment, const AclsanDeviceMemoryAccessData& data, bool newIndex, CbIndex index)
-{
-    const auto mode = racecheck::AccessMode(data);
-    const auto vfKey = race::DynamicVfKey(data);
-    if (vfKey) {
-        auto& history = segment.vfGroups[*vfKey];
-        // One VF has one external ordering; a write witnesses every conflict a read can.
-        switch (NormalizeMemoryAccessMode(mode)) {
-            case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
-                if (history.readers.empty() && history.writers.empty()) {
-                    history.readers.push_back(index);
-                }
-                segment.state = MemOpState::Read;
-                break;
-            case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
-                if (history.writers.empty()) {
-                    history.readers.clear();
-                    for (auto& writers : history.atomicWriters) {
-                        writers.clear();
-                    }
-                    history.writers.push_back(index);
-                }
-                segment.state = MemOpState::Write;
-                break;
-            default:
-                if (racecheck::IsAtomicWrite(mode) && history.writers.empty()) {
-                    AppendUnique(
-                        history.atomicWriters[mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD], index, newIndex);
-                    segment.state = MemOpState::AtomicWrite;
-                }
-                break;
-        }
-        return;
-    }
-    switch (NormalizeMemoryAccessMode(mode)) {
-        case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
-            AppendUnique(segment.externalReaders, index, newIndex);
-            segment.state = MemOpState::Read;
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
-            AppendUnique(segment.externalWriters, index, newIndex);
-            segment.state = MemOpState::Write;
-            break;
-        default:
-            if (racecheck::IsAtomicWrite(mode)) {
-                AppendUnique(
-                    segment.externalAtomicWriters[mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD], index,
-                    newIndex);
-                segment.state = MemOpState::AtomicWrite;
-            }
-            break;
-    }
-}
-
 void Apply(MemState& segment, AclsanDeviceMemoryAccessMode mode, CbIndex index, bool newIndex)
 {
     switch (NormalizeMemoryAccessMode(mode)) {
@@ -622,10 +462,7 @@ void Apply(MemState& segment, AclsanDeviceMemoryAccessMode mode, CbIndex index, 
 
 } // namespace
 
-MemStateTracker::MemStateTracker(
-    const std::vector<AclsanDeviceMemoryAccessData>& records, racecheck::MemStateTrackerMode mode)
-    : records_(records), mode_(mode)
-{}
+MemStateTracker::MemStateTracker(const std::vector<AclsanDeviceMemoryAccessData>& records) : records_(records) {}
 
 void MemStateTracker::Trace(
     CbIndex index, const char* event, uint64_t begin, uint64_t end, CbIndex previous, const char* detail,
@@ -788,9 +625,6 @@ std::vector<AccessPair> MemStateTracker::CheckPotentialRaceImpl(
             local.emplace(racecheck::PrepareAccess(current));
             prepared = &*local;
         }
-        if (mode_ == racecheck::MemStateTrackerMode::VfExternal) {
-            return CheckVfPotentialRace(cbIndex, *prepared);
-        }
         const auto& ranges = prepared->ranges;
         const auto& key = prepared->key;
         const auto mode = prepared->mode;
@@ -880,39 +714,6 @@ std::vector<AccessPair> MemStateTracker::CheckPotentialRaceImpl(
     }
 }
 
-std::vector<AccessPair> MemStateTracker::CheckVfPotentialRace(
-    CbIndex cbIndex, const racecheck::PreparedAccess& prepared) const
-{
-    Trace(cbIndex, "check.vf.begin");
-    const auto& current = Record(cbIndex);
-    const auto table = tables_.find(prepared.key);
-    std::vector<AccessPair> candidates;
-    if (table == tables_.end()) {
-        return candidates;
-    }
-    for (const auto range : prepared.ranges) {
-        const auto& segments = table->second;
-        auto it = segments.lower_bound(range.begin);
-        if (it != segments.begin() && std::prev(it)->second.end > range.begin) {
-            --it;
-        }
-        for (; it != segments.end() && it->second.begin < range.end; ++it) {
-            const auto begin = std::max(range.begin, it->second.begin);
-            const auto end = std::min(range.end, it->second.end);
-            if (begin >= end) {
-                continue;
-            }
-            VisitVfCandidates(it->second, current, [&](CbIndex previous) {
-                if (previous == cbIndex || IsInstructionReadBeforeWrite(records_[previous], current)) {
-                    return;
-                }
-                candidates.push_back({previous, cbIndex, prepared.key.memorySpace, begin, end});
-            });
-        }
-    }
-    return candidates;
-}
-
 void MemStateTracker::UpdateMemState(CbIndex cbIndex, const std::vector<AccessPair>& conflicts)
 {
     UpdateMemStateImpl(cbIndex, conflicts, nullptr);
@@ -951,10 +752,6 @@ void MemStateTracker::UpdateMemStateImpl(
         if (!prepared) {
             local.emplace(racecheck::PrepareAccess(current));
             prepared = &*local;
-        }
-        if (mode_ == racecheck::MemStateTrackerMode::VfExternal) {
-            UpdateVfMemState(cbIndex, conflicts, *prepared);
-            return;
         }
         const auto& key = prepared->key;
         const auto mode = prepared->mode;
@@ -1120,78 +917,4 @@ void MemStateTracker::UpdateMemStateImpl(
     }
 }
 
-void MemStateTracker::UpdateVfMemState(
-    CbIndex cbIndex, const std::vector<AccessPair>& conflicts, const racecheck::PreparedAccess& prepared)
-{
-    const auto& current = Record(cbIndex);
-    const auto& ranges = prepared.ranges;
-    for (const auto& pair : conflicts) {
-        const auto& previous = Record(pair.prevIndex);
-        const auto previousKey = racecheck::MakeKey(previous);
-        if (pair.curIndex != cbIndex || pair.prevIndex == cbIndex || pair.memorySpace != prepared.key.memorySpace ||
-            prepared.key < previousKey || previousKey < prepared.key || pair.begin >= pair.end) {
-            throw RacecheckError(RacecheckErrorKind::InvalidEvent, "VF conflict identity, space or range mismatch");
-        }
-        if (IsInstructionReadBeforeWrite(previous, current)) {
-            throw RacecheckError(
-                RacecheckErrorKind::InvalidEvent,
-                "same-instruction source read and destination write are not conflict candidates");
-        }
-        const auto range = std::upper_bound(
-            ranges.begin(), ranges.end(), pair.begin,
-            [](uint64_t begin, const racecheck::ByteRange& candidate) { return begin < candidate.begin; });
-        if (range == ranges.begin() || std::prev(range)->end < pair.end) {
-            throw RacecheckError(
-                RacecheckErrorKind::InvalidEvent, "VF conflict is not contained in an actual current access range");
-        }
-    }
-    if (ranges.empty()) {
-        return;
-    }
-    const bool newIndex = !largestUpdatedIndex_ || cbIndex > *largestUpdatedIndex_;
-    auto& working = tables_.try_emplace(prepared.key).first->second;
-    for (const auto range : ranges) {
-        SplitVf(working, range.begin);
-        SplitVf(working, range.end);
-    }
-    for (const auto range : ranges) {
-        uint64_t cursor = range.begin;
-        auto it = working.lower_bound(cursor);
-        if (it != working.begin() && std::prev(it)->second.end > cursor) {
-            --it;
-        }
-        while (cursor < range.end) {
-            if (it == working.end() || it->second.begin > cursor) {
-                const auto end = it == working.end() ? range.end : std::min(range.end, it->second.begin);
-                it = working.emplace(cursor, MemState{cursor, end, MemOpState::Read, {}, {}}).first;
-            }
-            auto& segment = it->second;
-            ApplyVf(segment, current, newIndex, cbIndex);
-            cursor = segment.end;
-            ++it;
-        }
-    }
-    for (const auto range : ranges) {
-        auto it = working.lower_bound(range.begin);
-        if (it != working.begin()) {
-            --it;
-        }
-        while (it != working.end()) {
-            auto next = std::next(it);
-            if (next == working.end() || next->second.begin > range.end) {
-                break;
-            }
-            if (SameVfState(it->second, next->second)) {
-                it->second.end = next->second.end;
-                working.erase(next);
-            } else {
-                ++it;
-            }
-        }
-    }
-    launchId_ = current.header.launchId;
-    if (newIndex) {
-        largestUpdatedIndex_ = cbIndex;
-    }
-}
 } // namespace npucheck
