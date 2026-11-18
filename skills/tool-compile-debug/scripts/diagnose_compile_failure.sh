@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # 用途：包内确定性编译失败诊断入口（包装 scripts/run.py diagnose）。
 # 使用方法：bash diagnose_compile_failure.sh <工程目录> <构建日志> <输出目录> [SoC] [--json-stdout]
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # 用途：在工程副本中按原构建配方验证已有修改；可用 --apply-patch 验证显式补丁。
 # 使用方法：bash run_verify.sh <工程目录> <输出JSON> [--previous-result <前次证据JSON>]
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of

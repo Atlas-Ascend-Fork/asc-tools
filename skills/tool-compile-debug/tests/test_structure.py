@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -272,6 +273,20 @@ class SkillStructureTest(unittest.TestCase):
         self.assertTrue(local)
         for link in local:
             self.assertTrue((SKILL_ROOT / link).is_file(), link)
+
+    def test_all_python_and_shell_files_carry_copyright(self):
+        scripts = [
+            path for path in package_files(SKILL_ROOT) if path.suffix in {".py", ".sh"}
+        ]
+        self.assertTrue(scripts)
+        for script in scripts:
+            with self.subTest(script=script.relative_to(SKILL_ROOT).as_posix()):
+                head = "\n".join(script.read_text(encoding="utf-8").splitlines()[:20])
+                self.assertIn(LICENSE_MARK, head)
+                self.assertRegex(
+                    head,
+                    r"(?m)^# Copyright \(c\) \d{4}(?:-\d{4})? Huawei Technologies Co\., Ltd\.$",
+                )
 
     def test_scripts_carry_license_header_and_purpose(self):
         scripts = sorted((SKILL_ROOT / "scripts").glob("*.py"))

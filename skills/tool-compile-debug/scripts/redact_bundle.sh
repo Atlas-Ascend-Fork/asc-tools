@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # 用途：对外分享前对产物做本地脱敏（包装 scripts/run.py redact）。
 # 使用方法：bash redact_bundle.sh <输入文件> <输出文件> [--stats <统计JSON>]
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of

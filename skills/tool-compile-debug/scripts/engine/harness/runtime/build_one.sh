@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # 用途：在独立临时副本中按原构建配方执行一次编译，供真实编译验证取证。
 # Usage: bash build_one.sh CASE_DIR [SOC_VERSION] [--target NAME] [--cmake-arg ARG] [-- build.sh ARGS...]
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -9,7 +10,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-set -uo pipefail
+set -euo pipefail
 
 CASE_DIR="${1:?usage: build_one.sh CASE_DIR [SOC_VERSION] [--target NAME] [--cmake-arg ARG] [-- build.sh ARGS...]}"
 shift
@@ -64,7 +65,9 @@ LOG_FILE="${LOG_DIR}/build.log"
 
 mkdir -p "$BUILD_DIR" "$LOG_DIR"
 
-status=0
+# Collect the pipeline status without putting the build subshell in an if/||
+# condition: those contexts disable errexit inside the subshell as well.
+set +e
 (
   set -euo pipefail
   cd "$CASE_DIR"
@@ -143,7 +146,9 @@ status=0
     echo "No build.sh or CMakeLists.txt found" >&2
     exit 88
   fi
-) 2>&1 | tee "$LOG_FILE" || status=$?
+) 2>&1 | tee "$LOG_FILE"
+status=$?
+set -e
 
 for f in \
   "$BUILD_DIR/compile_commands.json" \
