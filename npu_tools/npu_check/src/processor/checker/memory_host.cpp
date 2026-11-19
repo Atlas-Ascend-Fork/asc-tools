@@ -15,7 +15,7 @@
 namespace npucheck {
 bool MemoryAnalysis::IsLegacyMemcpy(AclsanCallbackId id, const AclsanCallbackCommonData& common) const
 {
-    return managed_ && id == ACLSAN_CBID_MEMORY_WRITE_END && common.apiName &&
+    return managed_ && id == ACLSAN_CBID_MEMORY_WRITE_END && common.apiName != nullptr &&
            std::strcmp(common.apiName, "aclrtMemcpy") == 0;
 }
 
@@ -84,22 +84,21 @@ void MemoryAnalysis::QueryHostInitialization(HostAccess& access)
         access.uninitializedBytes += end - cursor;
     }
     if (access.uninitializedBytes != 0 &&
-        (unordered || !launches_.empty() || uncertainInitializationDevices_.count(operand.deviceId)))
+        (unordered || !launches_.empty() || uncertainInitializationDevices_.count(operand.deviceId) != 0U))
         access.initializationKnown = false;
 }
 
 void MemoryAnalysis::HostOperand(uint32_t device, uint64_t address, uint64_t bytes, uint32_t mode, const char* apiName)
 {
-    constexpr size_t MAX_HOST_OPERANDS = 100000;
     HostAccess access{
-        {device, address, bytes, mode, currentHostNode_, apiName ? apiName : "host memory operation"},
+        {device, address, bytes, mode, currentHostNode_, apiName != nullptr ? apiName : "host memory operation"},
         Classify(0, {device, address, bytes})};
     // Runtime may infer memcpy direction from the pointers and ignore kind.
     // An untracked operand is not proof that a host pointer is invalid GM.
     if (access.resource.status == RangeStatus::UNKNOWN)
         access.resource.status = RangeStatus::AMBIGUOUS;
-    if (state->hostAccesses.size() >= MAX_HOST_OPERANDS || bytes > std::numeric_limits<uint32_t>::max() ||
-        access.resource.status == RangeStatus::AMBIGUOUS) {
+    if (state->hostAccesses.size() >= limits_.HostAccessRecordBudget() ||
+        bytes > std::numeric_limits<uint32_t>::max() || access.resource.status == RangeStatus::AMBIGUOUS) {
         complete_ = false;
         access.initializationKnown = false;
     }
@@ -111,7 +110,7 @@ void MemoryAnalysis::HostOperand(uint32_t device, uint64_t address, uint64_t byt
                 device, {address, address + bytes}, currentHostNode_, access.resource.allocation->allocSequence);
     }
     hostOperations_.push_back(access);
-    if (state->hostAccesses.size() < MAX_HOST_OPERANDS && bytes <= UINT64_MAX - address)
+    if (state->hostAccesses.size() < limits_.HostAccessRecordBudget() && bytes <= UINT64_MAX - address)
         state->hostAccesses.push_back(std::move(access.evidence));
 }
 

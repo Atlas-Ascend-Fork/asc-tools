@@ -12,7 +12,6 @@
 #include "npu_tool_log.h"
 
 #include <cstdint>
-#include <type_traits>
 #include <variant>
 
 namespace aclsan {
@@ -20,43 +19,9 @@ namespace aclsan {
 namespace {
 
 template <typename ParamField>
-constexpr bool HasParamFieldLogger() noexcept
+void LogParamField(const ParamField&) noexcept
 {
-    return std::is_same_v<ParamField, aclsan::VectorMaskWriteParamField> ||
-           std::is_same_v<ParamField, aclsan::CtrlRegisterParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyGmToUbufAlignV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyGmToCbufAlignV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyUbufToGmAlignV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyUbufToUbufParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyGmToCbufV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::LoadGmToCbuf2DV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::NdDmaParamField> ||
-           std::is_same_v<ParamField, aclsan::FixL0cToOutParamField> ||
-           std::is_same_v<ParamField, aclsan::LocalMemoryTransferParamField> ||
-           std::is_same_v<ParamField, aclsan::ScalarGmParamField> ||
-           std::is_same_v<ParamField, aclsan::ScalarDevParamField> ||
-           std::is_same_v<ParamField, aclsan::ScalarPreloadParamField> ||
-           std::is_same_v<ParamField, aclsan::ScalarAtomicParamField> ||
-           std::is_same_v<ParamField, aclsan::MmadParamField> ||
-           std::is_same_v<ParamField, aclsan::LoadL1MxParamField> ||
-           std::is_same_v<ParamField, aclsan::SetL12DParamField> ||
-           std::is_same_v<ParamField, aclsan::LoadCbufToL0ParamField> ||
-           std::is_same_v<ParamField, aclsan::LoadCbufToCbTransposeParamField> ||
-           std::is_same_v<ParamField, aclsan::Img2ColParamField> ||
-           std::is_same_v<ParamField, aclsan::FmatrixParamField> ||
-           std::is_same_v<ParamField, aclsan::L3dRptParamField> ||
-           std::is_same_v<ParamField, aclsan::NdDmaPadCountParamField> ||
-           std::is_same_v<ParamField, aclsan::Mte2SourceParamField> ||
-           std::is_same_v<ParamField, aclsan::NdDmaLoopStrideParamField> ||
-           std::is_same_v<ParamField, aclsan::Mte2NzParamField> ||
-           std::is_same_v<ParamField, aclsan::Loop3ParamField> ||
-           std::is_same_v<ParamField, aclsan::DmaLoopSizeParamField> ||
-           std::is_same_v<ParamField, aclsan::DmaLoopStrideParamField> ||
-           std::is_same_v<ParamField, aclsan::SetPaddingParamField> ||
-           std::is_same_v<ParamField, aclsan::FlagParamField> ||
-           std::is_same_v<ParamField, aclsan::SyncBufParamField> ||
-           std::is_same_v<ParamField, aclsan::PipeBarrierParamField> ||
-           std::is_same_v<ParamField, aclsan::PushPbParamField> || std::is_same_v<ParamField, aclsan::VfParamField>;
+    // Parameters without a dedicated overload do not produce a log entry.
 }
 
 const char* BlockTypeName(uint32_t blockType) noexcept
@@ -424,14 +389,7 @@ void LogRawRecord(const ParsedTraceRecord& parsed) noexcept
 
 void LogParamField(const aclsan::DeviceInstructionParamField& params) noexcept
 {
-    std::visit(
-        [](const auto& value) noexcept {
-            using ParamField = std::decay_t<decltype(value)>;
-            if constexpr (HasParamFieldLogger<ParamField>()) {
-                LogParamField(value);
-            }
-        },
-        params);
+    std::visit([](const auto& value) noexcept { LogParamField(value); }, params);
 }
 
 void LogCallbackData(const AclsanDeviceRegisterStateData& cbData) noexcept

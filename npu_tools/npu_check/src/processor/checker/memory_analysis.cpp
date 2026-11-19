@@ -9,8 +9,8 @@
  */
 
 #include "checker/memory_analysis.h"
-#include <algorithm>
 #include "device_instr/common/instruction_id.h"
+#include "npu_tool_log.h"
 
 namespace npucheck {
 HostOrder::NodeId MemoryAnalysis::HostNode()
@@ -19,30 +19,49 @@ HostOrder::NodeId MemoryAnalysis::HostNode()
     complete_ = complete_ && order_.Complete();
     return node;
 }
+bool MemoryAnalysis::HandleOperatorCompletion(
+    AclsanCallbackId id, const AclsanCallbackCommonData& common, const void* data)
+{
+    if (id != ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE || common.size < sizeof(AclsanOperatorExecutionData)) {
+        return false;
+    }
+    const auto& event = *static_cast<const AclsanOperatorExecutionData*>(data);
+    const auto launch = launches_.find(event.launchId);
+    if (launch == launches_.end()) {
+        return event.launchId != 0 && boundaries_.count(event.launchId) != 0;
+    }
+    if (!launch->second.registered || launch->second.stream != event.stream) {
+        return false;
+    }
+    if (common.result != 0 || event.flags != ACLSAN_OPERATOR_EXECUTION_FLAG_NONE) {
+        complete_ = false;
+    }
+    closing_.insert(event.launchId);
+    return true;
+}
+
 bool MemoryAnalysis::HostEvent(AclsanCallbackDomain domain, AclsanCallbackId id, const void* data)
 {
     const auto& common = *static_cast<const AclsanCallbackCommonData*>(data);
     if (common.version != ACLSAN_API_VERSION || common.size < sizeof(common))
         return false;
+    if (domain == ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION) {
+        return HandleOperatorCompletion(id, common, data);
+    }
+    if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
+        if (common.size < sizeof(AclsanSynchronizeData))
+            return false;
+        return RecordSynchronization(*static_cast<const AclsanSynchronizeData*>(data), std::this_thread::get_id());
+    }
     if (common.result != 0) {
         if (domain == ACLSAN_CB_DOMAIN_MEMORY)
             complete_ = false;
         return true;
     }
-    // A successful synchronization publishes the stream timeline to this thread
-    // before the callback event is stamped, so later host work observes the join.
-    if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
-        if (common.size < sizeof(AclsanSynchronizeData))
-            return false;
-        const auto& sync = *static_cast<const AclsanSynchronizeData*>(data);
-        order_.Join(order_.ThreadActor(std::this_thread::get_id()), order_.StreamActor(sync.stream));
-    }
     const auto node = HostNode();
     currentHostNode_ = node;
     if (domain == ACLSAN_CB_DOMAIN_LAUNCH)
         return RegisterLaunch(*static_cast<const AclsanLaunchData*>(data));
-    if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE)
-        return CloseStream(*static_cast<const AclsanSynchronizeData*>(data));
     if (domain == ACLSAN_CB_DOMAIN_MEMORY) {
         if (IsLegacyMemcpy(id, common))
             return true;
@@ -56,7 +75,7 @@ bool MemoryAnalysis::HostEvent(AclsanCallbackDomain domain, AclsanCallbackId id,
 }
 bool MemoryAnalysis::RegisterLaunch(const AclsanLaunchData& launch)
 {
-    if (launch.common.size < sizeof(launch) || launch.launchId == 0 || boundaries_.count(launch.launchId))
+    if (launch.common.size < sizeof(launch) || launch.launchId == 0 || boundaries_.count(launch.launchId) != 0U)
         return false;
     auto& output = Get(launch.launchId);
     output.stream = launch.stream;
@@ -68,16 +87,39 @@ bool MemoryAnalysis::RegisterLaunch(const AclsanLaunchData& launch)
     const auto entry = order_.Issue(stream);
     const auto exit = order_.Issue(stream);
     boundaries_.emplace(launch.launchId, std::make_pair(entry, exit));
+    boundaryStreams_[launch.launchId] = launch.stream;
+    streamLaunches_[launch.stream] = launch.launchId;
     complete_ = complete_ && order_.Complete();
     return true;
 }
-bool MemoryAnalysis::CloseStream(const AclsanSynchronizeData& sync)
+bool MemoryAnalysis::RecordSynchronization(const AclsanSynchronizeData& sync, std::thread::id thread)
 {
-    if (sync.common.size < sizeof(sync))
+    if (sync.common.version != ACLSAN_API_VERSION || sync.common.size < sizeof(sync))
         return false;
-    for (const auto& launch : launches_)
-        if (launch.second.registered && launch.second.stream == sync.stream)
-            closing_.insert(launch.first);
+    if (managed_) {
+        synchronizationReports_.clear();
+        ObserveSynchronization(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync);
+    }
+    if (sync.common.result != 0) {
+        complete_ = false;
+        return true;
+    }
+    const auto actor = order_.ThreadActor(thread);
+    const uint64_t frontier = sync.common.correlationId;
+    if (frontier == 0) {
+        if (streamLaunches_.count(sync.stream) != 0)
+            complete_ = false;
+    } else {
+        const auto boundary = boundaries_.find(frontier);
+        const auto stream = boundaryStreams_.find(frontier);
+        if (boundary == boundaries_.end() || stream == boundaryStreams_.end() || stream->second != sync.stream) {
+            complete_ = false;
+            return false;
+        }
+        order_.JoinNode(actor, boundary->second.second);
+    }
+    (void)order_.Issue(actor);
+    complete_ = complete_ && order_.Complete();
     return true;
 }
 bool MemoryAnalysis::ResourceEvent(AclsanCallbackId id, const AclsanResourceData& resource)
@@ -93,6 +135,49 @@ bool MemoryAnalysis::ResourceEvent(AclsanCallbackId id, const AclsanResourceData
     return true;
 }
 
+namespace {
+bool IsRegisterTransfer(uint32_t instructionId)
+{
+    using aclsan::InstructionId;
+    switch (static_cast<InstructionId>(instructionId)) {
+        case InstructionId::NdDmaOutToUbufB8:
+        case InstructionId::NdDmaOutToUbufB16:
+        case InstructionId::NdDmaOutToUbufB32:
+        case InstructionId::CopyGmToCbufAlignV2B8:
+        case InstructionId::CopyGmToCbufAlignV2B16:
+        case InstructionId::CopyGmToCbufAlignV2B32:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool HasFootprintModifiers(const AclsanDeviceMemoryAccessData& access)
+{
+    return access.vectorMask0 != 0 || access.vectorMask1 != 0 || access.predicateMask0 != 0 ||
+           access.predicateMask1 != 0 || access.memoryFlags != 0;
+}
+} // namespace
+
+void MemoryAnalysis::StoreDeviceMemory(Launch& launch, const AclsanDeviceMemoryAccessData& access)
+{
+    const auto core = race::DomainOf(access.header);
+    const bool missing = (access.regDependencyMask0 & ~launch.registerMasks[core]) != 0;
+    const bool hasModifiers = HasFootprintModifiers(access);
+    if (IsRegisterTransfer(access.instructionId) && missing &&
+        access.header.flags == ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED && access.accessCount == 1 &&
+        access.accessIndex == 0 && access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN && access.layoutKind == 0 &&
+        access.accessMode == 0 && access.address == 0 && !hasModifiers && access.unitFlag == 0) {
+        launch.dependencyOnly.push_back(access);
+        return;
+    }
+    // Keep raw operands for bounds checking even when the graph cannot use their footprint.
+    if (access.header.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT || hasModifiers) {
+        launch.inexactMemory = true;
+    }
+    launch.memory.push_back(access);
+}
+
 bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
 {
     const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
@@ -104,40 +189,20 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
     if (h.version != ACLSAN_API_VERSION || h.size < required || h.launchId == 0 || h.instrExecId == 0)
         return false;
     auto& launch = Get(h.launchId);
-    constexpr size_t MAX_EVENTS = 100000;
-    if (launch.memory.size() + launch.sync.size() + launch.registers.size() + launch.dependencyOnly.size() +
-            launch.vfs.size() + launch.localBarriers.size() >=
-        MAX_EVENTS) {
-        launch.reasons.insert("event_budget");
+    // VF-expanded UB accesses and ordinary UB transfers must reach the same graph.
+    if (race::ExceedsBudget(
+            limits_.LaunchEventBudget(),
+            {launch.memory.size(), launch.sync.size(), launch.registers.size(), launch.dependencyOnly.size(),
+             launch.vfs.size(), launch.localBarriers.size(), 1})) {
+        if (launch.reasons.insert("event_budget").second) {
+            ASCTOOL_WARNING(
+                "analysis budget: launch=%llu stage=ingress limit=%zu", static_cast<unsigned long long>(h.launchId),
+                limits_.LaunchEventBudget());
+        }
         return true;
     }
     if (id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
-        const auto& a = *static_cast<const AclsanDeviceMemoryAccessData*>(data);
-        const auto core = race::DomainOf(h);
-        using aclsan::InstructionId;
-        const auto instruction = static_cast<InstructionId>(a.instructionId);
-        const bool registerTransfer =
-            instruction == InstructionId::NdDmaOutToUbufB8 || instruction == InstructionId::NdDmaOutToUbufB16 ||
-            instruction == InstructionId::NdDmaOutToUbufB32 || instruction == InstructionId::CopyGmToCbufAlignV2B8 ||
-            instruction == InstructionId::CopyGmToCbufAlignV2B16 ||
-            instruction == InstructionId::CopyGmToCbufAlignV2B32;
-        const bool missing = (a.regDependencyMask0 & ~launch.registerMasks[core]) != 0;
-        if (registerTransfer && missing && h.flags == ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED && a.accessCount == 1 &&
-            a.accessIndex == 0 && a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN && a.layoutKind == 0 &&
-            a.accessMode == 0 && a.address == 0 && a.vectorMask0 == 0 && a.vectorMask1 == 0 && a.predicateMask0 == 0 &&
-            a.predicateMask1 == 0 && a.memoryFlags == 0 && a.unitFlag == 0) {
-            launch.dependencyOnly.push_back(a);
-            return true;
-        }
-        // An exact footprint is usable independently of whether register setter
-        // probes were requested. Register initialization is a checker verdict.
-        if (h.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT || a.vectorMask0 || a.vectorMask1 || a.predicateMask0 ||
-            a.predicateMask1 || a.memoryFlags) {
-            launch.inexactMemory = true;
-            // Keep the raw operand for bounds checking; the common graph will
-            // reject incomplete observations rather than invent a footprint.
-        }
-        launch.memory.push_back(a);
+        StoreDeviceMemory(launch, *static_cast<const AclsanDeviceMemoryAccessData*>(data));
     } else if (id == ACLSAN_CBID_DEVICE_VF) {
         launch.vfs.push_back(*static_cast<const AclsanDeviceVfData*>(data));
     } else if (id == ACLSAN_CBID_DEVICE_STATE) {
@@ -171,7 +236,7 @@ bool MemoryAnalysis::BeginCallback(AclsanCallbackDomain domain, AclsanCallbackId
     hostWriteRecorded_ = false;
     hostOperations_.clear();
     synchronizationReports_.clear();
-    if (!data)
+    if (data == nullptr)
         return false;
     bool valid = true;
     if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION)
@@ -179,7 +244,9 @@ bool MemoryAnalysis::BeginCallback(AclsanCallbackDomain domain, AclsanCallbackId
     else
         valid = HostEvent(domain, id, data);
     if (managed_ && valid) {
-        ObserveSynchronization(domain, id, data);
+        if (domain != ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
+            ObserveSynchronization(domain, id, data);
+        }
         // Publish validated writes for every completed launch before any checker
         // queries this batch. Visibility still requires an HB edge to its reader.
         for (auto launchId : closing_)
@@ -199,14 +266,33 @@ void MemoryAnalysis::EndCallback()
 race::DependencyGraph& MemoryAnalysis::Graph(uint64_t id, const race::Limits& limits, std::set<std::string>& reasons)
 {
     auto& launch = Get(id);
+    const auto& policy = managed_ ? limits_ : limits;
+    if (launch.dependencyLimits && !(*launch.dependencyLimits == policy))
+        launch.reasons.insert("analysis_budget_policy_mismatch");
     if (!launch.dependency) {
+        launch.dependencyLimits = policy;
+        if (race::ExceedsBudget(
+                policy.LaunchEventBudget(),
+                {launch.memory.size(), launch.sync.size(), launch.registers.size(), launch.dependencyOnly.size(),
+                 launch.vfs.size(), launch.localBarriers.size()})) {
+            launch.reasons.insert("event_budget");
+            ASCTOOL_WARNING(
+                "analysis budget: launch=%llu stage=events memory=%zu sync=%zu registers=%zu limit=%zu",
+                static_cast<unsigned long long>(id), launch.memory.size(), launch.sync.size(), launch.registers.size(),
+                policy.LaunchEventBudget());
+        }
         if (invalidSynchronization_.count(id) != 0)
             launch.reasons.insert("invalid_synchronization");
         if (launch.inexactMemory)
             launch.reasons.insert("incomplete_memory_observation");
-        launch.dependency = std::make_unique<race::DependencyGraph>(limits);
+        launch.dependency = std::make_unique<race::DependencyGraph>(
+            policy, managed_ ? rangeBudget_ : std::shared_ptr<race::RangeStorageBudget>{});
+        ASCTOOL_INFO(
+            "analysis policy: launch=%llu events=%zu segments=%zu edges=%zu queryWork=%zu analysisWork=%zu",
+            static_cast<unsigned long long>(id), policy.LaunchEventBudget(), policy.FootprintIntervalBudget(),
+            policy.GraphEdgeBudget(), policy.ReachabilityQueryWorkBudget(), policy.ReachabilityPhaseWorkBudget());
         race::BuildDependencyGraph(
-            launch.memory, launch.sync, launch.skippedFragments, limits, launch.reasons, *launch.dependency,
+            launch.memory, launch.sync, launch.skippedFragments, policy, launch.reasons, *launch.dependency,
             launch.registers, launch.vfs, launch.localBarriers);
         ++graphBuilds_;
     }
@@ -215,6 +301,23 @@ race::DependencyGraph& MemoryAnalysis::Graph(uint64_t id, const race::Limits& li
     if (!complete_)
         reasons.insert("host_graph_incomplete");
     return *launch.dependency;
+}
+bool MemoryAnalysis::HasUnfinishedPredecessor(uint64_t launchId) const
+{
+    const auto current = boundaries_.find(launchId);
+    if (current == boundaries_.end())
+        return false;
+    for (const auto& launch : launches_) {
+        if (launch.first == launchId || !launch.second.registered)
+            continue;
+        const auto previous = boundaries_.find(launch.first);
+        if (previous == boundaries_.end())
+            continue;
+        const auto precedes = order_.Precedes(previous->second.second, current->second.first);
+        if (precedes && *precedes)
+            return true;
+    }
+    return false;
 }
 race::HappensBeforeGraph::Relation MemoryAnalysis::CompareLaunches(uint64_t previous, uint64_t current)
 {

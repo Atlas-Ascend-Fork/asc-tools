@@ -82,6 +82,7 @@ int main()
 
     assert(RuntimeStubSetOriginFunction("aclrtBinaryLoadFromData", &OriginalBinaryLoad) == ACL_SUCCESS);
     assert(RuntimeStubSetOriginFunction("aclrtResetDevice", &OriginalResetDevice) == ACL_SUCCESS);
+    assert(aclrtSetDevice(0) == ACL_SUCCESS);
     AclsanSubscriberHandle subscriber = nullptr;
     assert(aclsanSubscribe(&subscriber, &Callback, nullptr) == ACLSAN_STATUS_SUCCESS);
     assert(
@@ -103,6 +104,9 @@ int main()
     assert(std::string(result->frames[0].fileName) == "/src/kernel.asc");
 
     assert(aclrtResetDevice(0) == ACL_SUCCESS);
+    // Reset can release only a device reference. The image remains registered until it is unloaded.
+    assert(aclsanGetDeviceCallStack(0x170, result.get()) == ACLSAN_STATUS_SUCCESS);
+    assert(aclrtBinaryUnLoad(binary) == ACL_SUCCESS);
     assert(aclsanGetDeviceCallStack(0x170, result.get()) == ACLSAN_STATUS_ERROR_INVALID_STATE);
     assert(aclsanUnsubscribe(subscriber) == ACLSAN_STATUS_SUCCESS);
     fs::remove_all(work);

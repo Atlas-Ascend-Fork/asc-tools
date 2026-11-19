@@ -13,7 +13,7 @@
 #include <vector>
 #include <string>
 #include <sstream>
-#include <iostream>
+#include <limits>
 #include <unordered_map>
 
 #include "ctrlbin_serialize.h"
@@ -93,31 +93,37 @@ public:
         injectInfo_.push_back(injectInfo);
     }
 
-    void Serialize(std::stringstream& ss)
+    bool Serialize(std::stringstream& ss) const
     {
         std::stringstream buffer;
         for (const auto& info : injectInfo_) {
             info.Serialize(buffer);
         }
 
-        CtrlInfo ctrlInfo{};
-        ctrlInfo.splitOffset1 = buffer.str().size();
-        std::string funcLists = Join(funcNames_.begin(), funcNames_.end(), FUNC_SEP);
+        const size_t bindingBytes = buffer.str().size();
+        if (bindingBytes > std::numeric_limits<uint16_t>::max()) {
+            return false;
+        }
+        const std::string funcLists = Join(funcNames_.cbegin(), funcNames_.cend(), FUNC_SEP);
+        // The name-list header also has a trailing padding block of the same size.
+        const size_t fixedBytes = sizeof(CtrlInfo) + bindingBytes + 2U * sizeof(FuncNameList);
+        if (funcLists.size() > std::numeric_limits<uint32_t>::max() - fixedBytes) {
+            return false;
+        }
 
-        // series funcLists
-        FuncNameList funcNameList{static_cast<uint32_t>(funcLists.size() + sizeof(FuncNameList))};
+        CtrlInfo ctrlInfo{};
+        ctrlInfo.splitOffset1 = static_cast<uint16_t>(bindingBytes);
+        const FuncNameList funcNameList{static_cast<uint32_t>(funcLists.size() + sizeof(FuncNameList))};
         buffer << ::Serialize(funcNameList);
         buffer << funcLists;
         // Preserve the established ctrl.bin layout without reading beyond funcLists.data().
         buffer << std::string(sizeof(FuncNameList), '\0');
-        std::string bufferStr = buffer.str();
-        ctrlInfo.size = bufferStr.size() + sizeof(CtrlInfo);
-        ctrlInfo.version = 0;
-        ctrlInfo.reserve[0] = 0;
-        ctrlInfo.reserve[1] = 0;
+        const std::string bufferStr = buffer.str();
+        ctrlInfo.size = static_cast<uint32_t>(fixedBytes + funcLists.size());
 
         ss << ::Serialize(ctrlInfo);
         ss << bufferStr;
+        return true;
     }
 
 private:
@@ -133,7 +139,9 @@ private:
 bool WriteCtrlbin(const std::string& outputPath)
 {
     std::stringstream ss;
-    CtrlbinBindingRegistry::Instance().Serialize(ss);
+    if (!CtrlbinBindingRegistry::Instance().Serialize(ss)) {
+        return false;
+    }
     return asctools::security::WriteFile(outputPath, ss.str(), SAVE_DATA_FILE_AUTHORITY);
 }
 } // namespace

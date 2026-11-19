@@ -49,9 +49,14 @@ struct PhysicalSpaceKey {
     uint32_t deviceId;
     AclsanDeviceMemorySpace memorySpace;
     uint32_t phyCoreId;
+    // Local storage belongs to the memory owner's logical block, including
+    // peer accesses. GM remains a launch-wide device domain.
+    uint32_t ownerBlockId = 0;
+    uint32_t ownerBlockType = 0;
     bool operator<(const PhysicalSpaceKey& rhs) const noexcept
     {
-        return std::tie(deviceId, memorySpace, phyCoreId) < std::tie(rhs.deviceId, rhs.memorySpace, rhs.phyCoreId);
+        return std::tie(deviceId, memorySpace, phyCoreId, ownerBlockId, ownerBlockType) <
+               std::tie(rhs.deviceId, rhs.memorySpace, rhs.phyCoreId, rhs.ownerBlockId, rhs.ownerBlockType);
     }
 };
 
@@ -242,7 +247,7 @@ struct NpuCheckReportExecContext {
     std::string kernelName;
 };
 
-inline constexpr std::uint32_t kNpuCheckReportCommonHasExecContext = 1U << 0;
+inline constexpr std::uint32_t kNpuCheckReportCommonHasExecContext = 1U << 0U;
 
 struct NpuCheckReportCommon {
     std::uint64_t reportId = 0;

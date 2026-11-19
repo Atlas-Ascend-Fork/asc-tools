@@ -140,8 +140,8 @@ std::string FindInDirectory(const boost::filesystem::path& directory, const char
 
 uint64_t HashText(uint64_t hash, const std::string& text)
 {
-    for (const unsigned char value : text) {
-        hash ^= value;
+    for (const char value : text) {
+        hash ^= static_cast<unsigned char>(value);
         hash *= FNV1A_PRIME;
     }
     hash ^= HASH_SEPARATOR;
@@ -162,7 +162,8 @@ bool IsExecutableFile(const std::string& path)
     }
     struct stat metadata {};
     if (stat(path.c_str(), &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
-        (metadata.st_uid != 0 && metadata.st_uid != geteuid()) || (metadata.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        (metadata.st_uid != 0 && metadata.st_uid != geteuid()) ||
+        (metadata.st_mode & (static_cast<mode_t>(S_IWGRP) | static_cast<mode_t>(S_IWOTH))) != 0) {
         return false;
     }
     return access(path.c_str(), X_OK) == 0;
@@ -321,8 +322,8 @@ std::string FileDigest(const boost::filesystem::path& path)
         return {};
     }
     uint64_t hash = FNV1A_OFFSET_BASIS;
-    for (const unsigned char value : content) {
-        hash ^= value;
+    for (const char value : content) {
+        hash ^= static_cast<unsigned char>(value);
         hash *= FNV1A_PRIME;
     }
     std::ostringstream output;
@@ -621,6 +622,23 @@ bool ReplaceDirectory(
     return true;
 }
 
+bool MaterializeGroupSource(
+    const boost::filesystem::path& includeDirectory, const boost::filesystem::path& source, ProbeGroup group,
+    const GeneratedProbeSource& generated)
+{
+    return WriteExclusiveFile(
+               (includeDirectory / "trace_record.h").string(), std::string(EmbeddedTraceRecordHeader())) &&
+           WriteExclusiveFile(
+               (includeDirectory / "trace_buffer_abi.h").string(), std::string(EmbeddedTraceBufferAbiHeader())) &&
+           WriteExclusiveFile(source.string(), generated.source) &&
+           WriteExclusiveFile((source.parent_path() / (ProbeGroupName(group) + ".map")).string(), generated.sourceMap);
+}
+
+bool WriteGroupManifest(const boost::filesystem::path& staging, const std::string& manifest)
+{
+    return !manifest.empty() && WriteExclusiveFile((staging / "manifest").string(), manifest);
+}
+
 bool GetOrBuildGroupArtifact(
     const DbiRequest& request, const ToolchainPaths& tools, const boost::filesystem::path& groupsRoot, ProbeGroup group,
     DbiResult& result, GroupArtifact& artifact)
@@ -666,12 +684,7 @@ bool GetOrBuildGroupArtifact(
             return false;
         }
         const auto source = sourceDirectory / ("generated-" + ProbeGroupName(group) + ".cpp");
-        if (!WriteExclusiveFile(
-                (includeDirectory / "trace_record.h").string(), std::string(EmbeddedTraceRecordHeader())) ||
-            !WriteExclusiveFile(
-                (includeDirectory / "trace_buffer_abi.h").string(), std::string(EmbeddedTraceBufferAbiHeader())) ||
-            !WriteExclusiveFile(source.string(), generated.source) ||
-            !WriteExclusiveFile((sourceDirectory / (ProbeGroupName(group) + ".map")).string(), generated.sourceMap)) {
+        if (!MaterializeGroupSource(includeDirectory, source, group, generated)) {
             result.stage = "materialize-source";
             result.diagnostic = "cannot materialize generated Probe source for " + ProbeGroupName(group);
             return false;
@@ -705,7 +718,7 @@ bool GetOrBuildGroupArtifact(
         }
         const std::string manifest =
             GroupManifest(stagedObject, request.arch, request.coreType, group, generated, compilerIdentity);
-        if (manifest.empty() || !WriteExclusiveFile((staging / "manifest").string(), manifest)) {
+        if (!WriteGroupManifest(staging, manifest)) {
             result.stage = "publish-group-cache";
             result.diagnostic = "cannot create group manifest";
             return false;
@@ -858,6 +871,271 @@ std::string MakeCacheKey(
     return output.str();
 }
 
+namespace {
+struct KernelSelection {
+    std::string selectedKernelSymbol;
+    std::string orderingKernelSymbol;
+};
+
+struct ProbeArtifacts {
+    boost::filesystem::path probeObject;
+    boost::filesystem::path ctrlBin;
+};
+
+struct MergedKernel {
+    std::string buildId;
+    boost::filesystem::path path;
+};
+
+bool ResolveKernelSelection(
+    const DbiRequest& request, const ToolchainPaths& tools, DbiResult& result, KernelSelection& selection,
+    ProbeCoreType& coreType)
+{
+    std::string kernelSymbols;
+    if (!RunChecked("inspect-kernel", {tools.llvmObjdump, "--syms", request.inputKernel}, result, &kernelSymbols)) {
+        return false;
+    }
+    if (HasJumpTableSymbol(kernelSymbols)) {
+        RejectJumpTableKernel();
+    }
+    selection.selectedKernelSymbol = SelectKernelTextSymbol(kernelSymbols, request.tilingKey);
+    if (selection.selectedKernelSymbol.empty()) {
+        result.stage = "symbol-ordering";
+        result.diagnostic = request.tilingKey.has_value() ? "cannot identify kernel text symbol for tiling key " +
+                                                                std::to_string(*request.tilingKey) :
+                                                            "cannot identify kernel text symbol";
+        return false;
+    }
+    // The launch tiling key selects the executable entry for Tune and core-type detection. The linker ordering file
+    // follows the original ELF layout and must remain anchored at its first kernel entry for multi-entry Mix kernels.
+    selection.orderingKernelSymbol = SelectKernelTextSymbol(kernelSymbols, std::nullopt);
+    if (selection.orderingKernelSymbol.empty()) {
+        result.stage = "symbol-ordering";
+        result.diagnostic = "cannot identify kernel ordering anchor";
+        return false;
+    }
+    if (coreType == ProbeCoreType::Unknown) {
+        coreType = DetectProbeCoreType(kernelSymbols, selection.selectedKernelSymbol);
+    }
+    return true;
+}
+
+bool ResolveProbeArtifacts(
+    const DbiRequest& request, const ToolchainPaths& tools, const std::vector<ProbeGroup>& groups,
+    const boost::filesystem::path& aggregatesRoot, const std::string& groupIdentity,
+    const std::vector<std::string>& objectPaths, DbiResult& result, ProbeArtifacts& artifacts)
+{
+    // 聚合缓存把同一 normalized groups 的 probe.o 与 ctrl.bin 作为一个不可分割的产物发布。
+    const std::string artifactIdentity = groupIdentity + ":probe-link-aicorelinux-v1:" + CtrlBinGeneratorIdentity() +
+                                         ":" + std::string(EmbeddedCtrlBinImplementationIdentity()) + ":" +
+                                         FileIdentity(tools.ldLld);
+    const std::string cacheKey = MakeCacheKey(request.arch, groups, artifactIdentity, request.coreType);
+    const auto artifactDirectory = aggregatesRoot / cacheKey;
+    CacheLock cacheLock;
+    if (!cacheLock.Acquire(aggregatesRoot / (cacheKey + ".lock"), result.diagnostic)) {
+        result.stage = "cache-lock";
+        return false;
+    }
+    artifacts.probeObject = artifactDirectory / "probe.o";
+    artifacts.ctrlBin = artifactDirectory / "ctrl.bin";
+    if (!IsValidCachedArtifact(artifactDirectory, request.arch, groups, request.coreType, artifactIdentity)) {
+        const std::string buildId = std::to_string(static_cast<unsigned long long>(getpid())) + "-" +
+                                    std::to_string(g_cacheBuildId.fetch_add(1));
+        const auto stagingDirectory = aggregatesRoot / (".build-" + cacheKey + "-" + buildId);
+        boost::system::error_code error;
+        if (!boost::filesystem::create_directory(stagingDirectory, error) || error ||
+            !EnsurePrivateDirectory(stagingDirectory, result.diagnostic)) {
+            result.stage = "cache-directory";
+            if (result.diagnostic.empty()) {
+                result.diagnostic = "cannot create Probe artifact staging directory: " + error.message();
+            }
+            return false;
+        }
+        TemporaryDirectory stagingCleanup(stagingDirectory, request.keepTemp);
+
+        // 将已校验的 group objects 合并，保证后续只需向内核链接一个 probe.o。
+        const auto stagedProbeObject = stagingDirectory / "probe.o";
+        std::vector<std::string> linkArguments{tools.ldLld, "-r", "-m", "aicorelinux"};
+        linkArguments.insert(linkArguments.end(), objectPaths.begin(), objectPaths.end());
+        linkArguments.insert(linkArguments.end(), {"-o", stagedProbeObject.string()});
+        if (!RunChecked("link-probe", linkArguments, result) || !IsNonEmptyFile(stagedProbeObject)) {
+            if (result.diagnostic.empty()) {
+                result.stage = "link-probe";
+                result.diagnostic = "ld.lld did not create " + stagedProbeObject.string();
+            }
+            return false;
+        }
+
+        // 使用同一组 groups 生成 ctrl.bin，并与 probe.o 作为一个目录原子发布。
+        const auto stagedCtrlBin = stagingDirectory / "ctrl.bin";
+        if (!GenerateCtrlBin(stagedCtrlBin.string(), groups, result.diagnostic)) {
+            result.stage = "generate-ctrlbin";
+            return false;
+        }
+        const std::string manifest = ArtifactManifest(
+            stagedProbeObject, stagedCtrlBin, request.arch, groups, request.coreType, artifactIdentity);
+        if (manifest.empty() || !WriteExclusiveFile((stagingDirectory / "manifest").string(), manifest)) {
+            result.stage = "publish-cache";
+            result.diagnostic = "cannot create Probe artifact manifest";
+            return false;
+        }
+
+        if (!ReplaceDirectory(stagingDirectory, artifactDirectory, result, "publish-cache")) {
+            return false;
+        }
+        stagingCleanup.Release();
+        if (!IsValidCachedArtifact(artifactDirectory, request.arch, groups, request.coreType, artifactIdentity)) {
+            result.stage = "publish-cache";
+            result.diagnostic = "published Probe artifact failed validation";
+            return false;
+        }
+    }
+    // 缓存文件发布后不再修改，后续均为请求私有操作，因此提前释放缓存锁。
+    cacheLock.Release();
+
+    return true;
+}
+
+bool MergeKernelWithProbe(
+    const DbiRequest& request, const ToolchainPaths& tools, const KernelSelection& selection,
+    const ProbeArtifacts& artifacts, const std::string& tilingKeyText, DbiResult& result, MergedKernel& merged)
+{
+    // 读取探针对象的符号表，提取待合并的探针弱符号。
+    std::string probeSymbols;
+    if (!RunChecked(
+            "inspect-probe", {tools.llvmObjdump, "--syms", artifacts.probeObject.string()}, result, &probeSymbols)) {
+        return false;
+    }
+    const auto probeTextSymbols = ParseTextSymbols(probeSymbols, "w");
+    const std::string probeSymbol = probeTextSymbols.empty() ? std::string{} : probeTextSymbols.front();
+    if (probeSymbol.empty()) {
+        result.stage = "symbol-ordering";
+        result.diagnostic = "cannot identify Probe text symbol";
+        return false;
+    }
+    LogToolOutput(
+        "symbol-selection", "selection",
+        "kernel=" + selection.selectedKernelSymbol + " ordering_anchor=" + selection.orderingKernelSymbol + " probe=" +
+            probeSymbol + " tiling_key=" + tilingKeyText + " core_type=" + ProbeCoreTypeName(request.coreType));
+    // 生成符号排序文件，确保链接后原始内核正文位于探针入口之前。
+    const auto orderingFile = boost::filesystem::path(request.workDirectory) / "symbol_ordering.txt";
+    if (!WriteReplaceFile(orderingFile, selection.orderingKernelSymbol + "\n" + probeSymbol)) {
+        result.stage = "symbol-ordering";
+        result.diagnostic = "cannot write " + orderingFile.string();
+        return false;
+    }
+    // 按指定符号顺序将 probe.o 与原始内核链接，生成待插桩的中间内核对象。
+    merged.buildId = std::to_string(g_cacheBuildId.fetch_add(1));
+    merged.path = boost::filesystem::path(request.workDirectory) / "kernel_with_probe.o";
+    const auto stagedMergedKernel =
+        boost::filesystem::path(request.workDirectory) / (".kernel_with_probe-" + merged.buildId);
+    TemporaryFile mergedCleanup(stagedMergedKernel);
+    const std::vector<std::string> mergeArguments{
+        tools.ldLld,
+        "-m",
+        "aicorelinux",
+        "-Ttext=0",
+        "-execute-probe",
+        "--symbol-ordering-file",
+        orderingFile.string(),
+        "-z",
+        "separate-loadable-segments",
+        artifacts.probeObject.string(),
+        request.inputKernel,
+        "-static",
+        "-q",
+        "-o",
+        stagedMergedKernel.string()};
+    if (!RunChecked("merge-kernel", mergeArguments, result) || !IsNonEmptyFile(stagedMergedKernel)) {
+        if (result.diagnostic.empty()) {
+            result.stage = "merge-kernel";
+            result.diagnostic = "ld.lld did not create " + stagedMergedKernel.string();
+        }
+        return false;
+    }
+    boost::system::error_code error;
+    boost::filesystem::rename(stagedMergedKernel, merged.path, error);
+    if (error) {
+        result.stage = "publish-kernel";
+        result.diagnostic = "cannot publish " + merged.path.string() + ": " + error.message();
+        return false;
+    }
+    mergedCleanup.Release();
+
+    return true;
+}
+
+void InstrumentMergedKernel(
+    const DbiRequest& request, const ToolchainPaths& tools, const ProbeArtifacts& artifacts, const MergedKernel& merged,
+    DbiResult& result)
+{
+    // 使用 bisheng-tune 和 ctrl.bin 对合并后的内核执行 DBI 插桩。
+    // 先输出到目标文件的临时同级文件，避免工具中途失败时暴露不完整的内核。
+    const auto stagedOutput =
+        boost::filesystem::path(request.outputKernel).parent_path() /
+        (".dbi-patched-" + std::to_string(static_cast<unsigned long long>(getpid())) + "-" + merged.buildId);
+    TemporaryFile outputCleanup(stagedOutput);
+    std::vector<std::string> tuneArguments{
+        tools.bishengTune,
+        "--action=instru-probe",
+        "--tune-argsize=" + std::to_string(request.traceArgumentOffset),
+        "--instru-memprobe",
+        merged.path.string(),
+        "--dbi-config=" + artifacts.ctrlBin.string(),
+        "-o=" + stagedOutput.string()};
+    tuneArguments.insert(tuneArguments.end(), request.extraTuneArgs.begin(), request.extraTuneArgs.end());
+    if (request.tilingKey.has_value()) {
+        for (const auto& argument : request.extraTuneArgs) {
+            if (argument.rfind("--tiling-key", 0) == 0 || argument.rfind("--tune-argsize", 0) == 0) {
+                result.stage = "selection";
+                result.diagnostic = "extra tune arguments override the selected entry or trace offset";
+                return;
+            }
+        }
+        tuneArguments.emplace_back("--tiling-key=" + std::to_string(*request.tilingKey));
+    }
+    if (!RunChecked("bisheng-tune", tuneArguments, result) || !IsNonEmptyFile(stagedOutput)) {
+        if (result.diagnostic.empty()) {
+            result.stage = "bisheng-tune";
+            result.diagnostic = "bisheng-tune did not create " + stagedOutput.string();
+        }
+        return;
+    }
+    // 调用ArgsArray场景会传入--append-hbmout-paraminfo参数。
+    // 此时还需要额外修改插桩后.o的meta段使得与DBI的统一偏移保持一致
+    if (std::find(request.extraTuneArgs.begin(), request.extraTuneArgs.end(), "--append-hbmout-paraminfo") !=
+        request.extraTuneArgs.end()) {
+        result.stage = "kernel-param-metadata";
+        std::string patched = ReadFile(stagedOutput);
+        std::string kernelBeforePatch = ReadFile(request.inputKernel);
+        // 获取 整改插桩.o的meta段后的内容
+        if (!ModifyKernelParamMetadata(
+                kernelBeforePatch, patched, request.traceArgumentOffset, result.diagnostic,
+                request.tilingKey ? &*request.tilingKey : nullptr)) {
+            result.diagnostic = "cannot modify kernel ELF metadata: " + result.diagnostic;
+            return;
+        }
+        if (!WriteReplaceFile(stagedOutput, patched)) {
+            result.diagnostic = "cannot replace patched kernel with modified metadata";
+            return;
+        }
+    }
+    // 插桩成功后原子发布最终内核，并填写流水线成功结果。
+    boost::system::error_code error;
+    boost::filesystem::rename(stagedOutput, request.outputKernel, error);
+    if (error) {
+        result.stage = "publish-kernel";
+        result.diagnostic = "cannot publish " + request.outputKernel + ": " + error.message();
+        return;
+    }
+    outputCleanup.Release();
+    result.success = true;
+    result.patchedPath = request.outputKernel;
+    result.stage = "complete";
+    result.diagnostic.clear();
+}
+} // namespace
+
 DbiResult RunDbiPipeline(const DbiRequest& request)
 {
     // 校验调用方传入的参数，并快照本次请求对应的 ProbeGroup 集合。
@@ -885,40 +1163,18 @@ DbiResult RunDbiPipeline(const DbiRequest& request)
         return result;
     }
 
-    std::string kernelSymbols;
-    if (!RunChecked("inspect-kernel", {tools.llvmObjdump, "--syms", request.inputKernel}, result, &kernelSymbols)) {
-        return result;
-    }
-    if (HasJumpTableSymbol(kernelSymbols)) {
-        RejectJumpTableKernel();
-    }
-    const std::string selectedKernelSymbol = SelectKernelTextSymbol(kernelSymbols, request.tilingKey);
-    if (selectedKernelSymbol.empty()) {
-        result.stage = "symbol-ordering";
-        result.diagnostic = request.tilingKey.has_value() ? "cannot identify kernel text symbol for tiling key " +
-                                                                std::to_string(*request.tilingKey) :
-                                                            "cannot identify kernel text symbol";
-        return result;
-    }
-    // The launch tiling key selects the executable entry for Tune and core-type detection. The linker ordering file
-    // follows the original ELF layout and must remain anchored at its first kernel entry for multi-entry Mix kernels.
-    const std::string orderingKernelSymbol = SelectKernelTextSymbol(kernelSymbols, std::nullopt);
-    if (orderingKernelSymbol.empty()) {
-        result.stage = "symbol-ordering";
-        result.diagnostic = "cannot identify kernel ordering anchor";
-        return result;
-    }
+    KernelSelection selection;
     DbiRequest resolvedRequest = request;
-    if (resolvedRequest.coreType == ProbeCoreType::Unknown) {
-        resolvedRequest.coreType = DetectProbeCoreType(kernelSymbols, selectedKernelSymbol);
+    if (!ResolveKernelSelection(request, tools, result, selection, resolvedRequest.coreType)) {
+        return result;
     }
     const auto groups =
         ResolveProbeGroups(requestedGroups, resolvedRequest.coreType, resolvedRequest.useCompleteProbeSet);
     const std::string tilingKeyText = request.tilingKey.has_value() ? std::to_string(*request.tilingKey) : "none";
     LogToolOutput(
         "kernel-selection", "selection",
-        "kernel=" + selectedKernelSymbol + " ordering_anchor=" + orderingKernelSymbol + " tiling_key=" + tilingKeyText +
-            " core_type=" + ProbeCoreTypeName(resolvedRequest.coreType) +
+        "kernel=" + selection.selectedKernelSymbol + " ordering_anchor=" + selection.orderingKernelSymbol +
+            " tiling_key=" + tilingKeyText + " core_type=" + ProbeCoreTypeName(resolvedRequest.coreType) +
             " complete_probe_set=" + (groups == AllProbeGroups() ? "1" : "0"));
 
     // 准备本次流水线使用的工作目录和跨请求复用的缓存目录。
@@ -953,198 +1209,17 @@ DbiResult RunDbiPipeline(const DbiRequest& request)
         objectPaths.push_back(artifact.object.string());
     }
 
-    // 聚合缓存把同一 normalized groups 的 probe.o 与 ctrl.bin 作为一个不可分割的产物发布。
-    const std::string artifactIdentity = groupIdentity + ":probe-link-aicorelinux-v1:" + CtrlBinGeneratorIdentity() +
-                                         ":" + std::string(EmbeddedCtrlBinImplementationIdentity()) + ":" +
-                                         FileIdentity(tools.ldLld);
-    const std::string cacheKey = MakeCacheKey(request.arch, groups, artifactIdentity, resolvedRequest.coreType);
-    const auto artifactDirectory = aggregatesRoot / cacheKey;
-    CacheLock cacheLock;
-    if (!cacheLock.Acquire(aggregatesRoot / (cacheKey + ".lock"), result.diagnostic)) {
-        result.stage = "cache-lock";
+    ProbeArtifacts artifacts;
+    if (!ResolveProbeArtifacts(
+            resolvedRequest, tools, groups, aggregatesRoot, groupIdentity, objectPaths, result, artifacts)) {
         return result;
     }
-    const auto probeObject = artifactDirectory / "probe.o";
-    const auto ctrlBin = artifactDirectory / "ctrl.bin";
-    if (!IsValidCachedArtifact(artifactDirectory, request.arch, groups, resolvedRequest.coreType, artifactIdentity)) {
-        const std::string buildId = std::to_string(static_cast<unsigned long long>(getpid())) + "-" +
-                                    std::to_string(g_cacheBuildId.fetch_add(1));
-        const auto stagingDirectory = aggregatesRoot / (".build-" + cacheKey + "-" + buildId);
-        error.clear();
-        if (!boost::filesystem::create_directory(stagingDirectory, error) || error ||
-            !EnsurePrivateDirectory(stagingDirectory, result.diagnostic)) {
-            result.stage = "cache-directory";
-            if (result.diagnostic.empty()) {
-                result.diagnostic = "cannot create Probe artifact staging directory: " + error.message();
-            }
-            return result;
-        }
-        TemporaryDirectory stagingCleanup(stagingDirectory, request.keepTemp);
 
-        // 将已校验的 group objects 合并，保证后续只需向内核链接一个 probe.o。
-        const auto stagedProbeObject = stagingDirectory / "probe.o";
-        std::vector<std::string> linkArguments{tools.ldLld, "-r", "-m", "aicorelinux"};
-        linkArguments.insert(linkArguments.end(), objectPaths.begin(), objectPaths.end());
-        linkArguments.insert(linkArguments.end(), {"-o", stagedProbeObject.string()});
-        if (!RunChecked("link-probe", linkArguments, result) || !IsNonEmptyFile(stagedProbeObject)) {
-            if (result.diagnostic.empty()) {
-                result.stage = "link-probe";
-                result.diagnostic = "ld.lld did not create " + stagedProbeObject.string();
-            }
-            return result;
-        }
-
-        // 使用同一组 groups 生成 ctrl.bin，并与 probe.o 作为一个目录原子发布。
-        const auto stagedCtrlBin = stagingDirectory / "ctrl.bin";
-        if (!GenerateCtrlBin(stagedCtrlBin.string(), groups, result.diagnostic)) {
-            result.stage = "generate-ctrlbin";
-            return result;
-        }
-        const std::string manifest = ArtifactManifest(
-            stagedProbeObject, stagedCtrlBin, request.arch, groups, resolvedRequest.coreType, artifactIdentity);
-        if (manifest.empty() || !WriteExclusiveFile((stagingDirectory / "manifest").string(), manifest)) {
-            result.stage = "publish-cache";
-            result.diagnostic = "cannot create Probe artifact manifest";
-            return result;
-        }
-
-        if (!ReplaceDirectory(stagingDirectory, artifactDirectory, result, "publish-cache")) {
-            return result;
-        }
-        stagingCleanup.Release();
-        if (!IsValidCachedArtifact(
-                artifactDirectory, request.arch, groups, resolvedRequest.coreType, artifactIdentity)) {
-            result.stage = "publish-cache";
-            result.diagnostic = "published Probe artifact failed validation";
-            return result;
-        }
-    }
-    // 缓存文件发布后不再修改，后续均为请求私有操作，因此提前释放缓存锁。
-    cacheLock.Release();
-
-    // 读取探针对象的符号表，提取待合并的探针弱符号。
-    std::string probeSymbols;
-    if (!RunChecked("inspect-probe", {tools.llvmObjdump, "--syms", probeObject.string()}, result, &probeSymbols)) {
+    MergedKernel merged;
+    if (!MergeKernelWithProbe(resolvedRequest, tools, selection, artifacts, tilingKeyText, result, merged)) {
         return result;
     }
-    const auto probeTextSymbols = ParseTextSymbols(probeSymbols, "w");
-    const std::string probeSymbol = probeTextSymbols.empty() ? std::string{} : probeTextSymbols.front();
-    if (probeSymbol.empty()) {
-        result.stage = "symbol-ordering";
-        result.diagnostic = "cannot identify Probe text symbol";
-        return result;
-    }
-    LogToolOutput(
-        "symbol-selection", "selection",
-        "kernel=" + selectedKernelSymbol + " ordering_anchor=" + orderingKernelSymbol + " probe=" + probeSymbol +
-            " tiling_key=" + tilingKeyText + " core_type=" + ProbeCoreTypeName(resolvedRequest.coreType));
-    // 生成符号排序文件，确保链接后原始内核正文位于探针入口之前。
-    const auto orderingFile = boost::filesystem::path(request.workDirectory) / "symbol_ordering.txt";
-    if (!WriteReplaceFile(orderingFile, orderingKernelSymbol + "\n" + probeSymbol)) {
-        result.stage = "symbol-ordering";
-        result.diagnostic = "cannot write " + orderingFile.string();
-        return result;
-    }
-    // 按指定符号顺序将 probe.o 与原始内核链接，生成待插桩的中间内核对象。
-    const auto requestBuildId = std::to_string(g_cacheBuildId.fetch_add(1));
-    const auto mergedKernel = boost::filesystem::path(request.workDirectory) / "kernel_with_probe.o";
-    const auto stagedMergedKernel =
-        boost::filesystem::path(request.workDirectory) / (".kernel_with_probe-" + requestBuildId);
-    TemporaryFile mergedCleanup(stagedMergedKernel);
-    const std::vector<std::string> mergeArguments{
-        tools.ldLld,
-        "-m",
-        "aicorelinux",
-        "-Ttext=0",
-        "-execute-probe",
-        "--symbol-ordering-file",
-        orderingFile.string(),
-        "-z",
-        "separate-loadable-segments",
-        probeObject.string(),
-        request.inputKernel,
-        "-static",
-        "-q",
-        "-o",
-        stagedMergedKernel.string()};
-    if (!RunChecked("merge-kernel", mergeArguments, result) || !IsNonEmptyFile(stagedMergedKernel)) {
-        if (result.diagnostic.empty()) {
-            result.stage = "merge-kernel";
-            result.diagnostic = "ld.lld did not create " + stagedMergedKernel.string();
-        }
-        return result;
-    }
-    boost::filesystem::rename(stagedMergedKernel, mergedKernel, error);
-    if (error) {
-        result.stage = "publish-kernel";
-        result.diagnostic = "cannot publish " + mergedKernel.string() + ": " + error.message();
-        return result;
-    }
-    mergedCleanup.Release();
-
-    // 使用 bisheng-tune 和 ctrl.bin 对合并后的内核执行 DBI 插桩。
-    // 先输出到目标文件的临时同级文件，避免工具中途失败时暴露不完整的内核。
-    const auto stagedOutput =
-        boost::filesystem::path(request.outputKernel).parent_path() /
-        (".dbi-patched-" + std::to_string(static_cast<unsigned long long>(getpid())) + "-" + requestBuildId);
-    TemporaryFile outputCleanup(stagedOutput);
-    std::vector<std::string> tuneArguments{
-        tools.bishengTune,
-        "--action=instru-probe",
-        "--tune-argsize=" + std::to_string(request.traceArgumentOffset),
-        "--instru-memprobe",
-        mergedKernel.string(),
-        "--dbi-config=" + ctrlBin.string(),
-        "-o=" + stagedOutput.string()};
-    tuneArguments.insert(tuneArguments.end(), request.extraTuneArgs.begin(), request.extraTuneArgs.end());
-    if (request.tilingKey.has_value()) {
-        for (const auto& argument : request.extraTuneArgs) {
-            if (argument.rfind("--tiling-key", 0) == 0 || argument.rfind("--tune-argsize", 0) == 0) {
-                result.stage = "selection";
-                result.diagnostic = "extra tune arguments override the selected entry or trace offset";
-                return result;
-            }
-        }
-        tuneArguments.emplace_back("--tiling-key=" + std::to_string(*request.tilingKey));
-    }
-    if (!RunChecked("bisheng-tune", tuneArguments, result) || !IsNonEmptyFile(stagedOutput)) {
-        if (result.diagnostic.empty()) {
-            result.stage = "bisheng-tune";
-            result.diagnostic = "bisheng-tune did not create " + stagedOutput.string();
-        }
-        return result;
-    }
-    // 调用ArgsArray场景会传入--append-hbmout-paraminfo参数。
-    // 此时还需要额外修改插桩后.o的meta段使得与DBI的统一偏移保持一致
-    if (std::find(request.extraTuneArgs.begin(), request.extraTuneArgs.end(), "--append-hbmout-paraminfo") !=
-        request.extraTuneArgs.end()) {
-        result.stage = "kernel-param-metadata";
-        std::string patched = ReadFile(stagedOutput);
-        std::string kernelBeforePatch = ReadFile(request.inputKernel);
-        // 获取 整改插桩.o的meta段后的内容
-        if (!ModifyKernelParamMetadata(
-                kernelBeforePatch, patched, request.traceArgumentOffset, result.diagnostic,
-                request.tilingKey ? &*request.tilingKey : nullptr)) {
-            result.diagnostic = "cannot modify kernel ELF metadata: " + result.diagnostic;
-            return result;
-        }
-        if (!WriteReplaceFile(stagedOutput, patched)) {
-            result.diagnostic = "cannot replace patched kernel with modified metadata";
-            return result;
-        }
-    }
-    // 插桩成功后原子发布最终内核，并填写流水线成功结果。
-    boost::filesystem::rename(stagedOutput, request.outputKernel, error);
-    if (error) {
-        result.stage = "publish-kernel";
-        result.diagnostic = "cannot publish " + request.outputKernel + ": " + error.message();
-        return result;
-    }
-    outputCleanup.Release();
-    result.success = true;
-    result.patchedPath = request.outputKernel;
-    result.stage = "complete";
-    result.diagnostic.clear();
+    InstrumentMergedKernel(request, tools, artifacts, merged, result);
     return result;
 }
 

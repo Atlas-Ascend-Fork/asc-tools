@@ -52,7 +52,7 @@ extern "C" NPU_CHECK_API int acltoolInitialize(void)
 {
     try {
         std::lock_guard<std::mutex> lock(g_serviceMutex);
-        if (g_service) {
+        if (g_service != nullptr) {
             return g_service->IsInitialized() ? 0 : 1;
         }
         auto service = std::make_unique<npucheck::ToolManager>();

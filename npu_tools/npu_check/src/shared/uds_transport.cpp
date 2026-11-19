@@ -137,7 +137,8 @@ IoStatus WaitFor(int fd, short events, DeadlineMs deadline, std::string& error)
         if (rc == 0) {
             continue; // 时间片到期，回顶部重判绝对 deadline
         }
-        if ((static_cast<unsigned int>(descriptor.revents) & (POLLERR | POLLNVAL)) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) &
+             (static_cast<unsigned int>(POLLERR) | static_cast<unsigned int>(POLLNVAL))) != 0) {
             error = "socket error reported by poll";
             return IoStatus::SYSTEM_ERROR;
         }

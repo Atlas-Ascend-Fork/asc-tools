@@ -13,8 +13,10 @@
 
 #include "acl/acl_rt.h"
 #include "aclsan_memory_cbdata.h"
+#include "aclsan_trace_kernel_end.h"
 #include "aclsan_vf.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -31,11 +33,37 @@ class Dav3510RegisterStateManager;
 
 namespace aclsan {
 
+bool IsTrustedTraceCopyProvider(const char* providerPath, char* canonicalPath, size_t canonicalPathSize) noexcept;
+bool TraceHasKnownBinaryHandle(aclrtBinHandle binary) noexcept;
+int32_t TraceCurrentDeviceId() noexcept;
+void* VerifiedTraceGetDeviceSymbol(void* symbol) noexcept;
+
 struct BinarySegment;
 
 namespace device_runtime {
 struct CallStackResult;
 }
+
+// Internal transport dependencies; the legacy snapshot path never reads the clock.
+class TraceTransport {
+public:
+    using CopyFunction = aclError (*)(void*, size_t, const void*, size_t, aclrtMemcpyKind);
+    using Clock = std::chrono::steady_clock;
+    using NowFunction = Clock::time_point (*)();
+
+    explicit TraceTransport(CopyFunction copy, NowFunction now = &Clock::now) : copy_(copy), now_(now) {}
+
+    aclError CopyFromDevice(void* destination, size_t destinationBytes, const void* source, size_t bytes) const
+    {
+        return copy_(destination, destinationBytes, source, bytes, ACL_MEMCPY_DEVICE_TO_HOST);
+    }
+
+    Clock::time_point Now() const { return now_(); }
+
+private:
+    CopyFunction copy_;
+    NowFunction now_;
+};
 
 enum class TraceArgumentMode {
     HOST_ARGS,
@@ -51,11 +79,16 @@ struct PreparedTraceLaunch {
     bool instrumented = false;
     uint64_t launchId = 0;
     uint32_t blockCount = 0;
+    // 397/398 boundary marker 的期望数量；unknown 时不做提前完成判定。
+    TraceKernelCoreExpectation kernelEndExpectation{};
     uint32_t physicalCoreSlotCount = 0;
     uint32_t deviceId = 0;
     // 隐藏参数 memInfo 在 kernel 连续参数布局中的字节偏移 例如[0~23为原始参数,24~31为memInfo的地址值]
     uint32_t traceArgumentOffset = 0;
     void* deviceBuffer = nullptr;
+    aclrtContext context = nullptr;
+    std::shared_ptr<void> reservation;
+    std::shared_ptr<void> deviceGate;
     const aclsan::DeviceInstructionDecoder* decoder = nullptr;
     std::vector<uint8_t> hostBuffer;
     // 仅 HostArgs 使用的连续参数区，ArgsArray 模式下为空。
@@ -73,11 +106,6 @@ struct TraceCollectionResult {
     size_t completeLaunchCount = 0;
     size_t recordCount = 0;
     uint64_t droppedRecordCount = 0;
-
-    bool Complete() const noexcept
-    {
-        return launchCount != 0 && completeLaunchCount == launchCount && recordCount != 0 && droppedRecordCount == 0;
-    }
 };
 
 void DispatchTraceRecords(
@@ -89,14 +117,13 @@ void DispatchTraceRecords(
 
 void RecordTraceLoadedImage(aclrtBinHandle binary, const void* image, size_t bytes) noexcept;
 // 登记运行时为已加载 device ELF 实际占用的 GM 区间（公共 RESOURCE 事件），并在每次 launch 上计数。
-// 同一 binary 只登记一次；stream 同步后扣减在途计数，计数归零时释放。
+// 同一 binary 只登记一次；按 launch 完成扣减在途计数，计数归零时释放。
 void AcquireTraceLaunchResources(
     const PreparedTraceLaunch& prepared, const void* function, const void* stream) noexcept;
 bool RegisterTraceLoadedImageResources(
     uint32_t deviceId, uintptr_t binary, uintptr_t base, const std::vector<BinarySegment>& segments,
     const void* stream) noexcept;
 void ReleaseTraceStreamResources(const void* stream) noexcept;
-void ReleaseTraceDeviceResources(uint32_t deviceId) noexcept;
 
 void RecordTraceBinaryLoadFromData(
     aclrtBinHandle binary, bool instrumented, uint32_t traceArgumentOffset, const void* image,
@@ -111,9 +138,17 @@ aclError PrepareTraceLaunch(
     PreparedTraceLaunch& prepared) noexcept;
 void CompleteTraceLaunch(
     PreparedTraceLaunch&& prepared, const void* function, const void* stream, aclError launchResult) noexcept;
+uint64_t TraceStreamFrontier(const void* stream) noexcept;
 aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept;
+// 按 stream 收尾尚未由 completion 事件路径发布完成的 launch；同步成功后的兜底，避免遗留 launch 阻塞同流后续 launch。
 TraceCollectionResult CollectTraceStream(aclrtStream stream, bool executionComplete = true) noexcept;
+void CollectTraceAfterExecutionException(aclrtStream stream, uint64_t frontier) noexcept;
 void ResetTraceRuntimeState() noexcept;
+bool QuiesceTraceDevice(int32_t deviceId, bool canBindContext, std::shared_ptr<void>& resetGuard) noexcept;
+void FinishTraceDeviceReset(int32_t deviceId, bool success) noexcept;
+bool IsTraceDispatchActive() noexcept;
+void StartTraceWorkerAcceptance() noexcept;
+void StopTraceWorker() noexcept;
 bool GetTraceFunctionName(aclrtFuncHandle function, std::string& functionName) noexcept;
 device_runtime::CallStackResult ResolveTraceDeviceCallStack(uint64_t pc) noexcept;
 

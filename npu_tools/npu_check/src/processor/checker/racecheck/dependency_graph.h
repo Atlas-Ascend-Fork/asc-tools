@@ -12,6 +12,7 @@
 
 #include "checker/racecheck/happens_before_graph.h"
 #include "checker/racecheck/types.h"
+#include "checker/racecheck/shared_ranges.h"
 
 #include <map>
 #include <set>
@@ -22,15 +23,23 @@ struct DependencyGraph {
     struct Access {
         const AclsanDeviceMemoryAccessData& data;
         size_t node;
-        std::vector<Interval> ranges;
+        SharedRanges ranges;
     };
 
-    explicit DependencyGraph(const Limits& limits = {}) : graph(limits.edges, limits.queryWork, limits.queryCache) {}
+    explicit DependencyGraph(const Limits& limits = {}, std::shared_ptr<RangeStorageBudget> budget = {})
+        : rangeStorage(limits, std::move(budget)),
+          graph(limits.GraphEdgeBudget(), limits.ReachabilityQueryWorkBudget(), limits.ReachabilityCacheEntryBudget())
+    {}
 
     uint64_t warnings = 0;
+    RangeStoragePool rangeStorage;
     HappensBeforeGraph graph;
     std::vector<Access> accesses;
-    std::map<VfKey, size_t> vfEntries;
+    struct VfBoundary {
+        size_t entry;
+        size_t completion;
+    };
+    std::map<VfKey, VfBoundary> vfBoundaries;
 };
 
 void BuildDependencyGraph(

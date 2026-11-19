@@ -81,7 +81,7 @@ public:
             return false;
         }
         value = static_cast<uint16_t>(
-            (static_cast<uint16_t>(data_[offset_]) << BITS_PER_WIRE_BYTE) | static_cast<uint16_t>(data_[offset_ + 1]));
+            (static_cast<uint32_t>(data_[offset_]) << BITS_PER_WIRE_BYTE) | static_cast<uint32_t>(data_[offset_ + 1]));
         offset_ += sizeof(value);
         return true;
     }
@@ -342,6 +342,49 @@ std::vector<uint8_t> EncodeConfigure(const ConfigureRequest& request)
     return payload.size() <= MAX_PAYLOAD_SIZE ? payload : std::vector<uint8_t>{};
 }
 
+namespace {
+bool DecodeToolOptions(Decoder& decoder, uint16_t optionCount, ToolRequest& tool, std::string& error)
+{
+    tool.options.reserve(optionCount);
+    bool hasPreviousOption = false;
+    uint16_t previousOptionId = 0;
+    for (uint16_t optionIndex = 0; optionIndex < optionCount; ++optionIndex) {
+        uint16_t optionId = 0;
+        uint16_t valueSize = 0;
+        if (!decoder.GetU16(optionId) || !decoder.GetU16(valueSize)) {
+            return Fail(error, "malformed option entry");
+        }
+        if (hasPreviousOption && optionId <= previousOptionId) {
+            return Fail(error, "configure options are not sorted or contain duplicates");
+        }
+        hasPreviousOption = true;
+        previousOptionId = optionId;
+
+        const OptionRegistryEntry* entry = LookupOptionById(static_cast<OptionId>(optionId));
+        if (entry == nullptr) {
+            return Fail(error, "unknown option id in configure");
+        }
+        if (entry->toolId != tool.toolId) {
+            return Fail(error, "option does not belong to the enclosing tool");
+        }
+        if (valueSize != entry->valueSize) {
+            return Fail(error, "option value size does not match the registry");
+        }
+        OptionValue option;
+        option.optionId = static_cast<OptionId>(optionId);
+        if (!decoder.GetBytes(option.value, valueSize)) {
+            return Fail(error, "truncated option value");
+        }
+        // V1 全部是"出现即为真"的开关，值域只有 presentValue 一个合法取值。
+        if (option.value.size() != 1 || option.value[0] != entry->presentValue) {
+            return Fail(error, "option value is out of range");
+        }
+        tool.options.push_back(std::move(option));
+    }
+    return true;
+}
+} // namespace
+
 bool DecodeConfigure(const std::vector<uint8_t>& payload, ConfigureRequest& request, std::string& error)
 {
     Decoder decoder(payload.data(), payload.size());
@@ -378,43 +421,8 @@ bool DecodeConfigure(const std::vector<uint8_t>& payload, ConfigureRequest& requ
 
         ToolRequest tool;
         tool.toolId = static_cast<ToolId>(toolId);
-        tool.options.reserve(optionCount);
-        bool hasPreviousOption = false;
-        uint16_t previousOptionId = 0;
-        for (uint16_t optionIndex = 0; optionIndex < optionCount; ++optionIndex) {
-            uint16_t optionId = 0;
-            uint16_t valueSize = 0;
-            if (!decoder.GetU16(optionId) || !decoder.GetU16(valueSize)) {
-                return Fail(error, "malformed option entry");
-            }
-            if (hasPreviousOption && optionId <= previousOptionId) {
-                return Fail(error, "configure options are not sorted or contain duplicates");
-            }
-            hasPreviousOption = true;
-            previousOptionId = optionId;
-
-            const OptionRegistryEntry* entry = LookupOptionById(static_cast<OptionId>(optionId));
-            if (entry == nullptr) {
-                return Fail(error, "unknown option id in configure");
-            }
-            // 归属必须与所在的 tool 一致：option_id 已经唯一确定了所属工具，两者不符
-            // 说明对端编码有问题，静默接受会让选项作用到错误的 checker 上。
-            if (entry->toolId != tool.toolId) {
-                return Fail(error, "option does not belong to the enclosing tool");
-            }
-            if (valueSize != entry->valueSize) {
-                return Fail(error, "option value size does not match the registry");
-            }
-            OptionValue option;
-            option.optionId = static_cast<OptionId>(optionId);
-            if (!decoder.GetBytes(option.value, valueSize)) {
-                return Fail(error, "truncated option value");
-            }
-            // V1 全部是"出现即为真"的开关，值域只有 presentValue 一个合法取值。
-            if (option.value.size() != 1 || option.value[0] != entry->presentValue) {
-                return Fail(error, "option value is out of range");
-            }
-            tool.options.push_back(std::move(option));
+        if (!DecodeToolOptions(decoder, optionCount, tool, error)) {
+            return false;
         }
         request.tools.push_back(std::move(tool));
     }

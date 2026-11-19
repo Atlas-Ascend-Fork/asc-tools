@@ -10,8 +10,8 @@
 
 #include "checker/racecheck/memory_access_state.h"
 #include <algorithm>
+#include <iterator>
 #include <set>
-#include <limits>
 
 namespace npucheck::race {
 namespace {
@@ -66,111 +66,153 @@ void MemoryAccessState::Split(Tree& tree, uint64_t position)
         it->second.end = position;
     }
 }
-bool MemoryAccessState::Apply(const std::vector<Update>& updates)
-{
+struct MemoryAccessState::UpdatePlan {
     struct Patch {
         Tree replacement;
         std::set<uint64_t> removed;
     };
     std::map<Storage, Patch> patches;
-    size_t staging = 0, removedBytes = 0, removedCount = 0;
-    const auto charge = [this, &staging](size_t amount) {
-        if (bytes_ > byteBudget_ || staging > byteBudget_ - bytes_ || amount > byteBudget_ - bytes_ - staging)
-            return false;
-        staging += amount;
-        peak_ = std::max(peak_, bytes_ + staging);
+    size_t staging = 0;
+    size_t removedBytes = 0;
+    size_t removedCount = 0;
+    size_t addedBytes = 0;
+    size_t addedCount = 0;
+};
+
+bool MemoryAccessState::ChargeStaging(size_t amount, size_t& staging)
+{
+    if (bytes_ > byteBudget_ || staging > byteBudget_ - bytes_ || amount > byteBudget_ - bytes_ - staging) {
+        return false;
+    }
+    staging += amount;
+    peak_ = std::max(peak_, bytes_ + staging);
+    return true;
+}
+
+bool MemoryAccessState::StageUpdate(const Update& update, UpdatePlan& plan)
+{
+    // Reserve a conservative bound for new endpoints, split survivors and bookkeeping.
+    if (!ChargeStaging(PATCH_COST_MULTIPLIER * Cost(update.state) + PATCH_BOOKKEEPING_ALLOWANCE, plan.staging)) {
+        return false;
+    }
+    auto& patch = plan.patches[update.storage];
+    const auto source = spaces_.find(update.storage);
+    if (source == spaces_.end()) {
         return true;
-    };
+    }
+    const auto& tree = source->second;
+    auto it = tree.upper_bound(update.range.begin);
+    if (it != tree.begin()) {
+        --it;
+    }
+    for (; it != tree.end() && it->first < update.range.end; ++it) {
+        if (it->second.end <= update.range.begin || patch.removed.count(it->first) != 0U) {
+            continue;
+        }
+        const auto cost = Cost(it->second.state);
+        if (!ChargeStaging(PATCH_COST_MULTIPLIER * cost + REPLACEMENT_BOOKKEEPING_ALLOWANCE, plan.staging)) {
+            return false;
+        }
+        patch.removed.insert(it->first);
+        patch.replacement.emplace(*it);
+        plan.removedBytes += cost;
+        ++plan.removedCount;
+    }
+    return true;
+}
+
+void MemoryAccessState::PrepareReplacements(const std::vector<Update>& updates, UpdatePlan& plan)
+{
+    for (const auto& update : updates) {
+        auto& tree = plan.patches.at(update.storage).replacement;
+        Split(tree, update.range.begin);
+        Split(tree, update.range.end);
+        tree.erase(tree.lower_bound(update.range.begin), tree.lower_bound(update.range.end));
+        tree.emplace(update.range.begin, Segment{update.range.end, update.state});
+    }
+    for (auto& entry : plan.patches) {
+        auto& tree = entry.second.replacement;
+        for (auto it = tree.begin(); it != tree.end();) {
+            const auto next = std::next(it);
+            if (next != tree.end() && it->second.end == next->first && Equal(it->second.state, next->second.state)) {
+                it->second.end = next->second.end;
+                tree.erase(next);
+            } else {
+                ++it;
+            }
+        }
+        for (const auto& segment : tree) {
+            plan.addedBytes += Cost(segment.second.state);
+            ++plan.addedCount;
+        }
+    }
+}
+
+void MemoryAccessState::CommitReplacements(UpdatePlan& plan)
+{
+    // Allocate outer maps before touching live segments. Empty maps are not observable state.
+    for (const auto& entry : plan.patches) {
+        spaces_.try_emplace(entry.first);
+    }
+    for (auto& entry : plan.patches) {
+        auto& target = spaces_.at(entry.first);
+        auto& patch = entry.second;
+        for (const auto key : patch.removed) {
+            target.erase(key);
+        }
+        while (!patch.replacement.empty()) {
+            auto node = patch.replacement.extract(patch.replacement.begin());
+            auto it = target.insert(std::move(node)).position;
+            if (it != target.begin()) {
+                auto prev = std::prev(it);
+                if (prev->second.end == it->first && Equal(prev->second.state, it->second.state)) {
+                    prev->second.end = it->second.end;
+                    plan.addedBytes -= Cost(it->second.state);
+                    --plan.addedCount;
+                    target.erase(it);
+                    it = prev;
+                }
+            }
+            const auto next = std::next(it);
+            if (next != target.end() && it->second.end == next->first && Equal(it->second.state, next->second.state)) {
+                it->second.end = next->second.end;
+                plan.removedBytes += Cost(next->second.state);
+                ++plan.removedCount;
+                target.erase(next);
+            }
+        }
+    }
+    segments_ = segments_ + plan.addedCount - plan.removedCount;
+    bytes_ = bytes_ + plan.addedBytes - plan.removedBytes;
+    peak_ = std::max(peak_, bytes_);
+}
+
+bool MemoryAccessState::Apply(const std::vector<Update>& updates)
+{
+    UpdatePlan plan;
     try {
         for (size_t i = 0; i < updates.size(); ++i) {
-            const auto& u = updates[i];
-            if (!u.state || u.range.begin >= u.range.end)
+            const auto& update = updates[i];
+            if (update.state == nullptr || update.range.begin >= update.range.end) {
                 return false;
-            if (i != 0 && (u.storage < updates[i - 1].storage ||
-                           (u.storage == updates[i - 1].storage && u.range.begin < updates[i - 1].range.end)))
+            }
+            if (i != 0U &&
+                (update.storage < updates[i - 1].storage ||
+                 (update.storage == updates[i - 1].storage && update.range.begin < updates[i - 1].range.end))) {
                 return false;
-            // Reserve a conservative bound for new endpoints, split survivors and bookkeeping.
-            if (!charge(PATCH_COST_MULTIPLIER * Cost(u.state) + PATCH_BOOKKEEPING_ALLOWANCE))
+            }
+            if (!StageUpdate(update, plan)) {
                 return false;
-            auto& patch = patches[u.storage];
-            auto source = spaces_.find(u.storage);
-            if (source == spaces_.end())
-                continue;
-            auto it = source->second.upper_bound(u.range.begin);
-            if (it != source->second.begin())
-                --it;
-            for (; it != source->second.end() && it->first < u.range.end; ++it) {
-                if (it->second.end <= u.range.begin || patch.removed.count(it->first))
-                    continue;
-                if (!charge(PATCH_COST_MULTIPLIER * Cost(it->second.state) + REPLACEMENT_BOOKKEEPING_ALLOWANCE))
-                    return false;
-                patch.removed.insert(it->first);
-                patch.replacement.emplace(*it);
-                removedBytes += Cost(it->second.state);
-                ++removedCount;
             }
         }
-        for (const auto& u : updates) {
-            auto& tree = patches.at(u.storage).replacement;
-            Split(tree, u.range.begin);
-            Split(tree, u.range.end);
-            tree.erase(tree.lower_bound(u.range.begin), tree.lower_bound(u.range.end));
-            tree.emplace(u.range.begin, Segment{u.range.end, u.state});
-        }
-        size_t addedBytes = 0, addedCount = 0;
-        for (auto& p : patches) {
-            auto& tree = p.second.replacement;
-            for (auto it = tree.begin(); it != tree.end();) {
-                auto next = std::next(it);
-                if (next != tree.end() && it->second.end == next->first &&
-                    Equal(it->second.state, next->second.state)) {
-                    it->second.end = next->second.end;
-                    tree.erase(next);
-                } else
-                    ++it;
-            }
-            for (const auto& s : tree) {
-                addedBytes += Cost(s.second.state);
-                ++addedCount;
-            }
-        }
-        if (segments_ - removedCount > segmentBudget_ || addedCount > segmentBudget_ - (segments_ - removedCount))
+        PrepareReplacements(updates, plan);
+        const auto retainedCount = segments_ - plan.removedCount;
+        const auto retainedBytes = bytes_ - plan.removedBytes;
+        if (retainedCount > segmentBudget_ || plan.addedCount > segmentBudget_ - retainedCount ||
+            retainedBytes > byteBudget_ || plan.addedBytes > byteBudget_ - retainedBytes) {
             return false;
-        if (bytes_ - removedBytes > byteBudget_ || addedBytes > byteBudget_ - (bytes_ - removedBytes))
-            return false;
-        // Allocate outer maps before touching live segments. Empty maps are not observable state.
-        for (const auto& p : patches)
-            spaces_.try_emplace(p.first);
-        for (auto& p : patches) {
-            auto& target = spaces_.at(p.first);
-            for (auto key : p.second.removed)
-                target.erase(key);
-            while (!p.second.replacement.empty()) {
-                auto node = p.second.replacement.extract(p.second.replacement.begin());
-                auto it = target.insert(std::move(node)).position;
-                if (it != target.begin()) {
-                    auto prev = std::prev(it);
-                    if (prev->second.end == it->first && Equal(prev->second.state, it->second.state)) {
-                        prev->second.end = it->second.end;
-                        addedBytes -= Cost(it->second.state);
-                        --addedCount;
-                        target.erase(it);
-                        it = prev;
-                    }
-                }
-                auto next = std::next(it);
-                if (next != target.end() && it->second.end == next->first &&
-                    Equal(it->second.state, next->second.state)) {
-                    it->second.end = next->second.end;
-                    removedBytes += Cost(next->second.state);
-                    ++removedCount;
-                    target.erase(next);
-                }
-            }
         }
-        segments_ = segments_ + addedCount - removedCount;
-        bytes_ = bytes_ + addedBytes - removedBytes;
-        peak_ = std::max(peak_, bytes_);
+        CommitReplacements(plan);
         return true;
     } catch (const std::bad_alloc&) {
         return false;

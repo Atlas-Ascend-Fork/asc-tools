@@ -37,6 +37,7 @@ Function GetOriginalRuntimeFunction(aclrtApiId apiId, const char* hookName) noex
 }
 
 void ApplyRuntimeHooks(const std::set<aclrtApiId>& requiredHooks) noexcept;
+void CollectRetiredTraceVariants() noexcept;
 
 } // namespace aclsan
 

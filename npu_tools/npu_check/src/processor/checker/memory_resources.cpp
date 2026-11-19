@@ -8,10 +8,40 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "checker/memory_resources.h"
-#include <algorithm>
 #include <limits>
+#include <optional>
 
 namespace npucheck {
+namespace {
+// No result means this generation does not apply; an ambiguous result stops the scan.
+std::optional<RangeResult> ResolveGeneration(
+    const AllocationRegistry::Record& record, const MemoryLocation& location, uint64_t end, size_t entry, size_t exit,
+    HostOrder& order)
+{
+    const auto& allocation = record.allocation;
+    const auto allocationEnd = allocation.base + allocation.bytes;
+    if (location.address > allocationEnd || end <= allocation.base)
+        return std::nullopt;
+    const auto allocatedBefore = order.Precedes(record.allocated, entry);
+    const auto allocatedAfter = order.Precedes(exit, record.allocated);
+    if (!allocatedBefore.has_value() || !allocatedAfter.has_value())
+        return RangeResult{RangeStatus::AMBIGUOUS, allocation};
+    if (*allocatedAfter)
+        return std::nullopt;
+    if (!*allocatedBefore)
+        return RangeResult{RangeStatus::AMBIGUOUS, allocation};
+    if (record.freed.has_value()) {
+        const auto freedBefore = order.Precedes(*record.freed, entry);
+        const auto freedAfter = order.Precedes(exit, *record.freed);
+        if (!freedBefore.has_value() || !freedAfter.has_value() || (!*freedBefore && !*freedAfter))
+            return RangeResult{RangeStatus::AMBIGUOUS, allocation};
+        if (*freedBefore)
+            return RangeResult{RangeStatus::USE_AFTER_FREE, allocation};
+    }
+    const bool contained = allocation.base <= location.address && end <= allocationEnd;
+    return RangeResult{contained ? RangeStatus::VALID : RangeStatus::OUT_OF_BOUNDS, allocation};
+}
+} // namespace
 AllocationUpdateStatus MemoryResources::Apply(
     AclsanCallbackId id, const AclsanResourceData& data, MemoryState& state, size_t node)
 {
@@ -46,28 +76,9 @@ RangeResult MemoryResources::Resolve(
         if (queries_ != std::numeric_limits<size_t>::max()) {
             ++queries_;
         }
-        const auto& allocation = it->allocation;
-        const auto allocationEnd = allocation.base + allocation.bytes;
-        if (location.address > allocationEnd || end <= allocation.base)
-            continue;
-        const auto allocatedBefore = order.Precedes(it->allocated, entry);
-        const auto allocatedAfter = order.Precedes(exit, it->allocated);
-        if (!allocatedBefore || !allocatedAfter)
-            return {RangeStatus::AMBIGUOUS, allocation};
-        if (*allocatedAfter)
-            continue;
-        if (!*allocatedBefore)
-            return {RangeStatus::AMBIGUOUS, allocation};
-        if (it->freed) {
-            const auto freedBefore = order.Precedes(*it->freed, entry);
-            const auto freedAfter = order.Precedes(exit, *it->freed);
-            if (!freedBefore || !freedAfter || (!*freedBefore && !*freedAfter))
-                return {RangeStatus::AMBIGUOUS, allocation};
-            if (*freedBefore)
-                return {RangeStatus::USE_AFTER_FREE, allocation};
-        }
-        const bool contained = allocation.base <= location.address && end <= allocationEnd;
-        return {contained ? RangeStatus::VALID : RangeStatus::OUT_OF_BOUNDS, allocation};
+        const auto result = ResolveGeneration(*it, location, end, entry, exit, order);
+        if (result.has_value())
+            return *result;
     }
 
     // A one-device callback cannot resolve a pointer known only on another device.

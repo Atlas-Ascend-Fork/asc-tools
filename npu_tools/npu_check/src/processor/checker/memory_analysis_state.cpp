@@ -8,7 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "checker/memory_analysis.h"
+#include "checker/racecheck/analysis_phase_timer.h"
 #include <algorithm>
+#include <limits>
 
 namespace npucheck {
 RangeResult MemoryAnalysis::Classify(uint64_t launchId, const MemoryLocation& location)
@@ -62,10 +64,11 @@ bool MemoryAnalysis::HostWrite(const AclsanMemoryWriteData& write)
 void MemoryAnalysis::ObserveSynchronization(AclsanCallbackDomain domain, AclsanCallbackId id, const void* data)
 {
     if (domain != ACLSAN_CB_DOMAIN_LAUNCH && domain != ACLSAN_CB_DOMAIN_SYNCHRONIZE &&
+        !(domain == ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION && id == ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE) &&
         !(domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && id == ACLSAN_CBID_DEVICE_SYNC))
         return;
     CheckerReportList reports;
-    if (!synchronization_->OnCallback(domain, id, data, reports))
+    if (!synchronization_->OnCallback(domain, id, data, reports) || !synchronization_->ObservationComplete())
         complete_ = false;
     for (auto& report : reports) {
         if (auto* sync = std::get_if<NpuCheckSynccheckReport>(&report)) {
@@ -76,6 +79,15 @@ void MemoryAnalysis::ObserveSynchronization(AclsanCallbackDomain domain, AclsanC
 }
 
 namespace {
+constexpr uint8_t UNKNOWN_INITIALIZATION_SOURCE = 0;
+constexpr uint8_t USABLE_INITIALIZATION_SOURCE = 1;
+constexpr uint8_t INVALID_INITIALIZATION_SOURCE = 2;
+constexpr size_t MISSING_INITIALIZATION_RANK = 0;
+constexpr uint8_t INITIALIZATION_CACHE_PIPELINE = 0;
+constexpr size_t MAX_OBSERVED_PAGE_COMMITS = 8;
+constexpr size_t FIRST_INITIALIZATION_QUERY = 1;
+constexpr size_t UNINDEXED_SOURCE_COUNT = 0;
+
 bool Covered(race::Interval range, const std::vector<race::Interval>& writes)
 {
     auto cursor = range.begin;
@@ -89,11 +101,91 @@ bool Covered(race::Interval range, const std::vector<race::Interval>& writes)
     }
     return false;
 }
+bool ReadsCovered(const std::vector<race::Interval>& reads, const std::vector<race::Interval>& writes)
+{
+    // Both inputs are canonical unions; never bridge a gap between intervals.
+    auto write = writes.begin();
+    for (const auto& read : reads) {
+        while (write != writes.end() && write->end <= read.begin)
+            ++write;
+        if (write == writes.end() || write->begin > read.begin || write->end < read.end)
+            return false;
+    }
+    return true;
+}
+
+bool InitializationRangesOverlap(const std::vector<race::Interval>& reads, const std::vector<race::Interval>& writes)
+{
+    auto read = reads.begin();
+    auto write = writes.begin();
+    while (read != reads.end() && write != writes.end()) {
+        if (read->begin < write->end && write->begin < read->end)
+            return true;
+        if (read->end <= write->begin)
+            ++read;
+        else
+            ++write;
+    }
+    return false;
+}
+
+void IndexInitializationSources(
+    const MemoryAnalysis::Launch& launch, const race::DependencyGraph& dependency, const std::vector<uint32_t>& sources,
+    MemoryAnalysis::StorageWrites& writes)
+{
+    for (auto index : sources) {
+        if (launch.accessValid[index] == USABLE_INITIALIZATION_SOURCE)
+            writes.validSources.push_back(index);
+        else
+            writes.invalidSources.push_back(index);
+    }
+    writes.ranked = std::all_of(writes.validSources.begin(), writes.validSources.end(), [&dependency](uint32_t index) {
+        return dependency.graph.TraversalRank(dependency.accesses[index].node).has_value();
+    });
+    if (!writes.ranked)
+        return;
+    std::sort(writes.validSources.begin(), writes.validSources.end(), [&dependency](uint32_t left, uint32_t right) {
+        const auto first = *dependency.graph.TraversalRank(dependency.accesses[left].node);
+        const auto second = *dependency.graph.TraversalRank(dependency.accesses[right].node);
+        return first != second ? first < second : left < right;
+    });
+}
+
+void OrderInitializationSources(
+    const MemoryAnalysis::Launch& launch, const race::DependencyGraph& dependency, size_t readerNode,
+    std::vector<uint32_t>& candidates)
+{
+    const auto readerRank = dependency.graph.TraversalRank(readerNode);
+    std::sort(candidates.begin(), candidates.end(), [&launch, &dependency, &readerRank](uint32_t left, uint32_t right) {
+        const bool leftUsable = launch.accessValid[left] == USABLE_INITIALIZATION_SOURCE;
+        const bool rightUsable = launch.accessValid[right] == USABLE_INITIALIZATION_SOURCE;
+        if (leftUsable != rightUsable)
+            return !leftUsable; // Invalid sources must not be hidden by sufficient valid evidence.
+        if (!leftUsable)
+            return left < right;
+        const auto leftRank = dependency.graph.TraversalRank(dependency.accesses[left].node);
+        const auto rightRank = dependency.graph.TraversalRank(dependency.accesses[right].node);
+        const bool leftPreferred = readerRank && leftRank && *leftRank < *readerRank;
+        const bool rightPreferred = readerRank && rightRank && *rightRank < *readerRank;
+        if (leftPreferred != rightPreferred)
+            return leftPreferred;
+        const auto first = leftRank.value_or(MISSING_INITIALIZATION_RANK);
+        const auto second = rightRank.value_or(MISSING_INITIALIZATION_RANK);
+        return first != second ? first > second : left < right;
+    });
+}
+
+void AddPrunedInitializationSources(size_t count, size_t& total)
+{
+    const auto maximum = std::numeric_limits<size_t>::max();
+    total = count > maximum - total ? maximum : total + count;
+}
 } // namespace
 
 void MemoryAnalysis::BuildStorageIndex(uint64_t launchId, Launch& launch, const race::DependencyGraph& dependency)
 {
-    launch.accessValid.assign(dependency.accesses.size(), 0);
+    race::AnalysisPhaseTimer timing(launchId, "initialization_index");
+    launch.accessValid.assign(dependency.accesses.size(), UNKNOWN_INITIALIZATION_SOURCE);
     for (uint32_t i = 0; i < dependency.accesses.size(); ++i) {
         const auto& access = dependency.accesses[i];
         launch.accessesByNode[access.node].push_back(i);
@@ -134,8 +226,9 @@ void MemoryAnalysis::BuildStorageIndex(uint64_t launchId, Launch& launch, const 
                     valid = valid && capacity != 0 && range.end <= capacity;
                 }
             }
-            launch.accessValid[index] = valid ? 1 : 2;
+            launch.accessValid[index] = valid ? USABLE_INITIALIZATION_SOURCE : INVALID_INITIALIZATION_SOURCE;
         }
+        IndexInitializationSources(launch, dependency, accesses, writes);
     }
     launch.storageIndexReady = true;
 }
@@ -162,97 +255,209 @@ void MemoryAnalysis::CommitWritePage(uint64_t launchId, Launch& launch, const ra
     if (found == launch.writesByStorage.end())
         return;
     const auto& domain = std::get<1>(storage);
-    const auto key = InitStateKey::Local(
-        std::get<0>(domain), launchId, std::get<1>(domain), std::get<2>(domain), std::get<0>(storage));
+    // Managed initialization pages follow the physical storage key used for write evidence.
+    const auto key = InitStateKey::PhysicalLocal(
+        std::get<0>(domain), launchId, std::get<1>(domain), std::get<3>(domain), std::get<0>(storage));
     auto& page = state->initialized.GetOrCreate(key);
-    for (const auto& range : found->second.ranges) {
-        if (launch.accessValid[range.access] == 1)
-            page.Write(range.begin, range.end - range.begin, 0);
+    std::optional<race::AnalysisPhaseTimer> timing;
+    if (launch.initializationPageTimings < MAX_OBSERVED_PAGE_COMMITS) {
+        ++launch.initializationPageTimings;
+        timing.emplace(launchId, "initialization_page_commit");
     }
+    // The index is sorted by begin. All writes use the same cache pipeline, so
+    // their exact union is equivalent to repeatedly setting every valid byte.
+    std::optional<race::Interval> pending;
+    for (const auto& range : found->second.ranges) {
+        if (launch.accessValid[range.access] != USABLE_INITIALIZATION_SOURCE)
+            continue;
+        if (pending && range.begin <= pending->end) {
+            pending->end = std::max(pending->end, range.end);
+        } else {
+            if (pending)
+                page.Write(pending->begin, pending->end - pending->begin, INITIALIZATION_CACHE_PIPELINE);
+            pending = race::Interval{range.begin, range.end};
+        }
+    }
+    if (pending)
+        page.Write(pending->begin, pending->end - pending->begin, INITIALIZATION_CACHE_PIPELINE);
+}
+
+void MemoryAnalysis::PrepareInitializationQuery(
+    uint64_t launchId, InitializationQuery& query, std::set<std::string>& reasons)
+{
+    auto& launch = query.launch;
+    const auto node = launch.accessesByNode.find(query.readerNode);
+    if (node != launch.accessesByNode.end()) {
+        for (auto index : node->second) {
+            const auto& access = query.dependency.accesses[index];
+            if (race::StorageOf(access.data) == query.storage && race::ReadsMemory(access.data.accessMode))
+                query.reads.insert(query.reads.end(), access.ranges.begin(), access.ranges.end());
+        }
+    }
+    race::MergeIntervals(query.reads);
+    if (query.reads.empty())
+        return;
+    if (std::get<0>(query.storage) == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+        const auto device = std::get<0>(std::get<1>(query.storage));
+        query.preceding = InitializationsBefore(launchId, device, query.reads, reasons);
+    }
+    const auto writes = launch.writesByStorage.find(query.storage);
+    if (writes == launch.writesByStorage.end())
+        return;
+    const auto rank = query.dependency.graph.TraversalRank(query.readerNode);
+    if (writes->second.ranked && rank) {
+        query.indexed = &writes->second;
+        const auto& sources = query.indexed->validSources;
+        const auto split =
+            std::lower_bound(sources.begin(), sources.end(), *rank, [&query](uint32_t index, size_t value) {
+                return *query.dependency.graph.TraversalRank(query.dependency.accesses[index].node) < value;
+            });
+        query.rankSplit = static_cast<size_t>(split - sources.begin());
+        for (auto index : query.indexed->invalidSources) {
+            if (InitializationRangesOverlap(query.reads, query.dependency.accesses[index].ranges))
+                query.candidates.push_back(index);
+        }
+        return;
+    }
+    for (auto read : query.reads)
+        CollectOverlappingWrites(writes->second, read.begin, read.end, query.candidates);
+    std::sort(query.candidates.begin(), query.candidates.end());
+    query.candidates.erase(std::unique(query.candidates.begin(), query.candidates.end()), query.candidates.end());
+    OrderInitializationSources(launch, query.dependency, query.readerNode, query.candidates);
+}
+
+bool MemoryAnalysis::VisitInitializationSource(
+    InitializationQuery& query, uint32_t index, std::set<std::string>& reasons)
+{
+    const auto& access = query.dependency.accesses[index];
+    if (access.node == query.readerNode)
+        return true;
+    auto& comparisons = query.launch.initializationQueryWork;
+    if (comparisons >= limits_.CandidateComparisonBudget()) {
+        reasons.insert("comparison_budget");
+        return false;
+    }
+    ++comparisons;
+    if (race::ExceedsBudget(
+            limits_.InitializationIntervalBudget(),
+            {query.preceding.size(), query.unordered.size(), access.ranges.size()})) {
+        reasons.insert("segment_budget");
+        return false;
+    }
+    const auto relation = query.dependency.graph.Compare(access.node, query.readerNode);
+    if (query.launch.accessValid[index] != USABLE_INITIALIZATION_SOURCE) {
+        if (relation != race::HappensBeforeGraph::Relation::After)
+            reasons.insert("invalid_initialization_source");
+        return true;
+    }
+    if (relation == race::HappensBeforeGraph::Relation::Before) {
+        query.preceding.insert(query.preceding.end(), access.ranges.begin(), access.ranges.end());
+        race::MergeIntervals(query.preceding);
+    } else if (relation == race::HappensBeforeGraph::Relation::Unordered) {
+        query.unordered.insert(query.unordered.end(), access.ranges.begin(), access.ranges.end());
+    } else if (relation == race::HappensBeforeGraph::Relation::Unknown) {
+        reasons.insert("graph_query_budget");
+    }
+    return true;
+}
+
+bool MemoryAnalysis::CollectRankedInitializationRange(
+    InitializationQuery& query, size_t begin, size_t end, bool reverse, std::set<std::string>& reasons)
+{
+    constexpr size_t LAST_SOURCE_OFFSET = 1;
+    constexpr size_t SOURCE_VISIT_INCREMENT = 1;
+    const auto count = end - begin; // Both boundaries come from this immutable source vector.
+    for (size_t offset = 0; offset < count; ++offset) {
+        if (reasons.empty() && ReadsCovered(query.reads, query.preceding)) {
+            AddPrunedInitializationSources(count - offset, query.launch.initializationSourcesPruned);
+            return false;
+        }
+        const auto position = reverse ? end - LAST_SOURCE_OFFSET - offset : begin + offset;
+        const auto index = query.indexed->validSources[position];
+        AddPrunedInitializationSources(SOURCE_VISIT_INCREMENT, query.launch.initializationSourcesVisited);
+        if (!InitializationRangesOverlap(query.reads, query.dependency.accesses[index].ranges))
+            continue;
+        if (!VisitInitializationSource(query, index, reasons))
+            return false;
+    }
+    return true;
+}
+
+void MemoryAnalysis::CollectInitializationEvidence(InitializationQuery& query, std::set<std::string>& reasons)
+{
+    for (size_t position = 0; position < query.candidates.size(); ++position) {
+        const auto index = query.candidates[position];
+        const bool usable = query.launch.accessValid[index] == USABLE_INITIALIZATION_SOURCE;
+        if (usable && reasons.empty() && ReadsCovered(query.reads, query.preceding)) {
+            AddPrunedInitializationSources(
+                query.candidates.size() - position, query.launch.initializationSourcesPruned);
+            return;
+        }
+        if (!VisitInitializationSource(query, index, reasons))
+            return;
+    }
+    if (query.indexed == nullptr)
+        return;
+    if (!CollectRankedInitializationRange(query, 0, query.rankSplit, true, reasons)) {
+        // Deferred counts describe storage sources, not proven spatially-overlapping HB queries.
+        AddPrunedInitializationSources(
+            query.indexed->validSources.size() - query.rankSplit, query.launch.initializationSourcesPruned);
+        return;
+    }
+    CollectRankedInitializationRange(query, query.rankSplit, query.indexed->validSources.size(), false, reasons);
 }
 
 std::vector<race::Interval> MemoryAnalysis::PrecedingWrites(
     uint64_t launchId, size_t readerNode, const race::Storage& storage, std::set<std::string>& reasons)
 {
-    const race::Limits limits;
-    auto& dependency = Graph(launchId, limits, reasons);
+    auto& dependency = Graph(launchId, limits_, reasons);
     auto& launch = Get(launchId);
     if (!launch.storageIndexReady)
         BuildStorageIndex(launchId, launch, dependency);
-    std::vector<race::Interval> reads, preceding, unordered;
-    const auto node = launch.accessesByNode.find(readerNode);
-    if (node != launch.accessesByNode.end())
-        for (auto index : node->second) {
-            const auto& access = dependency.accesses[index];
-            if (race::StorageOf(access.data) == storage && race::ReadsMemory(access.data.accessMode))
-                reads.insert(reads.end(), access.ranges.begin(), access.ranges.end());
-        }
-    if (reads.empty())
-        return preceding;
-    const auto device = std::get<0>(std::get<1>(storage));
-    if (std::get<0>(storage) == ACLSAN_DEVICE_MEMORY_SPACE_GM)
-        preceding = InitializationsBefore(launchId, device, reads, reasons);
-
-    auto& comparisons = launch.initializationQueryWork;
-    const auto writes = launch.writesByStorage.find(storage);
-    if (writes != launch.writesByStorage.end()) {
-        std::vector<uint32_t> candidates;
-        for (auto read : reads)
-            CollectOverlappingWrites(writes->second, read.begin, read.end, candidates);
-        std::sort(candidates.begin(), candidates.end());
-        candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
-        for (auto index : candidates) {
-            const auto& access = dependency.accesses[index];
-            if (access.node == readerNode)
-                continue;
-            if (++comparisons > limits.comparisons) {
-                reasons.insert("comparison_budget");
-                break;
-            }
-            if (preceding.size() + unordered.size() + access.ranges.size() > limits.segments) {
-                reasons.insert("segment_budget");
-                break;
-            }
-            const auto relation = dependency.graph.Compare(access.node, readerNode);
-            if (launch.accessValid[index] != 1) {
-                // An invalid write matters only to overlapping reads it can
-                // precede. Never invent an initialization fact from that write.
-                if (relation != race::HappensBeforeGraph::Relation::After) {
-                    reasons.insert("invalid_initialization_source");
-                }
-                continue;
-            }
-            if (relation == race::HappensBeforeGraph::Relation::Before)
-                preceding.insert(preceding.end(), access.ranges.begin(), access.ranges.end());
-            else if (relation == race::HappensBeforeGraph::Relation::Unordered)
-                unordered.insert(unordered.end(), access.ranges.begin(), access.ranges.end());
-            else if (relation == race::HappensBeforeGraph::Relation::Unknown)
-                reasons.insert("graph_query_budget");
-        }
-    }
-    race::MergeIntervals(preceding);
-    // The local page is a cache consulted only inside the proven preceding ranges. Commit
-    // every usable write once per storage instead of re-committing a reader-filtered
-    // subset; under-committing is what would turn later reads into false reports.
+    InitializationQuery query(launch, dependency, storage, readerNode);
+    if (launch.initializationQueryBatches < std::numeric_limits<size_t>::max())
+        ++launch.initializationQueryBatches;
+    const auto batch = launch.initializationQueryBatches;
+    const bool observed = batch != 0 && (batch & (batch - FIRST_INITIALIZATION_QUERY)) == 0;
+    std::optional<race::AnalysisPhaseTimer> timing;
+    if (observed)
+        timing.emplace(launchId, "initialization_query");
+    PrepareInitializationQuery(launchId, query, reasons);
+    if (observed)
+        ASCTOOL_INFO(
+            "initialization query: launch=%llu batch=%zu reads=%zu eager_candidates=%zu indexed_sources=%zu "
+            "hb_queries=%zu visited_sources=%zu deferred_storage_sources=%zu",
+            static_cast<unsigned long long>(launchId), batch, query.reads.size(), query.candidates.size(),
+            query.indexed == nullptr ? UNINDEXED_SOURCE_COUNT : query.indexed->validSources.size(),
+            launch.initializationQueryWork, launch.initializationSourcesVisited, launch.initializationSourcesPruned);
+    if (query.reads.empty())
+        return {};
+    CollectInitializationEvidence(query, reasons);
+    race::MergeIntervals(query.preceding);
+    // The cache must include all valid writes, not just sufficient evidence for this reader.
     if (std::get<0>(storage) != ACLSAN_DEVICE_MEMORY_SPACE_GM && reasons.empty() &&
         launch.pageCommitted.insert(storage).second)
         CommitWritePage(launchId, launch, storage);
-    for (auto read : reads)
-        if (!Covered(read, preceding))
-            for (auto write : unordered)
-                if (write.begin < read.end && read.begin < write.end)
-                    reasons.insert("unordered_initialization");
-    return preceding;
+    for (auto read : query.reads) {
+        if (Covered(read, query.preceding))
+            continue;
+        if (std::any_of(query.unordered.begin(), query.unordered.end(), [read](auto write) {
+                return write.begin < read.end && read.begin < write.end;
+            }))
+            reasons.insert("unordered_initialization");
+    }
+    return std::move(query.preceding);
 }
 
 void MemoryAnalysis::CommitLaunch(uint64_t launchId)
 {
     if (!managed_)
         return;
+    race::AnalysisPhaseTimer timing(launchId, "initialization_publish");
     // Publish the complete validated launch before checker queries begin.
     try {
         std::set<std::string> reasons;
-        auto& dependency = Graph(launchId, {}, reasons);
+        auto& dependency = Graph(launchId, limits_, reasons);
         if (!reasons.empty()) {
             for (const auto& access : Get(launchId).memory)
                 if (race::WritesMemory(access.accessMode) || access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN)

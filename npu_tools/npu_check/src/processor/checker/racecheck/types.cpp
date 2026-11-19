@@ -9,7 +9,6 @@
  */
 
 #include "checker/racecheck/types.h"
-#include "device_instr/common/instruction_id.h"
 #include "acl_san/aclsan_api.h"
 #include <algorithm>
 #include <functional>
@@ -50,12 +49,21 @@ void MergeIntervals(std::vector<Interval>& ranges)
     }
     ranges.resize(n);
 }
-bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::vector<Interval>& result)
-{
-    result.clear();
-    __extension__ using Wide = __int128;
-    std::vector<std::pair<uint64_t, int64_t>> axes;
+namespace {
+__extension__ using Wide = __int128;
+using SignedAxis = std::pair<uint64_t, int64_t>;
+using ForwardAxis = std::pair<uint64_t, uint64_t>;
+struct Footprint {
     uint64_t bytes = 0;
+    Wide lower = 0;
+    std::vector<SignedAxis> axes;
+    std::vector<ForwardAxis> forward;
+    std::vector<ForwardAxis> sparse;
+};
+bool ReadFootprint(const AclsanDeviceMemoryAccessData& access, Footprint& footprint)
+{
+    auto& bytes = footprint.bytes;
+    auto& axes = footprint.axes;
     switch (access.layoutKind) {
         case ACLSAN_MEM_LAYOUT_SCALAR:
             bytes = access.layout.scalar.bytes;
@@ -80,23 +88,14 @@ bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::v
         default:
             return false;
     }
-    if (bytes == 0 || std::any_of(axes.begin(), axes.end(), [](auto axis) { return axis.first == 0; }))
-        return true;
-    size_t count = 1;
-    for (auto axis : axes) {
-        if (axis.first > budget / count)
-            return false;
-        count *= axis.first;
-    }
-    if (count > budget)
-        return false;
+    return true;
+}
+bool ValidateFootprint(uint64_t address, Footprint& footprint)
+{
     const Wide max = std::numeric_limits<uint64_t>::max();
-    // Validate the full Cartesian footprint before coalescing. Checking each
-    // signed extremum independently avoids cancellation hiding an invalid
-    // address, and keeps the running bounds within uint64_t even for INT64_MIN.
-    Wide lower = access.address, upper = access.address;
-    std::vector<std::pair<uint64_t, uint64_t>> forwardAxes;
-    for (const auto& axis : axes) {
+    Wide lower = address, upper = address;
+    // Check signed extrema before folding, including INT64_MIN strides.
+    for (const auto& axis : footprint.axes) {
         const Wide extent = static_cast<Wide>(axis.first - 1) * axis.second;
         if (extent < 0) {
             if (-extent > lower)
@@ -107,57 +106,113 @@ bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::v
                 return false;
             upper += extent;
         }
-        const uint64_t step = axis.second < 0 ? static_cast<uint64_t>(-static_cast<Wide>(axis.second)) :
-                                                static_cast<uint64_t>(axis.second);
-        forwardAxes.emplace_back(axis.first, step);
+        const auto step = axis.second < 0 ? static_cast<uint64_t>(-static_cast<Wide>(axis.second)) :
+                                            static_cast<uint64_t>(axis.second);
+        footprint.forward.emplace_back(axis.first, step);
     }
-    if (bytes > max - upper)
-        return false;
-    // Negative axes now start at their lowest address. Axis order does not
-    // change a Cartesian footprint; smallest steps expose dense/overlapping
-    // runs first. An axis is folded only when its translated intervals touch
-    // or overlap, so gaps in a sparse matrix never become accessed bytes.
-    std::sort(forwardAxes.begin(), forwardAxes.end(), [](auto x, auto y) { return x.second < y.second; });
-    std::vector<std::pair<uint64_t, uint64_t>> sparseAxes;
-    for (const auto& axis : forwardAxes) {
+    footprint.lower = lower;
+    return footprint.bytes <= max - upper;
+}
+bool FoldDenseAxes(Footprint& footprint)
+{
+    const Wide max = std::numeric_limits<uint64_t>::max();
+    std::sort(footprint.forward.begin(), footprint.forward.end(), [](auto a, auto b) { return a.second < b.second; });
+    for (const auto& axis : footprint.forward) {
         if (axis.first == 1)
             continue;
-        if (axis.second <= bytes) {
-            const Wide growth = static_cast<Wide>(axis.first - 1) * axis.second;
-            if (growth > max - bytes)
-                return false;
-            bytes += static_cast<uint64_t>(growth);
-        } else {
-            sparseAxes.push_back(axis);
+        if (axis.second > footprint.bytes) {
+            footprint.sparse.push_back(axis);
+            continue;
         }
+        const Wide growth = static_cast<Wide>(axis.first - 1) * axis.second;
+        if (growth > max - footprint.bytes)
+            return false;
+        footprint.bytes += static_cast<uint64_t>(growth);
     }
-    std::function<bool(size_t, Wide)> visit = [&](size_t d, Wide offset) {
-        if (d == sparseAxes.size()) {
-            if (offset < 0 || offset > max || bytes > max - offset)
+    return true;
+}
+NormalizationStatus MaterializeFootprint(const Footprint& footprint, size_t budget, std::vector<Interval>& result)
+{
+    size_t count = 1;
+    for (const auto& axis : footprint.sparse) {
+        if (axis.first > budget / count)
+            return NormalizationStatus::SegmentBudget;
+        count *= static_cast<size_t>(axis.first);
+    }
+    if (count > budget)
+        return NormalizationStatus::SegmentBudget;
+    const Wide max = std::numeric_limits<uint64_t>::max();
+    std::function<bool(size_t, Wide)> visit = [&footprint, &result, &visit, max](size_t dimension, Wide offset) {
+        if (dimension == footprint.sparse.size()) {
+            if (offset < 0 || offset > max || footprint.bytes > max - offset)
                 return false;
-            result.push_back({static_cast<uint64_t>(offset), static_cast<uint64_t>(offset + bytes)});
+            result.push_back({static_cast<uint64_t>(offset), static_cast<uint64_t>(offset + footprint.bytes)});
             return true;
         }
-        for (uint64_t i = 0; i < sparseAxes[d].first; ++i)
-            if (!visit(d + 1, offset + static_cast<Wide>(i) * sparseAxes[d].second))
+        const auto& axis = footprint.sparse[dimension];
+        for (uint64_t i = 0; i < axis.first; ++i)
+            if (!visit(dimension + 1, offset + static_cast<Wide>(i) * axis.second))
                 return false;
         return true;
     };
-    if (!visit(0, lower)) {
+    if (!visit(0, footprint.lower)) {
         result.clear();
-        return false;
+        return NormalizationStatus::InvalidLayout;
     }
     MergeIntervals(result);
-    return true;
+    return NormalizationStatus::Complete;
+}
+NormalizationStatus PrepareFootprint(const AclsanDeviceMemoryAccessData& access, Footprint& footprint)
+{
+    if (!ReadFootprint(access, footprint))
+        return NormalizationStatus::InvalidLayout;
+    if (footprint.bytes == 0 ||
+        std::any_of(footprint.axes.begin(), footprint.axes.end(), [](auto a) { return a.first == 0; })) {
+        footprint.bytes = 0;
+        return NormalizationStatus::Complete;
+    }
+    return ValidateFootprint(access.address, footprint) && FoldDenseAxes(footprint) ?
+               NormalizationStatus::Complete :
+               NormalizationStatus::InvalidLayout;
+}
+} // namespace
+NormalizationStatus DescribeNormalization(
+    const AclsanDeviceMemoryAccessData& access, NormalizationObservation& observation)
+{
+    observation = {};
+    Footprint footprint;
+    const auto status = PrepareFootprint(access, footprint);
+    if (status != NormalizationStatus::Complete)
+        return status;
+    observation.empty = footprint.bytes == 0;
+    if (!observation.empty) {
+        observation.base = static_cast<uint64_t>(footprint.lower);
+        observation.bytes = footprint.bytes;
+        observation.sparseAxes = std::move(footprint.sparse);
+    }
+    return status;
+}
+NormalizationStatus NormalizeDetailed(
+    const AclsanDeviceMemoryAccessData& access, size_t budget, std::vector<Interval>& result)
+{
+    result.clear();
+    Footprint footprint;
+    const auto status = PrepareFootprint(access, footprint);
+    if (status != NormalizationStatus::Complete || footprint.bytes == 0)
+        return status;
+    return MaterializeFootprint(footprint, budget, result);
+}
+bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::vector<Interval>& result)
+{
+    return NormalizeDetailed(access, budget, result) == NormalizationStatus::Complete;
 }
 Storage StorageOf(const AclsanDeviceMemoryAccessData& access)
 {
     return {
-        access.memorySpace, access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
-                                Domain{access.header.deviceId, 0, 0, 0} :
-                                Domain{
-                                    access.header.deviceId, access.memoryOwner.blockType, access.memoryOwner.blockId,
-                                    access.memoryOwner.phyCoreId}};
+        access.memorySpace,
+        access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
+            Domain{access.header.deviceId, 0, 0, 0} :
+            Domain{access.header.deviceId, access.memoryOwner.blockType, 0, access.memoryOwner.phyCoreId}};
 }
 
 UnitResetHistory UnitFlagResets(

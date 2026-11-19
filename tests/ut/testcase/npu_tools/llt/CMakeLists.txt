@@ -259,6 +259,7 @@ file(WRITE "${NPU_TOOLS_UTEST_DYNAMIC_LIST}"
   rtFunctionGetMetaInfo;
   rtFunctionGetMetaInfoSize;
   aclrtBinaryGetDevAddress;
+  aclrtGetCurrentContext;
 };
 ")
 

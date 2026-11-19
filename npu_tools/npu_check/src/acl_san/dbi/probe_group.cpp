@@ -28,10 +28,11 @@ std::vector<ProbeGroup> NormalizeProbeGroups(const std::vector<ProbeGroup>& grou
 std::vector<ProbeGroup> ProbeGroupsFromMask(uint32_t mask)
 {
     const std::pair<uint32_t, ProbeGroup> groups[] = {
-        {PROBE_GROUP_MTE1, ProbeGroup::Mte1},     {PROBE_GROUP_MTE2, ProbeGroup::Mte2},
-        {PROBE_GROUP_MTE3, ProbeGroup::Mte3},     {PROBE_GROUP_FIXPIPE, ProbeGroup::Fixpipe},
-        {PROBE_GROUP_SCALAR, ProbeGroup::Scalar}, {PROBE_GROUP_SYNC, ProbeGroup::Sync},
-        {PROBE_GROUP_MATRIX, ProbeGroup::Matrix}, {PROBE_GROUP_VECTOR, ProbeGroup::Vector},
+        {PROBE_GROUP_MTE1, ProbeGroup::Mte1},         {PROBE_GROUP_MTE2, ProbeGroup::Mte2},
+        {PROBE_GROUP_MTE3, ProbeGroup::Mte3},         {PROBE_GROUP_FIXPIPE, ProbeGroup::Fixpipe},
+        {PROBE_GROUP_SCALAR, ProbeGroup::Scalar},     {PROBE_GROUP_SYNC, ProbeGroup::Sync},
+        {PROBE_GROUP_MATRIX, ProbeGroup::Matrix},     {PROBE_GROUP_VECTOR, ProbeGroup::Vector},
+        {PROBE_GROUP_BOUNDARY, ProbeGroup::Boundary},
     };
     std::vector<ProbeGroup> selected;
     for (const auto& group : groups) {
@@ -61,6 +62,8 @@ std::string ProbeGroupName(ProbeGroup group)
             return "matrix";
         case ProbeGroup::Vector:
             return "vector";
+        case ProbeGroup::Boundary:
+            return "boundary";
     }
     return {};
 }

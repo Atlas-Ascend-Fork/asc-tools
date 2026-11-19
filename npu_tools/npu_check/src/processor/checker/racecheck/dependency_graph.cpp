@@ -11,8 +11,10 @@
 #include "checker/racecheck/dependency_graph.h"
 #include "checker/racecheck/vf_subgraph.h"
 #include "checker/memory_access_mode.h"
+#include "checker/racecheck/analysis_phase_timer.h"
 #include "npu_tool_log.h"
 #include "device_instr/common/instruction_id.h"
+#include "npu_tool_log.h"
 #include <algorithm>
 #include <limits>
 #include <optional>
@@ -52,17 +54,26 @@ bool SameHeader(const AclsanDeviceEventHeader& a, const AclsanDeviceEventHeader&
     return Key(a) == Key(b) && a.pc == b.pc && a.siteId == b.siteId && a.pipeline == b.pipeline && a.flags == b.flags &&
            a.serialNo == b.serialNo && a.sourceKind == b.sourceKind;
 }
+bool SameMemoryDescriptor(const AclsanDeviceMemoryAccessData& a, const AclsanDeviceMemoryAccessData& b)
+{
+    return SameHeader(a.header, b.header) && a.address == b.address && a.accessMode == b.accessMode &&
+           a.memorySpace == b.memorySpace && a.accessCount == b.accessCount && a.instructionId == b.instructionId &&
+           a.unitFlag == b.unitFlag && a.layoutKind == b.layoutKind && a.memoryFlags == b.memoryFlags &&
+           a.dataBits == b.dataBits && a.alignSize == b.alignSize;
+}
+
+bool SameMemoryExecution(const AclsanDeviceMemoryAccessData& a, const AclsanDeviceMemoryAccessData& b)
+{
+    return a.vectorMask0 == b.vectorMask0 && a.vectorMask1 == b.vectorMask1 && a.predicateMask0 == b.predicateMask0 &&
+           a.predicateMask1 == b.predicateMask1 && a.regDependencyMask0 == b.regDependencyMask0 &&
+           a.regDependencyMask1 == b.regDependencyMask1 && a.vfInstrExecSeq == b.vfInstrExecSeq &&
+           a.vfInstrValid == b.vfInstrValid && a.memoryOwner.phyCoreId == b.memoryOwner.phyCoreId &&
+           a.memoryOwner.blockId == b.memoryOwner.blockId && a.memoryOwner.blockType == b.memoryOwner.blockType;
+}
+
 bool SameMemory(const AclsanDeviceMemoryAccessData& a, const AclsanDeviceMemoryAccessData& b)
 {
-    if (!SameHeader(a.header, b.header) || a.address != b.address || a.accessMode != b.accessMode ||
-        a.memorySpace != b.memorySpace || a.accessCount != b.accessCount || a.instructionId != b.instructionId ||
-        a.unitFlag != b.unitFlag || a.layoutKind != b.layoutKind || a.memoryFlags != b.memoryFlags ||
-        a.dataBits != b.dataBits || a.alignSize != b.alignSize || a.vectorMask0 != b.vectorMask0 ||
-        a.vectorMask1 != b.vectorMask1 || a.predicateMask0 != b.predicateMask0 ||
-        a.predicateMask1 != b.predicateMask1 || a.regDependencyMask0 != b.regDependencyMask0 ||
-        a.regDependencyMask1 != b.regDependencyMask1 || a.vfInstrExecSeq != b.vfInstrExecSeq ||
-        a.vfInstrValid != b.vfInstrValid || a.memoryOwner.phyCoreId != b.memoryOwner.phyCoreId ||
-        a.memoryOwner.blockId != b.memoryOwner.blockId || a.memoryOwner.blockType != b.memoryOwner.blockType) {
+    if (!SameMemoryDescriptor(a, b) || !SameMemoryExecution(a, b)) {
         return false;
     }
     switch (a.layoutKind) {
@@ -162,17 +173,23 @@ class DependencyGraphBuilder {
         size_t node;
         std::vector<size_t> contributors;
     };
+    struct NotificationSender {
+        std::optional<uint32_t> pipe;
+        std::vector<size_t> completions;
+    };
     struct NotificationStream {
-        std::map<Domain, std::vector<size_t>> senders;
+        std::map<Domain, NotificationSender> senders;
         std::vector<Notification> tokens;
         size_t consumed = 0;
     };
     struct CrossCounter {
         std::map<uint32_t, NotificationStream> modes;
         std::vector<size_t> waits;
+        std::optional<uint32_t> waitPipe;
         size_t consumed = 0;
     };
     std::map<CrossFlag, CrossCounter> crossCounters;
+    std::map<size_t, size_t> crossCoreCompletions;
     // GET/RLS BUF is the device-level representation of a Mutex. A mutex is
     // shared by all supported pipes in one execution domain. Only one GET may
     // be active for a mutex, while GET/RLS itself must pair on the same pipe,
@@ -203,16 +220,19 @@ class DependencyGraphBuilder {
     const std::vector<AclsanDeviceBarrierData>& localBarriers;
     uint64_t& warnings;
     std::vector<Access>& accesses;
-    std::map<VfKey, size_t>& vfEntries;
+    std::map<VfKey, DependencyGraph::VfBoundary>& vfBoundaries;
     std::map<Instruction, size_t> instructionStarts;
     UnitResetHistory unitResets;
     // Prefix/acquire joins do not imply completion order within a pipeline.
     std::map<Pipe, std::optional<size_t>> prefix, acquired;
     // Only S/V/M complete in issue order within one core.
     std::map<Pipe, size_t> lastOrdered;
+    std::map<Pipe, size_t> lastCrossCoreCompletion;
     bool graphExhausted = false;
+    bool budgetReported = false;
     size_t joinNodes = 0;
     size_t comparisons = 0;
+    RangeStoragePool& rangeStorage_;
 
 public:
     DependencyGraphBuilder(
@@ -231,24 +251,120 @@ public:
           localBarriers(barriers),
           warnings(output.warnings),
           accesses(output.accesses),
-          vfEntries(output.vfEntries)
+          vfBoundaries(output.vfBoundaries),
+          rangeStorage_(output.rangeStorage)
     {}
 
     void Run()
     {
-        NormalizeEvents();
-        unitResets = UnitFlagResets(registers, reasons);
-        ExpandUnitFlagAccesses();
-        RouteCrossCoreNotifications();
-        BuildNotificationTokens();
-        BuildLocalEdges();
-        OrderVfsOnPhysicalPipe();
-        ResolveCrossCoreWaits();
-        SealGraph();
+        const auto launchId = ObservedLaunchId();
+        {
+            AnalysisPhaseTimer phase(launchId, "normalize_events");
+            NormalizeEvents();
+        }
+        {
+            AnalysisPhaseTimer phase(launchId, "unit_flag_fragments");
+            unitResets = UnitFlagResets(registers, reasons);
+            ExpandUnitFlagAccesses();
+            ReportRangeStorage();
+        }
+        {
+            AnalysisPhaseTimer phase(launchId, "notification_tokens");
+            RouteCrossCoreNotifications();
+            BuildNotificationTokens();
+        }
+        {
+            AnalysisPhaseTimer phase(launchId, "local_hb_edges");
+            BuildLocalEdges();
+            BuildPhysicalBlockEdges();
+            OrderVfsOnPhysicalPipe();
+        }
+        {
+            AnalysisPhaseTimer phase(launchId, "cross_core_waits");
+            ResolveCrossCoreWaits();
+        }
+        {
+            AnalysisPhaseTimer phase(launchId, "seal_graph");
+            SealGraph();
+        }
     }
 
 private:
-    void NormalizeEvents()
+    uint64_t ObservedLaunchId() const
+    {
+        constexpr uint64_t MISSING_OBSERVED_LAUNCH_ID = 0;
+        if (!memory.empty())
+            return memory.front().header.launchId;
+        if (!sync.empty())
+            return sync.front().header.launchId;
+        if (!registers.empty())
+            return registers.front().header.launchId;
+        return MISSING_OBSERVED_LAUNCH_ID;
+    }
+    void ReportRangeStorage() const
+    {
+        const auto launchId = ObservedLaunchId();
+        const auto& stats = rangeStorage_.Stats();
+        const auto& budget = *rangeStorage_.Budget();
+        ASCTOOL_INFO(
+            "range storage: launch=%llu calls=%zu hits=%zu materialized=%zu admitted=%zu keys=%zu "
+            "live_capacity_intervals=%zu peak_capacity_intervals=%zu limit_intervals=%zu "
+            "storage_rejected=%zu materialization_rejected=%zu untracked=%zu cache_disabled=%u",
+            static_cast<unsigned long long>(launchId), stats.calls, stats.hits, stats.materialized, stats.admitted,
+            rangeStorage_.CachedKeys(), budget.Used(), budget.Peak(), budget.Limit(), stats.storageRejected,
+            stats.materializationRejected, stats.untracked, static_cast<unsigned>(stats.cacheDisabled));
+    }
+    void NoteBudget(const char* stage, size_t used, size_t limit, const AclsanDeviceEventHeader* header = nullptr)
+    {
+        if (budgetReported)
+            return;
+        budgetReported = true;
+        if (header == nullptr && !memory.empty())
+            header = &memory.front().header;
+        if (header == nullptr && !sync.empty())
+            header = &sync.front().header;
+        const size_t minimum = limit < std::numeric_limits<size_t>::max() ? limit + 1 : limit;
+        constexpr uint64_t MISSING_TRACE_LAUNCH_ID = 0;
+        constexpr uint32_t MISSING_TRACE_CORE_ID = 0;
+        constexpr uint64_t MISSING_TRACE_PC = 0;
+        constexpr uint64_t MISSING_TRACE_EXECUTION_ID = 0;
+        ASCTOOL_WARNING(
+            "analysis budget: launch=%llu stage=%s used=%zu required_at_least=%zu limit=%zu core=%u pc=0x%llx "
+            "instruction=%llu",
+            static_cast<unsigned long long>(header ? header->launchId : MISSING_TRACE_LAUNCH_ID), stage, used, minimum,
+            limit, header ? header->executor.phyCoreId : MISSING_TRACE_CORE_ID,
+            static_cast<unsigned long long>(header ? header->pc : MISSING_TRACE_PC),
+            static_cast<unsigned long long>(header ? header->instrExecId : MISSING_TRACE_EXECUTION_ID));
+    }
+    void NormalizeAccessRanges(const AclsanDeviceMemoryAccessData& access, SharedRanges& ranges)
+    {
+        const auto status = rangeStorage_.Normalize(access, ranges);
+        if (status == RangeStorageStatus::Complete)
+            return;
+        if (status == RangeStorageStatus::StorageBudget) {
+            reasons.insert("range_storage_budget");
+            NoteBudget(
+                "live_range_capacity", rangeStorage_.Budget()->Used(), rangeStorage_.Budget()->Limit(), &access.header);
+        } else if (status == RangeStorageStatus::MaterializationBudget) {
+            reasons.insert("invalid_or_excessive_layout");
+            reasons.insert("segment_budget");
+            NoteBudget(
+                "single_footprint_materialization", limits_.FootprintIntervalBudget(),
+                limits_.FootprintIntervalBudget(), &access.header);
+        } else {
+            reasons.insert("invalid_or_excessive_layout");
+            if (reasons.insert("invalid_memory_layout").second)
+                ASCTOOL_WARNING(
+                    "analysis layout invalid: launch=%llu core=%u instruction=%llu pc=0x%llx",
+                    static_cast<unsigned long long>(access.header.launchId), access.header.executor.phyCoreId,
+                    static_cast<unsigned long long>(access.header.instrExecId),
+                    static_cast<unsigned long long>(access.header.pc));
+        }
+    }
+    using FragmentCounts = std::map<Instruction, std::pair<uint32_t, std::set<uint32_t>>>;
+    using VfEventCounts = std::map<Instruction, size_t>;
+
+    void ValidateInstructionIdentities()
     {
         std::map<std::pair<uint64_t, std::optional<uint64_t>>, std::pair<AclsanDeviceEventHeader, InstructionKind>>
             identities;
@@ -276,12 +392,20 @@ private:
         for (const auto& a : localBarriers) {
             identity(a.header, Key(a), InstructionKind::LOCAL_BARRIER);
         }
+    }
+
+    void SortEvents()
+    {
         // Stable identities, independent of callback interleaving, determine tie breaks only.
         std::sort(memory.begin(), memory.end(), [](const auto& a, const auto& b) {
             return std::make_pair(Key(a), a.accessIndex) < std::make_pair(Key(b), b.accessIndex);
         });
         std::sort(sync.begin(), sync.end(), [](const auto& a, const auto& b) { return Key(a.header) < Key(b.header); });
         std::sort(vfs.begin(), vfs.end(), [](const auto& a, const auto& b) { return Key(a.header) < Key(b.header); });
+    }
+
+    void NormalizeVfMetadata()
+    {
         for (const auto& vf : vfs) {
             const auto key = Key(vf.header);
             const auto old = vfMetadata.find(key);
@@ -305,11 +429,92 @@ private:
                     vf.header.executor.blockId);
             }
         }
+    }
+
+    size_t NormalizeVfAccessNode(const AclsanDeviceMemoryAccessData& a, bool vfMode, VfEventCounts& vfAccessCounts)
+    {
+        const Instruction parent = Key(a.header);
+        if (!vfMode || a.vfInstrValid != 1 || a.header.pipeline != ACLSAN_DEVICE_PIPE_VECTOR ||
+            a.header.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR ||
+            a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UB || a.unitFlag != 0) {
+            reasons.insert("invalid_vf_access");
+        }
+        ++vfAccessCounts[parent];
+        auto& vf = EnsureVf(parent);
+        const auto node = vf.AddAccess(a);
+        if (a.instructionId != 0 && a.instructionId != static_cast<uint32_t>(aclsan::InstructionId::Vf)) {
+            reasons.insert("invalid_vf_access");
+        }
+        return node;
+    }
+
+    std::optional<size_t> NormalizeAccessNode(
+        const AclsanDeviceMemoryAccessData& a, const Instruction& key, VfEventCounts& vfAccessCounts)
+    {
+        const bool vfMode = a.accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ &&
+                            a.accessMode <= ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE;
+        if ((vfMode && a.vfInstrValid != 1) || (a.vfInstrValid == 1 && a.header.instrExecId == 0)) {
+            reasons.insert("missing_vf_instruction_index");
+            return std::nullopt;
+        }
+        if (a.vfInstrValid != 0) {
+            return NormalizeVfAccessNode(a, vfMode, vfAccessCounts);
+        }
+        const auto event = events.find(key);
+        if (event == events.end()) {
+            const auto node = graph.AddNode();
+            events.emplace(key, Event{false, accesses.size(), node, a.header.pipeline});
+            return node;
+        }
+        if (vfGraphs.count(key) != 0) {
+            reasons.insert("vf_group_identity_mismatch");
+            return std::nullopt;
+        }
+        const auto& first = accesses[event->second.index].data;
+        if (event->second.pipe != a.header.pipeline || first.header.pc != a.header.pc ||
+            first.header.siteId != a.header.siteId || first.instructionId != a.instructionId ||
+            (first.unitFlag != a.unitFlag && a.header.pipeline != ACLSAN_DEVICE_PIPE_FIXPIPE)) {
+            reasons.insert("instruction_identity_mismatch");
+        }
+        return event->second.node;
+    }
+
+    Access NormalizeAccessCoverage(const AclsanDeviceMemoryAccessData& a, size_t node)
+    {
+        Access access{a, node, {}};
+        if (a.instructionId == static_cast<uint32_t>(aclsan::InstructionId::Vf) && a.vfInstrValid == 0) {
+            reasons.insert("missing_vf_instruction_index");
+        }
+        if (a.instructionId >= static_cast<uint32_t>(aclsan::InstructionId::StAtomicB32) &&
+            a.instructionId <= static_cast<uint32_t>(aclsan::InstructionId::StiAtomicB8)) {
+            reasons.insert("atomic_semantics_unknown");
+        }
+        if ((a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
+             a.memoryOwner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) ||
+            (a.memorySpace >= ACLSAN_DEVICE_MEMORY_SPACE_L1 && a.memorySpace <= ACLSAN_DEVICE_MEMORY_SPACE_L0C &&
+             a.memoryOwner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
+            reasons.insert("owner_mapping_unknown");
+        }
+        const uint32_t accessMode = NormalizeMemoryAccessMode(a.accessMode);
+        if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
+            accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD) {
+            reasons.insert("atomic_semantics_unknown");
+        }
+        if (accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
+            accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX ||
+            a.memorySpace > ACLSAN_DEVICE_MEMORY_SPACE_FB ||
+            !IsSupportedMemorySpace(static_cast<AclsanDeviceMemorySpace>(a.memorySpace))) {
+            reasons.insert("access_coverage_unknown");
+        } else {
+            NormalizeAccessRanges(a, access.ranges);
+        }
+        return access;
+    }
+
+    void NormalizeMemoryOperands(FragmentCounts& counts, VfEventCounts& vfAccessCounts)
+    {
         std::map<std::pair<Instruction, uint32_t>, size_t> accessKeys;
-        std::map<Instruction, std::pair<uint32_t, std::set<uint32_t>>> counts;
         std::map<Instruction, const AclsanDeviceMemoryAccessData*> instructionMetadata;
-        std::map<Instruction, size_t> vfAccessCounts, vfBarrierCounts;
-        size_t segments = 0;
         for (const auto& a : memory) {
             const auto key = Key(a);
             auto old = accessKeys.find({key, a.accessIndex});
@@ -318,7 +523,7 @@ private:
                     reasons.insert("conflicting_duplicate");
                 continue;
             }
-            if (!a.accessCount || a.accessIndex >= a.accessCount || !ValidPipe(a.header.pipeline) ||
+            if (a.accessCount == 0U || a.accessIndex >= a.accessCount || !ValidPipe(a.header.pipeline) ||
                 a.header.executor.blockType > ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE) {
                 reasons.insert("invalid_access_identity");
                 continue;
@@ -327,7 +532,7 @@ private:
             if (!inserted) {
                 const auto& first = *metadata->second;
                 if (first.vfInstrValid != a.vfInstrValid ||
-                    (a.vfInstrValid &&
+                    (a.vfInstrValid != 0U &&
                      (first.accessMode != a.accessMode || first.vfInstrExecSeq != a.vfInstrExecSeq))) {
                     reasons.insert("vf_group_identity_mismatch");
                 }
@@ -337,74 +542,18 @@ private:
                 reasons.insert("access_count_mismatch");
             count.first = a.accessCount;
             count.second.insert(a.accessIndex);
-            auto event = events.find(key);
-            const bool vfMode = a.accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ &&
-                                a.accessMode <= ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE;
-            size_t node;
-            if ((vfMode && a.vfInstrValid != 1) || (a.vfInstrValid == 1 && a.header.instrExecId == 0)) {
-                reasons.insert("missing_vf_instruction_index");
+            const auto node = NormalizeAccessNode(a, key, vfAccessCounts);
+            if (!node.has_value()) {
                 continue;
             }
-            if (a.vfInstrValid != 0) {
-                const Instruction parent = Key(a.header);
-                if (!vfMode || a.vfInstrValid != 1 || a.header.pipeline != ACLSAN_DEVICE_PIPE_VECTOR ||
-                    a.header.executor.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR ||
-                    a.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_UB || a.unitFlag != 0) {
-                    reasons.insert("invalid_vf_access");
-                }
-                ++vfAccessCounts[parent];
-                auto& vf = EnsureVf(parent);
-                node = vf.AddAccess(a);
-                if (a.instructionId != 0 && a.instructionId != static_cast<uint32_t>(aclsan::InstructionId::Vf)) {
-                    reasons.insert("invalid_vf_access");
-                }
-            } else if (event == events.end()) {
-                node = graph.AddNode();
-                events.emplace(key, Event{false, accesses.size(), node, a.header.pipeline});
-            } else {
-                node = event->second.node;
-                if (vfGraphs.count(key) != 0) {
-                    reasons.insert("vf_group_identity_mismatch");
-                    continue;
-                }
-                const auto& first = accesses[event->second.index].data;
-                if (event->second.pipe != a.header.pipeline || first.header.pc != a.header.pc ||
-                    first.header.siteId != a.header.siteId || first.instructionId != a.instructionId ||
-                    (first.unitFlag != a.unitFlag && a.header.pipeline != ACLSAN_DEVICE_PIPE_FIXPIPE)) {
-                    reasons.insert("instruction_identity_mismatch");
-                }
-            }
-            if (a.instructionId == static_cast<uint32_t>(aclsan::InstructionId::Vf) && a.vfInstrValid == 0) {
-                reasons.insert("missing_vf_instruction_index");
-            }
-            Access access{a, node, {}};
-            if (a.instructionId >= static_cast<uint32_t>(aclsan::InstructionId::StAtomicB32) &&
-                a.instructionId <= static_cast<uint32_t>(aclsan::InstructionId::StiAtomicB8)) {
-                reasons.insert("atomic_semantics_unknown");
-            }
-            if ((a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
-                 a.memoryOwner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR) ||
-                (a.memorySpace >= ACLSAN_DEVICE_MEMORY_SPACE_L1 && a.memorySpace <= ACLSAN_DEVICE_MEMORY_SPACE_L0C &&
-                 a.memoryOwner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
-                reasons.insert("owner_mapping_unknown");
-            }
-            const uint32_t accessMode = NormalizeMemoryAccessMode(a.accessMode);
-            if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
-                accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD) {
-                reasons.insert("atomic_semantics_unknown");
-            }
-            if (accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
-                accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX ||
-                a.memorySpace > ACLSAN_DEVICE_MEMORY_SPACE_FB ||
-                !IsSupportedMemorySpace(static_cast<AclsanDeviceMemorySpace>(a.memorySpace))) {
-                reasons.insert("access_coverage_unknown");
-            } else if (!Normalize(a, limits_.segments - segments, access.ranges)) {
-                reasons.insert("invalid_or_excessive_layout");
-            }
-            segments += access.ranges.size();
+            auto access = NormalizeAccessCoverage(a, *node);
             accessKeys[{key, a.accessIndex}] = accesses.size();
             accesses.push_back(std::move(access));
         }
+    }
+
+    void ValidateAccessFragments(const FragmentCounts& counts)
+    {
         for (const auto& c : counts) {
             auto observed = c.second.second;
             const auto skipped = skippedFragments.find(c.first);
@@ -415,6 +564,10 @@ private:
             if (c.second.first != observed.size())
                 reasons.insert("missing_access_fragment");
         }
+    }
+
+    void NormalizeVfBarriers(VfEventCounts& vfBarrierCounts)
+    {
         std::map<Instruction, AclsanDeviceBarrierData> uniqueBarriers;
         for (const auto& b : localBarriers) {
             const auto key = Key(b);
@@ -438,6 +591,10 @@ private:
             ++vfBarrierCounts[parent];
             EnsureVf(parent).AddBarrier(b);
         }
+    }
+
+    void FinalizeVfGraphs(VfEventCounts& vfAccessCounts, VfEventCounts& vfBarrierCounts)
+    {
         for (auto& vf : vfGraphs) {
             const auto metadata = vfMetadata.find(vf.first);
             if (metadata == vfMetadata.end()) {
@@ -461,6 +618,10 @@ private:
                 vf.second.Build();
             }
         }
+    }
+
+    void NormalizeSyncEvents()
+    {
         for (size_t i = 0; i < sync.size(); ++i) {
             const auto& s = sync[i];
             auto found = events.find(Key(s.header));
@@ -478,6 +639,22 @@ private:
         }
     }
 
+    void NormalizeEvents()
+    {
+        ValidateInstructionIdentities();
+        SortEvents();
+        NormalizeVfMetadata();
+        AnalysisPhaseTimer phase(ObservedLaunchId(), "normalize_operands");
+        FragmentCounts counts;
+        VfEventCounts vfAccessCounts;
+        VfEventCounts vfBarrierCounts;
+        NormalizeMemoryOperands(counts, vfAccessCounts);
+        ValidateAccessFragments(counts);
+        NormalizeVfBarriers(vfBarrierCounts);
+        FinalizeVfGraphs(vfAccessCounts, vfBarrierCounts);
+        NormalizeSyncEvents();
+    }
+
     VfSubgraph& EnsureVf(const Instruction& key)
     {
         auto found = vfGraphs.find(key);
@@ -491,7 +668,8 @@ private:
         events[key] = Event{false, 0, vf.Completion(), ACLSAN_DEVICE_PIPE_VECTOR};
         instructionStarts[key] = vf.Entry();
         const auto& [domain, instructionId, vfSequence, launchId] = key;
-        vfEntries.emplace(VfKey{domain, instructionId, launchId}, vf.Entry());
+        vfBoundaries.emplace(
+            VfKey{domain, instructionId, launchId}, DependencyGraph::VfBoundary{vf.Entry(), vf.Completion()});
         ASCTOOL_DEBUG(
             "racecheck DAG graph=%p VF instr=%llu entry=%zu completion=%zu", static_cast<void*>(&graph),
             static_cast<unsigned long long>(instructionId), vf.Entry(), vf.Completion());
@@ -531,6 +709,10 @@ private:
     {
         if (!graph.AddEdge(a, b, reason)) {
             reasons.insert("graph_budget");
+            if (graph.EdgeCount() >= limits_.GraphEdgeBudget())
+                NoteBudget("graph_edges", graph.EdgeCount(), limits_.GraphEdgeBudget());
+            else
+                reasons.insert("invalid_graph_edge");
             graphExhausted = true;
         }
     }
@@ -547,8 +729,9 @@ private:
             return;
         // Each join needs two edges. Bound extra nodes as well as edges so a
         // failed edge insertion cannot leave an unbounded synthetic-node list.
-        if (joinNodes >= limits_.edges) {
+        if (joinNodes >= limits_.SyntheticGraphNodeBudget()) {
             reasons.insert("graph_budget");
+            NoteBudget("join_nodes", joinNodes, limits_.SyntheticGraphNodeBudget());
             graphExhausted = true;
             return;
         }
@@ -595,11 +778,11 @@ private:
     }
 
     void AddUnitFragment(
-        UnitPartition& partition, const Access& access, size_t start, const std::vector<Interval>& ranges, bool unit)
+        UnitPartition& partition, const Access& access, size_t start, const SharedRanges& ranges, bool unit)
     {
         const auto& a = access.data;
         const auto key = Key(a);
-        if (partition.expanded.size() >= limits_.segments || graphExhausted) {
+        if (partition.expanded.size() >= limits_.UnitFlagFragmentBudget() || graphExhausted) {
             reasons.insert("unit_flag_budget");
             return;
         }
@@ -633,9 +816,18 @@ private:
                                      range.end :
                                      std::min(range.end, *next * unitBytes);
             const uint64_t length = end - begin;
-            AddUnitFragment(partition, access, start, {Interval{begin, begin + length}}, true);
+            SharedRanges fragment;
+            if (rangeStorage_.Admit({Interval{begin, begin + length}}, fragment) != RangeStorageStatus::Complete) {
+                reasons.insert("range_storage_budget");
+                NoteBudget(
+                    "unit_flag_range_capacity", rangeStorage_.Budget()->Used(), rangeStorage_.Budget()->Limit(),
+                    &a.header);
+                graphExhausted = true;
+                return;
+            }
+            AddUnitFragment(partition, access, start, fragment, true);
             begin += length;
-            if (graphExhausted || partition.expanded.size() >= limits_.segments) {
+            if (graphExhausted || partition.expanded.size() >= limits_.UnitFlagFragmentBudget()) {
                 if (begin < range.end)
                     reasons.insert("unit_flag_budget");
                 break;
@@ -744,10 +936,19 @@ private:
         // UnitFlag synchronizes L0C fragments, never whole FIX/M pipelines.
         // Keep scratch state local to this stage; instruction boundaries remain in the graph.
         UnitPartition partition;
-        CollectUnitBoundaries(partition);
-        PartitionUnitAccesses(partition);
-        accesses = std::move(partition.expanded);
-        MatchUnitFlags(partition);
+        {
+            AnalysisPhaseTimer phase(ObservedLaunchId(), "unit_boundaries");
+            CollectUnitBoundaries(partition);
+        }
+        {
+            AnalysisPhaseTimer phase(ObservedLaunchId(), "unit_partition");
+            PartitionUnitAccesses(partition);
+            accesses = std::move(partition.expanded);
+        }
+        {
+            AnalysisPhaseTimer phase(ObservedLaunchId(), "unit_queue_match");
+            MatchUnitFlags(partition);
+        }
     }
 
     void RecordNotification(
@@ -764,7 +965,71 @@ private:
                 if (CrossParticipant(s.mode, peer, receiver, receiverFlag))
                     stream.senders[peer];
         }
-        stream.senders[DomainOf(s.header)].push_back(node);
+        auto& sender = stream.senders[DomainOf(s.header)];
+        if (sender.pipe.has_value() && *sender.pipe != s.srcPipe) {
+            reasons.insert("ambiguous_cross_core_notification_order");
+        }
+        sender.pipe = s.srcPipe;
+        sender.completions.push_back(node);
+    }
+
+    static bool SupportsCrossCoreNotification(const AclsanDeviceSyncData& event, const Domain& sender)
+    {
+        return event.scope == ACLSAN_DEVICE_SYNC_SCOPE_CORE &&
+               (event.mode == CROSS_CORE_MODE_SAME_PIPE || event.mode == CROSS_CORE_MODE_VECTOR ||
+                event.mode == CROSS_CORE_MODE_CROSS_TYPE || event.mode == CROSS_CORE_MODE_RECEIVER_FLAG) &&
+               (event.mode == CROSS_CORE_MODE_SAME_PIPE || Position3510(sender).has_value());
+    }
+
+    std::optional<uint64_t> ResolveReceiverFlag(
+        const AclsanDeviceSyncData& event, const Domain& sender, const Domain& receiver, uint64_t flag) const
+    {
+        if (event.mode != CROSS_CORE_MODE_RECEIVER_FLAG) {
+            return flag;
+        }
+        const auto senderPosition = Position3510(sender);
+        const auto receiverPosition = Position3510(receiver);
+        if (!senderPosition.has_value() || !receiverPosition.has_value()) {
+            return std::nullopt;
+        }
+        const bool cube = event.header.executor.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+        if (cube && receiverPosition->subblock != (flag >> 4U)) {
+            return std::nullopt;
+        }
+        return cube ? flag & 15U : flag + 16U * senderPosition->subblock;
+    }
+
+    size_t CrossCoreCompletion(size_t issue) const
+    {
+        const auto completion = crossCoreCompletions.find(issue);
+        return completion == crossCoreCompletions.end() ? issue : completion->second;
+    }
+
+    std::optional<size_t> RegisterCrossCoreCompletion(size_t issue, uint32_t pipe)
+    {
+        if (pipe == ACLSAN_DEVICE_PIPE_SCALAR) {
+            return issue;
+        }
+        if (joinNodes >= limits_.SyntheticGraphNodeBudget()) {
+            reasons.insert("graph_budget");
+            NoteBudget("cross_core_completion_nodes", joinNodes, limits_.SyntheticGraphNodeBudget());
+            graphExhausted = true;
+            return std::nullopt;
+        }
+        ++joinNodes;
+        const size_t completion = graph.AddNode();
+        crossCoreCompletions.emplace(issue, completion);
+        return completion;
+    }
+
+    void RecordCrossCoreWait(const CrossFlag& key, uint32_t pipe, size_t completion)
+    {
+        auto& counter = crossCounters[key];
+        if (counter.waitPipe.has_value() && *counter.waitPipe != pipe) {
+            reasons.insert("ambiguous_cross_core_notification_order");
+        }
+        counter.waitPipe = pipe;
+        counter.waits.push_back(completion);
     }
 
     void RouteCrossCoreNotifications()
@@ -787,42 +1052,38 @@ private:
             const bool intra = s.mode == CROSS_CORE_MODE_RECEIVER_FLAG;
             const bool cube = s.header.executor.blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
             const auto flag = s.objectId & (intra && cube ? 31U : 15U);
-            if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE ||
-                (s.mode != CROSS_CORE_MODE_SAME_PIPE && s.mode != CROSS_CORE_MODE_VECTOR &&
-                 s.mode != CROSS_CORE_MODE_CROSS_TYPE && s.mode != CROSS_CORE_MODE_RECEIVER_FLAG) ||
-                (s.mode != CROSS_CORE_MODE_SAME_PIPE && !Position3510(sender))) {
+            if (!SupportsCrossCoreNotification(s, sender)) {
                 reasons.insert("unsupported_cross_core_topology_or_mode");
                 continue;
             }
-            if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
-                crossCounters[{sender, intra, flag}].waits.push_back(e.node);
+            const bool isWait = s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT;
+            if (!isWait && s.action != ACLSAN_DEVICE_SYNC_ACTION_SET) {
                 continue;
             }
-            if (s.action != ACLSAN_DEVICE_SYNC_ACTION_SET)
+            const auto completion = RegisterCrossCoreCompletion(e.node, isWait ? s.dstPipe : s.srcPipe);
+            if (!completion.has_value()) {
+                break;
+            }
+            if (isWait) {
+                RecordCrossCoreWait({sender, intra, flag}, s.dstPipe, *completion);
                 continue;
+            }
             bool delivered = false;
             for (const auto& receiver : domains) {
-                uint64_t receiverFlag = flag;
-                if (intra) {
-                    const auto sp = Position3510(sender), rp = Position3510(receiver);
-                    if (!sp || !rp)
-                        continue;
-                    if (cube && rp->subblock != (flag >> 4U))
-                        continue;
-                    receiverFlag = cube ? flag & 15U : flag + 16U * sp->subblock;
-                }
-                if (!CrossParticipant(s.mode, sender, receiver, receiverFlag))
+                const auto receiverFlag = ResolveReceiverFlag(s, sender, receiver, flag);
+                if (!receiverFlag.has_value() || !CrossParticipant(s.mode, sender, receiver, *receiverFlag)) {
                     continue;
+                }
                 delivered = true;
-                if (++routedSets > limits_.edges) {
+                if (++routedSets > limits_.RoutedNotificationBudget()) {
                     reasons.insert("graph_budget");
                     break;
                 }
-                RecordNotification(s, receiver, receiverFlag, e.node, domains);
+                RecordNotification(s, receiver, *receiverFlag, *completion, domains);
             }
             if (!delivered)
                 reasons.insert("pending_cross_core_set");
-            if (routedSets > limits_.edges)
+            if (routedSets > limits_.RoutedNotificationBudget())
                 break;
         }
     }
@@ -831,19 +1092,18 @@ private:
     {
         size_t complete = std::numeric_limits<size_t>::max();
         for (const auto& sender : stream.senders)
-            complete = std::min(complete, sender.second.size());
+            complete = std::min(complete, sender.second.completions.size());
         if (stream.senders.empty())
             return;
         for (size_t i = 0; i < complete; ++i) {
             std::optional<size_t> joined;
             std::vector<size_t> contributors;
             for (const auto& sender : stream.senders) {
-                const auto node = sender.second[i];
+                const auto node = sender.second.completions[i];
                 contributors.push_back(node);
                 MergePrefix(joined, node, HappensBeforeGraph::Reason::TokenMatch);
             }
-            // Per-core scalar SET order makes successive complete
-            // notifications in one participant stream ordered as well.
+            // Each sender contributes notifications in its selected pipe's order.
             if (!stream.tokens.empty())
                 AddEdge(stream.tokens.back().node, *joined, HappensBeforeGraph::Reason::TokenMatch);
             stream.tokens.push_back({*joined, std::move(contributors)});
@@ -857,118 +1117,258 @@ private:
                 BuildStreamTokens(mode.second);
     }
 
+    struct PhysicalBlockSpan {
+        Domain domain;
+        uint64_t first;
+        uint64_t last;
+    };
+    using PhysicalSlot = std::pair<uint32_t, uint32_t>;
+    using BlockBoundaries = std::map<Domain, std::pair<size_t, size_t>>;
+
+    std::map<PhysicalSlot, std::vector<PhysicalBlockSpan>> PhysicalBlockSpans() const
+    {
+        std::map<PhysicalSlot, std::vector<PhysicalBlockSpan>> slots;
+        for (auto item = events.cbegin(); item != events.cend();) {
+            const auto domain = std::get<0>(item->first);
+            const uint64_t first = std::get<1>(item->first);
+            uint64_t last = first;
+            do {
+                last = std::get<1>(item->first);
+                ++item;
+            } while (item != events.cend() && std::get<0>(item->first) == domain);
+            slots[{std::get<0>(domain), std::get<3>(domain)}].push_back({domain, first, last});
+        }
+        return slots;
+    }
+
+    bool ValidPhysicalBlockSpans(PhysicalSlot slot, std::vector<PhysicalBlockSpan>& blocks)
+    {
+        constexpr uint32_t SLOT_ID_SHIFT = 32;
+        std::sort(
+            blocks.begin(), blocks.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
+        for (size_t i = 0; i < blocks.size(); ++i) {
+            const auto& block = blocks[i];
+            if (slot.second >= DAV3510_PHYSICAL_BLOCK_LIMIT || (block.first >> SLOT_ID_SHIFT) != slot.second ||
+                (block.last >> SLOT_ID_SHIFT) != slot.second || static_cast<uint32_t>(block.first) == 0 ||
+                std::get<1>(block.domain) != std::get<1>(blocks.front().domain) ||
+                (i != 0 && blocks[i - 1].last >= block.first)) {
+                reasons.insert("physical_block_order_unknown");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void AddPhysicalBlockBoundaries(const std::vector<PhysicalBlockSpan>& blocks, BlockBoundaries& boundaries)
+    {
+        std::optional<size_t> previous;
+        for (const auto& block : blocks) {
+            if (graphExhausted)
+                return;
+            constexpr size_t BOUNDARY_NODES = 2;
+            if (joinNodes > limits_.SyntheticGraphNodeBudget() ||
+                limits_.SyntheticGraphNodeBudget() - joinNodes < BOUNDARY_NODES) {
+                reasons.insert("graph_budget");
+                graphExhausted = true;
+                return;
+            }
+            const size_t begin = graph.AddNode();
+            const size_t end = graph.AddNode();
+            joinNodes += BOUNDARY_NODES;
+            boundaries.emplace(block.domain, std::make_pair(begin, end));
+            if (previous)
+                AddEdge(*previous, begin, HappensBeforeGraph::Reason::PhysicalBlockOrder);
+            previous = end;
+        }
+    }
+
+    void BuildPhysicalBlockEdges()
+    {
+        auto slots = PhysicalBlockSpans();
+        BlockBoundaries boundaries;
+        for (auto& entry : slots) {
+            if (entry.second.size() > 1 && ValidPhysicalBlockSpans(entry.first, entry.second))
+                AddPhysicalBlockBoundaries(entry.second, boundaries);
+        }
+        for (const auto& item : events) {
+            if (graphExhausted)
+                break;
+            const auto boundary = boundaries.find(std::get<0>(item.first));
+            if (boundary == boundaries.end())
+                continue;
+            const auto start = instructionStarts.find(item.first);
+            const size_t begin =
+                !item.second.sync && start != instructionStarts.end() ? start->second : item.second.node;
+            AddEdge(boundary->second.first, begin, HappensBeforeGraph::Reason::PhysicalBlockOrder);
+            AddEdge(
+                CrossCoreCompletion(item.second.node), boundary->second.second,
+                HappensBeforeGraph::Reason::PhysicalBlockOrder);
+        }
+    }
+
+    using Flag = std::tuple<Domain, uint32_t, uint32_t, uint32_t, uint64_t>;
+
+    void BuildMemoryEdges(const Domain& domain, const Event& e, size_t begin)
+    {
+        if (e.pipe == ACLSAN_DEVICE_PIPE_VECTOR || e.pipe == ACLSAN_DEVICE_PIPE_SCALAR ||
+            e.pipe == ACLSAN_DEVICE_PIPE_MATRIX) {
+            const auto previous = lastOrdered.find({domain, e.pipe});
+            if (previous != lastOrdered.end())
+                AddEdge(previous->second, begin, HappensBeforeGraph::Reason::PipelineOrder);
+            lastOrdered[{domain, e.pipe}] = e.node;
+        }
+        if (const auto token = acquired[{domain, e.pipe}])
+            AddEdge(*token, begin, HappensBeforeGraph::Reason::AcquireSuffix);
+        MergePrefix(prefix[{domain, e.pipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
+    }
+
+    void BuildBarrierEdges(const Domain& domain, const Event& e, const AclsanDeviceSyncData& s)
+    {
+        if (s.dstPipe == ACLSAN_DEVICE_PIPE_ALL) {
+            const uint32_t pipes[] = {ACLSAN_DEVICE_PIPE_SCALAR, ACLSAN_DEVICE_PIPE_VECTOR, ACLSAN_DEVICE_PIPE_MATRIX,
+                                      ACLSAN_DEVICE_PIPE_MTE1,   ACLSAN_DEVICE_PIPE_MTE2,   ACLSAN_DEVICE_PIPE_MTE3,
+                                      ACLSAN_DEVICE_PIPE_FIXPIPE};
+            for (const auto p : pipes) {
+                if (const auto prior = prefix[{domain, p}])
+                    AddEdge(*prior, e.node, HappensBeforeGraph::Reason::BarrierPrefix);
+                acquired[{domain, p}] = e.node;
+                prefix[{domain, p}] = e.node;
+            }
+        } else if (ValidPipe(s.dstPipe)) {
+            if (const auto prior = prefix[{domain, s.dstPipe}])
+                AddEdge(*prior, e.node, HappensBeforeGraph::Reason::BarrierPrefix);
+            acquired[{domain, s.dstPipe}] = e.node;
+            prefix[{domain, s.dstPipe}] = e.node;
+        } else {
+            reasons.insert("barrier_coverage_unknown");
+        }
+    }
+
+    void BuildCrossCorePipeEdges(const Pipe& pipe, size_t issue, size_t completion, bool isSet)
+    {
+        if (issue != completion) {
+            AddEdge(issue, completion, HappensBeforeGraph::Reason::PipelineOrder);
+            const auto previous = lastCrossCoreCompletion.find(pipe);
+            if (previous != lastCrossCoreCompletion.end()) {
+                AddEdge(previous->second, completion, HappensBeforeGraph::Reason::PipelineOrder);
+            }
+        }
+        lastCrossCoreCompletion[pipe] = completion;
+        if (isSet) {
+            if (const auto prior = prefix[pipe]; prior.has_value() && *prior != completion) {
+                AddEdge(*prior, completion, HappensBeforeGraph::Reason::PublishPrefix);
+            }
+        } else {
+            MergePrefix(acquired[pipe], completion, HappensBeforeGraph::Reason::AcquireSuffix);
+        }
+        MergePrefix(prefix[pipe], completion, HappensBeforeGraph::Reason::PublishPrefix);
+    }
+
+    void BuildLocalCrossCoreEdges(
+        const Domain& domain, const Event& e, const AclsanDeviceSyncData& s, std::map<Domain, size_t>& scalarWaitGate)
+    {
+        // Issue is ordered by scalar; execution on a selected pipe must not
+        // publish that pipe's work back onto the issuing scalar path.
+        const Pipe scalar{domain, ACLSAN_DEVICE_PIPE_SCALAR};
+        if (const auto prior = prefix[scalar])
+            AddEdge(*prior, e.node, HappensBeforeGraph::Reason::PipelineOrder);
+        lastOrdered[scalar] = e.node;
+        const bool isSet = s.action == ACLSAN_DEVICE_SYNC_ACTION_SET;
+        if (!isSet && s.action != ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
+            reasons.insert("invalid_cross_core_sync_action");
+            return;
+        }
+        const uint32_t pipe = isSet ? s.srcPipe : s.dstPipe;
+        const size_t completion = CrossCoreCompletion(e.node);
+        if (pipe != ACLSAN_DEVICE_PIPE_SCALAR) {
+            MergePrefix(prefix[scalar], e.node, HappensBeforeGraph::Reason::PublishPrefix);
+        } else if (!isSet) {
+            // A scalar wait delays later issue, not already queued work.
+            scalarWaitGate[domain] = completion;
+        }
+        BuildCrossCorePipeEdges({domain, pipe}, e.node, completion, isSet);
+    }
+
+    void BuildBlockFlagEdges(
+        const Domain& domain, const Event& e, const AclsanDeviceSyncData& s, std::map<Flag, size_t>& flags,
+        std::set<Flag>& invalidFlags)
+    {
+        const Flag key{domain, s.scope, s.srcPipe, s.dstPipe, s.objectId};
+        if (invalidFlags.count(key) != 0) {
+            if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
+                flags.erase(key);
+                invalidFlags.erase(key);
+            }
+            return;
+        }
+        if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
+            if (flags.count(key) != 0) {
+                invalidFlags.insert(key);
+                reasons.insert("duplicate_set");
+                return;
+            }
+            if (const auto prior = prefix[{domain, s.srcPipe}])
+                AddEdge(*prior, e.node, HappensBeforeGraph::Reason::PublishPrefix);
+            flags[key] = e.node;
+        } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
+            auto f = flags.find(key);
+            if (f == flags.end() || invalidFlags.count(key) != 0) {
+                reasons.insert("unmatched_wait");
+                return;
+            }
+            AddEdge(f->second, e.node, HappensBeforeGraph::Reason::TokenMatch);
+            flags.erase(f);
+            MergePrefix(acquired[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::AcquireSuffix);
+            MergePrefix(prefix[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
+        } else
+            reasons.insert("invalid_sync_action");
+    }
+
+    static bool IsSupportedLocalFlag(const AclsanDeviceSyncData& sync)
+    {
+        return sync.syncKind == ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG && ValidPipe(sync.srcPipe) &&
+               ValidPipe(sync.dstPipe) &&
+               (sync.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK || sync.mode == CROSS_CORE_MODE_SAME_PIPE) &&
+               (sync.scope == ACLSAN_DEVICE_SYNC_SCOPE_CORE || sync.srcPipe != sync.dstPipe) &&
+               (sync.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK || sync.mode <= CROSS_CORE_MODE_RECEIVER_FLAG);
+    }
+
     void BuildLocalEdges()
     {
-        using Flag = std::tuple<Domain, uint32_t, uint32_t, uint32_t, uint64_t>;
         std::map<Flag, size_t> flags;
         std::set<Flag> invalidFlags;
+        std::map<Domain, size_t> scalarWaitGate;
         for (const auto& pair : events) {
             if (graphExhausted)
                 break;
             const Domain domain = std::get<0>(pair.first);
             const auto& e = pair.second;
+            const size_t begin =
+                !e.sync && instructionStarts.count(pair.first) != 0 ? instructionStarts.at(pair.first) : e.node;
+            if (const auto wait = scalarWaitGate.find(domain); wait != scalarWaitGate.end())
+                AddEdge(wait->second, begin, HappensBeforeGraph::Reason::AcquireSuffix);
             if (!e.sync) {
-                const size_t begin =
-                    instructionStarts.count(pair.first) != 0 ? instructionStarts.at(pair.first) : e.node;
-                if (e.pipe == ACLSAN_DEVICE_PIPE_VECTOR || e.pipe == ACLSAN_DEVICE_PIPE_SCALAR ||
-                    e.pipe == ACLSAN_DEVICE_PIPE_MATRIX) {
-                    const auto previous = lastOrdered.find({domain, e.pipe});
-                    if (previous != lastOrdered.end())
-                        AddEdge(previous->second, begin, HappensBeforeGraph::Reason::PipelineOrder);
-                    lastOrdered[{domain, e.pipe}] = e.node;
-                }
-                if (const auto token = acquired[{domain, e.pipe}])
-                    AddEdge(*token, begin, HappensBeforeGraph::Reason::AcquireSuffix);
-                MergePrefix(prefix[{domain, e.pipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
+                BuildMemoryEdges(domain, e, begin);
                 continue;
             }
             const auto& s = sync[e.index];
             if (s.syncKind == ACLSAN_DEVICE_SYNC_KIND_UNKNOWN && s.action == ACLSAN_DEVICE_SYNC_ACTION_UNKNOWN) {
-                if (s.dstPipe == ACLSAN_DEVICE_PIPE_ALL) {
-                    const uint32_t pipes[] = {ACLSAN_DEVICE_PIPE_SCALAR, ACLSAN_DEVICE_PIPE_VECTOR,
-                                              ACLSAN_DEVICE_PIPE_MATRIX, ACLSAN_DEVICE_PIPE_MTE1,
-                                              ACLSAN_DEVICE_PIPE_MTE2,   ACLSAN_DEVICE_PIPE_MTE3,
-                                              ACLSAN_DEVICE_PIPE_FIXPIPE};
-                    for (const auto p : pipes) {
-                        if (const auto prior = prefix[{domain, p}])
-                            AddEdge(*prior, e.node, HappensBeforeGraph::Reason::BarrierPrefix);
-                        acquired[{domain, p}] = e.node;
-                        prefix[{domain, p}] = e.node;
-                    }
-                } else if (ValidPipe(s.dstPipe)) {
-                    if (const auto prior = prefix[{domain, s.dstPipe}])
-                        AddEdge(*prior, e.node, HappensBeforeGraph::Reason::BarrierPrefix);
-                    acquired[{domain, s.dstPipe}] = e.node;
-                    prefix[{domain, s.dstPipe}] = e.node;
-                } else {
-                    reasons.insert("barrier_coverage_unknown");
-                }
+                BuildBarrierEdges(domain, e, s);
                 continue;
             }
             if (s.syncKind == ACLSAN_DEVICE_SYNC_KIND_GET_RLS_BUF) {
                 BuildMutexEdges(domain, e, s);
                 continue;
             }
-            if (s.syncKind != ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG || !ValidPipe(s.srcPipe) || !ValidPipe(s.dstPipe) ||
-                (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode != CROSS_CORE_MODE_SAME_PIPE) ||
-                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_CORE && s.srcPipe == s.dstPipe) ||
-                (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK && s.mode > CROSS_CORE_MODE_RECEIVER_FLAG)) {
+            if (!IsSupportedLocalFlag(s)) {
                 reasons.insert("sync_coverage_unknown");
                 continue;
             }
             if (s.scope != ACLSAN_DEVICE_SYNC_SCOPE_BLOCK) {
-                // Cross-core SET/WAIT execute on scalar in core order, regardless
-                // of their selected source/destination pipeline or flag ID. This
-                // orders notifications, not all ordinary memory completions.
-                auto scalar = std::make_pair(domain, uint32_t{ACLSAN_DEVICE_PIPE_SCALAR});
-                if (const auto prior = prefix[scalar])
-                    AddEdge(*prior, e.node, HappensBeforeGraph::Reason::PipelineOrder);
-                lastOrdered[scalar] = e.node;
-                MergePrefix(prefix[scalar], e.node, HappensBeforeGraph::Reason::PublishPrefix);
-                if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
-                    if (s.srcPipe != ACLSAN_DEVICE_PIPE_SCALAR)
-                        if (const auto prior = prefix[{domain, s.srcPipe}])
-                            AddEdge(*prior, e.node, HappensBeforeGraph::Reason::PublishPrefix);
-                } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
-                    // Notification edges are resolved after local graph building.
-                    if (ValidPipe(s.dstPipe)) {
-                        MergePrefix(acquired[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::AcquireSuffix);
-                        MergePrefix(prefix[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
-                    }
-                } else if (s.action != ACLSAN_DEVICE_SYNC_ACTION_SET) {
-                    reasons.insert("invalid_cross_core_sync_action");
-                }
+                BuildLocalCrossCoreEdges(domain, e, s, scalarWaitGate);
                 continue;
             }
-            const Flag key{domain, s.scope, s.srcPipe, s.dstPipe, s.objectId};
-            if (invalidFlags.count(key) != 0) {
-                if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
-                    flags.erase(key);
-                    invalidFlags.erase(key);
-                }
-                continue;
-            }
-            if (s.action == ACLSAN_DEVICE_SYNC_ACTION_SET) {
-                if (flags.count(key) != 0) {
-                    invalidFlags.insert(key);
-                    reasons.insert("duplicate_set");
-                    continue;
-                }
-                if (const auto prior = prefix[{domain, s.srcPipe}])
-                    AddEdge(*prior, e.node, HappensBeforeGraph::Reason::PublishPrefix);
-                flags[key] = e.node;
-            } else if (s.action == ACLSAN_DEVICE_SYNC_ACTION_WAIT) {
-                auto f = flags.find(key);
-                if (f == flags.end() || invalidFlags.count(key) != 0) {
-                    reasons.insert("unmatched_wait");
-                    continue;
-                }
-                AddEdge(f->second, e.node, HappensBeforeGraph::Reason::TokenMatch);
-                flags.erase(f);
-                MergePrefix(acquired[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::AcquireSuffix);
-                MergePrefix(prefix[{domain, s.dstPipe}], e.node, HappensBeforeGraph::Reason::PublishPrefix);
-            } else
-                reasons.insert("invalid_sync_action");
+            BuildBlockFlagEdges(domain, e, s, flags, invalidFlags);
         }
         if (!flags.empty())
             reasons.insert("pending_set");
@@ -1087,7 +1487,7 @@ private:
         const auto wait = counter.waits[counter.consumed];
         const auto candidates = PendingWaitCandidates(counter, wait);
         auto* selected = SelectFirstNotification(candidates);
-        if (selected && reasons.empty()) {
+        if (selected != nullptr && reasons.empty()) {
             AddEdge(selected->tokens[selected->consumed++].node, wait, HappensBeforeGraph::Reason::TokenMatch);
             ++counter.consumed;
             return true;
@@ -1098,9 +1498,9 @@ private:
     void ResolveCrossCoreWaits()
     {
         // WAIT consumes one notification from its receiver counter, irrespective
-        // of mode. Resolve only orders proven by SET scalar order or existing HB
+        // of mode. Resolve using the current same-pipe prefix model and existing HB
         // paths. Iteration allows handshakes on another flag to establish order;
-        // callback arrival and map iteration order are never matching evidence.
+        // mixed-pipe issue order and callback arrival are not matching evidence.
         bool progress = true;
         while (progress && reasons.empty()) {
             progress = false;
@@ -1140,7 +1540,7 @@ void BuildDependencyGraph(
     const std::vector<AclsanDeviceRegisterStateData>& registers, std::vector<AclsanDeviceVfData>& vfs,
     const std::vector<AclsanDeviceBarrierData>& localBarriers)
 {
-    output.graph.BeginAnalysis(limits.analysisWork);
+    output.graph.BeginAnalysis(limits.ReachabilityPhaseWorkBudget());
     DependencyGraphBuilder(memory, sync, skippedFragments, limits, reasons, output, registers, vfs, localBarriers)
         .Run();
 }

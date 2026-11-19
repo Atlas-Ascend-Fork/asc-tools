@@ -203,6 +203,7 @@ ReportRecord MakeInitcheckRecord()
             {"firstUninitAddress", "3000"},
             {"base", "3000"},
             {"allocationInitializedBytes", "0"},
+            {"paddingNote", ""},
             {"allocSerialNo", "1"},
             {"deviceId", "0"},
             {"pc", "1234"},

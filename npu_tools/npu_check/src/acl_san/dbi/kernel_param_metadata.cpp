@@ -72,7 +72,7 @@ struct Section {
     uint64_t flags;
 };
 
-std::map<std::string, Section> ReadSections(const std::string& data, bool readOnly = false)
+void RequireElf64Header(const std::string& data)
 {
     Require(
         data.size() >= sizeof(Elf64_Ehdr) && data.compare(0, SELFMAG, ELFMAG) == 0 &&
@@ -81,6 +81,35 @@ std::map<std::string, Section> ReadSections(const std::string& data, bool readOn
             Read(data, offsetof(Elf64_Ehdr, e_version), sizeof(Elf64_Ehdr::e_version)) == EV_CURRENT &&
             Read(data, offsetof(Elf64_Ehdr, e_ehsize), sizeof(Elf64_Ehdr::e_ehsize)) == sizeof(Elf64_Ehdr),
         "expected ELF64 little-endian version 1");
+}
+
+void SelectSection(
+    std::map<std::string, Section>& sections, const std::string& name, const Section& section, uint64_t type,
+    bool readOnly, size_t fileSize)
+{
+    if (readOnly) {
+        if (type == SHT_PROGBITS && (section.flags & SHF_ALLOC) != 0 &&
+            (section.flags & (static_cast<uint64_t>(SHF_WRITE) | static_cast<uint64_t>(SHF_TLS))) == 0 &&
+            section.size != 0) {
+            Require(sections.emplace(name, section).second, "duplicate read-only section");
+        }
+        return;
+    }
+    constexpr char kMetadataPrefix[] = ".ascend.meta.";
+    if (name.compare(0, sizeof(kMetadataPrefix) - 1, kMetadataPrefix) != 0) {
+        return;
+    }
+    Require(
+        type == SHT_NOTE && (section.flags & SHF_ALLOC) == 0, "kernel metadata must be a non-allocated NOTE section");
+    Require(
+        section.alignment == 0 || ((section.alignment & (section.alignment - 1)) == 0 && section.alignment <= fileSize),
+        "invalid metadata alignment");
+    Require(sections.emplace(name, section).second, "duplicate kernel metadata section");
+}
+
+std::map<std::string, Section> ReadSections(const std::string& data, bool readOnly = false)
+{
+    RequireElf64Header(data);
     const uint64_t table = Read(data, offsetof(Elf64_Ehdr, e_shoff), sizeof(Elf64_Ehdr::e_shoff));
     const uint64_t count = Read(data, offsetof(Elf64_Ehdr, e_shnum), sizeof(Elf64_Ehdr::e_shnum));
     const uint64_t namesIndex = Read(data, offsetof(Elf64_Ehdr, e_shstrndx), sizeof(Elf64_Ehdr::e_shstrndx));
@@ -119,24 +148,7 @@ std::map<std::string, Section> ReadSections(const std::string& data, bool readOn
                 "allocated ELF section overlaps section table");
         }
         const std::string name = data.substr(namesOffset + nameOffset, end - namesOffset - nameOffset);
-        if (readOnly) {
-            if (type == SHT_PROGBITS && (section.flags & SHF_ALLOC) != 0 &&
-                (section.flags & (SHF_WRITE | SHF_TLS)) == 0 && section.size != 0) {
-                Require(sections.emplace(name, section).second, "duplicate read-only section");
-            }
-            continue;
-        }
-        if (name.compare(0, sizeof(".ascend.meta.") - 1, ".ascend.meta.") != 0) {
-            continue;
-        }
-        Require(
-            type == SHT_NOTE && (section.flags & SHF_ALLOC) == 0,
-            "kernel metadata must be a non-allocated NOTE section");
-        Require(
-            section.alignment == 0 ||
-                ((section.alignment & (section.alignment - 1)) == 0 && section.alignment <= data.size()),
-            "invalid metadata alignment");
-        Require(sections.emplace(name, section).second, "duplicate kernel metadata section");
+        SelectSection(sections, name, section, type, readOnly, data.size());
     }
     return sections;
 }
@@ -167,7 +179,7 @@ Metadata ReadMetadata(const std::string& data, const Section& section)
         if (tag == PARAM_SUMMARY) {
             Require(length == SUMMARY_SIZE, "unsupported ParamSummary layout");
             ++summaryCount;
-            count = Read(bytes, offset, sizeof(uint32_t));
+            count = static_cast<uint32_t>(Read(bytes, offset, sizeof(uint32_t)));
         } else if (tag == PARAM_INFO) {
             Require(length == PARAM_INFO_SIZE, "unsupported ParamInfo layout");
             ++infoCount;

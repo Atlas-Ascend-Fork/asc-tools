@@ -54,10 +54,11 @@ TEST(DbiPipelineTest, AddsScalarDependencyForEveryMemoryConsumerGroup)
 TEST(DbiPipelineTest, ObjectAndCtrlbinPlansAgreeForEveryProbeMask)
 {
     const std::pair<uint32_t, ProbeGroup> groupBits[] = {
-        {PROBE_GROUP_MTE1, ProbeGroup::Mte1},     {PROBE_GROUP_MTE2, ProbeGroup::Mte2},
-        {PROBE_GROUP_MTE3, ProbeGroup::Mte3},     {PROBE_GROUP_FIXPIPE, ProbeGroup::Fixpipe},
-        {PROBE_GROUP_SYNC, ProbeGroup::Sync},     {PROBE_GROUP_SCALAR, ProbeGroup::Scalar},
-        {PROBE_GROUP_MATRIX, ProbeGroup::Matrix}, {PROBE_GROUP_VECTOR, ProbeGroup::Vector},
+        {PROBE_GROUP_MTE1, ProbeGroup::Mte1},         {PROBE_GROUP_MTE2, ProbeGroup::Mte2},
+        {PROBE_GROUP_MTE3, ProbeGroup::Mte3},         {PROBE_GROUP_FIXPIPE, ProbeGroup::Fixpipe},
+        {PROBE_GROUP_SYNC, ProbeGroup::Sync},         {PROBE_GROUP_SCALAR, ProbeGroup::Scalar},
+        {PROBE_GROUP_MATRIX, ProbeGroup::Matrix},     {PROBE_GROUP_VECTOR, ProbeGroup::Vector},
+        {PROBE_GROUP_BOUNDARY, ProbeGroup::Boundary},
     };
     for (uint32_t mask = 0; mask <= PROBE_GROUP_ALL; ++mask) {
         std::vector<ProbeGroup> rawGroups;
@@ -310,7 +311,7 @@ TEST(CtrlbinGeneratorTest, FiltersBindingsToSelectedProbeGroups)
     const auto symbols = BindingSymbols({ProbeGroup::Mte2});
     ASSERT_FALSE(symbols.empty());
     for (const auto& symbol : symbols) {
-        EXPECT_NE(symbol.find("sanitizer_report_"), std::string::npos);
+        EXPECT_EQ(symbol.rfind("__npu_check_probe_", 0), 0U);
     }
 
     const auto path = boost::filesystem::temp_directory_path() / "mte2-only.ctrl.bin";
@@ -336,7 +337,7 @@ TEST(CtrlbinGeneratorTest, FiltersBindingsToSelectedProbeGroups)
 
     EXPECT_EQ(BindingSymbols({ProbeGroup::Matrix}).size(), 16U);
     const auto vectorSymbols = BindingSymbols({ProbeGroup::Vector});
-    EXPECT_EQ(vectorSymbols.size(), 15U);
+    EXPECT_EQ(vectorSymbols.size(), 13U);
     EXPECT_NE(
         std::find(vectorSymbols.begin(), vectorSymbols.end(), "__npu_check_probe_copy_ubuf_to_ubuf"),
         vectorSymbols.end());

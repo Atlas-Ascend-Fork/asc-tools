@@ -66,7 +66,7 @@
 
 ===== initcheck.partial_uninitialized_read =====
 ========= ERROR:[INITCHECK] Partially uninitialized <space> memory read
-=========     Read size: <accessBytes> bytes; uninitialized: <uninitBytes> bytes
+<paddingNote>=========     Read size: <accessBytes> bytes; uninitialized: <uninitBytes> bytes
 =========     Access start: 0x<address>; first uninitialized byte: 0x<firstUninitAddress>
 =========     Allocation base: 0x<base>; initialized bytes: <allocationInitializedBytes>; allocation instance: <allocSerialNo>
 =========     <location>, pc=0x<pc>
@@ -74,7 +74,7 @@
 
 ===== initcheck.uninitialized_read =====
 ========= ERROR:[INITCHECK] Uninitialized <space> memory read
-=========     Read size: <accessBytes> bytes; uninitialized: <uninitBytes> bytes
+<paddingNote>=========     Read size: <accessBytes> bytes; uninitialized: <uninitBytes> bytes
 =========     Access start: 0x<address>; first uninitialized byte: 0x<firstUninitAddress>
 =========     Allocation base: 0x<base>; initialized bytes: <allocationInitializedBytes>; allocation instance: <allocSerialNo>
 =========     <location>, pc=0x<pc>

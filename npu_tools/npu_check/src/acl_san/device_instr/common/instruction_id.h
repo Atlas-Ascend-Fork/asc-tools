@@ -11,6 +11,7 @@
 #ifndef NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_INSTR_COMMON_INSTRUCTION_ID_H
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DEVICE_INSTR_COMMON_INSTRUCTION_ID_H
 
+#include <array>
 #include <cstdint>
 
 namespace aclsan {
@@ -223,31 +224,10 @@ enum class InstructionId : uint32_t {
 
 constexpr bool AccessesL0Operands(uint32_t id) noexcept
 {
-    switch (static_cast<InstructionId>(id)) {
-        // Conventional MMAD operands.
-        case InstructionId::MadS8:
-        case InstructionId::MadF16F32:
-        case InstructionId::MadBf16F32:
-        case InstructionId::MadF32F32:
-        case InstructionId::MadE4m3E4m3:
-        case InstructionId::MadE4m3E5m2:
-        case InstructionId::MadE5m2E4m3:
-        case InstructionId::MadE5m2E5m2:
-        // MXFP4 operands.
-        case InstructionId::MadMxE1m2E1m2:
-        case InstructionId::MadMxE1m2E2m1:
-        case InstructionId::MadMxE2m1E1m2:
-        case InstructionId::MadMxE2m1E2m1:
-        // MXFP8 operands, including all E4M3/E5M2 combinations.
-        case InstructionId::MadMxE4m3E4m3:
-        case InstructionId::MadMxE4m3E5m2:
-        case InstructionId::MadMxE5m2E4m3:
-        case InstructionId::MadMxE5m2E5m2:
-            return true;
-        default:
-            break;
-    }
-    return (id >= static_cast<uint32_t>(InstructionId::LoadCbufToCbTransposeB8) &&
+    // The conventional MMAD, MXFP4, and MXFP8 IDs form one contiguous range.
+    return (id >= static_cast<uint32_t>(InstructionId::MadS8) &&
+            id <= static_cast<uint32_t>(InstructionId::MadMxE5m2E5m2)) ||
+           (id >= static_cast<uint32_t>(InstructionId::LoadCbufToCbTransposeB8) &&
             id <= static_cast<uint32_t>(InstructionId::LoadCbufToCbB32)) ||
            (id >= static_cast<uint32_t>(InstructionId::LoadCbufToCaMx) &&
             id <= static_cast<uint32_t>(InstructionId::Img2ColCbufToCbB32)) ||
@@ -256,138 +236,36 @@ constexpr bool AccessesL0Operands(uint32_t id) noexcept
 
 constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
 {
-    if ((instructionId >= static_cast<uint32_t>(InstructionId::StB64Imm) &&
-         instructionId <= static_cast<uint32_t>(InstructionId::LdpB8)) ||
-        (instructionId >= static_cast<uint32_t>(InstructionId::LoadCbufToCbTransposeB8) &&
-         instructionId <= static_cast<uint32_t>(InstructionId::LoadCbufToCbB32)) ||
-        (instructionId >= static_cast<uint32_t>(InstructionId::Img2ColCbufToCaB16) &&
-         instructionId <= static_cast<uint32_t>(InstructionId::Img2ColCbufToCbB32)) ||
-        instructionId == static_cast<uint32_t>(InstructionId::Img2ColCbufToCaB32) ||
-        instructionId == static_cast<uint32_t>(InstructionId::SetFmatrix) ||
-        instructionId == static_cast<uint32_t>(InstructionId::SetFmatrixB) ||
-        instructionId == static_cast<uint32_t>(InstructionId::SetL3dRpt) ||
-        instructionId == static_cast<uint32_t>(InstructionId::SetL3dRptB) ||
-        instructionId == static_cast<uint32_t>(InstructionId::LoadCbufToCaMx) ||
-        instructionId == static_cast<uint32_t>(InstructionId::LoadCbufToCbMx) ||
-        instructionId == static_cast<uint32_t>(InstructionId::CopyCbufToUbuf) ||
-        (instructionId >= static_cast<uint32_t>(InstructionId::MadS8) &&
-         instructionId <= static_cast<uint32_t>(InstructionId::MadMxE5m2E5m2))) {
-        return true;
-    }
-    switch (static_cast<InstructionId>(instructionId)) {
-        case InstructionId::PipeBarrier:
-        case InstructionId::PushPb:
-        case InstructionId::Vf:
-        case InstructionId::StAtomicB32:
-        case InstructionId::StAtomicB16:
-        case InstructionId::StAtomicB8:
-        case InstructionId::StiAtomicB32:
-        case InstructionId::StiAtomicB16:
-        case InstructionId::StiAtomicB8:
-        case InstructionId::DcPreload:
-        case InstructionId::DcPreloadI:
-        case InstructionId::StDevB64:
-        case InstructionId::StDevB32:
-        case InstructionId::StDevB16:
-        case InstructionId::StDevB8:
-        case InstructionId::LdDevB64:
-        case InstructionId::LdDevB32:
-        case InstructionId::LdDevB16:
-        case InstructionId::LdDevB8:
-        case InstructionId::LoadGmToCbuf2DV2:
-        case InstructionId::CopyGmToCbufV2:
-        case InstructionId::CopyGmToCbufAlignV2B8:
-        case InstructionId::CopyGmToCbufAlignV2B16:
-        case InstructionId::CopyGmToCbufAlignV2B32:
-        case InstructionId::CopyGmToCbufMultiNd2NzB8:
-        case InstructionId::CopyGmToCbufMultiNd2NzB16:
-        case InstructionId::CopyGmToCbufMultiNd2NzB32:
-        case InstructionId::CopyGmToCbufMultiDn2NzB8:
-        case InstructionId::CopyGmToCbufMultiDn2NzB16:
-        case InstructionId::CopyGmToCbufMultiDn2NzB32:
-        case InstructionId::CopyGmToUbufAlignV2B8:
-        case InstructionId::CopyGmToUbufAlignV2B16:
-        case InstructionId::CopyGmToUbufAlignV2B32:
-        case InstructionId::Mte2SrcPara:
-        case InstructionId::LoopSizeUbufToGm:
-        case InstructionId::Loop1StrideUbufToGm:
-        case InstructionId::Loop2StrideUbufToGm:
-        case InstructionId::LoopSizeGmToUbuf:
-        case InstructionId::Loop1StrideGmToUbuf:
-        case InstructionId::Loop2StrideGmToUbuf:
-        case InstructionId::NdDmaPadCount:
-        case InstructionId::NdDmaLoop0Stride:
-        case InstructionId::NdDmaLoop1Stride:
-        case InstructionId::NdDmaLoop2Stride:
-        case InstructionId::NdDmaLoop3Stride:
-        case InstructionId::NdDmaLoop4Stride:
-        case InstructionId::NdDmaOutToUbufB8:
-        case InstructionId::NdDmaOutToUbufB16:
-        case InstructionId::NdDmaOutToUbufB32:
-        case InstructionId::ChannelPara:
-        case InstructionId::SetFpc:
-        case InstructionId::Loop3Param:
-        case InstructionId::SetL12DB16:
-        case InstructionId::SetL12DB32:
-        case InstructionId::SetMte2NzPara:
-        case InstructionId::CopyUbufToGmAlignV2:
-        case InstructionId::CopyUbufToCbuf:
-        case InstructionId::CopyUbufToUbuf:
-        case InstructionId::FixL0cToOutF32:
-        case InstructionId::FixL0cToOutS32:
-        case InstructionId::CopyCbufToFbuf:
-        case InstructionId::CopyCbufToBtF32:
-        case InstructionId::CopyCbufToBtS32:
-        case InstructionId::CopyCbufToBtF16:
-        case InstructionId::CopyCbufToBtBf16:
-        case InstructionId::FixL0cToCbufF32:
-        case InstructionId::FixL0cToCbufS32:
-        case InstructionId::FixL0cToUbufF32:
-        case InstructionId::FixL0cToUbufS32:
-        case InstructionId::SetVectorMask:
-        case InstructionId::SetCtrl:
-        case InstructionId::SetPadding:
-        case InstructionId::LoopSizeGmToCbuf:
-        case InstructionId::Loop1StrideGmToCbuf:
-        case InstructionId::Loop2StrideGmToCbuf:
-        case InstructionId::SetFlag:
-        case InstructionId::SetFlagI:
-        case InstructionId::WaitFlag:
-        case InstructionId::WaitFlagI:
-        case InstructionId::WaitFlagDev:
-        case InstructionId::WaitFlagDevI:
-        case InstructionId::FftsCrossCoreSync:
-        case InstructionId::GetBuf:
-        case InstructionId::GetBufI:
-        case InstructionId::RlsBuf:
-        case InstructionId::RlsBufI:
-        case InstructionId::SetIntraBlock:
-        case InstructionId::SetIntraBlockI:
-        case InstructionId::WaitIntraBlock:
-        case InstructionId::WaitIntraBlockI:
-        case InstructionId::SetFlagV:
-        case InstructionId::SetFlagIV:
-        case InstructionId::WaitFlagV:
-        case InstructionId::WaitFlagIV:
-        case InstructionId::GetBufV:
-        case InstructionId::GetBufIV:
-        case InstructionId::RlsBufV:
-        case InstructionId::RlsBufIV:
-        case InstructionId::SetIntraBlockV:
-        case InstructionId::SetIntraBlockIV:
-        case InstructionId::WaitIntraBlockV:
-        case InstructionId::WaitIntraBlockIV:
-        case InstructionId::FftsCrossCoreSyncV:
-        case InstructionId::WaitFlagDevV:
-        case InstructionId::WaitFlagDevIV:
-        case InstructionId::HSetFlag:
-        case InstructionId::HSetFlagI:
-        case InstructionId::HWaitFlag:
-        case InstructionId::HWaitFlagI:
-            return true;
-        default:
-            return false;
-    }
+    constexpr auto defined = [] {
+        struct IdRange {
+            InstructionId first;
+            InstructionId last;
+        };
+        // Keep holes between instruction families out of the lookup table.
+        constexpr IdRange ranges[] = {
+            {InstructionId::StB64Imm, InstructionId::SetVectorMask},
+            {InstructionId::ChannelPara, InstructionId::SetCtrl},
+            {InstructionId::SetFpc, InstructionId::SetFpc},
+            {InstructionId::CopyCbufToFbuf, InstructionId::FixL0cToUbufS32},
+            {InstructionId::CopyUbufToCbuf, InstructionId::CopyUbufToUbuf},
+            {InstructionId::SetFmatrix, InstructionId::SetFmatrixB},
+            {InstructionId::SetL3dRpt, InstructionId::SetPadding},
+            {InstructionId::LoopSizeGmToCbuf, InstructionId::Loop2StrideGmToCbuf},
+            {InstructionId::SetMte2NzPara, InstructionId::MadMxE5m2E5m2},
+            {InstructionId::Img2ColCbufToCaB32, InstructionId::CopyCbufToBtBf16},
+            {InstructionId::PipeBarrier, InstructionId::WaitFlagI},
+            {InstructionId::WaitFlagDev, InstructionId::HWaitFlagI},
+            {InstructionId::Vf, InstructionId::PushPb},
+        };
+        std::array<bool, static_cast<uint32_t>(InstructionId::PushPb) + 1> lookup{};
+        for (const auto range : ranges) {
+            for (auto id = static_cast<uint32_t>(range.first); id <= static_cast<uint32_t>(range.last); ++id) {
+                lookup[id] = true;
+            }
+        }
+        return lookup;
+    }();
+    return instructionId < defined.size() && defined[instructionId];
 }
 
 } // namespace aclsan

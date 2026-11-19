@@ -15,11 +15,13 @@
 #include <memory>
 #include <cstddef>
 #include <cstdint>
+#include "checker/racecheck/analysis_budget.h"
 #include <map>
 #include <optional>
 #include <set>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace npucheck::race {
@@ -45,7 +47,7 @@ inline Instruction Key(const AclsanDeviceEventHeader& h)
 }
 inline Instruction Key(const AclsanDeviceMemoryAccessData& a)
 {
-    if (a.vfInstrValid) {
+    if (a.vfInstrValid != 0U) {
         return {DomainOf(a.header), a.header.instrExecId, a.vfInstrExecSeq, a.header.launchId};
     }
     return Key(a.header);
@@ -74,19 +76,20 @@ struct Interval {
     uint64_t begin;
     uint64_t end;
 };
-struct Limits {
-    size_t events = 100000;
-    size_t segments = 1U << 20U;
-    size_t edges = 1U << 20U;
-    size_t comparisons = 10000000;
-    size_t queryWork = 10000000;
-    size_t queryCache = 65536;
-    size_t analysisWork = 100000000; // DFS work per build or checker replay, not per shared graph lifetime.
-    size_t stateSegments = 1U << 20U;
-    size_t stateBytes = 128U << 20U;
+enum class NormalizationStatus { Complete, InvalidLayout, SegmentBudget };
+// Validated geometry used to share immutable ranges across accesses.
+struct NormalizationObservation {
+    bool empty = false;
+    uint64_t base = 0;
+    uint64_t bytes = 0;
+    std::vector<std::pair<uint64_t, uint64_t>> sparseAxes;
 };
+NormalizationStatus DescribeNormalization(
+    const AclsanDeviceMemoryAccessData& access, NormalizationObservation& observation);
+NormalizationStatus NormalizeDetailed(
+    const AclsanDeviceMemoryAccessData& access, size_t budget, std::vector<Interval>& result);
 bool Normalize(const AclsanDeviceMemoryAccessData& access, size_t budget, std::vector<Interval>& result);
-void MergeIntervals(std::vector<Interval>& intervals);
+void MergeIntervals(std::vector<Interval>& ranges);
 bool ValidPipe(uint32_t pipe);
 // Atomic destinations read the old bytes and then write the result. The API
 // enumerates modes; they are not a READ/WRITE bitmask.

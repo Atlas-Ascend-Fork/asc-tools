@@ -46,6 +46,11 @@ private:
         StatePtr state;
     };
     using Tree = std::map<uint64_t, Segment>;
+    struct UpdatePlan;
+    bool ChargeStaging(size_t amount, size_t& staging);
+    bool StageUpdate(const Update& update, UpdatePlan& plan);
+    static void PrepareReplacements(const std::vector<Update>& updates, UpdatePlan& plan);
+    void CommitReplacements(UpdatePlan& plan);
     static size_t Cost(const StatePtr& state);
     static void Split(Tree& tree, uint64_t position);
     static bool Equal(const StatePtr& a, const StatePtr& b);

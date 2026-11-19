@@ -34,6 +34,7 @@ file(WRITE "${TEST_ROOT}/commands.log" "")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env
     "DBI_FAKE_LOG=${TEST_ROOT}/commands.log"
+    "ASCEND_HOME_PATH=${RUNTIME_ROOT}"
     "${SAMPLE}"
   RESULT_VARIABLE sample_result
   OUTPUT_VARIABLE sample_stdout
@@ -51,7 +52,7 @@ set(required_output
   "[hook] function instrumented=yes"
   "[hook] launch trace_buffer_injected=yes"
   "[device] records=2"
-  "[d2h] copies=1"
+  "[d2h] copies=2"
   "[callback] records=2"
   "[verify] kernel_result=simulated trace_records=pass resources=balanced"
   "FULL_FLOW_SAMPLE_PASS"

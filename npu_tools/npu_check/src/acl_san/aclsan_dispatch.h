@@ -30,6 +30,7 @@ public:
     static void DispatchDeviceVf(const AclsanDeviceVfData& cbData) noexcept;
     static void DispatchLaunch(const AclsanLaunchData& cbData) noexcept;
     static void DispatchLaunchBefore(const AclsanLaunchData& cbData) noexcept;
+    static void DispatchOperatorExecution(const AclsanOperatorExecutionData& cbData) noexcept;
 
 private:
     static bool IsSupportedResourceCallback(AclsanCallbackId cbId) noexcept;

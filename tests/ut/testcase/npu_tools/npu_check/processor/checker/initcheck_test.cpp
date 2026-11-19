@@ -56,6 +56,23 @@ bool Dispatch(Initcheck& checker, AclsanCallbackId cbid, const void* data, Check
     return checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, cbid, data, reports);
 }
 
+void StartReplay(Initcheck& checker, CheckerReportList& reports, uint64_t id = 11)
+{
+    AclsanLaunchData launch{};
+    launch.common = {ACLSAN_API_VERSION, sizeof(launch), nullptr, 0, 0};
+    launch.launchId = id;
+    ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+}
+
+void FinishReplay(Initcheck& checker, CheckerReportList& reports, uint64_t id = 11)
+{
+    AclsanOperatorExecutionData completion{};
+    completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, id};
+    completion.launchId = id;
+    ASSERT_TRUE(checker.OnCallback(
+        ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
+}
+
 class InitcheckHostWriteTest : public ::testing::Test {
 protected:
     Initcheck checker;
@@ -84,8 +101,34 @@ protected:
         write.deviceId = device;
         return checker.OnCallback(ACLSAN_CB_DOMAIN_MEMORY, ACLSAN_CBID_MEMORY_WRITE_END, &write, reports);
     }
-    void ReadAndSync()
+    static void Launch(Initcheck& target, CheckerReportList& output, void* stream = nullptr)
     {
+        AclsanLaunchData launch{};
+        launch.common.version = ACLSAN_API_VERSION;
+        launch.common.size = sizeof(launch);
+        launch.launchId = 11;
+        launch.stream = stream;
+        ASSERT_TRUE(target.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, output));
+    }
+
+    void Launch(void* stream = nullptr) { Launch(checker, reports, stream); }
+
+    static void Complete(Initcheck& target, CheckerReportList& output, void* stream = nullptr)
+    {
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, 11};
+        completion.launchId = 11;
+        completion.stream = stream;
+        ASSERT_TRUE(target.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, output));
+    }
+
+    void Complete(void* stream = nullptr) { Complete(checker, reports, stream); }
+
+    void ReadAndSync(bool alreadyLaunched = false)
+    {
+        if (!alreadyLaunched)
+            Launch();
         auto access = Access(1, 0);
         access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
@@ -97,7 +140,10 @@ protected:
         access.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
         access.layout.range.bytes = 128;
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+        Complete();
         AclsanSynchronizeData sync{};
+        sync.common.version = ACLSAN_API_VERSION;
+        sync.common.size = sizeof(sync);
         ASSERT_TRUE(
             checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
     }
@@ -142,16 +188,17 @@ TEST_F(InitcheckHostWriteTest, WrongDeviceAndOutOfBoundsWritesAreIncomplete)
 
 TEST_F(InitcheckHostWriteTest, PendingLaunchWithoutTraceIsNotComplete)
 {
-    AclsanLaunchData launch{};
-    launch.launchId = 11;
-    launch.stream = reinterpret_cast<void*>(0x1234);
-    ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+    auto stream = reinterpret_cast<void*>(0x1234);
+    Launch(stream);
     EXPECT_FALSE(checker.AnalysisComplete());
     AclsanSynchronizeData otherStream{};
+    otherStream.common.version = ACLSAN_API_VERSION;
+    otherStream.common.size = sizeof(otherStream);
     ASSERT_TRUE(checker.OnCallback(
         ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &otherStream, reports));
     EXPECT_FALSE(checker.AnalysisComplete());
-    otherStream.stream = launch.stream;
+    Complete(stream);
+    otherStream.stream = stream;
     ASSERT_TRUE(checker.OnCallback(
         ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &otherStream, reports));
     EXPECT_TRUE(checker.AnalysisComplete());
@@ -159,11 +206,9 @@ TEST_F(InitcheckHostWriteTest, PendingLaunchWithoutTraceIsNotComplete)
 
 TEST_F(InitcheckHostWriteTest, WriteDuringPendingLaunchDoesNotRetroactivelyInitialize)
 {
-    AclsanLaunchData launch{};
-    launch.launchId = 11;
-    ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+    Launch();
     EXPECT_FALSE(Write(128));
-    ReadAndSync();
+    ReadAndSync(true);
     ASSERT_EQ(reports.size(), 1U);
     EXPECT_EQ(std::get<NpuCheckInitcheckReport>(reports[0]).uninitBytes, 128U);
     EXPECT_FALSE(checker.AnalysisComplete());
@@ -220,6 +265,7 @@ protected:
 
     void Replay(uint64_t writtenBytes, bool matchingFlag = true)
     {
+        Launch();
         const auto mode = std::get<0>(GetParam());
         const bool cubeWriter = mode == 4;
         const uint32_t writer = cubeWriter ? 0 : (mode == 0 ? 72 : 18);
@@ -237,9 +283,7 @@ protected:
             const auto write = Memory(1, writer, cubeWriter, true, writtenBytes);
             ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &write, reports));
         }
-        AclsanSynchronizeData sync{};
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        Complete();
     }
 };
 
@@ -369,10 +413,11 @@ TEST(InitcheckTest, KeepsStateAcrossCallbacksWithinSameLaunch)
     EXPECT_EQ(checker.Stats().deviceOperations, 2U);
 }
 
-TEST(InitcheckTest, FailedSynchronizationRetainsStateUntilSuccessfulSynchronization)
+TEST(InitcheckTest, SynchronizationRetainsRegisterStateUntilOperatorCompletion)
 {
     Initcheck checker;
     CheckerReportList reports;
+    StartReplay(checker, reports);
     const auto state = State(ACLSAN_DEVICE_REGISTER_MTE2_SOURCE, 7);
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_STATE, &state, reports));
 
@@ -391,6 +436,10 @@ TEST(InitcheckTest, FailedSynchronizationRetainsStateUntilSuccessfulSynchronizat
         checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &success, reports));
     const auto afterSuccess = Access(2, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_MTE2_SOURCE);
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &afterSuccess, reports));
+    EXPECT_TRUE(reports.empty());
+    FinishReplay(checker, reports);
+    const auto afterCompletion = Access(3, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_MTE2_SOURCE, 0, 12);
+    ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &afterCompletion, reports));
     ASSERT_EQ(reports.size(), 1U);
     EXPECT_EQ(std::get<NpuCheckInitcheckReport>(reports[0]).registerId, ACLSAN_DEVICE_REGISTER_MTE2_SOURCE);
 }
@@ -488,6 +537,10 @@ TEST_F(InitcheckHostWriteTest, MemcheckReportedInvalidReadDoesNotPoisonInitcheck
         dispatch(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, &allocation);
         if (freed)
             dispatch(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE, &allocation);
+        AclsanLaunchData launch{};
+        launch.common = {ACLSAN_API_VERSION, sizeof(launch), nullptr, 0, 0};
+        launch.launchId = 11;
+        dispatch(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch);
         auto access = Access(1, 0);
         access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
@@ -499,8 +552,10 @@ TEST_F(InitcheckHostWriteTest, MemcheckReportedInvalidReadDoesNotPoisonInitcheck
         access.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
         access.layout.range.bytes = freed ? 128 : 129;
         dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access);
-        AclsanSynchronizeData sync{};
-        dispatch(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync);
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launch.launchId};
+        completion.launchId = launch.launchId;
+        dispatch(ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion);
         ASSERT_EQ(combinedReports.size(), 1U);
         EXPECT_TRUE(std::holds_alternative<NpuCheckMemcheckReport>(combinedReports[0]));
         EXPECT_TRUE(initcheck.AnalysisComplete());
@@ -514,6 +569,7 @@ TEST_F(InitcheckHostWriteTest, UnreportedInvalidReadAndLostTraceRemainIncomplete
     for (bool lost : {false, true}) {
         Initcheck initcheck;
         CheckerReportList output;
+        Launch(initcheck, output);
         auto access = Access(1, 0);
         access.header.flags = lost ? ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR : ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
@@ -525,9 +581,7 @@ TEST_F(InitcheckHostWriteTest, UnreportedInvalidReadAndLostTraceRemainIncomplete
         access.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
         access.layout.range.bytes = 128;
         ASSERT_TRUE(Dispatch(initcheck, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, output));
-        AclsanSynchronizeData sync{};
-        ASSERT_TRUE(
-            initcheck.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, output));
+        Complete(initcheck, output);
         EXPECT_FALSE(initcheck.AnalysisComplete());
         EXPECT_EQ(initcheck.Stats().malformedEvents, 1U);
     }
@@ -580,10 +634,9 @@ TEST_F(InitcheckHostWriteTest, BoundsReportDoesNotHideTraceLossMismatchedInstruc
         else
             ++bounds.common.exec.phyCoreId;
         CheckerReportList output{bounds};
+        Launch(initcheck, output);
         ASSERT_TRUE(Dispatch(initcheck, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, output));
-        AclsanSynchronizeData sync{};
-        ASSERT_TRUE(
-            initcheck.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, output));
+        Complete(initcheck, output);
         EXPECT_FALSE(initcheck.AnalysisComplete());
         EXPECT_EQ(initcheck.Stats().malformedEvents, 1U);
         if (scenario == 3)
@@ -593,6 +646,7 @@ TEST_F(InitcheckHostWriteTest, BoundsReportDoesNotHideTraceLossMismatchedInstruc
 
 TEST_F(InitcheckHostWriteTest, InvalidInstructionDoesNotInitializeLocalOutputOrSuppressOtherReads)
 {
+    Launch();
     auto access = Access(1, 0);
     access.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
@@ -623,9 +677,7 @@ TEST_F(InitcheckHostWriteTest, InvalidInstructionDoesNotInitializeLocalOutputOrS
     access.header.instrExecId = 3;
     access.layout.range.bytes = 128;
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
-    AclsanSynchronizeData sync{};
-    ASSERT_TRUE(
-        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+    Complete();
     ASSERT_EQ(reports.size(), 3U);
     EXPECT_EQ(std::get<NpuCheckInitcheckReport>(reports[1]).common.exec.instrExecId, 2U);
     EXPECT_TRUE(std::holds_alternative<NpuCheckInitcheckReport>(reports.back()));
@@ -637,25 +689,24 @@ TEST(InitcheckTest, MissingStridePlaceholderReportsRegisterWithoutReplayingUnkno
 {
     Initcheck checker;
     CheckerReportList reports;
+    StartReplay(checker, reports);
     auto placeholder = Access(1, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE);
     placeholder.instructionId = static_cast<uint32_t>(aclsan::InstructionId::NdDmaOutToUbufB8);
     placeholder.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
     placeholder.accessCount = 1;
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &placeholder, reports));
-    AclsanSynchronizeData sync{};
-    ASSERT_TRUE(
-        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+    FinishReplay(checker, reports);
     ASSERT_EQ(reports.size(), 1U);
     EXPECT_EQ(std::get<NpuCheckInitcheckReport>(reports[0]).registerId, ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE);
     EXPECT_EQ(checker.Stats().errors, 1U);
     EXPECT_EQ(checker.Stats().malformedEvents, 0U);
     EXPECT_EQ(checker.Summary().find("memory_coverage_unknown"), std::string::npos);
     EXPECT_TRUE(checker.AnalysisComplete());
-    // Standalone callbacks also close register/report state at synchronization.
+    StartReplay(checker, reports, 12);
+    placeholder.header.launchId = 12;
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &placeholder, reports));
     EXPECT_EQ(reports.size(), 2U);
-    ASSERT_TRUE(
-        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+    FinishReplay(checker, reports, 12);
     EXPECT_TRUE(checker.AnalysisComplete());
     EXPECT_EQ(checker.Stats().malformedEvents, 0U);
 }
@@ -669,15 +720,14 @@ TEST(InitcheckTest, MissingGmToL1RegisterPlaceholderDoesNotReplayOrInitializeMem
         SCOPED_TRACE(static_cast<uint32_t>(opcode));
         Initcheck checker;
         CheckerReportList reports;
+        StartReplay(checker, reports);
         auto placeholder = Access(1, UINT64_C(1) << ACLSAN_DEVICE_REGISTER_DMA_LOOP_SIZE_GM_TO_CBUF);
         placeholder.instructionId = static_cast<uint32_t>(opcode);
         placeholder.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         placeholder.header.flags = ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
         placeholder.accessCount = 1;
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &placeholder, reports));
-        AclsanSynchronizeData sync{};
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        FinishReplay(checker, reports);
         ASSERT_EQ(reports.size(), 1U);
         EXPECT_EQ(
             std::get<NpuCheckInitcheckReport>(reports[0]).registerId, ACLSAN_DEVICE_REGISTER_DMA_LOOP_SIZE_GM_TO_CBUF);
@@ -686,9 +736,12 @@ TEST(InitcheckTest, MissingGmToL1RegisterPlaceholderDoesNotReplayOrInitializeMem
         EXPECT_TRUE(checker.AnalysisComplete());
 
         // Skipping the unknown transfer must not credit an L1 initialization write.
+        StartReplay(checker, reports, 12);
+        placeholder.header.launchId = 12;
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &placeholder, reports));
-        ASSERT_EQ(reports.size(), 2U); // Synchronization also cleared register-report deduplication.
+        ASSERT_EQ(reports.size(), 2U);
         auto read = Access(2, 0);
+        read.header.launchId = 12;
         read.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
         read.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
         read.accessCount = 1;
@@ -698,8 +751,7 @@ TEST(InitcheckTest, MissingGmToL1RegisterPlaceholderDoesNotReplayOrInitializeMem
         read.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
         read.layout.range.bytes = 32;
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &read, reports));
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        FinishReplay(checker, reports, 12);
         ASSERT_EQ(reports.size(), 3U);
         EXPECT_EQ(
             std::get<NpuCheckInitcheckReport>(reports[2]).common.pattern,
@@ -728,10 +780,9 @@ TEST(InitcheckTest, GmToL1TraceLossAndPartialAccessesRemainIncomplete)
             access.accessCount = 2;
         else
             access.regDependencyMask0 = 0;
+        StartReplay(checker, reports);
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
-        AclsanSynchronizeData sync{};
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        FinishReplay(checker, reports);
         EXPECT_EQ(checker.Stats().malformedEvents, 1U);
         EXPECT_FALSE(checker.AnalysisComplete());
     }
@@ -755,10 +806,9 @@ TEST(InitcheckTest, OtherEstimatedEventsRemainIncomplete)
             placeholder.accessCount = 2;
         else
             placeholder.instructionId = 83; // An unknown destination may write GM.
+        StartReplay(checker, reports);
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &placeholder, reports));
-        AclsanSynchronizeData sync{};
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        FinishReplay(checker, reports);
         EXPECT_EQ(checker.Stats().malformedEvents, 1U);
         EXPECT_FALSE(checker.AnalysisComplete());
     }
@@ -768,6 +818,16 @@ class LocalInitcheckReplayTest : public ::testing::TestWithParam<uint32_t> {
 protected:
     Initcheck checker;
     CheckerReportList reports;
+
+    void SetUp() override { Launch(11); }
+
+    void Launch(uint64_t id)
+    {
+        AclsanLaunchData launch{};
+        launch.common = {ACLSAN_API_VERSION, sizeof(launch), nullptr, 0, 0};
+        launch.launchId = id;
+        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+    }
 
     AclsanDeviceMemoryAccessData Memory(uint64_t id, uint32_t mode, uint64_t address = 0, uint64_t bytes = 128)
     {
@@ -801,11 +861,13 @@ protected:
         data.objectId = 3;
         ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_SYNC, &data, reports));
     }
-    void Sync()
+    void Sync(uint64_t id = 11)
     {
-        AclsanSynchronizeData data{};
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &data, reports));
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, id};
+        completion.launchId = id;
+        ASSERT_TRUE(checker.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
     }
 };
 
@@ -910,6 +972,7 @@ TEST_P(LocalInitcheckReplayTest, NextLaunchStartsUndefinedWhileGmStateSurvives)
     Sync();
     ASSERT_TRUE(checker.AnalysisComplete()) << checker.Summary();
     ASSERT_TRUE(reports.empty());
+    Launch(12);
     auto localRead = Memory(1, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
     localRead.header.launchId = 12;
     Add(localRead);
@@ -917,7 +980,7 @@ TEST_P(LocalInitcheckReplayTest, NextLaunchStartsUndefinedWhileGmStateSurvives)
     gm.header.launchId = 12;
     gm.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     Add(gm);
-    Sync();
+    Sync(12);
     ASSERT_TRUE(checker.AnalysisComplete()) << checker.Summary();
     ASSERT_EQ(reports.size(), 1U);
     EXPECT_EQ(std::get<NpuCheckInitcheckReport>(reports[0]).common.exec.instrExecId, 1U);
@@ -964,15 +1027,14 @@ TEST(InitcheckTest, FpcOnlyLaunchIsPendingUntilDrained)
 {
     Initcheck checker;
     CheckerReportList reports;
+    StartReplay(checker, reports);
     auto state = State(ACLSAN_DEVICE_REGISTER_FPC, UINT64_C(1) << 63);
     state.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
     state.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
     state.header.instrExecId = 1;
     ASSERT_TRUE(Dispatch(checker, ACLSAN_CBID_DEVICE_STATE, &state, reports));
     EXPECT_FALSE(checker.AnalysisComplete());
-    AclsanSynchronizeData sync{};
-    ASSERT_TRUE(
-        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+    FinishReplay(checker, reports);
     EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
     EXPECT_TRUE(reports.empty());
 }

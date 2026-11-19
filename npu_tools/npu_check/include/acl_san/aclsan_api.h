@@ -78,6 +78,8 @@ typedef enum AclsanCallbackDomain {
     ACLSAN_CB_DOMAIN_LAUNCH = 7,
     ACLSAN_CB_DOMAIN_REPORT = 8,
     ACLSAN_CB_DOMAIN_ERROR = 9,
+    // 算子执行完毕：一个 launch 的设备侧 trace 已采集完成、cbdata 已全部派发。
+    ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION = 10,
 } AclsanCallbackDomain;
 
 typedef enum AclsanCallbackIdResource {
@@ -116,6 +118,13 @@ typedef enum AclsanCallbackIdLaunch {
     ACLSAN_CBID_LAUNCH_KERNEL_BEFORE = 2,
     ACLSAN_CBID_LAUNCH_INVALID = 0x7fffffff
 } AclsanCallbackIdLaunch;
+
+typedef enum AclsanCallbackIdOperatorExecution {
+    // 一个算子（launch）的设备侧 trace 已采集完成，属于该 launch 的 cbdata 已全部派发。
+    // 回调数据为 AclsanOperatorExecutionData，launchId 与 AclsanLaunchData.launchId 对应。
+    ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE = 1,
+    ACLSAN_CBID_OPERATOR_EXECUTION_INVALID = 0x7fffffff
+} AclsanCallbackIdOperatorExecution;
 
 // 通用 callback ABI 类型；具体含义由 AclsanCallbackDomain 和 ID 共同决定。
 typedef uint32_t AclsanCallbackId;

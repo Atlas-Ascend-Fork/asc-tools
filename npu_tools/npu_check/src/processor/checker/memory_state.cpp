@@ -31,16 +31,16 @@ void GmInitStateTable::ValidateRange(uint64_t address, uint64_t bytes) const
 
 const GmInitStateTable::Leaf* GmInitStateTable::FindLeaf(uint64_t address) const
 {
-    const auto& middle = (*root_)[address >> 32];
-    return middle ? (*middle)[(address >> 16) & kMask].get() : nullptr;
+    const auto& middle = (*root_)[address >> 32U];
+    return middle ? (*middle)[(address >> 16U) & kMask].get() : nullptr;
 }
 
 std::unique_ptr<GmInitStateTable::Leaf>& GmInitStateTable::LeafSlot(uint64_t address)
 {
-    auto& middle = (*root_)[address >> 32];
+    auto& middle = (*root_)[address >> 32U];
     if (!middle)
         middle = std::make_unique<Middle>();
-    return (*middle)[(address >> 16) & kMask];
+    return (*middle)[(address >> 16U) & kMask];
 }
 
 InitStateQuery GmInitStateTable::Query(uint64_t address, uint64_t bytes) const
@@ -51,7 +51,7 @@ InitStateQuery GmInitStateTable::Query(uint64_t address, uint64_t bytes) const
         const Leaf* leaf = FindLeaf(address);
         const uint64_t offset = address & kMask;
         const uint64_t count = std::min(bytes, kPageBytes - offset);
-        if (!leaf || leaf->writtenBytes == 0) {
+        if (leaf == nullptr || leaf->writtenBytes == 0) {
             if (result.uninitializedBytes == 0)
                 result.firstUninitializedAddress = address;
             result.uninitializedBytes += count;
@@ -64,7 +64,7 @@ InitStateQuery GmInitStateTable::Query(uint64_t address, uint64_t bytes) const
                 const auto first = std::find_if(leaf->states.begin(), leaf->states.end(), [](uint8_t state) {
                     return !detail::InitWritten(state);
                 });
-                result.firstUninitializedAddress = address + (first - leaf->states.begin());
+                result.firstUninitializedAddress = address + static_cast<uint64_t>(first - leaf->states.begin());
             }
             result.uninitializedBytes += kPageBytes - leaf->writtenBytes;
         } else {
@@ -118,8 +118,8 @@ void GmInitStateTable::Clear(uint64_t address, uint64_t bytes)
     ValidateRange(address, bytes);
     while (bytes != 0) {
         // 跳过不存在的 4GB 目录，释放巨大但未展开的分配不逐字节遍历。
-        if (!(*root_)[address >> 32]) {
-            const uint64_t count = std::min(bytes, (UINT64_C(1) << 32) - (address & UINT64_C(0xffffffff)));
+        if (!(*root_)[address >> 32U]) {
+            const uint64_t count = std::min(bytes, (UINT64_C(1) << 32U) - (address & UINT64_C(0xffffffff)));
             address += count;
             bytes -= count;
             continue;
@@ -157,12 +157,12 @@ void LocalInitStateTable::ValidateRange(uint64_t address, uint64_t bytes) const
 
 const LocalInitStateTable::Leaf* LocalInitStateTable::FindLeaf(uint64_t address) const
 {
-    return pages_[address >> 16].get();
+    return pages_[address >> 16U].get();
 }
 
 std::unique_ptr<LocalInitStateTable::Leaf>& LocalInitStateTable::LeafSlot(uint64_t address)
 {
-    return pages_[address >> 16];
+    return pages_[address >> 16U];
 }
 
 InitStateQuery LocalInitStateTable::Query(uint64_t address, uint64_t bytes) const
@@ -173,7 +173,7 @@ InitStateQuery LocalInitStateTable::Query(uint64_t address, uint64_t bytes) cons
         const Leaf* leaf = FindLeaf(address);
         const uint64_t offset = address & kMask;
         const uint64_t count = std::min(bytes, kPageBytes - offset);
-        if (!leaf || leaf->writtenBytes == 0) {
+        if (leaf == nullptr || leaf->writtenBytes == 0) {
             if (result.uninitializedBytes == 0)
                 result.firstUninitializedAddress = address;
             result.uninitializedBytes += count;
@@ -186,7 +186,7 @@ InitStateQuery LocalInitStateTable::Query(uint64_t address, uint64_t bytes) cons
                 const auto first = std::find_if(leaf->states.begin(), leaf->states.end(), [](uint8_t state) {
                     return !detail::InitWritten(state);
                 });
-                result.firstUninitializedAddress = address + (first - leaf->states.begin());
+                result.firstUninitializedAddress = address + static_cast<uint64_t>(first - leaf->states.begin());
             }
             result.uninitializedBytes += kPageBytes - leaf->writtenBytes;
         } else {

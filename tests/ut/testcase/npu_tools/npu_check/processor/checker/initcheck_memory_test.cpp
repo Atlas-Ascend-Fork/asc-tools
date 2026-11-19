@@ -31,6 +31,7 @@ protected:
         data.launchId = id;
         data.stream = stream;
         EXPECT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &data, reports));
+        pendingLaunches.emplace_back(id, stream);
     }
 
     AclsanDeviceMemoryAccessData Range(
@@ -66,6 +67,22 @@ protected:
 
     void Sync(void* stream = nullptr, int result = 0)
     {
+        if (result == 0) {
+            for (auto it = pendingLaunches.begin(); it != pendingLaunches.end();) {
+                if (it->second != stream) {
+                    ++it;
+                    continue;
+                }
+                AclsanOperatorExecutionData completion{};
+                completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, it->first};
+                completion.launchId = it->first;
+                completion.stream = stream;
+                EXPECT_TRUE(checker.OnCallback(
+                    ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion,
+                    reports));
+                it = pendingLaunches.erase(it);
+            }
+        }
         AclsanSynchronizeData data{};
         data.common.version = ACLSAN_API_VERSION;
         data.common.size = sizeof(data);
@@ -103,6 +120,7 @@ protected:
 
     Initcheck checker;
     CheckerReportList reports;
+    std::vector<std::pair<uint64_t, void*>> pendingLaunches;
 };
 
 TEST_F(InitcheckMemoryTest, UntouchedL0AReadReportsAllBytes)

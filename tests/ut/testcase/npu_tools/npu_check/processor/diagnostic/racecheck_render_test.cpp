@@ -164,7 +164,7 @@ void TestGmAtomicAndLargeOverlap()
     report.current.header.executor.phyCoreId = 10;
     report.previous.memoryOwner = report.previous.header.executor;
     report.current.memoryOwner = report.current.header.executor;
-    report.key = {2, ACLSAN_DEVICE_MEMORY_SPACE_L1, 10};
+    report.key = {2, ACLSAN_DEVICE_MEMORY_SPACE_L1, 10, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE};
     Contains(Render(report), "memory: L1 in aicore (10) type (AIC)");
 }
 void ExpectInvalid(const NpuCheckRacecheckReport& report, const std::string& reason)

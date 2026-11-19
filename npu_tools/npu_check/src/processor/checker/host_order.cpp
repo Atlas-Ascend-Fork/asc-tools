@@ -75,6 +75,17 @@ void HostOrder::Join(ActorId destination, ActorId source)
         *current_[destination], destination, counters_[destination], *lastIssued_[source], source, lastIndex_[source]);
 }
 
+void HostOrder::JoinNode(ActorId destination, NodeId source)
+{
+    if (destination == kInvalidActor || !complete_ || source == kInvalidNode || source >= nodes_.size()) {
+        complete_ = false;
+        return;
+    }
+    const auto& node = nodes_[source];
+    current_[destination] =
+        Merge(*current_[destination], destination, counters_[destination], *node.clock, node.actor, node.index);
+}
+
 std::optional<bool> HostOrder::Precedes(NodeId first, NodeId second) const
 {
     if (!complete_ || first == kInvalidNode || second == kInvalidNode)

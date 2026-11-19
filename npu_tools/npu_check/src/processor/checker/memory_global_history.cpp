@@ -37,7 +37,6 @@ public:
         state.globalAccesses.insert(
             state.globalAccesses.end(), std::make_move_iterator(current_.begin()),
             std::make_move_iterator(current_.end()));
-        state.globalSegments += segments_;
         return std::move(reports_);
     }
 
@@ -66,7 +65,7 @@ private:
 
     bool Work()
     {
-        if (++work_ <= limits_.comparisons)
+        if (race::TryConsumeBudget(limits_.CandidateComparisonBudget(), work_))
             return true;
         reasons_.insert("global_comparison_budget");
         return false;
@@ -77,23 +76,20 @@ private:
         for (const auto& access : dependency.accesses) {
             if (access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM)
                 continue;
-            segments_ += access.ranges.size();
-            if (segments_ + state.globalSegments > limits_.segments ||
-                current_.size() + state.globalAccesses.size() >= limits_.events) {
+            if (race::ExceedsBudget(
+                    limits_.GlobalAccessHistoryBudget(), {current_.size(), state.globalAccesses.size(), 1})) {
                 reasons_.insert("global_history_budget");
                 return;
             }
-            MemoryState::GlobalAccess record{access.data, {}};
-            for (auto range : access.ranges)
-                record.ranges.push_back({range.begin, range.end});
-            current_.push_back(std::move(record));
+            // No duplicate interval charge: the immutable storage carries its live
+            // session-capacity lease through graph and history ownership.
+            current_.push_back(MemoryState::GlobalAccess{access.data, access.ranges});
         }
     }
     void Report(
         const MemoryState::GlobalAccess& old, const MemoryState::GlobalAccess& now, uint64_t begin, uint64_t end)
     {
-        if (reports_.size() >= limits_.segments ||
-            reports_.size() >= limits_.stateBytes / sizeof(NpuCheckRacecheckReport)) {
+        if (reports_.size() >= limits_.RaceReportBudget<NpuCheckRacecheckReport>()) {
             reasons_.insert("global_report_budget");
             return;
         }
@@ -139,7 +135,7 @@ private:
     std::set<std::string>& reasons_;
     std::vector<MemoryState::GlobalAccess> current_;
     std::vector<NpuCheckRacecheckReport> reports_;
-    size_t work_ = 0, segments_ = 0;
+    size_t work_ = 0;
 };
 } // namespace
 std::vector<NpuCheckRacecheckReport> MemoryAnalysis::CrossLaunchConflicts(

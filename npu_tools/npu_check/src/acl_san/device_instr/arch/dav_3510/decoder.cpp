@@ -14,6 +14,8 @@
 #include "device_instr/common/bit_range.h"
 #include "device_instr/common/instruction_id.h"
 
+#include <array>
+
 namespace aclsan::dav3510 {
 namespace {
 
@@ -221,7 +223,7 @@ DecodedInstruction DecodeNdDmaLoopStride(const aclsan::AclsanRawTraceRecord& rec
     const uint64_t stride = (record.args[0] >> 20U) & ((1ULL << 40U) - 1U);
     return DecodedInstruction{
         DeviceInstructionKind::NdDmaLoopStride,
-        NdDmaLoopStrideParamField{loopIndex, stride, static_cast<uint32_t>(record.args[0] & 0xfffff)}};
+        NdDmaLoopStrideParamField{loopIndex, stride, static_cast<uint32_t>(record.args[0] & 0xfffffU)}};
 }
 
 DecodedInstruction DecodeMte2NzParam(const aclsan::AclsanRawTraceRecord& record) noexcept
@@ -319,7 +321,7 @@ DecodedInstruction DecodeFixL0c(
     const uint8_t quantPreHigh =
         static_cast<uint8_t>(ExtractBitRange(record.args[3], FixL0cToOutLayout::QUANT_PRE_HIGH));
     const uint8_t quantPreLow = static_cast<uint8_t>(ExtractBitRange(record.args[3], FixL0cToOutLayout::QUANT_PRE_LOW));
-    params.quantPre = static_cast<uint8_t>((quantPreHigh << 5U) | quantPreLow);
+    params.quantPre = static_cast<uint8_t>((static_cast<unsigned int>(quantPreHigh) << 5U) | quantPreLow);
     params.reluPre = static_cast<uint8_t>(ExtractBitRange(record.args[3], FixL0cToOutLayout::RELU_PRE));
     params.splitEnable = ExtractBitRange(record.args[3], FixL0cToOutLayout::SPLIT_ENABLE) != 0;
     params.nz2ndEnable = ExtractBitRange(record.args[3], FixL0cToOutLayout::NZ2ND_ENABLE) != 0;
@@ -451,6 +453,516 @@ std::optional<DecodedInstruction> DecodeCrossCore(
     return DecodedInstruction{kind, CrossCoreParamField{record.instrId, pipe, mode, flagId}};
 }
 
+using DecodeHandler = std::optional<DecodedInstruction> (*)(const aclsan::AclsanRawTraceRecord&) noexcept;
+using DecodeTable = std::array<DecodeHandler, RawId(InstructionId::PushPb) + 1U>;
+
+template <typename... Ids>
+constexpr void RegisterDecoders(DecodeTable& table, DecodeHandler handler, Ids... ids) noexcept
+{
+    ((table[RawId(ids)] = handler), ...);
+}
+
+constexpr DecodeTable MakeDecodeTable() noexcept
+{
+    DecodeTable table{};
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodedInstruction{
+                DeviceInstructionKind::PushPb,
+                PushPbParamField{{record.args[0], record.args[1], record.args[2], record.args[3]}}};
+        },
+        InstructionId::PushPb);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodedInstruction{DeviceInstructionKind::Vf, VfParamField{record.args[0], record.args[1]}};
+        },
+        InstructionId::Vf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarAtomic(record, DATA_BITS_B32);
+        },
+        InstructionId::StAtomicB32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarAtomic(record, DATA_BITS_B16);
+        },
+        InstructionId::StAtomicB16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarAtomic(record, DATA_BITS_B8);
+        },
+        InstructionId::StAtomicB8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarAtomic(record, DATA_BITS_B32);
+        },
+        InstructionId::StiAtomicB32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarAtomic(record, DATA_BITS_B16);
+        },
+        InstructionId::StiAtomicB16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarAtomic(record, DATA_BITS_B8);
+        },
+        InstructionId::StiAtomicB8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarPreload(record);
+        },
+        InstructionId::DcPreload, InstructionId::DcPreloadI);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarDev(record, DeviceInstructionKind::StDev, DATA_BITS_B64);
+        },
+        InstructionId::StDevB64);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarDev(record, DeviceInstructionKind::StDev, DATA_BITS_B32);
+        },
+        InstructionId::StDevB32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarDev(record, DeviceInstructionKind::StDev, DATA_BITS_B16);
+        },
+        InstructionId::StDevB16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarDev(record, DeviceInstructionKind::StDev, DATA_BITS_B8);
+        },
+        InstructionId::StDevB8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarDev(record, DeviceInstructionKind::LdDev, DATA_BITS_B64);
+        },
+        InstructionId::LdDevB64);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarDev(record, DeviceInstructionKind::LdDev, DATA_BITS_B32);
+        },
+        InstructionId::LdDevB32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarDev(record, DeviceInstructionKind::LdDev, DATA_BITS_B16);
+        },
+        InstructionId::LdDevB16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarDev(record, DeviceInstructionKind::LdDev, DATA_BITS_B8);
+        },
+        InstructionId::LdDevB8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLoadGmToCbuf2DV2(record);
+        },
+        InstructionId::LoadGmToCbuf2DV2);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyGmToCbufV2(record);
+        },
+        InstructionId::CopyGmToCbufV2);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeMovAlignV2<CopyGmToCbufAlignV2ParamField>(
+                record, DeviceInstructionKind::CopyGmToCbufAlignV2, DATA_BITS_B8);
+        },
+        InstructionId::CopyGmToCbufAlignV2B8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeMovAlignV2<CopyGmToCbufAlignV2ParamField>(
+                record, DeviceInstructionKind::CopyGmToCbufAlignV2, DATA_BITS_B16);
+        },
+        InstructionId::CopyGmToCbufAlignV2B16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeMovAlignV2<CopyGmToCbufAlignV2ParamField>(
+                record, DeviceInstructionKind::CopyGmToCbufAlignV2, DATA_BITS_B32);
+        },
+        InstructionId::CopyGmToCbufAlignV2B32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiNd2NzParamField>(record, DATA_BITS_B8);
+        },
+        InstructionId::CopyGmToCbufMultiNd2NzB8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiNd2NzParamField>(record, DATA_BITS_B16);
+        },
+        InstructionId::CopyGmToCbufMultiNd2NzB16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiNd2NzParamField>(record, DATA_BITS_B32);
+        },
+        InstructionId::CopyGmToCbufMultiNd2NzB32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiDn2NzParamField>(record, DATA_BITS_B8);
+        },
+        InstructionId::CopyGmToCbufMultiDn2NzB8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiDn2NzParamField>(record, DATA_BITS_B16);
+        },
+        InstructionId::CopyGmToCbufMultiDn2NzB16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiDn2NzParamField>(record, DATA_BITS_B32);
+        },
+        InstructionId::CopyGmToCbufMultiDn2NzB32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyUbufToGmAlignV2(record);
+        },
+        InstructionId::CopyUbufToGmAlignV2);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCopyUbufToUbuf(record);
+        },
+        InstructionId::CopyUbufToUbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeMovAlignV2<CopyGmToUbufAlignV2ParamField>(
+                record, DeviceInstructionKind::CopyGmToUbufAlignV2, DATA_BITS_B8);
+        },
+        InstructionId::CopyGmToUbufAlignV2B8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeMovAlignV2<CopyGmToUbufAlignV2ParamField>(
+                record, DeviceInstructionKind::CopyGmToUbufAlignV2, DATA_BITS_B16);
+        },
+        InstructionId::CopyGmToUbufAlignV2B16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeMovAlignV2<CopyGmToUbufAlignV2ParamField>(
+                record, DeviceInstructionKind::CopyGmToUbufAlignV2, DATA_BITS_B32);
+        },
+        InstructionId::CopyGmToUbufAlignV2B32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeNdDmaOutToUbuf(record, DATA_BITS_B8);
+        },
+        InstructionId::NdDmaOutToUbufB8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeNdDmaOutToUbuf(record, DATA_BITS_B16);
+        },
+        InstructionId::NdDmaOutToUbufB16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeNdDmaOutToUbuf(record, DATA_BITS_B32);
+        },
+        InstructionId::NdDmaOutToUbufB32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodedInstruction{DeviceInstructionKind::ChannelPara, ChannelParaParamField{record.args[0]}};
+        },
+        InstructionId::ChannelPara);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodedInstruction{DeviceInstructionKind::SetFpc, FpcParamField{record.args[0]}};
+        },
+        InstructionId::SetFpc);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLoop3Param(record);
+        },
+        InstructionId::Loop3Param);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeMte2SourceParam(record);
+        },
+        InstructionId::Mte2SrcPara);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeNdDmaPadCount(record);
+        },
+        InstructionId::NdDmaPadCount);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeNdDmaLoopStride(record);
+        },
+        InstructionId::NdDmaLoop0Stride, InstructionId::NdDmaLoop1Stride, InstructionId::NdDmaLoop2Stride,
+        InstructionId::NdDmaLoop3Stride, InstructionId::NdDmaLoop4Stride);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeMte2NzParam(record);
+        },
+        InstructionId::SetMte2NzPara);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopSize(record, DmaLoopDirection::UBUF_TO_GM);
+        },
+        InstructionId::LoopSizeUbufToGm);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopStride(record, DmaLoopDirection::UBUF_TO_GM, 0);
+        },
+        InstructionId::Loop1StrideUbufToGm);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopStride(record, DmaLoopDirection::UBUF_TO_GM, 1);
+        },
+        InstructionId::Loop2StrideUbufToGm);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopSize(record, DmaLoopDirection::GM_TO_UBUF);
+        },
+        InstructionId::LoopSizeGmToUbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_UBUF, 0);
+        },
+        InstructionId::Loop1StrideGmToUbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_UBUF, 1);
+        },
+        InstructionId::Loop2StrideGmToUbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeFixL0c<FixL0cToOutParamField>(record, DATA_BITS_B32, DeviceInstructionKind::FixL0cToOut);
+        },
+        InstructionId::FixL0cToOutF32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeFixL0c<FixL0cToOutParamField>(record, DATA_BITS_B32, DeviceInstructionKind::FixL0cToOut);
+        },
+        InstructionId::FixL0cToOutS32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToFbuf);
+        },
+        InstructionId::CopyCbufToFbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToBt);
+        },
+        InstructionId::CopyCbufToBtF32, InstructionId::CopyCbufToBtS32, InstructionId::CopyCbufToBtF16,
+        InstructionId::CopyCbufToBtBf16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToCbufF32);
+        },
+        InstructionId::FixL0cToCbufF32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToCbufS32);
+        },
+        InstructionId::FixL0cToCbufS32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToUbufF32);
+        },
+        InstructionId::FixL0cToUbufF32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToUbufS32);
+        },
+        InstructionId::FixL0cToUbufS32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyUbufToCbuf);
+        },
+        InstructionId::CopyUbufToCbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeSetL12D(record, DATA_BITS_B16);
+        },
+        InstructionId::SetL12DB16);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeSetL12D(record, DATA_BITS_B32);
+        },
+        InstructionId::SetL12DB32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            if (record.args[0] > 1) {
+                return std::nullopt;
+            }
+            return DecodedInstruction{
+                DeviceInstructionKind::MoveMask,
+                VectorMaskWriteParamField{static_cast<uint32_t>(record.args[0]), record.args[1]}};
+        },
+        InstructionId::SetVectorMask);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodedInstruction{DeviceInstructionKind::SetCtrl, CtrlRegisterParamField{record.args[0]}};
+        },
+        InstructionId::SetCtrl);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeSetPadding(record);
+        },
+        InstructionId::SetPadding);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopSize(record, DmaLoopDirection::GM_TO_CBUF);
+        },
+        InstructionId::LoopSizeGmToCbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_CBUF, 0);
+        },
+        InstructionId::Loop1StrideGmToCbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_CBUF, 1);
+        },
+        InstructionId::Loop2StrideGmToCbuf);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            if (record.args[0] > UINT32_MAX)
+                return std::nullopt;
+            return DecodedInstruction{
+                DeviceInstructionKind::PipeBarrier,
+                PipeBarrierParamField{record.instrId, static_cast<uint32_t>(record.args[0])}};
+        },
+        InstructionId::PipeBarrier);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeFlag(record, DeviceInstructionKind::SetFlag);
+        },
+        InstructionId::SetFlag, InstructionId::SetFlagI, InstructionId::SetFlagV, InstructionId::SetFlagIV);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeFlag(record, DeviceInstructionKind::WaitFlag);
+        },
+        InstructionId::WaitFlag, InstructionId::WaitFlagI, InstructionId::WaitFlagV, InstructionId::WaitFlagIV);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCrossCore(record, DeviceInstructionKind::CrossCoreSet);
+        },
+        InstructionId::FftsCrossCoreSync, InstructionId::FftsCrossCoreSyncV);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCrossCore(record, DeviceInstructionKind::IntraBlockSet);
+        },
+        InstructionId::SetIntraBlock, InstructionId::SetIntraBlockI, InstructionId::SetIntraBlockV,
+        InstructionId::SetIntraBlockIV);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCrossCore(record, DeviceInstructionKind::CrossCoreWait);
+        },
+        InstructionId::WaitFlagDev, InstructionId::WaitFlagDevI, InstructionId::WaitFlagDevV,
+        InstructionId::WaitFlagDevIV);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeCrossCore(record, DeviceInstructionKind::IntraBlockWait);
+        },
+        InstructionId::WaitIntraBlock, InstructionId::WaitIntraBlockI, InstructionId::WaitIntraBlockV,
+        InstructionId::WaitIntraBlockIV);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeHardwareFlag(record, DeviceInstructionKind::HardwareSetFlag);
+        },
+        InstructionId::HSetFlag, InstructionId::HSetFlagI);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeHardwareFlag(record, DeviceInstructionKind::HardwareWaitFlag);
+        },
+        InstructionId::HWaitFlag, InstructionId::HWaitFlagI);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeBuffer(record, DeviceInstructionKind::GetBuf);
+        },
+        InstructionId::GetBuf, InstructionId::GetBufI, InstructionId::GetBufV, InstructionId::GetBufIV);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeBuffer(record, DeviceInstructionKind::RlsBuf);
+        },
+        InstructionId::RlsBuf, InstructionId::RlsBufI, InstructionId::RlsBufV, InstructionId::RlsBufIV);
+    return table;
+}
+
+constexpr auto DECODE_TABLE = MakeDecodeTable();
+
+std::optional<DecodedInstruction> DecodeRegisteredInstruction(const aclsan::AclsanRawTraceRecord& record) noexcept
+{
+    if (record.instrId >= DECODE_TABLE.size()) {
+        return std::nullopt;
+    }
+    const auto decode = DECODE_TABLE[record.instrId];
+    return decode != nullptr ? decode(record) : std::nullopt;
+}
+
 std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& record) noexcept
 {
     if (record.instrId >= RawId(InstructionId::StB64Imm) && record.instrId <= RawId(InstructionId::LdpB8)) {
@@ -520,8 +1032,8 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         f.mExtension = static_cast<uint16_t>(ExtractBitRange(record.args[2], Img2ColLayout::M_EXTENSION));
         f.kStartPoint = static_cast<uint16_t>(ExtractBitRange(record.args[2], Img2ColLayout::K_START_POINT));
         f.mStartPoint = static_cast<uint16_t>(ExtractBitRange(record.args[2], Img2ColLayout::M_START_POINT));
-        f.strideWidth = ExtractBitRange(record.args[3], Img2ColLayout::STRIDE_WIDTH);
-        f.strideHeight = ExtractBitRange(record.args[3], Img2ColLayout::STRIDE_HEIGHT);
+        f.strideWidth = static_cast<uint8_t>(ExtractBitRange(record.args[3], Img2ColLayout::STRIDE_WIDTH));
+        f.strideHeight = static_cast<uint8_t>(ExtractBitRange(record.args[3], Img2ColLayout::STRIDE_HEIGHT));
         f.filterWidth = static_cast<uint8_t>(ExtractBitRange(record.args[3], Img2ColLayout::FILTER_WIDTH));
         f.filterHeight = static_cast<uint8_t>(ExtractBitRange(record.args[3], Img2ColLayout::FILTER_HEIGHT));
         f.dilationFilterWidth =
@@ -564,226 +1076,7 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
     if (record.instrId == RawId(InstructionId::CopyCbufToUbuf)) {
         return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToUbuf);
     }
-    switch (record.instrId) {
-        case RawId(InstructionId::PushPb):
-            return DecodedInstruction{
-                DeviceInstructionKind::PushPb,
-                PushPbParamField{{record.args[0], record.args[1], record.args[2], record.args[3]}}};
-        case RawId(InstructionId::Vf):
-            return DecodedInstruction{DeviceInstructionKind::Vf, VfParamField{record.args[0], record.args[1]}};
-        case RawId(InstructionId::StAtomicB32):
-            return DecodeScalarAtomic(record, DATA_BITS_B32);
-        case RawId(InstructionId::StAtomicB16):
-            return DecodeScalarAtomic(record, DATA_BITS_B16);
-        case RawId(InstructionId::StAtomicB8):
-            return DecodeScalarAtomic(record, DATA_BITS_B8);
-        case RawId(InstructionId::StiAtomicB32):
-            return DecodeScalarAtomic(record, DATA_BITS_B32);
-        case RawId(InstructionId::StiAtomicB16):
-            return DecodeScalarAtomic(record, DATA_BITS_B16);
-        case RawId(InstructionId::StiAtomicB8):
-            return DecodeScalarAtomic(record, DATA_BITS_B8);
-        case RawId(InstructionId::DcPreload):
-        case RawId(InstructionId::DcPreloadI):
-            return DecodeScalarPreload(record);
-        case RawId(InstructionId::StDevB64):
-            return DecodeScalarDev(record, DeviceInstructionKind::StDev, DATA_BITS_B64);
-        case RawId(InstructionId::StDevB32):
-            return DecodeScalarDev(record, DeviceInstructionKind::StDev, DATA_BITS_B32);
-        case RawId(InstructionId::StDevB16):
-            return DecodeScalarDev(record, DeviceInstructionKind::StDev, DATA_BITS_B16);
-        case RawId(InstructionId::StDevB8):
-            return DecodeScalarDev(record, DeviceInstructionKind::StDev, DATA_BITS_B8);
-        case RawId(InstructionId::LdDevB64):
-            return DecodeScalarDev(record, DeviceInstructionKind::LdDev, DATA_BITS_B64);
-        case RawId(InstructionId::LdDevB32):
-            return DecodeScalarDev(record, DeviceInstructionKind::LdDev, DATA_BITS_B32);
-        case RawId(InstructionId::LdDevB16):
-            return DecodeScalarDev(record, DeviceInstructionKind::LdDev, DATA_BITS_B16);
-        case RawId(InstructionId::LdDevB8):
-            return DecodeScalarDev(record, DeviceInstructionKind::LdDev, DATA_BITS_B8);
-
-        case RawId(InstructionId::LoadGmToCbuf2DV2):
-            return DecodeLoadGmToCbuf2DV2(record);
-        case RawId(InstructionId::CopyGmToCbufV2):
-            return DecodeCopyGmToCbufV2(record);
-
-        case RawId(InstructionId::CopyGmToCbufAlignV2B8):
-            return DecodeMovAlignV2<CopyGmToCbufAlignV2ParamField>(
-                record, DeviceInstructionKind::CopyGmToCbufAlignV2, DATA_BITS_B8);
-        case RawId(InstructionId::CopyGmToCbufAlignV2B16):
-            return DecodeMovAlignV2<CopyGmToCbufAlignV2ParamField>(
-                record, DeviceInstructionKind::CopyGmToCbufAlignV2, DATA_BITS_B16);
-        case RawId(InstructionId::CopyGmToCbufAlignV2B32):
-            return DecodeMovAlignV2<CopyGmToCbufAlignV2ParamField>(
-                record, DeviceInstructionKind::CopyGmToCbufAlignV2, DATA_BITS_B32);
-
-        case RawId(InstructionId::CopyGmToCbufMultiNd2NzB8):
-            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiNd2NzParamField>(record, DATA_BITS_B8);
-        case RawId(InstructionId::CopyGmToCbufMultiNd2NzB16):
-            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiNd2NzParamField>(record, DATA_BITS_B16);
-        case RawId(InstructionId::CopyGmToCbufMultiNd2NzB32):
-            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiNd2NzParamField>(record, DATA_BITS_B32);
-
-        case RawId(InstructionId::CopyGmToCbufMultiDn2NzB8):
-            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiDn2NzParamField>(record, DATA_BITS_B8);
-        case RawId(InstructionId::CopyGmToCbufMultiDn2NzB16):
-            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiDn2NzParamField>(record, DATA_BITS_B16);
-        case RawId(InstructionId::CopyGmToCbufMultiDn2NzB32):
-            return DecodeCopyGmToCbufMulti<CopyGmToCbufMultiDn2NzParamField>(record, DATA_BITS_B32);
-
-        case RawId(InstructionId::CopyUbufToGmAlignV2):
-            return DecodeCopyUbufToGmAlignV2(record);
-
-        case RawId(InstructionId::CopyUbufToUbuf):
-            return DecodeCopyUbufToUbuf(record);
-
-        case RawId(InstructionId::CopyGmToUbufAlignV2B8):
-            return DecodeMovAlignV2<CopyGmToUbufAlignV2ParamField>(
-                record, DeviceInstructionKind::CopyGmToUbufAlignV2, DATA_BITS_B8);
-        case RawId(InstructionId::CopyGmToUbufAlignV2B16):
-            return DecodeMovAlignV2<CopyGmToUbufAlignV2ParamField>(
-                record, DeviceInstructionKind::CopyGmToUbufAlignV2, DATA_BITS_B16);
-        case RawId(InstructionId::CopyGmToUbufAlignV2B32):
-            return DecodeMovAlignV2<CopyGmToUbufAlignV2ParamField>(
-                record, DeviceInstructionKind::CopyGmToUbufAlignV2, DATA_BITS_B32);
-
-        case RawId(InstructionId::NdDmaOutToUbufB8):
-            return DecodeNdDmaOutToUbuf(record, DATA_BITS_B8);
-        case RawId(InstructionId::NdDmaOutToUbufB16):
-            return DecodeNdDmaOutToUbuf(record, DATA_BITS_B16);
-        case RawId(InstructionId::NdDmaOutToUbufB32):
-            return DecodeNdDmaOutToUbuf(record, DATA_BITS_B32);
-        case RawId(InstructionId::ChannelPara):
-            return DecodedInstruction{DeviceInstructionKind::ChannelPara, ChannelParaParamField{record.args[0]}};
-        case RawId(InstructionId::SetFpc):
-            return DecodedInstruction{DeviceInstructionKind::SetFpc, FpcParamField{record.args[0]}};
-        case RawId(InstructionId::Loop3Param):
-            return DecodeLoop3Param(record);
-
-        case RawId(InstructionId::Mte2SrcPara):
-            return DecodeMte2SourceParam(record);
-        case RawId(InstructionId::NdDmaPadCount):
-            return DecodeNdDmaPadCount(record);
-        case RawId(InstructionId::NdDmaLoop0Stride):
-        case RawId(InstructionId::NdDmaLoop1Stride):
-        case RawId(InstructionId::NdDmaLoop2Stride):
-        case RawId(InstructionId::NdDmaLoop3Stride):
-        case RawId(InstructionId::NdDmaLoop4Stride):
-            return DecodeNdDmaLoopStride(record);
-        case RawId(InstructionId::SetMte2NzPara):
-            return DecodeMte2NzParam(record);
-        case RawId(InstructionId::LoopSizeUbufToGm):
-            return DecodeDmaLoopSize(record, DmaLoopDirection::UBUF_TO_GM);
-        case RawId(InstructionId::Loop1StrideUbufToGm):
-            return DecodeDmaLoopStride(record, DmaLoopDirection::UBUF_TO_GM, 0);
-        case RawId(InstructionId::Loop2StrideUbufToGm):
-            return DecodeDmaLoopStride(record, DmaLoopDirection::UBUF_TO_GM, 1);
-        case RawId(InstructionId::LoopSizeGmToUbuf):
-            return DecodeDmaLoopSize(record, DmaLoopDirection::GM_TO_UBUF);
-        case RawId(InstructionId::Loop1StrideGmToUbuf):
-            return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_UBUF, 0);
-        case RawId(InstructionId::Loop2StrideGmToUbuf):
-            return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_UBUF, 1);
-
-        case RawId(InstructionId::FixL0cToOutF32):
-            return DecodeFixL0c<FixL0cToOutParamField>(record, DATA_BITS_B32, DeviceInstructionKind::FixL0cToOut);
-        case RawId(InstructionId::FixL0cToOutS32):
-            return DecodeFixL0c<FixL0cToOutParamField>(record, DATA_BITS_B32, DeviceInstructionKind::FixL0cToOut);
-        case RawId(InstructionId::CopyCbufToFbuf):
-            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToFbuf);
-        case RawId(InstructionId::CopyCbufToBtF32):
-        case RawId(InstructionId::CopyCbufToBtS32):
-        case RawId(InstructionId::CopyCbufToBtF16):
-        case RawId(InstructionId::CopyCbufToBtBf16):
-            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToBt);
-        case RawId(InstructionId::FixL0cToCbufF32):
-            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToCbufF32);
-        case RawId(InstructionId::FixL0cToCbufS32):
-            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToCbufS32);
-        case RawId(InstructionId::FixL0cToUbufF32):
-            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToUbufF32);
-        case RawId(InstructionId::FixL0cToUbufS32):
-            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::FixL0cToUbufS32);
-        case RawId(InstructionId::CopyUbufToCbuf):
-            return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyUbufToCbuf);
-
-        case RawId(InstructionId::SetL12DB16):
-            return DecodeSetL12D(record, DATA_BITS_B16);
-        case RawId(InstructionId::SetL12DB32):
-            return DecodeSetL12D(record, DATA_BITS_B32);
-
-        case RawId(InstructionId::SetVectorMask):
-            if (record.args[0] > 1) {
-                return std::nullopt;
-            }
-            return DecodedInstruction{
-                DeviceInstructionKind::MoveMask,
-                VectorMaskWriteParamField{static_cast<uint32_t>(record.args[0]), record.args[1]}};
-        case RawId(InstructionId::SetCtrl):
-            return DecodedInstruction{DeviceInstructionKind::SetCtrl, CtrlRegisterParamField{record.args[0]}};
-        case RawId(InstructionId::SetPadding):
-            return DecodeSetPadding(record);
-        case RawId(InstructionId::LoopSizeGmToCbuf):
-            return DecodeDmaLoopSize(record, DmaLoopDirection::GM_TO_CBUF);
-        case RawId(InstructionId::Loop1StrideGmToCbuf):
-            return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_CBUF, 0);
-        case RawId(InstructionId::Loop2StrideGmToCbuf):
-            return DecodeDmaLoopStride(record, DmaLoopDirection::GM_TO_CBUF, 1);
-
-        case RawId(InstructionId::PipeBarrier):
-            if (record.args[0] > UINT32_MAX)
-                return std::nullopt;
-            return DecodedInstruction{
-                DeviceInstructionKind::PipeBarrier,
-                PipeBarrierParamField{record.instrId, static_cast<uint32_t>(record.args[0])}};
-        case RawId(InstructionId::SetFlag):
-        case RawId(InstructionId::SetFlagI):
-        case RawId(InstructionId::SetFlagV):
-        case RawId(InstructionId::SetFlagIV):
-            return DecodeFlag(record, DeviceInstructionKind::SetFlag);
-        case RawId(InstructionId::WaitFlag):
-        case RawId(InstructionId::WaitFlagI):
-        case RawId(InstructionId::WaitFlagV):
-        case RawId(InstructionId::WaitFlagIV):
-            return DecodeFlag(record, DeviceInstructionKind::WaitFlag);
-        case RawId(InstructionId::FftsCrossCoreSync):
-        case RawId(InstructionId::FftsCrossCoreSyncV):
-            return DecodeCrossCore(record, DeviceInstructionKind::CrossCoreSet);
-        case RawId(InstructionId::SetIntraBlock):
-        case RawId(InstructionId::SetIntraBlockI):
-        case RawId(InstructionId::SetIntraBlockV):
-        case RawId(InstructionId::SetIntraBlockIV):
-            return DecodeCrossCore(record, DeviceInstructionKind::IntraBlockSet);
-        case RawId(InstructionId::WaitFlagDev):
-        case RawId(InstructionId::WaitFlagDevI):
-        case RawId(InstructionId::WaitFlagDevV):
-        case RawId(InstructionId::WaitFlagDevIV):
-            return DecodeCrossCore(record, DeviceInstructionKind::CrossCoreWait);
-        case RawId(InstructionId::WaitIntraBlock):
-        case RawId(InstructionId::WaitIntraBlockI):
-        case RawId(InstructionId::WaitIntraBlockV):
-        case RawId(InstructionId::WaitIntraBlockIV):
-            return DecodeCrossCore(record, DeviceInstructionKind::IntraBlockWait);
-        case RawId(InstructionId::HSetFlag):
-        case RawId(InstructionId::HSetFlagI):
-            return DecodeHardwareFlag(record, DeviceInstructionKind::HardwareSetFlag);
-        case RawId(InstructionId::HWaitFlag):
-        case RawId(InstructionId::HWaitFlagI):
-            return DecodeHardwareFlag(record, DeviceInstructionKind::HardwareWaitFlag);
-        case RawId(InstructionId::GetBuf):
-        case RawId(InstructionId::GetBufI):
-        case RawId(InstructionId::GetBufV):
-        case RawId(InstructionId::GetBufIV):
-            return DecodeBuffer(record, DeviceInstructionKind::GetBuf);
-        case RawId(InstructionId::RlsBuf):
-        case RawId(InstructionId::RlsBufI):
-        case RawId(InstructionId::RlsBufV):
-        case RawId(InstructionId::RlsBufIV):
-            return DecodeBuffer(record, DeviceInstructionKind::RlsBuf);
-        default:
-            return std::nullopt;
-    }
+    return DecodeRegisteredInstruction(record);
 }
 
 } // namespace

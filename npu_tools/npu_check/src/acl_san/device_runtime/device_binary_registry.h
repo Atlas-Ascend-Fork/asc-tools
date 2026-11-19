@@ -39,24 +39,42 @@ public:
     DeviceBinaryRegistry(const DeviceBinaryRegistry&) = delete;
     DeviceBinaryRegistry& operator=(const DeviceBinaryRegistry&) = delete;
 
+    static constexpr int32_t UNKNOWN_DEVICE = -1;
+
     bool RecordBinaryLoadFromData(
-        uintptr_t binary, bool instrumented, uint32_t traceArgumentOffset, const void* image,
-        size_t imageBytes) noexcept;
-    void RecordBinaryUnload(uintptr_t binary) noexcept;
-    bool RecordLoadedImage(uintptr_t binary, const void* image, size_t bytes) noexcept;
+        uintptr_t binary, bool instrumented, uint32_t traceArgumentOffset, const void* image, size_t imageBytes,
+        int32_t deviceId = UNKNOWN_DEVICE) noexcept;
+    bool HasKnownBinaryHandle(uintptr_t binary) const noexcept;
+    void RecordBinaryUnload(uintptr_t binary, int32_t deviceId = UNKNOWN_DEVICE) noexcept;
+    bool RecordLoadedImage(
+        uintptr_t binary, const void* image, size_t bytes, int32_t deviceId = UNKNOWN_DEVICE) noexcept;
     bool GetFunctionReadOnlySections(
-        uintptr_t function, uintptr_t& binary, std::vector<BinarySectionRange>& sections) const;
+        uintptr_t function, uintptr_t& binary, std::vector<BinarySectionRange>& sections,
+        int32_t deviceId = UNKNOWN_DEVICE) const;
     bool GetFunctionActualBinary(
-        uintptr_t function, uintptr_t& binary, std::vector<BinarySegment>& segments) const noexcept;
-    void RecordBinaryFunctionLookup(uintptr_t binary, uintptr_t function, const char* functionName = nullptr) noexcept;
-    void RecordLatestBinaryFunctionLookup(uintptr_t function) noexcept;
-    bool GetFunctionTraceArgumentOffset(uintptr_t function, uint32_t& traceArgumentOffset) const noexcept;
-    bool GetFunctionName(uintptr_t function, std::string& functionName) const noexcept;
-    std::shared_ptr<NpubitUbHandle> GetFunctionHibitHandle(uintptr_t function) const noexcept;
+        uintptr_t function, uintptr_t& binary, std::vector<BinarySegment>& segments,
+        int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
+    void RecordBinaryFunctionLookup(
+        uintptr_t binary, uintptr_t function, const char* functionName = nullptr,
+        int32_t deviceId = UNKNOWN_DEVICE) noexcept;
+    void RecordLatestBinaryFunctionLookup(uintptr_t function, int32_t deviceId = UNKNOWN_DEVICE) noexcept;
+    enum class TraceLookup { Instrumented, NotInstrumented, Unresolved };
+    TraceLookup LookupFunctionTraceArgumentOffset(
+        uintptr_t function, uint32_t& traceArgumentOffset, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
+    bool GetFunctionTraceArgumentOffset(
+        uintptr_t function, uint32_t& traceArgumentOffset, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
+    bool GetFunctionName(
+        uintptr_t function, std::string& functionName, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
+    std::shared_ptr<NpubitUbHandle> GetFunctionHibitHandle(
+        uintptr_t function, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
+    // Returns retained unknown-device binary and image entries, or SIZE_MAX on error.
+    // An unknown device ID never removes entries.
+    size_t ResetDevice(int32_t deviceId) noexcept;
     void Reset() noexcept;
 
-    CallStackResult ResolveCallStack(uint64_t pc) const noexcept;
-    CallStackResult ResolveCallStackWithRunner(uint64_t pc, const CommandRunner& runner) const noexcept;
+    CallStackResult ResolveCallStack(uint64_t pc, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
+    CallStackResult ResolveCallStackWithRunner(
+        uint64_t pc, const CommandRunner& runner, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
 
 private:
     struct Impl;

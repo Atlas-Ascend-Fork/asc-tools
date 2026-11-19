@@ -14,6 +14,7 @@
 #include "acl_san/aclsan_cbdata_common.h"
 #include "acl_san/aclsan_cbdata_device.h"
 #include "acl_san/aclsan_cbdata_launch.h"
+#include "acl_san/aclsan_cbdata_operator.h"
 #include "acl_san/aclsan_cbdata_resource.h"
 #include "acl_san/aclsan_cbdata_synchronize.h"
 

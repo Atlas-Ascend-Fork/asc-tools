@@ -105,8 +105,9 @@ aclError OriginalMalloc(void** pointer, size_t bytes, aclrtMemMallocPolicy)
         return ACL_ERROR_INVALID_PARAM;
     }
     ++g_state.allocations;
-    *pointer = std::malloc(bytes);
-    return *pointer == nullptr ? ACL_ERROR_BAD_ALLOC : ACL_SUCCESS;
+    *pointer = nullptr;
+    return posix_memalign(pointer, alignof(aclsan::AclsanTraceBufferHeader), bytes) == 0 ? ACL_SUCCESS :
+                                                                                           ACL_ERROR_BAD_ALLOC;
 }
 
 aclError OriginalFree(void* pointer)
@@ -121,9 +122,10 @@ aclError OriginalMemcpy(void* dst, size_t dstMax, const void* src, size_t bytes,
     if (dst == nullptr || src == nullptr || bytes > dstMax) {
         return ACL_ERROR_INVALID_PARAM;
     }
-    if (kind == ACL_MEMCPY_HOST_TO_DEVICE) {
+    // Count the trace buffer upload and the two record transfers, apart from FIFO metadata traffic.
+    if (kind == ACL_MEMCPY_HOST_TO_DEVICE && bytes > sizeof(aclsan::AclsanTraceBufferHeader)) {
         ++g_state.h2dCalls;
-    } else if (kind == ACL_MEMCPY_DEVICE_TO_HOST) {
+    } else if (kind == ACL_MEMCPY_DEVICE_TO_HOST && bytes == sizeof(aclsan::AclsanRawTraceRecord)) {
         ++g_state.d2hCalls;
     }
     std::memcpy(dst, src, bytes);
@@ -152,18 +154,15 @@ aclError OriginalLaunch(
     auto* bytes = static_cast<uint8_t*>(traceBuffer);
     auto* header = reinterpret_cast<aclsan::AclsanTraceBufferHeader*>(bytes);
     if (header->magic != aclsan::ASCSAN_TRACE_BUFFER_MAGIC || header->blockCount != blocks ||
-        header->physicalCoreSlotCount != aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
+        header->physicalCoreCount != aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return ACL_ERROR_INVALID_PARAM;
     }
 
     constexpr uint32_t blockIds[] = {0U, 1U};
     constexpr uint32_t phyCoreIds[] = {0U, aclsan::ASCSAN_AIC_CORES_PER_DIE};
     for (uint32_t recordIndex = 0; recordIndex < 2; ++recordIndex) {
-        auto* slice = reinterpret_cast<aclsan::AclsanTraceSliceHeader*>(
-            bytes + sizeof(*header) +
-            static_cast<size_t>(phyCoreIds[recordIndex]) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE);
-        auto* record =
-            reinterpret_cast<aclsan::AclsanRawTraceRecord*>(reinterpret_cast<uint8_t*>(slice) + sizeof(*slice));
+        const uint32_t slot = phyCoreIds[recordIndex];
+        auto* record = reinterpret_cast<aclsan::AclsanRawTraceRecord*>(bytes + aclsan::TraceRecordOffset(slot, 0));
         record->pc = kRecords[recordIndex].pc;
         record->args[0] = kRecords[recordIndex].srcPipe;
         record->args[1] = kRecords[recordIndex].dstPipe;
@@ -176,8 +175,8 @@ aclError OriginalLaunch(
         record->pipeline = static_cast<uint16_t>(kRecords[recordIndex].pipeline);
         record->blockId = blockIds[recordIndex];
         record->reserved = 0;
-        slice->phyCoreId = phyCoreIds[recordIndex];
-        slice->recordCount = 1;
+        constexpr uint32_t RECORD_COUNT = 1;
+        std::memcpy(bytes + aclsan::TraceWriteControlOffset(slot), &RECORD_COUNT, sizeof(RECORD_COUNT));
     }
     std::puts("[device] records=2");
     return ACL_SUCCESS;
@@ -202,11 +201,11 @@ aclError OriginalGetDeviceInfo(uint32_t deviceId, aclrtDevAttr attr, int64_t* va
         return ACL_ERROR_INVALID_PARAM;
     }
     if (attr == ACL_DEV_ATTR_CUBE_CORE_NUM) {
-        *value = 2;
+        *value = 36;
         return ACL_SUCCESS;
     }
     if (attr == ACL_DEV_ATTR_VECTOR_CORE_NUM) {
-        *value = 4;
+        *value = aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT - 36U;
         return ACL_SUCCESS;
     }
     return ACL_ERROR_INVALID_PARAM;
@@ -289,12 +288,9 @@ int main()
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, kStream, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
-    CHECK(g_state.h2dCalls == 1);
-    CHECK(g_state.d2hCalls == 0);
-    CHECK(g_state.callbacks.empty());
-
     CHECK(aclrtSynchronizeStream(kStream) == ACL_SUCCESS);
-    CHECK(g_state.d2hCalls == 1);
+    CHECK(g_state.h2dCalls == 1);
+    CHECK(g_state.d2hCalls == 2);
     CHECK(g_state.callbacks.size() == 2);
     CHECK(g_state.callbacks[0].blockId == 0);
     CHECK(g_state.callbacks[0].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE);
@@ -310,7 +306,7 @@ int main()
     CHECK(g_state.callbacks[1].pc == 0x2000);
     CHECK(g_state.allocations == g_state.frees);
 
-    std::puts("[d2h] copies=1");
+    std::puts("[d2h] copies=2");
     std::puts("[callback] records=2");
     std::puts("[verify] kernel_result=simulated trace_records=pass resources=balanced");
     std::puts("FULL_FLOW_SAMPLE_PASS");

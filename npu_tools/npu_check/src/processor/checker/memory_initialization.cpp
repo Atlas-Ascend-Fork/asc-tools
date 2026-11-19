@@ -14,8 +14,7 @@
 namespace npucheck {
 void MemoryAnalysis::AddInitialization(uint32_t device, race::Interval range, size_t node, uint64_t allocationSequence)
 {
-    constexpr size_t MAX_INITIALIZATION_RANGES = 100000;
-    if (initializationCount_ >= MAX_INITIALIZATION_RANGES) {
+    if (initializationCount_ >= limits_.InitializationRecordBudget()) {
         // This is lost evidence, unlike a computational work counter. It stays
         // incomplete until the session ends; starting a new launch cannot repair it.
         complete_ = false;
@@ -116,7 +115,7 @@ std::vector<race::Interval> MemoryAnalysis::InitializationsBefore(
                 break;
             }
             if (*precedes) {
-                if (output.size() >= race::Limits{}.segments) {
+                if (output.size() >= limits_.InitializationIntervalBudget()) {
                     reasons.insert("initialization_segment_budget");
                     return {};
                 }

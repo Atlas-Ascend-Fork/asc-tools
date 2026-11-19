@@ -23,20 +23,18 @@ namespace aclsan {
 
 struct ParsedTraceRecord {
     AclsanRawTraceRecord record{};
-    // Launch 内唯一的固定 trace 槽位编号，从 1 开始；跨快照稳定，跨核大小不表示执行先后。
     uint64_t instrExecId = 0;
     uint64_t launchId = 0;
     uint32_t blockId = 0;
     uint32_t blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE;
     uint32_t phyCoreId = 0;
     uint32_t deviceId = 0;
-    uint64_t parameterBytes = 0; // Filled from the owning launch, never inferred from an access.
+    uint64_t parameterBytes = 0;
     uint32_t physicalCoreSlotCount = 0;
 };
 
 struct TraceBufferParseResult {
     bool ok = false;
-    uint64_t overflowCount = 0;
     std::vector<ParsedTraceRecord> records;
     std::string error;
 };
@@ -45,9 +43,15 @@ bool InitializeTraceBuffer(
     std::vector<uint8_t>& buffer, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,
     std::string& error);
 
-TraceBufferParseResult ParseTraceBuffer(
-    const uint8_t* buffer, size_t bytes, uint32_t expectedPhysicalCoreSlotCount, uint32_t expectedBlockCount,
-    uint64_t expectedLaunchId, uint32_t deviceId);
+bool ValidateTraceSegmentHeader(const AclsanTraceBufferHeader& header, uint32_t blockCount, uint64_t launchId) noexcept;
+bool ValidateTraceFifoRecord(
+    const AclsanRawTraceRecord& record, uint32_t slot, uint32_t sequence, uint32_t blockCount) noexcept;
+
+// records is an already-copied contiguous batch, in increasing sequence order.
+// The byte pointer need not be aligned for AclsanRawTraceRecord.
+TraceBufferParseResult DecodeTraceFifoRange(
+    const uint8_t* records, size_t count, uint32_t slot, uint32_t firstSequence, uint32_t blockCount, uint64_t launchId,
+    uint32_t deviceId);
 
 } // namespace aclsan
 

@@ -19,8 +19,8 @@ namespace aclsan {
 // args[3] carries SYS_VA_BASE when args[4] carries this protocol marker.
 constexpr uint64_t ASCSAN_SCALAR_ADDRESS_CONTEXT_V1 = 0x5343414C41520001ULL;
 
-constexpr uint64_t ASCSAN_TRACE_BUFFER_MAGIC = 0x41534353414E3038ULL;
-constexpr size_t ASCSAN_TRACE_BYTES_PER_CORE = 1024U * 1024U;
+constexpr uint64_t ASCSAN_TRACE_BUFFER_MAGIC = 0x41534353414E303AULL;
+constexpr uint32_t ASCSAN_TRACE_RECORDS_PER_CORE = 13107U;
 // dav-3510 的 108 个物理核槽位均分到两个 die，每个 die 有 108 / 2 = 54 个槽位。
 // 每个 die 内 AIC:AIV = 1:2，前 54 / (1 + 2) = 18 个槽位为 AIC，后 36 个为 AIV。
 // 全局物理 ID 分布：die 0 为 AIC [0, 17]、AIV [18, 53]；
@@ -90,73 +90,98 @@ constexpr bool IsTraceBlockIdValid(uint64_t blockId, bool isAic, uint32_t blockC
     return blockId < blockLimit;
 }
 
-// 每次已插桩 kernel launch 当前独占一个 trace segment。Host 在 launch 前初始化 header 并拷贝到
-// Device GM，Device probe 执行时只写入本次 launch 注入的 segment。segmentBytes 明确给出
-// [segment base, segment base + segmentBytes) 边界；未来多个 segment 可在共享 buffer 中连续存放。
-// Buffer 的三层布局：
-//   [AclsanTraceBufferHeader]
-//   [physical core slice 0: AclsanTraceSliceHeader][records][padding to ASCSAN_TRACE_BYTES_PER_CORE]
-//   ...
-//
-// 大小及偏移计算：
-//   sliceBytes  = ASCSAN_TRACE_BYTES_PER_CORE
-//   sliceCount  = physicalCoreSlotCount
-//   segmentBytes = sizeof(AclsanTraceBufferHeader) + sliceCount * sliceBytes
-//   sliceOffset(sliceIndex) = sizeof(AclsanTraceBufferHeader) + sliceIndex * sliceBytes
-//
-// blockCount 保存 launch blockDim A，只用于校验 record 携带的逻辑 blockId。
-// dav-3510 的物理核按两个 die 分段排列：每个 die 内前 1/3 为 AIC、后 2/3 为 AIV，
-// 即 AIC、AIV | AIC、AIV。
-// sliceIndex 等于 get_coreid()。每个物理核执行的所有逻辑 block 共享一个 slice，
-// 有效记录下标范围为 [0, recordCount)。
-// recordCount 即该 slice 的有效结尾，不额外写入 record 或 launch 尾标志。
-struct AclsanTraceBufferHeader {
-    uint64_t magic;        // Trace segment 格式标识，固定为 ASCSAN_TRACE_BUFFER_MAGIC。
-    uint64_t launchId;     // Host 为本次 launch 分配的标识；该 segment 内所有 record 均继承此归属。
-    uint64_t segmentBytes; // 包含 header 和所有定长 slice 的完整 segment 字节数。
-    uint32_t blockCount;   // 本次 kernel launch 的 blockDim，即 A。
-    // 固定物理 ID 槽位数（108），包含禁用核的空洞，不是 aclrt 返回的可用核数。
-    uint32_t physicalCoreSlotCount;
+// SIMD starts with interleaved device- and host-owned cache lines.
+struct alignas(64) AclsanTraceBufferHeader {
+    uint64_t magic;
+    uint64_t launchId;
+    uint64_t segmentBytes;
+    uint32_t blockCount;
+    uint32_t physicalCoreCount;
+    uint64_t simdSegmentOffset;
+    uint64_t simdSegmentBytes;
+    uint64_t simtSegmentOffset;
+    uint64_t simtSegmentBytes;
 };
 
-// 新代码可使用 segment 术语；保留 AclsanTraceBufferHeader 名称以兼容现有调用点。
-using AclsanTraceSegmentHeader = AclsanTraceBufferHeader;
-
-// 单个物理 slice 的写入状态。phyCoreId 仅在 recordCount 大于 0 时有效。
-struct AclsanTraceSliceHeader {
-    uint32_t recordCount;   // 当前 slice 中已写入的有效记录数。
-    uint32_t overflowCount; // Slice 容量用尽后丢弃的记录数，最大饱和至 UINT32_MAX。
-    uint32_t phyCoreId;     // Device 通过 get_coreid() 获取的物理核 ID。
-    uint32_t reserved;      // 保持后续 AclsanRawTraceRecord 的 64 位对齐，固定写 0。
+struct alignas(64) AclsanTraceWriteLine {
+    uint32_t writeSequence;
+    uint32_t droppedCount;
+    uint8_t reserved[56];
 };
 
-// Device probe 生成的一条原始 trace 记录，固定占用 80 字节。record 不重复保存 launchId；Host 解析时
-// 从所属 AclsanTraceBufferHeader 取得 launchId，并附加到 ParsedTraceRecord。
-//   [pc: 8][args[0..4]: 40][instrId: 4][siteId: 4][category: 2][pipeline: 2][blockId: 4][reserved: 4][padding:
-//   4][parameterBase: 8]
+struct alignas(64) AclsanTraceReadLine {
+    uint32_t readSequence;
+    uint8_t reserved[60];
+};
+
+struct alignas(64) AclsanTraceControl {
+    AclsanTraceWriteLine write;
+    AclsanTraceReadLine read;
+};
+
 struct AclsanRawTraceRecord {
-    uint64_t pc;                        // 被插桩指令的 PC。
-    uint64_t args[5];                   // Probe 捕获的指令参数，具体含义由对应指令协议定义。
-    uint32_t instrId;                   // 指令标识；probe 写入 apiId，Host 按 InstructionId 解析。
-    uint32_t siteId;                    // 插桩点标识，用于关联 patch 元数据；当前写入固定填 0。
-    DeviceInstructionCategory category; // 指令功能分类。
-    uint16_t pipeline;                  // 指令实际执行的 Device PIPE_* 值。
-    uint32_t blockId;                   // AscendC::GetBlockIdx() 返回的逻辑 block ID。
-    uint32_t reserved;                  // 显式保留字段，固定写 0。
-    uint64_t parameterBase;             // Internal launch parameter region, captured on the executing core.
+    uint64_t pc;
+    uint64_t args[5];
+    uint32_t instrId;
+    uint32_t siteId;
+    DeviceInstructionCategory category;
+    uint16_t pipeline;
+    uint32_t blockId;
+    uint32_t reserved;
+    uint32_t padding;
+    uint64_t parameterBase;
 };
 
-constexpr uint32_t ASCSAN_TRACE_RECORDS_PER_CORE = static_cast<uint32_t>(
-    (ASCSAN_TRACE_BYTES_PER_CORE - sizeof(AclsanTraceSliceHeader)) / sizeof(AclsanRawTraceRecord));
-
-constexpr bool TraceBufferBytes(uint32_t physicalCoreSlotCount, size_t* bytes)
+constexpr size_t TraceWriteControlOffset(uint32_t slot)
 {
-    if (bytes == nullptr || physicalCoreSlotCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
+    return slot < ASCSAN_PHYSICAL_CORE_SLOT_COUNT ?
+               sizeof(AclsanTraceBufferHeader) + static_cast<size_t>(slot) * sizeof(AclsanTraceControl) :
+               SIZE_MAX;
+}
+
+constexpr size_t TraceReadControlOffset(uint32_t slot)
+{
+    return slot < ASCSAN_PHYSICAL_CORE_SLOT_COUNT ? TraceWriteControlOffset(slot) + sizeof(AclsanTraceWriteLine) :
+                                                    SIZE_MAX;
+}
+
+constexpr size_t TraceRecordOffset(uint32_t slot, uint32_t sequence)
+{
+    if (slot >= ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
+        return SIZE_MAX;
+    }
+    return sizeof(AclsanTraceBufferHeader) +
+           static_cast<size_t>(ASCSAN_PHYSICAL_CORE_SLOT_COUNT) * sizeof(AclsanTraceControl) +
+           (static_cast<size_t>(slot) * ASCSAN_TRACE_RECORDS_PER_CORE + sequence % ASCSAN_TRACE_RECORDS_PER_CORE) *
+               sizeof(AclsanRawTraceRecord);
+}
+
+constexpr bool TraceBufferBytes(uint32_t physicalCoreCount, size_t* bytes)
+{
+    if (bytes == nullptr || physicalCoreCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return false;
     }
-    *bytes = sizeof(AclsanTraceBufferHeader) + static_cast<size_t>(physicalCoreSlotCount) * ASCSAN_TRACE_BYTES_PER_CORE;
+    *bytes = sizeof(AclsanTraceBufferHeader) +
+             static_cast<size_t>(physicalCoreCount) *
+                 (sizeof(AclsanTraceControl) + ASCSAN_TRACE_RECORDS_PER_CORE * sizeof(AclsanRawTraceRecord));
     return true;
 }
+
+static_assert(sizeof(AclsanTraceBufferHeader) == 64U && alignof(AclsanTraceBufferHeader) == 64U);
+static_assert(
+    offsetof(AclsanTraceBufferHeader, blockCount) == 24U &&
+    offsetof(AclsanTraceBufferHeader, physicalCoreCount) == 28U);
+static_assert(
+    offsetof(AclsanTraceBufferHeader, simdSegmentOffset) == 32U &&
+    offsetof(AclsanTraceBufferHeader, simdSegmentBytes) == 40U &&
+    offsetof(AclsanTraceBufferHeader, simtSegmentOffset) == 48U &&
+    offsetof(AclsanTraceBufferHeader, simtSegmentBytes) == 56U);
+static_assert(sizeof(AclsanTraceWriteLine) == 64U && sizeof(AclsanTraceReadLine) == 64U);
+static_assert(sizeof(AclsanTraceControl) == 128U && offsetof(AclsanTraceControl, read) == 64U);
+static_assert(
+    sizeof(AclsanRawTraceRecord) == 80U && offsetof(AclsanRawTraceRecord, reserved) == 64U &&
+    offsetof(AclsanRawTraceRecord, padding) == 68U && offsetof(AclsanRawTraceRecord, parameterBase) == 72U);
+static_assert(TraceRecordOffset(0U, 0U) == 13888U);
 
 } // namespace aclsan
 

@@ -35,9 +35,9 @@ constexpr size_t MAX_RESULT_BYTES = 64u * 1024u * 1024u;
 // bit 0-2 是 must-understand 的语义位，bit 3-7 保留且必须为 0（接收端发现非零即协议
 // 错误），bit 8-15 保留给未来 minor 新增的 must-ignore 标志（接收端必须忽略无法识别
 // 的置位）。按位区分这两类，使得 minor 版本可以在不破坏旧实现的前提下新增标志。
-constexpr uint16_t FLAG_MORE = 1u << 0;       // 仅 Result 有效：同一报告还有续帧
-constexpr uint16_t FLAG_HAS_ERRORS = 1u << 1; // 仅 Result 末帧有效：本次检查发现了问题
-constexpr uint16_t FLAG_TRUNCATED = 1u << 2;  // 仅 Result 末帧有效：报告因触及总长上限被截断
+constexpr uint16_t FLAG_MORE = 1u << 0U;       // 仅 Result 有效：同一报告还有续帧
+constexpr uint16_t FLAG_HAS_ERRORS = 1u << 1U; // 仅 Result 末帧有效：本次检查发现了问题
+constexpr uint16_t FLAG_TRUNCATED = 1u << 2U;  // 仅 Result 末帧有效：报告因触及总长上限被截断
 constexpr uint16_t FLAGS_RESERVED_MUST_UNDERSTAND = 0x00f8u; // bit 3-7
 constexpr uint16_t FLAGS_RESERVED_MUST_IGNORE = 0xff00u;     // bit 8-15
 

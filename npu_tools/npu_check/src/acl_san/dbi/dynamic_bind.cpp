@@ -254,10 +254,6 @@ static const BindingSpec ALL_BINDINGS[] = {
     {InstrType::SET_FLAGI_V, "__npu_check_probe_set_flagi_v", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
     {InstrType::WAIT_FLAG_V, "__npu_check_probe_wait_flag_v", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
     {InstrType::WAIT_FLAGI_V, "__npu_check_probe_wait_flagi_v", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
-    {InstrType::SET_INTRA_BLOCK_V, "__npu_check_probe_set_intra_block_v", {PROBE_ARGUMENT_0}},
-    {InstrType::SET_INTRA_BLOCKI_V, "__npu_check_probe_set_intra_blocki_v", {PROBE_ARGUMENT_0}},
-    {InstrType::WAIT_INTRA_BLOCK_V, "__npu_check_probe_wait_intra_block_v", {PROBE_ARGUMENT_0}},
-    {InstrType::WAIT_INTRA_BLOCKI_V, "__npu_check_probe_wait_intra_blocki_v", {PROBE_ARGUMENT_0}},
     {InstrType::SET_CROSS_CORE_V, "__npu_check_probe_ffts_cross_core_sync_v", {PROBE_ARGUMENT_0}},
     {InstrType::WAIT_FLAG_DEV_V, "__npu_check_probe_wait_flag_dev_pipe_v", {PROBE_ARGUMENT_0}},
     {InstrType::WAIT_FLAG_DEVI_V, "__npu_check_probe_wait_flag_devi_pipe_v", {PROBE_ARGUMENT_0}},
@@ -443,10 +439,17 @@ static const BindingSpec ALL_BINDINGS[] = {
     {InstrType::SET_L3D_RPT_B, "__npu_check_probe_set_l3d_rpt_b", {PROBE_ARGUMENT_0}},
     {InstrType::SET_PADDING_B, "__npu_check_probe_set_padding_b", {PROBE_ARGUMENT_0}},
     {InstrType::PIPE_BARRIER, "__npu_check_probe_pipe_barrier", {PROBE_ARGUMENT_0}},
+    // Register scalar intra-block probes first so bisheng-tune preserves their pipe and register operands.
     {InstrType::SET_INTRA_BLOCK, "__npu_check_probe_set_intra_block", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
     {InstrType::SET_INTRA_BLOCKI, "__npu_check_probe_set_intra_blocki", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
     {InstrType::WAIT_INTRA_BLOCK, "__npu_check_probe_wait_intra_block", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
     {InstrType::WAIT_INTRA_BLOCKI, "__npu_check_probe_wait_intra_blocki", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
+    {InstrType::SET_INTRA_BLOCK_V, "__npu_check_probe_set_intra_block_v", {PROBE_ARGUMENT_0}},
+    {InstrType::SET_INTRA_BLOCKI_V, "__npu_check_probe_set_intra_blocki_v", {PROBE_ARGUMENT_0}},
+    {InstrType::WAIT_INTRA_BLOCK_V, "__npu_check_probe_wait_intra_block_v", {PROBE_ARGUMENT_0}},
+    {InstrType::WAIT_INTRA_BLOCKI_V, "__npu_check_probe_wait_intra_blocki_v", {PROBE_ARGUMENT_0}},
+    {InstrType::BEFORE_KERNEL_STACK_FRAME, "__npu_check_probe_before_kernel_stack_frame", {}},
+    {InstrType::BEFORE_KERNEL_END, "__npu_check_probe_before_kernel_end", {}},
 };
 
 using aclsan::ProbeGroup;
@@ -677,6 +680,11 @@ static constexpr BindingGroupSpec BINDING_GROUPS[] = {
          InstrType::VMRGSORT_F16,
          InstrType::VMRGSORT_F32,
      }},
+    {ProbeGroup::Boundary,
+     {
+         InstrType::BEFORE_KERNEL_STACK_FRAME,
+         InstrType::BEFORE_KERNEL_END,
+     }},
 };
 
 thread_local const std::vector<aclsan::ProbeGroup>* g_selectedGroups = nullptr;
@@ -740,8 +748,8 @@ namespace aclsan {
 
 std::vector<ProbeGroup> AllProbeGroups()
 {
-    return {ProbeGroup::Mte1,   ProbeGroup::Mte2, ProbeGroup::Mte3,   ProbeGroup::Fixpipe,
-            ProbeGroup::Scalar, ProbeGroup::Sync, ProbeGroup::Matrix, ProbeGroup::Vector};
+    return {ProbeGroup::Mte1, ProbeGroup::Mte2,   ProbeGroup::Mte3,   ProbeGroup::Fixpipe, ProbeGroup::Scalar,
+            ProbeGroup::Sync, ProbeGroup::Matrix, ProbeGroup::Vector, ProbeGroup::Boundary};
 }
 
 std::vector<std::string> BindingSymbols(const std::vector<ProbeGroup>& groups)
@@ -763,8 +771,8 @@ std::string CtrlBinGeneratorIdentity()
     constexpr uint64_t prime = 1099511628211ULL;
     // FNV hashing keeps the low 64 bits; widen the multiplication before masking.
     const auto append = [&hash](const std::string& value) {
-        for (const unsigned char byte : value) {
-            hash ^= byte;
+        for (const char byte : value) {
+            hash ^= static_cast<unsigned char>(byte);
             hash = static_cast<uint64_t>((static_cast<unsigned __int128>(hash) * prime) & UINT64_MAX);
         }
         hash ^= 0xffU;

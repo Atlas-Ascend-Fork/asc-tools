@@ -20,6 +20,7 @@ file(MAKE_DIRECTORY
   "${RUNTIME_ROOT}/x86_64-linux/asc/include/basic_api"
   "${RUNTIME_ROOT}/x86_64-linux/ascendc/include/highlevel_api"
 )
+file(WRITE "${RUNTIME_ROOT}/version.cfg" "# Host DBI fixture\n")
 file(WRITE "${RUNTIME_ROOT}/x86_64-linux/asc/include/kernel_operator.h" "// test marker\n")
 
 get_filename_component(fake_tool_name "${FAKE_TOOL}" NAME)
@@ -33,6 +34,7 @@ file(WRITE "${TEST_ROOT}/commands.log" "")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env
     "DBI_FAKE_LOG=${TEST_ROOT}/commands.log"
+    "ASCEND_HOME_PATH=${RUNTIME_ROOT}"
     "LD_LIBRARY_PATH=${RUNTIME_ROOT}/x86_64-linux/lib64:${INJECTION_LIBRARY_DIR}:$ENV{LD_LIBRARY_PATH}"
     "${TEST_EXECUTABLE}" ${TEST_ARGUMENTS}
   RESULT_VARIABLE test_result

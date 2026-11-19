@@ -56,15 +56,14 @@ inline std::optional<uint64_t> AddressWithOffset(uint64_t base, __int128 offset)
     return static_cast<uint64_t>(static_cast<__int128>(base) + offset);
 }
 
-template <typename Visitor>
-bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
+using AffineAxes = std::array<AffineAxis, kMaxAffineRank>;
+
+inline bool PrepareAffineAxes(const AffineLayout& layout, AffineAxes& axes, uint32_t& axisCount)
 {
     if (layout.rank == 0 || layout.rank > kMaxAffineRank || layout.elementBytes == 0) {
         return false;
     }
 
-    std::array<AffineAxis, kMaxAffineRank> axes{};
-    uint32_t axisCount = 0;
     for (uint32_t dimension = 0; dimension < layout.rank; ++dimension) {
         const uint64_t count = layout.dimensions[dimension];
         if (count == 0) {
@@ -84,10 +83,13 @@ bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
         }
         axes[insertion] = axis;
     }
+    return true;
+}
 
-    __int128 contiguousBegin = 0;
-    uint64_t contiguousBytes = layout.elementBytes;
-    uint32_t sparseBegin = 0;
+inline bool MergeContiguousAxes(
+    const AffineAxes& axes, uint32_t axisCount, uint32_t& sparseBegin, __int128& contiguousBegin,
+    uint64_t& contiguousBytes)
+{
     for (; sparseBegin < axisCount; ++sparseBegin) {
         const AffineAxis& axis = axes[sparseBegin];
         if (axis.absoluteStride > contiguousBytes) {
@@ -109,8 +111,13 @@ bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
             return false;
         }
     }
+    return true;
+}
 
-    uint64_t segmentCount = 1;
+inline bool ValidateSparseAxes(
+    const AffineAxes& axes, uint32_t axisCount, uint32_t sparseBegin, __int128 contiguousBegin, uint64_t base,
+    uint64_t& segmentCount)
+{
     __int128 minimumOffset = contiguousBegin;
     __int128 maximumOffset = contiguousBegin;
     for (uint32_t axisIndex = sparseBegin; axisIndex < axisCount; ++axisIndex) {
@@ -132,7 +139,23 @@ bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
             return false;
         }
     }
-    if (!AddressWithOffset(layout.base, minimumOffset) || !AddressWithOffset(layout.base, maximumOffset)) {
+    return AddressWithOffset(base, minimumOffset).has_value() && AddressWithOffset(base, maximumOffset).has_value();
+}
+
+template <typename Visitor>
+bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
+{
+    AffineAxes axes{};
+    uint32_t axisCount = 0;
+    if (!PrepareAffineAxes(layout, axes, axisCount)) {
+        return false;
+    }
+    __int128 contiguousBegin = 0;
+    uint64_t contiguousBytes = layout.elementBytes;
+    uint32_t sparseBegin = 0;
+    uint64_t segmentCount = 1;
+    if (!MergeContiguousAxes(axes, axisCount, sparseBegin, contiguousBegin, contiguousBytes) ||
+        !ValidateSparseAxes(axes, axisCount, sparseBegin, contiguousBegin, layout.base, segmentCount)) {
         return false;
     }
 
@@ -150,7 +173,7 @@ bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
             }
         }
         const auto address = AddressWithOffset(layout.base, offset);
-        if (!address) {
+        if (!address.has_value()) {
             return false;
         }
         visitor(*address, contiguousBytes);

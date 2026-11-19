@@ -26,7 +26,7 @@ racecheck::ByteRange AccessRange(
     AccessRangeCache& cache, const racecheck::PreparedAccess* current)
 {
     const std::vector<racecheck::ByteRange>* ranges = nullptr;
-    if (current && index == evidence.curIndex) {
+    if (current != nullptr && index == evidence.curIndex) {
         ranges = &current->ranges;
     } else {
         auto found = cache.find(index);
@@ -48,7 +48,7 @@ PhysicalSpaceKey ValidateAccesses(
     const AclsanDeviceMemoryAccessData& previous, const AclsanDeviceMemoryAccessData& current,
     ConflictKind* inferredKind, const racecheck::PreparedAccess* prepared = nullptr)
 {
-    const auto key = prepared ? prepared->key : racecheck::MakeKey(current);
+    const auto key = prepared != nullptr ? prepared->key : racecheck::MakeKey(current);
     const bool crossLaunchGm =
         previous.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && current.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM;
     if ((!crossLaunchGm && previous.header.launchId != current.header.launchId) ||
@@ -57,7 +57,7 @@ PhysicalSpaceKey ValidateAccesses(
             RacecheckErrorKind::InvalidEvent, "race report belongs to another launch or physical table");
     }
     const auto priorMode = racecheck::AccessMode(previous);
-    const auto currentMode = prepared ? prepared->mode : racecheck::AccessMode(current);
+    const auto currentMode = prepared != nullptr ? prepared->mode : racecheck::AccessMode(current);
     const bool priorRead = priorMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     const bool currentRead = currentMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     const bool bothAtomic = racecheck::IsAtomicWrite(priorMode) && racecheck::IsAtomicWrite(currentMode);
@@ -71,7 +71,7 @@ PhysicalSpaceKey ValidateAccesses(
         throw RacecheckError(
             RacecheckErrorKind::InvalidEvent, "race report has no matching inter-instruction conflict");
     }
-    if (inferredKind) {
+    if (inferredKind != nullptr) {
         *inferredKind = kind;
     }
     return key;
@@ -153,7 +153,7 @@ std::vector<NpuCheckRacecheckReport> MakeDiagnostics(
         std::vector<NpuCheckRacecheckReport> reports;
         reports.reserve(evidence.size());
         for (const auto& item : evidence) {
-            if (current && item.curIndex != currentIndex) {
+            if (current != nullptr && item.curIndex != currentIndex) {
                 throw RacecheckError(
                     RacecheckErrorKind::InvalidEvent, "report evidence does not match prepared current index");
             }
@@ -245,7 +245,7 @@ PhysicalSpaceKey ValidateReportActors(const NpuCheckRacecheckReport& report, Con
 
 ReportRenderStatus NormalizeRacecheckReport(const NpuCheckRacecheckReport& report, ReportRecord* out)
 {
-    if (!out || report.checkRange.begin >= report.checkRange.end ||
+    if (out == nullptr || report.checkRange.begin >= report.checkRange.end ||
         report.previousRange.begin > report.checkRange.begin || report.previousRange.end < report.checkRange.end ||
         report.currentRange.begin > report.checkRange.begin || report.currentRange.end < report.checkRange.end) {
         return ReportRenderStatus::INVALID_ARGUMENT;

@@ -16,7 +16,6 @@
 #include "diagnostic/report/synccheck_adapter.h"
 
 #include <type_traits>
-#include <utility>
 
 namespace npucheck::detail {
 namespace {

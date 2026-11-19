@@ -71,21 +71,26 @@ TEST(HappensBeforeGraphTest, PathsAgreeWithIndependentTransitiveClosure)
                 }
         }
 }
+void SealCrossChainSearchGraph(Graph& graph)
+{
+    for (int i = 0; i < 4; ++i)
+        graph.AddNode();
+    // Node 0 claims 3 first, so the query from 1 to 3 must scan both outgoing edges.
+    ASSERT_TRUE(graph.AddEdge(0, 3, EDGE));
+    ASSERT_TRUE(graph.AddEdge(1, 2, EDGE));
+    ASSERT_TRUE(graph.AddEdge(1, 3, EDGE));
+    ASSERT_TRUE(graph.Seal());
+}
+
 TEST(HappensBeforeGraphTest, UnknownNeverTurnsIntoNoPath)
 {
     Graph graph(10, 1, 10);
-    for (int i = 0; i < 4; ++i)
-        graph.AddNode();
-    ASSERT_TRUE(graph.AddEdge(0, 1, EDGE));
-    ASSERT_TRUE(graph.AddEdge(1, 2, EDGE));
-    ASSERT_TRUE(graph.Seal());
-    EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Unknown);
-    EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Unknown);
-    // The budget bounds one search, not the session: a shallow query after an
-    // exhausted deep one still answers instead of inheriting Unknown.
-    EXPECT_EQ(graph.Compare(0, 1), Graph::Relation::Before);
-    EXPECT_EQ(graph.QueryWork(), 3U);
-    EXPECT_EQ(graph.Compare(2, 3), Graph::Relation::Unordered); // Empty adjacency needs no work.
+    ASSERT_NO_FATAL_FAILURE(SealCrossChainSearchGraph(graph));
+    EXPECT_EQ(graph.Compare(1, 3), Graph::Relation::Unknown);
+    EXPECT_EQ(graph.Compare(1, 3), Graph::Relation::Unknown);
+    EXPECT_EQ(graph.Compare(0, 3), Graph::Relation::Before);
+    EXPECT_EQ(graph.QueryWork(), 2U);
+    EXPECT_EQ(graph.Compare(2, 3), Graph::Relation::Unordered);
 }
 TEST(HappensBeforeGraphTest, LaterQueryAnswersAfterAnExhaustedSearch)
 {
@@ -119,37 +124,27 @@ TEST(HappensBeforeGraphTest, CyclesMissingCoverageAndPostSealMutationFailClosed)
 }
 TEST(HappensBeforeGraphTest, AggregateWorkDoesNotSpendFutureQueriesQuota)
 {
-    Graph graph(600, 600, 0);
-    for (size_t i = 0; i <= 512; ++i) {
-        graph.AddNode();
-        if (i != 0) {
-            ASSERT_TRUE(graph.AddEdge(i - 1, i, EDGE));
-        }
+    constexpr size_t REPETITIONS = 100;
+    constexpr size_t PER_QUERY_WORK = 2;
+    Graph graph(10, PER_QUERY_WORK, 0);
+    ASSERT_NO_FATAL_FAILURE(SealCrossChainSearchGraph(graph));
+    for (size_t i = 0; i < REPETITIONS; ++i) {
+        ASSERT_EQ(graph.Compare(1, 3), Graph::Relation::Before) << "query " << i;
     }
-    ASSERT_TRUE(graph.Seal());
-    for (size_t i = 0; i < 200000; ++i) {
-        if (graph.Compare(0, 512) != Graph::Relation::Before) {
-            FAIL() << "A previous query exhausted this query's quota at iteration " << i;
-        }
-    }
-    EXPECT_GT(graph.QueryWork(), 100000000U);
-    EXPECT_EQ(graph.Compare(0, 1), Graph::Relation::Before);
+    EXPECT_EQ(graph.QueryWork(), REPETITIONS * PER_QUERY_WORK);
 }
 TEST(HappensBeforeGraphTest, CheckerAnalysisAllowancesAreIndependent)
 {
     Graph graph(10, 100, 0);
-    graph.AddNode();
-    graph.AddNode();
-    graph.AddNode();
-    ASSERT_TRUE(graph.AddEdge(0, 1, EDGE));
-    ASSERT_TRUE(graph.AddEdge(1, 2, EDGE));
-    ASSERT_TRUE(graph.Seal());
+    ASSERT_NO_FATAL_FAILURE(SealCrossChainSearchGraph(graph));
     graph.BeginAnalysis(1);
-    EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Unknown);
-    // The same checker cannot silently recover by starting another search.
-    EXPECT_EQ(graph.Compare(0, 1), Graph::Relation::Unknown);
-    graph.BeginAnalysis(100);
-    EXPECT_EQ(graph.Compare(0, 2), Graph::Relation::Before);
+    EXPECT_EQ(graph.Compare(1, 3), Graph::Relation::Unknown);
+    EXPECT_EQ(graph.QueryWork(), 1U);
+    EXPECT_EQ(graph.Compare(1, 3), Graph::Relation::Unknown);
+    EXPECT_EQ(graph.QueryWork(), 1U);
+    graph.BeginAnalysis(2);
+    EXPECT_EQ(graph.Compare(1, 3), Graph::Relation::Before);
+    EXPECT_EQ(graph.QueryWork(), 3U);
 }
 } // namespace
 } // namespace npucheck::race

@@ -31,6 +31,7 @@
 
 #include "acl_san/aclsan_api.h"
 #include "acl_san/aclsan_cbdata.h"
+#include "aclsan_device_data.h"
 #include "device_instr/arch/dav_3510/register_state_manager.h"
 #include "device_instr/arch/dav_3510/decoder.h"
 #include "device_instr/common/instruction_id.h"
@@ -158,6 +159,8 @@ aclError FakeAclrtMalloc(void** deviceAddress, size_t size, aclrtMemMallocPolicy
     *deviceAddress = g_hostInputAllocation ? g_hostInputStorage.data() : Address(0x12340000U);
     return ACL_SUCCESS;
 }
+
+aclError FakeAclrtBinaryUnload(aclrtBinHandle) { return ACL_SUCCESS; }
 
 aclError FakeAclrtFree(void* deviceAddress)
 {
@@ -1113,6 +1116,7 @@ void TestArgsArrayUsesCallerPointerStorage()
 void TestTraceArgumentModes()
 {
     ResetCapture();
+    aclsan::StartTraceWorkerAcceptance();
     const auto binary = Address(0x88770001);
     const auto function = Address(0x12345679);
     const std::array<uint8_t, 8> image{0x7f, 'E', 'L', 'F', 1, 2, 3, 4};
@@ -1158,6 +1162,15 @@ AclsanTestBinaryGetDevAddress(aclrtBinHandle, void** address, size_t* bytes)
     }
     *address = reinterpret_cast<void*>(g_binaryAddressBase);
     *bytes = static_cast<size_t>(g_binaryAddressBytes);
+    return ACL_SUCCESS;
+}
+
+extern "C" __attribute__((visibility("default"))) aclError aclrtGetCurrentContext(aclrtContext* context)
+{
+    if (context == nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    *context = Address(0x12340000U);
     return ACL_SUCCESS;
 }
 
@@ -1264,6 +1277,8 @@ void* CaptureGetOriginalRuntimeApi(aclrtApiId apiId)
             return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&FakeAclrtMemcpy));
         case ACL_RT_API_aclrtGetDevice:
             return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&FakeAclrtGetDevice));
+        case ACL_RT_API_aclrtBinaryUnLoad:
+            return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&FakeAclrtBinaryUnload));
         case ACL_RT_API_aclrtBinaryGetGlobal:
             return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&FakeAclrtBinaryGetGlobal));
         case ACL_RT_API_aclrtGetFunctionAttribute:
@@ -1734,13 +1749,18 @@ TEST(AclsanLoadedImageResources, InFlightCountingAcrossStreams)
     EXPECT_EQ(g_callbackOrder[0].second, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END);
     EXPECT_TRUE(g_resourceEvents.empty());
 
+    aclsan::ReleaseTraceStreamResources(streamA);
+    EXPECT_TRUE(g_resourceEvents.empty());
+
     EXPECT_EQ(aclrtSynchronizeStreamHook(streamB), ACL_ERROR_INVALID_PARAM);
+    EXPECT_TRUE(g_resourceEvents.empty());
+    aclsan::ReleaseTraceStreamResources(streamB);
     ASSERT_EQ(g_resourceEvents.size(), 2U);
     EXPECT_EQ(ResourceIds(), firstIds);
     aclsan::ResetTraceRuntimeState();
 }
 
-TEST(AclsanLoadedImageResources, SynchronizeEndPrecedesFreeEvents)
+TEST(AclsanLoadedImageResources, SynchronizeWithoutPendingLaunchRetainsRegistration)
 {
     const aclsan_test::BoundaryGuard boundaryGuard{LoadedImageBoundary()};
     ResetCapture();
@@ -1754,8 +1774,13 @@ TEST(AclsanLoadedImageResources, SynchronizeEndPrecedesFreeEvents)
     g_resourceEvents.clear();
 
     EXPECT_EQ(aclrtSynchronizeStreamHook(stream), ACL_SUCCESS);
-    ASSERT_EQ(g_callbackOrder.size(), 3U);
+    ASSERT_EQ(g_callbackOrder.size(), 1U);
     EXPECT_EQ(g_callbackOrder[0].second, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END);
+    EXPECT_TRUE(g_resourceEvents.empty());
+
+    // This fixture registers the image directly, without creating a pending launch.
+    aclsan::ReleaseTraceStreamResources(stream);
+    ASSERT_EQ(g_callbackOrder.size(), 3U);
     EXPECT_EQ(g_callbackOrder[1].second, ACLSAN_CBID_RESOURCE_MEMORY_FREE);
     EXPECT_EQ(g_callbackOrder[2].second, ACLSAN_CBID_RESOURCE_MEMORY_FREE);
     ASSERT_EQ(g_resourceEvents.size(), allocations.size());
@@ -1780,9 +1805,10 @@ TEST(AclsanLoadedImageResources, SynchronizeEndPrecedesFreeEvents)
     aclsan::ResetTraceRuntimeState();
 }
 
-TEST(AclsanLoadedImageResources, TimeoutSynchronizationStillReleases)
+TEST(AclsanLoadedImageResources, TimeoutSynchronizationRetainsResources)
 {
     const aclsan_test::BoundaryGuard boundaryGuard{LoadedImageBoundary()};
+    aclsan::ResetTraceRuntimeState();
     ResetCapture();
     const auto binary = reinterpret_cast<uintptr_t>(Address(0x88775000U));
     const auto stream = Address(0x45670000U);
@@ -1794,14 +1820,16 @@ TEST(AclsanLoadedImageResources, TimeoutSynchronizationStillReleases)
     g_synchronizeResult = ACL_ERROR_RT_STREAM_SYNC_TIMEOUT;
     EXPECT_EQ(aclrtSynchronizeStreamWithTimeoutHook(stream, 1234), ACL_ERROR_RT_STREAM_SYNC_TIMEOUT);
     EXPECT_EQ(g_lastSynchronizeTimeout, 1234);
-    ASSERT_EQ(g_callbackOrder.size(), 3U);
+    ASSERT_EQ(g_callbackOrder.size(), 1U);
     EXPECT_EQ(g_callbackOrder[0].second, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END);
+    EXPECT_TRUE(g_resourceEvents.empty());
+    aclsan::ReleaseTraceStreamResources(stream);
     ASSERT_EQ(g_resourceEvents.size(), 2U);
     EXPECT_EQ(ResourceIds(), firstIds);
     aclsan::ResetTraceRuntimeState();
 }
 
-TEST(AclsanLoadedImageResources, DeviceReleaseFreesAllImages)
+TEST(AclsanLoadedImageResources, DeviceResetRetainsImagesUntilStreamRelease)
 {
     const aclsan_test::BoundaryGuard boundaryGuard{LoadedImageBoundary()};
     ResetCapture();
@@ -1814,7 +1842,9 @@ TEST(AclsanLoadedImageResources, DeviceReleaseFreesAllImages)
     g_callbackOrder.clear();
     g_resourceEvents.clear();
 
-    aclsan::ReleaseTraceDeviceResources(3);
+    aclsan::FinishTraceDeviceReset(3, true);
+    ASSERT_TRUE(g_resourceEvents.empty());
+    aclsan::ReleaseTraceStreamResources(stream);
     ASSERT_EQ(g_resourceEvents.size(), 4U);
     for (const auto& event : g_resourceEvents) {
         EXPECT_EQ(event.deviceId, 3U);
@@ -1822,7 +1852,7 @@ TEST(AclsanLoadedImageResources, DeviceReleaseFreesAllImages)
     }
     g_callbackOrder.clear();
     g_resourceEvents.clear();
-    aclsan::ReleaseTraceDeviceResources(3);
+    aclsan::ReleaseTraceStreamResources(stream);
     EXPECT_TRUE(g_resourceEvents.empty());
     aclsan::ResetTraceRuntimeState();
 }

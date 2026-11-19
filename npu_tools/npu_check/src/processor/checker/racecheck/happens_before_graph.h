@@ -30,7 +30,8 @@ public:
         PublishPrefix,
         TokenMatch,
         AcquireSuffix,
-        BarrierPrefix
+        BarrierPrefix,
+        PhysicalBlockOrder
     };
     struct Edge {
         size_t target;
@@ -48,20 +49,40 @@ public:
     // this allowance never restores missing observations or changes graph validity.
     void BeginAnalysis(size_t workBudget);
     const std::vector<size_t>& Order() const { return order_; }
+    // Candidate visitation only: a topological position is never an HB proof.
+    std::optional<size_t> TraversalRank(size_t node) const
+    {
+        if (!sealed_ || !valid_ || node >= rank_.size())
+            return std::nullopt;
+        return rank_[node];
+    }
+    // Within one chain, increasing rank follows actual dependency edges.
+    std::optional<size_t> ChainOf(size_t node) const
+    {
+        if (!sealed_ || !valid_ || node >= chain_.size())
+            return std::nullopt;
+        return chain_[node];
+    }
     size_t QueryWork() const { return work_; }
     size_t EdgeCount() const { return edgeCount_; }
-    // Greedy path cover size computed at Seal. It is the dimension of a future
-    // reachability index; reported for measurement only, never used for verdicts.
-    size_t ChainCount() const { return chainCount_; }
 
 private:
     enum class Path { Yes, No, Unknown };
+    struct ReachabilityInterval {
+        size_t firstReachable = 0;
+        size_t lastReachable = 0;
+        size_t subtreeFirst = 0;
+    };
+    void BuildReachabilityIntervals();
+    bool MayReach(size_t from, size_t to) const;
+    bool HasPathWitness(size_t from, size_t to) const;
     Path Reachable(size_t from, size_t to);
     bool SpendWork(size_t& queryWork);
     std::vector<std::vector<Edge>> edges_;
-    std::vector<size_t> order_, rank_, seen_, pending_;
+    std::vector<ReachabilityInterval> reachabilityIntervals_;
+    std::vector<size_t> order_, rank_, seen_, pending_, chain_;
     std::map<std::pair<size_t, size_t>, bool> cache_;
-    size_t edgeBudget_, workBudget_, cacheBudget_, edgeCount_ = 0, work_ = 0, generation_ = 0, chainCount_ = 0;
+    size_t edgeBudget_, workBudget_, cacheBudget_, edgeCount_ = 0, work_ = 0, generation_ = 0;
     size_t analysisWork_ = 0;
     size_t analysisBudget_ = static_cast<size_t>(-1);
     bool sealed_ = false;

@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "acl_san/aclsan_cbdata_operator.h"
 #include "device_instr/common/instruction_id.h"
 #include "checker/racecheck.h"
 #include "checker/racecheck_reports.h"
@@ -192,9 +193,22 @@ struct Harness {
     }
     void End()
     {
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, 1};
+        completion.launchId = 1;
+        const auto domain = ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION;
+        const auto id = ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE;
+        if (analysis->Managed()) {
+            ASSERT_TRUE(analysis->BeginCallback(domain, id, &completion));
+        }
+        ASSERT_TRUE(checker.OnCallback(domain, id, &completion, reports));
+        if (analysis->Managed()) {
+            analysis->EndCallback();
+        }
         AclsanSynchronizeData s{};
         s.common.version = ACLSAN_API_VERSION;
         s.common.size = sizeof(s);
+        s.common.correlationId = 1;
         if (analysis->Managed()) {
             analysis->BeginCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &s);
         }
@@ -254,7 +268,7 @@ TEST(VfRacecheck, ScalarAndVectorGroupsWithinOneVfAreIgnored)
     }
 }
 
-TEST(VfRacecheck, ReplayedVfAccessesFreezeFirstExternalConflict)
+TEST(VfRacecheck, ReplayedVfAccessesRetainFirstWriteWitness)
 {
     Harness h;
     auto external = Access(1, 0, 0, VST, 1);
@@ -272,14 +286,15 @@ TEST(VfRacecheck, ReplayedVfAccessesFreezeFirstExternalConflict)
     ASSERT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
     ASSERT_EQ(h.reports.size(), 1U);
     const auto& report = std::get<NpuCheckRacecheckReport>(h.reports.front());
-    EXPECT_EQ(report.kind, ConflictKind::RAW);
+    EXPECT_EQ(report.kind, ConflictKind::WAW);
     const auto& vf = report.previous.vfInstrValid ? report.previous : report.current;
-    EXPECT_EQ(vf.vfInstrExecSeq, 0U);
+    EXPECT_EQ(vf.accessMode, VST);
+    EXPECT_EQ(vf.vfInstrExecSeq, 1U);
     EXPECT_EQ(report.checkRange.begin, 0U);
     EXPECT_EQ(report.checkRange.end, 64U);
 }
 
-TEST(VfRacecheck, ReplayedVfFreezesTheFirstOverlappingRange)
+TEST(VfRacecheck, ReplayedVfReportsDistinctOverlappingRanges)
 {
     for (bool delayVf : {false, true}) {
         SCOPED_TRACE(delayVf);
@@ -299,26 +314,34 @@ TEST(VfRacecheck, ReplayedVfFreezesTheFirstOverlappingRange)
         h.Complete(10, 2, 2);
         h.End();
         ASSERT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
-        ASSERT_EQ(h.reports.size(), 1U);
-        const auto& report = std::get<NpuCheckRacecheckReport>(h.reports.front());
-        EXPECT_EQ(report.checkRange.begin, 0U);
-        EXPECT_EQ(report.checkRange.end, 64U);
-        const bool vfPrevious = report.previous.vfInstrValid != 0;
-        const auto& vf = vfPrevious ? report.previous : report.current;
-        const auto& externalAccess = vfPrevious ? report.current : report.previous;
-        EXPECT_EQ(vf.accessMode, VLD);
-        EXPECT_EQ(externalAccess.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-        EXPECT_EQ(report.kind, vfPrevious ? ConflictKind::WAR : ConflictKind::RAW);
-        const auto& vfRange = vfPrevious ? report.previousRange : report.currentRange;
-        EXPECT_EQ(vfRange.begin, 0U);
-        EXPECT_EQ(vfRange.end, 64U);
+        ASSERT_EQ(h.reports.size(), 2U);
+        std::array<bool, 2> seen{};
+        for (const auto& entry : h.reports) {
+            const auto& report = std::get<NpuCheckRacecheckReport>(entry);
+            const bool vfPrevious = report.previous.vfInstrValid != 0;
+            const auto& vf = vfPrevious ? report.previous : report.current;
+            const auto& externalAccess = vfPrevious ? report.current : report.previous;
+            ASSERT_NE(vf.vfInstrValid, 0);
+            EXPECT_EQ(externalAccess.vfInstrValid, 0);
+            EXPECT_EQ(externalAccess.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+            ASSERT_LT(vf.vfInstrExecSeq, seen.size());
+            const size_t index = vf.vfInstrExecSeq;
+            EXPECT_FALSE(seen[index]);
+            seen[index] = true;
+            EXPECT_EQ(vf.accessMode, index == 0 ? VLD : VST);
+            EXPECT_EQ(
+                report.kind, index == 0 ? (vfPrevious ? ConflictKind::WAR : ConflictKind::RAW) : ConflictKind::WAW);
+            EXPECT_EQ(report.checkRange.begin, index * 32U);
+            EXPECT_EQ(report.checkRange.end, (index + 1U) * 32U);
+        }
     }
 }
 
-TEST(VfRacecheck, RepeatedVfAccessesFitOneExternalComparison)
+TEST(VfRacecheck, RepeatedVfAccessesFitSmallComparisonBudget)
 {
+    constexpr size_t COMPARISON_BUDGET = 4;
     race::Limits limits;
-    limits.comparisons = 1;
+    limits.comparisons = COMPARISON_BUDGET;
     Harness h(limits);
     auto external = Access(1, 0, 0, VST, 1);
     external.vfInstrValid = 0;
@@ -335,16 +358,25 @@ TEST(VfRacecheck, RepeatedVfAccessesFitOneExternalComparison)
     EXPECT_EQ(h.reports.size(), 1U);
 }
 
-TEST(VfRacecheck, UnifiedVfStateDoesNotChargeSummaryStorage)
+TEST(VfRacecheck, VfSummaryChargesBytesButNotTrackerSegments)
 {
-    race::Limits limits;
-    limits.stateBytes = 700;
-    Harness h(limits);
-    h.Add(Access(10, 0, 0, VST, 1));
-    h.Complete(10, 1, 1);
-    h.End();
-    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
-    EXPECT_EQ(h.reports.size(), 0U);
+    constexpr size_t INSUFFICIENT_BYTES = 700;
+    constexpr size_t SUFFICIENT_BYTES = 1024;
+    for (const auto byteBudget : {INSUFFICIENT_BYTES, SUFFICIENT_BYTES}) {
+        SCOPED_TRACE(byteBudget);
+        race::Limits limits;
+        limits.stateBytes = byteBudget;
+        limits.stateSegments = 1;
+        Harness h(limits);
+        h.Add(Access(10, 0, 0, VST, 1));
+        h.Complete(10, 1, 1);
+        h.End();
+        const bool expectedComplete = byteBudget == SUFFICIENT_BYTES;
+        const auto summary = h.checker.Summary();
+        EXPECT_EQ(h.checker.AnalysisComplete(), expectedComplete) << summary;
+        EXPECT_EQ(summary.find("memory_state_budget") == std::string::npos, expectedComplete);
+        EXPECT_TRUE(h.reports.empty());
+    }
 }
 
 TEST(VfRacecheck, CompressedVfPreservesReadWriteConflictSemantics)
@@ -821,6 +853,9 @@ TEST(VfRacecheck, SamePhysicalPipeOrdersVfsAcrossBlocksRegardlessOfCallbackOrder
         Harness h;
         auto a = Access(10, 0, 0, VST, 1);
         auto b = Access(20, 0, 0, VLD, 1);
+        constexpr uint32_t SLOT_ID_SHIFT = 32;
+        a.header.instrExecId |= uint64_t{a.header.executor.phyCoreId} << SLOT_ID_SHIFT;
+        b.header.instrExecId |= uint64_t{b.header.executor.phyCoreId} << SLOT_ID_SHIFT;
         b.header.executor.blockId = 1;
         h.Add(a);
         h.Add(b);
@@ -864,6 +899,16 @@ TEST(VfRacecheck, CrossCoreFlagOrdersRemoteWriterThroughItsExecutor)
 {
     for (bool synchronized : {false, true}) {
         Harness h;
+        constexpr uint32_t MIX_KERNEL_TYPE = 3;
+        LaunchTopology topology{};
+        topology.kernelType = MIX_KERNEL_TYPE;
+        topology.kernelTypeValid = true;
+        topology.aicRatio = 1;
+        topology.aivRatio = 2;
+        topology.ratioValid = true;
+        topology.groupCount = 1;
+        topology.groupCountValid = true;
+        h.analysis->Synchronization()->OnKernelLaunch(1, topology, nullptr);
         auto writer = Access(1, 0, 0, VST, 1);
         writer.vfInstrValid = 0;
         writer.instructionId = 0;
@@ -883,12 +928,14 @@ TEST(VfRacecheck, CrossCoreFlagOrdersRemoteWriterThroughItsExecutor)
                 sync.header = set ? writer.header : reader.header;
                 sync.header.instrExecId = set ? 2 : 3;
                 sync.header.size = sizeof(sync);
-                sync.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
+                sync.header.sourceKind = ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC;
+                sync.syncKind = ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK;
                 sync.action = set ? ACLSAN_DEVICE_SYNC_ACTION_SET : ACLSAN_DEVICE_SYNC_ACTION_WAIT;
-                sync.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+                sync.scope = ACLSAN_DEVICE_SYNC_SCOPE_DEVICE;
                 sync.mode = 4;
                 sync.objectId = 8;
-                sync.srcPipe = sync.dstPipe = set ? ACLSAN_DEVICE_PIPE_MTE1 : ACLSAN_DEVICE_PIPE_VECTOR;
+                sync.srcPipe = set ? ACLSAN_DEVICE_PIPE_MTE1 : 0U;
+                sync.dstPipe = set ? 0U : ACLSAN_DEVICE_PIPE_VECTOR;
                 h.Add(ACLSAN_CBID_DEVICE_SYNC, sync);
             }
         }

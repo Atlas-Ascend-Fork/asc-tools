@@ -19,6 +19,9 @@
 #include "diagnostic/report_renderer.h"
 
 #include <cstdint>
+#include <map>
+#include <set>
+#include <tuple>
 #include <vector>
 
 namespace npucheck {
@@ -49,10 +52,11 @@ public:
     std::string Summary() const override;
     bool HasErrors() const override;
     bool AnalysisComplete() const override;
+    void Finalize(CheckerReportList& reports) override;
 
     void OnAllocation(const AclsanResourceData& data);
     void OnFree(const AclsanResourceData& data);
-    void QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data);
+    std::vector<npucheck::NpuCheckMemcheckReport> QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data);
     std::vector<npucheck::NpuCheckMemcheckReport> OnSynchronization();
     MemcheckStats Stats() const;
 
@@ -63,15 +67,22 @@ private:
     std::vector<npucheck::NpuCheckMemcheckReport> CheckDeviceMemoryAccess(
         const AclsanDeviceMemoryAccessData& data, uint64_t groupId);
     void OnHostMemory(const AclsanCallbackCommonData& common, CheckerReportList& reports);
+    bool OnDeviceMemoryCallback(const void* data, CheckerReportList& reports);
     void Count(const std::vector<npucheck::NpuCheckMemcheckReport>& reports);
+    std::vector<npucheck::NpuCheckMemcheckReport> CheckObservedAccess(const AclsanDeviceMemoryAccessData& access);
+    void CollectLaunch(uint64_t launchId, std::vector<npucheck::NpuCheckMemcheckReport>& reports);
+    std::vector<npucheck::NpuCheckMemcheckReport> CollectCompletedLaunch(uint64_t launchId);
 
+    using InstructionIdentity = std::tuple<uint32_t, uint32_t, uint32_t, uint64_t>;
+    std::map<uint64_t, std::map<InstructionIdentity, uint64_t>> instructionGroups_;
+    std::set<uint64_t> observedLaunches_;
+    bool unfinishedLaunches_ = false;
     std::shared_ptr<MemoryAnalysis> analysis_;
     std::shared_ptr<MemoryState> memoryState_;
     std::vector<AclsanDeviceMemoryAccessData> pendingDeviceAccesses_;
     MemcheckStats stats_{};
     uint64_t nextReportId_ = 1;
     uint64_t nextGroupId_ = 1;
-    static constexpr size_t maxPendingDeviceOperations = 1u << 20u;
 };
 
 } // namespace npucheck

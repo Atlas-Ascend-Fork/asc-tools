@@ -155,13 +155,13 @@ TEST(RacecheckerAllocationTest, PublishingConflictsDoesNotCopyExistingReportPayl
                 ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
         }
     }
-    AclsanSynchronizeData sync{};
-    sync.common.version = ACLSAN_API_VERSION;
-    sync.common.size = sizeof(sync);
+    AclsanOperatorExecutionData completion{};
+    completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launch.launchId};
+    completion.launchId = launch.launchId;
     trackedAllocations = 0;
     trackedExactAllocationSize = frameCount * sizeof(ReportFrame);
-    const bool success =
-        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports);
+    const bool success = checker.OnCallback(
+        ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports);
     trackedExactAllocationSize = 0;
     EXPECT_TRUE(success);
     EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
@@ -203,15 +203,15 @@ TEST(RacecheckerAllocationTest, ReportReservationFailurePreservesPayloadAndRepor
             ASSERT_TRUE(checker.OnCallback(
                 ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
         }
-        AclsanSynchronizeData sync{};
-        sync.common.version = ACLSAN_API_VERSION;
-        sync.common.size = sizeof(sync);
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launchId};
+        completion.launchId = launchId;
         // Reject only the destination vector's growth, then allow error handling to allocate.
         if (launchId == 1) {
             failExactAllocationSize = originalCapacity * 2 * sizeof(CheckerReport);
         }
-        const bool success =
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports);
+        const bool success = checker.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports);
         const bool injected = failExactAllocationSize == 0;
         failExactAllocationSize = 0;
         ASSERT_TRUE(success);

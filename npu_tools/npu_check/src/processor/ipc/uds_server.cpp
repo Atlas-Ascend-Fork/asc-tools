@@ -20,7 +20,6 @@
 #include <limits>
 #include <optional>
 #include <poll.h>
-#include <sstream>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/un.h>

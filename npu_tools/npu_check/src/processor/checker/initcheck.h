@@ -110,14 +110,37 @@ private:
 
     bool OnRegisterState(const AclsanDeviceRegisterStateData& data);
     bool OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports);
+    void ReportMissingRegisters(const AclsanDeviceMemoryAccessData& data, uint64_t missing, CheckerReportList& reports);
     void OnHostMemory(const AclsanCallbackCommonData& common, CheckerReportList& reports);
     bool OnHostWrite(const AclsanMemoryWriteData& data);
     void OnAllocation(const AclsanResourceData& data);
     void OnFree(const AclsanResourceData& data);
     NpuCheckInitcheckReport MakeReport(const AclsanDeviceMemoryAccessData& data, uint32_t registerId, uint64_t groupId);
-    void OnSynchronization(const AclsanSynchronizeData& data, CheckerReportList& reports);
+    void OnSynchronization(const AclsanSynchronizeData& data);
     bool OnDeviceSync(AclsanCallbackId cbid, const void* data);
-    void FlushMemoryAccesses(void* stream, CheckerReportList& reports);
+    bool OnDeviceCallback(AclsanCallbackId cbid, const void* data, CheckerReportList& reports);
+    bool OnOperatorExecution(const AclsanOperatorExecutionData& event, CheckerReportList& reports);
+    void FlushMemoryAccesses(uint64_t launchId, CheckerReportList& reports);
+    void ClearLaunchReplayState(uint64_t launchId);
+    void CheckReplayEventBudget(
+        uint64_t launchId, size_t memoryCount, size_t syncCount, std::set<std::string>& reasons);
+    void CheckReplayStreamOrder(
+        uint64_t launchId, const std::vector<AclsanDeviceMemoryAccessData>& memory, std::set<std::string>& reasons);
+    std::optional<uint32_t> CheckReplayDevice(
+        const std::vector<AclsanDeviceMemoryAccessData>& memory, const std::vector<AclsanDeviceSyncData>& sync,
+        std::set<std::string>& reasons);
+    void CommitReplayGmWrites(
+        uint64_t launchId, const std::vector<race::DependencyGraph::Access>& accesses, std::set<std::string>& reasons);
+    void FinishReplayLaunch(
+        uint64_t launchId, const std::vector<AclsanDeviceMemoryAccessData>& memory,
+        const std::set<std::string>& reasons, size_t degradedInstructions, std::vector<NpuCheckInitcheckReport>& staged,
+        CheckerReportList& reports);
+    void CommitReplayLocalWrites(
+        const std::vector<race::DependencyGraph::Access>& accesses, const std::vector<size_t>& indices,
+        std::set<std::string>& reasons);
+    bool StageReplayReports(
+        const InitCheckResult& result, size_t reportBegin, std::vector<NpuCheckInitcheckReport>& staged,
+        std::set<std::string>& reasons, bool& instructionDegraded);
     void ReplayLaunch(
         uint64_t launchId, std::vector<AclsanDeviceMemoryAccessData>& memory, std::vector<AclsanDeviceSyncData>& sync,
         CheckerReportList& reports);

@@ -117,27 +117,87 @@ bool HappensBeforeGraph::Seal(bool coverageComplete)
     if (valid_) {
         // Greedy path cover over the actual edges. Each node not claimed by a
         // predecessor starts a chain; every node claims at most one successor.
-        // O(V+E), no storage beyond one flag per node.
-        std::vector<uint8_t> claimed(edges_.size(), 0);
-        size_t chains = 0;
+        chain_.resize(edges_.size());
+        size_t nextChainId = 0;
         for (auto node : order_) {
-            if (!claimed[node])
-                ++chains;
+            if (chain_[node] == 0)
+                chain_[node] = ++nextChainId;
             for (const auto& edge : edges_[node]) {
-                if (!claimed[edge.target]) {
-                    claimed[edge.target] = 1;
+                if (chain_[edge.target] == 0) {
+                    chain_[edge.target] = chain_[node];
                     break;
                 }
             }
         }
-        chainCount_ = chains;
+        BuildReachabilityIntervals();
     }
     return valid_;
 }
+
+void HappensBeforeGraph::BuildReachabilityIntervals()
+{
+    reachabilityIntervals_.resize(edges_.size());
+    struct Frame {
+        size_t node;
+        size_t nextEdge;
+    };
+    std::vector<Frame> stack;
+    size_t finish = 0;
+    for (const auto root : order_) {
+        if (reachabilityIntervals_[root].lastReachable != 0)
+            continue;
+        reachabilityIntervals_[root].subtreeFirst = finish + 1;
+        stack.push_back({root, 0});
+        while (!stack.empty()) {
+            auto& frame = stack.back();
+            const auto node = frame.node;
+            auto& interval = reachabilityIntervals_[node];
+            if (frame.nextEdge == edges_[node].size()) {
+                interval.lastReachable = ++finish;
+                if (interval.firstReachable == 0)
+                    interval.firstReachable = finish;
+                stack.pop_back();
+                continue;
+            }
+            const auto target = edges_[node][frame.nextEdge].target;
+            auto& successor = reachabilityIntervals_[target];
+            // Seal has already checked acyclicity, so no successor is active on this stack.
+            if (successor.lastReachable == 0) {
+                successor.subtreeFirst = finish + 1;
+                stack.push_back({target, 0});
+                continue;
+            }
+            if (interval.firstReachable == 0 || successor.firstReachable < interval.firstReachable)
+                interval.firstReachable = successor.firstReachable;
+            ++frame.nextEdge;
+        }
+    }
+}
+
+bool HappensBeforeGraph::MayReach(size_t from, size_t to) const
+{
+    // Every edge goes to an interval contained in its source's interval.
+    const auto& source = reachabilityIntervals_[from];
+    const auto& target = reachabilityIntervals_[to];
+    return source.firstReachable <= target.firstReachable && target.lastReachable <= source.lastReachable;
+}
+
+bool HappensBeforeGraph::HasPathWitness(size_t from, size_t to) const
+{
+    if (rank_[from] > rank_[to])
+        return false;
+    const auto& source = reachabilityIntervals_[from];
+    const auto finish = reachabilityIntervals_[to].lastReachable;
+    // A DFS subtree consists only of descendants reached along real tree edges.
+    return chain_[from] == chain_[to] || (source.subtreeFirst <= finish && finish <= source.lastReachable);
+}
+
 HappensBeforeGraph::Path HappensBeforeGraph::Reachable(size_t from, size_t to)
 {
-    if (rank_[from] >= rank_[to])
+    if (rank_[from] >= rank_[to] || !MayReach(from, to))
         return Path::No;
+    if (HasPathWitness(from, to))
+        return Path::Yes;
     auto cached = cache_.find({from, to});
     if (cached != cache_.end())
         return cached->second ? Path::Yes : Path::No;
@@ -157,11 +217,11 @@ HappensBeforeGraph::Path HappensBeforeGraph::Reachable(size_t from, size_t to)
             if (!SpendWork(spent)) {
                 return Path::Unknown; // Never cache an interrupted search as false.
             }
-            if (e.target == to) {
+            if (HasPathWitness(e.target, to)) {
                 found = true;
                 break;
             }
-            if (rank_[e.target] < rank_[to] && seen_[e.target] != generation_) {
+            if (rank_[e.target] < rank_[to] && seen_[e.target] != generation_ && MayReach(e.target, to)) {
                 seen_[e.target] = generation_;
                 pending_.push_back(e.target);
             }

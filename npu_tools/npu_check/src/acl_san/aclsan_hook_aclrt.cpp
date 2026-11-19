@@ -13,17 +13,19 @@
 #include "device_runtime/device_symbolizer.h"
 #include "aclsan_active_probe_plan.h"
 #include "aclsan_dispatch.h"
-#include "aclsan_device_data.h"
 #include "npu_tool_log.h"
 #include "aclsan_runtime_hook.h"
 #include "aclsan_trace_runtime.h"
+#include "aclsan_trace_status.h"
 #include "injection/injection_hook.h"
 #include "file_io.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cerrno>
+#include <iterator>
 #include <list>
 #include <map>
 #include <memory>
@@ -37,7 +39,6 @@
 #include <shared_mutex>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace aclsan {
@@ -120,6 +121,7 @@ public:
 struct PatchedFile {
     std::string path;
     aclrtBinHandle binary = nullptr;
+    int32_t deviceId = -1;
     ~PatchedFile()
     {
         if (!path.empty()) {
@@ -130,6 +132,34 @@ struct PatchedFile {
 
 std::mutex g_patchedFileMutex;
 std::list<PatchedFile> g_patchedFiles;
+
+bool AdoptPatchedFile(aclrtBinHandle binary, int32_t deviceId)
+{
+    if (deviceId < 0) {
+        return true;
+    }
+    std::lock_guard<std::mutex> lock(g_patchedFileMutex);
+    auto unknown = g_patchedFiles.end();
+    size_t matches = 0;
+    for (auto it = g_patchedFiles.begin(); it != g_patchedFiles.end(); ++it) {
+        if (it->binary != binary) {
+            continue;
+        }
+        ++matches;
+        if (it->deviceId < 0) {
+            unknown = it;
+        }
+    }
+    if (unknown == g_patchedFiles.end()) {
+        return true;
+    }
+    if (matches != 1U || aclsan::TraceHasKnownBinaryHandle(binary)) {
+        aclsan::TraceIntegrityMark(0U, 0U, true);
+        return false;
+    }
+    unknown->deviceId = deviceId;
+    return true;
+}
 
 class BinaryLoadGuard {
 public:
@@ -174,10 +204,88 @@ struct DeferredFunction {
     std::string name;
 };
 
+using DeferredHandleKey = std::pair<int32_t, uintptr_t>;
+constexpr int32_t UNKNOWN_DEFERRED_DEVICE = -1;
 std::mutex g_deferredMutex;
-std::map<aclrtBinHandle, std::shared_ptr<DeferredBinary>> g_deferredBinaries;
-std::map<const void*, DeferredFunction> g_deferredFunctions;
+std::map<DeferredHandleKey, std::shared_ptr<DeferredBinary>> g_deferredBinaries;
+std::map<DeferredHandleKey, DeferredFunction> g_deferredFunctions;
 std::list<std::shared_ptr<DeferredBinary>> g_retiredBinaries;
+
+int32_t DeferredDeviceId() noexcept { return aclsan::TraceCurrentDeviceId(); }
+
+std::shared_ptr<DeferredBinary> DeferredSource(const std::shared_ptr<DeferredBinary>& source) { return source; }
+std::shared_ptr<DeferredBinary> DeferredSource(const DeferredFunction& function) { return function.source; }
+
+template <typename Map>
+bool DeferredSourceConflicts(const Map& entries, const std::shared_ptr<DeferredBinary>& source)
+{
+    for (const auto& [key, value] : entries) {
+        if (key.first != UNKNOWN_DEFERRED_DEVICE || DeferredSource(value) != source) {
+            continue;
+        }
+        for (const auto& [otherKey, otherValue] : entries) {
+            (void)otherValue;
+            if (otherKey.second == key.second && otherKey != key) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+template <typename Map>
+void AdoptDeferredEntries(Map& entries, int32_t deviceId, const std::shared_ptr<DeferredBinary>& source)
+{
+    for (auto it = entries.begin(); it != entries.end();) {
+        if (it->first.first != UNKNOWN_DEFERRED_DEVICE || DeferredSource(it->second) != source) {
+            ++it;
+            continue;
+        }
+        auto current = it++;
+        auto node = entries.extract(current);
+        node.key().first = deviceId;
+        entries.insert(std::move(node));
+    }
+}
+
+template <typename Map>
+auto FindDeferred(Map& entries, int32_t deviceId, uintptr_t handle, bool& ambiguous)
+{
+    ambiguous = false;
+    if (deviceId != UNKNOWN_DEFERRED_DEVICE) {
+        auto exact = entries.find({deviceId, handle});
+        if (exact != entries.end()) {
+            return exact;
+        }
+        const auto unknown = entries.find({UNKNOWN_DEFERRED_DEVICE, handle});
+        if (unknown == entries.end()) {
+            return entries.end();
+        }
+        const auto source = DeferredSource(unknown->second);
+        if (DeferredSourceConflicts(g_deferredBinaries, source) ||
+            DeferredSourceConflicts(g_deferredFunctions, source)) {
+            ambiguous = true;
+            aclsan::TraceIntegrityMark(0, 0, true);
+            return entries.end();
+        }
+        AdoptDeferredEntries(g_deferredBinaries, deviceId, source);
+        AdoptDeferredEntries(g_deferredFunctions, deviceId, source);
+        return entries.find({deviceId, handle});
+    }
+    auto found = entries.end();
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        if (it->first.second != handle) {
+            continue;
+        }
+        if (found != entries.end()) {
+            ambiguous = true;
+            aclsan::TraceIntegrityMark(0, 0, true);
+            return entries.end();
+        }
+        found = it;
+    }
+    return found;
+}
 
 bool IsDeferredLoad(const aclrtBinaryLoadOptions* options)
 {
@@ -212,13 +320,23 @@ std::shared_ptr<DeferredBinary> CopyDeferredBinary(
     return source;
 }
 
-void RecordDeferredFunction(aclrtBinHandle binary, const void* function, bool byEntry, uint64_t entry, const char* name)
+aclError RecordDeferredFunction(
+    aclrtBinHandle binary, const void* function, bool byEntry, uint64_t entry, const char* name)
 {
+    const int32_t deviceId = DeferredDeviceId();
     std::lock_guard<std::mutex> lock(g_deferredMutex);
-    const auto it = g_deferredBinaries.find(binary);
+    bool ambiguous = false;
+    const auto it = FindDeferred(g_deferredBinaries, deviceId, reinterpret_cast<uintptr_t>(binary), ambiguous);
     if (it != g_deferredBinaries.end()) {
-        g_deferredFunctions[function] = {it->second, byEntry, entry, name == nullptr ? "" : name};
+        g_deferredFunctions[{it->first.first, reinterpret_cast<uintptr_t>(function)}] = {
+            it->second, byEntry, entry, name == nullptr ? "" : name};
+    } else if (ambiguous || deviceId == UNKNOWN_DEFERRED_DEVICE) {
+        if (!ambiguous) {
+            aclsan::TraceIntegrityMark(0, 0, true);
+        }
+        return ACL_ERROR_FAILURE;
     }
+    return ACL_SUCCESS;
 }
 
 aclError RecordSymbolFunction(aclrtFuncHandle function)
@@ -230,7 +348,7 @@ aclError RecordSymbolFunction(aclrtFuncHandle function)
         reinterpret_cast<aclError (*)(aclrtFuncHandle, aclrtBinHandle*)>(dlsym(RTLD_DEFAULT, "aclrtFunctionGetBinary"));
     const auto getName =
         reinterpret_cast<aclError (*)(aclrtFuncHandle, uint32_t, char*)>(dlsym(RTLD_DEFAULT, "aclrtGetFunctionName"));
-    if (!getBinary || !getName) {
+    if (getBinary == nullptr || getName == nullptr) {
         return ACL_ERROR_FEATURE_UNSUPPORTED;
     }
     aclrtBinHandle binary = nullptr;
@@ -243,10 +361,13 @@ aclError RecordSymbolFunction(aclrtFuncHandle function)
     if (status != ACL_SUCCESS) {
         return status;
     }
-    if (!binary || name[0] == '\0' || name[sizeof(name) - 1] != '\0') {
+    if (binary == nullptr || name[0] == '\0' || name[sizeof(name) - 1] != '\0') {
         return ACL_ERROR_INVALID_PARAM;
     }
-    RecordDeferredFunction(binary, function, false, 0, name);
+    status = RecordDeferredFunction(binary, function, false, 0, name);
+    if (status != ACL_SUCCESS) {
+        return status;
+    }
     aclsan::RecordTraceBinaryFunctionLookup(binary, function, name);
     return ACL_SUCCESS;
 }
@@ -490,6 +611,47 @@ aclError aclrtFreeHook(void* deviceAddress) noexcept
     return result;
 }
 
+static aclError LoadDeferredBinary(
+    aclrtBinaryLoadFromDataFunc original, const void* data, size_t length, const aclrtBinaryLoadOptions* options,
+    aclrtBinHandle* binHandle) noexcept
+{
+    if (data == nullptr || length == 0 || binHandle == nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    try {
+        auto source = CopyDeferredBinary(data, length, options, false);
+        // Allocate the registry node before Runtime creates a handle.
+        std::map<DeferredHandleKey, std::shared_ptr<DeferredBinary>> staging;
+        staging.emplace(DeferredHandleKey{DeferredDeviceId(), 0U}, source);
+        const auto result = original(data, length, options, binHandle);
+        if (result != ACL_SUCCESS) {
+            return result;
+        }
+        if (*binHandle == nullptr) {
+            return ACL_ERROR_FAILURE;
+        }
+        auto node = staging.extract(staging.begin());
+        node.key().second = reinterpret_cast<uintptr_t>(*binHandle);
+        std::unique_lock<std::mutex> lock(g_deferredMutex);
+        if (!g_deferredBinaries.insert(std::move(node)).inserted) {
+            lock.unlock();
+            const auto unload =
+                GetOriginalRuntimeFunction<aclrtBinaryUnLoadFunc>(ACL_RT_API_aclrtBinaryUnLoad, "aclrtBinaryUnLoad");
+            if (unload(*binHandle) != ACL_SUCCESS) {
+                AbortHookFailure("aclrtBinaryLoadFromData", "rollback_load", "cannot release duplicate handle");
+            }
+            *binHandle = nullptr;
+            return ACL_ERROR_FAILURE;
+        }
+        aclsan::RecordTraceBinaryLoadFromData(*binHandle, false, 0, data, length);
+        return result;
+    } catch (const std::bad_alloc&) {
+        return ACL_ERROR_BAD_ALLOC;
+    } catch (...) {
+        return ACL_ERROR_FAILURE;
+    }
+}
+
 aclError aclrtBinaryLoadFromDataHook(
     const void* data, size_t length, const aclrtBinaryLoadOptions* options, aclrtBinHandle* binHandle) noexcept
 {
@@ -514,40 +676,7 @@ aclError aclrtBinaryLoadFromDataHook(
     }
     const BinaryLoadGuard guard;
     if (IsDeferredLoad(options)) {
-        if (data == nullptr || length == 0 || binHandle == nullptr) {
-            return ACL_ERROR_INVALID_PARAM;
-        }
-        try {
-            auto source = CopyDeferredBinary(data, length, options, false);
-            // Allocate the registry node before Runtime creates a handle.
-            std::map<aclrtBinHandle, std::shared_ptr<DeferredBinary>> staging;
-            staging.emplace(nullptr, source);
-            const auto result = original(data, length, options, binHandle);
-            if (result == ACL_SUCCESS) {
-                if (*binHandle == nullptr) {
-                    return ACL_ERROR_FAILURE;
-                }
-                auto node = staging.extract(staging.begin());
-                node.key() = *binHandle;
-                std::unique_lock<std::mutex> lock(g_deferredMutex);
-                if (!g_deferredBinaries.insert(std::move(node)).inserted) {
-                    lock.unlock();
-                    const auto unload = GetOriginalRuntimeFunction<aclrtBinaryUnLoadFunc>(
-                        ACL_RT_API_aclrtBinaryUnLoad, "aclrtBinaryUnLoad");
-                    if (unload(*binHandle) != ACL_SUCCESS) {
-                        AbortHookFailure("aclrtBinaryLoadFromData", "rollback_load", "cannot release duplicate handle");
-                    }
-                    *binHandle = nullptr;
-                    return ACL_ERROR_FAILURE;
-                }
-                aclsan::RecordTraceBinaryLoadFromData(*binHandle, false, 0, data, length);
-            }
-            return result;
-        } catch (const std::bad_alloc&) {
-            return ACL_ERROR_BAD_ALLOC;
-        } catch (...) {
-            return ACL_ERROR_FAILURE;
-        }
+        return LoadDeferredBinary(original, data, length, options, binHandle);
     }
     bool loadedPatched = false;
     InstrumentedBinaryLoadContext loadContext{original, options, binHandle};
@@ -644,8 +773,8 @@ aclError aclrtBinaryLoadFromFileHook(const char* path, aclrtBinaryLoadOptions* o
         }
         if (IsDeferredLoad(options)) {
             auto source = CopyDeferredBinary(image.data(), image.size(), options, true);
-            std::map<aclrtBinHandle, std::shared_ptr<DeferredBinary>> staging;
-            staging.emplace(nullptr, source);
+            std::map<DeferredHandleKey, std::shared_ptr<DeferredBinary>> staging;
+            staging.emplace(DeferredHandleKey{DeferredDeviceId(), 0U}, source);
             const BinaryLoadGuard guard;
             const auto result = original(normalizedPath.c_str(), options, binary);
             if (result == ACL_SUCCESS) {
@@ -653,7 +782,7 @@ aclError aclrtBinaryLoadFromFileHook(const char* path, aclrtBinaryLoadOptions* o
                     return ACL_ERROR_FAILURE;
                 }
                 auto node = staging.extract(staging.begin());
-                node.key() = *binary;
+                node.key().second = reinterpret_cast<uintptr_t>(*binary);
                 std::unique_lock<std::mutex> lock(g_deferredMutex);
                 if (!g_deferredBinaries.insert(std::move(node)).inserted) {
                     lock.unlock();
@@ -684,6 +813,7 @@ aclError aclrtBinaryLoadFromFileHook(const char* path, aclrtBinaryLoadOptions* o
             return result.consumerStatus;
         }
         files.front().binary = *binary;
+        files.front().deviceId = DeferredDeviceId();
         {
             // Retain the transformed file for lazy loading until successful unload.
             std::lock_guard<std::mutex> lock(g_patchedFileMutex);
@@ -708,14 +838,88 @@ aclError aclrtBinaryGetFunctionHook(
         return ACL_ERROR_FAILURE;
     }
     if (result == ACL_SUCCESS && funcHandle != nullptr) {
+        if (!AdoptPatchedFile(binHandle, DeferredDeviceId())) {
+            return ACL_ERROR_FAILURE;
+        }
         try {
-            RecordDeferredFunction(binHandle, *funcHandle, false, 0, kernelName);
+            if (RecordDeferredFunction(binHandle, *funcHandle, false, 0, kernelName) != ACL_SUCCESS) {
+                return ACL_ERROR_FAILURE;
+            }
         } catch (...) {
             return ACL_ERROR_BAD_ALLOC;
         }
         aclsan::RecordTraceBinaryFunctionLookup(binHandle, *funcHandle, kernelName);
     }
     return result;
+}
+
+void ResolveDeferredVariantFunction(const DeferredFunction& selected, DeferredVariant& variant)
+{
+    if (selected.byEntry) {
+        const auto lookup = GetOriginalRuntimeFunction<aclrtBinaryGetFunctionByEntryFunc>(
+            ACL_RT_API_aclrtBinaryGetFunctionByEntry, "aclrtBinaryGetFunctionByEntry");
+        variant.status = lookup(variant.binary, selected.entry, &variant.function);
+    } else {
+        const auto lookup = GetOriginalRuntimeFunction<aclrtBinaryGetFunctionFunc>(
+            ACL_RT_API_aclrtBinaryGetFunction, "aclrtBinaryGetFunction");
+        variant.status = lookup(variant.binary, selected.name.c_str(), &variant.function);
+    }
+    if (variant.status == ACL_SUCCESS && variant.function == nullptr) {
+        variant.status = ACL_ERROR_FAILURE;
+    }
+    if (variant.status != ACL_SUCCESS && variant.binary != nullptr) {
+        const auto unload =
+            GetOriginalRuntimeFunction<aclrtBinaryUnLoadFunc>(ACL_RT_API_aclrtBinaryUnLoad, "aclrtBinaryUnLoad");
+        if (unload(variant.binary) == ACL_SUCCESS) {
+            aclsan::RecordTraceBinaryUnload(variant.binary);
+            variant.binary = nullptr;
+            if (!variant.file.path.empty()) {
+                (void)unlink(variant.file.path.c_str());
+                variant.file.path.clear();
+            }
+        }
+        variant.function = nullptr;
+    }
+}
+
+aclError BuildDeferredVariant(
+    const DeferredFunction& selected, int argumentMode, uint32_t plan, uint32_t traceOffset, DeferredVariant& variant)
+{
+    variant.attempted = true;
+    const auto getDevice = GetOriginalRuntimeFunction<aclrtGetDeviceFunc>(ACL_RT_API_aclrtGetDevice, "aclrtGetDevice");
+    if (getDevice(&variant.deviceId) != ACL_SUCCESS || variant.deviceId < 0) {
+        return ACL_ERROR_FAILURE;
+    }
+    auto optionsCopy = selected.source->options;
+    aclrtBinaryLoadOptions options{optionsCopy.data(), optionsCopy.size()};
+    auto* optionPtr = selected.source->nullOptions ? nullptr : &options;
+    const auto dataLoad = GetOriginalRuntimeFunction<aclrtBinaryLoadFromDataFunc>(
+        ACL_RT_API_aclrtBinaryLoadFromData, "aclrtBinaryLoadFromData");
+    const auto fileLoad = selected.source->fromFile ?
+                              GetOriginalRuntimeFunction<aclrtBinaryLoadFromFileFunc>(
+                                  ACL_RT_API_aclrtBinaryLoadFromFile, "aclrtBinaryLoadFromFile") :
+                              nullptr;
+    InstrumentedBinaryLoadContext dataContext{dataLoad, optionPtr, &variant.binary};
+    FileLoadContext fileContext{fileLoad, optionPtr, &variant.binary, variant.file};
+    const auto soc = GetOriginalRuntimeFunction<aclrtGetSocNameFunc>(ACL_RT_API_aclrtGetSocName, "aclrtGetSocName");
+    Dl_info library{};
+    const char* runtime = dladdr(reinterpret_cast<const void*>(soc), &library) != 0 ? library.dli_fname : nullptr;
+    const BinaryLoadGuard guard;
+    const auto result = aclsan::InstrumentRuntimeBinaryForEntry(
+        selected.source->image.data(), selected.source->image.size(), plan, soc(), runtime,
+        selected.source->fromFile ? &LoadInstrumentedFile : &LoadInstrumentedBinary,
+        selected.source->fromFile ? static_cast<void*>(&fileContext) : static_cast<void*>(&dataContext),
+        selected.byEntry ? &selected.entry : nullptr, traceOffset, argumentMode != 0, argumentMode == 0);
+    variant.status =
+        result.status == aclsan::BinaryInstrumentationStatus::Instrumented ? result.consumerStatus : ACL_ERROR_FAILURE;
+    if (variant.status == ACL_SUCCESS) {
+        ResolveDeferredVariantFunction(selected, variant);
+        variant.traceOffset = result.traceArgumentOffset;
+    }
+    ASCTOOL_INFO(
+        "deferred DBI entry=%llu by_entry=%u abi=%d result=%d", static_cast<unsigned long long>(selected.entry),
+        selected.byEntry, argumentMode, variant.status);
+    return ACL_SUCCESS;
 }
 
 aclError PrepareDeferredLaunch(
@@ -725,8 +929,17 @@ aclError PrepareDeferredLaunch(
         DeferredFunction selected;
         {
             std::lock_guard<std::mutex> lock(g_deferredMutex);
-            const auto it = g_deferredFunctions.find(function);
+            bool ambiguous = false;
+            const int32_t deviceId = DeferredDeviceId();
+            const auto it =
+                FindDeferred(g_deferredFunctions, deviceId, reinterpret_cast<uintptr_t>(function), ambiguous);
             if (it == g_deferredFunctions.end()) {
+                if (ambiguous || deviceId == UNKNOWN_DEFERRED_DEVICE) {
+                    if (!ambiguous) {
+                        aclsan::TraceIntegrityMark(0, 0, true);
+                    }
+                    return ACL_ERROR_FAILURE;
+                }
                 return ACL_SUCCESS;
             }
             selected = it->second;
@@ -767,68 +980,10 @@ aclError PrepareDeferredLaunch(
         std::lock_guard<std::mutex> buildLock(launch.variant->mutex);
         auto& variant = *launch.variant;
         if (!variant.attempted) {
-            variant.attempted = true;
-            const auto getDevice =
-                GetOriginalRuntimeFunction<aclrtGetDeviceFunc>(ACL_RT_API_aclrtGetDevice, "aclrtGetDevice");
-            if (getDevice(&variant.deviceId) != ACL_SUCCESS || variant.deviceId < 0) {
-                return ACL_ERROR_FAILURE;
+            const auto buildStatus = BuildDeferredVariant(selected, argumentMode, plan, traceOffset, variant);
+            if (buildStatus != ACL_SUCCESS) {
+                return buildStatus;
             }
-            auto optionsCopy = launch.source->options;
-            aclrtBinaryLoadOptions options{optionsCopy.data(), optionsCopy.size()};
-            auto* optionPtr = launch.source->nullOptions ? nullptr : &options;
-            const auto dataLoad = GetOriginalRuntimeFunction<aclrtBinaryLoadFromDataFunc>(
-                ACL_RT_API_aclrtBinaryLoadFromData, "aclrtBinaryLoadFromData");
-            const auto fileLoad = launch.source->fromFile ?
-                                      GetOriginalRuntimeFunction<aclrtBinaryLoadFromFileFunc>(
-                                          ACL_RT_API_aclrtBinaryLoadFromFile, "aclrtBinaryLoadFromFile") :
-                                      nullptr;
-            InstrumentedBinaryLoadContext dataContext{dataLoad, optionPtr, &variant.binary};
-            FileLoadContext fileContext{fileLoad, optionPtr, &variant.binary, variant.file};
-            const auto soc =
-                GetOriginalRuntimeFunction<aclrtGetSocNameFunc>(ACL_RT_API_aclrtGetSocName, "aclrtGetSocName");
-            Dl_info library{};
-            const char* runtime =
-                dladdr(reinterpret_cast<const void*>(soc), &library) != 0 ? library.dli_fname : nullptr;
-            const BinaryLoadGuard guard;
-            const auto result = aclsan::InstrumentRuntimeBinaryForEntry(
-                launch.source->image.data(), launch.source->image.size(), plan, soc(), runtime,
-                launch.source->fromFile ? &LoadInstrumentedFile : &LoadInstrumentedBinary,
-                launch.source->fromFile ? static_cast<void*>(&fileContext) : static_cast<void*>(&dataContext),
-                selected.byEntry ? &selected.entry : nullptr, traceOffset, argumentMode != 0, argumentMode == 0);
-            variant.status = result.status == aclsan::BinaryInstrumentationStatus::Instrumented ?
-                                 result.consumerStatus :
-                                 ACL_ERROR_FAILURE;
-            if (variant.status == ACL_SUCCESS) {
-                if (selected.byEntry) {
-                    const auto lookup = GetOriginalRuntimeFunction<aclrtBinaryGetFunctionByEntryFunc>(
-                        ACL_RT_API_aclrtBinaryGetFunctionByEntry, "aclrtBinaryGetFunctionByEntry");
-                    variant.status = lookup(variant.binary, selected.entry, &variant.function);
-                } else {
-                    const auto lookup = GetOriginalRuntimeFunction<aclrtBinaryGetFunctionFunc>(
-                        ACL_RT_API_aclrtBinaryGetFunction, "aclrtBinaryGetFunction");
-                    variant.status = lookup(variant.binary, selected.name.c_str(), &variant.function);
-                }
-                if (variant.status == ACL_SUCCESS && variant.function == nullptr) {
-                    variant.status = ACL_ERROR_FAILURE;
-                }
-                if (variant.status != ACL_SUCCESS && variant.binary != nullptr) {
-                    const auto unload = GetOriginalRuntimeFunction<aclrtBinaryUnLoadFunc>(
-                        ACL_RT_API_aclrtBinaryUnLoad, "aclrtBinaryUnLoad");
-                    if (unload(variant.binary) == ACL_SUCCESS) {
-                        aclsan::RecordTraceBinaryUnload(variant.binary);
-                        variant.binary = nullptr;
-                        if (!variant.file.path.empty()) {
-                            (void)unlink(variant.file.path.c_str());
-                            variant.file.path.clear();
-                        }
-                    }
-                    variant.function = nullptr;
-                }
-                variant.traceOffset = result.traceArgumentOffset;
-            }
-            ASCTOOL_INFO(
-                "deferred DBI entry=%llu by_entry=%u abi=%d result=%d", static_cast<unsigned long long>(selected.entry),
-                selected.byEntry, argumentMode, variant.status);
         }
         if (variant.status == ACL_SUCCESS) {
             if (!variant.registered) {
@@ -856,7 +1011,7 @@ void CollectRetiredVariants() noexcept
         const auto getContext =
             reinterpret_cast<aclError (*)(aclrtContext*)>(dlsym(RTLD_DEFAULT, "aclrtGetCurrentContext"));
         aclrtContext context = nullptr;
-        if (!getContext || getContext(&context) != ACL_SUCCESS) {
+        if (getContext == nullptr || getContext(&context) != ACL_SUCCESS) {
             return;
         }
         std::list<std::shared_ptr<DeferredBinary>> retired;
@@ -897,8 +1052,16 @@ void ResetDeferredDevice(int32_t deviceId) noexcept
         std::vector<std::shared_ptr<DeferredBinary>> sources;
         {
             std::lock_guard<std::mutex> lock(g_deferredMutex);
-            for (const auto& item : g_deferredBinaries) {
-                sources.push_back(item.second);
+            size_t unknown = 0;
+            for (const auto& [key, source] : g_deferredBinaries) {
+                if (key.first == UNKNOWN_DEFERRED_DEVICE) {
+                    ++unknown;
+                } else if (key.first == deviceId) {
+                    sources.push_back(source);
+                }
+            }
+            if (unknown != 0U) {
+                ASCTOOL_WARNING("acl_san: reset retained %zu unknown-device deferred binaries", unknown);
             }
         }
         for (const auto& source : sources) {
@@ -906,8 +1069,8 @@ void ResetDeferredDevice(int32_t deviceId) noexcept
             std::list<std::shared_ptr<DeferredBinary>> staging{retired};
             std::unique_lock<std::shared_mutex> lock(source->lifecycle);
             for (auto it = source->variants.begin(); it != source->variants.end();) {
-                it->second->registered = false;
                 if (it->second->deviceId == deviceId) {
+                    it->second->registered = false;
                     auto current = it++;
                     retired->variants.insert(source->variants.extract(current));
                 } else {
@@ -918,7 +1081,6 @@ void ResetDeferredDevice(int32_t deviceId) noexcept
                 std::lock_guard<std::mutex> registryLock(g_deferredMutex);
                 g_retiredBinaries.splice(g_retiredBinaries.end(), staging);
             }
-            lock.unlock();
         }
     } catch (...) {
         AbortHookFailure("aclrtResetDevice", "invalidate_deferred_cache", "cannot invalidate deferred DBI cache");
@@ -935,8 +1097,13 @@ aclError aclrtBinaryGetFunctionByEntryHook(
         return ACL_ERROR_FAILURE;
     }
     if (result == ACL_SUCCESS && funcHandle != nullptr) {
+        if (!AdoptPatchedFile(binHandle, DeferredDeviceId())) {
+            return ACL_ERROR_FAILURE;
+        }
         try {
-            RecordDeferredFunction(binHandle, *funcHandle, true, functionEntry, nullptr);
+            if (RecordDeferredFunction(binHandle, *funcHandle, true, functionEntry, nullptr) != ACL_SUCCESS) {
+                return ACL_ERROR_FAILURE;
+            }
         } catch (...) {
             return ACL_ERROR_BAD_ALLOC;
         }
@@ -1121,23 +1288,18 @@ aclError aclrtSynchronizeStreamHook(aclrtStream stream) noexcept
 {
     const auto original = GetOriginalRuntimeFunction<aclrtSynchronizeStreamFunc>(
         ACL_RT_API_aclrtSynchronizeStream, "aclrtSynchronizeStream");
-    const aclError runtimeResult = original(stream);
-    const bool executionComplete = runtimeResult != ACL_ERROR_RT_STREAM_SYNC_TIMEOUT;
-    const aclsan::TraceCollectionResult collection = aclsan::CollectTraceStream(stream, executionComplete);
-    const bool dbiCompletion = runtimeResult == ACL_ERROR_RT_AICORE_EXCEPTION && collection.Complete();
-    const aclError result = dbiCompletion ? ACL_SUCCESS : runtimeResult;
-    if (executionComplete) {
-        CollectRetiredVariants();
+    const uint64_t frontier = aclsan::TraceStreamFrontier(stream);
+    const aclError result = original(stream);
+    ASCTOOL_DEBUG("aclrtSynchronizeStream: stream=%p result=%d", stream, result);
+    if (result == ACL_SUCCESS) {
+        (void)aclsan::CollectTraceStream(stream, true);
+        aclsan::CollectRetiredTraceVariants();
+    } else if (result == ACL_ERROR_RT_AICORE_EXCEPTION) {
+        aclsan::CollectTraceAfterExecutionException(stream, frontier);
     }
-    ASCTOOL_DEBUG(
-        "aclrtSynchronizeStream: stream=%p runtime_result=%d result=%d trace_collect=%u trace_launches=%zu "
-        "trace_complete=%zu trace_records=%zu trace_dropped=%llu dbi_completion=%u",
-        stream, runtimeResult, result, static_cast<unsigned>(executionComplete), collection.launchCount,
-        collection.completeLaunchCount, collection.recordCount,
-        static_cast<unsigned long long>(collection.droppedRecordCount), static_cast<unsigned>(dbiCompletion));
-    const AclsanSynchronizeData callbackData = MakeSynchronizeData("aclrtSynchronizeStream", stream, result);
+    AclsanSynchronizeData callbackData = MakeSynchronizeData("aclrtSynchronizeStream", stream, result);
+    callbackData.common.correlationId = frontier;
     aclsan::AclsanCallbackDispatcher::DispatchSynchronizeEnd(callbackData);
-    aclsan::ReleaseTraceStreamResources(stream);
     return result;
 }
 
@@ -1146,23 +1308,18 @@ aclError aclrtSynchronizeStreamWithTimeoutHook(aclrtStream stream, int32_t timeo
 {
     const auto original = GetOriginalRuntimeFunction<aclrtSynchronizeStreamWithTimeoutFunc>(
         ACL_RT_API_aclrtSynchronizeStreamWithTimeout, "aclrtSynchronizeStreamWithTimeout");
-    const aclError runtimeResult = original(stream, timeout);
-    const bool executionComplete = runtimeResult != ACL_ERROR_RT_STREAM_SYNC_TIMEOUT;
-    const aclsan::TraceCollectionResult collection = aclsan::CollectTraceStream(stream, executionComplete);
-    const bool dbiCompletion = runtimeResult == ACL_ERROR_RT_AICORE_EXCEPTION && collection.Complete();
-    const aclError result = dbiCompletion ? ACL_SUCCESS : runtimeResult;
-    if (executionComplete) {
-        CollectRetiredVariants();
+    const uint64_t frontier = aclsan::TraceStreamFrontier(stream);
+    const aclError result = original(stream, timeout);
+    ASCTOOL_DEBUG("aclrtSynchronizeStreamWithTimeout: stream=%p timeout=%d result=%d", stream, timeout, result);
+    if (result == ACL_SUCCESS) {
+        (void)aclsan::CollectTraceStream(stream, true);
+        aclsan::CollectRetiredTraceVariants();
+    } else if (result == ACL_ERROR_RT_AICORE_EXCEPTION) {
+        aclsan::CollectTraceAfterExecutionException(stream, frontier);
     }
-    ASCTOOL_DEBUG(
-        "aclrtSynchronizeStreamWithTimeout: stream=%p timeout=%d runtime_result=%d result=%d trace_collect=%u "
-        "trace_launches=%zu trace_complete=%zu trace_records=%zu trace_dropped=%llu dbi_completion=%u",
-        stream, timeout, runtimeResult, result, static_cast<unsigned>(executionComplete), collection.launchCount,
-        collection.completeLaunchCount, collection.recordCount,
-        static_cast<unsigned long long>(collection.droppedRecordCount), static_cast<unsigned>(dbiCompletion));
-    const AclsanSynchronizeData callbackData = MakeSynchronizeData("aclrtSynchronizeStreamWithTimeout", stream, result);
+    AclsanSynchronizeData callbackData = MakeSynchronizeData("aclrtSynchronizeStreamWithTimeout", stream, result);
+    callbackData.common.correlationId = frontier;
     aclsan::AclsanCallbackDispatcher::DispatchSynchronizeEnd(callbackData);
-    aclsan::ReleaseTraceStreamResources(stream);
     return result;
 }
 
@@ -1171,11 +1328,34 @@ aclError aclrtBinaryUnLoadHook(aclrtBinHandle binHandle) noexcept
     const auto original =
         GetOriginalRuntimeFunction<aclrtBinaryUnLoadFunc>(ACL_RT_API_aclrtBinaryUnLoad, "aclrtBinaryUnLoad");
     std::shared_ptr<DeferredBinary> source;
+    DeferredHandleKey sourceKey{DeferredDeviceId(), reinterpret_cast<uintptr_t>(binHandle)};
+    if (!AdoptPatchedFile(binHandle, sourceKey.first)) {
+        return ACL_ERROR_FAILURE;
+    }
     {
         std::lock_guard<std::mutex> lock(g_deferredMutex);
-        auto it = g_deferredBinaries.find(binHandle);
+        bool ambiguous = false;
+        auto it = FindDeferred(g_deferredBinaries, sourceKey.first, sourceKey.second, ambiguous);
+        if (ambiguous) {
+            return ACL_ERROR_FAILURE;
+        }
         if (it != g_deferredBinaries.end()) {
+            sourceKey = it->first;
             source = it->second;
+        }
+    }
+    if (sourceKey.first == UNKNOWN_DEFERRED_DEVICE) {
+        std::lock_guard<std::mutex> lock(g_patchedFileMutex);
+        size_t matches = 0;
+        for (const auto& file : g_patchedFiles) {
+            if (file.binary == binHandle) {
+                ++matches;
+                sourceKey.first = file.deviceId;
+            }
+        }
+        if (matches > 1U) {
+            aclsan::TraceIntegrityMark(0, 0, true);
+            return ACL_ERROR_FAILURE;
         }
     }
     std::unique_lock<std::shared_mutex> lifecycle;
@@ -1194,7 +1374,7 @@ aclError aclrtBinaryUnLoadHook(aclrtBinHandle binHandle) noexcept
         if (source) {
             source->closing = true;
             std::lock_guard<std::mutex> lock(g_deferredMutex);
-            g_deferredBinaries.erase(binHandle);
+            g_deferredBinaries.erase(sourceKey);
             for (auto it = g_deferredFunctions.begin(); it != g_deferredFunctions.end();) {
                 it = it->second.source == source ? g_deferredFunctions.erase(it) : std::next(it);
             }
@@ -1202,7 +1382,9 @@ aclError aclrtBinaryUnLoadHook(aclrtBinHandle binHandle) noexcept
         }
         aclsan::RecordTraceBinaryUnload(binHandle);
         std::lock_guard<std::mutex> lock(g_patchedFileMutex);
-        g_patchedFiles.remove_if([binHandle](const auto& file) { return file.binary == binHandle; });
+        g_patchedFiles.remove_if([binHandle, &sourceKey](const auto& file) {
+            return file.binary == binHandle && file.deviceId == sourceKey.first;
+        });
     }
     if (lifecycle.owns_lock()) {
         lifecycle.unlock();
@@ -1213,12 +1395,33 @@ aclError aclrtBinaryUnLoadHook(aclrtBinHandle binHandle) noexcept
 
 aclError aclrtResetDeviceHook(int32_t deviceId) noexcept
 {
+    using GetContext = aclError (*)(aclrtContext*);
+    using SetContext = aclError (*)(aclrtContext);
+    const auto getContext = reinterpret_cast<GetContext>(dlsym(RTLD_DEFAULT, "aclrtGetCurrentContext"));
+    const auto setContext = reinterpret_cast<SetContext>(dlsym(RTLD_DEFAULT, "aclrtSetCurrentContext"));
+    aclrtContext savedContext = nullptr;
+    const aclError contextResult = getContext == nullptr ? ACL_ERROR_FAILURE : getContext(&savedContext);
+    if ((contextResult != ACL_SUCCESS && contextResult != ACL_ERROR_RT_CONTEXT_NULL) ||
+        (savedContext != nullptr && setContext == nullptr)) {
+        aclsan::TraceIntegrityMark(0, 0, true);
+        return ACL_ERROR_FAILURE;
+    }
+    const bool hasContext = contextResult == ACL_SUCCESS && savedContext != nullptr;
+    std::shared_ptr<void> resetGuard;
+    const bool quiesced = aclsan::QuiesceTraceDevice(deviceId, hasContext, resetGuard);
+    const bool restored = !hasContext || setContext(savedContext) == ACL_SUCCESS;
+    if (!quiesced || !restored) {
+        if (resetGuard) {
+            aclsan::FinishTraceDeviceReset(deviceId, false);
+        }
+        aclsan::TraceIntegrityMark(0, 0, true);
+        return ACL_ERROR_FAILURE;
+    }
     const auto original =
         GetOriginalRuntimeFunction<aclrtResetDeviceFunc>(ACL_RT_API_aclrtResetDevice, "aclrtResetDevice");
     const aclError result = original(deviceId);
+    aclsan::FinishTraceDeviceReset(deviceId, result == ACL_SUCCESS);
     if (result == ACL_SUCCESS) {
-        aclsan::ReleaseTraceDeviceResources(static_cast<uint32_t>(deviceId));
-        aclsan::ResetTraceRuntimeState();
         ResetDeferredDevice(deviceId);
     }
     return result;
@@ -1295,6 +1498,8 @@ const std::array<RuntimeHookBinding, 17> RUNTIME_HOOK_BINDINGS = {{
 
 namespace aclsan {
 
+void CollectRetiredTraceVariants() noexcept { CollectRetiredVariants(); }
+
 AclsanStatus ResolveActiveDeviceCallStack(uint64_t pc, device_runtime::CallStackResult* result) noexcept
 {
     if (result == nullptr) {
@@ -1308,6 +1513,11 @@ AclsanStatus ResolveActiveDeviceCallStack(uint64_t pc, device_runtime::CallStack
 // 针对所有hook相关的aclrt函数，不在requiredHooks中的统一清除hook，反之注册hook
 void ApplyRuntimeHooks(const std::set<aclrtApiId>& requiredHooks) noexcept
 {
+    if (!requiredHooks.empty()) {
+        StartTraceWorkerAcceptance();
+    } else {
+        StopTraceWorker();
+    }
     for (const RuntimeHookBinding& binding : RUNTIME_HOOK_BINDINGS) {
         const bool enable = aclsan::IsHookRequired(requiredHooks, binding.apiId);
         if (binding.configure(enable) != 0) {

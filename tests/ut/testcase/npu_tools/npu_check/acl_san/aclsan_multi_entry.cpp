@@ -151,6 +151,12 @@ aclError ParamInfo(const void*, size_t, size_t* offset, size_t* bytes)
     *bytes = 8;
     return ACL_SUCCESS;
 }
+aclError AllocateTrace(void** address, size_t bytes, aclrtMemMallocPolicy)
+{
+    constexpr size_t traceAlignment = 64;
+    return posix_memalign(address, traceAlignment, bytes) == 0 ? ACL_SUCCESS : ACL_ERROR_BAD_ALLOC;
+}
+
 aclError Sync(aclrtStream) { return syncResult; }
 void Callback(void*, AclsanCallbackDomain domain, AclsanCallbackId id, const void* data)
 {
@@ -218,6 +224,7 @@ int main(int argc, char**)
     SET("aclrtLaunchKernelWithArgsArray", ArrayLaunch);
     SET("aclrtFunctionGetParamCount", ParamCount);
     SET("aclrtFunctionGetParamInfo", ParamInfo);
+    SET("aclrtMalloc", AllocateTrace);
     SET("aclrtSynchronizeStream", Sync);
     assert(RuntimeStubSetSocName("Ascend950PR_9589") == ACL_SUCCESS);
     assert(acltoolHookInit() == ACL_SUCCESS);
@@ -290,7 +297,7 @@ int main(int argc, char**)
     unloadResult = 0;
     assert(aclrtBinaryUnLoad(parent) == 0 && unloads == unloadedFailures + 1);
     syncResult = 81;
-    assert(aclrtSynchronizeStream(stream) == 81 && unloads == loads);
+    assert(aclrtSynchronizeStream(stream) == 81 && unloads < loads);
     syncResult = 0;
     assert(aclrtSynchronizeStream(stream) == 0);
     assert(unloads == loads);

@@ -217,15 +217,10 @@ TEST(UbMemory, CbufUbCopiesSeparateIssuerAndStorageOwner)
 
 TEST(UbMemory, TraceIdsStayDistinctWhenVectorWritersShareL1Owner)
 {
-    std::vector<uint8_t> buffer;
-    std::string error;
-    ASSERT_TRUE(InitializeTraceBuffer(buffer, 108, 1, 9, error));
-    // The same PC and local record ordinal on the two AIVs in one mix group.
+    std::vector<ParsedTraceRecord> records;
+    // The same PC and sequence on the two AIVs in one mix group.
     for (uint32_t sub = 0; sub < 2; ++sub) {
         const uint32_t core = 18 + sub;
-        const size_t offset = sizeof(AclsanTraceBufferHeader) + core * ASCSAN_TRACE_BYTES_PER_CORE;
-        const AclsanTraceSliceHeader slice{1, 0, core, 0};
-        std::memcpy(buffer.data() + offset, &slice, sizeof(slice));
         AclsanRawTraceRecord raw{};
         raw.instrId = 173;
         raw.pc = 0x1c8;
@@ -235,13 +230,14 @@ TEST(UbMemory, TraceIdsStayDistinctWhenVectorWritersShareL1Owner)
         raw.args[0] = sub * 32;
         raw.args[1] = 0x1000;
         raw.args[2] = (1ULL << 4) | (1ULL << 16);
-        std::memcpy(buffer.data() + offset + sizeof(slice), &raw, sizeof(raw));
+        const auto parsed = DecodeTraceFifoRange(reinterpret_cast<const uint8_t*>(&raw), 1, core, 0, 1, 9, 0);
+        ASSERT_TRUE(parsed.ok) << parsed.error;
+        ASSERT_EQ(parsed.records.size(), 1u);
+        records.push_back(parsed.records.front());
     }
-    const auto parsed = ParseTraceBuffer(buffer.data(), buffer.size(), 108, 1, 9, 0);
-    ASSERT_TRUE(parsed.ok) << parsed.error;
-    ASSERT_EQ(parsed.records.size(), 2u);
+    ASSERT_EQ(records.size(), 2u);
     std::vector<AclsanDeviceEventHeader> l1Headers;
-    for (const auto& record : parsed.records) {
+    for (const auto& record : records) {
         const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(record.record);
         ASSERT_TRUE(decoded);
         MemoryCbdataContext context{};

@@ -53,6 +53,7 @@ public:
     NodeId Issue(ActorId actor);
     // Publishes the source timeline to the destination actor (submit or sync).
     void Join(ActorId destination, ActorId source);
+    void JoinNode(ActorId destination, NodeId source);
 
     // True when no observation was dropped. Unknown coverage answers nullopt, which is
     // the same three-state contract the graph-based queries expose.

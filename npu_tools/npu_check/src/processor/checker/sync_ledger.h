@@ -12,6 +12,7 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_SYNC_LEDGER_H
 
 #include "acl_san/aclsan_cbdata_device.h"
+#include "acl_san/aclsan_cbdata_operator.h"
 #include "checker/checker.h"
 #include "diagnostic/report_renderer.h"
 
@@ -74,10 +75,12 @@ public:
     std::string Summary() const;
     bool HasErrors() const;
     bool AnalysisComplete() const;
+    bool ObservationComplete() const { return observationComplete_; }
     void OnKernelLaunch(uint64_t launchId, const LaunchTopology& topology, void* stream = nullptr);
     void OnDeviceSync(const AclsanDeviceSyncData& data);
     std::vector<npucheck::NpuCheckSynccheckReport> OnSynchronization();
     std::vector<npucheck::NpuCheckSynccheckReport> OnSynchronization(void* stream);
+    std::vector<npucheck::NpuCheckSynccheckReport> OnOperatorComplete(uint64_t launchId);
     SynccheckStats Stats() const;
     std::optional<LaunchTopology> TopologyForLaunch(uint64_t launchId) const;
     std::optional<uint32_t> CrossCounterValue(
@@ -85,6 +88,8 @@ public:
     size_t PendingCrossSetRoundCount(uint64_t launchId) const;
 
 private:
+    bool HandleOperatorCompletion(const AclsanOperatorExecutionData& event, CheckerReportList& reports);
+
     static constexpr uint32_t kGlobalGroup = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t kInvalidAivIndex = std::numeric_limits<uint32_t>::max();
     static void HashCombine(size_t& seed, uint64_t value) noexcept;
@@ -226,7 +231,7 @@ private:
         uint32_t aivIndex = 0;
     };
 
-    static LaunchTopology NormalizeTopology(const LaunchTopology& topology);
+    static LaunchTopology NormalizeTopology(const LaunchTopology& input);
     static SyncBufOccupancyKey BuildSyncBufOccupancyKey(const AclsanDeviceSyncData& data);
     static bool ResolveParticipant(
         const LaunchTopology& topology, const AclsanDeviceSyncData& data, ParticipantKey& participant,
@@ -234,6 +239,12 @@ private:
     static CanonicalCrossFlag CanonicalizeMode4SetFlag(const ParticipantKey& participant, uint64_t rawFlagId);
     static uint32_t CanonicalizeLocalWaitFlag(const ParticipantKey& participant, uint32_t syncKind, uint64_t rawFlagId);
     static bool ValidateCrossInstruction(const AclsanDeviceSyncData& data, std::string& error);
+    static bool BuildGlobalCounterContributions(
+        const LaunchTopology& topology, const ParticipantKey& participant, uint32_t sourceFlagId, uint32_t targetFlagId,
+        std::vector<CounterContribution>& contributions, std::string& error);
+    static void AddGroupAivs(const LaunchTopology& topology, ParticipantSet& participants, uint32_t groupId);
+    static std::string DescribeUnsupportedCounterMode(
+        const LaunchTopology& topology, const ParticipantKey& participant, uint32_t mode);
     static bool BuildCounterContributions(
         const LaunchSyncState& state, const ParticipantKey& participant, uint32_t mode, uint32_t sourceFlagId,
         uint32_t targetFlagId, uint32_t aivIndex, std::vector<CounterContribution>& contributions, std::string& error);
@@ -258,6 +269,7 @@ private:
         LaunchSyncState& state, const CounterContribution& contribution, const AclsanDeviceSyncData& trigger);
     static void CleanupFlagUsage(LaunchSyncState& state, const FlagUsageKey& key);
     void FinalizeCrossCore(LaunchSyncState& state, Reports& reports);
+    void FinalizeLaunch(LaunchSyncState& state, Reports& reports);
     Reports FinalizeLaunches(void* stream, bool filterByStream);
 
     static Report BuildMismatchBase(

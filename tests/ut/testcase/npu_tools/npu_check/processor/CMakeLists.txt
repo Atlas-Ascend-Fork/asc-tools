@@ -91,7 +91,8 @@ add_executable(npu_check_cube_memory_tests
 target_compile_features(npu_check_cube_memory_tests PRIVATE cxx_std_17)
 target_compile_definitions(npu_check_cube_memory_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_include_directories(npu_check_cube_memory_tests PRIVATE
-  "${NPU_CHECK_SOURCE_DIR}" "${NPU_CHECK_DBI_INCLUDE_DIR}" "${NPU_CHECK_DBI_ROOT}/../../include")
+  "${NPU_CHECK_SOURCE_DIR}" "${NPU_CHECK_DBI_INCLUDE_DIR}" "${NPU_CHECK_DBI_ROOT}/../../include"
+  "${CMAKE_SOURCE_DIR}/npu_tools/injection/include" "${INJECTION_PROFILING_INCLUDE_DIR}")
 target_link_libraries(npu_check_cube_memory_tests PRIVATE
   npu_check_core npu_sanitizer_plog Threads::Threads GTest::gtest c_sec_static)
 add_test(NAME npu_check_cube_memory_tests COMMAND npu_check_cube_memory_tests)

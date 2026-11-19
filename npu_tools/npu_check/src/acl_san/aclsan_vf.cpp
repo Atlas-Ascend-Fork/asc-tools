@@ -78,6 +78,94 @@ std::optional<std::pair<uint32_t, uint32_t>> LocalMemBarrierTypes(NpubitUbAccess
             return std::nullopt;
     }
 }
+
+bool PrepareNpubitInput(
+    const ParsedTraceRecord& vf, const std::array<uint64_t, PUSH_PB_STATE_COUNT_PER_VF>& states,
+    const std::array<uint64_t, VECTOR_MASK_REGISTER_COUNT>& masks, NpubitPushPBStateRecord& input)
+{
+    if (vf.phyCoreId > std::numeric_limits<uint8_t>::max()) {
+        ASCTOOL_ERROR("acl_san Npubit: physical core id cannot fit aicore_id: %u", vf.phyCoreId);
+        return false;
+    }
+    // HiBit treats these fields as labels, not hardware-state selectors.
+    // Callback execution identity and UB ownership come from the parent trace.
+    input.aicore_id = static_cast<uint8_t>(vf.phyCoreId);
+    const auto aic = AicPhysicalCoreForAiv(vf.phyCoreId);
+    if (aic == UINT32_MAX) {
+        ASCTOOL_ERROR("acl_san Npubit: invalid AIV topology core=%u", vf.phyCoreId);
+        return false;
+    }
+    const auto firstAiv = AivPhysicalCoreForAic(aic, 0);
+    input.subcore_type = vf.phyCoreId == firstAiv ? NPUBIT_SUBCORE_TYPE_VEC0 : NPUBIT_SUBCORE_TYPE_VEC1;
+    input.vf_instr_address = vf.record.pc; // Original instruction PC, not args[0] (VF entry).
+    std::copy(states.begin(), states.end(), input.states);
+    // Hardware register order: MASK[0] is low, MASK[1] is high.
+    std::copy(masks.begin(), masks.end(), input.mask);
+    ASCTOOL_DEBUG(
+        "acl_san NpubitGetUbAddressRanges input pc=0x%llx aicoreId=%u subcoreType=%u",
+        static_cast<unsigned long long>(input.vf_instr_address), static_cast<unsigned int>(input.aicore_id),
+        static_cast<unsigned int>(input.subcore_type));
+    for (uint32_t index = 0; index < PUSH_PB_STATE_COUNT_PER_VF; ++index) {
+        ASCTOOL_DEBUG(
+            "acl_san NpubitGetUbAddressRanges input state[%u]=0x%llx", index,
+            static_cast<unsigned long long>(input.states[index]));
+    }
+    for (uint32_t index = 0; index < VECTOR_MASK_REGISTER_COUNT; ++index) {
+        ASCTOOL_DEBUG(
+            "acl_san NpubitGetUbAddressRanges input mask[%u]=0x%llx", index,
+            static_cast<unsigned long long>(input.mask[index]));
+    }
+    return true;
+}
+
+void LogNpubitRanges(int status, NpubitUbAddressRange* ranges, size_t count)
+{
+    ASCTOOL_DEBUG(
+        "acl_san NpubitGetUbAddressRanges result status=%d count=%zu data=%p", status, count,
+        static_cast<void*>(ranges));
+    if (ranges != nullptr && count <= MAX_VF_EVENTS) {
+        for (size_t index = 0; index < count; ++index) {
+            const auto& range = ranges[index];
+            ASCTOOL_DEBUG(
+                "acl_san NpubitGetUbAddressRanges result range[%zu] pc=0x%llx address=0x%llx "
+                "bytes=0x%llx accessType=%u",
+                index, static_cast<unsigned long long>(range.pc), static_cast<unsigned long long>(range.target_address),
+                static_cast<unsigned long long>(range.processed_bytes), static_cast<unsigned int>(range.access_type));
+        }
+    }
+}
+
+bool ResolveNpubitAccessMode(NpubitUbAccessType type, AclsanDeviceMemoryAccessMode& mode, uint32_t& sourceKind)
+{
+    switch (type) {
+        case NPUBIT_UB_ACCESS_VECTOR_READ:
+            mode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ;
+            return true;
+        case NPUBIT_UB_ACCESS_VECTOR_WRITE:
+            mode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE;
+            return true;
+        case NPUBIT_UB_ACCESS_SCALAR_READ:
+            mode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_READ;
+            sourceKind = ACLSAN_DEVICE_SOURCE_SCALAR;
+            return true;
+        case NPUBIT_UB_ACCESS_SCALAR_WRITE:
+            mode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE;
+            sourceKind = ACLSAN_DEVICE_SOURCE_SCALAR;
+            return true;
+        default:
+            ASCTOOL_ERROR("acl_san Npubit: invalid access mode");
+            return false;
+    }
+}
+
+void SetVfAccessCounts(std::vector<VfCallbackData>& events, const std::map<uint64_t, uint32_t>& fragmentCounts)
+{
+    for (auto& event : events) {
+        if (auto* access = std::get_if<AclsanDeviceMemoryAccessData>(&event); access != nullptr) {
+            access->accessCount = fragmentCounts.at(access->vfInstrExecSeq);
+        }
+    }
+}
 } // namespace
 
 VfPbState::Key VfPbState::Identity(const ParsedTraceRecord& record)
@@ -126,7 +214,7 @@ NpubitUbHandle::NpubitUbHandle(std::unique_ptr<Impl> impl) : impl_(std::move(imp
 NpubitUbHandle::~NpubitUbHandle()
 {
     // Assumed cleanup contract; replace here when the official header is supplied.
-    if (impl_->handle) {
+    if (impl_->handle != nullptr) {
         NpubitReleaseHandle(impl_->handle);
     }
 }
@@ -134,7 +222,7 @@ NpubitUbHandle::~NpubitUbHandle()
 std::shared_ptr<NpubitUbHandle> NpubitUbHandle::Create(const void* object, size_t bytes) noexcept
 {
     try {
-        if (!object || bytes == 0) {
+        if (object == nullptr || bytes == 0) {
             return {};
         }
         auto impl = std::make_unique<Impl>();
@@ -143,7 +231,7 @@ std::shared_ptr<NpubitUbHandle> NpubitUbHandle::Create(const void* object, size_
         auto result = std::make_shared<NpubitUbHandle>(std::move(impl));
         const auto status = NpubitCreateHandle(result->impl_->object.data(), bytes, &result->impl_->handle, V100, true);
         // Success == 0 is an integration assumption, confined to this adapter.
-        if (static_cast<int>(status) != 0 || !result->impl_->handle) {
+        if (static_cast<int>(status) != 0 || result->impl_->handle == nullptr) {
             ASCTOOL_ERROR("acl_san NpubitCreateHandle failed, status=%d", static_cast<int>(status));
             return {};
         }
@@ -156,7 +244,7 @@ std::shared_ptr<NpubitUbHandle> NpubitUbHandle::Create(const void* object, size_
 
 bool NpubitUbHandle::Matches(const void* object, size_t bytes) const noexcept
 {
-    return object && bytes == impl_->object.size() && std::memcmp(object, impl_->object.data(), bytes) == 0;
+    return object != nullptr && bytes == impl_->object.size() && std::memcmp(object, impl_->object.data(), bytes) == 0;
 }
 
 std::vector<VfCallbackData> NpubitUbHandle::Query(
@@ -168,38 +256,9 @@ std::vector<VfCallbackData> NpubitUbHandle::Query(
     info = local;
     try {
         std::lock_guard<std::mutex> lock(impl_->mutex);
-        if (vf.phyCoreId > std::numeric_limits<uint8_t>::max()) {
-            ASCTOOL_ERROR("acl_san Npubit: physical core id cannot fit aicore_id: %u", vf.phyCoreId);
-            return {};
-        }
         NpubitPushPBStateRecord input{};
-        // HiBit treats these fields as labels, not hardware-state selectors.
-        // Callback execution identity and UB ownership come from the parent trace.
-        input.aicore_id = static_cast<uint8_t>(vf.phyCoreId);
-        const auto aic = AicPhysicalCoreForAiv(vf.phyCoreId);
-        if (aic == UINT32_MAX) {
-            ASCTOOL_ERROR("acl_san Npubit: invalid AIV topology core=%u", vf.phyCoreId);
+        if (!PrepareNpubitInput(vf, states, masks, input)) {
             return {};
-        }
-        const auto firstAiv = AivPhysicalCoreForAic(aic, 0);
-        input.subcore_type = vf.phyCoreId == firstAiv ? NPUBIT_SUBCORE_TYPE_VEC0 : NPUBIT_SUBCORE_TYPE_VEC1;
-        input.vf_instr_address = vf.record.pc; // Original instruction PC, not args[0] (VF entry).
-        std::copy(states.begin(), states.end(), input.states);
-        // Hardware register order: MASK[0] is low, MASK[1] is high.
-        std::copy(masks.begin(), masks.end(), input.mask);
-        ASCTOOL_DEBUG(
-            "acl_san NpubitGetUbAddressRanges input pc=0x%llx aicoreId=%u subcoreType=%u",
-            static_cast<unsigned long long>(input.vf_instr_address), static_cast<unsigned int>(input.aicore_id),
-            static_cast<unsigned int>(input.subcore_type));
-        for (uint32_t index = 0; index < PUSH_PB_STATE_COUNT_PER_VF; ++index) {
-            ASCTOOL_DEBUG(
-                "acl_san NpubitGetUbAddressRanges input state[%u]=0x%llx", index,
-                static_cast<unsigned long long>(input.states[index]));
-        }
-        for (uint32_t index = 0; index < VECTOR_MASK_REGISTER_COUNT; ++index) {
-            ASCTOOL_DEBUG(
-                "acl_san NpubitGetUbAddressRanges input mask[%u]=0x%llx", index,
-                static_cast<unsigned long long>(input.mask[index]));
         }
         // Free while still holding the query mutex, before another query can invalidate vendor storage.
         struct Output {
@@ -217,21 +276,7 @@ std::vector<VfCallbackData> NpubitUbHandle::Query(
         // HiBit guarantees that success returns every dynamic access and barrier,
         // including a valid empty expansion. Conversion and delivery are checked below.
         const auto status = NpubitGetUbAddressRanges(impl_->handle, &input, &output.data, &count);
-        ASCTOOL_DEBUG(
-            "acl_san NpubitGetUbAddressRanges result status=%d count=%zu data=%p", static_cast<int>(status), count,
-            static_cast<void*>(output.data));
-        if (output.data != nullptr && count <= MAX_VF_EVENTS) {
-            for (size_t index = 0; index < count; ++index) {
-                const auto& range = output.data[index];
-                ASCTOOL_DEBUG(
-                    "acl_san NpubitGetUbAddressRanges result range[%zu] pc=0x%llx address=0x%llx "
-                    "bytes=0x%llx accessType=%u",
-                    index, static_cast<unsigned long long>(range.pc),
-                    static_cast<unsigned long long>(range.target_address),
-                    static_cast<unsigned long long>(range.processed_bytes),
-                    static_cast<unsigned int>(range.access_type));
-            }
-        }
+        LogNpubitRanges(static_cast<int>(status), output.data, count);
         if (static_cast<int>(status) != 0 || (count != 0 && output.data == nullptr) || count > MAX_VF_EVENTS) {
             ASCTOOL_ERROR(
                 "acl_san NpubitGetUbAddressRanges failed, pc=0x%llx status=%d",
@@ -293,26 +338,10 @@ std::vector<VfCallbackData> NpubitUbHandle::Query(
                 result.emplace_back(barrier);
                 continue;
             }
-            AclsanDeviceMemoryAccessMode mode;
+            AclsanDeviceMemoryAccessMode mode{};
             uint32_t sourceKind = ACLSAN_DEVICE_SOURCE_VECTOR;
-            switch (range.access_type) {
-                case NPUBIT_UB_ACCESS_VECTOR_READ:
-                    mode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ;
-                    break;
-                case NPUBIT_UB_ACCESS_VECTOR_WRITE:
-                    mode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE;
-                    break;
-                case NPUBIT_UB_ACCESS_SCALAR_READ:
-                    mode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_READ;
-                    sourceKind = ACLSAN_DEVICE_SOURCE_SCALAR;
-                    break;
-                case NPUBIT_UB_ACCESS_SCALAR_WRITE:
-                    mode = ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE;
-                    sourceKind = ACLSAN_DEVICE_SOURCE_SCALAR;
-                    break;
-                default:
-                    ASCTOOL_ERROR("acl_san Npubit: invalid access mode");
-                    return {};
+            if (!ResolveNpubitAccessMode(range.access_type, mode, sourceKind)) {
+                return {};
             }
             // Validate the type before filtering zero-byte records.
             if (range.processed_bytes == 0) {
@@ -335,11 +364,7 @@ std::vector<VfCallbackData> NpubitUbHandle::Query(
             ++accessCount;
             result.emplace_back(access);
         }
-        for (auto& event : result) {
-            if (auto* access = std::get_if<AclsanDeviceMemoryAccessData>(&event)) {
-                access->accessCount = fragmentCounts.at(access->vfInstrExecSeq);
-            }
-        }
+        SetVfAccessCounts(result, fragmentCounts);
         info.status = ACLSAN_DEVICE_VF_SUCCESS;
         info.accessCount = accessCount;
         info.eventCount = static_cast<uint32_t>(result.size());

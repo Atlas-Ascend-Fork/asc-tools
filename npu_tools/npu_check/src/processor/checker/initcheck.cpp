@@ -12,7 +12,6 @@
 #include "checker/initcheck.h"
 #include "checker/initcheck_report.h"
 #include "checker/memory_access_layout.h"
-#include "checker/racecheck.h"
 #include "device_instr/common/instruction_id.h"
 #include "npu_tool_log.h"
 
@@ -45,7 +44,7 @@ struct Operand {
 bool ExpandRanges(const AclsanDeviceMemoryAccessData& data, std::vector<Range>& ranges)
 {
     bool valid = true;
-    auto append = [&](uint64_t address, uint64_t bytes) {
+    auto append = [&valid, &ranges](uint64_t address, uint64_t bytes) {
         if (!GmInitStateTable::ValidRange(address, bytes))
             valid = false;
         if (bytes != 0)
@@ -127,7 +126,8 @@ NpuCheckInitcheckReport MakeMemoryReport(const AclsanDeviceMemoryAccessData& dat
 {
     auto report = BuildInitcheckMemoryReportBase(data, allocation.bytes, allocation.deviceId);
     const auto now = std::chrono::system_clock::now().time_since_epoch();
-    report.common.timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+    report.common.timestampNs =
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
     report.allocation.state = 1;
     report.allocation.allocId = allocation.resourceId;
     report.allocation.base = allocation.base;
@@ -203,6 +203,185 @@ InitCheckStatus MemoryInitcheck::MarkInitialized(InitStateKey scope, uint64_t ad
     }
 }
 
+namespace {
+constexpr uint32_t INCOMPLETE_FLAGS = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
+                                      static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED) |
+                                      static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR);
+
+bool IsCompleteInstructionAccess(const AclsanDeviceMemoryAccessData& access, size_t accessCount)
+{
+    return access.accessCount == accessCount && (access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_EXACT) != 0U &&
+           (access.header.flags & INCOMPLETE_FLAGS) == 0U;
+}
+
+bool MatchesInitializationOwner(const InitStateKey& scope, const AclsanDeviceMemoryAccessData& access)
+{
+    if (scope.space == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+        return true;
+    }
+    const auto& owner = access.memoryOwner;
+    return scope.blockType == owner.blockType && scope.blockId == (scope.physical ? owner.phyCoreId : owner.blockId);
+}
+
+InitCheckStatus CollectInstructionOperands(
+    InitStateKey scope, const std::vector<AclsanDeviceMemoryAccessData>& accesses, std::vector<Operand>& operands)
+{
+    std::vector<bool> seen(accesses.size(), false);
+    // 完整性检查先于任何状态更新。调用方必须已校验配置寄存器依赖，并按同步依赖排序。
+    for (const auto& access : accesses) {
+        const auto& h = access.header;
+        if (h.version != ACLSAN_API_VERSION || h.size < sizeof(access) || h.deviceId != scope.deviceId ||
+            race::Key(access) != race::Key(accesses.front()) || h.pipeline > MAX_WRITER_PIPELINE ||
+            access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
+            access.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
+            access.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
+            return InitCheckStatus::INVALID_RECORD;
+        }
+        if (!IsCompleteInstructionAccess(access, accesses.size())) {
+            return InitCheckStatus::INCOMPLETE_RECORD;
+        }
+        seen[access.accessIndex] = true;
+        if (access.memorySpace != scope.space)
+            continue;
+        if (!MatchesInitializationOwner(scope, access)) {
+            return InitCheckStatus::INVALID_RECORD;
+        }
+        if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) != 0U && access.predicateMask0 == 0 &&
+            access.predicateMask1 == 0)
+            continue;
+        Operand operand{&access, {}};
+        if (!ExpandRanges(access, operand.ranges))
+            return InitCheckStatus::INVALID_RECORD;
+        operands.push_back(std::move(operand));
+    }
+    return InitCheckStatus::OK;
+}
+
+template <typename Classify>
+InitCheckStatus ValidateOperandAllocations(const std::vector<Operand>& operands, const Classify& classify)
+{
+    for (const auto& operand : operands) {
+        uint64_t total = 0;
+        for (const auto& range : operand.ranges) {
+            const auto status = classify(range.address, range.bytes).status;
+            if (status == RangeStatus::UNKNOWN || status == RangeStatus::AMBIGUOUS) {
+                return InitCheckStatus::UNRESOLVED_ALLOCATION;
+            }
+            if (status != RangeStatus::VALID) {
+                return InitCheckStatus::INVALID_ALLOCATION;
+            }
+            total += range.bytes;
+        }
+        // 报告 ABI 的 accessBytes 为 uint32_t，不静默截断读取大小。
+        if (total > std::numeric_limits<uint32_t>::max())
+            return InitCheckStatus::RESOURCE_EXHAUSTED;
+    }
+    return InitCheckStatus::OK;
+}
+
+// GM combines its launch baseline with proven preceding writes. Local
+// replay queries actual state bytes only where a preceding write proves
+// visibility; topologically earlier but unordered writes cannot leak in.
+InitStateQuery QueryInstructionInitialization(
+    const InitStateTable& table, const MemoryInitcheck::InitializedRanges& precedingWrites,
+    bool restrictToPrecedingWrites, InitStateKey scope, uint64_t address, uint64_t bytes)
+{
+    InitStateQuery result;
+    const auto append = [&table, &result](uint64_t begin, uint64_t end) {
+        const auto q = table.Query(begin, end - begin);
+        if (result.uninitializedBytes == 0 && q.uninitializedBytes != 0)
+            result.firstUninitializedAddress = q.firstUninitializedAddress;
+        result.uninitializedBytes += q.uninitializedBytes;
+    };
+    const auto appendGap = [&append, &result, restrictToPrecedingWrites](uint64_t begin, uint64_t end) {
+        if (!restrictToPrecedingWrites) {
+            append(begin, end);
+        } else if (begin < end) {
+            if (result.uninitializedBytes == 0)
+                result.firstUninitializedAddress = begin;
+            result.uninitializedBytes += end - begin;
+        }
+    };
+    const uint64_t end = address + bytes;
+    for (const auto& range : precedingWrites) {
+        if (range.second <= address)
+            continue;
+        if (range.first >= end)
+            break;
+        if (range.first > address)
+            appendGap(address, range.first);
+        const auto coveredBegin = std::max(address, range.first);
+        const auto coveredEnd = std::min(end, range.second);
+        if (restrictToPrecedingWrites && scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM)
+            append(coveredBegin, coveredEnd);
+        address = coveredEnd;
+    }
+    if (address < end)
+        appendGap(address, end);
+    return result;
+}
+
+template <typename Classify, typename Query>
+void ReportInstructionReads(
+    const std::vector<Operand>& operands, const Classify& classify, const Query& queryInitialized, uint64_t group,
+    uint64_t& nextReportId, std::vector<NpuCheckInitcheckReport>& output)
+{
+    // Report all reads before writing any state for this instruction.
+    for (const auto& operand : operands) {
+        if (!race::ReadsMemory(operand.access->accessMode))
+            continue;
+        std::map<uint64_t, NpuCheckInitcheckReport> reports;
+        for (const auto& range : operand.ranges) {
+            const auto allocation = *classify(range.address, range.bytes).allocation;
+            auto [it, inserted] = reports.try_emplace(allocation.base);
+            auto& report = it->second;
+            if (inserted) {
+                report = MakeMemoryReport(*operand.access, allocation);
+                // rowBytes 非零表示读取携带 NZ 有效数据布局，先暂定为 WARNING。
+                // 若物理读范围内只有对齐填充字节未初始化，则最终报告 WARNING；
+                // 若有效数据未初始化，或布局无效且存在未初始化字节，后续检查会升级为 ERROR；
+                // 全部初始化则不报告。
+                if (operand.access->validNz.rowBytes != 0) {
+                    report.common.severity = ReportSeverity::WARNING;
+                }
+                report.access.rangeBegin = range.address;
+            }
+            report.access.rangeEnd = range.address + range.bytes;
+            report.access.accessBytes += static_cast<uint32_t>(range.bytes);
+            const auto query = queryInitialized(range.address, range.bytes);
+            if (query.uninitializedBytes != 0 && report.uninitBytes == 0) {
+                report.firstUninitAddress = query.firstUninitializedAddress;
+                report.firstUninitOffset = query.firstUninitializedAddress - allocation.base;
+            }
+            report.uninitBytes += query.uninitializedBytes;
+            if (operand.access->validNz.rowBytes != 0 && query.uninitializedBytes != 0 &&
+                !RequiredReadInitialized(
+                    *operand.access, range.address, range.address + range.bytes,
+                    [&queryInitialized](uint64_t begin, uint64_t end) {
+                        return queryInitialized(begin, end - begin).uninitializedBytes == 0;
+                    })) {
+                report.common.severity = ReportSeverity::ERROR;
+            }
+        }
+        for (auto& entry : reports) {
+            auto& report = entry.second;
+            if (report.uninitBytes == 0)
+                continue;
+            report.initializedBytes = report.access.accessBytes - report.uninitBytes;
+            report.allocationInitializedBytes =
+                report.allocation.bytes -
+                queryInitialized(report.allocation.base, report.allocation.bytes).uninitializedBytes;
+            report.common.pattern = report.initializedBytes == 0 ?
+                                        NpuCheckReportPattern::INITCHECK_UNINITIALIZED_READ :
+                                        NpuCheckReportPattern::INITCHECK_PARTIAL_UNINITIALIZED_READ;
+            report.common.reportId = nextReportId++;
+            report.common.groupId = group;
+            output.push_back(std::move(report));
+        }
+    }
+}
+} // namespace
+
 InitCheckResult MemoryInitcheck::CheckInstruction(
     InitStateKey scope, const std::vector<AclsanDeviceMemoryAccessData>& accesses,
     const InitializedRanges& precedingWrites, bool commitWrites, bool restrictToPrecedingWrites,
@@ -218,37 +397,10 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
         const auto& first = accesses.front().header;
         if (scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM && scope.launchId != first.launchId)
             return fail(InitCheckStatus::INVALID_RECORD);
-        std::vector<bool> seen(accesses.size(), false);
         std::vector<Operand> operands;
-        // 完整性检查先于任何状态更新。调用方必须已校验配置寄存器依赖，并按同步依赖排序。
-        for (const auto& access : accesses) {
-            const auto& h = access.header;
-            if (h.version != ACLSAN_API_VERSION || h.size < sizeof(access) || h.deviceId != scope.deviceId ||
-                race::Key(access) != race::Key(accesses.front()) || h.pipeline > MAX_WRITER_PIPELINE ||
-                access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
-                access.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
-                access.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
-                return fail(InitCheckStatus::INVALID_RECORD);
-            }
-            if (access.accessCount != accesses.size() || (h.flags & ACLSAN_DEVICE_EVENT_FLAG_EXACT) == 0 ||
-                (h.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED |
-                            ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR)) != 0) {
-                return fail(InitCheckStatus::INCOMPLETE_RECORD);
-            }
-            seen[access.accessIndex] = true;
-            if (access.memorySpace != scope.space)
-                continue;
-            const auto owner = access.memoryOwner;
-            if ((scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM &&
-                 (scope.blockType != owner.blockType || scope.blockId != owner.blockId)))
-                return fail(InitCheckStatus::INVALID_RECORD);
-            if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) && access.predicateMask0 == 0 &&
-                access.predicateMask1 == 0)
-                continue;
-            Operand operand{&access, {}};
-            if (!ExpandRanges(access, operand.ranges))
-                return fail(InitCheckStatus::INVALID_RECORD);
-            operands.push_back(std::move(operand));
+        const auto collectStatus = CollectInstructionOperands(scope, accesses, operands);
+        if (collectStatus != InitCheckStatus::OK) {
+            return fail(collectStatus);
         }
         const auto found = state_->allocations.find(scope);
         const auto classify = [this, scope, found, &classifier](uint64_t address, uint64_t bytes) -> RangeResult {
@@ -266,117 +418,20 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
             return found == state_->allocations.end() ? RangeResult{} :
                                                         found->second.Classify(scope.deviceId, address, bytes);
         };
-        for (const auto& operand : operands) {
-            uint64_t total = 0;
-            for (const auto& range : operand.ranges) {
-                const auto status = classify(range.address, range.bytes).status;
-                if (status == RangeStatus::UNKNOWN || status == RangeStatus::AMBIGUOUS) {
-                    return fail(InitCheckStatus::UNRESOLVED_ALLOCATION);
-                }
-                if (status != RangeStatus::VALID) {
-                    return fail(InitCheckStatus::INVALID_ALLOCATION);
-                }
-                total += range.bytes;
-            }
-            // 报告 ABI 的 accessBytes 为 uint32_t，不静默截断读取大小。
-            if (total > std::numeric_limits<uint32_t>::max())
-                return fail(InitCheckStatus::RESOURCE_EXHAUSTED);
+        const auto allocationStatus = ValidateOperandAllocations(operands, classify);
+        if (allocationStatus != InitCheckStatus::OK) {
+            return fail(allocationStatus);
         }
         if (operands.empty())
             return result;
         auto& table = state_->initialized.GetOrCreate(scope);
-        // GM combines its launch baseline with proven preceding writes. Local
-        // replay queries actual state bytes only where a preceding write proves
-        // visibility; topologically earlier but unordered writes cannot leak in.
         const auto queryInitialized = [&table, &precedingWrites, restrictToPrecedingWrites, scope](
                                           uint64_t address, uint64_t bytes) {
-            InitStateQuery result;
-            const auto append = [&table, &result](uint64_t begin, uint64_t end) {
-                const auto q = table.Query(begin, end - begin);
-                if (result.uninitializedBytes == 0 && q.uninitializedBytes != 0)
-                    result.firstUninitializedAddress = q.firstUninitializedAddress;
-                result.uninitializedBytes += q.uninitializedBytes;
-            };
-            const auto appendGap = [&append, &result, restrictToPrecedingWrites](uint64_t begin, uint64_t end) {
-                if (!restrictToPrecedingWrites) {
-                    append(begin, end);
-                } else if (begin < end) {
-                    if (result.uninitializedBytes == 0)
-                        result.firstUninitializedAddress = begin;
-                    result.uninitializedBytes += end - begin;
-                }
-            };
-            const uint64_t end = address + bytes;
-            for (const auto& range : precedingWrites) {
-                if (range.second <= address)
-                    continue;
-                if (range.first >= end)
-                    break;
-                if (range.first > address)
-                    appendGap(address, range.first);
-                const auto coveredBegin = std::max(address, range.first);
-                const auto coveredEnd = std::min(end, range.second);
-                if (restrictToPrecedingWrites && scope.space != ACLSAN_DEVICE_MEMORY_SPACE_GM)
-                    append(coveredBegin, coveredEnd);
-                address = coveredEnd;
-            }
-            if (address < end)
-                appendGap(address, end);
-            return result;
+            return QueryInstructionInitialization(
+                table, precedingWrites, restrictToPrecedingWrites, scope, address, bytes);
         };
         const uint64_t group = nextGroupId_++;
-        // 每个读操作按分配汇总；同一条指令的全部读端先检查，随后才写入。
-        for (const auto& operand : operands) {
-            if (!race::ReadsMemory(operand.access->accessMode))
-                continue;
-            std::map<uint64_t, NpuCheckInitcheckReport> reports;
-            for (const auto& range : operand.ranges) {
-                const auto allocation = *classify(range.address, range.bytes).allocation;
-                auto [it, inserted] = reports.try_emplace(allocation.base);
-                auto& report = it->second;
-                if (inserted) {
-                    report = MakeMemoryReport(*operand.access, allocation);
-                    // rowBytes 非零表示读取携带 NZ 有效数据布局，先暂定为 WARNING。
-                    // 若物理读范围内只有对齐填充字节未初始化，则最终报告 WARNING；
-                    // 若有效数据未初始化，或布局无效且存在未初始化字节，后续检查会升级为 ERROR；
-                    // 全部初始化则不报告。
-                    if (operand.access->validNz.rowBytes != 0) {
-                        report.common.severity = ReportSeverity::WARNING;
-                    }
-                    report.access.rangeBegin = range.address;
-                }
-                report.access.rangeEnd = range.address + range.bytes;
-                report.access.accessBytes += static_cast<uint32_t>(range.bytes);
-                const auto query = queryInitialized(range.address, range.bytes);
-                if (query.uninitializedBytes != 0 && report.uninitBytes == 0) {
-                    report.firstUninitAddress = query.firstUninitializedAddress;
-                    report.firstUninitOffset = query.firstUninitializedAddress - allocation.base;
-                }
-                report.uninitBytes += query.uninitializedBytes;
-                if (operand.access->validNz.rowBytes != 0 && query.uninitializedBytes != 0 &&
-                    !RequiredReadInitialized(
-                        *operand.access, range.address, range.address + range.bytes, [&](uint64_t begin, uint64_t end) {
-                            return queryInitialized(begin, end - begin).uninitializedBytes == 0;
-                        })) {
-                    report.common.severity = ReportSeverity::ERROR;
-                }
-            }
-            for (auto& entry : reports) {
-                auto& report = entry.second;
-                if (report.uninitBytes == 0)
-                    continue;
-                report.initializedBytes = report.access.accessBytes - report.uninitBytes;
-                report.allocationInitializedBytes =
-                    report.allocation.bytes -
-                    queryInitialized(report.allocation.base, report.allocation.bytes).uninitializedBytes;
-                report.common.pattern = report.initializedBytes == 0 ?
-                                            NpuCheckReportPattern::INITCHECK_UNINITIALIZED_READ :
-                                            NpuCheckReportPattern::INITCHECK_PARTIAL_UNINITIALIZED_READ;
-                report.common.reportId = nextReportId_++;
-                report.common.groupId = group;
-                result.reports.push_back(std::move(report));
-            }
-        }
+        ReportInstructionReads(operands, classify, queryInitialized, group, nextReportId_, result.reports);
         for (const auto& operand : operands) {
             if (!commitWrites || !race::WritesMemory(operand.access->accessMode))
                 continue;
@@ -446,14 +501,41 @@ uint64_t L1PaddingReadAlignment(const AclsanDeviceMemoryAccessData& read)
     }
 }
 
+constexpr uint64_t kL1PaddingBlockBytes = 32;
+
+bool IsSingleL1PaddingLayout(const AclsanMemNdAffineLayout& nz)
+{
+    return nz.rank == L1PaddingLayout::kRank && nz.elementBytes == kL1PaddingBlockBytes &&
+           nz.dims[L1PaddingLayout::kMatrixAxis] == 1 &&
+           nz.strides[L1PaddingLayout::kRowAxis] == kL1PaddingBlockBytes && nz.dims[L1PaddingLayout::kRowAxis] != 0 &&
+           nz.dims[L1PaddingLayout::kRowAxis] <= L1InitStateTable::kCapacity / kL1PaddingBlockBytes &&
+           nz.dims[L1PaddingLayout::kColumnBlockAxis] != 0;
+}
+
+void AppendL1BiasPadding(
+    uint64_t readAddress, const AclsanDeviceMemoryAccessData& write, uint64_t available,
+    std::vector<race::Interval>& padding)
+{
+    // 32-bit bias is one dense Nz row. BT rounds the trailing length to 64B.
+    constexpr uint32_t kBiasDataBits = 32;
+    constexpr uint64_t kBlocksPerBiasAlignment = L1PaddingLayout::kBiasAlignmentBytes / kL1PaddingBlockBytes;
+    const auto& nz = write.layout.ndAffine;
+    const uint64_t blocks = nz.dims[L1PaddingLayout::kColumnBlockAxis];
+    if (write.dataBits != kBiasDataBits || nz.dims[L1PaddingLayout::kRowAxis] != 1 ||
+        nz.strides[L1PaddingLayout::kColumnBlockAxis] != kL1PaddingBlockBytes ||
+        blocks % kBlocksPerBiasAlignment == 0 || blocks >= available / kL1PaddingBlockBytes ||
+        readAddress != write.address) {
+        return;
+    }
+    const uint64_t end = write.address + blocks * kL1PaddingBlockBytes;
+    padding.push_back({end, end + kL1PaddingBlockBytes});
+}
+
 void AppendSingleL1Padding(
     const race::DependencyGraph::Access& read, uint64_t alignment, const AclsanDeviceMemoryAccessData& write,
     std::vector<race::Interval>& padding, size_t limit)
 {
     using aclsan::InstructionId;
-    constexpr uint32_t kBiasDataBits = 32;
-    constexpr uint64_t blockBytes = 32;
-    constexpr uint64_t kBlocksPerBiasAlignment = L1PaddingLayout::kBiasAlignmentBytes / blockBytes;
     constexpr uint64_t capacity = L1InitStateTable::kCapacity;
     const auto id = static_cast<InstructionId>(write.instructionId);
     if (id < InstructionId::CopyGmToCbufMultiNd2NzB8 || id > InstructionId::CopyGmToCbufMultiDn2NzB32 ||
@@ -461,33 +543,21 @@ void AppendSingleL1Padding(
         return;
     }
     const auto& nz = write.layout.ndAffine;
-    if (nz.rank != L1PaddingLayout::kRank || nz.elementBytes != blockBytes ||
-        nz.dims[L1PaddingLayout::kMatrixAxis] != 1 || nz.strides[L1PaddingLayout::kRowAxis] != blockBytes ||
-        nz.dims[L1PaddingLayout::kRowAxis] == 0 || nz.dims[L1PaddingLayout::kRowAxis] > capacity / blockBytes ||
-        nz.dims[L1PaddingLayout::kColumnBlockAxis] == 0) {
+    if (!IsSingleL1PaddingLayout(nz)) {
         return;
     }
 
     const uint64_t available = capacity - write.address;
     if (alignment == L1PaddingLayout::kBiasAlignmentBytes) {
-        // 32-bit Bias is one dense Nz row. BT requires its trailing length rounded to 64B.
-        if (write.dataBits != kBiasDataBits || nz.dims[L1PaddingLayout::kRowAxis] != 1 ||
-            nz.strides[L1PaddingLayout::kColumnBlockAxis] != blockBytes ||
-            nz.dims[L1PaddingLayout::kColumnBlockAxis] % kBlocksPerBiasAlignment == 0 ||
-            nz.dims[L1PaddingLayout::kColumnBlockAxis] >= available / blockBytes ||
-            read.data.address != write.address) {
-            return;
-        }
-        const uint64_t end = write.address + nz.dims[L1PaddingLayout::kColumnBlockAxis] * blockBytes;
-        padding.push_back({end, end + blockBytes});
+        AppendL1BiasPadding(read.data.address, write, available, padding);
         return;
     }
 
     // Only the rounded row tail is padding. A larger column stride may leave
     // additional gaps, which are never included in the inferred padding.
     const uint64_t rows = nz.dims[L1PaddingLayout::kRowAxis];
-    const uint64_t tileBytes = ((rows + alignment - 1) / alignment) * alignment * blockBytes;
-    const uint64_t writtenBytes = rows * blockBytes;
+    const uint64_t tileBytes = ((rows + alignment - 1) / alignment) * alignment * kL1PaddingBlockBytes;
+    const uint64_t writtenBytes = rows * kL1PaddingBlockBytes;
     if (write.dataBits != read.data.dataBits || tileBytes == writtenBytes ||
         nz.strides[L1PaddingLayout::kColumnBlockAxis] < static_cast<int64_t>(tileBytes) ||
         nz.dims[L1PaddingLayout::kColumnBlockAxis] >
@@ -555,7 +625,7 @@ bool CoveredBy(const std::vector<race::Interval>& ranges, const std::vector<race
 
 bool Initcheck::OnDeviceSync(AclsanCallbackId cbid, const void* data)
 {
-    if (!data) {
+    if (data == nullptr) {
         ++stats_.malformedEvents;
         return false;
     }
@@ -572,7 +642,7 @@ bool Initcheck::OnDeviceSync(AclsanCallbackId cbid, const void* data)
         replayReasons_[h.launchId].insert("sync_coverage_unknown");
         return true;
     }
-    if (pendingSyncEvents_.size() >= race::Limits{}.events) {
+    if (!analysis_->Managed() && pendingSyncEvents_.size() >= analysis_->AnalysisLimits().events) {
         replayReasons_[h.launchId].insert("event_budget");
         return true;
     }
@@ -594,19 +664,14 @@ bool Initcheck::OnDeviceSync(AclsanCallbackId cbid, const void* data)
     return true;
 }
 
-void Initcheck::FlushMemoryAccesses(void* stream, CheckerReportList& reports)
+void Initcheck::FlushMemoryAccesses(uint64_t launchId, CheckerReportList& reports)
 {
     struct Batch {
         std::vector<AclsanDeviceMemoryAccessData> memory;
         std::vector<AclsanDeviceSyncData> sync;
     };
     std::map<uint64_t, Batch> batches;
-    const auto selected = [&](uint64_t id) {
-        const auto launch = launchStreams_.find(id);
-        // Standalone cbdata consumers may not provide launch callbacks. Real
-        // registered launches are always drained only by their own stream.
-        return launch == launchStreams_.end() || launch->second == stream;
-    };
+    const auto selected = [launchId](uint64_t id) { return id == launchId; };
     for (const auto& launch : launchStreams_)
         if (selected(launch.first))
             batches[launch.first];
@@ -650,46 +715,57 @@ void Initcheck::FlushMemoryAccesses(void* stream, CheckerReportList& reports)
             for (const auto& access : entry.second.memory)
                 uncertainDevices_.insert(access.header.deviceId);
         }
-        launchStreams_.erase(entry.first);
-        replayReasons_.erase(entry.first);
-        unitFlagRegisters_.erase(entry.first);
-        for (auto it = initializedRegisters_.begin(); it != initializedRegisters_.end();)
-            if (std::get<1>(it->first) == entry.first)
-                it = initializedRegisters_.erase(it);
-            else
-                ++it;
-        for (auto it = reportedUsages_.begin(); it != reportedUsages_.end();) {
-            const auto& [instruction, registerId] = *it;
-            const auto& [domain, instructionId, vfSequence, launchId] = instruction;
-            if (launchId == entry.first) {
-                it = reportedUsages_.erase(it);
-            } else {
-                ++it;
-            }
+        ClearLaunchReplayState(entry.first);
+    }
+}
+
+void Initcheck::ClearLaunchReplayState(uint64_t launchId)
+{
+    launchStreams_.erase(launchId);
+    replayReasons_.erase(launchId);
+    unitFlagRegisters_.erase(launchId);
+    for (auto it = initializedRegisters_.begin(); it != initializedRegisters_.end();) {
+        if (std::get<1>(it->first) == launchId) {
+            it = initializedRegisters_.erase(it);
+        } else {
+            ++it;
         }
-        for (auto it = reportGroups_.begin(); it != reportGroups_.end();) {
-            const auto& [domain, instructionId, vfSequence, launchId] = it->first;
-            if (launchId == entry.first) {
-                it = reportGroups_.erase(it);
-            } else {
-                ++it;
-            }
+    }
+    for (auto it = reportedUsages_.begin(); it != reportedUsages_.end();) {
+        if (std::get<3>(std::get<0>(*it)) == launchId) {
+            it = reportedUsages_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = reportGroups_.begin(); it != reportGroups_.end();) {
+        if (std::get<3>(it->first) == launchId) {
+            it = reportGroups_.erase(it);
+        } else {
+            ++it;
         }
     }
 }
 
-void Initcheck::ReplayLaunch(
-    uint64_t launchId, std::vector<AclsanDeviceMemoryAccessData>& memory, std::vector<AclsanDeviceSyncData>& sync,
-    CheckerReportList& reports)
+void Initcheck::CheckReplayEventBudget(
+    uint64_t launchId, size_t memoryCount, size_t syncCount, std::set<std::string>& reasons)
 {
-    using namespace race;
-    auto& reasons = replayReasons_[launchId];
-    size_t degradedInstructions = 0;
-    const Limits limits;
+    const auto& limits = analysis_->AnalysisLimits();
     if (memoryInvalid_)
         reasons.insert("malformed_memory_event");
-    if (memory.size() + sync.size() + unitFlagRegisters_[launchId].size() > limits.events)
-        reasons.insert("event_budget");
+    if (race::ExceedsBudget(
+            limits.LaunchEventBudget(), {memoryCount, syncCount, unitFlagRegisters_[launchId].size()})) {
+        if (reasons.insert("event_budget").second)
+            ASCTOOL_WARNING(
+                "analysis budget: launch=%llu stage=events memory=%zu sync=%zu registers=%zu limit=%zu",
+                static_cast<unsigned long long>(launchId), memoryCount, syncCount, unitFlagRegisters_[launchId].size(),
+                limits.LaunchEventBudget());
+    }
+}
+
+void Initcheck::CheckReplayStreamOrder(
+    uint64_t launchId, const std::vector<AclsanDeviceMemoryAccessData>& memory, std::set<std::string>& reasons)
+{
     // A pending stream's traces may not have arrived yet. Without a stream
     // dependency, neither completion order proves which kernel initialized GM.
     const bool usesGm = std::any_of(
@@ -700,12 +776,18 @@ void Initcheck::ReplayLaunch(
             if (other.first != launchId &&
                 (currentLaunch == launchStreams_.end() || other.second != currentLaunch->second) &&
                 (!analysis_->Managed() ||
-                 analysis_->CompareLaunches(other.first, launchId) == HappensBeforeGraph::Relation::Unordered ||
-                 analysis_->CompareLaunches(other.first, launchId) == HappensBeforeGraph::Relation::Unknown)) {
+                 analysis_->CompareLaunches(other.first, launchId) == race::HappensBeforeGraph::Relation::Unordered ||
+                 analysis_->CompareLaunches(other.first, launchId) == race::HappensBeforeGraph::Relation::Unknown)) {
                 reasons.insert("cross_stream_initialization_unknown");
                 replayReasons_[other.first].insert("cross_stream_initialization_unknown");
             }
         }
+}
+
+std::optional<uint32_t> Initcheck::CheckReplayDevice(
+    const std::vector<AclsanDeviceMemoryAccessData>& memory, const std::vector<AclsanDeviceSyncData>& sync,
+    std::set<std::string>& reasons)
+{
     std::optional<uint32_t> device;
     const auto checkDevice = [&device, &reasons](const AclsanDeviceEventHeader& h) {
         if (device && *device != h.deviceId)
@@ -716,7 +798,7 @@ void Initcheck::ReplayLaunch(
         checkDevice(a.header);
         if (a.header.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT || a.vectorMask0 != 0 || a.vectorMask1 != 0 ||
             a.predicateMask0 != 0 || a.predicateMask1 != 0 ||
-            (a.memoryFlags & ~ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING) != 0) {
+            (a.memoryFlags & ~static_cast<uint32_t>(ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING)) != 0U) {
             reasons.insert("memory_coverage_unknown");
         }
         // Fragment handshakes require per-fragment initialization transactions;
@@ -727,298 +809,12 @@ void Initcheck::ReplayLaunch(
     }
     for (const auto& s : sync)
         checkDevice(s.header);
-    struct LocalTablesGuard {
-        MemoryInitcheck& checker;
-        uint32_t device;
-        uint64_t launch;
-        ~LocalTablesGuard() { checker.ResetLaunch(device, launch); }
-    } localTablesGuard{memoryInitcheck_, device.value_or(0), launchId};
-    std::unique_ptr<DependencyGraph> ownedDependency;
-    DependencyGraph* dependency = nullptr;
-    if (analysis_->Managed()) {
-        dependency = &analysis_->Graph(launchId, limits, reasons);
-    } else {
-        ownedDependency = std::make_unique<DependencyGraph>(limits);
-        dependency = ownedDependency.get();
-        if (reasons.empty()) {
-            std::vector<AclsanDeviceVfData> vfs;
-            BuildDependencyGraph(memory, sync, {}, limits, reasons, *dependency, unitFlagRegisters_[launchId], vfs, {});
-        }
-    }
-    auto& graph = dependency->graph;
-    graph.BeginAnalysis(limits.analysisWork);
-    auto& accesses = dependency->accesses;
-    // Managed sessions query shared lifetime facts and never depend on another
-    // checker's diagnostics. Retain the legacy standalone report adapter only
-    // for callers that do not provide the common callback ingress.
-    using InvalidInstruction =
-        std::tuple<uint32_t, uint64_t, uint32_t, uint32_t, uint32_t, uint64_t, uint32_t, uint64_t, uint32_t>;
-    std::set<InvalidInstruction> invalidInstructions;
-    for (const auto& report : reports) {
-        if (analysis_->Managed())
-            break;
-        const auto* bounds = std::get_if<NpuCheckMemcheckReport>(&report);
-        if (!bounds || bounds->common.tool != ReportTool::MEMCHECK ||
-            !(bounds->common.flags & kNpuCheckReportCommonHasExecContext) ||
-            (bounds->common.pattern != NpuCheckReportPattern::MEMCHECK_INVALID_ACCESS &&
-             bounds->common.pattern != NpuCheckReportPattern::MEMCHECK_USE_AFTER_FREE))
-            continue;
-        const auto& exec = bounds->common.exec;
-        if (exec.launchId == launchId)
-            invalidInstructions.emplace(
-                exec.deviceId, exec.launchId, exec.blockType, exec.blockId, exec.phyCoreId, exec.instrExecId,
-                exec.pipeId, exec.pc, exec.siteId);
-    }
-    std::map<size_t, std::vector<size_t>> instructions;
-    std::map<Storage, std::vector<size_t>> writers;
-    for (size_t i = 0; i < accesses.size(); ++i) {
-        const auto& a = accesses[i].data;
-        // UB operands remain in the dependency graph, but initcheck does not check UB bytes.
-        if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB)
-            continue;
-        const auto& h = a.header;
-        if (invalidInstructions.count(
-                {h.deviceId, h.launchId, h.executor.blockType, h.executor.blockId, h.executor.phyCoreId, h.instrExecId,
-                 h.pipeline, h.pc, h.siteId}) != 0) {
-            // An invalid GM write has unknown effects; it must never establish
-            // initialized bytes for this launch or a subsequent one.
-            if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && race::WritesMemory(a.accessMode))
-                reasons.insert("invalid_gm_write");
-            continue;
-        }
-        if (analysis_->Managed() && a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
-            bool valid = true;
-            for (auto range : accesses[i].ranges) {
-                const auto status = analysis_->ClassifyAccessRange(a, range.begin, range.end - range.begin).status;
-                if (status == RangeStatus::AMBIGUOUS || status == RangeStatus::UNKNOWN)
-                    reasons.insert("ambiguous_gm_lifetime");
-                valid = valid && status == RangeStatus::VALID;
-            }
-            if (!valid) {
-                if (race::WritesMemory(a.accessMode))
-                    reasons.insert("invalid_gm_write");
-                continue;
-            }
-        }
-        instructions[accesses[i].node].push_back(i);
-        if (race::WritesMemory(accesses[i].data.accessMode))
-            writers[StorageOf(accesses[i].data)].push_back(i);
-    }
-    std::vector<NpuCheckInitcheckReport> staged;
-    size_t comparisons = 0, candidates = 0;
-    for (auto node : graph.Order()) {
-        if (!reasons.empty())
-            break;
-        const auto instruction = instructions.find(node);
-        if (instruction == instructions.end())
-            continue;
-        std::vector<AclsanDeviceMemoryAccessData> operands;
-        std::vector<size_t> operandSources;
-        std::map<Storage, std::vector<size_t>> byStorage;
-        for (auto i : instruction->second) {
-            // The graph has already validated complete raw instructions. Replay
-            // only the byte ranges represented by this fragment's HB node.
-            for (const auto range : accesses[i].ranges) {
-                auto projected = accesses[i].data;
-                projected.address = range.begin;
-                projected.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
-                projected.layout = {};
-                projected.layout.range.bytes = range.end - range.begin;
-                operands.push_back(projected);
-                operandSources.push_back(i);
-            }
-            byStorage[StorageOf(accesses[i].data)].push_back(i);
-        }
-        for (size_t i = 0; i < operands.size(); ++i) {
-            operands[i].accessIndex = static_cast<uint32_t>(i);
-            operands[i].accessCount = static_cast<uint32_t>(operands.size());
-        }
-        const auto instructionReportsBegin = staged.size();
-        bool instructionDegraded = false;
-        for (const auto& storage : byStorage) {
-            const auto space = std::get<0>(storage.first);
-            if (space != ACLSAN_DEVICE_MEMORY_SPACE_GM && InitStateTableIndex::LocalCapacity(space) == 0)
-                continue;
-            std::vector<Interval> preceding;
-            if (analysis_->Managed())
-                preceding = analysis_->PrecedingWrites(launchId, node, storage.first, reasons);
-            std::map<size_t, std::vector<Interval>> paddingByRead;
-            if (space == ACLSAN_DEVICE_MEMORY_SPACE_L1) {
-                for (auto i : storage.second)
-                    if (L1PaddingReadAlignment(accesses[i].data)) {
-                        paddingByRead.emplace(i, std::vector<Interval>{});
-                    }
-            }
-            const bool hasRead = std::any_of(storage.second.begin(), storage.second.end(), [&accesses](size_t i) {
-                return race::ReadsMemory(accesses[i].data.accessMode);
-            });
-            if (hasRead && (!analysis_->Managed() || !paddingByRead.empty())) {
-                for (auto w : writers[storage.first]) {
-                    if (++candidates > limits.comparisons) {
-                        reasons.insert("candidate_budget");
-                        break;
-                    }
-                    if (accesses[w].node == node)
-                        continue; // Read-before-write within one instruction.
-                    if (++comparisons > limits.comparisons) {
-                        reasons.insert("comparison_budget");
-                        break;
-                    }
-                    const auto relation = graph.Compare(accesses[w].node, node);
-                    if (relation == HappensBeforeGraph::Relation::Unknown) {
-                        reasons.insert("graph_query_budget");
-                        break;
-                    }
-                    if (relation == HappensBeforeGraph::Relation::Before) {
-                        if (!analysis_->Managed()) {
-                            preceding.insert(preceding.end(), accesses[w].ranges.begin(), accesses[w].ranges.end());
-                        }
-                        for (auto& evidence : paddingByRead) {
-                            auto& padding = evidence.second;
-                            const auto& l1Read = accesses[evidence.first];
-                            if (padding.size() >= limits.segments) {
-                                reasons.insert("segment_budget");
-                                break;
-                            }
-                            std::vector<Interval> inferred;
-                            AppendL1Padding(
-                                l1Read, L1PaddingReadAlignment(l1Read.data), accesses[w].data, inferred,
-                                limits.segments - padding.size());
-                            bool superseded = false;
-                            if (!inferred.empty() && !accesses[w].ranges.empty()) {
-                                const uint64_t begin = accesses[w].ranges.front().begin;
-                                const uint64_t end = std::max(accesses[w].ranges.back().end, inferred.back().end);
-                                for (auto newer : writers[storage.first]) {
-                                    if (++candidates > limits.comparisons) {
-                                        reasons.insert("candidate_budget");
-                                        break;
-                                    }
-                                    if (newer == w || accesses[newer].node == node ||
-                                        !std::any_of(
-                                            accesses[newer].ranges.begin(), accesses[newer].ranges.end(),
-                                            [begin, end](const auto& r) { return r.begin < end && begin < r.end; })) {
-                                        continue;
-                                    }
-                                    // Compare the newer write against both the producer and the read.
-                                    constexpr size_t kComparisonsPerOverwriteCheck = 2;
-                                    if ((comparisons += kComparisonsPerOverwriteCheck) > limits.comparisons) {
-                                        reasons.insert("comparison_budget");
-                                        break;
-                                    }
-                                    const auto afterProducer = graph.Compare(accesses[w].node, accesses[newer].node);
-                                    const auto beforeRead = graph.Compare(accesses[newer].node, node);
-                                    if (afterProducer == HappensBeforeGraph::Relation::Unknown ||
-                                        beforeRead == HappensBeforeGraph::Relation::Unknown) {
-                                        reasons.insert("graph_query_budget");
-                                        break;
-                                    }
-                                    if (beforeRead == HappensBeforeGraph::Relation::Before &&
-                                        afterProducer != HappensBeforeGraph::Relation::After) {
-                                        superseded = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!superseded) {
-                                padding.insert(padding.end(), inferred.begin(), inferred.end());
-                            }
-                        }
-                    } else if (relation == HappensBeforeGraph::Relation::Unordered) {
-                        for (auto r : storage.second)
-                            if (race::ReadsMemory(accesses[r].data.accessMode) &&
-                                Overlap(accesses[w].ranges, accesses[r].ranges))
-                                reasons.insert("unordered_initialization");
-                    }
-                    if (preceding.size() > limits.segments) {
-                        reasons.insert("segment_budget");
-                        break;
-                    }
-                }
-            }
-            if (!reasons.empty())
-                break;
-            MergeIntervals(preceding);
-            for (auto& evidence : paddingByRead) {
-                auto& padding = evidence.second;
-                if (padding.empty()) {
-                    continue;
-                }
-                padding.insert(padding.end(), preceding.begin(), preceding.end());
-                MergeIntervals(padding);
-                // Padding changes severity only; it never initializes the bytes.
-                if (CoveredBy(accesses[evidence.first].ranges, padding)) {
-                    for (size_t i = 0; i < operands.size(); ++i)
-                        if (operandSources[i] == evidence.first) {
-                            operands[i].memoryFlags |= ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING;
-                        }
-                }
-            }
-            MemoryInitcheck::InitializedRanges initialized;
-            for (auto range : preceding)
-                initialized.emplace_back(range.begin, range.end);
-            const auto& data = accesses[storage.second.front()].data;
-            const auto& h = data.header;
-            const auto owner = data.memoryOwner;
-            const auto key = space == ACLSAN_DEVICE_MEMORY_SPACE_GM ?
-                                 InitStateKey{*device, 0} :
-                                 InitStateKey::Local(h.deviceId, h.launchId, owner.blockType, owner.blockId, space);
-            MemoryInitcheck::RangeClassifier classifier;
-            if (analysis_->Managed())
-                classifier = [this, launchId, device](uint64_t address, uint64_t bytes) {
-                    return analysis_->Classify(launchId, {*device, address, bytes});
-                };
-            const auto result = memoryInitcheck_.CheckInstruction(
-                key, operands, initialized, false, space != ACLSAN_DEVICE_MEMORY_SPACE_GM || analysis_->Managed(),
-                classifier);
-            if (result.status != InitCheckStatus::OK) {
-                if (result.status == InitCheckStatus::INVALID_ALLOCATION) {
-                    // The graph has validated exact operands and synchronization.
-                    // A known invalid range blocks this instruction's read verdicts,
-                    // not the reliable write facts used by later instructions.
-                    instructionDegraded = true;
-                } else {
-                    reasons.insert(
-                        result.status == InitCheckStatus::RESOURCE_EXHAUSTED ? "initialization_resource_exhausted" :
-                                                                               "invalid_memory_record");
-                }
-                staged.resize(instructionReportsBegin);
-                break;
-            }
-            const uint64_t group = nextGroupId_++;
-            for (auto report : result.reports) {
-                report.common.reportId = nextReportId_++;
-                report.common.groupId = group;
-                staged.emplace_back(std::move(report));
-            }
-        }
-        if (instructionDegraded) {
-            ++degradedInstructions;
-        }
-        // Exact valid writes remain initialization facts even when the source
-        // read was uninitialized or out of bounds; this is not value-taint analysis.
-        // Missing operands and exhausted resources never reach this commit.
-        if (reasons.empty() && !analysis_->Managed())
-            for (auto i : instruction->second) {
-                const auto& access = accesses[i];
-                const auto space = access.data.memorySpace;
-                if (InitStateTableIndex::LocalCapacity(space) == 0 || !race::WritesMemory(access.data.accessMode))
-                    continue;
-                const auto& h = access.data.header;
-                const auto owner = access.data.memoryOwner;
-                const auto key = InitStateKey::Local(h.deviceId, h.launchId, owner.blockType, owner.blockId, space);
-                for (const auto& range : access.ranges) {
-                    const auto capacity = InitStateTableIndex::LocalCapacity(space);
-                    if (range.end > capacity) {
-                        reasons.insert("invalid_initialization_source");
-                        continue;
-                    }
-                    if (memoryInitcheck_.MarkInitialized(
-                            key, range.begin, range.end - range.begin,
-                            static_cast<uint8_t>(access.data.header.pipeline)) != InitCheckStatus::OK)
-                        reasons.insert("write_commit_failed");
-                }
-            }
-    }
+    return device;
+}
+
+void Initcheck::CommitReplayGmWrites(
+    uint64_t launchId, const std::vector<race::DependencyGraph::Access>& accesses, std::set<std::string>& reasons)
+{
     // Commit device writes only once the entire launch has been validated. The
     // next synchronized launch sees these writes, never an arbitrary replay prefix.
     if (reasons.empty() && !analysis_->Managed()) {
@@ -1042,6 +838,19 @@ void Initcheck::ReplayLaunch(
                         launchId, access.data.header.deviceId, range.begin, range.end - range.begin);
             }
         }
+    }
+}
+
+void Initcheck::FinishReplayLaunch(
+    uint64_t launchId, const std::vector<AclsanDeviceMemoryAccessData>& memory, const std::set<std::string>& reasons,
+    size_t degradedInstructions, std::vector<NpuCheckInitcheckReport>& staged, CheckerReportList& reports)
+{
+    if (analysis_->Managed()) {
+        const auto& evidence = analysis_->Get(launchId);
+        ASCTOOL_INFO(
+            "initialization evidence: launch=%llu hb_queries=%zu visited_sources=%zu deferred_storage_sources=%zu",
+            static_cast<unsigned long long>(launchId), evidence.initializationQueryWork,
+            evidence.initializationSourcesVisited, evidence.initializationSourcesPruned);
     }
     if (!reasons.empty()) {
         ++stats_.malformedEvents;
@@ -1068,6 +877,466 @@ void Initcheck::ReplayLaunch(
         degradedInstructions_ += degradedInstructions;
         replayFailures_["invalid_memory_operation"] += degradedInstructions;
     }
+}
+
+namespace {
+
+using InvalidInstruction =
+    std::tuple<uint32_t, uint64_t, uint32_t, uint32_t, uint32_t, uint64_t, uint32_t, uint64_t, uint32_t>;
+
+using ReplayAccesses = std::vector<race::DependencyGraph::Access>;
+using ReplayWriters = std::map<race::Storage, std::vector<size_t>>;
+
+std::set<InvalidInstruction> CollectInvalidReplayInstructions(
+    uint64_t launchId, const MemoryAnalysis& analysis, const CheckerReportList& reports)
+{
+    // Managed sessions query shared lifetime facts and never depend on another
+    // checker's diagnostics. Retain the legacy standalone report adapter only
+    // for callers that do not provide the common callback ingress.
+    std::set<InvalidInstruction> invalidInstructions;
+    for (const auto& report : reports) {
+        if (analysis.Managed())
+            break;
+        const auto* bounds = std::get_if<NpuCheckMemcheckReport>(&report);
+        if (bounds == nullptr || bounds->common.tool != ReportTool::MEMCHECK ||
+            (bounds->common.flags & kNpuCheckReportCommonHasExecContext) == 0U ||
+            (bounds->common.pattern != NpuCheckReportPattern::MEMCHECK_INVALID_ACCESS &&
+             bounds->common.pattern != NpuCheckReportPattern::MEMCHECK_USE_AFTER_FREE))
+            continue;
+        const auto& exec = bounds->common.exec;
+        if (exec.launchId == launchId)
+            invalidInstructions.emplace(
+                exec.deviceId, exec.launchId, exec.blockType, exec.blockId, exec.phyCoreId, exec.instrExecId,
+                exec.pipeId, exec.pc, exec.siteId);
+    }
+    return invalidInstructions;
+}
+
+struct ReplayAccessIndex {
+    std::map<size_t, std::vector<size_t>> instructions;
+    ReplayWriters writers;
+};
+
+ReplayAccessIndex IndexReplayAccesses(
+    const ReplayAccesses& accesses, const std::set<InvalidInstruction>& invalidInstructions, MemoryAnalysis& analysis,
+    std::set<std::string>& reasons)
+{
+    std::map<size_t, std::vector<size_t>> instructions;
+    std::map<race::Storage, std::vector<size_t>> writers;
+    for (size_t i = 0; i < accesses.size(); ++i) {
+        const auto& a = accesses[i].data;
+        // UB operands remain in the dependency graph, but initcheck does not check UB bytes.
+        if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB)
+            continue;
+        const auto& h = a.header;
+        if (invalidInstructions.count(
+                {h.deviceId, h.launchId, h.executor.blockType, h.executor.blockId, h.executor.phyCoreId, h.instrExecId,
+                 h.pipeline, h.pc, h.siteId}) != 0) {
+            // An invalid GM write has unknown effects; it must never establish
+            // initialized bytes for this launch or a subsequent one.
+            if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && race::WritesMemory(a.accessMode))
+                reasons.insert("invalid_gm_write");
+            continue;
+        }
+        if (analysis.Managed() && a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+            bool valid = true;
+            for (auto range : accesses[i].ranges) {
+                const auto status = analysis.ClassifyAccessRange(a, range.begin, range.end - range.begin).status;
+                if (status == RangeStatus::AMBIGUOUS || status == RangeStatus::UNKNOWN)
+                    reasons.insert("ambiguous_gm_lifetime");
+                valid = valid && status == RangeStatus::VALID;
+            }
+            if (!valid) {
+                if (race::WritesMemory(a.accessMode))
+                    reasons.insert("invalid_gm_write");
+                continue;
+            }
+        }
+        instructions[accesses[i].node].push_back(i);
+        if (race::WritesMemory(accesses[i].data.accessMode))
+            writers[race::StorageOf(accesses[i].data)].push_back(i);
+    }
+    return {std::move(instructions), std::move(writers)};
+}
+
+struct ProjectedReplayOperands {
+    std::vector<AclsanDeviceMemoryAccessData> operands;
+    std::vector<size_t> operandSources;
+    std::map<race::Storage, std::vector<size_t>> byStorage;
+};
+
+ProjectedReplayOperands ProjectReplayOperands(const ReplayAccesses& accesses, const std::vector<size_t>& indices)
+{
+    std::vector<AclsanDeviceMemoryAccessData> operands;
+    std::vector<size_t> operandSources;
+    std::map<race::Storage, std::vector<size_t>> byStorage;
+    for (auto i : indices) {
+        // The graph has already validated complete raw instructions. Replay
+        // only the byte ranges represented by this fragment's HB node.
+        for (const auto range : accesses[i].ranges) {
+            auto projected = accesses[i].data;
+            projected.address = range.begin;
+            projected.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
+            projected.layout = {};
+            projected.layout.range.bytes = range.end - range.begin;
+            operands.push_back(projected);
+            operandSources.push_back(i);
+        }
+        byStorage[race::StorageOf(accesses[i].data)].push_back(i);
+    }
+    for (size_t i = 0; i < operands.size(); ++i) {
+        operands[i].accessIndex = static_cast<uint32_t>(i);
+        operands[i].accessCount = static_cast<uint32_t>(operands.size());
+    }
+    return {std::move(operands), std::move(operandSources), std::move(byStorage)};
+}
+
+} // namespace
+
+void Initcheck::CommitReplayLocalWrites(
+    const std::vector<race::DependencyGraph::Access>& accesses, const std::vector<size_t>& indices,
+    std::set<std::string>& reasons)
+{
+    // Exact valid writes remain initialization facts even when the source
+    // read was uninitialized or out of bounds; this is not value-taint analysis.
+    // Missing operands and exhausted resources never reach this commit.
+    if (reasons.empty() && !analysis_->Managed())
+        for (auto i : indices) {
+            const auto& access = accesses[i];
+            const auto space = access.data.memorySpace;
+            if (InitStateTableIndex::LocalCapacity(space) == 0 || !race::WritesMemory(access.data.accessMode))
+                continue;
+            const auto& h = access.data.header;
+            const auto owner = access.data.memoryOwner;
+            const auto key = InitStateKey::Local(h.deviceId, h.launchId, owner.blockType, owner.blockId, space);
+            for (const auto& range : access.ranges) {
+                const auto capacity = InitStateTableIndex::LocalCapacity(space);
+                if (range.end > capacity) {
+                    reasons.insert("invalid_initialization_source");
+                    continue;
+                }
+                if (memoryInitcheck_.MarkInitialized(
+                        key, range.begin, range.end - range.begin, static_cast<uint8_t>(access.data.header.pipeline)) !=
+                    InitCheckStatus::OK)
+                    reasons.insert("write_commit_failed");
+            }
+        }
+}
+
+namespace {
+using race::HappensBeforeGraph;
+using race::Interval;
+using PaddingByRead = std::map<size_t, std::vector<Interval>>;
+
+struct ReplayCandidateSearch {
+    const ReplayAccesses& accesses;
+    HappensBeforeGraph& graph;
+    const race::Limits& limits;
+    std::set<std::string>& reasons;
+    size_t& comparisons;
+    size_t& candidates;
+    size_t node;
+};
+
+bool HasReplayRead(const ReplayAccesses& accesses, const std::vector<size_t>& indices)
+{
+    return std::any_of(indices.begin(), indices.end(), [&accesses](size_t i) {
+        return race::ReadsMemory(accesses[i].data.accessMode);
+    });
+}
+
+PaddingByRead FindPaddingReads(
+    const ReplayAccesses& accesses, const std::vector<size_t>& readIndices, uint32_t space,
+    const std::vector<Interval>& preceding, bool managed, const std::set<std::string>& reasons)
+{
+    std::map<size_t, std::vector<Interval>> paddingByRead;
+    if (space == ACLSAN_DEVICE_MEMORY_SPACE_L1) {
+        for (auto i : readIndices) {
+            if (L1PaddingReadAlignment(accesses[i].data) == 0U)
+                continue;
+            // Padding inference is unnecessary when actual HB-before writes
+            // already initialize the read's entire exact footprint.
+            const bool initialized = managed && reasons.empty() && CoveredBy(accesses[i].ranges, preceding);
+            if (!initialized)
+                paddingByRead.emplace(i, std::vector<Interval>{});
+        }
+    }
+    return paddingByRead;
+}
+
+bool PaddingIsSuperseded(
+    const ReplayCandidateSearch& search, size_t w, const std::vector<size_t>& sourceWrites, uint64_t begin,
+    uint64_t end)
+{
+    for (auto newer : sourceWrites) {
+        if (++search.candidates > search.limits.InitializationCandidateBudget()) {
+            search.reasons.insert("candidate_budget");
+            break;
+        }
+        if (newer == w || search.accesses[newer].node == search.node ||
+            !std::any_of(
+                search.accesses[newer].ranges.begin(), search.accesses[newer].ranges.end(),
+                [begin, end](const auto& r) { return r.begin < end && begin < r.end; })) {
+            continue;
+        }
+        // Compare the newer write against both the producer and the read.
+        constexpr size_t kComparisonsPerOverwriteCheck = 2;
+        if ((search.comparisons += kComparisonsPerOverwriteCheck) > search.limits.CandidateComparisonBudget()) {
+            search.reasons.insert("comparison_budget");
+            break;
+        }
+        const auto afterProducer = search.graph.Compare(search.accesses[w].node, search.accesses[newer].node);
+        const auto beforeRead = search.graph.Compare(search.accesses[newer].node, search.node);
+        if (afterProducer == HappensBeforeGraph::Relation::Unknown ||
+            beforeRead == HappensBeforeGraph::Relation::Unknown) {
+            search.reasons.insert("graph_query_budget");
+            break;
+        }
+        if (beforeRead == HappensBeforeGraph::Relation::Before &&
+            afterProducer != HappensBeforeGraph::Relation::After) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void InferReplayPadding(
+    const ReplayCandidateSearch& search, size_t w, const std::vector<size_t>& sourceWrites,
+    PaddingByRead& paddingByRead)
+{
+    for (auto& evidence : paddingByRead) {
+        auto& padding = evidence.second;
+        const auto& l1Read = search.accesses[evidence.first];
+        if (padding.size() >= search.limits.InitializationIntervalBudget()) {
+            search.reasons.insert("segment_budget");
+            break;
+        }
+        std::vector<Interval> inferred;
+        AppendL1Padding(
+            l1Read, L1PaddingReadAlignment(l1Read.data), search.accesses[w].data, inferred,
+            search.limits.InitializationIntervalBudget() - padding.size());
+        bool superseded = false;
+        if (!inferred.empty() && !search.accesses[w].ranges.empty()) {
+            const uint64_t begin = search.accesses[w].ranges.front().begin;
+            const uint64_t end = std::max(search.accesses[w].ranges.back().end, inferred.back().end);
+            superseded = PaddingIsSuperseded(search, w, sourceWrites, begin, end);
+        }
+        if (!superseded) {
+            padding.insert(padding.end(), inferred.begin(), inferred.end());
+        }
+    }
+}
+
+void ScanReplayWriters(
+    const ReplayCandidateSearch& search, const std::vector<size_t>& sourceWrites,
+    const std::vector<size_t>& readIndices, bool managed, std::vector<Interval>& preceding,
+    PaddingByRead& paddingByRead)
+{
+    for (auto w : sourceWrites) {
+        if (++search.candidates > search.limits.InitializationCandidateBudget()) {
+            search.reasons.insert("candidate_budget");
+            break;
+        }
+        if (search.accesses[w].node == search.node)
+            continue; // Read-before-write within one instruction.
+        if (++search.comparisons > search.limits.CandidateComparisonBudget()) {
+            search.reasons.insert("comparison_budget");
+            break;
+        }
+        const auto relation = search.graph.Compare(search.accesses[w].node, search.node);
+        if (relation == HappensBeforeGraph::Relation::Unknown) {
+            search.reasons.insert("graph_query_budget");
+            break;
+        }
+        if (relation == HappensBeforeGraph::Relation::Before) {
+            if (!managed) {
+                preceding.insert(preceding.end(), search.accesses[w].ranges.begin(), search.accesses[w].ranges.end());
+            }
+            InferReplayPadding(search, w, sourceWrites, paddingByRead);
+        } else if (relation == HappensBeforeGraph::Relation::Unordered) {
+            for (auto r : readIndices)
+                if (race::ReadsMemory(search.accesses[r].data.accessMode) &&
+                    Overlap(search.accesses[w].ranges, search.accesses[r].ranges))
+                    search.reasons.insert("unordered_initialization");
+        }
+        if (preceding.size() > search.limits.InitializationIntervalBudget()) {
+            search.reasons.insert("segment_budget");
+            break;
+        }
+    }
+}
+
+InitStateKey ReplayInitializationKey(const AclsanDeviceMemoryAccessData& access, bool managed)
+{
+    const auto& h = access.header;
+    if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+        return {h.deviceId, 0};
+    }
+    const auto& owner = access.memoryOwner;
+    if (managed) {
+        return InitStateKey::PhysicalLocal(
+            h.deviceId, h.launchId, owner.blockType, owner.phyCoreId, access.memorySpace);
+    }
+    return InitStateKey::Local(h.deviceId, h.launchId, owner.blockType, owner.blockId, access.memorySpace);
+}
+
+const std::vector<AclsanDeviceMemoryAccessData>& SelectReplayStorageOperands(
+    const std::vector<AclsanDeviceMemoryAccessData>& operands, const race::Storage& storage, bool managed,
+    std::vector<AclsanDeviceMemoryAccessData>& selected)
+{
+    if (!managed) {
+        return operands;
+    }
+    for (const auto& operand : operands) {
+        if (race::StorageOf(operand) == storage) {
+            selected.push_back(operand);
+        }
+    }
+    for (size_t i = 0; i < selected.size(); ++i) {
+        selected[i].accessIndex = static_cast<uint32_t>(i);
+        selected[i].accessCount = static_cast<uint32_t>(selected.size());
+    }
+    return selected;
+}
+
+void ApplyReplayPadding(
+    const ReplayAccesses& accesses, const std::vector<Interval>& preceding, const std::vector<size_t>& operandSources,
+    PaddingByRead& paddingByRead, std::vector<AclsanDeviceMemoryAccessData>& operands)
+{
+    for (auto& evidence : paddingByRead) {
+        auto& padding = evidence.second;
+        if (padding.empty()) {
+            continue;
+        }
+        padding.insert(padding.end(), preceding.begin(), preceding.end());
+        MergeIntervals(padding);
+        // Padding changes severity only; it never initializes the bytes.
+        if (CoveredBy(accesses[evidence.first].ranges, padding)) {
+            for (size_t i = 0; i < operands.size(); ++i)
+                if (operandSources[i] == evidence.first) {
+                    operands[i].memoryFlags |= ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING;
+                }
+        }
+    }
+}
+
+} // namespace
+
+bool Initcheck::StageReplayReports(
+    const InitCheckResult& result, size_t reportBegin, std::vector<NpuCheckInitcheckReport>& staged,
+    std::set<std::string>& reasons, bool& instructionDegraded)
+{
+    if (result.status != InitCheckStatus::OK) {
+        if (result.status == InitCheckStatus::INVALID_ALLOCATION) {
+            // A known invalid range blocks read verdicts, not the write facts used by later instructions.
+            instructionDegraded = true;
+        } else {
+            reasons.insert(
+                result.status == InitCheckStatus::RESOURCE_EXHAUSTED ? "initialization_resource_exhausted" :
+                                                                       "invalid_memory_record");
+        }
+        staged.resize(reportBegin);
+        return false;
+    }
+    const uint64_t group = nextGroupId_++;
+    for (auto report : result.reports) {
+        report.common.reportId = nextReportId_++;
+        report.common.groupId = group;
+        staged.emplace_back(std::move(report));
+    }
+    return true;
+}
+
+void Initcheck::ReplayLaunch(
+    uint64_t launchId, std::vector<AclsanDeviceMemoryAccessData>& memory, std::vector<AclsanDeviceSyncData>& sync,
+    CheckerReportList& reports)
+{
+    using namespace race;
+    auto& reasons = replayReasons_[launchId];
+    size_t degradedInstructions = 0;
+    const auto& limits = analysis_->AnalysisLimits();
+    CheckReplayEventBudget(launchId, memory.size(), sync.size(), reasons);
+    CheckReplayStreamOrder(launchId, memory, reasons);
+    const auto device = CheckReplayDevice(memory, sync, reasons);
+    struct LocalTablesGuard {
+        MemoryInitcheck& checker;
+        uint32_t device;
+        uint64_t launch;
+        ~LocalTablesGuard() { checker.ResetLaunch(device, launch); }
+    } localTablesGuard{memoryInitcheck_, device.value_or(0), launchId};
+    std::unique_ptr<DependencyGraph> ownedDependency;
+    DependencyGraph* dependency = nullptr;
+    if (analysis_->Managed()) {
+        dependency = &analysis_->Graph(launchId, limits, reasons);
+    } else {
+        ownedDependency = std::make_unique<DependencyGraph>(limits);
+        dependency = ownedDependency.get();
+        if (reasons.empty()) {
+            std::vector<AclsanDeviceVfData> vfs;
+            BuildDependencyGraph(memory, sync, {}, limits, reasons, *dependency, unitFlagRegisters_[launchId], vfs, {});
+        }
+    }
+    auto& graph = dependency->graph;
+    graph.BeginAnalysis(limits.ReachabilityPhaseWorkBudget());
+    auto& accesses = dependency->accesses;
+    const auto invalidInstructions = CollectInvalidReplayInstructions(launchId, *analysis_, reports);
+    auto [instructions, writers] = IndexReplayAccesses(accesses, invalidInstructions, *analysis_, reasons);
+    std::vector<NpuCheckInitcheckReport> staged;
+    size_t comparisons = 0, candidates = 0;
+    for (auto node : graph.Order()) {
+        if (!reasons.empty())
+            break;
+        const auto instruction = instructions.find(node);
+        if (instruction == instructions.end())
+            continue;
+        auto [operands, operandSources, byStorage] = ProjectReplayOperands(accesses, instruction->second);
+        const auto instructionReportsBegin = staged.size();
+        bool instructionDegraded = false;
+        for (const auto& storage : byStorage) {
+            const auto space = std::get<0>(storage.first);
+            if (space != ACLSAN_DEVICE_MEMORY_SPACE_GM && InitStateTableIndex::LocalCapacity(space) == 0)
+                continue;
+            std::vector<Interval> preceding;
+            if (analysis_->Managed())
+                preceding = analysis_->PrecedingWrites(launchId, node, storage.first, reasons);
+            auto paddingByRead =
+                FindPaddingReads(accesses, storage.second, space, preceding, analysis_->Managed(), reasons);
+            ReplayCandidateSearch search{accesses, graph, limits, reasons, comparisons, candidates, node};
+            if (HasReplayRead(accesses, storage.second) && (!analysis_->Managed() || !paddingByRead.empty())) {
+                ScanReplayWriters(
+                    search, writers[storage.first], storage.second, analysis_->Managed(), preceding, paddingByRead);
+            }
+            if (!reasons.empty())
+                break;
+            MergeIntervals(preceding);
+            ApplyReplayPadding(accesses, preceding, operandSources, paddingByRead, operands);
+            MemoryInitcheck::InitializedRanges initialized;
+            for (auto range : preceding)
+                initialized.emplace_back(range.begin, range.end);
+            const auto key = ReplayInitializationKey(accesses[storage.second.front()].data, analysis_->Managed());
+            MemoryInitcheck::RangeClassifier classifier;
+            if (analysis_->Managed())
+                classifier = [this, launchId, device](uint64_t address, uint64_t bytes) {
+                    return analysis_->Classify(launchId, {*device, address, bytes});
+                };
+            // The graph validates the full instruction before replay groups its operands by storage.
+            std::vector<AclsanDeviceMemoryAccessData> selectedOperands;
+            const auto& storageOperands =
+                SelectReplayStorageOperands(operands, storage.first, analysis_->Managed(), selectedOperands);
+            const auto result = memoryInitcheck_.CheckInstruction(
+                key, storageOperands, initialized, false,
+                space != ACLSAN_DEVICE_MEMORY_SPACE_GM || analysis_->Managed(), classifier);
+            if (!StageReplayReports(result, instructionReportsBegin, staged, reasons, instructionDegraded)) {
+                break;
+            }
+        }
+        if (instructionDegraded) {
+            ++degradedInstructions;
+        }
+        CommitReplayLocalWrites(accesses, instruction->second, reasons);
+    }
+    CommitReplayGmWrites(launchId, accesses, reasons);
+    FinishReplayLaunch(launchId, memory, reasons, degradedInstructions, staged, reports);
 }
 
 namespace {
@@ -1145,39 +1414,38 @@ RegisterDescription DescribeRegister(uint32_t id)
 const char* ConsumerInstructionName(uint32_t id)
 {
     using aclsan::InstructionId;
-    switch (static_cast<InstructionId>(id)) {
-        case InstructionId::LoadGmToCbuf2DV2:
-            return "load_gm_to_cbuf_2dv2";
-        case InstructionId::CopyGmToCbufV2:
-            return "copy_gm_to_cbuf_v2";
-        case InstructionId::CopyGmToCbufAlignV2B8:
-        case InstructionId::CopyGmToCbufAlignV2B16:
-        case InstructionId::CopyGmToCbufAlignV2B32:
-            return "copy_gm_to_cbuf_align_v2";
-        case InstructionId::CopyGmToCbufMultiNd2NzB8:
-        case InstructionId::CopyGmToCbufMultiNd2NzB16:
-        case InstructionId::CopyGmToCbufMultiNd2NzB32:
-            return "copy_gm_to_cbuf_multi_nd2nz";
-        case InstructionId::CopyGmToCbufMultiDn2NzB8:
-        case InstructionId::CopyGmToCbufMultiDn2NzB16:
-        case InstructionId::CopyGmToCbufMultiDn2NzB32:
-            return "copy_gm_to_cbuf_multi_dn2nz";
-        case InstructionId::CopyUbufToGmAlignV2:
-            return "copy_ubuf_to_gm_align_v2";
-        case InstructionId::CopyGmToUbufAlignV2B8:
-        case InstructionId::CopyGmToUbufAlignV2B16:
-        case InstructionId::CopyGmToUbufAlignV2B32:
-            return "copy_gm_to_ubuf_align_v2";
-        case InstructionId::NdDmaOutToUbufB8:
-        case InstructionId::NdDmaOutToUbufB16:
-        case InstructionId::NdDmaOutToUbufB32:
-            return "nd_copy_gm_to_ubuf";
-        case InstructionId::FixL0cToOutF32:
-        case InstructionId::FixL0cToOutS32:
-            return "fix_l0c_to_out";
-        default:
-            return "unknown";
+    struct InstructionName {
+        InstructionId id;
+        const char* name;
+    };
+    static constexpr InstructionName names[] = {
+        {InstructionId::LoadGmToCbuf2DV2, "load_gm_to_cbuf_2dv2"},
+        {InstructionId::CopyGmToCbufV2, "copy_gm_to_cbuf_v2"},
+        {InstructionId::CopyGmToCbufAlignV2B8, "copy_gm_to_cbuf_align_v2"},
+        {InstructionId::CopyGmToCbufAlignV2B16, "copy_gm_to_cbuf_align_v2"},
+        {InstructionId::CopyGmToCbufAlignV2B32, "copy_gm_to_cbuf_align_v2"},
+        {InstructionId::CopyGmToCbufMultiNd2NzB8, "copy_gm_to_cbuf_multi_nd2nz"},
+        {InstructionId::CopyGmToCbufMultiNd2NzB16, "copy_gm_to_cbuf_multi_nd2nz"},
+        {InstructionId::CopyGmToCbufMultiNd2NzB32, "copy_gm_to_cbuf_multi_nd2nz"},
+        {InstructionId::CopyGmToCbufMultiDn2NzB8, "copy_gm_to_cbuf_multi_dn2nz"},
+        {InstructionId::CopyGmToCbufMultiDn2NzB16, "copy_gm_to_cbuf_multi_dn2nz"},
+        {InstructionId::CopyGmToCbufMultiDn2NzB32, "copy_gm_to_cbuf_multi_dn2nz"},
+        {InstructionId::CopyUbufToGmAlignV2, "copy_ubuf_to_gm_align_v2"},
+        {InstructionId::CopyGmToUbufAlignV2B8, "copy_gm_to_ubuf_align_v2"},
+        {InstructionId::CopyGmToUbufAlignV2B16, "copy_gm_to_ubuf_align_v2"},
+        {InstructionId::CopyGmToUbufAlignV2B32, "copy_gm_to_ubuf_align_v2"},
+        {InstructionId::NdDmaOutToUbufB8, "nd_copy_gm_to_ubuf"},
+        {InstructionId::NdDmaOutToUbufB16, "nd_copy_gm_to_ubuf"},
+        {InstructionId::NdDmaOutToUbufB32, "nd_copy_gm_to_ubuf"},
+        {InstructionId::FixL0cToOutF32, "fix_l0c_to_out"},
+        {InstructionId::FixL0cToOutS32, "fix_l0c_to_out"},
+    };
+    for (const auto& entry : names) {
+        if (static_cast<uint32_t>(entry.id) == id) {
+            return entry.name;
+        }
     }
+    return "unknown";
 }
 
 NpuCheckReportExecContext ToExecContext(const AclsanDeviceMemoryAccessData& data)
@@ -1210,7 +1478,9 @@ const std::vector<CallbackSpec>& Initcheck::GetSubscribedID() const
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF},
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
+        {ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE},
         {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END}};
     return callbacks;
 }
@@ -1316,6 +1586,23 @@ NpuCheckInitcheckReport Initcheck::MakeReport(
     return report;
 }
 
+static bool IsMissingRegisterPlaceholder(const AclsanDeviceMemoryAccessData& data, uint64_t missing)
+{
+    // These GM-to-UB/L1 transfers can emit a single address-less record when a required register is missing.
+    using aclsan::InstructionId;
+    const bool nddma = data.instructionId == static_cast<uint32_t>(InstructionId::NdDmaOutToUbufB8) ||
+                       data.instructionId == static_cast<uint32_t>(InstructionId::NdDmaOutToUbufB16) ||
+                       data.instructionId == static_cast<uint32_t>(InstructionId::NdDmaOutToUbufB32);
+    const bool gmToL1 = data.instructionId == static_cast<uint32_t>(InstructionId::CopyGmToCbufAlignV2B8) ||
+                        data.instructionId == static_cast<uint32_t>(InstructionId::CopyGmToCbufAlignV2B16) ||
+                        data.instructionId == static_cast<uint32_t>(InstructionId::CopyGmToCbufAlignV2B32);
+    return (nddma || gmToL1) && missing != 0 && data.header.flags == ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED &&
+           data.accessCount == 1 && data.accessIndex == 0 && data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN &&
+           data.layoutKind == 0 && data.accessMode == 0 && data.address == 0 && data.vectorMask0 == 0 &&
+           data.vectorMask1 == 0 && data.predicateMask0 == 0 && data.predicateMask1 == 0 && data.memoryFlags == 0 &&
+           data.unitFlag == 0;
+}
+
 bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports)
 {
     if (data.header.version != ACLSAN_API_VERSION || data.header.size < kMemoryAccessDependencySize ||
@@ -1338,24 +1625,8 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     const CoreKey core{
         data.header.deviceId, data.header.launchId, data.header.executor.blockType, data.header.executor.blockId};
     const uint64_t initialized = initializedRegisters_[core];
-    uint64_t missing = data.regDependencyMask0 & ~initialized;
-    // These transfers read GM and write UB/L1. If a required register is
-    // missing, their single address-less placeholder has no GM write to commit.
-    // Report the register error without attempting address replay. Partial
-    // accesses and lost traces must still fail the coverage checks below.
-    using aclsan::InstructionId;
-    const bool nddma = data.instructionId == static_cast<uint32_t>(InstructionId::NdDmaOutToUbufB8) ||
-                       data.instructionId == static_cast<uint32_t>(InstructionId::NdDmaOutToUbufB16) ||
-                       data.instructionId == static_cast<uint32_t>(InstructionId::NdDmaOutToUbufB32);
-    const bool gmToL1 = data.instructionId == static_cast<uint32_t>(InstructionId::CopyGmToCbufAlignV2B8) ||
-                        data.instructionId == static_cast<uint32_t>(InstructionId::CopyGmToCbufAlignV2B16) ||
-                        data.instructionId == static_cast<uint32_t>(InstructionId::CopyGmToCbufAlignV2B32);
-    const bool missingRegisterPlaceholder =
-        (nddma || gmToL1) && missing != 0 && data.header.flags == ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED &&
-        data.accessCount == 1 && data.accessIndex == 0 && data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN &&
-        data.layoutKind == 0 && data.accessMode == 0 && data.address == 0 && data.vectorMask0 == 0 &&
-        data.vectorMask1 == 0 && data.predicateMask0 == 0 && data.predicateMask1 == 0 && data.memoryFlags == 0 &&
-        data.unitFlag == 0;
+    const uint64_t missing = data.regDependencyMask0 & ~initialized;
+    const bool missingRegisterPlaceholder = IsMissingRegisterPlaceholder(data, missing);
     if (missingRegisterPlaceholder) {
         // Retain a dependency-only marker so synchronization also closes this
         // launch's register state when no address or sync records were emitted.
@@ -1365,8 +1636,7 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
             pendingMemoryAccesses_.push_back(registerOnly);
         }
     } else {
-        if ((data.header.flags & (ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED | ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR |
-                                  ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0) {
+        if ((data.header.flags & INCOMPLETE_FLAGS) != 0U) {
             replayReasons_[data.header.launchId].insert("memory_coverage_unknown");
         }
         // Keep all operands until synchronization so a GM instruction with multiple
@@ -1381,6 +1651,13 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     if (data.accessCount != 0 && !missingRegisterPlaceholder) {
         replayReasons_[data.header.launchId].insert("uninitialized_register_dependency");
     }
+    ReportMissingRegisters(data, missing, reports);
+    return true;
+}
+
+void Initcheck::ReportMissingRegisters(
+    const AclsanDeviceMemoryAccessData& data, uint64_t missing, CheckerReportList& reports)
+{
     const InstructionKey instruction = race::Key(data);
     const auto [group, inserted] = reportGroups_.try_emplace(instruction, nextGroupId_);
     if (inserted) {
@@ -1396,34 +1673,57 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
         reports.emplace_back(MakeReport(data, registerId, group->second));
         ++stats_.errors;
     }
-    return true;
 }
 
-void Initcheck::OnSynchronization(const AclsanSynchronizeData& data, CheckerReportList& reports)
+void Initcheck::OnSynchronization(const AclsanSynchronizeData& data)
 {
     ++stats_.synchronizations;
-    if (data.common.result != 0) {
+    if (data.common.result != 0)
         ++stats_.failedSynchronizations;
-        return;
+}
+
+bool Initcheck::OnDeviceCallback(AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
+{
+    switch (cbid) {
+        case ACLSAN_CBID_DEVICE_SYNC:
+        case ACLSAN_CBID_DEVICE_PIPE_BARRIER:
+            if (!OnDeviceSync(cbid, data)) {
+                memoryInvalid_ = true;
+                return false;
+            }
+            return true;
+        case ACLSAN_CBID_DEVICE_STATE:
+            return OnRegisterState(*static_cast<const AclsanDeviceRegisterStateData*>(data));
+        case ACLSAN_CBID_DEVICE_MEMORY_ACCESS:
+            return OnMemoryAccess(*static_cast<const AclsanDeviceMemoryAccessData*>(data), reports);
+        default:
+            return true;
     }
-    const size_t reportsBefore = reports.size();
-    FlushMemoryAccesses(data.stream, reports);
-    pendingLaunchStreams_.erase(data.stream);
-    ASCTOOL_INFO("initcheck synchronization completed memory_reports=%zu", reports.size() - reportsBefore);
-    // Other streams may still have live state. The two flushers remove only
-    // state belonging to launches closed by this stream.
+}
+
+bool Initcheck::OnOperatorExecution(const AclsanOperatorExecutionData& event, CheckerReportList& reports)
+{
+    const auto launch = launchStreams_.find(event.launchId);
+    if (event.common.version != ACLSAN_API_VERSION || event.common.size < sizeof(event) ||
+        launch == launchStreams_.end() || launch->second != event.stream) {
+        ++stats_.malformedEvents;
+        memoryInvalid_ = true;
+        return false;
+    }
+    if (event.common.result != 0 || event.flags != ACLSAN_OPERATOR_EXECUTION_FLAG_NONE)
+        replayReasons_[event.launchId].insert("operator_execution_incomplete");
+    FlushMemoryAccesses(event.launchId, reports);
+    const auto sameStream = [&event](const auto& entry) { return entry.second == event.stream; };
+    if (std::none_of(launchStreams_.begin(), launchStreams_.end(), sameStream))
+        pendingLaunchStreams_.erase(event.stream);
+    return true;
 }
 
 bool Initcheck::OnCallback(
     AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
 {
-    if ((domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && cbid == ACLSAN_CBID_DEVICE_SYNC) ||
-        (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && cbid == ACLSAN_CBID_DEVICE_PIPE_BARRIER)) {
-        if (!OnDeviceSync(cbid, data)) {
-            memoryInvalid_ = true;
-            return false;
-        }
-        return true;
+    if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
+        return OnDeviceCallback(cbid, data, reports);
     }
     if (domain == ACLSAN_CB_DOMAIN_MEMORY && analysis_->Managed()) {
         const auto& common = *static_cast<const AclsanCallbackCommonData*>(data);
@@ -1447,12 +1747,6 @@ bool Initcheck::OnCallback(
         }
         return true;
     }
-    if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && cbid == ACLSAN_CBID_DEVICE_STATE) {
-        return OnRegisterState(*static_cast<const AclsanDeviceRegisterStateData*>(data));
-    }
-    if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && cbid == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
-        return OnMemoryAccess(*static_cast<const AclsanDeviceMemoryAccessData*>(data), reports);
-    }
     if (domain == ACLSAN_CB_DOMAIN_LAUNCH) {
         const auto* event = static_cast<const AclsanLaunchData*>(data);
         if (event->common.result != 0) {
@@ -1463,9 +1757,11 @@ bool Initcheck::OnCallback(
         }
         return true;
     }
-    if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
-        OnSynchronization(*static_cast<const AclsanSynchronizeData*>(data), reports);
+    if (domain == ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION) {
+        return OnOperatorExecution(*static_cast<const AclsanOperatorExecutionData*>(data), reports);
     }
+    if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE)
+        OnSynchronization(*static_cast<const AclsanSynchronizeData*>(data));
     return true;
 }
 

@@ -9,7 +9,7 @@
  */
 #include "checker/allocation_registry.h"
 
-#include <algorithm>
+#include <iterator>
 #include <limits>
 
 namespace npucheck {

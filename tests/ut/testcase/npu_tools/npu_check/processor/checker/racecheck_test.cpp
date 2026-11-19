@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "acl_san/aclsan_cbdata_operator.h"
 #include "checker/racecheck.h"
 #include "diagnostic/report_renderer.h"
 #include "checker/racecheck_reports.h"
@@ -111,9 +112,15 @@ AclsanDeviceVfData VfCompletion(uint64_t parent, uint32_t accessCount)
     return completion;
 }
 struct Harness {
+    std::shared_ptr<MemoryAnalysis> analysis;
     Racechecker checker;
     CheckerReportList reports;
-    explicit Harness(race::Limits limits = {}) : checker(limits) { Launch(1); }
+    std::vector<std::pair<uint64_t, void*>> pendingLaunches;
+    explicit Harness(race::Limits limits = {})
+        : analysis(std::make_shared<MemoryAnalysis>(false, limits)), checker(limits, analysis)
+    {
+        Launch(1);
+    }
     void Launch(uint64_t id, void* stream = nullptr)
     {
         AclsanLaunchData l{};
@@ -122,6 +129,17 @@ struct Harness {
         l.launchId = id;
         l.stream = stream;
         ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &l, reports));
+        constexpr uint32_t MIX_KERNEL_TYPE = 3;
+        LaunchTopology topology{};
+        topology.kernelType = MIX_KERNEL_TYPE;
+        topology.kernelTypeValid = true;
+        topology.aicRatio = 1;
+        topology.aivRatio = 2;
+        topology.ratioValid = true;
+        topology.groupCount = 2;
+        topology.groupCountValid = true;
+        analysis->Synchronization()->OnKernelLaunch(id, topology, stream);
+        pendingLaunches.emplace_back(id, stream);
     }
     void Add(const AclsanDeviceMemoryAccessData& a)
     {
@@ -139,10 +157,29 @@ struct Harness {
     }
     void Sync(void* stream = nullptr, int result = 0)
     {
+        uint64_t frontier = 0;
+        if (result == 0) {
+            for (auto it = pendingLaunches.begin(); it != pendingLaunches.end();) {
+                if (it->second != stream) {
+                    ++it;
+                    continue;
+                }
+                AclsanOperatorExecutionData completion{};
+                completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, it->first};
+                completion.launchId = it->first;
+                completion.stream = stream;
+                frontier = std::max(frontier, completion.launchId);
+                ASSERT_TRUE(checker.OnCallback(
+                    ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion,
+                    reports));
+                it = pendingLaunches.erase(it);
+            }
+        }
         AclsanSynchronizeData s{};
         s.common.version = ACLSAN_API_VERSION;
         s.common.size = sizeof(s);
         s.common.result = result;
+        s.common.correlationId = frontier;
         s.stream = stream;
         ASSERT_TRUE(
             checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &s, reports));
@@ -492,15 +529,21 @@ TEST(RacecheckTest, FixToUbCompletionIncludesRemoteWriteWithAndWithoutUnitFlag)
                 if (synchronize) {
                     auto set = Flag(3, ACLSAN_DEVICE_SYNC_ACTION_SET, ACLSAN_DEVICE_PIPE_FIXPIPE);
                     set.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
-                    set.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+                    set.header.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
+                    set.header.sourceKind = ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC;
+                    set.syncKind = ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK;
+                    set.scope = ACLSAN_DEVICE_SYNC_SCOPE_DEVICE;
                     set.mode = ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
+                    set.dstPipe = 0;
                     set.objectId = 8 + sub * 16;
                     auto wait = set;
                     wait.header = read.header;
                     wait.header.size = sizeof(wait);
                     wait.header.instrExecId = 4;
+                    wait.header.sourceKind = ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC;
                     wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
-                    wait.srcPipe = wait.dstPipe = ACLSAN_DEVICE_PIPE_VECTOR;
+                    wait.srcPipe = 0;
+                    wait.dstPipe = ACLSAN_DEVICE_PIPE_VECTOR;
                     wait.objectId = 8;
                     sync = {set, wait};
                 }
@@ -514,6 +557,8 @@ TEST(RacecheckTest, FixToUbCompletionIncludesRemoteWriteWithAndWithoutUnitFlag)
                 race::DependencyGraph graph;
                 std::set<std::string> reasons;
                 std::vector<AclsanDeviceVfData> vfs;
+                for (auto& event : sync)
+                    event = race::NormalizeSync(event);
                 race::BuildDependencyGraph(memory, sync, {}, {}, reasons, graph, {}, vfs, {});
                 EXPECT_TRUE(reasons.empty());
                 const auto target = std::find_if(graph.accesses.begin(), graph.accesses.end(), [](const auto& a) {
@@ -594,13 +639,10 @@ TEST(RacecheckTest, AivLocalBarrierCannotCompleteAnAicIssuedRemoteFix)
     auto fix = FixToUb(1, 0);
     h.Add(fix.first);
     h.Add(fix.second);
-    auto barrier = Flag(2, ACLSAN_DEVICE_SYNC_ACTION_UNKNOWN);
-    barrier.header = fix.second.header;
+    auto barrier = Barrier(2, ACLSAN_DEVICE_PIPE_ALL);
     barrier.header.executor = fix.second.memoryOwner;
-    barrier.header.instrExecId = 2;
-    barrier.header.size = sizeof(barrier);
-    barrier.syncKind = ACLSAN_DEVICE_SYNC_KIND_UNKNOWN;
-    barrier.dstPipe = ACLSAN_DEVICE_PIPE_ALL;
+    barrier.header.instrExecId = (static_cast<uint64_t>(barrier.header.executor.phyCoreId) << 32) | 2U;
+    barrier.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
     h.Add(barrier);
     auto read = fix.second;
     read.header.executor = read.memoryOwner;
@@ -713,13 +755,19 @@ TEST(RacecheckTest, BarrierOrdersLaterSamePipeAccess)
     EXPECT_TRUE(h.checker.AnalysisComplete());
 }
 
-// Intentionally unrelated logical block IDs ensure matching uses physical groups.
+// Corresponding logical groups use different physical slots and dies.
 AclsanDeviceMemoryAccessData CrossMemory(uint64_t seq, uint32_t physical, bool cube, bool write, uint64_t addr = 0x2000)
 {
+    constexpr uint32_t SLOTS_PER_DIE = 54;
+    constexpr uint32_t CUBES_PER_DIE = 18;
+    constexpr uint32_t VECTORS_PER_CUBE = 2;
     auto a = Memory(seq, write ? 2U : 1U, write ? ACLSAN_DEVICE_PIPE_MTE3 : ACLSAN_DEVICE_PIPE_MTE2, addr);
     a.header.executor.blockType = cube ? ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE : ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     a.header.executor.phyCoreId = physical;
-    a.header.executor.blockId = 100U + physical;
+    const uint32_t local = physical % SLOTS_PER_DIE;
+    const uint32_t vectorSlot = cube ? 0U : local - CUBES_PER_DIE;
+    const uint32_t group = physical / SLOTS_PER_DIE + (cube ? local : vectorSlot / VECTORS_PER_CUBE);
+    a.header.executor.blockId = cube ? group : group * VECTORS_PER_CUBE + vectorSlot % VECTORS_PER_CUBE;
     a.header.instrExecId = 1000 * (physical + 1) + seq;
     if (cube && write)
         a.header.pipeline = ACLSAN_DEVICE_PIPE_FIXPIPE;
@@ -732,9 +780,12 @@ AclsanDeviceSyncData CrossSync(uint64_t seq, uint32_t physical, bool cube, bool 
     auto s = Flag(seq, set ? ACLSAN_DEVICE_SYNC_ACTION_SET : ACLSAN_DEVICE_SYNC_ACTION_WAIT);
     s.header = CrossMemory(seq, physical, cube, set).header;
     s.header.size = sizeof(s);
-    s.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
+    s.header.sourceKind = ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC;
+    s.syncKind = mode == 4 ? ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK : ACLSAN_DEVICE_SYNC_KIND_CROSS_CORE;
+    s.scope = ACLSAN_DEVICE_SYNC_SCOPE_DEVICE;
     s.mode = set || mode == 4 ? mode : 0; // WAIT_FLAG_DEV has no mode operand.
-    s.srcPipe = s.dstPipe = s.header.pipeline;
+    s.srcPipe = set ? s.header.pipeline : 0U;
+    s.dstPipe = set ? 0U : s.header.pipeline;
     s.objectId = flag;
     return s;
 }
@@ -800,8 +851,18 @@ TEST(RacecheckTest, CrossCoreCallbackFormatsPreserveModeMatching)
                 addSync(CrossSync(2, writer, cube, true, mode, mode == 4 ? 24 : 8));
                 if (mode != 4)
                     addSync(CrossSync(2, 19, false, true, mode));
+                if (mode == 0) {
+                    addSync(CrossSync(2, 72, false, true, mode));
+                    addSync(CrossSync(2, 73, false, true, mode));
+                }
                 addSync(CrossSync(3, reader, mode == 2, false, mode, matching ? 8 : 9));
                 h.Add(CrossMemory(4, reader, mode == 2, false));
+                if (mode == 0 || mode == 1)
+                    addSync(CrossSync(5, writer, false, false, mode));
+                if (mode == 0) {
+                    addSync(CrossSync(5, 72, false, false, mode));
+                    addSync(CrossSync(5, 73, false, false, mode));
+                }
                 h.Sync();
                 EXPECT_EQ(h.checker.AnalysisComplete(), matching) << h.checker.Summary();
                 EXPECT_TRUE(h.reports.empty());
@@ -910,7 +971,7 @@ TEST(RacecheckTest, CrossMode2And4DoNotJoinIndependentGroups)
     }
 }
 
-TEST(RacecheckTest, CrossCounterMayRetainUnusedNotificationsPerReceiver)
+TEST(RacecheckTest, CrossCounterReportsUnusedNotificationForItsReceiver)
 {
     Harness h;
     h.Add(CrossSync(1, 0, true, true, 4));
@@ -918,7 +979,12 @@ TEST(RacecheckTest, CrossCounterMayRetainUnusedNotificationsPerReceiver)
     h.Add(CrossSync(1, 54, true, true, 4));
     h.Add(CrossSync(2, 72, false, false, 4));
     h.Sync();
-    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    EXPECT_FALSE(h.checker.AnalysisComplete());
+    EXPECT_NE(h.checker.Summary().find("invalid_synchronization"), std::string::npos);
+    EXPECT_TRUE(h.reports.empty());
+    const auto stats = h.analysis->Synchronization()->Stats();
+    EXPECT_EQ(stats.unconsumedSyncTokens, 1U);
+    EXPECT_EQ(stats.waitWithoutSyncTokens, 0U);
 }
 
 TEST(RacecheckTest, CrossIndependentGroupsMayUseSameFlagWithDifferentModes)
@@ -962,15 +1028,17 @@ TEST(RacecheckTest, CrossCounterTwoSetsOneOrTwoWaitsProtectOnlyConsumedPrefix)
         if (safe)
             h.Add(CrossSync(2, 18, false, false, 4));
         h.Add(CrossMemory(3, 18, false, false, 0x4000));
+        if (!safe)
+            h.Add(CrossSync(4, 18, false, false, 4));
         h.Sync();
         EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
         EXPECT_EQ(h.reports.size(), safe ? 0U : 1U);
     }
 }
 
-TEST(RacecheckTest, CrossCounterMode1ThenMode0WithAccumulatedNotifications)
+TEST(RacecheckTest, CrossCounterRejectsModeChangeWithAccumulatedNotifications)
 {
-    for (bool safe : {false, true}) {
+    for (bool secondWait : {false, true}) {
         Harness h;
         // Same senders, same flag, two modes; no drain between SETs.
         for (uint32_t v : {18U, 19U}) {
@@ -979,13 +1047,16 @@ TEST(RacecheckTest, CrossCounterMode1ThenMode0WithAccumulatedNotifications)
                 h.Add(CrossMemory(2, v, false, true));
             h.Add(CrossSync(3, v, false, true, 0));
             h.Add(CrossSync(4, v, false, false, 0));
-            if (safe)
+            if (secondWait)
                 h.Add(CrossSync(5, v, false, false, 0));
         }
         h.Add(CrossMemory(6, 19, false, false));
         h.Sync();
-        EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
-        EXPECT_EQ(h.reports.size(), safe ? 0U : 1U);
+        EXPECT_FALSE(h.checker.AnalysisComplete());
+        EXPECT_NE(h.checker.Summary().find("invalid_synchronization"), std::string::npos);
+        EXPECT_TRUE(h.reports.empty());
+        const auto stats = h.analysis->Synchronization()->Stats();
+        EXPECT_GT(stats.sequenceMismatches, 0U);
     }
 }
 
@@ -1000,14 +1071,17 @@ TEST(RacecheckTest, CrossCounterModeSwitchResolvedByHandshakeOnAnotherFlag)
         h.Add(CrossSync(4, v, false, false, 2));
         h.Add(CrossMemory(5, v, false, false));
     }
-    h.Add(CrossSync(2, 0, true, false, 2, 9));
+    auto handshake = CrossSync(2, 0, true, false, 2, 9);
+    // The handshake must gate scalar issue of the following FIXPIPE notification.
+    handshake.dstPipe = ACLSAN_DEVICE_PIPE_SCALAR;
+    h.Add(handshake);
     h.Add(CrossSync(3, 0, true, true, 2));
     h.Sync();
     EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
     EXPECT_TRUE(h.reports.empty());
 }
 
-TEST(RacecheckTest, CrossSetScalarOrderSpansDifferentPipesAndFlags)
+TEST(RacecheckTest, CrossSetDifferentPipesDoNotProveNotificationOrder)
 {
     Harness h;
     h.Add(CrossMemory(1, 18, false, true));
@@ -1018,7 +1092,8 @@ TEST(RacecheckTest, CrossSetScalarOrderSpansDifferentPipesAndFlags)
     h.Add(CrossSync(1, 0, true, false, 4, 8));
     h.Add(CrossMemory(2, 0, true, false));
     h.Sync();
-    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    EXPECT_FALSE(h.checker.AnalysisComplete());
+    EXPECT_NE(h.checker.Summary().find("ambiguous_cross_core_notification_order"), std::string::npos);
     EXPECT_TRUE(h.reports.empty());
 }
 
@@ -1120,9 +1195,9 @@ TEST(RacecheckIntegrationTest, SynchronizationOrdersDifferentAtomicOperations)
     b.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
     b.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN;
     h.Add(b);
-    h.Add(Flag(3, ACLSAN_DEVICE_SYNC_ACTION_WAIT));
     h.Add(a);
     h.Add(Flag(2, ACLSAN_DEVICE_SYNC_ACTION_SET));
+    h.Add(Flag(3, ACLSAN_DEVICE_SYNC_ACTION_WAIT));
     h.Sync();
     EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
     EXPECT_TRUE(h.reports.empty());
@@ -1327,21 +1402,20 @@ TEST(RacecheckTest, ShadowByteMasksPagesAndStrideHoles)
     EXPECT_TRUE(strided.reports.empty());
     EXPECT_TRUE(strided.checker.AnalysisComplete());
 }
-TEST(RacecheckTest, DenseAffineAxesCoalesceWithoutChangingExpansionBudget)
+TEST(RacecheckTest, DenseAffineAxesCoalesceBeforeChargingExpansionBudget)
 {
     auto a = Memory(1, 1, ACLSAN_DEVICE_PIPE_MTE2, 0x10000);
     a.layoutKind = ACLSAN_MEM_LAYOUT_ND_AFFINE;
     a.layout.ndAffine = {5, 2, {2, 4, 8, 4, 16}, {-4096, 1024, 128, -32, 2}};
     std::vector<race::Interval> ranges;
-    ASSERT_TRUE(race::Normalize(a, 4096, ranges));
+    ASSERT_TRUE(race::Normalize(a, 1, ranges));
     ASSERT_EQ(ranges.size(), 1U);
     EXPECT_EQ(ranges[0].begin, 0x10000U - 4096U - 96U);
     EXPECT_EQ(ranges[0].end - ranges[0].begin, 8192U);
-    // Keep the original raw Cartesian-product limit, even for a dense result.
-    EXPECT_FALSE(race::Normalize(a, 4095, ranges));
+    EXPECT_EQ(race::NormalizeDetailed(a, 0, ranges), race::NormalizationStatus::SegmentBudget);
     EXPECT_TRUE(ranges.empty());
     a.layout.ndAffine = {2, 4, {2, 3, 0, 0, 0}, {64, 4, 0, 0, 0}};
-    ASSERT_TRUE(race::Normalize(a, 6, ranges));
+    ASSERT_TRUE(race::Normalize(a, 2, ranges));
     ASSERT_EQ(ranges.size(), 2U);
     EXPECT_EQ(ranges[0].begin, a.address);
     EXPECT_EQ(ranges[0].end, a.address + 12);
@@ -1487,8 +1561,11 @@ TEST(RacecheckTest, VectorHardwareOrderDoesNotOrderOtherDomainsOrPipes)
         auto b = Memory(2, 1, otherDomain ? ACLSAN_DEVICE_PIPE_VECTOR : ACLSAN_DEVICE_PIPE_MTE3);
         a.memorySpace = b.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
         a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
-        if (otherDomain)
+        if (otherDomain) {
             b.header.executor.blockId = 1;
+            b.header.executor.phyCoreId = 1;
+            b.header.instrExecId |= uint64_t{1} << 32U;
+        }
         h.Add(a);
         h.Add(b);
         h.Sync();
@@ -1674,7 +1751,7 @@ TEST(RacecheckTest, StreamIsolationSnapshotsAndFinalization)
     EXPECT_EQ(h.reports.size(), 1U);
     h.checker.Finalize(h.reports);
     EXPECT_FALSE(h.checker.AnalysisComplete());
-    EXPECT_NE(h.checker.Summary().find("missing_sync_end=1"), std::string::npos);
+    EXPECT_NE(h.checker.Summary().find("missing_operator_execution=1"), std::string::npos);
 }
 TEST(RacecheckTest, SuccessfulRetryPreservesKnownSyncFailure)
 {
@@ -1685,18 +1762,20 @@ TEST(RacecheckTest, SuccessfulRetryPreservesKnownSyncFailure)
     h.Sync();
     EXPECT_FALSE(h.checker.AnalysisComplete());
     EXPECT_FALSE(h.checker.HasErrors());
-    EXPECT_NE(h.checker.Summary().find("synchronization_failed=1"), std::string::npos);
+    EXPECT_NE(h.checker.Summary().find("synchronization_failed=2"), std::string::npos);
 }
-TEST(RacecheckTest, MissingSyncOrEmptyObservationCannotBeClean)
+TEST(RacecheckTest, MissingOperatorCompletionIsIncompleteButCompletedEmptyLaunchIsClean)
 {
     Harness pending;
     pending.Add(Memory(1));
     pending.checker.Finalize(pending.reports);
     EXPECT_FALSE(pending.checker.AnalysisComplete());
+    EXPECT_NE(pending.checker.Summary().find("missing_operator_execution=1"), std::string::npos);
     Harness empty;
     empty.Sync();
-    EXPECT_FALSE(empty.checker.AnalysisComplete());
-    EXPECT_NE(empty.checker.Summary().find("empty_memory_observation=1"), std::string::npos);
+    EXPECT_TRUE(empty.checker.AnalysisComplete()) << empty.checker.Summary();
+    EXPECT_FALSE(empty.checker.HasErrors());
+    EXPECT_TRUE(empty.reports.empty());
 }
 TEST(RacecheckTest, InexactSynchronizationMakesOrderingIncomplete)
 {
@@ -1882,7 +1961,7 @@ TEST(RacecheckTest, StateBudgetFailureIsIncompleteAndFullWidthAddressesWork)
     limited.Add(Memory(1));
     limited.Sync();
     EXPECT_FALSE(limited.checker.AnalysisComplete());
-    EXPECT_NE(limited.checker.Summary().find("state_plan_budget=1"), std::string::npos);
+    EXPECT_NE(limited.checker.Summary().find("memory_state_budget=1"), std::string::npos);
     Harness wide;
     wide.Add(Memory(1, 2, ACLSAN_DEVICE_PIPE_MTE2, UINT64_C(1) << 48U));
     wide.Sync();
@@ -2038,9 +2117,9 @@ TEST(RacecheckTest, RandomSynchronizationAndFootprintsMatchAllPairsOracle)
                     conflicts.emplace(a.header.instrExecId, b.header.instrExecId);
             }
         std::shuffle(memory.begin(), memory.end(), rng);
-        std::shuffle(sync.begin(), sync.end(), rng);
         for (const auto& a : memory)
             h.Add(a);
+        // The callback ledger consumes same-core synchronization in FIFO order.
         for (const auto& a : sync)
             h.Add(a);
         h.Sync();

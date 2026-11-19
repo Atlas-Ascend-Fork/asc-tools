@@ -12,7 +12,7 @@
 
 #include "acl_san/aclsan_cbdata_device.h"
 
-#include <iomanip>
+#include <limits>
 #include <sstream>
 
 namespace npucheck::detail {

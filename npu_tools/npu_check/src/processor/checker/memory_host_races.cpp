@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "checker/memory_analysis.h"
+#include "npu_tool_log.h"
 #include <algorithm>
 
 namespace npucheck {
@@ -17,16 +18,36 @@ public:
     HostRaceQuery(MemoryAnalysis& analysis, const race::Limits& limits, std::set<std::string>& reasons)
         : analysis_(analysis), limits_(limits), reasons_(reasons)
     {}
-    void Compare(
-        const HostAccessEvidence& host, const AclsanDeviceMemoryAccessData& device, race::Interval range,
+    bool CompareRanges(
+        const HostAccessEvidence& host, const AclsanDeviceMemoryAccessData& device, const race::SharedRanges& ranges,
         bool hostCurrent)
     {
-        if (host.deviceId != device.header.deviceId)
-            return;
+        // Charge the pair and its first interval together. Proven host/launch
+        // ordering excludes every interval; unknown ordering still visits each.
+        if (ranges.empty())
+            return true;
+        if (!Work())
+            return false;
+        if (host.deviceId != device.header.deviceId ||
+            (host.mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ && device.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ))
+            return true;
         const auto relation = analysis_.CompareHostToLaunch(host.node, device.header.launchId);
         if (relation == race::HappensBeforeGraph::Relation::Before ||
             relation == race::HappensBeforeGraph::Relation::After)
-            return;
+            return true;
+        bool firstRange = true;
+        for (const auto& range : ranges) {
+            if (!firstRange && !Work())
+                return false;
+            firstRange = false;
+            CompareDeviceRange(host, device, range, hostCurrent, relation);
+        }
+        return true;
+    }
+    void CompareDeviceRange(
+        const HostAccessEvidence& host, const AclsanDeviceMemoryAccessData& device, race::Interval range,
+        bool hostCurrent, race::HappensBeforeGraph::Relation relation)
+    {
         auto report = Prepare(host, device.accessMode, range, relation);
         if (!report)
             return;
@@ -69,10 +90,16 @@ public:
     }
     bool Work()
     {
-        if (++work_ <= limits_.comparisons && reports_.size() < limits_.segments &&
-            reports_.size() < limits_.stateBytes / sizeof(NpuCheckRacecheckReport))
+        const auto reportBudget = limits_.RaceReportBudget<NpuCheckRacecheckReport>();
+        if (reports_.size() < reportBudget && race::TryConsumeBudget(limits_.CandidateComparisonBudget(), work_)) {
             return true;
-        reasons_.insert("host_race_budget");
+        }
+        if (reasons_.insert("host_race_budget").second) {
+            ASCTOOL_WARNING(
+                "analysis budget: stage=host_races comparisons_used=%zu comparison_limit=%zu reports=%zu "
+                "report_limit=%zu",
+                work_, limits_.CandidateComparisonBudget(), reports_.size(), reportBudget);
+        }
         return false;
     }
 
@@ -112,18 +139,10 @@ std::vector<NpuCheckRacecheckReport> MemoryAnalysis::HostConflicts(
     const race::Limits& limits, std::set<std::string>& reasons)
 {
     HostRaceQuery query(*this, limits, reasons);
-    if (!state->globalHistoryComplete)
-        reasons.insert("global_history_incomplete");
     for (const auto& operation : hostOperations_) {
         const auto& host = operation.evidence;
         if (host.bytes > UINT64_MAX - host.address)
             continue;
-        for (const auto& access : state->globalAccesses)
-            for (auto range : access.ranges) {
-                if (!query.Work())
-                    return {};
-                query.Compare(host, access.data, {range.begin, range.end}, true);
-            }
         for (const auto& previous : state->hostAccesses) {
             if (!query.Work())
                 return {};
@@ -143,11 +162,8 @@ std::vector<NpuCheckRacecheckReport> MemoryAnalysis::CrossLaunchHostConflicts(
         if (access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM)
             continue;
         for (const auto& host : state->hostAccesses)
-            for (auto range : access.ranges) {
-                if (!query.Work())
-                    return {};
-                query.Compare(host, access.data, range, false);
-            }
+            if (!query.CompareRanges(host, access.data, access.ranges, false))
+                return {};
     }
     return query.Take();
 }

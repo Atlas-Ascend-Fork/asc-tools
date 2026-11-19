@@ -72,6 +72,11 @@ add_library(npu_check_core STATIC
 )
 
 target_compile_features(npu_check_core PUBLIC cxx_std_17)
+# The root clears default Release flags. Keep host checker optimization local
+# and retain assertions and the existing Debug configuration.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(npu_check_core PRIVATE "$<$<CONFIG:Release>:-O2>")
+endif()
 target_include_directories(npu_check_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
   PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../acl_san

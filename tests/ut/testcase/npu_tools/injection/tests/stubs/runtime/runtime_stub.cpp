@@ -491,6 +491,33 @@ extern "C" aclError aclrtResetDevice(std::int32_t deviceId)
     return result;
 }
 
+#ifdef ACL_RUNTIME_STUB_SHARED
+extern "C" aclError aclrtGetCurrentContext(aclrtContext* context)
+{
+    if (context == nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    static int contextToken;
+    *context = &contextToken;
+    return ACL_SUCCESS;
+}
+
+extern "C" aclError aclrtSetCurrentContext(aclrtContext context)
+{
+    return context != nullptr ? ACL_SUCCESS : ACL_ERROR_INVALID_PARAM;
+}
+
+extern "C" aclError aclrtMemcpyAsync(
+    void* dst, std::size_t destMax, const void* src, std::size_t count, aclrtMemcpyKind kind, aclrtStream stream)
+{
+    if (stream == nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    return CallCurrent<aclError (*)(void*, std::size_t, const void*, std::size_t, aclrtMemcpyKind)>(
+        "aclrtMemcpy", dst, destMax, src, count, kind);
+}
+#endif
+
 extern "C" aclError aclrtCreateStream(aclrtStream* stream)
 {
     return CallCurrent<aclError (*)(aclrtStream*)>("aclrtCreateStream", stream);

@@ -88,6 +88,7 @@ int main()
 {
     CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernelWithHostArgs", &OriginalLaunch) == ACL_SUCCESS);
     CHECK(RuntimeStubSetOriginFunction("aclrtLaunchKernelWithArgsArray", &ArrayLaunch) == ACL_SUCCESS);
+    CHECK(aclrtSetDevice(0) == ACL_SUCCESS);
 
     AclsanSubscriberHandle subscriber = nullptr;
     CHECK(aclsanSubscribe(&subscriber, &Callback, nullptr) == ACLSAN_STATUS_SUCCESS);

@@ -358,6 +358,76 @@ bool SyncLedger::ValidateCrossInstruction(const AclsanDeviceSyncData& data, std:
     return valid;
 }
 
+void SyncLedger::AddGroupAivs(const LaunchTopology& topology, ParticipantSet& participants, uint32_t groupId)
+{
+    participants.insert({groupId, ParticipantRole::AIV0});
+    if (topology.aivPerGroup == MIX_1_2_AIV_COUNT) {
+        participants.insert({groupId, ParticipantRole::AIV1});
+    }
+}
+
+bool SyncLedger::BuildGlobalCounterContributions(
+    const LaunchTopology& topology, const ParticipantKey& participant, uint32_t sourceFlagId, uint32_t targetFlagId,
+    std::vector<CounterContribution>& contributions, std::string& error)
+{
+    ParticipantSet required;
+    constexpr auto mode = ACLSAN_DEVICE_SYNC_MODE_GLOBAL;
+    if (participant.role == ParticipantRole::AIC && topology.aicPerGroup != 0U) {
+        for (uint32_t group = 0; group < topology.groupCount; ++group) {
+            required.insert({group, ParticipantRole::AIC});
+        }
+        for (uint32_t group = 0; group < topology.groupCount; ++group) {
+            contributions.push_back(
+                {{{group, ParticipantRole::AIC}, targetFlagId},
+                 required,
+                 sourceFlagId,
+                 mode,
+                 kGlobalGroup,
+                 CrossDirection::ALL_AIC});
+        }
+    } else if (participant.role != ParticipantRole::AIC && topology.aivPerGroup != 0U) {
+        for (uint32_t group = 0; group < topology.groupCount; ++group) {
+            AddGroupAivs(topology, required, group);
+        }
+        for (const ParticipantKey& target : required) {
+            contributions.push_back(
+                {{target, targetFlagId}, required, sourceFlagId, mode, kGlobalGroup, CrossDirection::ALL_AIV});
+        }
+    } else {
+        error = "mode0 participant class is incompatible with topology";
+        return false;
+    }
+    return !contributions.empty();
+}
+
+std::string SyncLedger::DescribeUnsupportedCounterMode(
+    const LaunchTopology& topology, const ParticipantKey& participant, uint32_t mode)
+{
+    std::ostringstream reason;
+    switch (mode) {
+        case ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV:
+            reason << "cross-core mode1 only synchronizes AIV participants within a MIX1:1 or MIX1:2 group; observed "
+                   << "topology=" << KernelMixTypeName(topology.mixType)
+                   << " and source=" << ParticipantSetText(ParticipantSet{participant});
+            break;
+        case ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV:
+            reason
+                << "cross-core mode2 requires MIX1:1 or MIX1:2 topology for AIC-to-all-AIV synchronization; observed "
+                << "topology=" << KernelMixTypeName(topology.mixType);
+            break;
+        case ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV:
+            reason << "cross-core mode4 only supports MIX1:2 topology (__mix__(1, 2) / KERNEL_TYPE_MIX_AIC_1_2) "
+                   << "for synchronization between one AIC and one selected AIV; observed topology="
+                   << KernelMixTypeName(topology.mixType) << ". On the AIC side flagId 0-15 selects AIV0 and 16-31 "
+                   << "selects AIV1; on the AIV side flagId must be 0-15";
+            break;
+        default:
+            reason << "unsupported cross-core mode=" << mode << "; supported mode values are 0, 1, 2, and 4";
+            break;
+    }
+    return reason.str();
+}
+
 bool SyncLedger::BuildCounterContributions(
     const LaunchSyncState& state, const ParticipantKey& participant, uint32_t mode, uint32_t sourceFlagId,
     uint32_t targetFlagId, uint32_t aivIndex, std::vector<CounterContribution>& contributions, std::string& error)
@@ -367,12 +437,6 @@ bool SyncLedger::BuildCounterContributions(
         error = "cross-core topology is incomplete";
         return false;
     }
-    const auto addGroupAivs = [&topology](ParticipantSet& set, uint32_t group) {
-        set.insert({group, ParticipantRole::AIV0});
-        if (topology.aivPerGroup == 2) {
-            set.insert({group, ParticipantRole::AIV1});
-        }
-    };
     const auto append = [&contributions, sourceFlagId, targetFlagId, mode](
                             const ParticipantKey& target, const ParticipantSet& required, uint32_t groupId,
                             CrossDirection direction) {
@@ -386,51 +450,30 @@ bool SyncLedger::BuildCounterContributions(
         contributions.push_back(std::move(contribution));
     };
     const uint32_t groupId = participant.groupId;
+    const bool isMixedGroup = topology.mixType == KernelMixType::MIX_1_1 || topology.mixType == KernelMixType::MIX_1_2;
     if (mode == ACLSAN_DEVICE_SYNC_MODE_GLOBAL) {
-        ParticipantSet required;
-        if (participant.role == ParticipantRole::AIC && topology.aicPerGroup != 0) {
-            for (uint32_t group = 0; group < topology.groupCount; ++group) {
-                required.insert({group, ParticipantRole::AIC});
-            }
-            for (uint32_t group = 0; group < topology.groupCount; ++group) {
-                append({group, ParticipantRole::AIC}, required, kGlobalGroup, CrossDirection::ALL_AIC);
-            }
-        } else if (participant.role != ParticipantRole::AIC && topology.aivPerGroup != 0) {
-            for (uint32_t group = 0; group < topology.groupCount; ++group) {
-                addGroupAivs(required, group);
-            }
-            for (const ParticipantKey& target : required) {
-                append(target, required, kGlobalGroup, CrossDirection::ALL_AIV);
-            }
-        } else {
-            error = "mode0 participant class is incompatible with topology";
-            return false;
-        }
-    } else if (groupId >= topology.groupCount) {
+        return BuildGlobalCounterContributions(topology, participant, sourceFlagId, targetFlagId, contributions, error);
+    }
+    if (groupId >= topology.groupCount) {
         error = "cross-core groupId is outside launch topology";
         return false;
-    } else if (
-        mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV &&
-        (topology.mixType == KernelMixType::MIX_1_1 || topology.mixType == KernelMixType::MIX_1_2) &&
-        participant.role != ParticipantRole::AIC) {
+    } else if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV && isMixedGroup && participant.role != ParticipantRole::AIC) {
         ParticipantSet required;
-        addGroupAivs(required, groupId);
+        AddGroupAivs(topology, required, groupId);
         for (const ParticipantKey& target : required) {
             append(target, required, groupId, CrossDirection::AIV_TO_AIV);
         }
-    } else if (
-        mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV &&
-        (topology.mixType == KernelMixType::MIX_1_1 || topology.mixType == KernelMixType::MIX_1_2)) {
+    } else if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV && isMixedGroup) {
         ParticipantSet required;
         if (participant.role == ParticipantRole::AIC) {
             required.insert(participant);
             ParticipantSet targets;
-            addGroupAivs(targets, groupId);
+            AddGroupAivs(topology, targets, groupId);
             for (const ParticipantKey& target : targets) {
                 append(target, required, groupId, CrossDirection::AIC_TO_AIV);
             }
         } else {
-            addGroupAivs(required, groupId);
+            AddGroupAivs(topology, required, groupId);
             append({groupId, ParticipantRole::AIC}, required, groupId, CrossDirection::AIV_TO_AIC);
         }
     } else if (
@@ -449,31 +492,8 @@ bool SyncLedger::BuildCounterContributions(
             error = "mode4 flag selects a different AIV participant";
             return false;
         }
-    } else if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIV) {
-        std::ostringstream reason;
-        reason << "cross-core mode1 only synchronizes AIV participants within a MIX1:1 or MIX1:2 group; observed "
-               << "topology=" << KernelMixTypeName(topology.mixType)
-               << " and source=" << ParticipantSetText(ParticipantSet{participant});
-        error = reason.str();
-        return false;
-    } else if (mode == ACLSAN_DEVICE_SYNC_MODE_GROUP_AIC_AIV) {
-        std::ostringstream reason;
-        reason << "cross-core mode2 requires MIX1:1 or MIX1:2 topology for AIC-to-all-AIV synchronization; observed "
-               << "topology=" << KernelMixTypeName(topology.mixType);
-        error = reason.str();
-        return false;
-    } else if (mode == ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV) {
-        std::ostringstream reason;
-        reason << "cross-core mode4 only supports MIX1:2 topology (__mix__(1, 2) / KERNEL_TYPE_MIX_AIC_1_2) "
-               << "for synchronization between one AIC and one selected AIV; observed topology="
-               << KernelMixTypeName(topology.mixType) << ". On the AIC side flagId 0-15 selects AIV0 and 16-31 "
-               << "selects AIV1; on the AIV side flagId must be 0-15";
-        error = reason.str();
-        return false;
     } else {
-        std::ostringstream reason;
-        reason << "unsupported cross-core mode=" << mode << "; supported mode values are 0, 1, 2, and 4";
-        error = reason.str();
+        error = DescribeUnsupportedCounterMode(topology, participant, mode);
         return false;
     }
     return !contributions.empty();
@@ -803,6 +823,7 @@ void SyncLedger::OnDeviceSync(const AclsanDeviceSyncData& data)
     ++stats_.syncEvents;
     const auto state = launchStates_.find(data.header.launchId);
     if (state == launchStates_.end()) {
+        observationComplete_ = false;
         ++stats_.invalidArguments;
         orphanReports_.push_back(BuildInvalid(
             data, finalizedLaunches_.count(data.header.launchId) != 0 ?
@@ -844,11 +865,10 @@ std::vector<SyncLedger::Report> SyncLedger::OnSynchronization() { return Finaliz
 
 std::vector<SyncLedger::Report> SyncLedger::OnSynchronization(void* stream) { return FinalizeLaunches(stream, true); }
 
-std::vector<SyncLedger::Report> SyncLedger::FinalizeLaunches(void* stream, bool filterByStream)
+void SyncLedger::FinalizeLaunch(LaunchSyncState& state, Reports& reports)
 {
-    ++stats_.synchronizationEvents;
-    Reports reports = std::move(orphanReports_);
-    orphanReports_.clear();
+    for (Report& report : state.reports)
+        reports.push_back(std::move(report));
     const auto reportPending = [this, &reports](const auto& pending) {
         for (const auto& entry : pending) {
             ++stats_.unconsumedOpens;
@@ -857,20 +877,50 @@ std::vector<SyncLedger::Report> SyncLedger::FinalizeLaunches(void* stream, bool 
                 entry.first));
         }
     };
+    reportPending(state.flags.pending);
+    reportPending(state.syncBufs.pending);
+    FinalizeCrossCore(state, reports);
+    stats_.pendingOpens -= state.flags.pending.size() + state.syncBufs.pending.size();
+    finalizedLaunches_.insert(state.launchId);
+}
+
+std::vector<SyncLedger::Report> SyncLedger::OnOperatorComplete(uint64_t launchId)
+{
+    Reports reports;
+    auto retained = orphanReports_.begin();
+    for (auto item = orphanReports_.begin(); item != orphanReports_.end(); ++item) {
+        if (item->common.exec.launchId == launchId) {
+            reports.push_back(std::move(*item));
+        } else {
+            if (retained != item)
+                *retained = std::move(*item);
+            ++retained;
+        }
+    }
+    orphanReports_.erase(retained, orphanReports_.end());
+    const auto state = launchStates_.find(launchId);
+    if (state != launchStates_.end()) {
+        FinalizeLaunch(state->second, reports);
+        launchStates_.erase(state);
+    } else if (finalizedLaunches_.count(launchId) == 0) {
+        observationComplete_ = false;
+        ++stats_.invalidArguments;
+    }
+    return reports;
+}
+
+std::vector<SyncLedger::Report> SyncLedger::FinalizeLaunches(void* stream, bool filterByStream)
+{
+    ++stats_.synchronizationEvents;
+    Reports reports = std::move(orphanReports_);
+    orphanReports_.clear();
     for (auto stateEntry = launchStates_.begin(); stateEntry != launchStates_.end();) {
         LaunchSyncState& state = stateEntry->second;
         if (filterByStream && state.stream != stream) {
             ++stateEntry;
             continue;
         }
-        for (Report& report : state.reports) {
-            reports.push_back(std::move(report));
-        }
-        reportPending(state.flags.pending);
-        reportPending(state.syncBufs.pending);
-        FinalizeCrossCore(state, reports);
-        stats_.pendingOpens -= state.flags.pending.size() + state.syncBufs.pending.size();
-        finalizedLaunches_.insert(state.launchId);
+        FinalizeLaunch(state, reports);
         stateEntry = launchStates_.erase(stateEntry);
     }
     return reports;

@@ -83,14 +83,12 @@ bool IsFileRangeValid(size_t offset, size_t bytes, size_t fileBytes)
     return offset <= fileBytes && bytes <= fileBytes - offset;
 }
 
-bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& traceArgumentOffset, std::string& diagnostic)
+bool ReadSectionTableHeader(const char* bytes, size_t length, Elf64_Ehdr& header, std::string& diagnostic)
 {
-    if (data == nullptr || length < sizeof(Elf64_Ehdr)) {
+    if (bytes == nullptr || length < sizeof(Elf64_Ehdr)) {
         diagnostic = "Device ELF header is missing";
         return false;
     }
-    const auto* bytes = static_cast<const char*>(data);
-    Elf64_Ehdr header{};
     if (memcpy_s(&header, sizeof(header), bytes, sizeof(header)) != EOK) {
         diagnostic = "cannot read device ELF header";
         return false;
@@ -106,7 +104,17 @@ bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& trace
         diagnostic = "Device ELF section table is out of bounds";
         return false;
     }
-    const auto ReadSection = [&header, &bytes](size_t index, Elf64_Shdr& section) {
+    return true;
+}
+
+bool ResolveTraceArgumentOffset(const void* data, size_t length, uint32_t& traceArgumentOffset, std::string& diagnostic)
+{
+    const auto* bytes = static_cast<const char*>(data);
+    Elf64_Ehdr header{};
+    if (!ReadSectionTableHeader(bytes, length, header, diagnostic)) {
+        return false;
+    }
+    const auto ReadSection = [&header, bytes](size_t index, Elf64_Shdr& section) {
         const size_t offset = static_cast<size_t>(header.e_shoff) + index * sizeof(Elf64_Shdr);
         return memcpy_s(&section, sizeof(section), bytes + offset, sizeof(section)) == EOK;
     };

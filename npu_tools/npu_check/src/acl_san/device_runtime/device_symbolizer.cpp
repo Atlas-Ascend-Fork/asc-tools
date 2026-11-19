@@ -12,7 +12,6 @@
 #include "dbi/tool_runner.h"
 #include "file_io.h"
 
-#include <sys/stat.h>
 #include <cerrno>
 #include <cctype>
 #include <cstddef>

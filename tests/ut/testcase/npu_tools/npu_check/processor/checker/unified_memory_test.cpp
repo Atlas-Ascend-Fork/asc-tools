@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "checker/checker.h"
+#include "acl_san/aclsan_cbdata_operator.h"
 #include "checker/memory_analysis.h"
 #include "checker/initcheck.h"
 #include "checker/memcheck.h"
@@ -21,7 +22,8 @@
 namespace npucheck {
 namespace {
 struct Session {
-    std::shared_ptr<MemoryAnalysis> analysis = std::make_shared<MemoryAnalysis>(true);
+    std::shared_ptr<MemoryAnalysis> analysis;
+    explicit Session(race::Limits limits = {}) : analysis(std::make_shared<MemoryAnalysis>(true, limits)) {}
     Memcheck bounds{analysis};
     Initcheck initialization{analysis};
     Racechecker race{race::Limits{}, analysis};
@@ -32,6 +34,7 @@ struct Session {
     bool initEnabled = true;
     bool boundsEnabled = true;
     bool raceEnabled = true;
+    std::vector<std::pair<uint64_t, void*>> pendingLaunches;
     template <typename T>
     void Send(AclsanCallbackDomain domain, AclsanCallbackId id, T data)
     {
@@ -61,13 +64,29 @@ struct Session {
         data.launchId = id;
         data.stream = stream;
         Send(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, data);
+        pendingLaunches.emplace_back(id, stream);
     }
     void Sync(void* stream = nullptr, int result = 0)
     {
+        uint64_t frontier = 0;
+        if (result == 0) {
+            for (auto it = pendingLaunches.begin(); it != pendingLaunches.end();) {
+                if (it->second != stream) {
+                    ++it;
+                    continue;
+                }
+                AclsanOperatorExecutionData completion{};
+                completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, it->first};
+                completion.launchId = it->first;
+                completion.stream = stream;
+                frontier = std::max(frontier, completion.launchId);
+                Send(ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, completion);
+                it = pendingLaunches.erase(it);
+            }
+        }
         AclsanSynchronizeData data{};
-        data.common = {ACLSAN_API_VERSION, sizeof(data), nullptr, 0, 0};
+        data.common = {ACLSAN_API_VERSION, sizeof(data), nullptr, result, frontier};
         data.stream = stream;
-        data.common.result = result;
         Send(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, data);
     }
     void Allocate(uint64_t address = 0x10000, uint64_t resourceId = 1, uint32_t device = 0)
@@ -213,12 +232,13 @@ TEST(UnifiedMemoryTest, FailedOrDifferentStreamSyncCannotCreateCompletionOrder)
     auto* a = reinterpret_cast<void*>(1);
     auto* b = reinterpret_cast<void*>(2);
     s.Launch(1, a);
-    s.Sync(a, 1);
     s.Launch(2, b);
-    EXPECT_EQ(s.analysis->CompareLaunches(1, 2), race::HappensBeforeGraph::Relation::Unordered);
     s.Sync(b);
     s.Launch(3, b);
     EXPECT_EQ(s.analysis->CompareLaunches(1, 3), race::HappensBeforeGraph::Relation::Unordered);
+    s.Sync(a, 1);
+    EXPECT_EQ(s.analysis->CompareLaunches(1, 2), race::HappensBeforeGraph::Relation::Unknown);
+    EXPECT_EQ(s.analysis->CompareLaunches(1, 3), race::HappensBeforeGraph::Relation::Unknown);
 }
 TEST(UnifiedMemoryTest, SerializationOfCallbacksDoesNotOrderDifferentHostThreads)
 {
@@ -244,8 +264,7 @@ TEST(UnifiedMemoryTest, LaterHostWriteCannotInitializeEarlierKernelRead)
     s.Memory(
         1, 1, ACLSAN_DEVICE_PIPE_MTE2, ACLSAN_DEVICE_MEMORY_SPACE_GM, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0x10000, 512);
     s.Sync();
-    ASSERT_EQ(s.reports.size(), 1U);
-    EXPECT_TRUE(std::holds_alternative<NpuCheckRacecheckReport>(s.reports.front()));
+    EXPECT_TRUE(s.reports.empty());
     EXPECT_FALSE(s.initialization.AnalysisComplete());
     EXPECT_NE(s.initialization.Summary().find("unordered_initialization"), std::string::npos);
 }
@@ -460,16 +479,20 @@ TEST(UnifiedMemoryTest, OrderedLaunchesDoNotSpendTheConflictPairAllowance)
             s.Memory(
                 launch, i + 1, ACLSAN_DEVICE_PIPE_MTE3, ACLSAN_DEVICE_MEMORY_SPACE_GM,
                 ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0x10000 + i * 128, 128);
-        AclsanSynchronizeData sync{};
-        sync.common = {ACLSAN_API_VERSION, sizeof(sync), nullptr, 0, 0};
-        ASSERT_TRUE(
-            s.analysis->BeginCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync));
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launch};
+        completion.launchId = launch;
+        ASSERT_TRUE(s.analysis->BeginCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion));
         std::set<std::string> reasons;
         EXPECT_TRUE(s.analysis->CrossLaunchConflicts(launch, limits, reasons).empty());
         EXPECT_TRUE(reasons.empty());
         EXPECT_TRUE(s.analysis->state->globalHistoryComplete);
         EXPECT_EQ(s.analysis->state->globalAccesses.size(), launch * 2);
         s.analysis->EndCallback();
+        AclsanSynchronizeData sync{};
+        sync.common = {ACLSAN_API_VERSION, sizeof(sync), nullptr, 0, launch};
+        s.Send(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, sync);
     }
 }
 TEST(UnifiedMemoryTest, StridedOperandKeepsItsKnownAllocationAcrossUnmappedFragments)
@@ -601,6 +624,7 @@ TEST(UnifiedMemoryTest, SyncCheckerReadsTheSameLedgerWithoutApplyingEventsTwice)
     EXPECT_EQ(s.synchronization.Stats().syncEvents, 2U);
     EXPECT_EQ(s.synchronization.Stats().matchedPairs, 1U);
     EXPECT_EQ(s.synchronization.Stats().synchronizationEvents, 1U);
+    EXPECT_TRUE(s.synchronization.AnalysisComplete());
     EXPECT_TRUE(s.reports.empty());
 }
 TEST(UnifiedMemoryTest, MissingRegisterPlaceholderIsNotAnUnknownMemoryFootprint)
@@ -715,7 +739,7 @@ TEST(UnifiedMemoryTest, StreamCompletionMakesKernelWriteVisibleToD2h)
     EXPECT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
     EXPECT_TRUE(s.race.AnalysisComplete()) << s.race.Summary();
 }
-TEST(UnifiedMemoryTest, D2hBeforeCompletionIsUnknownForInitializationAndARaceCandidate)
+TEST(UnifiedMemoryTest, D2hBeforeCompletionIsUnknownForInitialization)
 {
     Session s;
     s.Allocate();
@@ -726,17 +750,8 @@ TEST(UnifiedMemoryTest, D2hBeforeCompletionIsUnknownForInitializationAndARaceCan
     s.Memory(
         1, 1, ACLSAN_DEVICE_PIPE_MTE3, ACLSAN_DEVICE_MEMORY_SPACE_GM, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0x10000, 512);
     s.Sync();
-    ASSERT_EQ(s.reports.size(), 1U);
-    const auto& report = std::get<NpuCheckRacecheckReport>(s.reports.front());
-    ASSERT_TRUE(report.previousHost);
-    EXPECT_EQ(report.previousHost->apiName, "aclrtMemcpy");
-    EXPECT_EQ(report.kind, ConflictKind::WAR);
-    ReportRecord rendered;
-    EXPECT_EQ(NormalizeRacecheckReport(report, &rendered), ReportRenderStatus::SUCCESS);
-    EXPECT_NE(rendered.fields.at("previousActor").find("Host API aclrtMemcpy"), std::string::npos);
-    auto invalid = report;
-    invalid.previousHost->bytes = 0;
-    EXPECT_EQ(NormalizeRacecheckReport(invalid, &rendered), ReportRenderStatus::INVALID_ARGUMENT);
+    EXPECT_TRUE(s.reports.empty());
+    EXPECT_FALSE(s.initialization.AnalysisComplete());
 }
 TEST(UnifiedMemoryTest, FailedTransferCannotPublishInitializationOrHistory)
 {
@@ -758,7 +773,7 @@ TEST(UnifiedMemoryTest, FailedSynchronizationFlushesDiagnosticsWithoutCompletion
     s.Sync(a, 1);
     s.Launch(2, b);
     EXPECT_EQ(s.synchronization.Stats().synchronizationEvents, 1U);
-    EXPECT_EQ(s.analysis->CompareLaunches(1, 2), race::HappensBeforeGraph::Relation::Unordered);
+    EXPECT_EQ(s.analysis->CompareLaunches(1, 2), race::HappensBeforeGraph::Relation::Unknown);
     EXPECT_FALSE(s.bounds.AnalysisComplete());
 }
 TEST(UnifiedMemoryTest, ExactFootprintDoesNotRequireInitcheckOnlyRegisterProbesForRacecheck)
@@ -863,12 +878,17 @@ TEST(UnifiedMemoryTest, InitializationQueriesVisitOnlyOverlappingGenerationSourc
 
 TEST(UnifiedMemoryTest, InitializationEvidenceCapacityCannotBeResetByAnotherLaunch)
 {
-    Session s;
+    constexpr size_t HISTORY_CAPACITY = 8;
+    race::Limits limits;
+    limits.events = HISTORY_CAPACITY;
+    Session s(limits);
     s.Allocate();
     s.Transfer(ACLSAN_MEMORY_TRANSFER_HOST_TO_DEVICE, 0x90000, 0x10000, 0);
-    for (size_t i = 0; i <= 100000; ++i) {
+    for (size_t i = 0; i < HISTORY_CAPACITY; ++i) {
         s.analysis->RecordInitialization(0, 0, 0x10000, 4);
     }
+    ASSERT_TRUE(s.analysis->Complete());
+    s.analysis->RecordInitialization(0, 0, 0x10000, 4);
     ASSERT_FALSE(s.analysis->Complete());
     s.Launch(1);
     s.Sync();

@@ -12,6 +12,7 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_STATE_H
 #include "checker/allocation_registry.h"
 #include "checker/mem_state_tracker.h"
+#include "checker/racecheck/shared_ranges.h"
 #include <array>
 #include <map>
 #include <memory>
@@ -28,7 +29,7 @@ struct InitStateQuery {
 };
 class InitStateTable {
 public:
-    static constexpr uint64_t kPageBytes = UINT64_C(1) << 16;
+    static constexpr uint64_t kPageBytes = UINT64_C(1) << 16U;
     virtual ~InitStateTable() = default;
     virtual InitStateQuery Query(uint64_t address, uint64_t bytes) const = 0;
     virtual void Write(uint64_t address, uint64_t bytes, uint8_t pipe) = 0;
@@ -36,8 +37,8 @@ public:
     virtual uint64_t LeafCount() const = 0;
 };
 namespace detail {
-constexpr uint8_t kInitWrite = static_cast<uint8_t>(InitMemoryStatus::WRITE) << 4;
-inline bool InitWritten(uint8_t state) { return (state & 0x70) == kInitWrite; }
+constexpr uint8_t kInitWrite = static_cast<uint8_t>(static_cast<unsigned int>(InitMemoryStatus::WRITE) << 4U);
+inline bool InitWritten(uint8_t state) { return (static_cast<unsigned int>(state) & 0x70U) == kInitWrite; }
 struct InitStatePage {
     std::array<uint8_t, InitStateTable::kPageBytes> states{};
     uint32_t writtenBytes = 0;
@@ -46,7 +47,7 @@ struct InitStatePage {
 
 class GmInitStateTable final : public InitStateTable {
 public:
-    static constexpr uint64_t kAddressLimit = UINT64_C(1) << 48;
+    static constexpr uint64_t kAddressLimit = UINT64_C(1) << 48U;
     GmInitStateTable();
     static bool ValidRange(uint64_t address, uint64_t bytes);
     InitStateQuery Query(uint64_t address, uint64_t bytes) const override;
@@ -106,14 +107,21 @@ struct InitStateKey {
     uint32_t blockType = 0;
     uint32_t blockId = 0;
     uint32_t space = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    bool physical = false;
     static InitStateKey Local(uint32_t device, uint64_t launch, uint32_t type, uint32_t block, uint32_t space)
     {
         return {device, 0, launch, type, block, space};
     }
+    static InitStateKey PhysicalLocal(uint32_t device, uint64_t launch, uint32_t type, uint32_t core, uint32_t space)
+    {
+        return {device, 0, launch, type, core, space, true};
+    }
     bool operator<(const InitStateKey& other) const
     {
-        return std::tie(space, deviceId, contextId, launchId, blockType, blockId) <
-               std::tie(other.space, other.deviceId, other.contextId, other.launchId, other.blockType, other.blockId);
+        return std::tie(space, deviceId, contextId, launchId, blockType, blockId, physical) <
+               std::tie(
+                   other.space, other.deviceId, other.contextId, other.launchId, other.blockType, other.blockId,
+                   other.physical);
     }
 };
 
@@ -163,11 +171,10 @@ public:
     // Local-memory histories remain isolated to their launch and owner.
     struct GlobalAccess {
         AclsanDeviceMemoryAccessData data;
-        std::vector<racecheck::ByteRange> ranges;
+        race::SharedRanges ranges;
     };
     std::vector<GlobalAccess> globalAccesses;
     bool globalHistoryComplete = true;
-    size_t globalSegments = 0;
     std::vector<HostAccessEvidence> hostAccesses;
     std::unique_ptr<AccessHistory> NewAccessHistory() const { return std::make_unique<AccessHistory>(); }
 

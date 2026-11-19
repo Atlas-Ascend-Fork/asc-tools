@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "acl_san/aclsan_api.h"
+#include "acl_san/aclsan_cbdata_operator.h"
 #include "checker/checker.h"
 #include "diagnostic/report/device_call_stack.h"
 #include "diagnostic/report_renderer.h"
@@ -37,9 +38,12 @@ bool Dispatch(
     return valid;
 }
 
+constexpr uint64_t TEST_LAUNCH_ID = 1;
+
 AclsanDeviceSyncData Wait()
 {
     AclsanDeviceSyncData data{};
+    data.header.launchId = TEST_LAUNCH_ID;
     data.header.version = ACLSAN_API_VERSION;
     data.header.size = sizeof(data);
     data.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
@@ -57,6 +61,7 @@ AclsanDeviceMemoryAccessData Access()
     data.header.version = ACLSAN_API_VERSION;
     data.header.size = sizeof(data);
     data.address = 0x1018;
+    data.header.launchId = TEST_LAUNCH_ID;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
     data.memoryOwner = data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : data.header.executor;
     data.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
@@ -75,11 +80,34 @@ AclsanSynchronizeData Sync(int result = 0)
     return data;
 }
 
+bool DispatchLaunch(const std::vector<std::unique_ptr<Checker>>& checkers, CheckerReportList& reports)
+{
+    AclsanLaunchData launch{};
+    launch.common = {ACLSAN_API_VERSION, sizeof(launch), nullptr, 0, TEST_LAUNCH_ID};
+    launch.launchId = TEST_LAUNCH_ID;
+    launch.numBlocks = 1;
+    return Dispatch(checkers, ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports);
+}
+
+bool DispatchCompletion(const std::vector<std::unique_ptr<Checker>>& checkers, CheckerReportList& reports)
+{
+    AclsanOperatorExecutionData completion{};
+    completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, TEST_LAUNCH_ID};
+    completion.launchId = TEST_LAUNCH_ID;
+    return Dispatch(
+        checkers, ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports);
+}
+
 TEST(CheckerTest, CallbackUnionAndIndependentTools)
 {
     auto checkers = Both();
     const auto callbacks = RequiredCallbacks(checkers);
-    EXPECT_EQ(callbacks.size(), 8U);
+    EXPECT_EQ(callbacks.size(), 9U);
+    EXPECT_EQ(
+        std::count(
+            callbacks.begin(), callbacks.end(),
+            CallbackSpec{ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE}),
+        1);
     EXPECT_EQ(
         std::count_if(
             callbacks.begin(), callbacks.end(),
@@ -99,7 +127,8 @@ TEST(CheckerTest, RacecheckFactoryUsesSynchronizationGraphAndWaitsForCompleteLau
     ASSERT_NE(checker, nullptr);
     EXPECT_TRUE(checker->IsSubscribed(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS));
     EXPECT_TRUE(checker->IsSubscribed(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC));
-    EXPECT_FALSE(checker->AnalysisComplete());
+    EXPECT_TRUE(checker->AnalysisComplete());
+    EXPECT_TRUE(checker->IsSubscribed(ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE));
     EXPECT_NE(checker->Summary().find("tool=racecheck"), std::string::npos);
     EXPECT_TRUE(checker->IsSubscribed(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER));
 }
@@ -116,6 +145,7 @@ TEST(CheckerTest, BothProduceReportsFromTheSameSynchronization)
     allocation.memorySpace = ACLSAN_MEMORY_SPACE_DEVICE;
     allocation.resourceId = 1;
     ASSERT_TRUE(Dispatch(checkers, ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, &allocation, reports));
+    ASSERT_TRUE(DispatchLaunch(checkers, reports));
     const auto access = Access();
     const auto wait = Wait();
     ASSERT_TRUE(
@@ -125,6 +155,8 @@ TEST(CheckerTest, BothProduceReportsFromTheSameSynchronization)
     const auto sync = Sync();
     ASSERT_TRUE(
         Dispatch(checkers, ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+    EXPECT_TRUE(reports.empty());
+    ASSERT_TRUE(DispatchCompletion(checkers, reports));
     ASSERT_EQ(reports.size(), 2U);
     EXPECT_TRUE(std::holds_alternative<npucheck::NpuCheckMemcheckReport>(reports[0]));
     EXPECT_TRUE(std::holds_alternative<npucheck::NpuCheckSynccheckReport>(reports[1]));
@@ -147,6 +179,7 @@ TEST(CheckerTest, FailedSynchronizationAnalyzesPendingRecords)
 {
     auto checkers = Both();
     CheckerReportList reports;
+    ASSERT_TRUE(DispatchLaunch(checkers, reports));
     const auto access = Access();
     const auto wait = Wait();
     Dispatch(checkers, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports);
@@ -155,7 +188,9 @@ TEST(CheckerTest, FailedSynchronizationAnalyzesPendingRecords)
     EXPECT_TRUE(
         Dispatch(checkers, ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
     EXPECT_FALSE(checkers[0]->AnalysisComplete());
-    EXPECT_TRUE(checkers[1]->AnalysisComplete());
+    EXPECT_FALSE(checkers[1]->AnalysisComplete());
+    EXPECT_TRUE(reports.empty());
+    ASSERT_TRUE(DispatchCompletion(checkers, reports));
     EXPECT_TRUE(checkers[1]->HasErrors());
     EXPECT_TRUE(checkers[0]->HasErrors());
     ASSERT_EQ(reports.size(), 2U);

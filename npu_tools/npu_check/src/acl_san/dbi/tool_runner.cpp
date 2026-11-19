@@ -49,6 +49,31 @@ bool IsInjectionEnvironment(const char* value)
            std::strncmp(value, "ACL_API_INJECTION=", sizeof("ACL_API_INJECTION=") - 1) == 0;
 }
 
+int SpawnWithCapturedOutput(
+    pid_t& child, const std::vector<char*>& argv, const std::vector<char*>& environment, const int (&outputPipe)[2],
+    const int (&errorPipe)[2])
+{
+    posix_spawn_file_actions_t actions;
+    int status = posix_spawn_file_actions_init(&actions);
+    if (status != 0) {
+        return status;
+    }
+    status = posix_spawn_file_actions_adddup2(&actions, outputPipe[1], STDOUT_FILENO);
+    if (status == 0)
+        status = posix_spawn_file_actions_adddup2(&actions, errorPipe[1], STDERR_FILENO);
+    for (const int fd : {outputPipe[0], errorPipe[0], outputPipe[1], errorPipe[1]}) {
+        if (status != 0) {
+            break;
+        }
+        status = posix_spawn_file_actions_addclose(&actions, fd);
+    }
+    if (status == 0) {
+        status = posix_spawnp(&child, argv.front(), &actions, nullptr, argv.data(), environment.data());
+    }
+    (void)posix_spawn_file_actions_destroy(&actions);
+    return status;
+}
+
 } // namespace
 
 ToolResult RunTool(const std::vector<std::string>& commandArguments)
@@ -84,28 +109,8 @@ ToolResult RunTool(const std::vector<std::string>& commandArguments)
     }
     const auto environment = MakeSpawnArguments(environmentStorage);
 
-    posix_spawn_file_actions_t actions;
-    int spawnStatus = posix_spawn_file_actions_init(&actions);
-    const bool actionsInitialized = spawnStatus == 0;
-    if (spawnStatus == 0)
-        spawnStatus = posix_spawn_file_actions_adddup2(&actions, outputPipe[1], STDOUT_FILENO);
-    if (spawnStatus == 0)
-        spawnStatus = posix_spawn_file_actions_adddup2(&actions, errorPipe[1], STDERR_FILENO);
-    if (spawnStatus == 0)
-        spawnStatus = posix_spawn_file_actions_addclose(&actions, outputPipe[0]);
-    if (spawnStatus == 0)
-        spawnStatus = posix_spawn_file_actions_addclose(&actions, errorPipe[0]);
-    if (spawnStatus == 0)
-        spawnStatus = posix_spawn_file_actions_addclose(&actions, outputPipe[1]);
-    if (spawnStatus == 0)
-        spawnStatus = posix_spawn_file_actions_addclose(&actions, errorPipe[1]);
     pid_t child = -1;
-    if (spawnStatus == 0) {
-        spawnStatus = posix_spawnp(&child, argv.front(), &actions, nullptr, argv.data(), environment.data());
-    }
-    if (actionsInitialized) {
-        (void)posix_spawn_file_actions_destroy(&actions);
-    }
+    const int spawnStatus = SpawnWithCapturedOutput(child, argv, environment, outputPipe, errorPipe);
     if (spawnStatus != 0) {
         result.standardError = std::string("posix_spawnp failed: ") + std::strerror(spawnStatus);
         close(outputPipe[0]);

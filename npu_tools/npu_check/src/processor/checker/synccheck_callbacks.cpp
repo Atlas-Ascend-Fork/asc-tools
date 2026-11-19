@@ -9,6 +9,7 @@
  */
 
 #include "checker/sync_ledger.h"
+#include "acl_san/aclsan_cbdata_operator.h"
 #include "tool_manager/kernel_attributes.h"
 #include "npu_tool_log.h"
 #include <sstream>
@@ -19,30 +20,45 @@ const std::vector<npucheck::CallbackSpec>& SyncLedger::GetSubscribedID() const
     static const std::vector<npucheck::CallbackSpec> callbacks{
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC},
         {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END},
+        {ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE},
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL}};
     return callbacks;
 }
-bool SyncLedger::OnCallback(
-    AclsanCallbackDomain domain, [[maybe_unused]] AclsanCallbackId cbid, const void* data,
-    npucheck::CheckerReportList& reports)
+bool SyncLedger::HandleOperatorCompletion(const AclsanOperatorExecutionData& event, CheckerReportList& reports)
 {
-    if (!data) {
+    const auto state = launchStates_.find(event.launchId);
+    if (event.launchId == 0 || (state != launchStates_.end() && state->second.stream != event.stream)) {
+        observationComplete_ = false;
+        ++stats_.invalidArguments;
+        return false;
+    }
+    if (event.common.result != 0 || event.flags != ACLSAN_OPERATOR_EXECUTION_FLAG_NONE)
+        observationComplete_ = false;
+    auto completed = OnOperatorComplete(event.launchId);
+    AppendCheckerReports(std::move(completed), reports);
+    return true;
+}
+
+bool SyncLedger::OnCallback(
+    AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, npucheck::CheckerReportList& reports)
+{
+    if (data == nullptr) {
         observationComplete_ = false;
         return false;
     }
     if (domain != ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
         const auto& common = *static_cast<const AclsanCallbackCommonData*>(data);
-        const auto required =
-            domain == ACLSAN_CB_DOMAIN_LAUNCH ? sizeof(AclsanLaunchData) : sizeof(AclsanSynchronizeData);
+        const size_t required = domain == ACLSAN_CB_DOMAIN_LAUNCH             ? sizeof(AclsanLaunchData) :
+                                domain == ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION ? sizeof(AclsanOperatorExecutionData) :
+                                                                                sizeof(AclsanSynchronizeData);
         if (common.version != ACLSAN_API_VERSION || common.size < required) {
             observationComplete_ = false;
             return false;
         }
         if (common.result != 0 && domain == ACLSAN_CB_DOMAIN_LAUNCH)
             return true;
-        // A synchronization failure still closes the diagnostic observation
-        // batch. Only MemoryAnalysis may publish successful stream-completion
-        // edges; flushing this ledger never asserts kernel completion.
+        // A stream callback records Host ordering; device settlement is driven
+        // by the corresponding operator-complete event.
     }
     if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
         const auto* syncData = static_cast<const AclsanDeviceSyncData*>(data);
@@ -53,11 +69,11 @@ bool SyncLedger::OnCallback(
         OnDeviceSync(*syncData);
     } else if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
         const auto* syncData = static_cast<const AclsanSynchronizeData*>(data);
-        auto completed = OnSynchronization(syncData->stream);
-        ASCTOOL_INFO(
-            "synchronization observed reports=%zu stream=%p result=%d", completed.size(), syncData->stream,
-            syncData->common.result);
-        npucheck::AppendCheckerReports(std::move(completed), reports);
+        ++stats_.synchronizationEvents;
+        if (syncData->common.result != 0)
+            observationComplete_ = false;
+    } else if (domain == ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION && cbid == ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE) {
+        return HandleOperatorCompletion(*static_cast<const AclsanOperatorExecutionData*>(data), reports);
     } else if (domain == ACLSAN_CB_DOMAIN_LAUNCH) {
         const auto* launchData = static_cast<const AclsanLaunchData*>(data);
         const npucheck::KernelAttributes attributes = npucheck::QueryKernelAttributes(launchData->function);
@@ -106,7 +122,10 @@ bool SyncLedger::HasErrors() const
            stats.participantMismatches != 0 || stats.sequenceMismatches != 0 || stats.invalidArguments != 0 ||
            stats.unconsumedSyncTokens != 0 || stats.waitWithoutSyncTokens != 0;
 }
-bool SyncLedger::AnalysisComplete() const { return observationComplete_ && Stats().pendingOpens == 0; }
+bool SyncLedger::AnalysisComplete() const
+{
+    return observationComplete_ && Stats().pendingOpens == 0 && launchStates_.empty() && orphanReports_.empty();
+}
 std::string SyncLedger::Summary() const
 {
     const auto stats = Stats();

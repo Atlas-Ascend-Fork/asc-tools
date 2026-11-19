@@ -127,7 +127,8 @@ TEST_F(MemStateTrackerTest, VfModesUseOrdinaryReadWriteConflictSemantics)
                 EXPECT_EQ(normalized.fields.at("currentAccess"), names[current - 6]);
             }
             ASSERT_NO_THROW(Update(b, {}));
-            const auto& segment = tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10}).at(begin);
+            const PhysicalSpaceKey key{0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR};
+            const auto& segment = tracker.Tables().at(key).at(begin);
             EXPECT_EQ(segment.state, current == 6 || current == 8 ? MemOpState::Read : MemOpState::Write);
         }
     }
@@ -576,10 +577,13 @@ TEST_F(MemStateTrackerTest, SevenStepPhysicalSpaceExample)
     auto uw = Add(ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 2048, 10, ACLSAN_DEVICE_MEMORY_SPACE_UB);
     Accept(uw);
     ASSERT_EQ(tracker.Tables().size(), 4U);
-    const auto& ub10 = tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10});
+    const auto& ub10 =
+        tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR});
     ASSERT_EQ(ub10.size(), 1U);
     ExpectSegment(ub10, 0, 2048, MemOpState::Write, {uw}, {});
-    ExpectSegment(tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 11}), 0, 1024, MemOpState::Write, {u11}, {});
+    const auto& ub11 =
+        tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 11, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR});
+    ExpectSegment(ub11, 0, 1024, MemOpState::Write, {u11}, {});
     ExpectSegment(Gm(), 512, 1024, MemOpState::Race, {gm}, {});
     auto otherDevice = Add(ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 1024, 11, ACLSAN_DEVICE_MEMORY_SPACE_GM, 1);
     EXPECT_TRUE(tracker.CheckPotentialRace(otherDevice).empty());
@@ -619,7 +623,8 @@ TEST_F(MemStateTrackerTest, AscCopyUb2UbContiguousHasNoFalseConflict)
     EXPECT_TRUE(tracker.CheckPotentialRace(destination).empty());
     Update(destination, {});
     EXPECT_TRUE(reports.empty());
-    const auto& ub = tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10});
+    const auto& ub =
+        tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR});
     ASSERT_EQ(ub.size(), 2U);
     ExpectSegment(ub, 0, 256, MemOpState::Read, {}, {source});
     ExpectSegment(ub, 512, 768, MemOpState::Write, {destination}, {});
@@ -647,7 +652,8 @@ TEST_F(MemStateTrackerTest, AscCopyUb2UbInterleavedBlocksHaveNoFalseConflict)
     EXPECT_TRUE(tracker.CheckPotentialRace(destination).empty());
     Update(destination, {});
     EXPECT_TRUE(reports.empty());
-    const auto& ub = tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10});
+    const auto& ub =
+        tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR});
     ASSERT_EQ(ub.size(), 8U);
     for (uint64_t block = 0; block < 4; ++block) {
         ExpectSegment(ub, block * 64, block * 64 + 32, MemOpState::Read, {}, {source});
@@ -1614,8 +1620,10 @@ TEST_F(MemStateTrackerTest, L1ToUbTransferUsesActualSourceAndTargetCore)
     EXPECT_EQ(targetPairs[0].prevIndex, targetReader);
     EXPECT_EQ(targetPairs[1].prevIndex, targetWriter);
     Update(targetWrite, {targetPairs[0]});
-    const auto& source = tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_L1, 20});
-    const auto& target = tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10});
+    const auto& source =
+        tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_L1, 20, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE});
+    const auto& target =
+        tracker.Tables().at({0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR});
     ExpectSegment(source, 256, 1024, MemOpState::Race, {sourceWriter}, {});
     ExpectSegment(source, 1024, 1280, MemOpState::Read, {}, {sourceRead});
     ExpectSegment(target, 256, 512, MemOpState::Race, {}, {targetReader});

@@ -10,7 +10,6 @@
 
 #include "diagnostic/report/synccheck_adapter.h"
 
-#include "acl_san/aclsan_cbdata_device.h"
 #include "diagnostic/pipeline_name.h"
 #include "diagnostic/report/report_catalog.h"
 #include "diagnostic/report/report_fields.h"
@@ -176,27 +175,24 @@ const PairingReasonRule* FindPairingReasonRule(NpuCheckSyncMismatchReason reason
     return nullptr;
 }
 
+bool ValidatePairingKey(const NpuCheckSyncPairKey& key, NpuCheckSyncPrimitiveKind primitiveKind)
+{
+    switch (key.pairKind) {
+        case NpuCheckSyncPairKind::SET_WAIT_FLAG:
+            return key.mode == 0 && primitiveKind == NpuCheckSyncPrimitiveKind::SET_WAIT_FLAG;
+        case NpuCheckSyncPairKind::GET_RLS_BUF:
+            return key.srcPipe == 0 && primitiveKind == NpuCheckSyncPrimitiveKind::GET_RLS_BUF;
+        case NpuCheckSyncPairKind::CROSS_CORE_TOKEN:
+            return key.srcPipe == 0 && key.dstPipe == 0 && primitiveKind == NpuCheckSyncPrimitiveKind::SYNC_OBJECT;
+        default:
+            return false;
+    }
+}
+
 bool ValidatePairingReport(const NpuCheckSynccheckReport& report, const NpuCheckSyncPairingError& detail)
 {
     const PairingReasonRule* rule = FindPairingReasonRule(detail.reason);
-    if (!report.hasRelatedPoint || rule == nullptr ||
-        (detail.key.pairKind != NpuCheckSyncPairKind::SET_WAIT_FLAG &&
-         detail.key.pairKind != NpuCheckSyncPairKind::GET_RLS_BUF &&
-         detail.key.pairKind != NpuCheckSyncPairKind::CROSS_CORE_TOKEN)) {
-        return false;
-    }
-    if ((detail.key.pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG && detail.key.mode != 0) ||
-        (detail.key.pairKind == NpuCheckSyncPairKind::GET_RLS_BUF && detail.key.srcPipe != 0) ||
-        (detail.key.pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN &&
-         (detail.key.srcPipe != 0 || detail.key.dstPipe != 0))) {
-        return false;
-    }
-    if ((detail.key.pairKind == NpuCheckSyncPairKind::SET_WAIT_FLAG &&
-         report.primitiveKind != NpuCheckSyncPrimitiveKind::SET_WAIT_FLAG) ||
-        (detail.key.pairKind == NpuCheckSyncPairKind::GET_RLS_BUF &&
-         report.primitiveKind != NpuCheckSyncPrimitiveKind::GET_RLS_BUF) ||
-        (detail.key.pairKind == NpuCheckSyncPairKind::CROSS_CORE_TOKEN &&
-         report.primitiveKind != NpuCheckSyncPrimitiveKind::SYNC_OBJECT)) {
+    if (!report.hasRelatedPoint || rule == nullptr || !ValidatePairingKey(detail.key, report.primitiveKind)) {
         return false;
     }
 
@@ -218,7 +214,7 @@ bool ValidatePairingReport(const NpuCheckSynccheckReport& report, const NpuCheck
            report.relatedPoint.operation == relatedOperation;
 }
 
-bool ValidateSynccheckReport(const NpuCheckSynccheckReport& report)
+bool ValidateSyncReportContext(const NpuCheckSynccheckReport& report)
 {
     if ((report.common.flags & kNpuCheckReportCommonHasExecContext) == 0 || !IsActualPoint(report.triggerPoint) ||
         !ExecContextsEqual(report.common.exec, report.triggerPoint.exec) ||
@@ -238,44 +234,64 @@ bool ValidateSynccheckReport(const NpuCheckSynccheckReport& report)
         }
     }
 
-    const NpuCheckReportPattern pattern = report.common.pattern;
-    switch (pattern) {
+    return true;
+}
+
+bool HasValidRelatedPoint(const NpuCheckSynccheckReport& report)
+{
+    return IsActualPoint(report.relatedPoint) || IsExpectedPoint(report.relatedPoint);
+}
+
+bool ValidateBarrierDetail(const NpuCheckSynccheckReport& report)
+{
+    if (report.detailKind != NpuCheckSyncDetailKind::BARRIER ||
+        report.primitiveKind != NpuCheckSyncPrimitiveKind::BARRIER ||
+        !std::holds_alternative<NpuCheckSyncBarrierError>(report.detail)) {
+        return false;
+    }
+    if (report.common.pattern == NpuCheckReportPattern::SYNCCHECK_INTRA_CORE_DIVERGENT) {
+        return !report.hasRelatedPoint;
+    }
+    return !report.hasRelatedPoint || HasValidRelatedPoint(report);
+}
+
+bool ValidateObjectDetail(const NpuCheckSynccheckReport& report)
+{
+    if (report.detailKind != NpuCheckSyncDetailKind::OBJECT || !IsValidPrimitiveKind(report.primitiveKind) ||
+        !std::holds_alternative<NpuCheckSyncObjectError>(report.detail)) {
+        return false;
+    }
+    return !report.hasRelatedPoint ||
+           (report.common.pattern == NpuCheckReportPattern::SYNCCHECK_DEADLOCK && HasValidRelatedPoint(report));
+}
+
+bool ValidateSyncReportDetail(const NpuCheckSynccheckReport& report)
+{
+    switch (report.common.pattern) {
         case NpuCheckReportPattern::SYNCCHECK_INTRA_CORE_DIVERGENT:
-            return report.detailKind == NpuCheckSyncDetailKind::BARRIER && !report.hasRelatedPoint &&
-                   report.primitiveKind == NpuCheckSyncPrimitiveKind::BARRIER &&
-                   std::holds_alternative<NpuCheckSyncBarrierError>(report.detail);
         case NpuCheckReportPattern::SYNCCHECK_INTER_CORE_DIVERGENT:
         case NpuCheckReportPattern::SYNCCHECK_PARTICIPANT_MISMATCH:
-            return report.detailKind == NpuCheckSyncDetailKind::BARRIER &&
-                   report.primitiveKind == NpuCheckSyncPrimitiveKind::BARRIER &&
-                   std::holds_alternative<NpuCheckSyncBarrierError>(report.detail) &&
-                   (!report.hasRelatedPoint || IsActualPoint(report.relatedPoint) ||
-                    IsExpectedPoint(report.relatedPoint));
+            return ValidateBarrierDetail(report);
         case NpuCheckReportPattern::SYNCCHECK_INVALID_ARGUMENT:
         case NpuCheckReportPattern::SYNCCHECK_OBJECT_NOT_INITIALIZED:
-            return report.detailKind == NpuCheckSyncDetailKind::OBJECT && !report.hasRelatedPoint &&
-                   IsValidPrimitiveKind(report.primitiveKind) &&
-                   std::holds_alternative<NpuCheckSyncObjectError>(report.detail);
-        case NpuCheckReportPattern::SYNCCHECK_PAIRING_MISMATCH: {
-            if (report.detailKind != NpuCheckSyncDetailKind::PAIRING ||
-                !std::holds_alternative<NpuCheckSyncPairingError>(report.detail)) {
-                return false;
-            }
-            return ValidatePairingReport(report, std::get<NpuCheckSyncPairingError>(report.detail));
-        }
         case NpuCheckReportPattern::SYNCCHECK_DEADLOCK:
-            return report.detailKind == NpuCheckSyncDetailKind::OBJECT && IsValidPrimitiveKind(report.primitiveKind) &&
-                   std::holds_alternative<NpuCheckSyncObjectError>(report.detail) &&
-                   (!report.hasRelatedPoint || IsActualPoint(report.relatedPoint) ||
-                    IsExpectedPoint(report.relatedPoint));
+            return ValidateObjectDetail(report);
+        case NpuCheckReportPattern::SYNCCHECK_PAIRING_MISMATCH:
+            return report.detailKind == NpuCheckSyncDetailKind::PAIRING &&
+                   std::holds_alternative<NpuCheckSyncPairingError>(report.detail) &&
+                   ValidatePairingReport(report, std::get<NpuCheckSyncPairingError>(report.detail));
         case NpuCheckReportPattern::SYNCCHECK_INSTRUCTION_SEQUENCE_MISMATCH:
             return report.detailKind == NpuCheckSyncDetailKind::SEQUENCE && report.hasRelatedPoint &&
                    report.primitiveKind == NpuCheckSyncPrimitiveKind::INSTRUCTION_SEQUENCE &&
-                   std::holds_alternative<NpuCheckSyncSequenceError>(report.detail) &&
-                   (IsActualPoint(report.relatedPoint) || IsExpectedPoint(report.relatedPoint));
+                   std::holds_alternative<NpuCheckSyncSequenceError>(report.detail) && HasValidRelatedPoint(report);
         default:
             return false;
     }
+}
+
+bool ValidateSynccheckReport(const NpuCheckSynccheckReport& report)
+{
+    return ValidateSyncReportContext(report) && ValidateSyncReportDetail(report);
 }
 
 std::string FormatPairKey(const NpuCheckSyncPairKey& key)

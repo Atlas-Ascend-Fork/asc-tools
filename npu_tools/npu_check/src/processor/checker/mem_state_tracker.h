@@ -16,7 +16,9 @@
 #include <array>
 #include <cstddef>
 #include <exception>
+#include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -54,9 +56,29 @@ struct AccessPair {
     uint64_t begin;
     uint64_t end;
 };
-struct MemState {
-    // Number of incompatible atomic writer classes tracked separately: ADD, MIN and MAX.
+struct VfHistory {
     static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = 3;
+
+    // A dynamic VF keeps at most one ordinary witness per segment.
+    std::optional<CbIndex> witness;
+    bool writes = false;
+    // Grouped by access mode, preserving the insertion order within each mode.
+    std::vector<std::pair<AclsanDeviceMemoryAccessMode, CbIndex>> atomicWriters;
+};
+struct VfExternalState {
+    std::vector<CbIndex> readers;
+    std::vector<CbIndex> writers;
+    std::array<std::vector<CbIndex>, VfHistory::ATOMIC_WRITER_GROUP_COUNT> atomicWriters{};
+    std::map<race::VfKey, VfHistory> groups{};
+};
+struct MemState {
+    static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = VfHistory::ATOMIC_WRITER_GROUP_COUNT;
+
+    MemState(uint64_t begin, uint64_t end, MemOpState state) noexcept;
+    MemState(const MemState& other);
+    MemState(MemState&& other) noexcept = default;
+    MemState& operator=(const MemState& other);
+    MemState& operator=(MemState&& other) noexcept = default;
 
     uint64_t begin;
     uint64_t end;
@@ -65,12 +87,15 @@ struct MemState {
     std::vector<CbIndex> readers;
     // 分别保存 ADD、MIN、MAX，兼容原子操作可直接跳过对应分组。
     std::array<std::vector<CbIndex>, ATOMIC_WRITER_GROUP_COUNT> atomicWriters{};
+    // Only the VF-external tracker allocates these histories. Copies remain independent.
+    std::unique_ptr<VfExternalState> vfExternal;
 };
 using SegmentTable = std::map<uint64_t, MemState>;
 using PhysicalSpaceTables = std::map<PhysicalSpaceKey, SegmentTable>;
 
 // tracker 和报告准备阶段共用的字节区间算法。
 namespace racecheck {
+enum class MemStateTrackerMode { Ordinary, VfExternal };
 struct ByteRange {
     uint64_t begin;
     uint64_t end;
@@ -110,7 +135,11 @@ public:
     // records 的生命周期必须长于 tracker。已发布条目不可变，
     // 不能删除或重排。追加和调用必须串行；由于只保存下标和容器，
     // vector 扩容是安全的。
-    explicit MemStateTracker(const std::vector<AclsanDeviceMemoryAccessData>& records);
+    // VfExternal keeps ordinary and per-dynamic-VF histories without freezing
+    // a range after the first VF/ordinary conflict.
+    explicit MemStateTracker(
+        const std::vector<AclsanDeviceMemoryAccessData>& records,
+        racecheck::MemStateTrackerMode mode = racecheck::MemStateTrackerMode::Ordinary);
     // 第一次成功处理非空更新时，将此 tracker 绑定到一个 launch。
     // 集成层必须将每个 launch 路由到独立的 tracker。
     // 同一动态指令的源 READ 后接普通目标 WRITE 属于指令内在行为，
@@ -121,6 +150,10 @@ public:
     // prepared 必须由同一条不可变 records[cbIndex] 解析，且覆盖整个串行处理过程。
     // 不保存 prepared 的引用；省略该参数的接口会在本次调用内自行解析。
     std::vector<AccessPair> CheckPotentialRace(CbIndex cbIndex, const racecheck::PreparedAccess& prepared) const;
+    // Only a proven Before relation permits skipping a distinct dynamic VF history group.
+    using VfGroupPrecedes = std::function<bool(const race::VfKey&)>;
+    std::vector<AccessPair> CheckPotentialRace(
+        CbIndex cbIndex, const racecheck::PreparedAccess& prepared, const VfGroupPrecedes& vfGroupPrecedes) const;
     // 调用方在外部判序后提供完整且不变的已确认冲突候选子集，
     // 候选检查与更新之间不能修改表，不接受自行构造或已过期的冲突。
     // 所有模式直接修改原表，不再扫描历史复查候选成员关系。
@@ -131,12 +164,35 @@ public:
     const PhysicalSpaceTables& Tables() const noexcept { return tables_; }
 
 private:
-    std::vector<AccessPair> CheckPotentialRaceImpl(CbIndex cbIndex, const racecheck::PreparedAccess* prepared) const;
+    std::vector<AccessPair> CheckPotentialRaceImpl(
+        CbIndex cbIndex, const racecheck::PreparedAccess* prepared,
+        const VfGroupPrecedes* vfGroupPrecedes = nullptr) const;
+    std::vector<AccessPair> CheckVfPotentialRace(
+        CbIndex cbIndex, const racecheck::PreparedAccess& prepared, const VfGroupPrecedes* vfGroupPrecedes) const;
     void UpdateMemStateImpl(
         CbIndex cbIndex, const std::vector<AccessPair>& conflicts, const racecheck::PreparedAccess* prepared);
+    void ValidateOrdinaryConflicts(
+        CbIndex cbIndex, const std::vector<AccessPair>& conflicts, const racecheck::PreparedAccess& prepared,
+        const AclsanDeviceMemoryAccessData& current) const;
+    void SplitOrdinaryRanges(
+        CbIndex cbIndex, SegmentTable& working, const racecheck::PreparedAccess& prepared,
+        const std::vector<racecheck::FailedRange>& failures) const;
+    void ApplyOrdinaryRanges(
+        CbIndex cbIndex, SegmentTable& working, const racecheck::PreparedAccess& prepared,
+        const std::vector<racecheck::FailedRange>& failures, const std::vector<AccessPair>& conflicts,
+        const AclsanDeviceMemoryAccessData& current, bool newIndex) const;
+    static void ExtendOrdinaryWrite(SegmentTable& working, SegmentTable::iterator segment, uint64_t end);
+    void MergeOrdinaryRanges(
+        CbIndex cbIndex, SegmentTable& working, const std::vector<racecheck::ByteRange>& ranges) const;
+    void ValidateVfConflicts(
+        CbIndex cbIndex, const std::vector<AccessPair>& conflicts, const racecheck::PreparedAccess& prepared,
+        const AclsanDeviceMemoryAccessData& current) const;
+    void UpdateVfMemState(
+        CbIndex cbIndex, const std::vector<AccessPair>& conflicts, const racecheck::PreparedAccess& prepared);
     const AclsanDeviceMemoryAccessData& Record(CbIndex index) const;
 
     const std::vector<AclsanDeviceMemoryAccessData>& records_;
+    racecheck::MemStateTrackerMode mode_;
     PhysicalSpaceTables tables_;
     std::optional<uint64_t> launchId_;
     std::optional<CbIndex> largestUpdatedIndex_;
@@ -147,6 +203,7 @@ private:
     void TraceState(
         CbIndex index, const char* event, const MemState& state, const char* writerEvent = "history.writer",
         const char* readerEvent = "history.reader") const noexcept;
+    void TraceCandidate(const AccessPair& candidate, const AclsanDeviceMemoryAccessData& current) const noexcept;
     void TraceTable(CbIndex index, const SegmentTable& table) const noexcept;
 };
 } // namespace npucheck

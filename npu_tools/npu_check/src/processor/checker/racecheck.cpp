@@ -83,6 +83,90 @@ void Racecheck::StopLaunch(
 }
 
 // 收到一条设备内存访问记录后，检查竞争并更新该 launch 的内存状态。
+void Racecheck::AnalyzeMemoryAccess(
+    LaunchState& launch, const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports, const char*& stage)
+{
+    stage = "record_storage";
+    if (committed_ == std::numeric_limits<uint64_t>::max()) {
+        throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "committed operation counter overflow");
+    }
+    launch.records.push_back(data);
+    const auto index = launch.records.size() - 1;
+    // 本次回调持有解析结果；检查、报告和更新只引用，不重复展开，也不存入历史。
+    stage = "access_preparation";
+    const auto prepared = racecheck::PrepareAccess(launch.records[index]);
+    // 根据已维护的内存状态，找出与当前访问可能冲突的历史访问及重叠区间。
+    // 此时只是候选，还没有结合同步关系确认是否存在竞争。
+    stage = "candidate_check";
+    const auto candidates = launch.tracker.CheckPotentialRace(index, prepared);
+    if (candidates.size() > std::numeric_limits<uint64_t>::max() - candidates_) {
+        throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "candidate counter overflow");
+    }
+    candidates_ += candidates.size();
+    // 4. 对每个候选进行同步判序，conflicts 只保存确认存在竞争的访问对。
+    std::vector<AccessPair> conflicts;
+    stage = "ordering";
+    if (ordering_ != nullptr) {
+        for (const auto& candidate : candidates) {
+            // previous 是候选中的历史访问，current 是刚保存的当前访问。
+            const auto order = ordering_->Compare(launch.records[candidate.prevIndex], launch.records[index]);
+            if (order == RacecheckOrder::Unordered) {
+                // 没有相应的执行顺序保证：该候选被确认为竞争。
+                conflicts.push_back(candidate);
+            } else if (order != RacecheckOrder::Ordered) {
+                // 无法判序时不能当作“无竞争”，抛异常并由下方 catch 停止该 launch。
+                throw RacecheckError(RacecheckErrorKind::IncompleteTrace, "candidate ordering is unknown");
+            }
+            // Ordered 表示已证明 previous -> current，不加入竞争列表。
+        }
+    }
+    // 5. 根据确认的竞争准备全部报告，不设置固定数量预算。
+    stage = "report_preparation";
+    auto diagnostics = MakeRacecheckDiagnostics(conflicts, launch.records, index, prepared);
+    if (diagnostics.size() > std::numeric_limits<uint64_t>::max() - reportCount_) {
+        throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "race report counter overflow");
+    }
+    // 6. 在临时列表中准备“已有报告 + 本次新增报告”，暂不修改调用方的 reports。
+    // 提前完成内存分配，避免内存状态更新成功后，追加报告却因分配失败而中断。
+    auto pending = reports;
+    if (diagnostics.size() > pending.max_size() - pending.size()) {
+        throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "report list maximum capacity exceeded");
+    }
+    pending.reserve(pending.size() + diagnostics.size());
+    for (size_t i = 0; i < diagnostics.size(); ++i) {
+        const auto& evidence = conflicts[i];
+        auto diagnostic = std::move(diagnostics[i]);
+        // 用已提交报告数加上本次已准备的报告数，生成从 1 开始的连续编号。
+        diagnostic.reportId = reportCount_ + (pending.size() - reports.size()) + 1;
+        const auto& previousHeader = launch.records[evidence.prevIndex].header;
+        // 此处仅记录已准备的竞争证据，报告尚未发布。
+        ASCTOOL_DEBUG(
+            "racecheck event=report.evidence level=DEBUG device=%u launch=%llu instr=%llu pc=0x%llx "
+            "report_id=%llu prev_index=%llu cur_index=%llu previous_pc=0x%llx "
+            "previous_core=%u previous_pipe=%u overlap=[0x%llx,0x%llx) status=prepared",
+            data.header.deviceId, static_cast<unsigned long long>(data.header.launchId),
+            static_cast<unsigned long long>(data.header.instrExecId), static_cast<unsigned long long>(data.header.pc),
+            static_cast<unsigned long long>(diagnostic.reportId), static_cast<unsigned long long>(evidence.prevIndex),
+            static_cast<unsigned long long>(evidence.curIndex), static_cast<unsigned long long>(previousHeader.pc),
+            previousHeader.executor.phyCoreId, previousHeader.pipeline, static_cast<unsigned long long>(evidence.begin),
+            static_cast<unsigned long long>(evidence.end));
+        pending.emplace_back(std::move(diagnostic));
+    }
+    if (!diagnostics.empty()) {
+        Log("report.prepared", &data.header, "confirmed evidence prepared; not yet published");
+    }
+    // 7. 将当前访问和确认的冲突更新到内存状态，供后续访问检测使用。
+    // 更新成功后再交换报告列表，正式发布本次报告并累计成功处理数。
+    stage = "memory_state_update";
+    launch.tracker.UpdateMemState(index, conflicts, prepared);
+    reports.swap(pending);
+    reportCount_ += diagnostics.size();
+    ++committed_;
+    if (!diagnostics.empty()) {
+        Log("report.commit", &data.header, "state and checker reports committed");
+    }
+}
+
 bool Racecheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports)
 {
     ++accesses_;
@@ -113,90 +197,11 @@ bool Racecheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
         if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
             return true;
         }
-        if (!ordering_ && !warnedUnavailable_) {
+        if (ordering_ == nullptr && !warnedUnavailable_) {
             Log("ordering.unavailable", &data.header, "no synchronization ordering provider; analysis incomplete");
             warnedUnavailable_ = true;
         }
-        stage = "record_storage";
-        if (committed_ == std::numeric_limits<uint64_t>::max()) {
-            throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "committed operation counter overflow");
-        }
-        launch.records.push_back(data);
-        const auto index = launch.records.size() - 1;
-        // 本次回调持有解析结果；检查、报告和更新只引用，不重复展开，也不存入历史。
-        stage = "access_preparation";
-        const auto prepared = racecheck::PrepareAccess(launch.records[index]);
-        // 根据已维护的内存状态，找出与当前访问可能冲突的历史访问及重叠区间。
-        // 此时只是候选，还没有结合同步关系确认是否存在竞争。
-        stage = "candidate_check";
-        const auto candidates = launch.tracker.CheckPotentialRace(index, prepared);
-        if (candidates.size() > std::numeric_limits<uint64_t>::max() - candidates_) {
-            throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "candidate counter overflow");
-        }
-        candidates_ += candidates.size();
-        // 4. 对每个候选进行同步判序，conflicts 只保存确认存在竞争的访问对。
-        std::vector<AccessPair> conflicts;
-        stage = "ordering";
-        if (ordering_) {
-            for (const auto& candidate : candidates) {
-                // previous 是候选中的历史访问，current 是刚保存的当前访问。
-                const auto order = ordering_->Compare(launch.records[candidate.prevIndex], launch.records[index]);
-                if (order == RacecheckOrder::Unordered) {
-                    // 没有相应的执行顺序保证：该候选被确认为竞争。
-                    conflicts.push_back(candidate);
-                } else if (order != RacecheckOrder::Ordered) {
-                    // 无法判序时不能当作“无竞争”，抛异常并由下方 catch 停止该 launch。
-                    throw RacecheckError(RacecheckErrorKind::IncompleteTrace, "candidate ordering is unknown");
-                }
-                // Ordered 表示已证明 previous -> current，不加入竞争列表。
-            }
-        }
-        // 5. 根据确认的竞争准备全部报告，不设置固定数量预算。
-        stage = "report_preparation";
-        auto diagnostics = MakeRacecheckDiagnostics(conflicts, launch.records, index, prepared);
-        if (diagnostics.size() > std::numeric_limits<uint64_t>::max() - reportCount_) {
-            throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "race report counter overflow");
-        }
-        // 6. 在临时列表中准备“已有报告 + 本次新增报告”，暂不修改调用方的 reports。
-        // 提前完成内存分配，避免内存状态更新成功后，追加报告却因分配失败而中断。
-        auto pending = reports;
-        if (diagnostics.size() > pending.max_size() - pending.size()) {
-            throw RacecheckError(RacecheckErrorKind::CapacityExceeded, "report list maximum capacity exceeded");
-        }
-        pending.reserve(pending.size() + diagnostics.size());
-        for (size_t i = 0; i < diagnostics.size(); ++i) {
-            const auto& evidence = conflicts[i];
-            auto diagnostic = std::move(diagnostics[i]);
-            // 用已提交报告数加上本次已准备的报告数，生成从 1 开始的连续编号。
-            diagnostic.reportId = reportCount_ + (pending.size() - reports.size()) + 1;
-            const auto& previousHeader = launch.records[evidence.prevIndex].header;
-            // 此处仅记录已准备的竞争证据，报告尚未发布。
-            ASCTOOL_DEBUG(
-                "racecheck event=report.evidence level=DEBUG device=%u launch=%llu instr=%llu pc=0x%llx "
-                "report_id=%llu prev_index=%llu cur_index=%llu previous_pc=0x%llx "
-                "previous_core=%u previous_pipe=%u overlap=[0x%llx,0x%llx) status=prepared",
-                data.header.deviceId, static_cast<unsigned long long>(data.header.launchId),
-                static_cast<unsigned long long>(data.header.instrExecId),
-                static_cast<unsigned long long>(data.header.pc), static_cast<unsigned long long>(diagnostic.reportId),
-                static_cast<unsigned long long>(evidence.prevIndex), static_cast<unsigned long long>(evidence.curIndex),
-                static_cast<unsigned long long>(previousHeader.pc), previousHeader.executor.phyCoreId,
-                previousHeader.pipeline, static_cast<unsigned long long>(evidence.begin),
-                static_cast<unsigned long long>(evidence.end));
-            pending.emplace_back(std::move(diagnostic));
-        }
-        if (!diagnostics.empty()) {
-            Log("report.prepared", &data.header, "confirmed evidence prepared; not yet published");
-        }
-        // 7. 将当前访问和确认的冲突更新到内存状态，供后续访问检测使用。
-        // 更新成功后再交换报告列表，正式发布本次报告并累计成功处理数。
-        stage = "memory_state_update";
-        launch.tracker.UpdateMemState(index, conflicts, prepared);
-        reports.swap(pending);
-        reportCount_ += diagnostics.size();
-        ++committed_;
-        if (!diagnostics.empty()) {
-            Log("report.commit", &data.header, "state and checker reports committed");
-        }
+        AnalyzeMemoryAccess(launch, data, reports, stage);
         // true 表示本次访问处理成功；是否发现竞争，要看新增报告，不能看返回值。
         return true;
     } catch (const RacecheckError& error) {
@@ -229,7 +234,7 @@ bool Racecheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
 bool Racecheck::OnCallback(
     AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
 {
-    if (!data) {
+    if (data == nullptr) {
         ++failures_;
         Log("callback.failed", nullptr, "null callback data; analysis incomplete", true);
         return false;
@@ -239,7 +244,7 @@ bool Racecheck::OnCallback(
             return OnMemoryAccess(*static_cast<const AclsanDeviceMemoryAccessData*>(data), reports);
         }
         if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && cbid == ACLSAN_CBID_DEVICE_SYNC) {
-            if (ordering_) {
+            if (ordering_ != nullptr) {
                 ordering_->OnDeviceSync(*static_cast<const AclsanDeviceSyncData*>(data));
             }
         } else if (domain == ACLSAN_CB_DOMAIN_LAUNCH && cbid == ACLSAN_CBID_LAUNCH_KERNEL) {
@@ -276,10 +281,13 @@ std::string Racecheck::Summary() const
     output << "tool=racecheck device_operations=" << accesses_ << " committed_operations=" << committed_
            << " candidates=" << candidates_ << " races=" << reportCount_ << " errors=0 warnings=" << reportCount_
            << " failures=" << failures_ << " synchronizations=" << syncs_
-           << " ordering_available=" << (ordering_ ? "true" : "false");
+           << " ordering_available=" << (ordering_ != nullptr ? "true" : "false");
     return output.str();
 }
 
 bool Racecheck::HasErrors() const { return reportCount_ != 0; }
-bool Racecheck::AnalysisComplete() const { return ordering_ && failures_ == 0 && ordering_->AnalysisComplete(); }
+bool Racecheck::AnalysisComplete() const
+{
+    return ordering_ != nullptr && failures_ == 0 && ordering_->AnalysisComplete();
+}
 } // namespace npucheck

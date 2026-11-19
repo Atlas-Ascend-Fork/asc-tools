@@ -10,6 +10,7 @@
 
 #include "tool_manager/tool_manager.h"
 #include "checker/memory_analysis.h"
+#include "acl_san/aclsan_cbdata_common.h"
 
 #include "diagnostic/report/report_assembler.h"
 
@@ -23,6 +24,9 @@
 
 namespace npucheck {
 namespace {
+
+constexpr size_t MAX_DEFERRED_SYNCHRONIZATIONS = 65536;
+constexpr size_t MAX_DEFERRED_OPERATORS = 65536;
 
 std::string StatusMessage(const char* operation, AclsanStatus status)
 {
@@ -52,6 +56,11 @@ int ToolManager::Initialize()
         return 0;
     }
 
+    {
+        std::lock_guard<std::mutex> callbackLock(callbackMutex_);
+        stopping_ = false;
+        callbacksClosed_ = false;
+    }
     std::string error;
     if (!server_.StartAndHandshake(configure_, error)) {
         LogHandshakeFailure(error);
@@ -140,6 +149,16 @@ bool ToolManager::EnableCallbacks(std::string& error)
     for (const auto& [domain, cbid] : required) {
         const AclsanStatus status = aclsanEnableCallback(1, subscriber_, domain, cbid);
         if (status != ACLSAN_STATUS_SUCCESS) {
+            // 旧注入库没有完成事件时保留兼容，但不能将未完成的 launch 标为完整。
+            const bool optionalBoundary =
+                domain == ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION && cbid == ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE;
+            if (optionalBoundary) {
+                ASCTOOL_WARNING(
+                    "acl_san operator completion callback unavailable; pending launches will remain incomplete: "
+                    "domain=%u cbid=%u status=%u",
+                    static_cast<unsigned>(domain), static_cast<unsigned>(cbid), static_cast<unsigned>(status));
+                continue;
+            }
             error = StatusMessage("aclsanEnableCallback", status);
             return false;
         }
@@ -162,35 +181,24 @@ void ToolManager::RollbackSanitizer()
     {
         std::unique_lock<std::mutex> callbackLock(callbackMutex_);
         callbacksDrained_.wait(callbackLock, [this] { return activeCallbacks_ == 0; });
+        callbacksClosed_ = true;
     }
     checkers_.clear();
     memoryAnalysis_.reset();
 }
 
-void ToolManager::Finalize()
+void ToolManager::FinalizeCheckers()
 {
-    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
-    if (!initialized_ && !subscribed_) {
-        return;
-    }
-    {
-        std::lock_guard<std::mutex> callbackLock(callbackMutex_);
-        stopping_ = true;
-    }
-    AclsanStatus unsubscribeStatus = ACLSAN_STATUS_SUCCESS;
-    if (subscribed_) {
-        unsubscribeStatus = aclsanUnsubscribe(subscriber_);
-        subscribed_ = false;
-        subscriber_ = nullptr;
-    }
-    {
-        std::unique_lock<std::mutex> callbackLock(callbackMutex_);
-        callbacksDrained_.wait(callbackLock, [this] { return activeCallbacks_ == 0; });
-    }
-
     CheckerReportList finalReports;
     {
         std::lock_guard<std::mutex> stateLock(stateMutex_);
+        DrainSynchronizations(finalReports);
+        DrainOperatorExecutions(finalReports);
+        if (!deferredOperators_.empty()) {
+            ++frameworkErrors_;
+            ASCTOOL_ERROR("operator completion dependencies unresolved: count=%zu", deferredOperators_.size());
+            deferredOperators_.clear();
+        }
         for (auto& checker : checkers_) {
             try {
                 checker->Finalize(finalReports);
@@ -200,11 +208,10 @@ void ToolManager::Finalize()
         }
     }
     StoreReports(std::move(finalReports));
+}
 
-    // 当前不再发布实时诊断；停掉 publisher 线程后，Result 独占后续线路，且
-    // dropped_messages 才是最终值。
-    server_.StopPublisher();
-
+bool ToolManager::RenderSessionReport()
+{
     std::vector<npucheck::ReportRecord> reportRecords;
     {
         std::lock_guard<std::mutex> stateLock(stateMutex_);
@@ -212,16 +219,45 @@ void ToolManager::Finalize()
     }
     std::string renderedReport;
     const auto renderStatus = npucheck::RenderReportBundle(reportRecords, {}, &renderedReport);
-    const bool reportBundleAvailable = renderStatus == npucheck::ReportRenderStatus::SUCCESS;
-    if (!reportBundleAvailable) {
+    if (renderStatus != npucheck::ReportRenderStatus::SUCCESS) {
         {
             std::lock_guard<std::mutex> stateLock(stateMutex_);
             ++frameworkErrors_;
         }
         ASCTOOL_ERROR("failed to render the session report bundle status=%d", static_cast<int>(renderStatus));
-    } else if (!report_.Append(renderedReport) && !report_.Truncated()) {
+        return false;
+    }
+    if (!report_.Append(renderedReport) && !report_.Truncated()) {
         ASCTOOL_ERROR("failed to record the rendered session report bundle");
     }
+    return true;
+}
+
+void ToolManager::Finalize()
+{
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+    if (!initialized_ && !subscribed_) {
+        return;
+    }
+    AclsanStatus unsubscribeStatus = ACLSAN_STATUS_SUCCESS;
+    if (subscribed_) {
+        unsubscribeStatus = aclsanUnsubscribe(subscriber_);
+        subscribed_ = false;
+        subscriber_ = nullptr;
+    }
+    {
+        std::unique_lock<std::mutex> callbackLock(callbackMutex_);
+        stopping_ = true;
+        callbacksDrained_.wait(callbackLock, [this] { return activeCallbacks_ == 0; });
+        callbacksClosed_ = true;
+    }
+
+    FinalizeCheckers();
+
+    // 当前不再发布实时诊断；停掉 publisher 线程后，Result 独占后续线路，且
+    // dropped_messages 才是最终值。
+    server_.StopPublisher();
+    const bool reportBundleAvailable = RenderSessionReport();
 
     const std::string summary = BuildAndLogSummaryMessage();
     // 多工具时取"全部工具都分析完整"，任一工具留有在途或被丢弃的事件，整份报告就
@@ -249,6 +285,12 @@ void ToolManager::Finalize()
     // 信任这份结论由 Result 末帧的标志位表达，正文只负责让人读懂发生了什么。
     std::ostringstream trailer;
     trailer << "===== npu_check summary =====\n" << summary << '\n' << sessionEnd.str() << '\n';
+    {
+        std::lock_guard<std::mutex> stateLock(stateMutex_);
+        for (const auto& reason : frameworkErrorReasons_) {
+            trailer << "framework error: " << reason << '\n';
+        }
+    }
     (void)report_.Append(trailer.str());
 
     const bool hasErrors = HasDetectedErrors();
@@ -293,7 +335,7 @@ void ToolManager::Callback(
     if (service == nullptr) {
         return;
     }
-    if (!service->EnterCallback()) {
+    if (!service->EnterCallback(domain)) {
         return;
     }
     ActiveCallbackGuard callbackGuard(*service);
@@ -306,10 +348,11 @@ void ToolManager::Callback(
     }
 }
 
-bool ToolManager::EnterCallback()
+bool ToolManager::EnterCallback(AclsanCallbackDomain domain)
 {
     std::lock_guard<std::mutex> lock(callbackMutex_);
-    if (stopping_) {
+    // Unsubscribe may deliver a final framework ERROR after normal callbacks stop.
+    if (callbacksClosed_ || (stopping_ && domain != ACLSAN_CB_DOMAIN_ERROR)) {
         return false;
     }
     ++activeCallbacks_;
@@ -327,15 +370,157 @@ void ToolManager::LeaveCallback()
     }
 }
 
+void ToolManager::QueueSynchronization(const void* cbdata) noexcept
+{
+    try {
+        if (cbdata == nullptr) {
+            synchronizationLost_.store(true);
+            return;
+        }
+        const auto& common = *static_cast<const AclsanCallbackCommonData*>(cbdata);
+        if (common.version != ACLSAN_API_VERSION || common.size < sizeof(AclsanSynchronizeData)) {
+            synchronizationLost_.store(true);
+            return;
+        }
+        auto data = *static_cast<const AclsanSynchronizeData*>(cbdata);
+        data.common.apiName = nullptr;
+        std::lock_guard<std::mutex> lock(synchronizationMutex_);
+        if (synchronizations_.size() >= MAX_DEFERRED_SYNCHRONIZATIONS) {
+            synchronizationLost_.store(true);
+            return;
+        }
+        synchronizations_.push_back({data, std::this_thread::get_id()});
+    } catch (...) {
+        synchronizationLost_.store(true);
+    }
+}
+
+void ToolManager::DrainSynchronizations(CheckerReportList& reports)
+{
+    std::vector<DeferredSynchronization> pending;
+    {
+        std::lock_guard<std::mutex> lock(synchronizationMutex_);
+        pending.swap(synchronizations_);
+    }
+    if (synchronizationLost_.exchange(false)) {
+        ++frameworkErrors_;
+        ASCTOOL_ERROR("stream synchronization observation was lost");
+    }
+    for (const auto& sync : pending) {
+        if (!memoryAnalysis_->RecordSynchronization(sync.data, sync.thread)) {
+            ++malformedCallbacks_;
+            continue;
+        }
+        NotifyCheckersLocked(
+            ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync.data, reports);
+    }
+}
+
+void ToolManager::DrainOperatorExecutions(CheckerReportList& reports)
+{
+    bool progressed = true;
+    while (progressed) {
+        progressed = false;
+        for (size_t index = 0; index < deferredOperators_.size(); ++index) {
+            if (memoryAnalysis_->HasUnfinishedPredecessor(deferredOperators_[index].launchId))
+                continue;
+            const auto data = deferredOperators_[index];
+            deferredOperators_.erase(deferredOperators_.begin() + static_cast<std::ptrdiff_t>(index));
+            ProcessCallbackLocked(
+                ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &data, reports);
+            progressed = true;
+            break;
+        }
+    }
+}
+
+void ToolManager::ProcessCallbackLocked(
+    AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata, CheckerReportList& reports)
+{
+    struct EventGuard {
+        MemoryAnalysis& analysis;
+        ~EventGuard() { analysis.EndCallback(); }
+    } eventGuard{*memoryAnalysis_};
+    if (!memoryAnalysis_->BeginCallback(domain, cbid, cbdata)) {
+        ++malformedCallbacks_;
+        return;
+    }
+    NotifyCheckersLocked(domain, cbid, cbdata, reports);
+}
+
+void ToolManager::NotifyCheckersLocked(
+    AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata, CheckerReportList& reports)
+{
+    for (const auto& checker : checkers_) {
+        if (!checker->IsSubscribed(domain, cbid))
+            continue;
+        try {
+            if (!checker->OnCallback(domain, cbid, cbdata, reports))
+                ++malformedCallbacks_;
+        } catch (const std::exception& error) {
+            ++frameworkErrors_;
+            ASCTOOL_ERROR("checker callback failed: %s", error.what());
+        } catch (...) {
+            ++frameworkErrors_;
+            ASCTOOL_ERROR("checker callback failed");
+        }
+    }
+}
+
+bool ToolManager::DeferOperatorCompletionLocked(AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata)
+{
+    if (domain != ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION || cbid != ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE) {
+        return false;
+    }
+    const auto& common = *static_cast<const AclsanCallbackCommonData*>(cbdata);
+    if (common.version != ACLSAN_API_VERSION || common.size < sizeof(AclsanOperatorExecutionData)) {
+        return false;
+    }
+    auto event = *static_cast<const AclsanOperatorExecutionData*>(cbdata);
+    if (!memoryAnalysis_->HasUnfinishedPredecessor(event.launchId)) {
+        return false;
+    }
+    const bool duplicate = std::any_of(
+        deferredOperators_.begin(), deferredOperators_.end(),
+        [launchId = event.launchId](const auto& pending) { return pending.launchId == launchId; });
+    if (duplicate) {
+        ++malformedCallbacks_;
+    } else if (deferredOperators_.size() >= MAX_DEFERRED_OPERATORS) {
+        ++frameworkErrors_;
+        ASCTOOL_ERROR("operator completion queue capacity exceeded");
+    } else {
+        event.common.apiName = nullptr;
+        deferredOperators_.push_back(event);
+    }
+    return true;
+}
+
 void ToolManager::OnCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata)
 {
     LogCallback(domain, cbid, cbdata);
-    if (!cbdata) {
+    if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE && cbid == ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END) {
+        QueueSynchronization(cbdata);
+        return;
+    }
+    if (cbdata == nullptr) {
         LogMalformed(domain, cbid, "null callback data");
         {
             std::lock_guard<std::mutex> stateLock(stateMutex_);
             ++malformedCallbacks_;
         }
+        return;
+    }
+    if (domain == ACLSAN_CB_DOMAIN_ERROR) {
+        const auto& common = *static_cast<const AclsanCallbackCommonData*>(cbdata);
+        std::lock_guard<std::mutex> stateLock(stateMutex_);
+        if (common.version != ACLSAN_API_VERSION || common.size < sizeof(common)) {
+            ++malformedCallbacks_;
+            LogMalformed(domain, cbid, "invalid error callback data");
+            return;
+        }
+        ++frameworkErrors_;
+        frameworkErrorReasons_.emplace_back(common.apiName != nullptr ? common.apiName : "unspecified");
+        ASCTOOL_ERROR("framework error: %s result=%d", frameworkErrorReasons_.back().c_str(), common.result);
         return;
     }
     if (domain == ACLSAN_CB_DOMAIN_LAUNCH && cbid == ACLSAN_CBID_LAUNCH_KERNEL_BEFORE &&
@@ -359,27 +544,11 @@ void ToolManager::OnCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid,
     CheckerReportList reports;
     {
         std::lock_guard<std::mutex> stateLock(stateMutex_);
-        if (!memoryAnalysis_->BeginCallback(domain, cbid, cbdata))
-            ++malformedCallbacks_;
-        struct EventGuard {
-            MemoryAnalysis& analysis;
-            ~EventGuard() { analysis.EndCallback(); }
-        } eventGuard{*memoryAnalysis_};
-        for (const auto& checker : checkers_) {
-            if (!checker->IsSubscribed(domain, cbid)) {
-                continue;
-            }
-            try {
-                if (!checker->OnCallback(domain, cbid, cbdata, reports))
-                    ++malformedCallbacks_;
-            } catch (const std::exception& error) {
-                ++frameworkErrors_;
-                ASCTOOL_ERROR("checker callback failed: %s", error.what());
-            } catch (...) {
-                ++frameworkErrors_;
-                ASCTOOL_ERROR("checker callback failed");
-            }
+        DrainSynchronizations(reports);
+        if (!DeferOperatorCompletionLocked(domain, cbid, cbdata)) {
+            ProcessCallbackLocked(domain, cbid, cbdata, reports);
         }
+        DrainOperatorExecutions(reports);
     }
     StoreReports(std::move(reports));
 }

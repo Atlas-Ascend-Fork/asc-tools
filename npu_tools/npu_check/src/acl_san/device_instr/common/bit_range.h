@@ -31,7 +31,7 @@ inline uint64_t ExtractBitRange(uint64_t value, BitRange range) noexcept
             static_cast<unsigned int>(range.begin), static_cast<unsigned int>(range.end));
         return 0;
     }
-    const uint8_t width = range.end - range.begin + 1;
+    const auto width = static_cast<unsigned int>(range.end) - static_cast<unsigned int>(range.begin) + 1U;
     const uint64_t mask = width == std::numeric_limits<uint64_t>::digits ? std::numeric_limits<uint64_t>::max() :
                                                                            (UINT64_C(1) << width) - UINT64_C(1);
     return (value >> range.begin) & mask;

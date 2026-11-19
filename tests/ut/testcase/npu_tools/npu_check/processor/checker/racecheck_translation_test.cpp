@@ -8,15 +8,40 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "acl_san/aclsan_cbdata_operator.h"
 #include "checker/racecheck.h"
 #include "checker/initcheck.h"
 #include "aclsan_device_data.h"
 #include "aclsan_register_dependency.h"
 #include "device_instr/arch/dav_3510/decoder.h"
+#include "injection/injection_hook.h"
 #include <gtest/gtest.h>
 
 namespace {
 using namespace aclsan;
+
+aclError GetTranslationKernelAttribute(aclrtFuncHandle, aclrtFuncAttribute attribute, int64_t* value)
+{
+    switch (attribute) {
+        case ACL_FUNC_ATTR_KERNEL_TYPE:
+            *value = ACL_KERNEL_TYPE_MIX;
+            return ACL_SUCCESS;
+        case ACL_FUNC_ATTR_KERNEL_RATIO:
+            *value = 0x00010002;
+            return ACL_SUCCESS;
+        default:
+            return ACL_ERROR_RT_FEATURE_NOT_SUPPORT;
+    }
+}
+} // namespace
+
+extern "C" void* acltoolGetOriginalRuntimeApi(aclrtApiId apiId)
+{
+    return apiId == ACL_RT_API_aclrtGetFunctionAttribute ? reinterpret_cast<void*>(&GetTranslationKernelAttribute) :
+                                                           nullptr;
+}
+
+namespace {
 TEST(RacecheckTranslation, SharedCrossCoreInstructionsRetainCallbackFormat)
 {
     for (uint32_t id : {447U, 468U, 445U, 446U, 469U, 470U, 452U, 453U, 464U, 465U, 454U, 455U, 466U, 467U}) {
@@ -136,11 +161,11 @@ TEST(RacecheckTranslation, DecodedUnitFlagsDoNotOrderFixGmOrL1Writes)
                     ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
             }
         }
-        AclsanSynchronizeData end{};
-        end.common.version = ACLSAN_API_VERSION;
-        end.common.size = sizeof(end);
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+        AclsanOperatorExecutionData end{};
+        end.common = {ACLSAN_API_VERSION, sizeof(end)};
+        end.launchId = launch.launchId;
+        ASSERT_TRUE(checker.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &end, reports));
         checker.Finalize(reports);
         EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
         ASSERT_FALSE(reports.empty()) << checker.Summary();
@@ -191,6 +216,7 @@ TEST(RacecheckTranslation, DecodedFixToUbUsesAicSynchronizationForEveryDestinati
                         npucheck::CheckerReportList reports;
                         AclsanLaunchData launch{};
                         launch.launchId = 994;
+                        launch.numBlocks = 1;
                         launch.common = {ACLSAN_API_VERSION, sizeof(launch)};
                         ASSERT_TRUE(
                             checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
@@ -282,10 +308,12 @@ TEST(RacecheckTranslation, DecodedFixToUbUsesAicSynchronizationForEveryDestinati
                             emit(access, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
                         }
                         EXPECT_EQ(targets, destination >= 2 ? 2U : 1U);
-                        AclsanSynchronizeData end{};
+                        AclsanOperatorExecutionData end{};
                         end.common = {ACLSAN_API_VERSION, sizeof(end)};
+                        end.launchId = launch.launchId;
                         ASSERT_TRUE(checker.OnCallback(
-                            ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+                            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &end,
+                            reports));
                         checker.Finalize(reports);
                         EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
                         if (synchronize) {
@@ -401,11 +429,11 @@ TEST(RacecheckTranslation, RawCopyFlagLoadUsesExistingCallbacks)
             emit(3, 442, ACLSAN_DEVICE_PIPE_SCALAR, {4, 3, 0, 0});
         }
         emit(4, 141, ACLSAN_DEVICE_PIPE_MTE1, {0, 0x100, (1ULL << 32) | (1ULL << 40), 1});
-        AclsanSynchronizeData end{};
-        end.common.version = ACLSAN_API_VERSION;
-        end.common.size = sizeof(end);
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+        AclsanOperatorExecutionData end{};
+        end.common = {ACLSAN_API_VERSION, sizeof(end)};
+        end.launchId = launch.launchId;
+        ASSERT_TRUE(checker.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &end, reports));
         checker.Finalize(reports);
         EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
         EXPECT_EQ(reports.size(), synchronized ? 0U : 1U);
@@ -456,11 +484,11 @@ TEST(RacecheckTranslation, GmWritesWithoutCtrlParticipateInRaceDetection)
                     ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
             }
         }
-        AclsanSynchronizeData end{};
-        end.common.version = ACLSAN_API_VERSION;
-        end.common.size = sizeof(end);
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+        AclsanOperatorExecutionData end{};
+        end.common = {ACLSAN_API_VERSION, sizeof(end)};
+        end.launchId = launch.launchId;
+        ASSERT_TRUE(checker.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &end, reports));
         EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
         ASSERT_EQ(reports.size(), 1U);
         const auto& report = std::get<npucheck::NpuCheckRacecheckReport>(reports[0]);
@@ -497,11 +525,11 @@ TEST(RacecheckTranslation, MissingRegisterStateEstimatedCallbackMakesCoverageInc
     for (const auto& access : accesses)
         ASSERT_TRUE(checker.OnCallback(
             ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
-    AclsanSynchronizeData end{};
-    end.common.version = ACLSAN_API_VERSION;
-    end.common.size = sizeof(end);
-    ASSERT_TRUE(
-        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+    AclsanOperatorExecutionData end{};
+    end.common = {ACLSAN_API_VERSION, sizeof(end)};
+    end.launchId = launch.launchId;
+    ASSERT_TRUE(checker.OnCallback(
+        ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &end, reports));
     EXPECT_FALSE(checker.AnalysisComplete());
     EXPECT_TRUE(reports.empty());
     EXPECT_NE(checker.Summary().find("skipped_memory_events=1"), std::string::npos);
@@ -518,6 +546,10 @@ TEST(InitcheckTranslation, UbToL1FollowsIssuingVectorNotification)
                 npucheck::CheckerReportList reports;
                 ParsedTraceRecord raw{};
                 raw.launchId = 2001;
+                AclsanLaunchData launch{};
+                launch.common = {ACLSAN_API_VERSION, sizeof(launch)};
+                launch.launchId = raw.launchId;
+                ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
                 raw.instrExecId = 10;
                 raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
                 raw.blockId = sub;
@@ -578,10 +610,11 @@ TEST(InitcheckTranslation, UbToL1FollowsIssuingVectorNotification)
                 for (const auto& access : *accesses)
                     ASSERT_TRUE(checker.OnCallback(
                         ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
-                AclsanSynchronizeData end{};
+                AclsanOperatorExecutionData end{};
                 end.common = {ACLSAN_API_VERSION, sizeof(end)};
+                end.launchId = launch.launchId;
                 ASSERT_TRUE(checker.OnCallback(
-                    ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+                    ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &end, reports));
                 EXPECT_EQ(checker.AnalysisComplete(), notify) << checker.Summary();
                 if (notify && writeBytes < 128) {
                     ASSERT_EQ(reports.size(), 1U) << checker.Summary();
@@ -608,6 +641,7 @@ TEST(RacecheckTranslation, UbL1TransfersUseIssuerOrderAndKeepStorageOwnersIsolat
                     npucheck::CheckerReportList reports;
                     AclsanLaunchData launch{};
                     launch.launchId = 2002;
+                    launch.numBlocks = otherOwner ? 2 : 1;
                     launch.common = {ACLSAN_API_VERSION, sizeof(launch)};
                     ASSERT_TRUE(
                         checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
@@ -655,9 +689,9 @@ TEST(RacecheckTranslation, UbL1TransfersUseIssuerOrderAndKeepStorageOwnersIsolat
                         wait.header.size = sizeof(wait);
                         wait.header.instrExecId = 2;
                         wait.header.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
-                        wait.syncKind = ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG;
-                        wait.scope = ACLSAN_DEVICE_SYNC_SCOPE_CORE;
-                        wait.mode = ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
+                        wait.header.sourceKind = ACLSAN_DEVICE_SOURCE_CROSS_CORE_SYNC;
+                        wait.syncKind = ACLSAN_DEVICE_SYNC_KIND_INTRA_BLOCK;
+                        wait.scope = ACLSAN_DEVICE_SYNC_SCOPE_DEVICE;
                         wait.action = ACLSAN_DEVICE_SYNC_ACTION_WAIT;
                         wait.dstPipe = read.header.pipeline;
                         wait.objectId = toL1 ? 1 + 16 * sub : 1;
@@ -667,6 +701,7 @@ TEST(RacecheckTranslation, UbL1TransfersUseIssuerOrderAndKeepStorageOwnersIsolat
                         set.header.executor.blockId = raw.blockId;
                         set.header.executor.phyCoreId = raw.phyCoreId;
                         set.action = ACLSAN_DEVICE_SYNC_ACTION_SET;
+                        set.mode = ACLSAN_DEVICE_SYNC_MODE_SINGLE_AIV;
                         set.srcPipe = raw.record.pipeline;
                         set.dstPipe = 0;
                         set.objectId = toL1 ? 1 : 1 + 16 * sub;
@@ -682,10 +717,11 @@ TEST(RacecheckTranslation, UbL1TransfersUseIssuerOrderAndKeepStorageOwnersIsolat
                     emit(read, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
                     for (const auto& access : *accesses)
                         emit(access, ACLSAN_CBID_DEVICE_MEMORY_ACCESS);
-                    AclsanSynchronizeData end{};
+                    AclsanOperatorExecutionData end{};
                     end.common = {ACLSAN_API_VERSION, sizeof(end)};
+                    end.launchId = launch.launchId;
                     ASSERT_TRUE(checker.OnCallback(
-                        ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+                        ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &end, reports));
                     checker.Finalize(reports);
                     EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
                     EXPECT_EQ(reports.empty(), notify || otherOwner) << checker.Summary();

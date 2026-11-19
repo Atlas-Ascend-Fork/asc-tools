@@ -541,6 +541,274 @@ std::string ScreenNotice(const ResultSummary& summary)
     return {};
 }
 
+namespace {
+
+bool PrepareSession(
+    const Options& options, std::string& sessionDirectory, uint64_t& sessionId, std::string& workDir,
+    std::string& udsName, std::string& error)
+{
+    if (!CreateSessionDirectory(sessionDirectory, error)) {
+        LogInfraDetail(error);
+        return false;
+    }
+
+    // 会话标识：它在每一帧都被校验，覆盖面严格大于原先只在 Hello 校验一次的 nonce，
+    // 因此 nonce 已删除（见 wire_protocol.h 的说明）。
+    if (!RandomBytes(&sessionId, sizeof(sessionId)) || sessionId == 0) {
+        LogInfraDetail("cannot generate session identity");
+        return false;
+    }
+
+    // --work-dir 只控制 CLI 会话日志。DBI 使用自己管理的私有 runtime/cache 目录。
+    workDir = options.workDir.empty() ? sessionDirectory : options.workDir;
+    if (!EnsureDirectory(workDir, error)) {
+        LogInfraDetail(error);
+        return false;
+    }
+
+    const std::string& logPath = options.logFile;
+    if (!logPath.empty() && !ValidateLogFilePath(logPath, error)) {
+        LogInfraDetail(error);
+        return false;
+    }
+
+    // UDS 地址走抽象命名空间，不在文件系统里创建 socket 文件。前导 '@' 是与注入库之间
+    // 的书写约定，两端填 sockaddr_un 时会把它换成 '\0'（见 BuildAbstractAddress）。
+    // 随机部分保证并发实例之间不撞车；它不是秘密 —— /proc/net/unix 任何 UID 都能读到，
+    // 身份校验完全由 SO_PEERCRED 承担。
+    const std::string udsSuffix = HexRandom();
+    if (udsSuffix.empty()) {
+        LogInfraDetail("cannot generate a UDS address");
+        return false;
+    }
+    udsName = "@npu_check-" + udsSuffix;
+    return true;
+}
+
+[[noreturn]] void ExecApplication(
+    const Options& options, const std::string& libraryPath, const std::string& udsName, uint64_t sessionId,
+    const std::string& workDir, SignalBlocker& signalBlocker, UniqueFd& consoleRead, UniqueFd& consoleWrite)
+{
+    constexpr int CHILD_SETUP_ERROR_EXIT_CODE = 127;
+    if (setpgid(0, 0) != 0) {
+        dprintf(STDERR_FILENO, "npu_check: setpgid failed: %s\n", std::strerror(errno));
+        _exit(CHILD_SETUP_ERROR_EXIT_CODE);
+    }
+    if (!signalBlocker.Restore()) {
+        dprintf(STDERR_FILENO, "npu_check: cannot restore child signal mask\n");
+        _exit(CHILD_SETUP_ERROR_EXIT_CODE);
+    }
+    consoleRead.Reset();
+    if (dup2(consoleWrite.Get(), STDOUT_FILENO) < 0 || dup2(consoleWrite.Get(), STDERR_FILENO) < 0) {
+        _exit(CHILD_SETUP_ERROR_EXIT_CODE);
+    }
+    consoleWrite.Reset();
+    const std::string sessionText = std::to_string(sessionId);
+    const std::string parentText = std::to_string(getppid());
+    const std::string timeoutText = std::to_string(options.handshakeTimeoutMs);
+    (void)setenv("ACL_API_INJECTION", libraryPath.c_str(), 1);
+    (void)setenv(npucheck::ipc::UDS_NAME_ENV, udsName.c_str(), 1);
+    (void)setenv(npucheck::ipc::SESSION_ID_ENV, sessionText.c_str(), 1);
+    (void)setenv(npucheck::ipc::CLI_PID_ENV, parentText.c_str(), 1);
+    (void)setenv(npucheck::ipc::HANDSHAKE_TIMEOUT_ENV, timeoutText.c_str(), 1);
+    // 工作目录经环境变量下发：Configure 改用注册表编码后只承载工具与子选项，
+    // 路径这类与协议无关的部署信息不再占线路。
+    (void)setenv(npucheck::ipc::WORK_DIR_ENV, workDir.c_str(), 1);
+    auto arguments = options.application;
+    auto argv = BuildArgv(arguments);
+    execvp(argv[0], argv.data());
+    dprintf(STDERR_FILENO, "npu_check: execvp failed: %s\n", std::strerror(errno));
+    _exit(CHILD_SETUP_ERROR_EXIT_CODE);
+}
+
+void ReadConsole(OutputSink& output, const std::atomic<bool>& childExited, const UniqueFd& fd)
+{
+    constexpr size_t CONSOLE_BUFFER_SIZE = 8192;
+    constexpr int CONSOLE_POLL_INTERVAL_MS = 100;
+    std::array<char, CONSOLE_BUFFER_SIZE> buffer{};
+    std::chrono::steady_clock::time_point drainDeadline{};
+    while (true) {
+        pollfd descriptor{};
+        descriptor.fd = fd.Get();
+        descriptor.events = POLLIN;
+        int pollResult = 0;
+        do {
+            pollResult = poll(&descriptor, 1, CONSOLE_POLL_INTERVAL_MS);
+        } while (pollResult < 0 && errno == EINTR);
+        if (pollResult < 0 || (static_cast<unsigned int>(descriptor.revents) &
+                               (static_cast<unsigned int>(POLLERR) | static_cast<unsigned int>(POLLNVAL))) != 0) {
+            break;
+        }
+        if ((static_cast<unsigned int>(descriptor.revents) & POLLIN) != 0) {
+            const ssize_t bytes = read(fd.Get(), buffer.data(), buffer.size());
+            if (bytes < 0 && errno == EINTR) {
+                continue;
+            }
+            if (bytes <= 0) {
+                break;
+            }
+            output.Console(buffer.data(), static_cast<size_t>(bytes));
+        } else if ((static_cast<unsigned int>(descriptor.revents) & POLLHUP) != 0) {
+            break;
+        }
+        if (!childExited.load()) {
+            continue;
+        }
+        if (drainDeadline.time_since_epoch().count() == 0) {
+            drainDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        } else if (std::chrono::steady_clock::now() >= drainDeadline) {
+            break;
+        }
+    }
+}
+
+struct ReceivedReport {
+    explicit ReceivedReport(bool handshake) : protocolComplete(handshake) {}
+
+    // Only the receiver writes the report; the main thread reads it after joining.
+    std::string result;
+    std::atomic<bool> resultComplete{false};
+    std::atomic<bool> resultHasErrors{false};
+    std::atomic<bool> resultTruncated{false};
+    std::atomic<uint64_t> resultFrames{0};
+    std::atomic<bool> protocolComplete;
+};
+
+void ReceiveReport(
+    ipc::UdsClient& client, const std::atomic<bool>& childExited, OutputSink& output, ReceivedReport& received)
+{
+    while (true) {
+        npucheck::ipc::Frame frame{};
+        std::string receiveError;
+        // 采集阶段不设超时：应用可能跑数小时，任何固定值都是错的。终止由
+        // 对端关闭连接（CLOSED）或子进程退出驱动，见下面的分支。
+        const npucheck::ipc::IoStatus status = client.Receive(frame, npucheck::ipc::NO_DEADLINE, receiveError);
+        if (status == npucheck::ipc::IoStatus::CLOSED) {
+            break;
+        }
+        if (status == npucheck::ipc::IoStatus::TIMEOUT) {
+            if (childExited.load()) {
+                break;
+            }
+            continue;
+        }
+        if (status != npucheck::ipc::IoStatus::OK) {
+            received.protocolComplete = false;
+            output.Detail("UDS receive failed: " + receiveError);
+            break;
+        }
+        if (frame.type == npucheck::ipc::MessageType::RESULT) {
+            std::string message;
+            if (!npucheck::ipc::DecodeText(frame.payload, message, receiveError)) {
+                received.protocolComplete = false;
+                output.Detail("UDS payload failed: " + receiveError);
+                break;
+            }
+            // 上限与注入库侧共用同一个常量：对端异常时不能让 CLI 一直吃内存。
+            if (received.result.size() + message.size() > npucheck::ipc::MAX_RESULT_BYTES) {
+                received.protocolComplete = false;
+                output.Detail("result exceeds the maximum report size");
+                break;
+            }
+            received.result.append(message);
+            ++received.resultFrames;
+            if ((frame.flags & npucheck::ipc::FLAG_MORE) != 0) {
+                continue;
+            }
+            // MORE=0 的末帧到达即报告完整；结论位只在这一帧上有效，前面的分片
+            // 不带任何结论，所以这里必须读末帧的 flags 而不是任意一帧的。
+            received.resultHasErrors = (frame.flags & npucheck::ipc::FLAG_HAS_ERRORS) != 0;
+            received.resultTruncated = (frame.flags & npucheck::ipc::FLAG_TRUNCATED) != 0;
+            received.resultComplete = true;
+            break;
+        }
+        if (frame.type == npucheck::ipc::MessageType::ERROR) {
+            // Error 表示注入库侧基础设施失败，本次检查没有可信结论，不再等 Result。
+            received.protocolComplete = false;
+            npucheck::ipc::ErrorPayload failure{};
+            std::string decodeError;
+            if (!npucheck::ipc::DecodeError(frame.payload, failure, decodeError)) {
+                output.Detail("ERROR malformed error payload: " + decodeError);
+                break;
+            }
+            // domain/code 是稳定取值进结构化日志，message 只原样转述给人看，
+            // 不参与任何判定。
+            ASCTOOL_DEBUG(
+                "[UDS] phase=error domain=%u code=%u", static_cast<unsigned>(failure.domain),
+                static_cast<unsigned>(failure.code));
+            output.Detail("ERROR " + failure.message);
+            break;
+        }
+        // 其余都是 must-ignore 的实时诊断，收到即打印，不进拼接缓冲。
+        std::string message;
+        if (!npucheck::ipc::DecodeText(frame.payload, message, receiveError)) {
+            received.protocolComplete = false;
+            output.Sanitizer("UDS payload failed: " + receiveError, true);
+            break;
+        }
+        output.Sanitizer(std::string(npucheck::ipc::MessageTypeName(frame.type)) + " " + message, true);
+    }
+}
+
+void KillProcessGroupAndWait(pid_t child)
+{
+    if (kill(-child, SIGKILL) != 0) {
+        (void)kill(child, SIGKILL);
+    }
+    (void)waitpid(child, nullptr, 0);
+}
+
+int FinishApplication(
+    const Options& options, OutputSink& output, const ReceivedReport& received, bool handshake, int childStatus,
+    bool childStatusAvailable, ResultSummary& summary)
+{
+    const int childExit = childStatusAvailable ? ChildExitCode(childStatus) : INFRASTRUCTURE_ERROR_EXIT_CODE;
+
+    // 判定顺序是固定的：先看有没有收到 MORE=0 的末帧，再看是不是被 Error 打断，
+    // 最后才是"连接断了但报告没收全"。
+    if (received.resultComplete.load()) {
+        ASCTOOL_DEBUG(
+            "[UDS] phase=result frames=%llu bytes=%zu truncated=%d has_errors=%d",
+            static_cast<unsigned long long>(received.resultFrames.load()), received.result.size(),
+            static_cast<int>(received.resultTruncated.load()), static_cast<int>(received.resultHasErrors.load()));
+        output.Report(received.result);
+        if (received.resultTruncated.load()) {
+            output.Sanitizer("report truncated: the diagnostic buffer reached its size limit", true);
+        }
+    } else if (handshake) {
+        // 报告缺失或截断：已经收到的分片一律丢弃。半份报告看上去和完整报告没有区别，
+        // 输出它等于让用户把"没查到问题"和"没查完"混为一谈。
+        ASCTOOL_DEBUG(
+            "[UDS] phase=result frames=%llu bytes=%zu truncated=unknown has_errors=unknown",
+            static_cast<unsigned long long>(received.resultFrames.load()), received.result.size());
+        output.Detail("result missing or truncated; the partial report was discarded");
+    }
+
+    summary.truncated = received.resultTruncated.load();
+    summary.childExit = childStatusAvailable ? FormatChildExit(childStatus) : "unknown";
+    int exitCode = 0;
+    if (!handshake || !received.protocolComplete.load() || !received.resultComplete.load() || !childStatusAvailable) {
+        // 基础设施失败：拿不到可信结论，退 125 与应用自身的退出码区分开。
+        // has_errors 保持 unknown —— 没收到完整 Result 就没有结论可言。
+        summary.outcome = Outcome::INFRA_FAILED;
+        exitCode = INFRASTRUCTURE_ERROR_EXIT_CODE;
+    } else {
+        summary.hasErrors = received.resultHasErrors.load() ? 1 : 0;
+        // 默认透传应用退出码：检出问题不等于运行失败，是否要让 CI 挂掉由调用方决定。
+        // 只有显式指定 --error-exitcode 时才用它覆盖。
+        exitCode = childExit;
+        if (received.resultHasErrors.load() && options.errorExitCode != 0) {
+            exitCode = options.errorExitCode;
+        }
+        // 检出问题不算 app_failed：检查跑完了、报告也拿到了，结论由 has_errors 承载。
+        summary.outcome = childExit == 0 ? Outcome::FORWARDED : Outcome::APP_FAILED;
+    }
+    summary.exit = exitCode;
+    return exitCode;
+}
+
+} // namespace
+
 int RunApplication(const Options& options, const std::string& libraryPath)
 {
     // 摘要必须在任何返回路径上都落一次 plog、终端提示也只在这一处统一给出，因此用
@@ -561,42 +829,13 @@ int RunApplication(const Options& options, const std::string& libraryPath)
 
     std::string sessionDirectory;
     std::string error;
-    if (!CreateSessionDirectory(sessionDirectory, error)) {
-        LogInfraDetail(error);
-        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
-    }
-
-    // 会话标识：它在每一帧都被校验，覆盖面严格大于原先只在 Hello 校验一次的 nonce，
-    // 因此 nonce 已删除（见 wire_protocol.h 的说明）。
     uint64_t sessionId = 0;
-    if (!RandomBytes(&sessionId, sizeof(sessionId)) || sessionId == 0) {
-        LogInfraDetail("cannot generate session identity");
+    std::string workDir;
+    std::string udsName;
+    if (!PrepareSession(options, sessionDirectory, sessionId, workDir, udsName, error)) {
         return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
-
-    // --work-dir 只控制 CLI 会话日志。DBI 使用自己管理的私有 runtime/cache 目录。
-    const std::string workDir = options.workDir.empty() ? sessionDirectory : options.workDir;
-    if (!EnsureDirectory(workDir, error)) {
-        LogInfraDetail(error);
-        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
-    }
-
     const std::string& logPath = options.logFile;
-    if (!logPath.empty() && !ValidateLogFilePath(logPath, error)) {
-        LogInfraDetail(error);
-        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
-    }
-
-    // UDS 地址走抽象命名空间，不在文件系统里创建 socket 文件。前导 '@' 是与注入库之间
-    // 的书写约定，两端填 sockaddr_un 时会把它换成 '\0'（见 BuildAbstractAddress）。
-    // 随机部分保证并发实例之间不撞车；它不是秘密 —— /proc/net/unix 任何 UID 都能读到，
-    // 身份校验完全由 SO_PEERCRED 承担。
-    const std::string udsSuffix = HexRandom();
-    if (udsSuffix.empty()) {
-        LogInfraDetail("cannot generate a UDS address");
-        return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
-    }
-    const std::string udsName = "@npu_check-" + udsSuffix;
     OutputSink output(logPath);
     if (!output.Good()) {
         LogInfraDetail("cannot open '" + logPath + "' for writing");
@@ -637,36 +876,7 @@ int RunApplication(const Options& options, const std::string& libraryPath)
         return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
     if (child == 0) {
-        constexpr int CHILD_SETUP_ERROR_EXIT_CODE = 127;
-        if (setpgid(0, 0) != 0) {
-            dprintf(STDERR_FILENO, "npu_check: setpgid failed: %s\n", std::strerror(errno));
-            _exit(CHILD_SETUP_ERROR_EXIT_CODE);
-        }
-        if (!signalBlocker.Restore()) {
-            dprintf(STDERR_FILENO, "npu_check: cannot restore child signal mask\n");
-            _exit(CHILD_SETUP_ERROR_EXIT_CODE);
-        }
-        consoleRead.Reset();
-        if (dup2(consoleWrite.Get(), STDOUT_FILENO) < 0 || dup2(consoleWrite.Get(), STDERR_FILENO) < 0) {
-            _exit(CHILD_SETUP_ERROR_EXIT_CODE);
-        }
-        consoleWrite.Reset();
-        const std::string sessionText = std::to_string(sessionId);
-        const std::string parentText = std::to_string(getppid());
-        const std::string timeoutText = std::to_string(options.handshakeTimeoutMs);
-        (void)setenv("ACL_API_INJECTION", libraryPath.c_str(), 1);
-        (void)setenv(npucheck::ipc::UDS_NAME_ENV, udsName.c_str(), 1);
-        (void)setenv(npucheck::ipc::SESSION_ID_ENV, sessionText.c_str(), 1);
-        (void)setenv(npucheck::ipc::CLI_PID_ENV, parentText.c_str(), 1);
-        (void)setenv(npucheck::ipc::HANDSHAKE_TIMEOUT_ENV, timeoutText.c_str(), 1);
-        // 工作目录经环境变量下发：Configure 改用注册表编码后只承载工具与子选项，
-        // 路径这类与协议无关的部署信息不再占线路。
-        (void)setenv(npucheck::ipc::WORK_DIR_ENV, workDir.c_str(), 1);
-        auto arguments = options.application;
-        auto argv = BuildArgv(arguments);
-        execvp(argv[0], argv.data());
-        dprintf(STDERR_FILENO, "npu_check: execvp failed: %s\n", std::strerror(errno));
-        _exit(CHILD_SETUP_ERROR_EXIT_CODE);
+        ExecApplication(options, libraryPath, udsName, sessionId, workDir, signalBlocker, consoleRead, consoleWrite);
     }
     consoleWrite.Reset();
     if (setpgid(child, child) != 0 && errno != EACCES && errno != ESRCH) {
@@ -678,18 +888,12 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     SignalForwarder signalForwarder(child, error);
     if (!signalForwarder.Good()) {
         output.Detail(error);
-        if (kill(-child, SIGKILL) != 0) {
-            (void)kill(child, SIGKILL);
-        }
-        (void)waitpid(child, nullptr, 0);
+        KillProcessGroupAndWait(child);
         return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
     if (!signalBlocker.Restore(error)) {
         output.Detail(error);
-        if (kill(-child, SIGKILL) != 0) {
-            (void)kill(child, SIGKILL);
-        }
-        (void)waitpid(child, nullptr, 0);
+        KillProcessGroupAndWait(child);
         return summary.exit = INFRASTRUCTURE_ERROR_EXIT_CODE;
     }
 
@@ -697,132 +901,19 @@ int RunApplication(const Options& options, const std::string& libraryPath)
         "[CLI] session=%llu tools=%s app_pid=%d app_pgid=%d", static_cast<unsigned long long>(sessionId),
         toolNames.c_str(), static_cast<int>(child), static_cast<int>(child));
     std::atomic<bool> childExited{false};
-    std::thread consoleReader([&output, &childExited, fd = std::move(consoleRead)] {
-        constexpr size_t CONSOLE_BUFFER_SIZE = 8192;
-        constexpr int CONSOLE_POLL_INTERVAL_MS = 100;
-        std::array<char, CONSOLE_BUFFER_SIZE> buffer{};
-        std::chrono::steady_clock::time_point drainDeadline{};
-        while (true) {
-            pollfd descriptor{};
-            descriptor.fd = fd.Get();
-            descriptor.events = POLLIN;
-            int pollResult = 0;
-            do {
-                pollResult = poll(&descriptor, 1, CONSOLE_POLL_INTERVAL_MS);
-            } while (pollResult < 0 && errno == EINTR);
-            if (pollResult < 0 || (static_cast<unsigned int>(descriptor.revents) & (POLLERR | POLLNVAL)) != 0) {
-                break;
-            }
-            if ((static_cast<unsigned int>(descriptor.revents) & POLLIN) != 0) {
-                const ssize_t bytes = read(fd.Get(), buffer.data(), buffer.size());
-                if (bytes < 0 && errno == EINTR) {
-                    continue;
-                }
-                if (bytes <= 0) {
-                    break;
-                }
-                output.Console(buffer.data(), static_cast<size_t>(bytes));
-            } else if ((static_cast<unsigned int>(descriptor.revents) & POLLHUP) != 0) {
-                break;
-            }
-            if (!childExited) {
-                continue;
-            }
-            if (drainDeadline.time_since_epoch().count() == 0) {
-                drainDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-            } else if (std::chrono::steady_clock::now() >= drainDeadline) {
-                break;
-            }
-        }
-    });
+    std::thread consoleReader(
+        [&output, &childExited, fd = std::move(consoleRead)] { ReadConsole(output, childExited, fd); });
 
     ipc::UdsClient client;
     const bool handshake = client.ConnectAndConfigure(
         udsName, sessionId, static_cast<uint32_t>(child), handshakeDeadline, configure, error);
-    // Result 分片的拼接缓冲。只有 receiver 线程写，join 之后主线程才读。
-    std::string result;
-    std::atomic<bool> resultComplete{false};
-    std::atomic<bool> resultHasErrors{false};
-    std::atomic<bool> resultTruncated{false};
-    std::atomic<uint64_t> resultFrames{0};
-    std::atomic<bool> protocolComplete{handshake};
+    ReceivedReport received(handshake);
     std::thread receiver;
     if (handshake) {
-        receiver = std::thread([&] {
-            while (true) {
-                npucheck::ipc::Frame frame{};
-                std::string receiveError;
-                // 采集阶段不设超时：应用可能跑数小时，任何固定值都是错的。终止由
-                // 对端关闭连接（CLOSED）或子进程退出驱动，见下面的分支。
-                const npucheck::ipc::IoStatus status = client.Receive(frame, npucheck::ipc::NO_DEADLINE, receiveError);
-                if (status == npucheck::ipc::IoStatus::CLOSED) {
-                    break;
-                }
-                if (status == npucheck::ipc::IoStatus::TIMEOUT) {
-                    if (childExited) {
-                        break;
-                    }
-                    continue;
-                }
-                if (status != npucheck::ipc::IoStatus::OK) {
-                    protocolComplete = false;
-                    output.Detail("UDS receive failed: " + receiveError);
-                    break;
-                }
-                if (frame.type == npucheck::ipc::MessageType::RESULT) {
-                    std::string message;
-                    if (!npucheck::ipc::DecodeText(frame.payload, message, receiveError)) {
-                        protocolComplete = false;
-                        output.Detail("UDS payload failed: " + receiveError);
-                        break;
-                    }
-                    // 上限与注入库侧共用同一个常量：对端异常时不能让 CLI 一直吃内存。
-                    if (result.size() + message.size() > npucheck::ipc::MAX_RESULT_BYTES) {
-                        protocolComplete = false;
-                        output.Detail("result exceeds the maximum report size");
-                        break;
-                    }
-                    result.append(message);
-                    ++resultFrames;
-                    if ((frame.flags & npucheck::ipc::FLAG_MORE) != 0) {
-                        continue;
-                    }
-                    // MORE=0 的末帧到达即报告完整；结论位只在这一帧上有效，前面的分片
-                    // 不带任何结论，所以这里必须读末帧的 flags 而不是任意一帧的。
-                    resultHasErrors = (frame.flags & npucheck::ipc::FLAG_HAS_ERRORS) != 0;
-                    resultTruncated = (frame.flags & npucheck::ipc::FLAG_TRUNCATED) != 0;
-                    resultComplete = true;
-                    break;
-                }
-                if (frame.type == npucheck::ipc::MessageType::ERROR) {
-                    // Error 表示注入库侧基础设施失败，本次检查没有可信结论，不再等 Result。
-                    protocolComplete = false;
-                    npucheck::ipc::ErrorPayload failure{};
-                    std::string decodeError;
-                    if (!npucheck::ipc::DecodeError(frame.payload, failure, decodeError)) {
-                        output.Detail("ERROR malformed error payload: " + decodeError);
-                        break;
-                    }
-                    // domain/code 是稳定取值进结构化日志，message 只原样转述给人看，
-                    // 不参与任何判定。
-                    ASCTOOL_DEBUG(
-                        "[UDS] phase=error domain=%u code=%u", static_cast<unsigned>(failure.domain),
-                        static_cast<unsigned>(failure.code));
-                    output.Detail("ERROR " + failure.message);
-                    break;
-                }
-                // 其余都是 must-ignore 的实时诊断，收到即打印，不进拼接缓冲。
-                std::string message;
-                if (!npucheck::ipc::DecodeText(frame.payload, message, receiveError)) {
-                    protocolComplete = false;
-                    output.Sanitizer("UDS payload failed: " + receiveError, true);
-                    break;
-                }
-                output.Sanitizer(std::string(npucheck::ipc::MessageTypeName(frame.type)) + " " + message, true);
-            }
-        });
+        receiver = std::thread(
+            [&client, &childExited, &output, &received] { ReceiveReport(client, childExited, output, received); });
     } else {
-        protocolComplete = false;
+        received.protocolComplete = false;
         ASCTOOL_DEBUG("[UDS] phase=handshake result=failed");
         output.Detail("handshake=missing reason=\"" + error + "\"");
     }
@@ -841,48 +932,8 @@ int RunApplication(const Options& options, const std::string& libraryPath)
     if (receiver.joinable()) {
         receiver.join();
     }
-    const int childExit = childStatusAvailable ? ChildExitCode(childStatus) : INFRASTRUCTURE_ERROR_EXIT_CODE;
-
-    // 判定顺序是固定的：先看有没有收到 MORE=0 的末帧，再看是不是被 Error 打断，
-    // 最后才是"连接断了但报告没收全"。
-    if (resultComplete) {
-        ASCTOOL_DEBUG(
-            "[UDS] phase=result frames=%llu bytes=%zu truncated=%d has_errors=%d",
-            static_cast<unsigned long long>(resultFrames.load()), result.size(), static_cast<int>(resultTruncated),
-            static_cast<int>(resultHasErrors));
-        output.Report(result);
-        if (resultTruncated) {
-            output.Sanitizer("report truncated: the diagnostic buffer reached its size limit", true);
-        }
-    } else if (handshake) {
-        // 报告缺失或截断：已经收到的分片一律丢弃。半份报告看上去和完整报告没有区别，
-        // 输出它等于让用户把"没查到问题"和"没查完"混为一谈。
-        ASCTOOL_DEBUG(
-            "[UDS] phase=result frames=%llu bytes=%zu truncated=unknown has_errors=unknown",
-            static_cast<unsigned long long>(resultFrames.load()), result.size());
-        output.Detail("result missing or truncated; the partial report was discarded");
-    }
-
-    summary.truncated = resultTruncated;
-    summary.childExit = childStatusAvailable ? FormatChildExit(childStatus) : "unknown";
-    int exitCode = 0;
-    if (!handshake || !protocolComplete || !resultComplete || !childStatusAvailable) {
-        // 基础设施失败：拿不到可信结论，退 125 与应用自身的退出码区分开。
-        // has_errors 保持 unknown —— 没收到完整 Result 就没有结论可言。
-        summary.outcome = Outcome::INFRA_FAILED;
-        exitCode = INFRASTRUCTURE_ERROR_EXIT_CODE;
-    } else {
-        summary.hasErrors = resultHasErrors ? 1 : 0;
-        // 默认透传应用退出码：检出问题不等于运行失败，是否要让 CI 挂掉由调用方决定。
-        // 只有显式指定 --error-exitcode 时才用它覆盖。
-        exitCode = childExit;
-        if (resultHasErrors && options.errorExitCode != 0) {
-            exitCode = options.errorExitCode;
-        }
-        // 检出问题不算 app_failed：检查跑完了、报告也拿到了，结论由 has_errors 承载。
-        summary.outcome = childExit == 0 ? Outcome::FORWARDED : Outcome::APP_FAILED;
-    }
-    summary.exit = exitCode;
+    const int exitCode =
+        FinishApplication(options, output, received, handshake, childStatus, childStatusAvailable, summary);
 
     // 只删自己 mkdtemp 出来的会话目录。--work-dir 指定的目录是用户的，即便本次的
     // probe 缓存就落在里面，也一律不碰 —— 递归删一个用户给的路径

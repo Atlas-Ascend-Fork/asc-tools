@@ -15,6 +15,8 @@
 #include "injection/runtime_stub_api.h"
 #include "dbi/trace_buffer_abi.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -61,8 +63,8 @@ struct CapturedMemoryAccess {
 std::vector<CapturedRecord> g_records;
 std::vector<CapturedMemoryAccess> g_memoryAccesses;
 size_t g_mallocCalls = 0;
-size_t g_freeCalls = 0;
-size_t g_d2hCalls = 0;
+std::atomic<size_t> g_freeCalls{0};
+std::atomic<size_t> g_d2hCalls{0};
 size_t g_deviceInfoCalls = 0;
 bool g_failLaunch = false;
 aclError g_syncResult = ACL_SUCCESS;
@@ -158,8 +160,9 @@ bool LoadInstrumentedFunction(uint32_t argumentSize, const char* name, aclrtFunc
 aclError OriginalMalloc(void** pointer, size_t bytes, aclrtMemMallocPolicy)
 {
     ++g_mallocCalls;
-    *pointer = std::malloc(bytes);
-    return *pointer == nullptr ? ACL_ERROR_BAD_ALLOC : ACL_SUCCESS;
+    *pointer = nullptr;
+    return posix_memalign(pointer, alignof(aclsan::AclsanTraceBufferHeader), bytes) == 0 ? ACL_SUCCESS :
+                                                                                           ACL_ERROR_BAD_ALLOC;
 }
 
 aclError OriginalFree(void* pointer)
@@ -174,7 +177,7 @@ aclError OriginalMemcpy(void* dst, size_t dstMax, const void* src, size_t bytes,
     if (dst == nullptr || src == nullptr || bytes > dstMax) {
         return ACL_ERROR_INVALID_PARAM;
     }
-    if (kind == ACL_MEMCPY_DEVICE_TO_HOST) {
+    if (kind == ACL_MEMCPY_DEVICE_TO_HOST && bytes == 2 * sizeof(aclsan::AclsanRawTraceRecord)) {
         ++g_d2hCalls;
     }
     std::memcpy(dst, src, bytes);
@@ -225,14 +228,13 @@ aclError OriginalLaunch(
     auto* bytes = static_cast<uint8_t*>(deviceBuffer);
     auto* header = reinterpret_cast<aclsan::AclsanTraceBufferHeader*>(bytes);
     if (header->magic != aclsan::ASCSAN_TRACE_BUFFER_MAGIC || header->blockCount != blocks ||
-        header->physicalCoreSlotCount != aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
+        header->physicalCoreCount != aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return ACL_ERROR_INVALID_PARAM;
     }
     constexpr uint32_t phyCoreId = aclsan::ASCSAN_AIC_CORES_PER_DIE;
-    const uint32_t sliceIndex = phyCoreId;
-    auto* slice = reinterpret_cast<aclsan::AclsanTraceSliceHeader*>(
-        bytes + sizeof(*header) + static_cast<size_t>(sliceIndex) * aclsan::ASCSAN_TRACE_BYTES_PER_CORE);
-    auto* record = reinterpret_cast<aclsan::AclsanRawTraceRecord*>(reinterpret_cast<uint8_t*>(slice) + sizeof(*slice));
+    auto* writeSequence = bytes + aclsan::TraceWriteControlOffset(phyCoreId);
+    auto* record = reinterpret_cast<aclsan::AclsanRawTraceRecord*>(bytes + aclsan::TraceRecordOffset(phyCoreId, 0));
+    constexpr uint32_t RECORD_COUNT = 2;
     record->pc = 0x1234;
     if (g_writeMultiMemoryRecords) {
         record->args[0] = 2;
@@ -251,8 +253,7 @@ aclError OriginalLaunch(
         multi->category = aclsan::DeviceInstructionCategory::MemoryAccess;
         multi->pipeline = ACLSAN_DEVICE_PIPE_MTE2;
         multi->blockId = 1;
-        slice->phyCoreId = phyCoreId;
-        slice->recordCount = 2;
+        std::memcpy(writeSequence, &RECORD_COUNT, sizeof(RECORD_COUNT));
         return ACL_SUCCESS;
     }
     if (g_writeMemoryRecord) {
@@ -287,9 +288,6 @@ aclError OriginalLaunch(
     }
     record->blockId = 1;
     record->reserved = 0;
-    slice->phyCoreId = phyCoreId;
-    slice->recordCount = g_writeMemoryRecord ? 2 : 1;
-    slice->overflowCount = 0;
     if (!g_writeMemoryRecord) {
         auto* second = record + 1;
         second->pc = 0x2234;
@@ -304,8 +302,8 @@ aclError OriginalLaunch(
         second->pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
         second->blockId = 1;
         second->reserved = 0;
-        slice->recordCount = 2;
     }
+    std::memcpy(writeSequence, &RECORD_COUNT, sizeof(RECORD_COUNT));
     return ACL_SUCCESS;
 }
 
@@ -327,11 +325,11 @@ aclError OriginalGetDeviceInfo(uint32_t deviceId, aclrtDevAttr attr, int64_t* va
     }
     ++g_deviceInfoCalls;
     if (attr == ACL_DEV_ATTR_CUBE_CORE_NUM) {
-        *value = 2;
+        *value = 36;
         return ACL_SUCCESS;
     }
     if (attr == ACL_DEV_ATTR_VECTOR_CORE_NUM) {
-        *value = 4;
+        *value = aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT - 36U;
         return ACL_SUCCESS;
     }
     return ACL_ERROR_INVALID_PARAM;
@@ -466,18 +464,22 @@ int main(int argc, char** argv)
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
-    CHECK(g_records.empty());
-    CHECK(g_d2hCalls == 0);
-    // Physical trace slots are fixed, independent of the available core counts.
-    CHECK(g_deviceInfoCalls == 0);
+    // Preparing a FIFO launch validates the topology before and after acquiring its device gate.
+    CHECK(g_deviceInfoCalls == 4);
 
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream2, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
-    CHECK(g_records.size() == 2);
+    CHECK(aclrtSynchronizeStream(stream2) == ACL_SUCCESS);
+    CHECK(g_records.size() == 4);
+    std::stable_sort(g_records.begin(), g_records.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.launchId < rhs.launchId;
+    });
+    CHECK(g_records[2].launchId == 2 && g_records[3].launchId == 2);
+    constexpr uint64_t slotIdentity = static_cast<uint64_t>(aclsan::ASCSAN_AIC_CORES_PER_DIE) << 32U;
     CHECK(g_records[0].launchId == 1);
-    CHECK(g_records[0].instrExecId == aclsan::ASCSAN_AIC_CORES_PER_DIE * aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 1U);
+    CHECK(g_records[0].instrExecId == (slotIdentity | 1U));
     CHECK(g_records[0].deviceId == 3);
     CHECK(g_records[0].phyCoreId == aclsan::ASCSAN_AIC_CORES_PER_DIE);
     CHECK(g_records[0].blockId == 1);
@@ -487,15 +489,13 @@ int main(int argc, char** argv)
     CHECK(g_records[0].dstPipe == 3);
     CHECK(g_records[0].objectId == 7);
     CHECK(g_records[1].launchId == 1);
-    CHECK(g_records[1].instrExecId == aclsan::ASCSAN_AIC_CORES_PER_DIE * aclsan::ASCSAN_TRACE_RECORDS_PER_CORE + 2U);
+    CHECK(g_records[1].instrExecId == (slotIdentity | 2U));
     CHECK(g_records[1].deviceId == 3);
     CHECK(g_records[1].phyCoreId == aclsan::ASCSAN_AIC_CORES_PER_DIE);
     CHECK(g_records[1].blockId == 1);
     CHECK(g_records[1].blockType == ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR);
     CHECK(g_records[1].pc == 0x2234);
     CHECK(g_records[1].objectId == 8);
-    CHECK(aclrtSynchronizeStream(stream2) == ACL_SUCCESS);
-    CHECK(g_records.size() == 4);
 
     g_writeMemoryRecord = true;
     CHECK(
@@ -542,6 +542,9 @@ int main(int argc, char** argv)
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
     CHECK(aclrtSynchronizeStream(stream1) == ACL_ERROR_RT_STREAM_SYNC_TIMEOUT);
+    CHECK(g_freeCalls == freesBeforeTimedOutSync);
+    g_syncResult = ACL_SUCCESS;
+    CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
     CHECK(g_records.size() == recordsBeforeTimedOutSync + 2);
     CHECK(g_d2hCalls == d2hBeforeTimedOutSync + 1);
     CHECK(g_freeCalls == freesBeforeTimedOutSync + 1);
@@ -553,16 +556,22 @@ int main(int argc, char** argv)
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
-    CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
+    CHECK(aclrtSynchronizeStream(stream1) == ACL_ERROR_RT_AICORE_EXCEPTION);
     CHECK(g_records.size() == recordsBeforeDbiCompletion + 2);
     CHECK(g_d2hCalls == d2hBeforeDbiCompletion + 1);
+    CHECK(g_freeCalls == freesBeforeDbiCompletion);
+    g_syncResult = ACL_SUCCESS;
+    CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
     CHECK(g_freeCalls == freesBeforeDbiCompletion + 1);
 
+    g_syncResult = ACL_ERROR_RT_AICORE_EXCEPTION;
     g_writeRecord = false;
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
     CHECK(aclrtSynchronizeStream(stream1) == ACL_ERROR_RT_AICORE_EXCEPTION);
+    g_syncResult = ACL_SUCCESS;
+    CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
     g_writeRecord = true;
 
     const size_t recordsBeforeGenericFailure = g_records.size();
@@ -573,12 +582,12 @@ int main(int argc, char** argv)
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
     CHECK(aclrtSynchronizeStream(stream1) == ACL_ERROR_FAILURE);
-    CHECK(g_records.size() == recordsBeforeGenericFailure + 2);
-    CHECK(g_d2hCalls == d2hBeforeGenericFailure + 1);
-    CHECK(g_freeCalls == freesBeforeGenericFailure + 1);
+    CHECK(g_freeCalls == freesBeforeGenericFailure);
     g_syncResult = ACL_SUCCESS;
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
     CHECK(g_records.size() == recordsBeforeGenericFailure + 2);
+    CHECK(g_d2hCalls == d2hBeforeGenericFailure + 1);
+    CHECK(g_freeCalls == freesBeforeGenericFailure + 1);
 
     const size_t freesBeforeFailedLaunch = g_freeCalls;
     g_failLaunch = true;

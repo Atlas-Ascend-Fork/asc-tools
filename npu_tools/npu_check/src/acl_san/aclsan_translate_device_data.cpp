@@ -58,27 +58,24 @@ const char* MemoryCbdataStatusName(MemoryCbdataStatus status) noexcept
 template <typename ParamField>
 constexpr bool IsMemoryAccessParamField() noexcept
 {
-    return std::is_same_v<ParamField, aclsan::CopyGmToUbufAlignV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyUbufToUbufParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyGmToCbufAlignV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyGmToCbufMultiNd2NzParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyGmToCbufMultiDn2NzParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyUbufToGmAlignV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::CopyGmToCbufV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::NdDmaParamField> ||
-           std::is_same_v<ParamField, aclsan::LoadGmToCbuf2DV2ParamField> ||
-           std::is_same_v<ParamField, aclsan::FixL0cToOutParamField> ||
-           std::is_same_v<ParamField, aclsan::ScalarGmParamField> ||
-           std::is_same_v<ParamField, aclsan::ScalarDevParamField> ||
-           std::is_same_v<ParamField, aclsan::ScalarPreloadParamField> ||
-           std::is_same_v<ParamField, aclsan::ScalarAtomicParamField> ||
-           std::is_same_v<ParamField, aclsan::SetL12DParamField> ||
-           std::is_same_v<ParamField, aclsan::MmadParamField> ||
-           std::is_same_v<ParamField, aclsan::LoadL1MxParamField> ||
-           std::is_same_v<ParamField, aclsan::LocalMemoryTransferParamField> ||
-           std::is_same_v<ParamField, aclsan::LoadCbufToL0ParamField> ||
-           std::is_same_v<ParamField, aclsan::LoadCbufToCbTransposeParamField> ||
-           std::is_same_v<ParamField, aclsan::Img2ColParamField>;
+    return std::disjunction_v<
+        std::is_same<ParamField, aclsan::CopyGmToUbufAlignV2ParamField>,
+        std::is_same<ParamField, aclsan::CopyUbufToUbufParamField>,
+        std::is_same<ParamField, aclsan::CopyGmToCbufAlignV2ParamField>,
+        std::is_same<ParamField, aclsan::CopyGmToCbufMultiNd2NzParamField>,
+        std::is_same<ParamField, aclsan::CopyGmToCbufMultiDn2NzParamField>,
+        std::is_same<ParamField, aclsan::CopyUbufToGmAlignV2ParamField>,
+        std::is_same<ParamField, aclsan::CopyGmToCbufV2ParamField>, std::is_same<ParamField, aclsan::NdDmaParamField>,
+        std::is_same<ParamField, aclsan::LoadGmToCbuf2DV2ParamField>,
+        std::is_same<ParamField, aclsan::FixL0cToOutParamField>, std::is_same<ParamField, aclsan::ScalarGmParamField>,
+        std::is_same<ParamField, aclsan::ScalarDevParamField>,
+        std::is_same<ParamField, aclsan::ScalarPreloadParamField>,
+        std::is_same<ParamField, aclsan::ScalarAtomicParamField>, std::is_same<ParamField, aclsan::SetL12DParamField>,
+        std::is_same<ParamField, aclsan::MmadParamField>, std::is_same<ParamField, aclsan::LoadL1MxParamField>,
+        std::is_same<ParamField, aclsan::LocalMemoryTransferParamField>,
+        std::is_same<ParamField, aclsan::LoadCbufToL0ParamField>,
+        std::is_same<ParamField, aclsan::LoadCbufToCbTransposeParamField>,
+        std::is_same<ParamField, aclsan::Img2ColParamField>>;
 }
 
 template <typename ParamField>
@@ -101,7 +98,8 @@ public:
     {
         const auto pipeline = static_cast<AclsanDevicePipeline>(parsed.record.pipeline);
         return std::visit(
-            [&](const auto& value) noexcept -> std::optional<DeviceCallbackData> {
+            [&parsed, &decoded, &registerState, pipeline, internalInputs,
+             readOnlyBinaryRanges](const auto& value) noexcept -> std::optional<DeviceCallbackData> {
                 using ParamField = std::decay_t<decltype(value)>;
                 if constexpr (IsMemoryAccessParamField<ParamField>()) {
                     return MakeDeviceMemoryAccessCallbackData(
@@ -173,6 +171,14 @@ private:
         const RegisterDependencyMask dependencies =
             ResolveRegisterDependencies(MemoryInstructionField{params}, registerState);
         // Partial conversion can still contain proven GM or on-chip accesses.
+        AnnotateMemoryAccesses(result, params, dependencies);
+        return FinishMemoryAccessConversion<ParamField>(parsed, pipeline, result, dependencies);
+    }
+
+    template <typename ParamField>
+    static void AnnotateMemoryAccesses(
+        MemoryCbdataResult& result, const ParamField& params, const RegisterDependencyMask& dependencies) noexcept
+    {
         for (AclsanDeviceMemoryAccessData& access : result.data) {
             if constexpr (
                 std::is_same_v<ParamField, aclsan::MmadParamField> ||
@@ -199,6 +205,13 @@ private:
             access.regDependencyMask0 = dependencies.mask0;
             access.regDependencyMask1 = dependencies.mask1;
         }
+    }
+
+    template <typename ParamField>
+    static std::optional<DeviceCallbackData> FinishMemoryAccessConversion(
+        const ParsedTraceRecord& parsed, AclsanDevicePipeline pipeline, MemoryCbdataResult& result,
+        const RegisterDependencyMask& dependencies) noexcept
+    {
         // MX loads currently decode only their L1 source. Keep the missing L0
         // destination visible as incomplete coverage until its layout is decoded.
         if (result.status == MemoryCbdataStatus::SUCCESS && !std::is_same_v<ParamField, aclsan::LoadL1MxParamField>) {

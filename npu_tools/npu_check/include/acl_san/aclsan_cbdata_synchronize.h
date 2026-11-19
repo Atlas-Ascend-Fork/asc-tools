@@ -14,6 +14,8 @@
 #include "acl_san/aclsan_cbdata_common.h"
 
 typedef struct AclsanSynchronizeData {
+    // For a stream synchronization, correlationId is the last known launch submitted
+    // before the synchronization call, or zero when no launch was observed.
     AclsanCallbackCommonData common;
     void* stream; // 对应aclrtStream
 } AclsanSynchronizeData;

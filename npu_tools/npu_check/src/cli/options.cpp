@@ -10,8 +10,6 @@
 
 #include "options.h"
 
-#include <algorithm>
-#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
@@ -123,7 +121,7 @@ bool IsSafelyOwned(const boost::filesystem::path& path, std::string& reason)
         reason = "cannot stat '" + path.string() + "': " + std::strerror(errno);
         return false;
     }
-    if ((info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+    if ((info.st_mode & (static_cast<mode_t>(S_IWGRP) | static_cast<mode_t>(S_IWOTH))) != 0) {
         reason = "'" + path.string() + "' is group- or world-writable and cannot be injected";
         return false;
     }
@@ -157,17 +155,140 @@ bool ValidateLogFilePath(const std::string& path, std::string& error)
     return true;
 }
 
-bool ParseOptions(int argc, char** argv, Options& options, std::string& error)
+namespace {
+
+using ToolSet = std::set<npucheck::ipc::ToolId>;
+using SeenOptions = std::map<npucheck::ipc::OptionId, const npucheck::ipc::OptionRegistryEntry*>;
+
+bool IsNumericOption(const std::string& argument)
+{
+    return argument == "--handshake-timeout-ms" || argument == "--error-exitcode" || argument == "--deadlock-timeout";
+}
+
+bool ParseNumericOption(const std::string& argument, const std::string& value, Options& options, std::string& error)
+{
+    if (argument == "--handshake-timeout-ms") {
+        const auto parsed =
+            ParseBoundedInt(value, npucheck::ipc::MIN_HANDSHAKE_TIMEOUT_MS, npucheck::ipc::MAX_HANDSHAKE_TIMEOUT_MS);
+        if (!parsed.has_value()) {
+            error = "--handshake-timeout-ms must be in [100, 120000]";
+            return false;
+        }
+        options.handshakeTimeoutMs = *parsed;
+        return true;
+    }
+    if (argument == "--error-exitcode") {
+        const auto parsed = ParseBoundedInt(value, 1, 255);
+        if (!parsed.has_value()) {
+            error = "--error-exitcode must be in [1, 255]";
+            return false;
+        }
+        options.errorExitCode = *parsed;
+        return true;
+    }
+    if (argument == "--deadlock-timeout") {
+        const auto parsed = ParseBoundedInt(value, 1, INT_MAX);
+        if (!parsed.has_value()) {
+            error = "--deadlock-timeout must be a positive number of seconds";
+            return false;
+        }
+        options.opExecuteTimeoutSec = static_cast<uint32_t>(*parsed);
+        return true;
+    }
+    return false;
+}
+
+bool NormalizeToolRequests(
+    const ToolSet& explicitTools, const SeenOptions& seenOptions, Options& options, std::string& error)
+{
+    // 完全没有出现 --tool 时工具集合取默认值 {memcheck}；只要出现过任意一个 --tool，
+    // 默认值即不生效，不与显式指定的工具做并集 —— 否则用户没法把默认工具关掉。
+    ToolSet enabledTools = explicitTools;
+    if (enabledTools.empty()) {
+        enabledTools.insert(npucheck::ipc::ToolId::MEMCHECK);
+    }
+
+    // 子选项的依赖校验必须在默认值生效之后进行：否则只写 --check-cache-control 而不写
+    // --tool memcheck 时，会因为此刻工具集合还是空的而被误判为"所属工具未启用"。
+    for (const auto& [optionId, entry] : seenOptions) {
+        (void)optionId;
+        if (enabledTools.count(entry->toolId) == 0) {
+            error = std::string("--") + entry->name + " belongs to tool '" + npucheck::ipc::ToolName(entry->toolId) +
+                    "', which is not enabled";
+            return false;
+        }
+    }
+
+    // 规范化编码唯一：tools 按 toolId 升序，每个工具内 options 按 optionId 升序，均不重复。
+    for (const npucheck::ipc::ToolId toolId : enabledTools) {
+        npucheck::ipc::ToolRequest request;
+        request.toolId = toolId;
+        for (const auto& [optionId, entry] : seenOptions) {
+            if (entry->toolId != toolId) {
+                continue;
+            }
+            npucheck::ipc::OptionValue optionValue;
+            optionValue.optionId = optionId;
+            // 布尔类子选项是"出现即为真"的开关，缺省时不发送 OptionValue。
+            optionValue.value.assign(entry->valueSize, entry->presentValue);
+            request.options.push_back(std::move(optionValue));
+        }
+        options.tools.push_back(std::move(request));
+    }
+
+    return true;
+}
+
+bool ParseApplication(int argc, char** argv, int applicationStart, Options& options, std::string& error)
+{
+    // --help / -h 只打印帮助，不启动任何东西，因此不要求提供应用。这条检查放在选项
+    // 校验之后：先把写错的选项报出来，再决定要不要因为"缺应用"而失败。
+    if (applicationStart < 0 || applicationStart >= argc) {
+        if (options.showHelp) {
+            return true;
+        }
+        error = "expected an application command";
+        return false;
+    }
+    for (int i = applicationStart; i < argc; ++i) {
+        options.application.emplace_back(argv[i]);
+    }
+
+    // 应用名在 fork 之前就校验，写错时报用法错误 64 而不是等 execvp 失败后退 125。
+    //
+    // 这条最常见的触发形态是把工具名多写了一遍，例如
+    //   npu-check --tool synccheck synccheck --tool memcheck memcheck ./app
+    // 多余的 "synccheck" 会成为应用区起点、被当成应用名。此时报"应用不可执行"，
+    // 比 fork 之后一句 execvp failed 更接近用户实际写错的地方。
+    if (!IsExecutableCommand(options.application.front())) {
+        error = "application '" + options.application.front() + "' is not an executable command";
+        return false;
+    }
+    return true;
+}
+
+const npucheck::ipc::OptionRegistryEntry* LookupToolSuboption(const std::string& argument)
 {
     constexpr std::string_view LONG_OPTION_PREFIX = "--";
+    if (argument.size() <= LONG_OPTION_PREFIX.size() ||
+        argument.compare(0, LONG_OPTION_PREFIX.size(), LONG_OPTION_PREFIX) != 0) {
+        return nullptr;
+    }
+    return npucheck::ipc::LookupOption(argument.substr(LONG_OPTION_PREFIX.size()));
+}
+
+} // namespace
+
+bool ParseOptions(int argc, char** argv, Options& options, std::string& error)
+{
     options = {};
 
     // --tool 显式指定的集合。std::set 天然去重（重复指定同一工具即幂等）且按 toolId
     // 升序，正好是下发前要求的规范化顺序，不必再单独排序去重。
-    std::set<npucheck::ipc::ToolId> explicitTools;
+    ToolSet explicitTools;
     // 已出现的工具子选项。std::map 按 optionId 升序，同样直接满足规范化要求；
     // 同一子选项重复出现按幂等处理。
-    std::map<npucheck::ipc::OptionId, const npucheck::ipc::OptionRegistryEntry*> seenOptions;
+    SeenOptions seenOptions;
     int applicationStart = -1;
 
     for (int i = 1; i < argc; ++i) {
@@ -224,116 +345,24 @@ bool ParseOptions(int argc, char** argv, Options& options, std::string& error)
             options.workDir = AbsolutePath(value);
             continue;
         }
-        if (argument == "--handshake-timeout-ms") {
-            if (!NeedValue(argc, argv, i, value, error)) {
+        if (IsNumericOption(argument)) {
+            if (!NeedValue(argc, argv, i, value, error) || !ParseNumericOption(argument, value, options, error)) {
                 return false;
             }
-            const auto parsed = ParseBoundedInt(
-                value, npucheck::ipc::MIN_HANDSHAKE_TIMEOUT_MS, npucheck::ipc::MAX_HANDSHAKE_TIMEOUT_MS);
-            if (!parsed) {
-                error = "--handshake-timeout-ms must be in [100, 120000]";
-                return false;
-            }
-            options.handshakeTimeoutMs = *parsed;
-            continue;
-        }
-        if (argument == "--error-exitcode") {
-            if (!NeedValue(argc, argv, i, value, error)) {
-                return false;
-            }
-            const auto parsed = ParseBoundedInt(value, 1, 255);
-            if (!parsed) {
-                error = "--error-exitcode must be in [1, 255]";
-                return false;
-            }
-            options.errorExitCode = *parsed;
-            continue;
-        }
-        if (argument == "--deadlock-timeout") {
-            if (!NeedValue(argc, argv, i, value, error)) {
-                return false;
-            }
-            const auto parsed = ParseBoundedInt(value, 1, INT_MAX);
-            if (!parsed) {
-                error = "--deadlock-timeout must be a positive number of seconds";
-                return false;
-            }
-            options.opExecuteTimeoutSec = static_cast<uint32_t>(*parsed);
             continue;
         }
         // 工具子选项：名称在 CLI 中全局唯一，归属由共享注册表决定，因此可以出现在
         // 所属 --tool 之前或之后，这里不依赖"当前工具"状态，也不按参数相邻关系推断。
-        if (argument.compare(0, LONG_OPTION_PREFIX.size(), LONG_OPTION_PREFIX) == 0 &&
-            argument.size() > LONG_OPTION_PREFIX.size()) {
-            if (const auto* entry = npucheck::ipc::LookupOption(argument.substr(LONG_OPTION_PREFIX.size()));
-                entry != nullptr) {
-                seenOptions[entry->optionId] = entry;
-                continue;
-            }
+        if (const auto* entry = LookupToolSuboption(argument); entry != nullptr) {
+            seenOptions[entry->optionId] = entry;
+            continue;
         }
         error = "unknown option: " + argument;
         return false;
     }
 
-    // 完全没有出现 --tool 时工具集合取默认值 {memcheck}；只要出现过任意一个 --tool，
-    // 默认值即不生效，不与显式指定的工具做并集 —— 否则用户没法把默认工具关掉。
-    std::set<npucheck::ipc::ToolId> enabledTools = explicitTools;
-    if (enabledTools.empty()) {
-        enabledTools.insert(npucheck::ipc::ToolId::MEMCHECK);
-    }
-
-    // 子选项的依赖校验必须在默认值生效之后进行：否则只写 --check-cache-control 而不写
-    // --tool memcheck 时，会因为此刻工具集合还是空的而被误判为"所属工具未启用"。
-    for (const auto& [optionId, entry] : seenOptions) {
-        (void)optionId;
-        if (enabledTools.count(entry->toolId) == 0) {
-            error = std::string("--") + entry->name + " belongs to tool '" + npucheck::ipc::ToolName(entry->toolId) +
-                    "', which is not enabled";
-            return false;
-        }
-    }
-
-    // 规范化编码唯一：tools 按 toolId 升序，每个工具内 options 按 optionId 升序，均不重复。
-    for (const npucheck::ipc::ToolId toolId : enabledTools) {
-        npucheck::ipc::ToolRequest request;
-        request.toolId = toolId;
-        for (const auto& [optionId, entry] : seenOptions) {
-            if (entry->toolId != toolId) {
-                continue;
-            }
-            npucheck::ipc::OptionValue optionValue;
-            optionValue.optionId = optionId;
-            // 布尔类子选项是"出现即为真"的开关，缺省时不发送 OptionValue。
-            optionValue.value.assign(entry->valueSize, entry->presentValue);
-            request.options.push_back(std::move(optionValue));
-        }
-        options.tools.push_back(std::move(request));
-    }
-
-    // --help / -h 只打印帮助，不启动任何东西，因此不要求提供应用。这条检查放在选项
-    // 校验之后：先把写错的选项报出来，再决定要不要因为"缺应用"而失败。
-    if (applicationStart < 0 || applicationStart >= argc) {
-        if (options.showHelp) {
-            return true;
-        }
-        error = "expected an application command";
-        return false;
-    }
-    for (int i = applicationStart; i < argc; ++i) {
-        options.application.emplace_back(argv[i]);
-    }
-
-    // 应用名在 fork 之前就校验，写错时报用法错误 64 而不是等 execvp 失败后退 125。
-    //
-    // 这条最常见的触发形态是把工具名多写了一遍，例如
-    //   npu-check --tool synccheck synccheck --tool memcheck memcheck ./app
-    // 多余的 "synccheck" 会成为应用区起点、被当成应用名。此时报"应用不可执行"，
-    // 比 fork 之后一句 execvp failed 更接近用户实际写错的地方。
-    if (!IsExecutableCommand(options.application.front())) {
-        error = "application '" + options.application.front() + "' is not an executable command";
-        return false;
-    }
-    return true;
+    return NormalizeToolRequests(explicitTools, seenOptions, options, error) &&
+           ParseApplication(argc, argv, applicationStart, options, error);
 }
 
 bool ResolveLibraryPath(const std::string& requested, std::string& resolved, std::string& error)

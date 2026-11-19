@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "acl_san/aclsan_api.h"
+#include "acl_san/aclsan_cbdata_operator.h"
 #include <gtest/gtest.h>
 #include "aclsan_memory_cbdata.h"
 #include "device_instr/arch/dav_3510/decoder.h"
@@ -68,9 +69,11 @@ TEST(CubeMemoryInitcheck, DecodedFp16LoadsAndMmadCheckBothOperandSpaces)
             emit(440, {ACLSAN_DEVICE_PIPE_MTE1, ACLSAN_DEVICE_PIPE_MATRIX, 3, 0}, ACLSAN_DEVICE_PIPE_SCALAR);
             emit(442, {ACLSAN_DEVICE_PIPE_MTE1, ACLSAN_DEVICE_PIPE_MATRIX, 3, 0}, ACLSAN_DEVICE_PIPE_SCALAR);
             emit(401, {0, 0, 0, 16 | (32ULL << 12) | (16ULL << 24) | (1ULL << 63)}, ACLSAN_DEVICE_PIPE_MATRIX);
-            AclsanSynchronizeData sync{};
+            AclsanOperatorExecutionData completion{};
+            completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launch.launchId};
+            completion.launchId = launch.launchId;
             ASSERT_TRUE(checker.OnCallback(
-                ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+                ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
             EXPECT_TRUE(checker.AnalysisComplete());
             // L1 source diagnostics remain the existing checker's responsibility.
             npucheck::CheckerReportList l0Reports;
@@ -302,9 +305,11 @@ TEST(CubeMemoryInitcheck, MmadPaddingDoesNotHideUninitializedValidOperands)
             ASSERT_TRUE(checker.OnCallback(
                 ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
         }
-        AclsanSynchronizeData sync{};
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launch.launchId};
+        completion.launchId = launch.launchId;
+        ASSERT_TRUE(checker.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
         ASSERT_TRUE(checker.AnalysisComplete()) << checker.Summary();
         ASSERT_EQ(reports.size(), 3U); // Uninitialized A, B, and L0C accumulator.
         for (const auto& record : reports) {
@@ -350,9 +355,11 @@ npucheck::CheckerReportList CheckReadAfterWrites(
     read.header.instrExecId = ++sequence;
     EXPECT_TRUE(
         checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &read, reports));
-    AclsanSynchronizeData sync{};
-    EXPECT_TRUE(
-        checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+    AclsanOperatorExecutionData completion{};
+    completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launch.launchId};
+    completion.launchId = launch.launchId;
+    EXPECT_TRUE(checker.OnCallback(
+        ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
     EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
     return reports;
 }
@@ -584,9 +591,11 @@ TEST(CubeMemoryInitcheck, Mte1WarnsForL1PaddingAndErrorsForReadsBeyondThePaddedL
             emit(440, ACLSAN_DEVICE_PIPE_SCALAR, {ACLSAN_DEVICE_PIPE_MTE2, ACLSAN_DEVICE_PIPE_MTE1, 0, 0});
             emit(442, ACLSAN_DEVICE_PIPE_SCALAR, {ACLSAN_DEVICE_PIPE_MTE2, ACLSAN_DEVICE_PIPE_MTE1, 0, 0});
             emit(c.readId, ACLSAN_DEVICE_PIPE_MTE1, {0, c.readOffset, c.config0, c.config1});
-            AclsanSynchronizeData sync{};
-            sync.common = {ACLSAN_API_VERSION, sizeof(sync), nullptr, 0, 0};
-            ASSERT_TRUE(send(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+            AclsanOperatorExecutionData completion{};
+            completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launch.launchId};
+            completion.launchId = launch.launchId;
+            ASSERT_TRUE(send(
+                ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
             ASSERT_TRUE(checker.AnalysisComplete()) << checker.Summary();
             ASSERT_FALSE(reports.empty());
             uint64_t missing = 0;
@@ -648,9 +657,11 @@ TEST(CubeMemoryInitcheck, ChannelSplitDoesNotHideEntirelyUninitializedSource)
             ASSERT_TRUE(checker.OnCallback(
                 ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
         }
-        AclsanSynchronizeData sync{};
-        ASSERT_TRUE(
-            checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports));
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, launch.launchId};
+        completion.launchId = launch.launchId;
+        ASSERT_TRUE(checker.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
         ASSERT_TRUE(checker.AnalysisComplete()) << checker.Summary();
         ASSERT_EQ(reports.size(), 1U);
         const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(reports.front());
@@ -777,7 +788,7 @@ TEST(CubeMemory, SetAndMxUseIndependentRowStrides)
     ASSERT_EQ(set.status, MemoryCbdataStatus::SUCCESS);
     ASSERT_EQ(set.data.size(), 1u);
     EXPECT_EQ(set.data[0].layout.blockRepeat.blockSize, 64u);
-    EXPECT_EQ(set.data[0].layout.blockRepeat.repeatStride, 128);
+    EXPECT_EQ(set.data[0].layout.blockRepeat.repeatStride, 192); // Two 32-byte blocks plus four gap blocks.
     auto mx = ConvertRaw(151, {0, 0x100, 2 | (3ULL << 16) | (2ULL << 32) | (2ULL << 40), 8});
     ASSERT_EQ(mx.status, MemoryCbdataStatus::SUCCESS);
     ASSERT_EQ(mx.data.size(), 1u);

@@ -10,7 +10,6 @@
 
 #include "aclsan_register_dependency.h"
 
-#include "device_instr/common/instruction_id.h"
 #include "device_instr/common/device_instr_struct_register.h"
 #include "device_instr/arch/dav_3510/dma_layout.h"
 
@@ -119,96 +118,136 @@ RegisterDependencyMask DmaDependencies(
     return result;
 }
 
+struct RegisterDependencyVisitor {
+    const MemoryRegisterState& state;
+
+    RegisterDependencyMask operator()(const LoadGmToCbuf2DV2ParamField& value) const noexcept
+    {
+        return value.decompMode == NO_DECOMPOSITION_MODE && value.mStep != NO_TRANSFER_COUNT &&
+                       value.kStep != NO_TRANSFER_COUNT ?
+                   RegisterDependencyMask{RegisterBit(ACLSAN_DEVICE_REGISTER_MTE2_SOURCE), 0} :
+                   RegisterDependencyMask{};
+    }
+
+    template <typename Field>
+    static RegisterDependencyMask ResolveNzDependency(const Field& value) noexcept
+    {
+        return value.nValue != NO_TRANSFER_COUNT && value.dValue != NO_TRANSFER_COUNT ?
+                   RegisterDependencyMask{RegisterBit(ACLSAN_DEVICE_REGISTER_MTE2_NZ), 0} :
+                   RegisterDependencyMask{};
+    }
+
+    RegisterDependencyMask operator()(const CopyGmToCbufMultiNd2NzParamField& value) const noexcept
+    {
+        return ResolveNzDependency(value);
+    }
+
+    RegisterDependencyMask operator()(const CopyGmToCbufMultiDn2NzParamField& value) const noexcept
+    {
+        return ResolveNzDependency(value);
+    }
+
+    RegisterDependencyMask operator()(const NdDmaOutToUbufParamField& value) const noexcept
+    {
+        const std::array<uint64_t, NDDMA_LOOP_COUNT> counts{
+            value.loop0Size, value.loop1Size, value.loop2Size, value.loop3Size, value.loop4Size};
+        for (uint64_t count : counts) {
+            if (count == NO_TRANSFER_COUNT) {
+                return {};
+            }
+        }
+        RegisterDependencyMask result{RegisterBit(ACLSAN_DEVICE_REGISTER_NDDMA_PAD_COUNT), 0};
+        for (size_t index = 0; index < counts.size(); ++index) {
+            const uint64_t padding = index == 0 ? uint64_t(value.loop0LeftPaddingCount) + value.loop0RightPaddingCount :
+                                     state.ndDmaPadCount ? uint64_t(state.ndDmaPadCount->leftPaddingCounts[index - 1]) +
+                                                               state.ndDmaPadCount->rightPaddingCounts[index - 1] :
+                                                           0;
+            if (counts[index] + padding > STRIDE_DEPENDENCY_THRESHOLD) {
+                result.mask0 |= RegisterBit(static_cast<AclsanDeviceRegisterId>(
+                    static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE) + index));
+            }
+        }
+        return result;
+    }
+
+    RegisterDependencyMask operator()(const CopyGmToUbufAlignV2ParamField& value) const noexcept
+    {
+        return DmaDependencies(value, DmaLoopDirection::GM_TO_UBUF, state);
+    }
+
+    RegisterDependencyMask operator()(const CopyGmToCbufAlignV2ParamField& value) const noexcept
+    {
+        return DmaDependencies(value, DmaLoopDirection::GM_TO_CBUF, state);
+    }
+
+    RegisterDependencyMask operator()(const CopyUbufToGmAlignV2ParamField& value) const noexcept
+    {
+        auto dependencies = DmaDependencies(value, DmaLoopDirection::UBUF_TO_GM, state);
+        if (value.burstNum != NO_TRANSFER_COUNT && value.burstLen != NO_TRANSFER_COUNT) {
+            dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_CTRL);
+        }
+        return dependencies;
+    }
+
+    RegisterDependencyMask operator()(const CopyGmToCbufV2ParamField& value) const noexcept
+    {
+        if (value.burstNum == NO_TRANSFER_COUNT || value.burstLen == NO_TRANSFER_COUNT) {
+            return {};
+        }
+        RegisterDependencyMask result = DmaDependencies(value, DmaLoopDirection::GM_TO_CBUF, state);
+        if (value.padFunctionMode >= PAD_FUNCTION_MODE_MIN && value.padFunctionMode <= PAD_FUNCTION_MODE_MAX) {
+            result.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_SET_PADDING);
+        }
+        return result;
+    }
+
+    RegisterDependencyMask operator()(const FixL0cToOutParamField& value) const noexcept
+    {
+        RegisterDependencyMask dependencies{};
+        if (value.nSize != NO_TRANSFER_COUNT && value.mSize != NO_TRANSFER_COUNT) {
+            dependencies.mask0 = RegisterBit(ACLSAN_DEVICE_REGISTER_CTRL);
+            if (value.nz2ndEnable || value.nz2dnEnable) {
+                dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3);
+            }
+            if (value.nz2dnEnable) {
+                dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_CHANNEL_PARA);
+            }
+        }
+        return dependencies;
+    }
+
+    RegisterDependencyMask operator()(const LocalMemoryTransferParamField& value) const noexcept
+    {
+        const bool fix = value.kind == LocalMemoryTransferKind::FixL0cToCbufF32 ||
+                         value.kind == LocalMemoryTransferKind::FixL0cToCbufS32 ||
+                         value.kind == LocalMemoryTransferKind::FixL0cToUbufF32 ||
+                         value.kind == LocalMemoryTransferKind::FixL0cToUbufS32;
+        using Layout = dav3510::FixL0cToOutLayout;
+        if (fix && ExtractBitRange(value.config0, Layout::N_SIZE) != NO_TRANSFER_COUNT &&
+            ExtractBitRange(value.config0, Layout::M_SIZE) != NO_TRANSFER_COUNT &&
+            (ExtractBitRange(value.config1, Layout::NZ2ND_ENABLE) != 0U ||
+             ExtractBitRange(value.config1, Layout::NZ2DN_ENABLE) != 0U)) {
+            const auto channel = ExtractBitRange(value.config1, Layout::NZ2DN_ENABLE) != 0U ?
+                                     RegisterBit(ACLSAN_DEVICE_REGISTER_CHANNEL_PARA) :
+                                     0;
+            return {RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3) | channel, 0};
+        }
+        return {};
+    }
+
+    template <typename Field>
+    RegisterDependencyMask operator()(const Field&) const noexcept
+    {
+        return {};
+    }
+};
+
 } // namespace
 
 RegisterDependencyMask ResolveRegisterDependencies(
     const MemoryInstructionField& field, const MemoryRegisterState& state) noexcept
 {
-    return std::visit(
-        [&state](const auto& value) noexcept -> RegisterDependencyMask {
-            using Field = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<Field, LoadGmToCbuf2DV2ParamField>) {
-                return value.decompMode == NO_DECOMPOSITION_MODE && value.mStep != NO_TRANSFER_COUNT &&
-                               value.kStep != NO_TRANSFER_COUNT ?
-                           RegisterDependencyMask{RegisterBit(ACLSAN_DEVICE_REGISTER_MTE2_SOURCE), 0} :
-                           RegisterDependencyMask{};
-            } else if constexpr (
-                std::is_same_v<Field, CopyGmToCbufMultiNd2NzParamField> ||
-                std::is_same_v<Field, CopyGmToCbufMultiDn2NzParamField>) {
-                return value.nValue != NO_TRANSFER_COUNT && value.dValue != NO_TRANSFER_COUNT ?
-                           RegisterDependencyMask{RegisterBit(ACLSAN_DEVICE_REGISTER_MTE2_NZ), 0} :
-                           RegisterDependencyMask{};
-            } else if constexpr (std::is_same_v<Field, NdDmaOutToUbufParamField>) {
-                const std::array<uint64_t, NDDMA_LOOP_COUNT> counts{
-                    value.loop0Size, value.loop1Size, value.loop2Size, value.loop3Size, value.loop4Size};
-                for (uint64_t count : counts) {
-                    if (count == NO_TRANSFER_COUNT) {
-                        return {};
-                    }
-                }
-                RegisterDependencyMask result{RegisterBit(ACLSAN_DEVICE_REGISTER_NDDMA_PAD_COUNT), 0};
-                for (size_t index = 0; index < counts.size(); ++index) {
-                    const uint64_t padding =
-                        index == 0          ? uint64_t(value.loop0LeftPaddingCount) + value.loop0RightPaddingCount :
-                        state.ndDmaPadCount ? uint64_t(state.ndDmaPadCount->leftPaddingCounts[index - 1]) +
-                                                  state.ndDmaPadCount->rightPaddingCounts[index - 1] :
-                                              0;
-                    if (counts[index] + padding > STRIDE_DEPENDENCY_THRESHOLD) {
-                        result.mask0 |= RegisterBit(static_cast<AclsanDeviceRegisterId>(
-                            static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_NDDMA_LOOP0_STRIDE) + index));
-                    }
-                }
-                return result;
-            } else if constexpr (std::is_same_v<Field, CopyGmToUbufAlignV2ParamField>) {
-                return DmaDependencies(value, DmaLoopDirection::GM_TO_UBUF, state);
-            } else if constexpr (std::is_same_v<Field, CopyGmToCbufAlignV2ParamField>) {
-                return DmaDependencies(value, DmaLoopDirection::GM_TO_CBUF, state);
-            } else if constexpr (std::is_same_v<Field, CopyUbufToGmAlignV2ParamField>) {
-                auto dependencies = DmaDependencies(value, DmaLoopDirection::UBUF_TO_GM, state);
-                if (value.burstNum != NO_TRANSFER_COUNT && value.burstLen != NO_TRANSFER_COUNT) {
-                    dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_CTRL);
-                }
-                return dependencies;
-            } else if constexpr (std::is_same_v<Field, CopyGmToCbufV2ParamField>) {
-                if (value.burstNum == NO_TRANSFER_COUNT || value.burstLen == NO_TRANSFER_COUNT) {
-                    return {};
-                }
-                RegisterDependencyMask result = DmaDependencies(value, DmaLoopDirection::GM_TO_CBUF, state);
-                if (value.padFunctionMode >= PAD_FUNCTION_MODE_MIN && value.padFunctionMode <= PAD_FUNCTION_MODE_MAX) {
-                    result.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_SET_PADDING);
-                }
-                return result;
-            } else if constexpr (std::is_same_v<Field, FixL0cToOutParamField>) {
-                RegisterDependencyMask dependencies{};
-                if (value.nSize != NO_TRANSFER_COUNT && value.mSize != NO_TRANSFER_COUNT) {
-                    dependencies.mask0 = RegisterBit(ACLSAN_DEVICE_REGISTER_CTRL);
-                    if (value.nz2ndEnable || value.nz2dnEnable) {
-                        dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3);
-                    }
-                    if (value.nz2dnEnable) {
-                        dependencies.mask0 |= RegisterBit(ACLSAN_DEVICE_REGISTER_CHANNEL_PARA);
-                    }
-                }
-                return dependencies;
-            } else if constexpr (std::is_same_v<Field, LocalMemoryTransferParamField>) {
-                const bool fix = value.kind == LocalMemoryTransferKind::FixL0cToCbufF32 ||
-                                 value.kind == LocalMemoryTransferKind::FixL0cToCbufS32 ||
-                                 value.kind == LocalMemoryTransferKind::FixL0cToUbufF32 ||
-                                 value.kind == LocalMemoryTransferKind::FixL0cToUbufS32;
-                using Layout = dav3510::FixL0cToOutLayout;
-                if (fix && ExtractBitRange(value.config0, Layout::N_SIZE) != NO_TRANSFER_COUNT &&
-                    ExtractBitRange(value.config0, Layout::M_SIZE) != NO_TRANSFER_COUNT &&
-                    (ExtractBitRange(value.config1, Layout::NZ2ND_ENABLE) != 0U ||
-                     ExtractBitRange(value.config1, Layout::NZ2DN_ENABLE) != 0U)) {
-                    const auto channel = ExtractBitRange(value.config1, Layout::NZ2DN_ENABLE) != 0U ?
-                                             RegisterBit(ACLSAN_DEVICE_REGISTER_CHANNEL_PARA) :
-                                             0;
-                    return {RegisterBit(ACLSAN_DEVICE_REGISTER_LOOP3) | channel, 0};
-                }
-            }
-            return {};
-        },
-        field);
+    return std::visit(RegisterDependencyVisitor{state}, field);
 }
 
 std::optional<AclsanDeviceRegisterStateData> MakeRegisterStateData(

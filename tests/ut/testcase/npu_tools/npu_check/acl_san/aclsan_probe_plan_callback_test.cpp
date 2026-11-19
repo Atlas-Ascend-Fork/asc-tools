@@ -141,17 +141,17 @@ TEST(AclsanProbePlanCallback, Main)
     CHECK(
         aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS) ==
         ACLSAN_STATUS_SUCCESS);
-    CHECK(aclsan::SnapshotActiveProbePlan() == memoryProbeMask);
+    CHECK(aclsan::SnapshotActiveProbePlan() == (memoryProbeMask | aclsan::PROBE_GROUP_BOUNDARY));
 
     CHECK(
         aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC) ==
         ACLSAN_STATUS_SUCCESS);
-    CHECK(aclsan::SnapshotActiveProbePlan() == (memoryProbeMask | PROBE_GROUP_SYNC));
+    CHECK(aclsan::SnapshotActiveProbePlan() == (memoryProbeMask | PROBE_GROUP_SYNC | aclsan::PROBE_GROUP_BOUNDARY));
 
     CHECK(
         aclsanEnableCallback(0, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS) ==
         ACLSAN_STATUS_SUCCESS);
-    CHECK(aclsan::SnapshotActiveProbePlan() == PROBE_GROUP_SYNC);
+    CHECK(aclsan::SnapshotActiveProbePlan() == (PROBE_GROUP_SYNC | aclsan::PROBE_GROUP_BOUNDARY));
 
     CHECK(aclsanUnsubscribe(subscriber) == ACLSAN_STATUS_SUCCESS);
     CHECK(aclsan::SnapshotActiveProbePlan() == 0);
@@ -193,7 +193,7 @@ TEST(AclsanProbePlanCallback, Main)
     CHECK(memoryStatus == ACLSAN_STATUS_SUCCESS);
     CHECK(syncStatus == ACLSAN_STATUS_SUCCESS);
     CHECK(g_maxActiveApplyCalls.load(std::memory_order_acquire) == 1);
-    CHECK(aclsan::SnapshotActiveProbePlan() == (memoryProbeMask | PROBE_GROUP_SYNC));
+    CHECK(aclsan::SnapshotActiveProbePlan() == (memoryProbeMask | PROBE_GROUP_SYNC | aclsan::PROBE_GROUP_BOUNDARY));
     CHECK(aclsanUnsubscribe(subscriber) == ACLSAN_STATUS_SUCCESS);
 }
 
@@ -213,7 +213,7 @@ TEST(AclsanProbePlanCallback, BarrierUsesInstructionDomainAndIndependentId)
     EXPECT_EQ(
         aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_PIPE_BARRIER),
         ACLSAN_STATUS_SUCCESS);
-    EXPECT_EQ(aclsan::SnapshotActiveProbePlan(), aclsan::PROBE_GROUP_SYNC);
+    EXPECT_EQ(aclsan::SnapshotActiveProbePlan(), aclsan::PROBE_GROUP_SYNC | aclsan::PROBE_GROUP_BOUNDARY);
     EXPECT_EQ(
         aclsanEnableCallback(1, subscriber, ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF + 1U),
         ACLSAN_STATUS_ERROR_INVALID_PARAMETER);

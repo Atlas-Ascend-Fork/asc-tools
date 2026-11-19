@@ -20,7 +20,7 @@ namespace npucheck {
 bool Checker::IsSubscribed(AclsanCallbackDomain domain, AclsanCallbackId cbid) const
 {
     const auto& idList = GetSubscribedID();
-    return std::any_of(idList.begin(), idList.end(), [=](const auto& callback) {
+    return std::any_of(idList.begin(), idList.end(), [domain, cbid](const auto& callback) {
         const auto& [subscribedDomain, subscribedCbid] = callback;
         return subscribedDomain == domain && subscribedCbid == cbid;
     });

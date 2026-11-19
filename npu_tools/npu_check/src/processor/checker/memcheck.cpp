@@ -8,18 +8,16 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#include "acl_san/aclsan_api.h"
 #include "checker/memcheck.h"
+#include "checker/memory_access_layout.h"
 #include "diagnostic/pipeline_name.h"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
-#include <tuple>
 #include <utility>
 
 namespace npucheck {
@@ -37,8 +35,6 @@ using npucheck::ReportTool;
 
 constexpr uint32_t ALLOCATION_STATE_LIVE = 1;
 constexpr uint32_t ALLOCATION_STATE_FREED = 2;
-constexpr uint32_t MAX_AFFINE_RANK = 5;
-constexpr uint64_t MAX_LAYOUT_SEGMENTS = 1u << 20u;
 // Capacities are shared with initialization and range classification.
 uint64_t CubeCapacity(uint32_t space) { return npucheck::InitStateTableIndex::LocalCapacity(space); }
 
@@ -60,20 +56,6 @@ NpuCheckReportMemorySpace CubeReportSpace(uint32_t space)
     }
 }
 
-struct AffineLayout {
-    uint64_t base = 0;
-    uint32_t rank = 0;
-    uint64_t elementBytes = 0;
-    std::array<uint64_t, MAX_AFFINE_RANK> dimensions{};
-    std::array<int64_t, MAX_AFFINE_RANK> strides{};
-};
-
-struct AffineAxis {
-    uint64_t count = 0;
-    int64_t stride = 0;
-    uint64_t absoluteStride = 0;
-};
-
 uint64_t TimestampNs()
 {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
@@ -88,136 +70,10 @@ std::optional<uint64_t> RangeEnd(uint64_t base, uint64_t bytes)
     return base + bytes;
 }
 
-uint64_t AbsoluteStride(int64_t stride)
-{
-    return stride < 0 ? static_cast<uint64_t>(-(stride + 1)) + 1 : static_cast<uint64_t>(stride);
-}
-
-bool AddOffset(__int128 left, __int128 right, __int128& result)
-{
-    return !__builtin_add_overflow(left, right, &result);
-}
-
-bool AxisExtent(const AffineAxis& axis, __int128& extent)
-{
-    return !__builtin_mul_overflow(static_cast<__int128>(axis.count - 1), static_cast<__int128>(axis.stride), &extent);
-}
-
-std::optional<uint64_t> AddressWithOffset(uint64_t base, __int128 offset)
-{
-    if (offset < -static_cast<__int128>(base) ||
-        offset > static_cast<__int128>(std::numeric_limits<uint64_t>::max() - base)) {
-        return std::nullopt;
-    }
-    return static_cast<uint64_t>(static_cast<__int128>(base) + offset);
-}
-
-template <typename Visitor>
-bool VisitAffineSegments(const AffineLayout& layout, Visitor&& visitor)
-{
-    if (layout.rank == 0 || layout.rank > MAX_AFFINE_RANK || layout.elementBytes == 0) {
-        return false;
-    }
-
-    std::array<AffineAxis, MAX_AFFINE_RANK> axes{};
-    uint32_t axisCount = 0;
-    for (uint32_t dimension = 0; dimension < layout.rank; ++dimension) {
-        const uint64_t count = layout.dimensions[dimension];
-        if (count == 0) {
-            return false;
-        }
-        if (count > 1) {
-            const int64_t stride = layout.strides[dimension];
-            axes[axisCount++] = {count, stride, AbsoluteStride(stride)};
-        }
-    }
-    for (uint32_t index = 1; index < axisCount; ++index) {
-        const AffineAxis axis = axes[index];
-        uint32_t insertion = index;
-        while (insertion > 0 && axes[insertion - 1].absoluteStride > axis.absoluteStride) {
-            axes[insertion] = axes[insertion - 1];
-            --insertion;
-        }
-        axes[insertion] = axis;
-    }
-
-    __int128 contiguousBegin = 0;
-    uint64_t contiguousBytes = layout.elementBytes;
-    uint32_t sparseBegin = 0;
-    for (; sparseBegin < axisCount; ++sparseBegin) {
-        const AffineAxis& axis = axes[sparseBegin];
-        if (axis.absoluteStride > contiguousBytes) {
-            break;
-        }
-
-        __int128 extent = 0;
-        if (!AxisExtent(axis, extent)) {
-            return false;
-        }
-        const unsigned __int128 absoluteExtent =
-            extent < 0 ? static_cast<unsigned __int128>(-(extent + 1)) + 1 : static_cast<unsigned __int128>(extent);
-        const unsigned __int128 mergedBytes = static_cast<unsigned __int128>(contiguousBytes) + absoluteExtent;
-        if (mergedBytes > std::numeric_limits<uint64_t>::max()) {
-            return false;
-        }
-        contiguousBytes = static_cast<uint64_t>(mergedBytes);
-        if (extent < 0 && !AddOffset(contiguousBegin, extent, contiguousBegin)) {
-            return false;
-        }
-    }
-
-    uint64_t segmentCount = 1;
-    __int128 minimumOffset = contiguousBegin;
-    __int128 maximumOffset = contiguousBegin;
-    for (uint32_t axisIndex = sparseBegin; axisIndex < axisCount; ++axisIndex) {
-        const AffineAxis& axis = axes[axisIndex];
-        if (axis.count > MAX_LAYOUT_SEGMENTS / segmentCount) {
-            return false;
-        }
-        segmentCount *= axis.count;
-
-        __int128 extent = 0;
-        if (!AxisExtent(axis, extent)) {
-            return false;
-        }
-        if (extent < 0) {
-            if (!AddOffset(minimumOffset, extent, minimumOffset)) {
-                return false;
-            }
-        } else if (!AddOffset(maximumOffset, extent, maximumOffset)) {
-            return false;
-        }
-    }
-    if (!AddressWithOffset(layout.base, minimumOffset) || !AddressWithOffset(layout.base, maximumOffset)) {
-        return false;
-    }
-
-    for (uint64_t linear = 0; linear < segmentCount; ++linear) {
-        uint64_t index = linear;
-        __int128 offset = contiguousBegin;
-        for (uint32_t axisIndex = sparseBegin; axisIndex < axisCount; ++axisIndex) {
-            const AffineAxis& axis = axes[axisIndex];
-            const uint64_t coordinate = index % axis.count;
-            index /= axis.count;
-            __int128 term = 0;
-            if (__builtin_mul_overflow(static_cast<__int128>(coordinate), static_cast<__int128>(axis.stride), &term) ||
-                !AddOffset(offset, term, offset)) {
-                return false;
-            }
-        }
-        const auto address = AddressWithOffset(layout.base, offset);
-        if (!address) {
-            return false;
-        }
-        visitor(*address, contiguousBytes);
-    }
-    return true;
-}
-
 NpuCheckReportAllocation ToReportAllocation(const std::optional<Allocation>& allocation)
 {
     NpuCheckReportAllocation result{};
-    if (!allocation) {
+    if (!allocation.has_value()) {
         return result;
     }
     result.allocId = allocation->resourceId;
@@ -375,31 +231,33 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     return {std::move(report)};
 }
 
-void Memcheck::QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data)
+std::vector<NpuCheckMemcheckReport> Memcheck::QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data)
 {
-    // 原子配置未知但范围已还原的 WRITE 仍按普通写检查边界。
-    // ATOMIC_CONFIG_UNKNOWN 不影响 Memcheck；ESTIMATED 表示访问范围也不精确。
+    // ATOMIC_CONFIG_UNKNOWN does not affect bounds; ESTIMATED makes the range uncertain.
     if ((data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0) {
         ++stats_.inexactDeviceOperations;
-        return;
+        return {};
     }
     if (data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM && CubeCapacity(data.memorySpace) == 0) {
-        return;
+        return {};
     }
     ++stats_.deviceOperations;
     if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
-        return;
+        return {};
     }
-    if (stats_.pendingDeviceOperations >= maxPendingDeviceOperations) {
-        ++stats_.droppedDeviceOperations;
-        return;
-    }
-    if (analysis_->Managed()) {
-        ++stats_.pendingDeviceOperations;
-    } else {
+    if (!analysis_->Managed()) {
         pendingDeviceAccesses_.push_back(data);
         stats_.pendingDeviceOperations = pendingDeviceAccesses_.size();
+        return {};
     }
+    observedLaunches_.insert(data.header.launchId);
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+        ++stats_.pendingDeviceOperations;
+        return {};
+    }
+    auto reports = CheckObservedAccess(data);
+    Count(reports);
+    return reports;
 }
 
 std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
@@ -460,7 +318,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
         case ACLSAN_MEM_LAYOUT_BLOCK_REPEAT: {
             constexpr uint32_t BLOCK_REPEAT_RANK = 2;
             const auto& layout = data.layout.blockRepeat;
-            AffineLayout affine{};
+            memory_layout::AffineLayout affine{};
             affine.base = data.address;
             affine.rank = BLOCK_REPEAT_RANK;
             affine.elementBytes = layout.blockSize;
@@ -468,22 +326,22 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
             affine.dimensions[1] = layout.repeatTimes;
             affine.strides[0] = layout.blockStride;
             affine.strides[1] = layout.repeatStride;
-            if (!VisitAffineSegments(affine, appendAccess)) {
+            if (!memory_layout::VisitAffineSegments(affine, appendAccess)) {
                 return markIncomplete();
             }
             break;
         }
         case ACLSAN_MEM_LAYOUT_ND_AFFINE: {
             const auto& layout = data.layout.ndAffine;
-            AffineLayout affine{};
+            memory_layout::AffineLayout affine{};
             affine.base = data.address;
             affine.rank = layout.rank;
             affine.elementBytes = layout.elementBytes;
-            for (uint32_t dimension = 0; dimension < MAX_AFFINE_RANK; ++dimension) {
+            for (uint32_t dimension = 0; dimension < memory_layout::kMaxAffineRank; ++dimension) {
                 affine.dimensions[dimension] = layout.dims[dimension];
                 affine.strides[dimension] = layout.strides[dimension];
             }
-            if (!VisitAffineSegments(affine, appendAccess)) {
+            if (!memory_layout::VisitAffineSegments(affine, appendAccess)) {
                 return markIncomplete();
             }
             break;
@@ -495,42 +353,109 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
     return reports;
 }
 
+std::vector<NpuCheckMemcheckReport> Memcheck::CheckObservedAccess(const AclsanDeviceMemoryAccessData& access)
+{
+    const InstructionIdentity identity{
+        access.header.deviceId, access.header.executor.blockType, access.header.executor.blockId,
+        access.header.instrExecId};
+    auto launch = instructionGroups_.find(access.header.launchId);
+    auto groupId = nextGroupId_;
+    if (launch != instructionGroups_.end()) {
+        const auto group = launch->second.find(identity);
+        if (group != launch->second.end()) {
+            groupId = group->second;
+        }
+    }
+    auto reports = CheckDeviceMemoryAccess(access, groupId);
+    if (!reports.empty() && groupId == nextGroupId_) {
+        instructionGroups_[access.header.launchId].emplace(identity, nextGroupId_++);
+    }
+    return reports;
+}
+
+void Memcheck::CollectLaunch(uint64_t launchId, std::vector<NpuCheckMemcheckReport>& reports)
+{
+    const auto& shared = analysis_->Get(launchId);
+    for (const auto& access : shared.memory) {
+        if (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM ||
+            (access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0) {
+            continue;
+        }
+        auto found = CheckObservedAccess(access);
+        reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+        --stats_.pendingDeviceOperations;
+    }
+}
+
+std::vector<NpuCheckMemcheckReport> Memcheck::CollectCompletedLaunch(uint64_t launchId)
+{
+    std::vector<NpuCheckMemcheckReport> reports;
+    if (analysis_->Managed()) {
+        if (observedLaunches_.erase(launchId) == 0) {
+            unfinishedLaunches_ = true;
+            return reports;
+        }
+        CollectLaunch(launchId, reports);
+    } else {
+        const auto end = std::remove_if(
+            pendingDeviceAccesses_.begin(), pendingDeviceAccesses_.end(),
+            [this, launchId, &reports](const auto& access) {
+                if (access.header.launchId != launchId)
+                    return false;
+                auto found = CheckObservedAccess(access);
+                reports.insert(
+                    reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+                --stats_.pendingDeviceOperations;
+                return true;
+            });
+        pendingDeviceAccesses_.erase(end, pendingDeviceAccesses_.end());
+    }
+    instructionGroups_.erase(launchId);
+    Count(reports);
+    return reports;
+}
+
 std::vector<NpuCheckMemcheckReport> Memcheck::OnSynchronization()
 {
     ++stats_.synchronizationEvents;
-    std::vector<AclsanDeviceMemoryAccessData> accesses;
-    accesses.swap(pendingDeviceAccesses_);
-    if (!analysis_->Managed())
-        stats_.pendingDeviceOperations = pendingDeviceAccesses_.size();
-
-    std::map<race::Instruction, uint64_t> instructionGroups;
     std::vector<NpuCheckMemcheckReport> reports;
-    const auto check = [&](const AclsanDeviceMemoryAccessData& access) {
-        if ((access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0 ||
-            (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM && CubeCapacity(access.memorySpace) == 0))
-            return;
-        if (analysis_->Managed() && stats_.pendingDeviceOperations != 0)
-            --stats_.pendingDeviceOperations;
-        const race::Instruction identity = race::Key(access);
-        const auto [group, inserted] = instructionGroups.try_emplace(identity, nextGroupId_);
-        if (inserted) {
-            ++nextGroupId_;
-        }
-        auto found = CheckDeviceMemoryAccess(access, group->second);
-        reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
-    };
     if (analysis_->Managed()) {
-        for (auto id : analysis_->Closing()) {
-            const auto& shared = analysis_->Get(id);
-            for (const auto& access : shared.memory)
-                check(access);
+        for (const auto id : analysis_->Closing()) {
+            if (observedLaunches_.erase(id) != 0) {
+                CollectLaunch(id, reports);
+                instructionGroups_.erase(id);
+            }
         }
     } else {
-        for (const auto& access : accesses)
-            check(access);
+        for (const auto& access : pendingDeviceAccesses_) {
+            auto found = CheckObservedAccess(access);
+            reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+        }
+        pendingDeviceAccesses_.clear();
+        instructionGroups_.clear();
+        stats_.pendingDeviceOperations = 0;
     }
     Count(reports);
     return reports;
+}
+
+void Memcheck::Finalize(CheckerReportList& reports)
+{
+    unfinishedLaunches_ = unfinishedLaunches_ || !observedLaunches_.empty() || !pendingDeviceAccesses_.empty();
+    std::vector<NpuCheckMemcheckReport> completed;
+    for (const auto id : observedLaunches_) {
+        CollectLaunch(id, completed);
+    }
+    for (const auto& access : pendingDeviceAccesses_) {
+        auto found = CheckObservedAccess(access);
+        completed.insert(completed.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+    }
+    observedLaunches_.clear();
+    pendingDeviceAccesses_.clear();
+    instructionGroups_.clear();
+    stats_.pendingDeviceOperations = 0;
+    Count(completed);
+    AppendCheckerReports(std::move(completed), reports);
 }
 
 MemcheckStats Memcheck::Stats() const { return stats_; }

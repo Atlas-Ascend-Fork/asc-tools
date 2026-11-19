@@ -10,6 +10,7 @@
 add_library(acl_runtime_stub SHARED
   runtime_stub.cpp
 )
+target_compile_definitions(acl_runtime_stub PRIVATE ACL_RUNTIME_STUB_SHARED)
 target_include_directories(acl_runtime_stub
   PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
   PRIVATE "${INJECTION_SOURCE_DIR}/src"

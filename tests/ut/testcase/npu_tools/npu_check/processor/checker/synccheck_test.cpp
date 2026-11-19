@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "checker/synccheck.h"
+#include "acl_san/aclsan_cbdata_operator.h"
 
 #include <gtest/gtest.h>
 #include "acl/acl.h"
@@ -371,7 +372,7 @@ TEST(SynccheckCrossCoreTest, RejectsUnknownLaunchAndUnsupportedTopology)
     EXPECT_EQ(checker.OnSynchronization().size(), 3U);
 }
 
-TEST(SynccheckCrossCoreTest, SynchronizationCallbackFinalizesPendingLaunchOnTimeout)
+TEST(SynccheckCrossCoreTest, SynchronizationTimeoutLeavesLaunchPendingUntilOperatorCompletion)
 {
     Synccheck checker;
     checker.OnKernelLaunch(1, MakeTopology(1));
@@ -381,10 +382,18 @@ TEST(SynccheckCrossCoreTest, SynchronizationCallbackFinalizesPendingLaunchOnTime
     synchronization.common.size = sizeof(synchronization);
     synchronization.common.result = ACL_ERROR_RT_STREAM_SYNC_TIMEOUT;
     CheckerReportList reports;
-    EXPECT_TRUE(checker.OnCallback(
+    ASSERT_TRUE(checker.OnCallback(
         ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &synchronization, reports));
+    EXPECT_TRUE(reports.empty());
+    EXPECT_TRUE(checker.TopologyForLaunch(1).has_value());
+    AclsanOperatorExecutionData completion{};
+    completion.common = {ACLSAN_API_VERSION, sizeof(completion), nullptr, 0, 1};
+    completion.launchId = 1;
+    ASSERT_TRUE(checker.OnCallback(
+        ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
     EXPECT_EQ(reports.size(), 1U);
     EXPECT_FALSE(checker.TopologyForLaunch(1).has_value());
+    EXPECT_FALSE(checker.AnalysisComplete());
     EXPECT_EQ(checker.Stats().unconsumedSyncTokens, 1U);
     EXPECT_EQ(checker.Stats().invalidArguments, 0U);
 }
@@ -393,12 +402,15 @@ TEST(SynccheckCrossCoreTest, AnalysisCompleteTracksPendingFlagOperations)
 {
     Synccheck checker;
     checker.OnKernelLaunch(1, MakeTopology(3));
-    EXPECT_TRUE(checker.AnalysisComplete());
+    EXPECT_FALSE(checker.AnalysisComplete());
     checker.OnDeviceSync(MakeSyncEvent(
         ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG, ACLSAN_DEVICE_SYNC_ACTION_SET, 7, ACLSAN_DEVICE_PIPE_MTE2, 0, 1));
     EXPECT_FALSE(checker.AnalysisComplete());
     checker.OnDeviceSync(MakeSyncEvent(
         ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG, ACLSAN_DEVICE_SYNC_ACTION_WAIT, 7, ACLSAN_DEVICE_PIPE_MTE2, 0, 1));
+    EXPECT_EQ(checker.Stats().pendingOpens, 0U);
+    EXPECT_FALSE(checker.AnalysisComplete());
+    EXPECT_TRUE(checker.OnSynchronization().empty());
     EXPECT_TRUE(checker.AnalysisComplete());
 }
 

@@ -53,6 +53,8 @@ private:
         LaunchState() : tracker(records) {}
     };
     bool OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports);
+    void AnalyzeMemoryAccess(
+        LaunchState& launch, const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports, const char*& stage);
     void Log(const char* event, const AclsanDeviceEventHeader* header, const char* detail, bool error = false)
         const noexcept;
     void StopLaunch(
@@ -102,7 +104,7 @@ private:
         std::set<std::string> reasons;
         explicit Launch(MemoryAnalysis* analysis = nullptr, uint64_t id = 0)
             : id(id),
-              shared(analysis && analysis->Managed() ? &analysis->Get(id) : &owned),
+              shared(analysis != nullptr && analysis->Managed() ? &analysis->Get(id) : &owned),
               memory(shared->memory),
               sync(shared->sync),
               registers(shared->registers),
@@ -114,6 +116,18 @@ private:
     Launch& GetLaunch(uint64_t id) { return launches_.try_emplace(id, analysis_.get(), id).first->second; }
     std::shared_ptr<MemoryAnalysis> analysis_;
     class LaunchProcessor;
+    bool MarkMalformedCallback();
+    bool AcceptLaunch(uint64_t launchId);
+    bool HandleHostMemory(AclsanCallbackId cbid, const void* data, CheckerReportList& reports);
+    bool HandleStreamSynchronization(const void* data);
+    bool HandleOperatorCompletion(const void* data, CheckerReportList& reports);
+    bool HandleLaunch(const void* data);
+    bool EventBudgetExceeded(Launch& launch, const AclsanDeviceEventHeader& header);
+    bool FullDeviceEventBudget(const Launch& state) const;
+    void StoreVfEvent(Launch& state, const AclsanDeviceVfData& vf);
+    bool AcceptMemoryEvent(Launch& state, const AclsanDeviceMemoryAccessData& a);
+    bool AcceptBarrierEvent(Launch& state, const AclsanDeviceBarrierData& barrier);
+    bool AcceptSyncEvent(Launch& state, const AclsanDeviceSyncData& s);
     bool StoreDeviceEvent(AclsanCallbackDomain domain, AclsanCallbackId id, const void* data);
     void Finish(uint64_t id, Launch& launch, CheckerReportList& reports);
     void Analyze(uint64_t id, Launch& launch, CheckerReportList& reports);
@@ -126,8 +140,9 @@ private:
     uint64_t memoryEvents_ = 0, syncEvents_ = 0, launchesCount_ = 0, hostEvents_ = 0;
     uint64_t skippedMemoryEvents_ = 0, skippedSyncEvents_ = 0;
     uint64_t warnings_ = 0;
+    uint64_t unsupportedUbEvents_ = 0;
     uint64_t raw_ = 0, war_ = 0, waw_ = 0, atomic_ = 0;
-    size_t graphNodesPeak_ = 0, graphEdgesPeak_ = 0, graphQueryWorkPeak_ = 0, graphChainsPeak_ = 0;
+    size_t graphNodesPeak_ = 0, graphEdgesPeak_ = 0, graphQueryWorkPeak_ = 0;
     size_t stateBytesPeak_ = 0, stateSegmentsPeak_ = 0;
     bool incomplete_ = false;
 };

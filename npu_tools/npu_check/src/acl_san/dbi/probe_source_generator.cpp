@@ -41,7 +41,7 @@ struct ProbeDefinition {
     std::string_view recordArguments;
 };
 
-const std::array<ProbeDefinition, 196> DEFINITIONS{
+const std::array<ProbeDefinition, 198> DEFINITIONS{
     {
         {static_cast<uint16_t>(InstrType::VF), ProbeGroup::Vector, "__npu_check_probe_vf",
          "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t entryPc, uint64_t instructionCount",
@@ -834,13 +834,20 @@ const std::array<ProbeDefinition, 196> DEFINITIONS{
          R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, pipe_t pipe, uint8_t syncId)PARAM",
          "Synchronization", "PIPE_S",
          R"ARGS(static_cast<uint64_t>(pipe), static_cast<uint64_t>(syncId), 0UL, 0UL, 0UL)ARGS"},
+        {static_cast<uint16_t>(InstrType::BEFORE_KERNEL_STACK_FRAME), ProbeGroup::Boundary,
+         "__npu_check_probe_before_kernel_stack_frame",
+         R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid)PARAM", "Synchronization", "PIPE_S",
+         R"ARGS(0UL, 0UL, 0UL, 0UL, 0UL)ARGS"},
+        {static_cast<uint16_t>(InstrType::BEFORE_KERNEL_END), ProbeGroup::Boundary,
+         "__npu_check_probe_before_kernel_end", R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid)PARAM",
+         "Synchronization", "PIPE_S", R"ARGS(0UL, 0UL, 0UL, 0UL, 0UL)ARGS"},
     }};
 
 uint64_t HashText(uint64_t hash, std::string_view text)
 {
     constexpr uint64_t HASH_PRIME = 1099511628211ULL;
-    for (const unsigned char value : text) {
-        hash ^= value;
+    for (const char value : text) {
+        hash ^= static_cast<unsigned char>(value);
         hash = MultiplyHashModulo(hash, HASH_PRIME);
     }
     hash ^= 0xffU;
@@ -877,7 +884,7 @@ bool IsKnownGroup(ProbeGroup group)
 {
     return group == ProbeGroup::Mte1 || group == ProbeGroup::Mte2 || group == ProbeGroup::Mte3 ||
            group == ProbeGroup::Fixpipe || group == ProbeGroup::Scalar || group == ProbeGroup::Sync ||
-           group == ProbeGroup::Matrix || group == ProbeGroup::Vector;
+           group == ProbeGroup::Matrix || group == ProbeGroup::Vector || group == ProbeGroup::Boundary;
 }
 
 std::vector<const ProbeDefinition*> DefinitionsForGroup(ProbeGroup group)

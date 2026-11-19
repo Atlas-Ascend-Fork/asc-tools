@@ -12,6 +12,8 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_TOOL_MANAGER_TOOL_MANAGER_H
 
 #include "acl_san/aclsan_api.h"
+#include "acl_san/aclsan_cbdata_operator.h"
+#include "acl_san/aclsan_cbdata_synchronize.h"
 #include "checker/checker.h"
 #include "diagnostic/report_renderer.h"
 #include "diagnostic/report_buffer.h"
@@ -24,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace npucheck {
@@ -40,6 +43,7 @@ public:
     bool IsInitialized() const;
 
 private:
+    friend struct ToolManagerTestAccess;
     class ActiveCallbackGuard {
     public:
         explicit ActiveCallbackGuard(ToolManager& service) noexcept : service_(service) {}
@@ -55,8 +59,18 @@ private:
         void* userdata, AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata) noexcept;
     void OnCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata);
     void OnCallbackException(const char* reason) noexcept;
-    bool EnterCallback();
+    bool EnterCallback(AclsanCallbackDomain domain);
     void LeaveCallback();
+    void QueueSynchronization(const void* cbdata) noexcept;
+    void DrainSynchronizations(CheckerReportList& reports);
+    void ProcessCallbackLocked(
+        AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata, CheckerReportList& reports);
+    void NotifyCheckersLocked(
+        AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata, CheckerReportList& reports);
+    void DrainOperatorExecutions(CheckerReportList& reports);
+    bool DeferOperatorCompletionLocked(AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata);
+    void FinalizeCheckers();
+    bool RenderSessionReport();
     bool ConfigureSanitizer(std::string& error);
     bool EnableCallbacks(std::string& error);
     void RollbackSanitizer();
@@ -73,8 +87,17 @@ private:
     std::mutex callbackMutex_;
     std::condition_variable callbacksDrained_;
     mutable std::mutex stateMutex_;
+    struct DeferredSynchronization {
+        AclsanSynchronizeData data;
+        std::thread::id thread;
+    };
+    std::mutex synchronizationMutex_;
+    std::vector<DeferredSynchronization> synchronizations_;
+    std::vector<AclsanOperatorExecutionData> deferredOperators_;
+    std::atomic<bool> synchronizationLost_{false};
     uint64_t activeCallbacks_ = 0;
     bool stopping_ = false;
+    bool callbacksClosed_ = false;
     bool initialized_ = false;
     bool subscribed_ = false;
 
@@ -94,6 +117,7 @@ private:
     std::atomic<uint64_t> callbackCount_{0};
     uint64_t malformedCallbacks_ = 0;
     uint64_t frameworkErrors_ = 0;
+    std::vector<std::string> frameworkErrorReasons_;
 };
 
 } // namespace npucheck
