@@ -53,6 +53,7 @@ add_library(acl_pti_unit STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/range_profiler.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_memory.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_runtime.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_registry.cpp
@@ -65,7 +66,7 @@ target_sources(acl_pti_unit PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security
 target_include_directories(acl_pti_unit PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(acl_pti_unit
   PUBLIC npu_compute_test_headers
-  PRIVATE c_sec_static acl_tool_injection_test_unit Threads::Threads Boost::filesystem ${CMAKE_DL_LIBS}
+  PRIVATE npu_bit c_sec_static acl_tool_injection_test_unit Threads::Threads Boost::filesystem ${CMAKE_DL_LIBS}
 )
 set_target_properties(acl_pti_unit PROPERTIES
   CXX_VISIBILITY_PRESET hidden
@@ -118,6 +119,7 @@ add_library(acl_pti_test SHARED
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/range_profiler.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_memory.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_runtime.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_registry.cpp
@@ -132,7 +134,7 @@ target_sources(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security
 target_include_directories(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(acl_pti_test
   PUBLIC npu_compute_test_headers
-  PRIVATE c_sec_static acl_tool_injection_test acl_prof_api_stub Threads::Threads Boost::filesystem
+  PRIVATE npu_bit c_sec_static acl_tool_injection_test acl_prof_api_stub Threads::Threads Boost::filesystem
 )
 set_target_properties(acl_pti_test PROPERTIES
   OUTPUT_NAME acl_pti_test

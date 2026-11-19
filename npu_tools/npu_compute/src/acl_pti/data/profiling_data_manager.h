@@ -40,6 +40,7 @@ public:
     ReplayResult RecordReplayStatus(const ReplayStopInfo& info);
     // Releases only the closed reception context; aggregated data remains until Shutdown.
     aclptiResult ReleaseReplay(uint64_t replayId);
+    aclptiResult SetRooflineData(aclptiRooflineData data);
     // Requires no active replay; drains the worker and publishes the result at most once.
     aclptiResult Shutdown();
 
@@ -64,6 +65,7 @@ private:
     ManagerState state_ = ManagerState::Created;
     aclptiResult shutdownStatus_ = ACLPTI_SUCCESS;
     DataProcessor processor_;
+    std::optional<aclptiRooflineData> rooflineData_;
 };
 
 } // namespace aclpti::data

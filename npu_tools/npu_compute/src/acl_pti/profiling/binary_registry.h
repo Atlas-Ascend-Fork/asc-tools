@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <string>
 #include "pm_sampling_instruction_map.h"
 #include <unordered_map>
@@ -41,6 +42,14 @@ struct PmSamplingBinarySnapshot {
     std::string companionError;
 };
 
+// Original image and launch locator; capturing this does not require a device/context.
+struct BinarySource {
+    std::shared_ptr<const std::vector<char>> image;
+    std::vector<aclrtBinaryLoadOption> options;
+    std::string name;
+    std::optional<std::uint64_t> entry;
+};
+
 class BinaryRegistry {
 public:
     // Holds the registry lock through the original Runtime unload. Destroy without
@@ -58,11 +67,13 @@ public:
         bool pipeline = true);
     aclptiResult RegisterBinaryFunction(aclrtBinHandle binary, const char* name, aclrtFuncHandle function);
     aclptiResult RegisterBinaryFunction(aclrtBinHandle binary, std::uint64_t entry, aclrtFuncHandle function);
-    aclptiResult RegisterSymbolFunction(aclrtFuncHandle function, bool pmSampling = false, bool pipeline = true);
+    aclptiResult RegisterSymbolFunction(
+        aclrtFuncHandle function, bool pmSampling = false, bool pipeline = true, bool captureSource = false);
     aclptiResult PrepareBinaryUnload(aclrtBinHandle binary, UnloadContext& context);
     aclptiResult CompleteBinaryUnload(UnloadContext& context);
     // Capture while Runtime handles are valid. Shared immutable images outlive binary unload.
     bool GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot);
+    bool GetSource(aclrtFuncHandle original, BinarySource& source);
     // Null means the function was not loaded with instrumentation enabled.
     aclrtFuncHandle FindInstrumentedFunction(aclrtFuncHandle original);
     // Returns the independent sampling companion, or the original for a non-SIMT kernel.
@@ -81,13 +92,16 @@ private:
         std::shared_ptr<const PmSamplingBinaryImage> pmSamplingImage;
         std::unordered_map<aclrtFuncHandle, std::uint64_t> elfEntries;
         std::uint32_t traceArgumentOffset = 0;
+        BinarySource source;
+        std::unordered_map<aclrtFuncHandle, std::string> names;
+        std::unordered_map<aclrtFuncHandle, std::uint64_t> originalEntries;
     };
     template <typename Function, typename Key>
     aclptiResult ResolveBinaryFunction(aclrtApiId id, aclrtBinHandle binary, Key key, aclrtFuncHandle function);
     template <typename Function, typename Key>
     aclptiResult ResolveFunctionState(
         aclrtApiId id, aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function);
-    aclptiResult EnsureSamplingBinary(aclrtBinHandle binary, bool pipeline);
+    aclptiResult EnsureSamplingBinary(aclrtBinHandle binary, bool pipeline, bool pmSampling);
     aclptiResult RegisterInstrumentedBinary(
         const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary,
         bool pmSampling = false, bool pipeline = false);

@@ -54,6 +54,8 @@ TEST(NpuComputeIpcProtocol, Codecs)
         "L2Cache",
         "ArithmeticUtilization",
         "ResourceConflictRatio",
+        "PmSampling",
+        "Roofline",
     };
     auto bytes = EncodeConfig(config);
     const auto decoded = DecodeConfig(bytes);

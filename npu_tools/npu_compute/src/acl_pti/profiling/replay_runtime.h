@@ -35,6 +35,7 @@ public:
 
     bool CollectPipeline() const { return rangeProfiler_.CollectPipeline(); }
     bool CollectPcSampling() const { return rangeProfiler_.CollectPcSampling(); }
+    bool CollectRoofline() const { return rangeProfiler_.CollectRoofline(); }
     bool GetPmSamplingSnapshot(aclrtFuncHandle function, PmSamplingBinarySnapshot& snapshot)
     {
         return binaryRegistry_.GetPmSamplingSnapshot(function, snapshot);

@@ -244,6 +244,8 @@ aclptiResult DataProcessor::FinishReplayResult(
 void DataProcessor::AssembleProfilingResult()
 {
     std::map<LogicalKey, RowAccumulator> pmuRows;
+    const bool hasPmuReplay = std::any_of(
+        replays_.begin(), replays_.end(), [](const auto& item) { return item.second.kind == ReplayKind::Pmu; });
     for (auto& [replayId, replay] : replays_) {
         result_.stats.receivedBytes += replay.stats.receivedBytes;
         result_.stats.acceptedBytes += replay.stats.acceptedBytes;
@@ -253,15 +255,26 @@ void DataProcessor::AssembleProfilingResult()
         if (replay.stats.failedRecordCount != 0) {
             result_.errorStats.failedRecordCountByReplay[replayId] = replay.stats.failedRecordCount;
         }
+        if (replay.kind == ReplayKind::RooflinePmu && replay.status != ACLPTI_SUCCESS) {
+            continue;
+        }
         for (auto& [key, rows] : replay.taskLogs) {
             auto& destination = result_.taskLogs[key];
             destination.insert(destination.end(), rows.begin(), rows.end());
+        }
+        if (replay.kind == ReplayKind::RooflinePmu) {
+            // Other PMU sections must not include counters from the extra Roofline replay.
+            result_.rooflineReplayId = replayId;
+            if (hasPmuReplay) {
+                continue;
+            }
         }
         for (auto& [key, rows] : replay.blockLogs) {
             auto& destination = result_.blockLogs[key];
             destination.insert(destination.end(), rows.begin(), rows.end());
         }
-        if (replay.kind == ReplayKind::Pmu && replay.status == ACLPTI_SUCCESS) {
+        if ((replay.kind == ReplayKind::Pmu || replay.kind == ReplayKind::RooflinePmu) &&
+            replay.status == ACLPTI_SUCCESS) {
             MergeRows(replay.pmuLogs, &pmuRows);
             MergeTaskPmuCoreData(replay.taskPmuData.aic, result_.taskPmuData.aic);
             MergeTaskPmuCoreData(replay.taskPmuData.aiv, result_.taskPmuData.aiv);

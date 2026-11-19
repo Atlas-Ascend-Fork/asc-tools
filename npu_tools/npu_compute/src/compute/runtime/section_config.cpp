@@ -18,7 +18,7 @@ namespace {
 
 constexpr std::array kSupportedSections = {
     "PipeUtilization",       "Memory",     "MemoryL0", "MemoryUB", "L2Cache", "Pipeline", "ArithmeticUtilization",
-    "ResourceConflictRatio", "PmSampling",
+    "ResourceConflictRatio", "PmSampling", "Roofline",
 };
 
 bool Fail(const std::string& message, std::string* error)

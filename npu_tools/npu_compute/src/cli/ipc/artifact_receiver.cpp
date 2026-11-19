@@ -301,16 +301,19 @@ namespace {
 std::set<std::string> ExpectedPmuFiles(const ipc::Config& config, bool& pipelineExpected, bool& samplingExpected)
 {
     std::set<std::string> expectedPmu;
+    bool rooflineExpected = false;
     for (const auto& section : config.sections) {
         if (section == "Pipeline") {
             pipelineExpected = true;
         } else if (section == "PmSampling") {
             samplingExpected = true;
+        } else if (section == "Roofline") {
+            rooflineExpected = true;
         } else {
             expectedPmu.insert(section + ".csv");
         }
     }
-    if (!expectedPmu.empty() || pipelineExpected || samplingExpected) {
+    if (!expectedPmu.empty() || pipelineExpected || samplingExpected || rooflineExpected) {
         expectedPmu.insert("summary.jsonl");
     }
     return expectedPmu;

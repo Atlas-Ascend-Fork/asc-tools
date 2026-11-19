@@ -9,6 +9,7 @@
  */
 #include "npu_compute_log.h"
 #include "range_profiler.h"
+#include "npubit_collector.h"
 #include <memory>
 #include "binary_registry.h"
 #include "acl_pti/data/pmu_events.h"
@@ -76,9 +77,12 @@ constexpr uint32_t kMemoryL0[] = {772, 774, 776, 778, 1795, 1797};
 constexpr uint32_t kMemoryUb[] = {1058, 1059, 1393, 1394, 1397, 1398, 1407, 1408};
 constexpr uint32_t kL2Cache[] = {1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071};
 
+constexpr uint32_t kRoofline[] = {data::pmu::CUBE_ACTIVE_CYCLES_EVENT, data::pmu::VECTOR_ACTIVE_CYCLES_EVENT};
+
 constexpr uint32_t kMsprofCollectionType = 8;
 
 constexpr SectionDefinition kSectionCatalog[] = {
+    {"Roofline", kRoofline, std::size(kRoofline)},
     {"ArithmeticUtilization", ARITHMETIC_UTILIZATION, std::size(ARITHMETIC_UTILIZATION)},
     {"PipeUtilization", kPipeUtilization, std::size(kPipeUtilization)},
     {"ResourceConflictRatio", kResourceConflictRatio, std::size(kResourceConflictRatio)},
@@ -213,6 +217,7 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
 
     try {
         std::vector<uint32_t> events;
+        bool roofline = false;
         std::unordered_set<uint32_t> seen;
         for (std::size_t index = 0; index < params->numSections; ++index) {
             const char* name = params->sections[index];
@@ -241,6 +246,10 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
                 return ACLPTI_ERROR_NOT_SUPPORTED;
             }
             ASCTOOL_DEBUG("[aclpti] selected section name=%.*s", static_cast<int>(length), name);
+            if (section->name == "Roofline") {
+                roofline = true;
+                continue;
+            }
             for (std::size_t eventIndex = 0; eventIndex < section->eventCount; ++eventIndex) {
                 const uint32_t event = section->events[eventIndex];
                 if (seen.insert(event).second) {
@@ -249,6 +258,7 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
             }
         }
         pmuEvents_ = std::move(events);
+        collectRoofline_ = roofline;
         blockResult_ = params->blockResult;
         collectPipeline_ = params->collectPipeline;
         if (collectPipeline_) {
@@ -313,7 +323,11 @@ std::vector<RangeProfiler::ReplayRound> RangeProfiler::BuildReplayRounds() const
     std::vector<ReplayRound> rounds;
     const std::size_t pmuRoundCount = (pmuEvents_.size() + COMPUTE_AICORE_METRICS_NUM - 1) / COMPUTE_AICORE_METRICS_NUM;
     rounds.reserve(
-        pmuRoundCount + static_cast<std::size_t>(collectPipeline_) + static_cast<std::size_t>(collectPcSampling_));
+        pmuRoundCount + static_cast<std::size_t>(collectRoofline_) + static_cast<std::size_t>(collectPipeline_) +
+        static_cast<std::size_t>(collectPcSampling_));
+    if (collectRoofline_) {
+        rounds.push_back(ReplayRound{data::ReplayKind::RooflinePmu, 0, std::size(kRoofline)});
+    }
     for (std::size_t round = 0; round < pmuRoundCount; ++round) {
         const std::size_t firstEvent = round * COMPUTE_AICORE_METRICS_NUM;
         rounds.push_back(ReplayRound{
@@ -339,12 +353,13 @@ void RangeProfiler::ConfigureProfilingRound(
     config->prepareInfo.kind = round.kind;
     config->prepareInfo.pmuEventIds.fill(data::kInvalidPmuEvent);
     MsprofConfigAttr& primaryAttr = config->attrs[0];
-    if (round.kind == data::ReplayKind::Pmu) {
+    if (round.kind == data::ReplayKind::Pmu || round.kind == data::ReplayKind::RooflinePmu) {
         config->msprof.profSwitch = PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK;
         primaryAttr.id = PROF_CONFIG_ATTR_AICORE_METRICS;
         std::fill_n(primaryAttr.value.aicoreMetrics, COMPUTE_AICORE_METRICS_NUM, MSPROF_INVALID_AICORE_METRIC);
+        const uint32_t* events = round.kind == data::ReplayKind::RooflinePmu ? kRoofline : pmuEvents_.data();
         for (std::size_t index = 0; index < round.pmuEventCount; ++index) {
-            const uint32_t event = pmuEvents_[round.firstPmuEvent + index];
+            const uint32_t event = events[round.firstPmuEvent + index];
             primaryAttr.value.aicoreMetrics[index] = event;
             config->prepareInfo.pmuEventIds[index] = event;
         }
@@ -356,11 +371,12 @@ void RangeProfiler::ConfigureProfilingRound(
     }
 
     std::size_t attrCount = 1;
-    if (round.kind != data::ReplayKind::Pipeline && blockResult_ != ACLPTI_BLOCK_RESULT_DISABLED) {
+    const auto blockResult = round.kind == data::ReplayKind::RooflinePmu ? ACLPTI_BLOCK_RESULT_ALL : blockResult_;
+    if (round.kind != data::ReplayKind::Pipeline && blockResult != ACLPTI_BLOCK_RESULT_DISABLED) {
         MsprofConfigAttr& blockAttr = config->attrs[attrCount++];
         blockAttr.id = PROF_CONFIG_ATTR_TASK_BLOCK;
         blockAttr.value.taskBlockMode =
-            blockResult_ == ACLPTI_BLOCK_RESULT_ALL ? PROF_COMPUTE_ALL_BLOCK : PROF_COMPUTE_BLOCK_SHRINK;
+            blockResult == ACLPTI_BLOCK_RESULT_ALL ? PROF_COMPUTE_ALL_BLOCK : PROF_COMPUTE_BLOCK_SHRINK;
     }
     config->msprof.devNums = 1;
     config->msprof.devIdList[0] = static_cast<std::uint32_t>(deviceId);
@@ -551,7 +567,30 @@ aclptiResult RangeProfiler::ReplayKernel(
             }
         }
 
-        return ACLPTI_SUCCESS;
+        if (!collectRoofline_) {
+            return ACLPTI_SUCCESS;
+        }
+        BinarySource source;
+        std::size_t round = rounds.size();
+        const auto beforeReplay = [&] {
+            if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
+                TryFlushL2Cache(deviceId, round);
+            }
+            ++round;
+        };
+        aclptiRooflineData roofline;
+        if (binaryRegistry.GetSource(originalFunction, source)) {
+            status = CollectNpubitRoofline(
+                source, replayMemory, launchFunction, synchronizeFunction, stream, beforeReplay, roofline);
+        } else {
+            roofline.errors.emplace_back(
+                "original ELF/function locator unavailable; enable collection before binary load");
+        }
+        for (const auto& error : roofline.errors) {
+            ASCTOOL_WARNING("[aclpti] Roofline data incomplete: %s", error.c_str());
+        }
+        const auto publish = dataManager_.SetRooflineData(std::move(roofline));
+        return status != ACLPTI_SUCCESS ? status : publish;
     } catch (const std::bad_alloc&) {
         ASCTOOL_ERROR(
             "[aclpti] error operation=replay_metadata_alloc status=%d"

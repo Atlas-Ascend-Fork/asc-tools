@@ -62,6 +62,7 @@ bool IsPrimaryPayload(ReplayKind kind, RawDataType type, bool biu)
         case ReplayKind::Pipeline:
             return biu;
         case ReplayKind::Pmu:
+        case ReplayKind::RooflinePmu:
             return type == PMU_DATA_TYPE;
         case ReplayKind::PcSampling:
             return type == PC_SAMPLING_DATA_TYPE;

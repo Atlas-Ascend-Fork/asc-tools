@@ -385,6 +385,7 @@ int TestSets()
     auto full = basic;
     full.push_back("ResourceConflictRatio");
     full.push_back("PmSampling");
+    full.push_back("Roofline");
     CHECK(Parse({"npu-compute", "--set", "basic", "./app"}, &config, &errors));
     CHECK(config.sections == basic && config.collect_pipeline);
     CHECK(Parse({"npu-compute", "./app"}, &config, &errors));
@@ -398,8 +399,8 @@ int TestSets()
     CHECK(Parse({"npu-compute", "--section", "Memory", "--set", "basic", "./app"}, &config, &errors));
     CHECK(config.sections == reordered);
     CHECK(Parse(
-        {"npu-compute", "--set", "basic", "--section", "ResourceConflictRatio", "--section", "PmSampling",
-         "--replay-mode=kernel", "-o", "x.npu-rep", "./app", "--set", "full"},
+        {"npu-compute", "--set", "basic", "--section", "ResourceConflictRatio", "--section", "PmSampling", "--section",
+         "Roofline", "--replay-mode=kernel", "-o", "x.npu-rep", "./app", "--set", "full"},
         &config, &errors));
     CHECK(config.sections == full);
     CHECK(config.program_arguments == std::vector<std::string>({"--set", "full"}));
@@ -830,4 +831,13 @@ TEST(NpuComputeCli, NoPackRejectsLegacyDiskOptionAndPreservesAppArguments)
     EXPECT_NE(errors.front().find("unknown option"), std::string::npos);
     EXPECT_TRUE(Parse({"npu-compute", "app", "--disk", "--no-pack"}, &config, &errors));
     EXPECT_EQ(config.program_arguments, (std::vector<std::string>{"--disk", "--no-pack"}));
+}
+
+TEST(NpuComputeCli, RooflineUsesTheExistingSectionOption)
+{
+    CliConfig config;
+    std::vector<std::string> errors;
+    EXPECT_TRUE(Parse({"npu-compute", "--section", "Roofline", "--section", "Memory", "./app"}, &config, &errors));
+    EXPECT_EQ(config.sections, (std::vector<std::string>{"Roofline", "Memory"}));
+    EXPECT_FALSE(Parse({"npu-compute", "--section", "roofline", "./app"}, &config, &errors));
 }

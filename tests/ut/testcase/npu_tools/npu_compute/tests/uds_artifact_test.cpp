@@ -498,3 +498,24 @@ TEST(NpuComputeUdsArtifact, OrdinarySoErrorDoesNotTerminatePublication)
     ASSERT_TRUE(WIFEXITED(status));
     EXPECT_EQ(WEXITSTATUS(status), 0);
 }
+
+TEST(NpuComputeUdsArtifact, RooflineUsesSummaryWithoutCsvArtifact)
+{
+    TempDirectory temporary;
+    ArtifactReceiver receiver(temporary.Path());
+    Config config;
+    config.sections = {"Roofline"};
+    Result result;
+    result.sections = config.sections;
+    const std::vector<std::string> names = {"HardwareInfo.jsonl", "summary.jsonl"};
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        const auto id = i + 1;
+        const std::string data = "{}\n";
+        Begin(receiver, id, names[i]);
+        TypedChunk(receiver, id, KindForName(names[i]), data);
+        End(receiver, id, data.size());
+        result.manifest.push_back({id, names[i], data.size()});
+    }
+    Check(receiver.Validate(result, config));
+    Check(!fs::exists(fs::path(temporary.Path()) / "roofline.csv"));
+}

@@ -20,7 +20,7 @@
 namespace npucompute::ipc {
 namespace {
 constexpr size_t DEFAULT_STRING_BYTES = 128;
-constexpr size_t MAX_SECTION_COUNT = 9;
+constexpr size_t MAX_SECTION_COUNT = 10;
 constexpr size_t MAX_ARTIFACT_COUNT = 64;
 constexpr size_t MAX_ERROR_MESSAGE_BYTES = 4096;
 constexpr unsigned int BITS_PER_BYTE = std::numeric_limits<uint8_t>::digits;
@@ -193,7 +193,7 @@ void ValidateConfig(const Config& config)
         Check(
             section == "PipeUtilization" || section == "Memory" || section == "MemoryL0" || section == "MemoryUB" ||
                 section == "L2Cache" || section == "Pipeline" || section == "ArithmeticUtilization" ||
-                section == "ResourceConflictRatio" || section == "PmSampling",
+                section == "ResourceConflictRatio" || section == "PmSampling" || section == "Roofline",
             "unknown section");
         Check(seen.insert(section).second, "duplicate section");
     }

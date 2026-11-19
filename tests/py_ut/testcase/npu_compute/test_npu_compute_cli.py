@@ -28,6 +28,7 @@ SECTIONS = [
     "L2Cache",
     "ArithmeticUtilization",
     "ResourceConflictRatio",
+    "Roofline",
 ]
 FIXTURE = Path(
     os.environ.get(
@@ -215,7 +216,7 @@ def test_list_sections_outputs_only_ids_in_alphabetical_order():
 
     assert result.returncode == 0
     assert result.stdout.splitlines() == sorted(
-        [*SECTIONS, "Pipeline", "PmSampling"], key=str.casefold
+        [*SECTIONS, "Pipeline", "PmSampling", "Roofline"], key=str.casefold
     )
     assert result.stderr == ""
 
@@ -607,7 +608,10 @@ def test_help_has_one_definition_per_option():
     ("options", "sections"),
     [
         (("--set", "basic"), BASIC_SECTIONS),
-        (("--set", "full"), [*BASIC_SECTIONS, "ResourceConflictRatio", "PmSampling"]),
+        (
+            ("--set", "full"),
+            [*BASIC_SECTIONS, "ResourceConflictRatio", "PmSampling", "Roofline"],
+        ),
         (
             (
                 "--section",

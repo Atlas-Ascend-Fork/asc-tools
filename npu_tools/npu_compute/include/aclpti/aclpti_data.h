@@ -202,6 +202,22 @@ struct aclptiPmSamplingContext {
     uint64_t pcOffset = 0; // Probe-reported displacement from sampled code to the original kernel.
 };
 
+enum class aclptiRooflineChannel : uint8_t { Simd, Simt, Cube };
+
+// Owned npubit analysis, independent of the library's record layout and buffer lifetime.
+struct aclptiRooflineWork {
+    aclptiRooflineChannel channel;
+    uint32_t bitWidth;
+    double operations; // OP, summed over all cores; vector coefficients already include x2.
+};
+
+struct aclptiRooflineData {
+    aclptiResult status = ACLPTI_ERROR_NOT_SUPPORTED;
+    std::vector<aclptiRooflineWork> work;
+    std::optional<double> gmBytes; // Whole-kernel logical GM read + write bytes, shared by all points.
+    std::vector<std::string> errors;
+};
+
 // Complete collection for one original launch, including all of its profiling replays.
 // PMU events are merged before delivery; distinct original launches must never share a result.
 struct aclptiProfilingDataResult {
@@ -210,6 +226,8 @@ struct aclptiProfilingDataResult {
     std::map<aclptiBlockKey, std::vector<aclptiTaskLogRow>> blockLogs;
     std::map<aclptiBlockKey, aclptiPmuDataRow> pmuLogs;
     aclptiTaskPmuData taskPmuData;
+    std::optional<aclptiRooflineData> rooflineData;
+    std::optional<uint64_t> rooflineReplayId;
     std::map<uint64_t, aclptiPipelineData> pipelineData;
     std::vector<aclptiRawDataChunk> pcSamplingData;
     std::map<uint64_t, std::shared_ptr<const aclptiPmSamplingContext>> pmSamplingContexts;

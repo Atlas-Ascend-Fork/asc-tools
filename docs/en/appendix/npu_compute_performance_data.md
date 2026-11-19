@@ -1,11 +1,12 @@
 # npu-compute performance data
 
-This document describes the fields and calculations in Section CSV files, `summary.jsonl`, and `HardwareInfo.jsonl`. CSV files contain Block/sub-block details or Task metrics according to the collection level. The summary contains Task-level metrics for the selected Sections, performance hints, and an `OpInfoSummary` operator overview. HardwareInfo records host and device information.
+This document describes the fields and calculations in Section CSV files, `summary.jsonl`, and `HardwareInfo.jsonl`. CSV files contain Block/sub-block details or Task metrics according to the collection level. The summary contains Task metrics for the selected PMU Sections, Roofline data when selected, performance hints, and an `OpInfoSummary` operator overview. HardwareInfo records host and device information.
 
 | Output | Scope | Relationship to other data |
 |---|---|---|
 | Section CSV | Block/sub-block or Task | Block CSV has one row per logical execution object. Task CSV has one row per Section with both AIC/AIV metrics and omits `block_id` and `sub_block_id`. |
-| Section records in the summary | Task | Cycles, counters, and data volumes correspond to cumulative totals. Ratios, hit rates, and bandwidths use cumulative inputs and their respective denominators; they are not uniformly Block averages. |
+| PMU Section records in the summary | Task | Cycles, counters, and data volumes correspond to cumulative totals. Ratios, hit rates, and bandwidths use cumulative inputs and their respective denominators; they are not uniformly Block averages. |
+| `Roofline` | Current kernel | Model inputs grouped by compute type and instruction bit width. All points share the kernel duration and GM traffic volume. |
 | `PerformanceHints` | Current Task | Checks from predefined rules, with separate hints for AIC/AIV where applicable. |
 | `OpInfoSummary` | Current Kernel | Combines Task metrics, Block parallel statistics, runtime metadata, and hardware capabilities. |
 | `HardwareInfo.jsonl` | Collection environment | Host and device information, distinct from the Kernel's logical launch counts. |
@@ -265,11 +266,11 @@ NA means inapplicable to the current Core or unavailable data; it does not mean 
 
 ## summary (Section summaries and operator information)
 
-`summary.jsonl` uses JSON Lines, one object per line. The selected subset of the seven PMU Sections is emitted in alphabetical order, without duplicates, followed by one `PerformanceHints` record and the final `OpInfoSummary`. Pipeline-only and PmSampling-only collections must also emit a summary containing PerformanceHints and OpInfoSummary when a Kernel collection result exists. Commands that execute no Kernel do not create a summary.
+`summary.jsonl` uses JSON Lines, one object per line. The selected PMU Sections and Roofline are emitted in alphabetical order, without duplicates, followed by one `PerformanceHints` record and the final `OpInfoSummary`. Pipeline-only and PmSampling-only collections must also emit a summary containing PerformanceHints and OpInfoSummary when a Kernel collection result exists. Commands that execute no Kernel do not create a summary.
 
 ### PerformanceHints
 
-This record stores an overall performance assessment for the current Task. New reports contain exactly one record after the selected PMU Sections and before `OpInfoSummary`. The total is the selected PMU Section count plus 2 (`Pipeline` produces a separate `PipeTrace.json`). Historical reports can contain only Section records and the final `OpInfoSummary`.
+This record stores an overall performance assessment for the current Task. New reports contain exactly one record after the selected PMU Sections and Roofline and before `OpInfoSummary`. The total is the selected PMU Section count plus 2, with one additional record when Roofline is selected. Historical reports can contain only Section records and the final `OpInfoSummary`.
 
 | Field | JSON type | Meaning |
 |---|---|---|
@@ -330,6 +331,43 @@ NPU_COMPUTE_DEBUG=1 npu-compute --section PipeUtilization --section Memory ./app
 The category is ArithmeticUtilization, L2Cache, Memory, MemoryL0, MemoryUB, PipeUtilization, or ResourceConflictRatio. Fields use the corresponding CSV names and units, excluding block_id and sub_block_id. Each Section computes one metric record directly from the current Task's AIC/AIV counters. Unavailable fields remain present and use the exact JSON string "NA"; valid zero remains a number. Counters have no decimal places; other finite metrics have six.
 
 Each result contains one Task PMU object with separate optional AIC/AIV counters. Events for each side are merged across successful replays. Task summaries use this object directly; metrics with a missing side or required event use "NA". Task CSV files contain one row per Section with both sides and omit block_id and sub_block_id. Block CSV files retain one row per logical execution object.
+
+### Roofline
+
+When you select `--section Roofline` or `--set full`, `summary.jsonl` contains a record whose `category` is `Roofline`. Each data point sums the operations for one compute type and bit width across the kernel. The report includes only combinations with a positive operation count.
+
+| Data point name | Compute type |
+|---|---|
+| `aiv_simd_b8`, `aiv_simd_b16`, `aiv_simd_b32` | AIV SIMD |
+| `aiv_simt_b8`, `aiv_simt_b16`, `aiv_simt_b32` | AIV SIMT |
+| `aic_b8`, `aic_b16`, `aic_b32` | AIC Cube |
+
+The suffix `b8`, `b16`, or `b32` indicates the bit width of the data used by the compute instruction. Floating-point and integer operations of the same bit width are grouped together.
+
+| Field | Unit | Meaning and source |
+|---|---|---|
+| `p_peak` | OP/s | Theoretical peak compute throughput, calculated from the device core count, core frequency, and bit width. |
+| `b_peak` | GB/s | Theoretical GM bandwidth used by the model: 1600 for SIMD and Cube, 800 for SIMT. |
+| `w` | OP | Operation count for the compute type and bit width, obtained from replays with NPUBIT instrumentation. |
+| `t` | s | Task Duration from the dedicated Roofline replay. The tool uses valid task start and end records from the uninstrumented PMU replay and converts the duration from microseconds to seconds. |
+| `q` | B | Logical GM bytes read and written by the entire kernel. The tool adds the bytes from data transfer instructions and, for SIMT global memory reads and writes, multiplies the active thread execution counts by the corresponding data size in bytes. |
+
+All points in a record share `t` and `q`. The value of `q` describes logical traffic; it does not measure physical traffic reaching off-chip memory through L2. Unavailable fields contain the string `"NA"`. If no valid operation count is available, the record contains only `category`.
+
+**Peak compute throughput.** Let `b` be the bit width, `N_AIV` and `N_AIC` the device's AIV and AIC core counts, and `f_AIV` and `f_AIC` the respective core frequencies in MHz. The tool uses the current frequency if valid, then tries the rated frequency, and otherwise uses 1650 MHz.
+
+- SIMD and SIMT: `p_peak = N_AIV × (256 × 2) × (8 / b) × f_AIV × 10^6`.
+- Cube: `p_peak = N_AIC × (8192 × 2) × (8 / b) × f_AIC × 10^6`.
+
+**Operation count.** SIMD uses compute instruction execution counts, and SIMT uses warp-level instruction execution counts. Both multiply each count by 512 (b8), 256 (b16), or 128 (b32). For Cube, the tool sums `2 × M × N × K` over the dimensions in the MMAD records and uses the bit width of matrix A.
+
+**Plotting Roofline.** When `q` and `t` are both positive, the point's horizontal coordinate is arithmetic intensity `I = w / q` (OP/B), and its vertical coordinate is achieved throughput `P = w / t` (OP/s). The theoretical limit is `min(p_peak, b_peak × 10^9 × I)` (OP/s), where `10^9` converts GB/s to B/s.
+
+The following example contains a single AIV SIMD b16 point:
+
+```json
+{"category":"Roofline","aiv_simd_b16":{"p_peak":27033600000000,"b_peak":1600,"w":8388608,"t":0.00001,"q":524288}}
+```
 
 ### Relationship between Block and Task metrics
 

@@ -1,11 +1,12 @@
 # npu-compute性能数据
 
-本文说明各Section CSV、`summary.jsonl`和`HardwareInfo.jsonl`的字段含义与计算方法。CSV按采集级别展示Block/sub-block明细或Task指标；summary包含所选Section的Task级指标、性能提示及`OpInfoSummary`算子概览；HardwareInfo记录主机和设备信息。
+本文说明各Section CSV、`summary.jsonl`和`HardwareInfo.jsonl`的字段含义与计算方法。CSV按采集级别展示Block/sub-block明细或Task指标；summary包含所选PMU Section的Task级指标、所选的Roofline数据、性能提示及`OpInfoSummary`算子概览；HardwareInfo记录主机和设备信息。
 
 | 输出内容 | 数据范围 | 与其他数据的关系 |
 |---|---|---|
 | Section CSV | Block/sub-block或Task | Block级每个逻辑执行对象一行；Task级每个Section一行，同时包含AIC/AIV指标，省略`block_id`和`sub_block_id`。 |
-| summary的Section记录 | Task | 周期、计数和数据量对应累计；比例、命中率和带宽按累计基础数据及相应分母重算，不能统一理解为Block均值。 |
+| summary的PMU Section记录 | Task | 周期、计数和数据量对应累计；比例、命中率和带宽按累计基础数据及相应分母重算，不能统一理解为Block均值。 |
+| `Roofline` | 当前Kernel | 按计算类型和指令数据位宽输出性能模型数据，各数据点共用Kernel耗时和GM访存量。 |
 | `PerformanceHints` | 当前Task | 按预定义规则生成的检查建议，支持AIC/AIV的规则分别成条。 |
 | `OpInfoSummary` | 当前Kernel | 组合Task指标、Block并行统计、运行时元数据和硬件能力信息。 |
 | `HardwareInfo.jsonl` | 采集环境 | 提供主机及设备信息，与Kernel的启动逻辑数量不同。 |
@@ -265,11 +266,11 @@ NA表示当前Core不适用或所需数据不可用，不表示数值零。
 
 ## summary（Section汇总和算子基础信息）
 
-所选性能指标的Task汇总、性能提示和算子基础信息保存在`summary.jsonl`中，每行一个JSON对象。七个PMU Section按名称字母升序输出所选子集，重复选择只输出一次；新报告随后写入一条`PerformanceHints`，最后固定为`OpInfoSummary`。仅选择Pipeline或PmSampling时，有Kernel采集结果也必须生成摘要，包含PerformanceHints和OpInfoSummary。未执行Kernel时不凭空创建摘要。
+性能汇总、Roofline数据、性能提示和算子基础信息保存在`summary.jsonl`中，每行一个JSON对象。所选的PMU Section和Roofline按名称字母升序输出，重复选择只输出一次；新报告随后写入一条`PerformanceHints`，最后固定为`OpInfoSummary`。仅选择Pipeline或PmSampling时，有Kernel采集结果也必须生成摘要，包含PerformanceHints和OpInfoSummary。未执行Kernel时不凭空创建摘要。
 
 ### PerformanceHints
 
-此记录保存当前Task的整体性能评估结论。新报告中固定包含一条，位于所选PMU Section记录之后、`OpInfoSummary`之前；记录总数为所选PMU Section数加2（`Pipeline`输出独立的`PipeTrace.json`）。历史报告可只包含Section记录与末行`OpInfoSummary`。
+此记录保存当前Task的整体性能评估结论。新报告中固定包含一条，位于所选PMU Section和Roofline记录之后、`OpInfoSummary`之前；记录总数为所选PMU Section数加2，选择Roofline时再加1。历史报告可只包含Section记录与末行`OpInfoSummary`。
 
 | 字段 | JSON类型 | 含义 |
 |---|---|---|
@@ -330,6 +331,43 @@ NPU_COMPUTE_DEBUG=1 npu-compute --section PipeUtilization --section Memory ./app
 Section的`category`为对应名称：ArithmeticUtilization、L2Cache、Memory、MemoryL0、MemoryUB、PipeUtilization或ResourceConflictRatio。指标沿用对应CSV字段及单位，去除`block_id`和`sub_block_id`。每个Section直接使用当前Task的AIC/AIV计数计算一条指标记录；无有效值时保留字段并输出精确字符串`"NA"`，数值零保持number。
 
 一份结果包含一个Task PMU对象，分别保存AIC/AIV两侧计数；同侧事件在成功的replay之间合并。Task摘要直接使用该对象，计数字段不保留小数，其他有限指标保留六位。缺少对应侧或必需事件的指标输出`"NA"`。
+
+### Roofline
+
+选择`--section Roofline`或`--set full`时，`summary.jsonl`包含一条`category`为`Roofline`的记录。每个数据点汇总同一计算类型和位宽在整个Kernel上的计算量，只有计算量大于零的组合才会输出。
+
+| 数据点名称 | 计算类型 |
+|---|---|
+| `aiv_simd_b8`、`aiv_simd_b16`、`aiv_simd_b32` | AIV SIMD |
+| `aiv_simt_b8`、`aiv_simt_b16`、`aiv_simt_b32` | AIV SIMT |
+| `aic_b8`、`aic_b16`、`aic_b32` | AIC Cube |
+
+名称末尾的`b8`、`b16`、`b32`表示计算指令涉及的数据位宽。相同位宽的浮点和整数运算归入同一组。
+
+| 字段 | 单位 | 含义与来源 |
+|---|---|---|
+| `p_peak` | OP/s | 理论峰值算力，按设备对应核数、核频率及位宽计算。 |
+| `b_peak` | GB/s | 工具采用的理论GM带宽参考值：SIMD和Cube为1600，SIMT为800。 |
+| `w` | OP | 当前计算类型和位宽的实际运算量，通过NPUBIT插桩重放获取。 |
+| `t` | s | Roofline专用轮次的Task Duration。从未插桩PMU重放的有效任务起止记录计算，再从微秒换算为秒。 |
+| `q` | B | 整个Kernel的逻辑GM读写字节数。累加搬运指令的字节数，以及SIMT全局内存读写指令的活跃线程执行次数乘对应的数据字节数。 |
+
+`t`和`q`由同一记录内的所有数据点共用。`q`表示逻辑访存量，不表示实际穿过L2到达片外内存的流量。无法获得有效值的字段写为字符串`"NA"`；没有有效计算量时，记录仅包含`category`。
+
+**理论算力。** 设`b`为位宽，`N_AIV`和`N_AIC`为设备的AIV和AIC核数，`f_AIV`和`f_AIC`为对应核频率（MHz）。频率依次取有效的当前频率、额定频率或默认值1650 MHz。
+
+- SIMD和SIMT：`p_peak = N_AIV × (256 × 2) × (8 / b) × f_AIV × 10^6`。
+- Cube：`p_peak = N_AIC × (8192 × 2) × (8 / b) × f_AIC × 10^6`。
+
+**实际计算量。** SIMD按计算指令的执行计数统计，SIMT采用warp级指令执行计数；两者均对每个计数按位宽乘以512（b8）、256（b16）或128（b32）。Cube按各条MMAD采集记录的矩阵维度累计`2 × M × N × K`，位宽取A矩阵的数据位宽。
+
+**绘制Roofline。** 当`q`和`t`均大于零时，实际点的横坐标为算术强度`I = w / q`（OP/B），纵坐标为实际计算性能`P = w / t`（OP/s）。理论上限为`min(p_peak, b_peak × 10^9 × I)`（OP/s），其中`10^9`将GB/s换算为B/s。
+
+示例：一条仅包含AIV SIMD b16数据点的记录。
+
+```json
+{"category":"Roofline","aiv_simd_b16":{"p_peak":27033600000000,"b_peak":1600,"w":8388608,"t":0.00001,"q":524288}}
+```
 
 ### Block与Task指标的关系
 

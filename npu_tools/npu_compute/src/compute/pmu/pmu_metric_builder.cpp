@@ -305,11 +305,14 @@ struct TaskLogCounterPair {
 using TaskLogKey = std::tuple<uint16_t, uint16_t, uint8_t>;
 using TaskLogPairsByReplay = std::map<uint64_t, std::map<TaskLogKey, TaskLogCounterPair>>;
 
-TaskLogPairsByReplay PairTaskLogCounters(const aclptiProfilingDataResult& result)
+TaskLogPairsByReplay PairTaskLogCounters(const aclptiProfilingDataResult& result, std::optional<uint64_t> replayId)
 {
     TaskLogPairsByReplay pairs;
     for (const auto& taskLogs : result.taskLogs) {
         for (const aclptiTaskLogRow& log : taskLogs.second) {
+            if (replayId && log.replayId != *replayId) {
+                continue;
+            }
             const bool isStart = log.funcType == aclpti::data::kTaskStartFunctionType;
             if ((!isStart && log.funcType != aclpti::data::kTaskEndFunctionType) ||
                 log.sqeType == static_cast<uint8_t>(aclptiDavidSqeType::Placeholder)) {
@@ -327,9 +330,13 @@ TaskLogPairsByReplay PairTaskLogCounters(const aclptiProfilingDataResult& result
     return pairs;
 }
 
-Metric TaskLogDurationUs(const aclptiProfilingDataResult& result)
+Metric TaskLogDurationUs(const aclptiProfilingDataResult& result, std::optional<uint64_t> selectedReplay = std::nullopt)
 {
-    const auto pairs = PairTaskLogCounters(result);
+    auto pairs = PairTaskLogCounters(result, selectedReplay);
+    // The extra Roofline replay must not change other sections' duration statistics.
+    if (!selectedReplay && result.rooflineReplayId && pairs.size() > 1) {
+        pairs.erase(*result.rooflineReplayId);
+    }
     std::vector<double> durations;
     constexpr double kMicrosecondsPerMillisecond = 1000.0;
     for (const auto& [replayId, tasks] : pairs) {
@@ -1302,6 +1309,11 @@ PmuMetricRow PmuMetricBuilder::BuildTask(
 std::optional<double> PmuMetricBuilder::TaskDuration(const aclptiProfilingDataResult& result)
 {
     return TaskLogDurationUs(result);
+}
+
+std::optional<double> PmuMetricBuilder::TaskDuration(const aclptiProfilingDataResult& result, uint64_t replayId)
+{
+    return TaskLogDurationUs(result, replayId);
 }
 
 std::optional<double> PmuMetricBuilder::OperationDuration(const aclptiProfilingDataResult& result, PmuDataLevel level)

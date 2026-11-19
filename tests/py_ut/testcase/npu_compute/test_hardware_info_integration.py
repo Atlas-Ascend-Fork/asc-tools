@@ -42,7 +42,7 @@ def test_list_sets_and_errors_do_not_launch(tmp_path):
     expected = ""
     for name, members in (
         ("basic", basic),
-        ("full", [*basic, "ResourceConflictRatio", "PmSampling"]),
+        ("full", [*basic, "ResourceConflictRatio", "PmSampling", "Roofline"]),
     ):
         expected += (
             name

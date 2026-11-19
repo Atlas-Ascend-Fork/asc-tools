@@ -9,6 +9,7 @@
  */
 #include "npu_compute_log.h"
 #include "report/report_writer.h"
+#include <algorithm>
 
 namespace npucompute {
 
@@ -17,11 +18,13 @@ aclptiResult WritePmuReport(
     const KernelMetadata& metadata, ArtifactSink& sink, std::string_view artifactPrefix, bool* degraded)
 {
     try {
-        const auto status = WritePmuCsv(result, sections, config, sink, artifactPrefix, degraded);
+        auto pmuSections = sections;
+        pmuSections.erase(std::remove(pmuSections.begin(), pmuSections.end(), "Roofline"), pmuSections.end());
+        const auto status = WritePmuCsv(result, pmuSections, config, sink, artifactPrefix, degraded);
         if (status != ACLPTI_SUCCESS) {
             return status;
         }
-        return WriteSummaryJsonl(result, sections, config, metadata, sink, artifactPrefix);
+        return WriteSummaryJsonl(result, sections, config, metadata, sink, artifactPrefix, degraded);
     } catch (const std::exception& error) {
         ASCTOOL_ERROR(
             "[npu-compute] report failed: %s"

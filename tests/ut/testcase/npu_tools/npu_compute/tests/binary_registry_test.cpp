@@ -12,6 +12,7 @@
 
 #include "acl_pti/profiling/binary_instrumenter.h"
 #include "acl_pti/profiling/binary_registry.h"
+#include "acl_pti/profiling/npubit_collector.h"
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -529,4 +530,86 @@ TEST(NpuComputeBinaryRegistry, KeepsSamplingAndPipelineCompanionsIndependent)
         ASSERT_EQ(registry.CompleteBinaryUnload(context), ACLPTI_SUCCESS);
     }
     simtBinary = false;
+}
+
+TEST(NpuComputeBinaryRegistry, RooflineCapturesOwnedSourceWithoutInstrumentationOrDeviceAllocation)
+{
+    BinaryRegistry registry;
+    std::vector<char> input{'E', 'L', 'F'};
+    aclrtBinaryLoadOption option{};
+    option.type = ACL_RT_BINARY_LOAD_OPT_LAZY_LOAD;
+    option.value.isLazyLoad = 1;
+    aclrtBinaryLoadOptions options{&option, 1};
+    const auto toolsBefore = instrumentationCalls;
+    const auto loadsBefore = loads;
+    auto* binary = &binaryTokens[31];
+    auto* function = &functionTokens[31];
+    ASSERT_EQ(registry.RegisterBinary(input.data(), input.size(), &options, binary, false, false), ACLPTI_SUCCESS);
+    ASSERT_EQ(registry.RegisterBinaryFunction(binary, "kernel", function), ACLPTI_SUCCESS);
+    input[0] = 'X';
+    option.value.isLazyLoad = 0;
+    aclpti::profiling::BinarySource source;
+    ASSERT_TRUE(registry.GetSource(function, source));
+    EXPECT_EQ(*source.image, (std::vector<char>{'E', 'L', 'F'}));
+    EXPECT_EQ(source.name, "kernel");
+    ASSERT_EQ(source.options.size(), 1);
+    EXPECT_EQ(source.options[0].value.isLazyLoad, 1);
+    EXPECT_EQ(instrumentationCalls, toolsBefore);
+    EXPECT_EQ(loads, loadsBefore);
+    BinaryRegistry::UnloadContext context;
+    ASSERT_EQ(registry.PrepareBinaryUnload(binary, context), ACLPTI_SUCCESS);
+    ASSERT_EQ(registry.CompleteBinaryUnload(context), ACLPTI_SUCCESS);
+    EXPECT_FALSE(registry.GetSource(function, source));
+    // Snapshot ownership survives original unload.
+    EXPECT_EQ(source.image->at(0), 'E');
+}
+
+TEST(NpuComputeBinaryRegistry, RooflineResolvesAclnnTilingKeyToRuntimeFunctionName)
+{
+    failName = false;
+    BinaryRegistry registry;
+    const char input[] = "ELF";
+    auto* binary = &binaryTokens[31];
+    auto* function = &functionTokens[31];
+    constexpr std::uint64_t kTilingKey = 42;
+    const auto toolsBefore = instrumentationCalls;
+    const auto loadsBefore = loads;
+    ASSERT_EQ(registry.RegisterBinary(input, sizeof(input), nullptr, binary, false, false), ACLPTI_SUCCESS);
+    ASSERT_EQ(registry.RegisterBinaryFunction(binary, kTilingKey, function), ACLPTI_SUCCESS);
+    aclpti::profiling::BinarySource source;
+    ASSERT_TRUE(registry.GetSource(function, source));
+    EXPECT_EQ(source.name, "kernel");
+    ASSERT_TRUE(source.entry.has_value());
+    EXPECT_EQ(*source.entry, kTilingKey);
+    EXPECT_EQ(*source.image, (std::vector<char>(input, input + sizeof(input))));
+    EXPECT_EQ(instrumentationCalls, toolsBefore);
+    EXPECT_EQ(loads, loadsBefore);
+
+    failName = true;
+    EXPECT_FALSE(registry.GetSource(function, source));
+    failName = false;
+}
+
+TEST(NpuComputeBinaryRegistry, RooflinePreservesRecordedNameWithoutRuntimeNameLookup)
+{
+    BinaryRegistry registry;
+    const char input[] = "ELF";
+    auto* binary = &binaryTokens[31];
+    auto* function = &functionTokens[31];
+    ASSERT_EQ(registry.RegisterBinary(input, sizeof(input), nullptr, binary, false, false), ACLPTI_SUCCESS);
+    ASSERT_EQ(registry.RegisterBinaryFunction(binary, "kernel_mix_aic", function), ACLPTI_SUCCESS);
+    failName = true;
+    aclpti::profiling::BinarySource source;
+    EXPECT_TRUE(registry.GetSource(function, source));
+    EXPECT_EQ(source.name, "kernel_mix_aic");
+    failName = false;
+}
+
+TEST(NpuComputeRoofline, WorkUsesDynamicInstructionCountsAndMatrixElementSizes)
+{
+    using namespace aclpti::profiling;
+    EXPECT_DOUBLE_EQ(*RooflineVectorOperations(8, 3), 1536);
+    EXPECT_DOUBLE_EQ(*RooflineVectorOperations(16, 3), 768);
+    EXPECT_DOUBLE_EQ(*RooflineVectorOperations(32, 3), 384);
+    EXPECT_FALSE(RooflineVectorOperations(64, 3));
 }

@@ -21,8 +21,9 @@
 | <a name="section-pipeutilization"></a> `PipeUtilization`             | 计算与流水线利用率数据                              | `basic`、`full` |
 | <a name="section-pmsampling"></a> `PmSampling`                       | 指令地址及各采样状态累计计数、反汇编和函数/内联信息 | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | 流水等待率与Vector资源冲突率                        | `full`          |
+| <a name="section-roofline"></a> `Roofline`                           | 理论算力和带宽，以及Kernel计算量、访存量和耗时       | `full`          |
 
-当前提供`basic`和`full`两个预定义Set：`basic`包含除`ResourceConflictRatio`和`PmSampling`外的7个Section，`full`包含全部9个Section。
+当前提供`basic`和`full`两个预定义Set：`basic`包含除`PmSampling`、`ResourceConflictRatio`和`Roofline`外的7个Section，`full`包含全部10个Section。
 
 各Section的字段含义和计算方法请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
 
@@ -223,9 +224,11 @@ npu-compute: directory= <parent-directory>/report_<timestamp-ms>_<8-lowercase-he
 | `summary.db` | 有效CSV成功入库，或完成`PmSampling`采集时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)。 |
 | `objdump.txt` | 选择`PmSampling`时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
 | `symbolizer.json` | 选择`PmSampling`时生成 | 采样地址对应的函数和内联调用信息。 |
-| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`和`PmSampling`除外） | 该Section的指标数据。 |
+| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`、`PmSampling`和`Roofline`除外） | 该Section的指标数据。 |
 
 `Pipeline` Section基于采样机制生成流水图，与用户启用的核数无直接关系；即使启用全部核，流水图最多展示6个采样Group的数据。
+
+`Roofline`数据保存在`summary.jsonl`中`category`为`Roofline`的记录里。字段含义和绘图方法见[Roofline数据说明](appendix/npu_compute_performance_data.md#roofline)。
 
 CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常查看。
 

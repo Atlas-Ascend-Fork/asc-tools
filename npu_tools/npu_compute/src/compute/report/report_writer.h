@@ -25,7 +25,7 @@ aclptiResult WritePmuCsv(
 
 aclptiResult WriteSummaryJsonl(
     const aclptiProfilingDataResult& result, const std::vector<std::string>& sections, const ReportConfig& config,
-    const KernelMetadata& metadata, ArtifactSink& sink, std::string_view artifactPrefix = {});
+    const KernelMetadata& metadata, ArtifactSink& sink, std::string_view artifactPrefix = {}, bool* degraded = nullptr);
 
 aclptiResult WritePmuReport(
     const aclptiProfilingDataResult& result, const std::vector<std::string>& sections, const ReportConfig& config,

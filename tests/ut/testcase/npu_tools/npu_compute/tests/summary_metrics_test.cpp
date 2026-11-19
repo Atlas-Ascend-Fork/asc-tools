@@ -95,6 +95,106 @@ void Na(const boost::json::object& object, const char* name)
     ASSERT_TRUE(object.at(name).is_string()) << name << ": " << object.at(name);
     EXPECT_EQ(object.at(name).as_string(), "NA");
 }
+TEST(SummaryMetrics, MissingRooflineDataDoesNotSuppressOtherSections)
+{
+    aclptiProfilingDataResult result;
+    MetricsSink sink;
+    bool degraded = false;
+    ASSERT_EQ(
+        WriteSummaryJsonl(result, {"Memory", "Roofline"}, {}, Metadata(KernelKind::Vector, 1), sink, {}, &degraded),
+        ACLPTI_SUCCESS);
+    EXPECT_NE(sink.content.find("\"category\":\"Memory\""), std::string::npos);
+    EXPECT_NE(sink.content.find("\"category\":\"Roofline\""), std::string::npos);
+    EXPECT_TRUE(degraded);
+    const auto roofline = Render(result, Metadata(KernelKind::Vector, 1), {"Roofline"}).records.front();
+    EXPECT_EQ(roofline.size(), 1);
+    EXPECT_EQ(sink.rows, 4);
+}
+
+TEST(SummaryMetrics, RooflineUsesItsOwnReplayTaskDurationAndWholeKernelBytes)
+{
+    aclptiProfilingDataResult result;
+    result.rooflineData.emplace();
+    result.rooflineData->status = ACLPTI_SUCCESS;
+    result.rooflineData->gmBytes = 4096;
+    result.rooflineData->work = {
+        {aclptiRooflineChannel::Simd, 16, 768},
+        {aclptiRooflineChannel::Simt, 16, 256},
+        {aclptiRooflineChannel::Cube, 8, 65536},
+        {aclptiRooflineChannel::Cube, 16, 32768}};
+    Row(result, 0, 0, ACLPTI_CORE_TYPE_AIV, 50000);
+    Row(result, 1, 0, ACLPTI_CORE_TYPE_AIV, 60000);
+    Row(result, 0, 0, ACLPTI_CORE_TYPE_AIC, 80000);
+    result.pmuLogs.at({0, 0, ACLPTI_CORE_TYPE_AIV, 0}).values[0x501] = 100;
+    result.pmuLogs.at({1, 0, ACLPTI_CORE_TYPE_AIV, 0}).values[0x501] = 200;
+    result.pmuLogs.at({0, 0, ACLPTI_CORE_TYPE_AIC, 0}).values[810] = 400;
+    Duration(result, 10);
+    result.rooflineReplayId = 7;
+    auto& logs = result.taskLogs[2];
+    logs = {{7, 0, 2, 0, 100, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}, {7, 1, 2, 0, 2600, 0, 0, ACLPTI_CORE_TYPE_AIC, 0, 0}};
+    const auto output = Render(result, Metadata(KernelKind::Mix, 2, 2), {"Roofline"});
+    const auto& roofline = output.records.front();
+    EXPECT_EQ(roofline.at("category").as_string(), "Roofline");
+    EXPECT_EQ(roofline.size(), 5);
+    const auto& aiv = roofline.at("aiv_simd_b16").as_object();
+    const auto& aic = roofline.at("aic_b8").as_object();
+    Near(aiv, "p_peak", 48.0 * 128 * 2 * 1000 * 1e6);
+    Near(aic, "p_peak", 24.0 * 16384 * 1000 * 1e6);
+    Near(aiv, "b_peak", 1600);
+    Near(aiv, "w", 768);
+    Near(aic, "w", 65536);
+    Near(roofline.at("aiv_simt_b16").as_object(), "w", 256);
+    Near(roofline.at("aic_b16").as_object(), "w", 32768);
+    for (const auto* point : {&aiv, &aic}) {
+        EXPECT_EQ(point->size(), 5);
+        for (const char* field : {"p_peak", "b_peak", "w", "t", "q"}) {
+            EXPECT_TRUE(point->contains(field));
+        }
+        Near(*point, "q", 4096);
+    }
+    for (const char* name : {"aiv_simd_b16", "aiv_simt_b16", "aic_b8", "aic_b16"}) {
+        EXPECT_DOUBLE_EQ(roofline.at(name).as_object().at("t").to_number<double>(), 2.5 / 1e6);
+    }
+    Near(output.records.back(), "Task Duration(us)", 10);
+    EXPECT_FALSE(roofline.contains("aiv"));
+    EXPECT_FALSE(roofline.contains("aic"));
+}
+
+TEST(SummaryMetrics, RooflineFrequencyFallbackAndMissingInputsRemainVisible)
+{
+    aclptiProfilingDataResult result;
+    result.rooflineData.emplace();
+    result.rooflineData->status = ACLPTI_SUCCESS;
+    result.rooflineData->gmBytes = 0;
+    result.rooflineData->work = {{aclptiRooflineChannel::Simd, 32, 128}};
+    Row(result, 0, 0, ACLPTI_CORE_TYPE_AIV, 9000);
+    auto& row = result.pmuLogs.begin()->second;
+    row.values[0x501] = 165;
+    Duration(result, 0.25);
+    result.rooflineReplayId = 0;
+    auto metadata = Metadata(KernelKind::Vector, 1);
+    metadata.hardware.currentAivFrequencyMhz.reset();
+    auto roofline = Render(result, metadata, {"Roofline"}).records.front();
+    auto point = roofline.at("aiv_simd_b32").as_object();
+    Near(point, "p_peak", 48.0 * 64 * 2 * 1650 * 1e6);
+    EXPECT_DOUBLE_EQ(point.at("t").to_number<double>(), 0.25 / 1e6);
+    metadata.hardware.ratedAivFrequencyMhz = 1500;
+    point = Render(result, metadata, {"Roofline"}).records.front().at("aiv_simd_b32").as_object();
+    Near(point, "p_peak", 48.0 * 64 * 2 * 1500 * 1e6);
+    EXPECT_DOUBLE_EQ(point.at("t").to_number<double>(), 0.25 / 1e6);
+    row.overflow = true;
+    metadata.hardware.vectorCoreCount.reset();
+    result.rooflineReplayId.reset();
+    roofline = Render(result, metadata, {"Roofline"}).records.front();
+    EXPECT_EQ(roofline.size(), 2);
+    point = roofline.at("aiv_simd_b32").as_object();
+    Na(point, "p_peak");
+    Na(point, "t");
+    result.rooflineReplayId = 9;
+    point = Render(result, metadata, {"Roofline"}).records.front().at("aiv_simd_b32").as_object();
+    Na(point, "t");
+}
+
 TEST(SummaryMetrics, MixUsesEveryLogicalObjectAndTaskDuration)
 {
     aclptiProfilingDataResult result;

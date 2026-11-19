@@ -49,6 +49,7 @@ public:
         std::string_view section, const aclptiTaskPmuData& taskPmuData, const ReportConfig& config,
         std::optional<double> duration = std::nullopt);
     static std::optional<double> TaskDuration(const aclptiProfilingDataResult& result);
+    static std::optional<double> TaskDuration(const aclptiProfilingDataResult& result, uint64_t replayId);
     static std::optional<double> OperationDuration(const aclptiProfilingDataResult& result, PmuDataLevel level);
     static const char* ReasonName(MissingReason reason);
 };

@@ -20,7 +20,8 @@ namespace {
 // Validate replay configuration independently of processor state.
 bool IsValidReplayInfo(const ReplayPrepareInfo& info)
 {
-    if (info.kind != ReplayKind::Pmu && info.kind != ReplayKind::Pipeline && info.kind != ReplayKind::PcSampling) {
+    if (info.kind != ReplayKind::Pmu && info.kind != ReplayKind::Pipeline && info.kind != ReplayKind::PcSampling &&
+        info.kind != ReplayKind::RooflinePmu) {
         return false;
     }
     bool unused = false;
@@ -61,6 +62,7 @@ aclptiResult ProfilingDataManager::Initialize(aclptiProfilingDataCallback callba
         return ACLPTI_ERROR_INVALID_STATE;
     }
     callback_ = std::move(callback);
+    rooflineData_.reset();
     shutdownStatus_ = ACLPTI_SUCCESS;
     if (!callback_) {
         callback_ = registeredCallback_;
@@ -108,6 +110,16 @@ aclptiResult ProfilingDataManager::ReleaseReplay(uint64_t replayId)
     return state_ == ManagerState::Running ? processor_.ReleaseReplay(replayId) : ACLPTI_ERROR_NOT_INITIALIZED;
 }
 
+aclptiResult ProfilingDataManager::SetRooflineData(aclptiRooflineData data)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ != ManagerState::Running) {
+        return ACLPTI_ERROR_NOT_INITIALIZED;
+    }
+    rooflineData_ = std::move(data);
+    return ACLPTI_SUCCESS;
+}
+
 aclptiResult ProfilingDataManager::Shutdown() { return ShutdownImpl(false); }
 aclptiResult ProfilingDataManager::ForceShutdown() { return ShutdownImpl(true); }
 
@@ -125,6 +137,7 @@ aclptiResult ProfilingDataManager::PublishFinalResult()
 #endif
         // Publish after the worker exits: the consumer owns a stable snapshot, not live state.
         if (processedResult) {
+            processedResult->rooflineData = std::move(rooflineData_);
             auto result = std::make_shared<aclptiProfilingDataResult>(std::move(*processedResult));
             callbackStatus = callback_(std::move(result));
         }

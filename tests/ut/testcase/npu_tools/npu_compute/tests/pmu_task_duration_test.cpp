@@ -138,4 +138,21 @@ TEST(PmuTaskDuration, InvalidReplayAndControlRecordsDoNotPoisonValidReplay)
     ASSERT_TRUE(PmuMetricBuilder::TaskDuration(result).has_value());
     EXPECT_DOUBLE_EQ(*PmuMetricBuilder::TaskDuration(result), 4);
 }
+
+TEST(PmuTaskDuration, RooflineReplayIsIndependentOfOtherReplayDurations)
+{
+    aclptiProfilingDataResult result;
+    AddTaskLogs(result, {7, 1, 2}, {100, 2600});
+    result.rooflineReplayId = 7;
+    EXPECT_EQ(PmuMetricBuilder::TaskDuration(result), 2.5);
+    EXPECT_EQ(PmuMetricBuilder::TaskDuration(result, 7), 2.5);
+    AddTaskLogs(result, {0, 1, 2}, {100, 10100});
+    AddTaskLogs(result, {1, 1, 2}, {100, 20100});
+    EXPECT_EQ(PmuMetricBuilder::TaskDuration(result), 15);
+    EXPECT_EQ(PmuMetricBuilder::TaskDuration(result, 7), 2.5);
+    EXPECT_FALSE(PmuMetricBuilder::TaskDuration(result, 9));
+    result.taskLogs[1].erase(result.taskLogs[1].begin() + 1);
+    EXPECT_FALSE(PmuMetricBuilder::TaskDuration(result, 7));
+    EXPECT_EQ(PmuMetricBuilder::TaskDuration(result), 15);
+}
 } // namespace

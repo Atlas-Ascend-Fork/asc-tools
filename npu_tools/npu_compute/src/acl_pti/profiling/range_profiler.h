@@ -46,6 +46,7 @@ public:
 
     bool CollectPipeline() const { return collectPipeline_; }
     bool CollectPcSampling() const { return collectPcSampling_; }
+    bool CollectRoofline() const { return collectRoofline_; }
 
     /// Replays a kernel and distinguishes profiling-only failures from unreliable device results.
     aclptiResult ReplayKernel(
@@ -107,6 +108,7 @@ private:
     aclptiBlockResultMode blockResult_ = ACLPTI_BLOCK_RESULT_DISABLED;
     bool collectPipeline_ = false;
     bool collectPcSampling_ = false;
+    bool collectRoofline_ = false;
     data::ProfilingDataManager& dataManager_ = data::ProfilingDataManager::Instance();
 };
 

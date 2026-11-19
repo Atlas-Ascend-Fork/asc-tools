@@ -21,8 +21,9 @@ The following Sections are currently supported:
 | <a name="section-pipeutilization"></a> `PipeUtilization`             | Compute and pipeline utilization data                              | `basic`, `full` |
 | <a name="section-pmsampling"></a> `PmSampling`                       | PC/state totals, disassembly and function/inline information       | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios           | `full`          |
+| <a name="section-roofline"></a> `Roofline`                           | Peak compute throughput and bandwidth, plus kernel operations, memory traffic, and duration | `full` |
 
-Two predefined sets are available: `basic` contains the seven Sections other than `ResourceConflictRatio` and `PmSampling`, and `full` contains all nine Sections.
+Two predefined sets are available: `basic` contains the seven Sections other than `PmSampling`, `ResourceConflictRatio`, and `Roofline`, and `full` contains all ten Sections.
 
 For the meaning and calculation method of the fields in each Section, see [Performance Data](appendix/npu_compute_performance_data.md).
 
@@ -223,9 +224,11 @@ A report can contain the following files:
 | `summary.db` | Valid CSV data is imported successfully, or `PmSampling` collection completes | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database). |
 | `objdump.txt` | When `PmSampling` is selected | Original operator disassembly. Compile with `-lineinfo` to include source line information. |
 | `symbolizer.json` | When `PmSampling` is selected | Function and inline information for sampled addresses. |
-| `<Section-name>.csv` | Metric data is collected (except for `Pipeline` and `PmSampling`) | Metric data for the Section. |
+| `<Section-name>.csv` | Metric data is collected (except for `Pipeline`, `PmSampling`, and `Roofline`) | Metric data for the Section. |
 
 `Pipeline` uses sampling to generate the pipeline diagram, independent of the number of cores enabled; even when all cores are enabled, the diagram shows data for at most six sampled Groups.
+
+`summary.jsonl` stores Roofline data in a record whose `category` is `Roofline`. For field definitions and plotting formulas, see [Roofline data](appendix/npu_compute_performance_data.md#roofline).
 
 `NA` in a CSV means that no valid value was collected for that metric; other metrics remain available.
 

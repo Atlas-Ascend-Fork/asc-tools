@@ -402,6 +402,53 @@ TEST(NpuComputePtiDataModule, TaskReplayMergeKeepsAicAndAivIndependent)
     EXPECT_EQ(aiv.values, (std::map<uint32_t, double>{{0x422, 20}, {0x200, 21}, {0x501, 91}}));
 }
 
+TEST(NpuComputePtiDataModule, RooflineReplayKeepsTimingSeparateFromOtherPmuData)
+{
+    struct Scenario {
+        aclptiResult rooflineStatus;
+        bool otherPmu;
+    };
+    for (const auto scenario :
+         {Scenario{ACLPTI_SUCCESS, true}, Scenario{ACLPTI_ERROR_PROFILING_FAILED, true},
+          Scenario{ACLPTI_SUCCESS, false}}) {
+        const auto rooflineStatus = scenario.rooflineStatus;
+        ResultSink sink;
+        auto& module = data::ProfilingDataManager::Instance();
+        ASSERT_EQ(module.Initialize([&sink](const auto& result) { return sink.Accept(result); }), ACLPTI_SUCCESS);
+        const auto callback = module.GetRawDataCallback();
+        ASSERT_NE(callback, nullptr);
+        ASSERT_EQ(module.PrepareReplay({7, PmuEvents({0x501}), data::ReplayKind::RooflinePmu}), ACLPTI_SUCCESS);
+        auto start = RawData(TaskLog(0, 1, 2, 100, 0, 0, ACLPTI_CORE_TYPE_AIV, 0), LOG_DATA_TYPE);
+        auto end = RawData(TaskLog(1, 1, 2, 2600, 0, 0, ACLPTI_CORE_TYPE_AIV, 0), LOG_DATA_TYPE);
+        auto pmu = RawData(PmuRecord(1, 2, 0, 1000), PMU_DATA_TYPE);
+        ASSERT_EQ(callback(&start), 0);
+        ASSERT_EQ(callback(&end), 0);
+        ASSERT_EQ(callback(&pmu), 0);
+        ASSERT_EQ(module.RecordReplayStatus({7, rooflineStatus}).status, rooflineStatus);
+        ASSERT_EQ(module.ReleaseReplay(7), ACLPTI_SUCCESS);
+        if (scenario.otherPmu) {
+            ASSERT_EQ(module.PrepareReplay({8, PmuEvents({0x501})}), ACLPTI_SUCCESS);
+            pmu = RawData(PmuRecord(1, 2, 0, 2000), PMU_DATA_TYPE);
+            ASSERT_EQ(callback(&pmu), 0);
+            ASSERT_EQ(module.RecordReplayStatus({8, ACLPTI_SUCCESS}).status, ACLPTI_SUCCESS);
+            ASSERT_EQ(module.ReleaseReplay(8), ACLPTI_SUCCESS);
+        }
+        ASSERT_EQ(module.Shutdown(), ACLPTI_SUCCESS);
+        const auto result = sink.Wait();
+        ASSERT_NE(result, nullptr);
+        EXPECT_EQ(result->rooflineReplayId.has_value(), rooflineStatus == ACLPTI_SUCCESS);
+        if (rooflineStatus == ACLPTI_SUCCESS) {
+            EXPECT_EQ(*result->rooflineReplayId, 7);
+            ASSERT_EQ(result->taskLogs.at(1).size(), 2);
+            EXPECT_EQ(result->taskLogs.at(1).front().replayId, 7);
+        } else {
+            EXPECT_TRUE(result->taskLogs.empty());
+        }
+        ASSERT_EQ(result->pmuLogs.size(), 1);
+        EXPECT_DOUBLE_EQ(result->pmuLogs.begin()->second.values.at(0x501), scenario.otherPmu ? 2000 : 1000);
+    }
+}
+
 TEST(NpuComputePtiDataModule, ReplayLifecycle)
 {
     ResultSink sink;

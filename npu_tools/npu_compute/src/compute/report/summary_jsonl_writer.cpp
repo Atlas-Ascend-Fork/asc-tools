@@ -29,6 +29,11 @@ namespace {
 
 using Metric = std::optional<double>;
 constexpr int kSummaryDecimalPlaces = 6;
+constexpr uint32_t kB8BitWidth = 8U;
+constexpr uint32_t kB16BitWidth = 16U;
+constexpr uint32_t kB32BitWidth = 32U;
+constexpr double kBitsPerByte = 8.0;
+constexpr int kRooflineDecimalPlaces = 17;
 
 std::string DemangleName(const std::string& name)
 {
@@ -160,6 +165,141 @@ void WriteOpPerformance(
     field("aicore_gm_bw_usage_rate(%)", usage);
 }
 
+double RooflineClock(const KernelMetadata& metadata, const ReportConfig& config, bool aic)
+{
+    constexpr double kFallbackFrequencyMhz = 1650.0;
+    const auto current = metadata.hardware.collected ? (aic ? metadata.hardware.currentAicFrequencyMhz :
+                                                              metadata.hardware.currentAivFrequencyMhz) :
+                                                       Metric(aic ? config.aicFrequencyMhz : config.aivFrequencyMhz);
+    if (current && std::isfinite(*current) && *current > 0) {
+        return *current;
+    }
+    const auto rated = SummaryRatedFrequency(metadata, aic);
+    if (rated) {
+        return *rated;
+    }
+    ASCTOOL_DEBUG(
+        "[npu-compute] Roofline %s frequency source=fallback valueMHz=%f", aic ? "AIC" : "AIV", kFallbackFrequencyMhz);
+    return kFallbackFrequencyMhz;
+}
+
+using RooflineWork = std::map<std::pair<aclptiRooflineChannel, uint32_t>, double>;
+
+RooflineWork MergeRooflineWork(const aclptiRooflineData* data, bool& complete)
+{
+    RooflineWork work;
+    if (data == nullptr) {
+        return work;
+    }
+    for (const auto& item : data->work) {
+        if ((item.bitWidth != kB8BitWidth && item.bitWidth != kB16BitWidth && item.bitWidth != kB32BitWidth) ||
+            !std::isfinite(item.operations) || item.operations < 0 ||
+            (item.channel != aclptiRooflineChannel::Simd && item.channel != aclptiRooflineChannel::Simt &&
+             item.channel != aclptiRooflineChannel::Cube)) {
+            complete = false;
+            continue;
+        }
+        if (item.operations > 0) {
+            work[{item.channel, item.bitWidth}] += item.operations;
+        }
+    }
+    return work;
+}
+
+SummaryFields RooflinePoint(
+    aclptiRooflineChannel channel, std::optional<uint32_t> bitWidth, double operations, Metric bytes,
+    const KernelMetadata& metadata, double frequencyMhz, Metric taskDuration)
+{
+    constexpr double kHzPerMhz = 1000000.0;
+    constexpr double kVectorB8OperationsPerCycle = 256.0 * 2.0;
+    constexpr double kCubeB8OperationsPerCycle = 8192.0 * 2.0;
+    constexpr double kSimdAndCubeBandwidthGbps = 1600.0;
+    constexpr double kSimtBandwidthGbps = 800.0;
+    const bool cube = channel == aclptiRooflineChannel::Cube;
+    const double bandwidthGbps =
+        channel == aclptiRooflineChannel::Simt ? kSimtBandwidthGbps : kSimdAndCubeBandwidthGbps;
+    const auto cores = cube ? metadata.hardware.cubeCoreCount : metadata.hardware.vectorCoreCount;
+    const Metric peak = cores && *cores > 0 && bitWidth ?
+                            Metric(
+                                *cores * (cube ? kCubeB8OperationsPerCycle : kVectorB8OperationsPerCycle) *
+                                kBitsPerByte / *bitWidth * frequencyMhz * kHzPerMhz) :
+                            std::nullopt;
+    return {
+        {"p_peak", {peak}},
+        {"b_peak", {bandwidthGbps}},
+        {"w", {std::isfinite(operations) ? Metric(operations) : std::nullopt}},
+        {"t", {taskDuration}},
+        {"q", {bytes}},
+    };
+}
+
+void WriteRooflinePoint(std::ostream& output, const std::string& name, const SummaryFields& fields)
+{
+    output << ',' << Quote(name) << ":{";
+    bool first = true;
+    for (const char* field : {"p_peak", "b_peak", "w", "t", "q"}) {
+        const auto& value = fields.at(field);
+        output << (first ? "" : ",") << Quote(field) << ':';
+        if (value.value && std::isfinite(*value.value)) {
+            // Default notation retains sub-microsecond t without decimal truncation.
+            output << std::setprecision(kRooflineDecimalPlaces) << *value.value;
+        } else {
+            output << "\"NA\"";
+        }
+        first = false;
+    }
+    output << '}';
+}
+
+bool Roofline(
+    std::ostream& output, const aclptiProfilingDataResult& result, const ReportConfig& config,
+    const KernelMetadata& metadata)
+{
+    const auto aicClock = RooflineClock(metadata, config, true);
+    const auto aivClock = RooflineClock(metadata, config, false);
+    constexpr double kMicrosecondsPerSecond = 1000000.0;
+    const auto durationUs =
+        result.rooflineReplayId ? PmuMetricBuilder::TaskDuration(result, *result.rooflineReplayId) : std::nullopt;
+    const Metric taskDuration = durationUs ? Metric(*durationUs / kMicrosecondsPerSecond) : std::nullopt;
+    const auto* data = result.rooflineData ? &*result.rooflineData : nullptr;
+    Metric bytes = data ? data->gmBytes : std::nullopt;
+    if (bytes && (!std::isfinite(*bytes) || *bytes < 0)) {
+        bytes.reset();
+    }
+    bool complete = data && data->status == ACLPTI_SUCCESS && data->errors.empty() && bytes.has_value();
+    const auto work = MergeRooflineWork(data, complete);
+    bool any = false;
+    output << "{\"category\":\"Roofline\"";
+    // 按位宽输出
+    for (const auto& [key, operations] : work) {
+        const auto channel = key.first;
+        const uint32_t bw = key.second;
+        std::string name;
+        double clock = 0.0;
+        if (channel == aclptiRooflineChannel::Simd) {
+            name = "aiv_simd_b" + std::to_string(bw);
+            clock = aivClock;
+        } else if (channel == aclptiRooflineChannel::Simt) {
+            name = "aiv_simt_b" + std::to_string(bw);
+            clock = aivClock;
+        } else if (channel == aclptiRooflineChannel::Cube) {
+            name = "aic_b" + std::to_string(bw);
+            clock = aicClock;
+        } else {
+            continue;
+        }
+        const auto fields = RooflinePoint(channel, bw, operations, bytes, metadata, clock, taskDuration);
+        for (const auto& [field, value] : fields) {
+            complete = complete && value.value && std::isfinite(*value.value);
+        }
+        WriteRooflinePoint(output, name, fields);
+        any = true;
+    }
+    complete = complete && any;
+    output << "}\n";
+    return complete;
+}
+
 void OpInfo(
     std::ostream& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
     const ReportConfig& config, const KernelMetadata& metadata, Fields memory)
@@ -200,7 +340,7 @@ void OpInfo(
 
 aclptiResult WriteSummaryJsonl(
     const aclptiProfilingDataResult& result, const std::vector<std::string>& sections, const ReportConfig& config,
-    const KernelMetadata& metadata, ArtifactSink& sink, std::string_view artifactPrefix)
+    const KernelMetadata& metadata, ArtifactSink& sink, std::string_view artifactPrefix, bool* degraded)
 {
     bool artifactStarted = false;
     try {
@@ -212,6 +352,13 @@ aclptiResult WriteSummaryJsonl(
         const auto summaryConfig = SummaryReportConfig(metadata, config);
         HintSections summarySections;
         for (const auto& section : selectedSections) {
+            if (section == "Roofline") {
+                const bool complete = Roofline(output, result, config, metadata);
+                if (!complete && degraded != nullptr) {
+                    *degraded = true;
+                }
+                continue;
+            }
             if (PmuMetricBuilder::Header(section).empty()) {
                 return ACLPTI_ERROR_NOT_SUPPORTED;
             }

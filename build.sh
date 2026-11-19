@@ -151,7 +151,7 @@ function copy_deps_file() {
   fi
 
   local dep_file
-  for dep_file in "${BUILD_DIR}"/cann-asc-tools-deps_*.tar.gz "${BUILD_DIR}"/cann_asc_tools_deps_*_pkg_compile.rar; do
+  for dep_file in "${BUILD_DIR}"/cann-asc-tools-deps_*.tar.gz; do
     if [[ -f "${dep_file}" ]]; then
       cp "${dep_file}" "${CANN_3RD_LIB_PATH}/"
     fi
