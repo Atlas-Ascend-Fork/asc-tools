@@ -25,6 +25,6 @@ add_executable(npu_check_cli
   uds_client.cpp
 )
 target_compile_features(npu_check_cli PRIVATE cxx_std_17)
-target_link_libraries(npu_check_cli PRIVATE $<BUILD_INTERFACE:intf_pub> npu_check_common npu_sanitizer_plog Threads::Threads Boost::filesystem)
+target_link_libraries(npu_check_cli PRIVATE npu_check_common npu_sanitizer_plog Threads::Threads Boost::filesystem)
 target_compile_options(npu_check_cli PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(npu_check_cli PROPERTIES OUTPUT_NAME npu-check)

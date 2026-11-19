@@ -221,7 +221,6 @@ target_include_directories(acl_san
 target_link_libraries(acl_san PRIVATE c_sec_static)
 target_link_libraries(acl_san
   PRIVATE
-    $<BUILD_INTERFACE:intf_pub>
     acl_tool_injection
     npu_bit
     npu_check_dbi_engine

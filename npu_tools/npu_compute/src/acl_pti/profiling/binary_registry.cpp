@@ -558,8 +558,7 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(
 bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& registered : binaries_) {
-        const auto& binary = registered.second;
+    for (const auto& [handle, binary] : binaries_) {
         const auto name = binary.names.find(original);
         const auto entry = binary.originalEntries.find(original);
         if (!binary.source.image || (name == binary.names.end() && entry == binary.originalEntries.end())) {

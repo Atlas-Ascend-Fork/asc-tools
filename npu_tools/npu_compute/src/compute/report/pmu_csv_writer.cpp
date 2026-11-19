@@ -207,8 +207,7 @@ Metric CsvOperationDuration(const aclptiProfilingDataResult& result)
 {
     bool hasAic = false;
     bool hasAiv = false;
-    for (const auto& entry : result.pmuLogs) {
-        const auto& key = entry.first;
+    for (const auto& [key, row] : result.pmuLogs) {
         hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
         hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
     }

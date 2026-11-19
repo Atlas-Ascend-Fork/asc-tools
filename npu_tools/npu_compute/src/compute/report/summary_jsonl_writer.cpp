@@ -289,8 +289,7 @@ bool Roofline(
             continue;
         }
         const auto fields = RooflinePoint(channel, bw, operations, bytes, metadata, clock, taskDuration);
-        for (const auto& entry : fields) {
-            const auto& value = entry.second;
+        for (const auto& [field, value] : fields) {
             complete = complete && value.value && std::isfinite(*value.value);
         }
         WriteRooflinePoint(output, name, fields);

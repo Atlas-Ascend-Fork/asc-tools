@@ -103,7 +103,7 @@ target_include_directories(npu_check
     ${CMAKE_CURRENT_LIST_DIR}/../acl_san
 )
 target_link_libraries(npu_check
-  PRIVATE $<BUILD_INTERFACE:intf_pub> npu_check_core acl_san acl_tool_injection Threads::Threads
+  PRIVATE npu_check_core acl_san acl_tool_injection Threads::Threads
 )
 target_compile_options(npu_check PRIVATE -Wall -Wextra -Wpedantic)
 target_link_options(npu_check PRIVATE
