@@ -171,6 +171,29 @@ class DeviceFuncType(Enum):
 
 DEVICE_FUNC_TYPE_MAP = {kind.value: kind.name for kind in DeviceFuncType}
 
+
+class DfxParamType(Enum):
+    TENSOR = 1
+    INPUT = 2
+    OUTPUT = 3
+    WORKSPACE = 4
+    ASCENDCLOG = 5
+    MC2CTX = 6
+    TILING = 7
+    L1 = 8
+    L2 = 9
+    OVERFLOW = 10
+    FFTS = 11
+    SHAPE_TENSOR = 12
+
+
+class DfxPointType(Enum):
+    LEVEL_1 = 1
+    LEVEL_2 = 2
+    LEVEL_2_WITH_SHAPE = 3
+    LEVEL_1_FOR_SHAPE_TENSOR = 4
+
+
 DEVICE_MACHINE_PATTERN = re.compile(r"(?:0x1029|\bhiipu\b)", re.IGNORECASE)
 SASS_INSTRUCTION_PATTERN = re.compile(r"^\s*[0-9a-fA-F]+:\s+[0-9a-fA-F]{8}\s+\S")
 SASS_PLACEHOLDER_PATTERN = re.compile(r"<(?:not available|unknown)>", re.IGNORECASE)
@@ -186,6 +209,27 @@ RUNTIME_IMPLICIT_INFO_MAP = {
     5: "SIMD Assert Flag",
     6: "AICPU Debug Flag",
     7: "CV11CompatCV12 Workspace",
+}
+
+
+# AivTypeFlag and rtschemModeType_t in Runtime.
+AIV_TYPE_FLAG_MAP = {
+    1: "AIV_TYPE_NO_VF",
+    2: "AIV_TYPE_SIMD_VF_ONLY",
+    3: "AIV_TYPE_SIMT_VF_ONLY",
+    4: "AIV_TYPE_SIMD_SIMT_MIX_VF",
+}
+SCHED_MODE_MAP = {0: "RT_SCHEM_MODE_NORMAL", 1: "RT_SCHEM_MODE_BATCH"}
+# Display labels for the documented parameter and specialization values.
+PARAM_TYPE_MAP = {1: "SCALAR", 2: "POINTER"}
+SPECIALIZATION_FLAG_MAP = {0: "STATIC", 1: "DYNAMIC"}
+COMPAT_MODE_MAP = {1: "M_TYPE_COMPAT"}
+FUNCTION_META_ENUM_MAPS = {
+    F_TYPE_KTYPE: K_TYPE_MAP,
+    F_TYPE_CROSS_CORE_SYNC: C_TYPE_MAP,
+    F_TYPE_AIV_TYPE_FLAG: AIV_TYPE_FLAG_MAP,
+    F_TYPE_SCHED_MODE: SCHED_MODE_MAP,
+    F_TYPE_DEVICE_FUNC_TYPE: DEVICE_FUNC_TYPE_MAP,
 }
 
 
@@ -279,6 +323,11 @@ class ObjDump:
         return struct.unpack(fmt, value)
 
     @staticmethod
+    def _format_meta_enum(value: int, names: dict) -> str:
+        name = names.get(value, names.get(str(value)))
+        return f"{name} ({value})" if name is not None else f"UNKNOWN({value})"
+
+    @staticmethod
     def _show_ascend_meta_tlv(content: bytes, t: int, tlv_len: int, index: int):
         value = content[index : index + tlv_len]
         name = F_TYPE_MAP.get(t, f"UNKNOWN({t})")
@@ -304,12 +353,13 @@ class ObjDump:
             if values is None:
                 return
 
-        if t == F_TYPE_MIX_TASK_RATION:
+        if t in FUNCTION_META_ENUM_MAPS:
+            (v,) = values
+            print(f"{name}: {ObjDump._format_meta_enum(v, FUNCTION_META_ENUM_MAPS[t])}")
+        elif t == F_TYPE_MIX_TASK_RATION:
             v1, v2 = values
             print(f"{name}: [{v1}:{v2}]")
         elif t in (
-            F_TYPE_KTYPE,
-            F_TYPE_CROSS_CORE_SYNC,
             F_TYPE_DETERMINISTIC_INFO,
             F_TYPE_ENABLE_EARLY_START,
             F_TYPE_BLOCK_NUM,
@@ -317,25 +367,17 @@ class ObjDump:
             F_TYPE_COMPAT_MODE,
         ):
             (v,) = values
-            if t == F_TYPE_KTYPE:
-                decoded = K_TYPE_MAP.get(str(v), f"UNKNOWN({v})")
-                print(f"{name}: {decoded}")
-            elif t == F_TYPE_CROSS_CORE_SYNC:
-                decoded = C_TYPE_MAP.get(str(v), f"UNKNOWN({v})")
-                print(f"{name}: {decoded}")
-            elif t == F_TYPE_BLOCK_NUM and v == 0xFFFFFFFF:
+            if t == F_TYPE_BLOCK_NUM and v == 0xFFFFFFFF:
                 print(f"{name}: 0xFFFFFFFF")
-            elif t == F_TYPE_COMPAT_MODE and v == DEFAULT_COMPAT_MODE:
-                print(f"{name}: 0xFFFFFFFF")
+            elif t == F_TYPE_COMPAT_MODE:
+                decoded = (
+                    "DEFAULT (0xFFFFFFFF)"
+                    if v == DEFAULT_COMPAT_MODE
+                    else ObjDump._format_meta_enum(v, COMPAT_MODE_MAP)
+                )
+                print(f"{name}: {decoded}")
             else:
                 print(f"{name}: {v}")
-        elif t == F_TYPE_DEVICE_FUNC_TYPE:
-            (func_type,) = values
-            decoded = DEVICE_FUNC_TYPE_MAP.get(func_type)
-            if decoded is None:
-                print(f"{name}: UNKNOWN({func_type})")
-            else:
-                print(f"{name}: {decoded} ({func_type})")
         elif t == F_TYPE_FUNCTION_ENTRY:
             flag, _, _, entry = values
             print(f"{name}: {entry}, flag=0x{flag:02X}")
@@ -346,8 +388,6 @@ class ObjDump:
             F_TYPE_SU_STACK_SIZE,
             F_TYPE_SIMT_WARP_STACK_SIZE,
             F_TYPE_SIMT_DVG_WARP_STACK_SIZE,
-            F_TYPE_AIV_TYPE_FLAG,
-            F_TYPE_SCHED_MODE,
         ):
             (v,) = values
             print(f"{name}: {v}")
@@ -370,7 +410,12 @@ class ObjDump:
             print(
                 f"{name}: "
                 + ", ".join(
-                    f"{field}={field_value}"
+                    f"{field}="
+                    + (
+                        ObjDump._format_meta_enum(field_value, PARAM_TYPE_MAP)
+                        if field == "paramType"
+                        else str(field_value)
+                    )
                     for field, field_value in zip(fields, values)
                 )
             )
@@ -381,32 +426,24 @@ class ObjDump:
 
     @staticmethod
     def _show_dfx(value: bytes, value_offset: int):
-        # Outer TLV follows ELF encoding; devkit serializes DFX words big-endian.
-        print(f"DFX_INFO: offset=0x{value_offset - 4:X}, length={len(value)}")
+        # Outer TLV follows ELF encoding; DFX headers and uint64 words are big-endian.
+        header = struct.Struct(">HH")
+        word_size = struct.calcsize(">Q")
+        print(f"DFX_INFO: offset=0x{value_offset - header.size:X}, length={len(value)}")
         offset = 0
         record = 0
         while offset < len(value):
             absolute = value_offset + offset
             remaining = len(value) - offset
-            if remaining < 4:
+            if remaining < header.size:
                 print(
                     f"[WARNING] DFX offset=0x{absolute:X}: truncated header, "
-                    f"expected=4, remaining={remaining}, raw={value[offset:].hex()}"
+                    f"expected={header.size}, remaining={remaining}, raw={value[offset:].hex()}"
                 )
                 return
-            kind, words = struct.unpack_from(">HH", value, offset)
-            if kind != F_TYPE_DFX_ARG_INFO:
-                print(
-                    f"  UNKNOWN_DFX_TYPE: offset=0x{absolute:X}, type={kind}, "
-                    f"length_raw={words}, raw={value[offset:].hex()}"
-                )
-                return
-            size = words * 8
-            print(
-                f"  DFX_ARG_INFO[{record}]: offset=0x{absolute:X}, type={kind}, "
-                f"length_words={words}, value_bytes={size}"
-            )
-            offset += 4
+            kind, words = header.unpack_from(value, offset)
+            size = words * word_size
+            offset += header.size
             remaining = len(value) - offset
             if size > remaining:
                 print(
@@ -415,32 +452,37 @@ class ObjDump:
                 )
                 return
             payload = value[offset : offset + size]
-            ObjDump._show_dfx_arg(payload, value_offset + offset)
+            if kind == F_TYPE_DFX_ARG_INFO:
+                print(
+                    f"  DFX_ARG_INFO[{record}]: offset=0x{absolute:X}, type={kind}, "
+                    f"length_words={words}, value_bytes={size}"
+                )
+                ObjDump._show_dfx_arg(payload, value_offset + offset)
+                record += 1
+            else:
+                print(
+                    f"  UNKNOWN_DFX_TYPE: offset=0x{absolute:X}, type={kind}, "
+                    f"length_words={words}, value_bytes={size}, raw={payload.hex()}"
+                )
             offset += size
-            record += 1
 
     @staticmethod
     def _show_dfx_arg(value: bytes, value_offset: int):
-        param_names = {
-            1: "TENSOR",
-            2: "INPUT",
-            3: "OUTPUT",
-            4: "WORKSPACE",
-            5: "ASCENDCLOG",
-            6: "MC2CTX",
-            7: "TILING",
-            8: "L1",
-            9: "L2",
-            10: "OVERFLOW",
-            11: "FFTS",
-            12: "SHAPE_TENSOR",
-        }
-        point_names = {
-            1: "LEVEL_1",
-            2: "LEVEL_2",
-            3: "LEVEL_2_WITH_SHAPE",
-            4: "LEVEL_1_FOR_SHAPE_TENSOR",
-        }
+        param_types = {kind.value: kind for kind in DfxParamType}
+        point_types = {kind.value: kind for kind in DfxPointType}
+        tensor_types = (
+            DfxParamType.TENSOR,
+            DfxParamType.INPUT,
+            DfxParamType.OUTPUT,
+            DfxParamType.SHAPE_TENSOR,
+        )
+        size_types = (DfxParamType.WORKSPACE, DfxParamType.TILING)
+        word = struct.Struct(">Q")
+        # Runtime dump_args.h assigns 16 bits each to tensor and pointer types.
+        type_field_bits = 16
+        type_field_mask = (1 << type_field_bits) - 1
+        args_type_mask = type_field_mask | (type_field_mask << type_field_bits)
+        unspecified = 0xFFFFFFFFFFFFFFFF
 
         def warn(message):
             print(
@@ -448,71 +490,74 @@ class ObjDump:
                 f"{message}, raw={value.hex()}"
             )
 
-        if len(value) < 8 or len(value) % 8:
+        def number(v):
+            return "-1 (unspecified)" if v == unspecified else str(v)
+
+        def show_remaining(fields):
+            if fields:
+                consumed = len(value) - len(fields) * word.size
+                print(
+                    f"    undecoded: offset=0x{value_offset + consumed:X}, "
+                    f"raw={value[consumed:].hex()}"
+                )
+
+        if len(value) < word.size or len(value) % word.size:
             warn(
                 f"invalid value length={len(value)}, expected uint64 words with args_type"
             )
             return
-        words = struct.unpack(">" + "Q" * (len(value) // 8), value)
-        args_type = words[0]
-        param_type = args_type & 0xFF
-        point_type = (args_type >> 16) & 0xFF
+        args_type, *fields = (item[0] for item in word.iter_unpack(value))
+        param_value = args_type & type_field_mask
+        point_value = (args_type >> type_field_bits) & type_field_mask
+        param_type = param_types.get(param_value)
+        point_type = point_types.get(point_value)
         print(f"    args_type: 0x{args_type:016X}")
         print(
-            f"    param_type: {param_names.get(param_type, 'UNKNOWN')} ({param_type})"
+            f"    param_type: {param_type.name if param_type else 'UNKNOWN'} ({param_value})"
         )
         print(
-            f"    point_type: {point_names.get(point_type, 'UNKNOWN')} ({point_type})"
+            f"    point_type: {point_type.name if point_type else 'UNKNOWN'} ({point_value})"
         )
         if (
-            args_type & ~0xFF00FF
-            or param_type not in param_names
-            or point_type not in point_names
-            or param_type not in (2, 3, 4, 7, 12)
+            args_type & ~args_type_mask
+            or point_type is None
+            or param_type not in tensor_types + size_types
         ):
-            if len(value) > 8:
-                print(
-                    f"    undecoded: offset=0x{value_offset + 8:X}, raw={value[8:].hex()}"
-                )
+            show_remaining(fields)
             return
 
-        def number(v):
-            return "-1 (unspecified)" if v == 0xFFFFFFFFFFFFFFFF else str(v)
-
-        # A dynamic workspace and some static tiling records contain args_type only.
-        if len(words) == 1:
-            if param_type in (2, 3, 12):
+        # Dynamic workspace and some tiling records contain args_type only.
+        if not fields:
+            if param_type in tensor_types:
                 warn("missing param_size")
             return
-        print(f"    param_size: {number(words[1])}")
-        consumed = 2
-        if param_type in (2, 3, 12) and point_type == 3:
-            if len(words) < 3:
+        param_size, *fields = fields
+        print(f"    param_size: {number(param_size)}")
+        if param_type in tensor_types and point_type == DfxPointType.LEVEL_2_WITH_SHAPE:
+            if not fields:
                 warn("missing param_dtype")
                 return
-            # Producer uses bytes or bits depending on target; do not guess the unit.
-            print(f"    param_dtype: {number(words[2])}")
-            consumed = 3
-        elif param_type in (2, 3) and point_type in (1, 4) and len(words) > 2:
-            dim = words[2]
+            param_dtype, *fields = fields
+            # Producer uses bytes or bits depending on target; retain its value.
+            print(f"    param_dtype: {number(param_dtype)}")
+        elif (
+            param_type in tensor_types
+            and point_type
+            in (DfxPointType.LEVEL_1, DfxPointType.LEVEL_1_FOR_SHAPE_TENSOR)
+            and fields
+        ):
+            dim, *fields = fields
             print(f"    param_dim: {number(dim)}")
-            if dim == 0xFFFFFFFFFFFFFFFF:
-                consumed = 3
-            else:
-                available = len(words) - 3
-                if dim > available:
+            if dim != unspecified:
+                if dim > len(fields):
                     warn(
-                        f"param_shape truncated, declared_dim={dim}, available={available}"
+                        f"param_shape truncated, declared_dim={dim}, available={len(fields)}"
                     )
                     return
-                shape = ", ".join(number(v) for v in words[3 : 3 + dim])
+                shape = ", ".join(number(v) for v in fields[:dim])
                 print(f"    param_shape: [{shape}]")
-                consumed = 3 + dim
-        if consumed < len(words):
-            print(
-                f"    undecoded: offset=0x{value_offset + consumed * 8:X}, "
-                f"raw={value[consumed * 8 :].hex()}"
-            )
+                fields = fields[dim:]
+        show_remaining(fields)
 
     @staticmethod
     def _unpack_buff_content_by_type(
@@ -546,9 +591,12 @@ class ObjDump:
             if values is None:
                 return
 
-        if t in (B_TYPE_VERSION, B_TYPE_SPECIALIZATION_FLAG):
+        if t == B_TYPE_VERSION:
             (v,) = values
             output = f"{name}: {v}"
+        elif t == B_TYPE_SPECIALIZATION_FLAG:
+            (v,) = values
+            output = f"{name}: {ObjDump._format_meta_enum(v, SPECIALIZATION_FLAG_MAP)}"
         elif t == B_TYPE_DEBUG:
             debug_buf_size, debug_options = values
             output = (
@@ -565,14 +613,14 @@ class ObjDump:
             )
         elif t == B_TYPE_RUNTIME_IMPLICIT_INFO:
             (v,) = values
-            decoded = RUNTIME_IMPLICIT_INFO_MAP.get(v, f"UNKNOWN({v})")
+            decoded = ObjDump._format_meta_enum(v, RUNTIME_IMPLICIT_INFO_MAP)
             output = f"{name}: {decoded}"
         elif t == B_TYPE_SK_INFO:
             reserved, cap, global_func, sk0, sk1, sk2, sk3 = values
             output = (
                 f"{name}: reserved={reserved}, cap=0x{cap:X}, "
                 f"global=0x{global_func:X}, sk0=0x{sk0:X}, sk1=0x{sk1:X}, "
-                f"sk2=0x{sk2:X}, sk3=0x{sk3:X}, entries=raw"
+                f"sk2=0x{sk2:X}, sk3=0x{sk3:X}"
             )
             if getattr(self, "_meta_relocatable", False):
                 output += " (relocatable ELF; relocations not applied)"

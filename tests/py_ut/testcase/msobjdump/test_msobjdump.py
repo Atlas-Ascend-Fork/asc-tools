@@ -840,7 +840,7 @@ class TestMsObjdump(unittest.TestCase):
             print("test run dump elf without exception")
             output = buf.getvalue()
             self.assertIn("ENABLE_EARLY_START: 1", output)
-            self.assertIn("KERNEL_TYPE: MIX_AIC_MAIN", output)
+            self.assertIn("KERNEL_TYPE: MIX_AIC_MAIN (4)", output)
             self.assertIn("MIX_TASK_RATION: [1:0]", output)
         self._clean_out_dir(out_dir)
 
@@ -1245,7 +1245,7 @@ class TestMsObjdump(unittest.TestCase):
         output = captured_output.getvalue().strip().splitlines()
 
         self.assertEqual(
-            output, ["RUNTIME_IMPLICIT_INFO: L2Cache Hint Flag", "VERSION: 1"]
+            output, ["RUNTIME_IMPLICIT_INFO: L2Cache Hint Flag (3)", "VERSION: 1"]
         )
 
     def test_show_ascend_meta_op_tlv_other_types(self):
@@ -1278,7 +1278,7 @@ class TestMsObjdump(unittest.TestCase):
                 "DEBUG: debugBufSize=8, debugOptions=2",
                 "DYNAMIC_PARAM: dynamicParamMode=3",
                 "OPTIONAL_PARAM: optionalInputMode=1, optionalOutputMode=2",
-                "RUNTIME_IMPLICIT_INFO: L2Cache Hint Flag",
+                "RUNTIME_IMPLICIT_INFO: L2Cache Hint Flag (3)",
             ],
         )
 
@@ -1399,15 +1399,15 @@ class TestMsObjdump(unittest.TestCase):
         self.assertEqual(
             captured_output.getvalue().strip().splitlines()[1:],
             [
-                "KERNEL_TYPE: AIV",
+                "KERNEL_TYPE: AIV (3)",
                 "PARAM_SUMMARY: paraNums=3, paramTotalSize=20",
                 "PARAM_INFO: index=0, ordinal=0, offset=0, size=8, align=8, "
-                "paramType=2, spaceIndex=0, spaceType=0, space=0, resv=0",
+                "paramType=POINTER (2), spaceIndex=0, spaceType=0, space=0, resv=0",
                 "PARAM_INFO: index=0, ordinal=1, offset=8, size=8, align=8, "
-                "paramType=2, spaceIndex=0, spaceType=0, space=0, resv=0",
+                "paramType=POINTER (2), spaceIndex=0, spaceType=0, space=0, resv=0",
                 "PARAM_INFO: index=0, ordinal=2, offset=16, size=4, align=4, "
-                "paramType=1, spaceIndex=0, spaceType=0, space=0, resv=0",
-                "AIV_TYPE_FLAG: 3",
+                "paramType=SCALAR (1), spaceIndex=0, spaceType=0, space=0, resv=0",
+                "AIV_TYPE_FLAG: AIV_TYPE_SIMT_VF_ONLY (3)",
                 "COMPILER_ALLOC_UB_SIZE: 8192",
                 "SU_STACK_SIZE: 352",
                 "SIMT_WARP_STACK_SIZE: 1280",
@@ -1463,9 +1463,9 @@ class TestMsObjdump(unittest.TestCase):
             [
                 "PARAM_SUMMARY: paraNums=5, paramTotalSize=4294967552",
                 "PARAM_INFO: index=2, ordinal=3, offset=128, size=64, align=8, "
-                "paramType=1, spaceIndex=4, spaceType=5, space=6, resv=7",
+                "paramType=SCALAR (1), spaceIndex=4, spaceType=5, space=6, resv=7",
                 "PARAM_INFO: index=2, ordinal=3, offset=128, size=64, align=8, "
-                "paramType=1, spaceIndex=4, spaceType=5, space=6, resv=7",
+                "paramType=SCALAR (1), spaceIndex=4, spaceType=5, space=6, resv=7",
             ],
         )
 
@@ -1590,7 +1590,7 @@ class TestMsObjdump(unittest.TestCase):
         self.assertEqual(
             captured_output.getvalue().strip().splitlines()[1:],
             [
-                "RUNTIME_IMPLICIT_INFO: AICPU Debug Flag",
+                "RUNTIME_IMPLICIT_INFO: AICPU Debug Flag (6)",
                 "RUNTIME_IMPLICIT_INFO: UNKNOWN(99)",
             ],
         )
@@ -1686,6 +1686,40 @@ class TestMsObjdump(unittest.TestCase):
             ],
         )
 
+    def test_function_enums_include_names_and_values(self):
+        cases = (
+            (1, 3, "KERNEL_TYPE: AIV (3)"),
+            (2, 0, "CROSS_CORE_SYNC: NO_USE_SYNC (0)"),
+            (2, 1, "CROSS_CORE_SYNC: USE_SYNC (1)"),
+            (12, 1, "AIV_TYPE_FLAG: AIV_TYPE_NO_VF (1)"),
+            (12, 2, "AIV_TYPE_FLAG: AIV_TYPE_SIMD_VF_ONLY (2)"),
+            (12, 3, "AIV_TYPE_FLAG: AIV_TYPE_SIMT_VF_ONLY (3)"),
+            (12, 4, "AIV_TYPE_FLAG: AIV_TYPE_SIMD_SIMT_MIX_VF (4)"),
+            (18, 0, "SCHED_MODE: RT_SCHEM_MODE_NORMAL (0)"),
+            (18, 1, "SCHED_MODE: RT_SCHEM_MODE_BATCH (1)"),
+            (12, 99, "AIV_TYPE_FLAG: UNKNOWN(99)"),
+            (18, 0xFFFFFFFF, "SCHED_MODE: UNKNOWN(4294967295)"),
+        )
+        for kind, value, expected in cases:
+            with self.subTest(kind=kind, value=value):
+                output = StringIO()
+                with contextlib.redirect_stdout(output):
+                    msobjdump_main.ObjDump._show_ascend_meta_tlv(
+                        struct.pack("<I", value), kind, 4, 0
+                    )
+                self.assertEqual(output.getvalue().strip(), expected)
+
+    def test_unknown_parameter_enum_preserves_reserved_values(self):
+        value = struct.pack("<4I2H4I", 1, 2, 3, 4, 8, 99, 6, 7, 8, 9)
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            msobjdump_main.ObjDump._show_ascend_meta_tlv(value, 17, len(value), 0)
+        self.assertEqual(
+            output.getvalue().strip(),
+            "PARAM_INFO: index=1, ordinal=2, offset=3, size=4, align=8, "
+            "paramType=UNKNOWN(99), spaceIndex=6, spaceType=7, space=8, resv=9",
+        )
+
     def test_device_function_types_do_not_use_kernel_type_enumeration(self):
         content = b"".join(
             struct.pack("<HHI", 19, 4, value)
@@ -1717,7 +1751,7 @@ class TestMsObjdump(unittest.TestCase):
                 "DEVICE_FUNC_TYPE: UNKNOWN(0)",
                 "DEVICE_FUNC_TYPE: UNKNOWN(7)",
                 "DEVICE_FUNC_TYPE: UNKNOWN(4294967295)",
-                "KERNEL_TYPE: MIX_AIC_MAIN",
+                "KERNEL_TYPE: MIX_AIC_MAIN (4)",
                 "SIMT_LAUNCH_BOUNDS: 256",
             ],
         )
@@ -1737,12 +1771,12 @@ class TestMsObjdump(unittest.TestCase):
         self.assertEqual(
             output.getvalue().splitlines(),
             [
-                "SPECIALIZATION_FLAG: 0",
-                "SPECIALIZATION_FLAG: 1",
-                "RUNTIME_IMPLICIT_INFO: CV11CompatCV12 Workspace",
+                "SPECIALIZATION_FLAG: STATIC (0)",
+                "SPECIALIZATION_FLAG: DYNAMIC (1)",
+                "RUNTIME_IMPLICIT_INFO: CV11CompatCV12 Workspace (7)",
                 "SIMT_LAUNCH_BOUNDS: 2048",
-                "COMPAT_MODE: 1",
-                "COMPAT_MODE: 0xFFFFFFFF",
+                "COMPAT_MODE: M_TYPE_COMPAT (1)",
+                "COMPAT_MODE: DEFAULT (0xFFFFFFFF)",
             ],
         )
 
@@ -1824,7 +1858,7 @@ class TestMsObjdump(unittest.TestCase):
                     self.assertIn("remaining=", output.getvalue())
                     self.assertTrue(output.getvalue().endswith(expected + "\n"))
 
-    def test_sk_entry_values_are_explicitly_raw_for_relocatable_elf(self):
+    def test_sk_entries_keep_relocation_notice_without_pseudo_field(self):
         objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
         objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
         objdump._aicore_binary_meta_printed = set()
@@ -1833,8 +1867,15 @@ class TestMsObjdump(unittest.TestCase):
         output = StringIO()
         with contextlib.redirect_stdout(output):
             objdump._show_ascend_meta_op_tlv(value, 5, len(value), 0)
-        self.assertIn(
-            "entries=raw (relocatable ELF; relocations not applied)", output.getvalue()
+        self.assertIn("(relocatable ELF; relocations not applied)", output.getvalue())
+        self.assertNotIn("entries=", output.getvalue())
+        objdump._meta_relocatable = False
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            objdump._show_ascend_meta_op_tlv(value, 5, len(value), 0)
+        self.assertEqual(
+            output.getvalue(),
+            "SK_INFO: reserved=0, cap=0xF, global=0x0, sk0=0x0, sk1=0x0, sk2=0x0, sk3=0x0\n",
         )
 
     def _dfx_output(self, payload):
@@ -1844,6 +1885,84 @@ class TestMsObjdump(unittest.TestCase):
                 b"\x00" * 4 + payload, 4, len(payload), 4
             )
         return output.getvalue()
+
+    def test_dfx_tik_tensor_records_from_buildcce(self):
+        # Captured from BuildCCE for two float16[16] GM tensors on Ascend910B1.
+        record = bytes.fromhex(
+            "000500040000000000010001000000000000002000000000000000010000000000000010"
+        )
+        output = self._dfx_output(record * 2)
+        self.assertEqual(output.count("param_type: TENSOR (1)"), 2)
+        self.assertEqual(output.count("param_size: 32"), 2)
+        self.assertEqual(output.count("param_dim: 1"), 2)
+        self.assertEqual(output.count("param_shape: [16]"), 2)
+        self.assertIn("DFX_ARG_INFO[1]: offset=0x28", output)
+        self.assertNotIn("raw=", output)
+        self.assertNotIn("WARNING", output)
+
+    def test_dfx_tensor_and_shape_tensor_layouts(self):
+        # Runtime routes GENERAL_TENSOR and SHAPE_TENSOR through LoadDfxTensor.
+        for param_type in (1, 12):
+            with self.subTest(param_type=param_type):
+                arg = struct.pack(">6Q", 0x10000 | param_type, 32, 3, 2, 2, 4)
+                output = self._dfx_output(struct.pack(">HH", 5, 6) + arg)
+                self.assertIn("param_size: 32", output)
+                self.assertIn("param_dim: 3", output)
+                self.assertIn("param_shape: [2, 2, 4]", output)
+                self.assertNotIn("raw=", output)
+                arg = struct.pack(">3Q", 0x30000 | param_type, 0xFFFFFFFFFFFFFFFF, 2)
+                output = self._dfx_output(struct.pack(">HH", 5, 3) + arg)
+                self.assertIn("param_dtype: 2", output)
+                self.assertNotIn("raw=", output)
+
+    def test_dfx_type_fields_are_not_truncated_to_eight_bits(self):
+        cases = (
+            (0x10102, "param_type: UNKNOWN (258)"),
+            (0x1010002, "point_type: UNKNOWN (257)"),
+        )
+        for args_type, expected in cases:
+            with self.subTest(args_type=args_type):
+                arg = struct.pack(">2Q", args_type, 32)
+                output = self._dfx_output(struct.pack(">HH", 5, 2) + arg)
+                self.assertIn(expected, output)
+                self.assertNotIn("param_size:", output)
+                self.assertIn("raw=0000000000000020", output)
+
+    def test_dfx_unknown_record_does_not_hide_following_arguments(self):
+        unknown = struct.pack(">HHQ", 99, 1, 123)
+        argument = struct.pack(">HH4Q", 5, 4, 0x10001, 32, 1, 16)
+        output = self._dfx_output(argument + unknown + argument)
+        self.assertIn(
+            "UNKNOWN_DFX_TYPE: offset=0x28, type=99, length_words=1, "
+            "value_bytes=8, raw=000000000000007b",
+            output,
+        )
+        self.assertEqual(output.count("param_shape: [16]"), 2)
+        self.assertIn("DFX_ARG_INFO[1]: offset=0x34", output)
+        self.assertNotIn("WARNING", output)
+        output = self._dfx_output(struct.pack(">HH", 99, 0) + argument)
+        self.assertIn("DFX_ARG_INFO[0]: offset=0x8", output)
+        self.assertIn("param_shape: [16]", output)
+
+    def test_dfx_unknown_record_with_truncated_value(self):
+        output = self._dfx_output(struct.pack(">HHQ", 99, 2, 123))
+        self.assertIn("truncated value, expected=16, remaining=8", output)
+        self.assertIn("raw=000000000000007b", output)
+
+    def test_dfx_incomplete_tensor_keeps_following_argument(self):
+        argument = struct.pack(">HH4Q", 5, 4, 0x10001, 32, 1, 16)
+        for words, message in (
+            ((0x10001,), "missing param_size"),
+            ((0x30001, 32), "missing param_dtype"),
+            ((0x10001, 32, 2, 16), "param_shape truncated"),
+        ):
+            with self.subTest(words=words):
+                malformed = struct.pack(">HH", 5, len(words))
+                malformed += struct.pack(">" + "Q" * len(words), *words)
+                output = self._dfx_output(malformed + argument)
+                self.assertIn(message, output)
+                self.assertIn("DFX_ARG_INFO[1]", output)
+                self.assertEqual(output.count("param_shape: [16]"), 1)
 
     def test_dfx_devkit_dynamic_output_layout(self):
         # Layout from devkit dynamic serializer; tiling bytes from its golden test.
