@@ -1,6 +1,6 @@
 # msobjdump 元数据说明
 
-用于解释 dump 输出，不是所有版本或所有输入必含字段的清单。按 kernel 名称归组，保留工具打印的字段原名和数值。重复索引不代表 kernel 名称相同，缺少字段也不代表对应功能关闭。
+用于解释 dump 输出，不是所有版本或所有输入必含字段的清单。Binary与Function元数据分别打印，保留字段原名和数值。Function标题中的名称来自section名称后缀；相同名称可能对应多个section。缺少字段不代表对应功能关闭。
 
 ## 二进制级信息
 
@@ -11,22 +11,39 @@
 | `DEBUG` | `debugBufSize` 是调试缓冲区大小，`debugOptions` 是调试选项；按对应版本定义解释，不能从它判断本次运行已产生调试数据 |
 | `DYNAMIC_PARAM` | `dynamicParamMode` 表示动态参数模式；文档定义 0 关闭、1 开启 |
 | `OPTIONAL_PARAM` | `optionalInputMode` / `optionalOutputMode` 表示可选输入/输出是否占位；文档定义 0 不占位、1 占位 |
-| `RUNTIME_IMPLICIT_INFO` | 工具按版本映射隐式信息，如 Printf、Hardware Sync、L2Cache Hint 标志；未知编号保留原值，不套用其他版本的映射 |
+| `RUNTIME_IMPLICIT_INFO` | 每条记录描述一种Runtime隐式资源，如Printf、硬同步、L2Cache Hint等；未知编号保留原值 |
+| `SK_INFO` | `cap`为SK能力标志，`global`为Kernel函数入口地址，`sk0`至`sk3`为SK子函数入口地址，`reserved`为保留字段 |
+| `SPECIALIZATION_RESOURCE_ID` | 算子二进制资源标识字符串 |
+| `ICACHE_PRELOAD` | 预加载标志及保留字段；flag为0不预加载、1预加载 |
+| `SPECIALIZATION_FLAG` | 二进制算子常量化状态：0为静态，1为动态 |
 
-文档列出的 `debugOptions` 值为 0（关闭）、1（DumpTensor/printf）、2（assert）、4（时间戳打点）、8（内存越界检测）。遇到其他值或组合，先核对当前版本定义，不能自行猜测。
+`debugOptions` 是位图：0表示关闭；1（DumpTensor/printf）、2（assert）、4（时间戳打点）、8（内存越界检测）可按位或组合。
 
-## kernel 级信息
+## Function级信息
 
 | 字段 | 含义与解释边界 |
 | --- | --- |
-| `.ascend.meta. [索引]: 名称` | kernel 名称，可能为 C++ 修饰后的符号；需要可读名称时可另外使用可用的 `c++filt`，同时保留原符号 |
+| `.ascend.meta. [索引]: 名称` | 索引为打印序号，名称为section名称中`.ascend.meta.`之后的字符串；工具不查询函数符号，也不还原C++函数名 |
 | `KERNEL_TYPE` | 产物声明的 core 类型；常见 AIC、AIV、MIX_AIC_MAIN、MIX_AIV_MAIN，分别指 Cube、Vector 及相应主核的混合类型；其他枚举按工具原值呈现 |
 | `CROSS_CORE_SYNC` | 硬同步配置，`USE_SYNC` / `NO_USE_SYNC`；适用平台需结合当前 CANN 文档，不能扩展为所有芯片均支持 |
 | `MIX_TASK_RATION` | Cube/Vector 任务配比，例如 `[1:2]`；保留工具原拼写，不解读为耗时或利用率比例 |
 | `DETERMINISTIC_INFO` | 文档定义 0 非确定性、1 确定性计算；表示编译产物配置，不代替运行测试 |
 | `FUNCTION_ENTRY` | 工具文档定义为 TilingKey；保留完整整数，不与符号地址、入口地址或真实执行过的分支混淆 |
-| `BLOCK_NUM` | 当前源码打印固定占位值 `0xFFFFFFFF`；不能转换成实际使用 4294967295 个核 |
-| `ENABLE_EARLY_START` | 当前源码识别并打印该字段整数；仅凭值不能断言 Early-Start 已在运行中生效或取得加速 |
+| `BLOCK_NUM` | 当前未启用，`0xFFFFFFFF`为默认占位值 |
+| `DEVICE_FUNC_TYPE` | 非Kernel函数类型；1融合架构MainScalar、2分离架构AIC MainScalar、3分离架构AIV MainScalar、4 SIMD函数、5 SIMT入口、6 SIMT子函数；与KERNEL_TYPE枚举不同，未知值保留编号 |
+| `SIMT_LAUNCH_BOUNDS` | SIMT最大线程数；不表示实际启动线程数 |
+| `DFX_INFO` | 异常调测使用的参数信息，由多个`DFX_ARG_INFO`记录组成 |
+| `DFX_ARG_INFO` | 单个参数的异常调测信息，包括参数类别、指针层级及相应的数据大小或形状信息 |
+| `L0_EXCEPTION_DFX_IS_TIK` | 是否为TIK算子：0为非TIK，1为TIK |
+| `COMPILER_ALLOC_UB_SIZE` | 编译器分配的UB大小 |
+| `SU_STACK_SIZE` | 核函数所需的Scalar Unit（SU）栈大小 |
+| `SIMT_WARP_STACK_SIZE` | SIMT通用栈大小 |
+| `SIMT_DVG_WARP_STACK_SIZE` | SIMT Divergence（分支）栈大小 |
+| `AIV_TYPE_FLAG` | AIV执行类型：1为SU，2为SU + SIMD，3为SU + SIMT，4为SU + SIMD + SIMT |
+| `PARAM_SUMMARY` | `paraNums`为参数数量，`paramTotalSize`为参数区总大小 |
+| `PARAM_INFO` | 单个参数的布局：`ordinal`为从0开始的参数序号，`offset`为参数区内偏移，`size`为参数槽位大小，`align`为对齐要求；`paramType`中1为标量、2为指针 |
+| `SCHED_MODE` | 调度模式：0为普通模式，1为Batch模式 |
+| `ENABLE_EARLY_START` | 当前源码识别并打印该字段整数；仅凭值不能断言early start特性已在运行中生效或取得加速 |
 
 例如输出 `KERNEL_TYPE: MIX_AIC_MAIN` 与 `MIX_TASK_RATION: [1:2]`，可以说明产物采用相应的混合核配置，不能由此推算算子耗时。`mix_aic` / `mix_aiv` 两个符号可以是同一混合算子的两部分，不能直接当作两个独立算子。
 
@@ -36,7 +53,7 @@ verbose 额外提供 ELF header、section、program header 和 symbol 等信息�
 
 | 内容特征 | dump/list/extract 处理方式 | `--sass` 处理方式 |
 | --- | --- | --- |
-| `.ascend.meta.*` | 直接读取 kernel 元数据；单算子 ELF 没有内嵌文件时 list/extract 提示无内容 | 按元数据定位后再反汇编 |
+| `.ascend.meta.*` | 直接读取Function元数据；单算子 ELF 没有内嵌文件时 list/extract 提示无内容 | 按元数据定位后再反汇编 |
 | 独立 device ELF（machine 为 `hiipu` 等） | 直接解析 | 直接反汇编 |
 | `.ascend.kernel.*` | 按内部描述读取 kernel 二进制并列出或提取 | 提取各 kernel 后逐个反汇编 |
 | `_o_start` / `_json_start` 等符号 | 识别包含二进制及 JSON 的打包产物，支持相应文件恢复 | 恢复 `.o` 负载后反汇编 |

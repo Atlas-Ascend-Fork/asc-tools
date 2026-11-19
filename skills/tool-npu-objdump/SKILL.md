@@ -107,7 +107,7 @@ python3 -m msobjdump --dump-elf "$input_file"
 - extract：给出实际生成文件的路径；`nothing to extra` 表示该输入没有可提取内容，不声称成功提取。
 - sass：结果打印到 stdout，多个 device 镜像以 `===== [SASS] 来源 =====` 分隔，来源标注提取路径（如 `demo[.aicore_binary]`、`lib.a(member.o)`）。退出码 0 要求找到镜像且无错误诊断。源码文件无法访问会产生 warning，但该告警本身不会使有效指令反汇编失败，对应源码不会显示。无 device ELF、thin archive、`llvm-objdump` 缺失或其输出全为 `<not available>`（当前环境的 llvm-objdump 不带 Ascend 反汇编后端）都会报错并返回非零；此时按 [故障排查](references/troubleshooting.md) 定位环境，不要声称已反汇编。
 
-回答围绕用户问题组织，不强制生成固定报告。保留可复现命令和必要证据。元数据说明编译产物配置，不能证明真实运行核数、精度或性能收益；`BLOCK_NUM: 0xFFFFFFFF` 是当前实现的占位输出。
+回答围绕用户问题组织，不强制生成固定报告。保留可复现命令和必要证据。元数据说明编译产物配置，不能证明真实运行核数、精度或性能收益；`BLOCK_NUM` 当前未启用，`0xFFFFFFFF` 为默认占位值。
 
 ## 参考资料
 

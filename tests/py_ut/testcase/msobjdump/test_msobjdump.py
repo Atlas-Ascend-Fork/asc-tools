@@ -1282,6 +1282,628 @@ class TestMsObjdump(unittest.TestCase):
             ],
         )
 
+    def test_binary_meta_full_records_and_new_types(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+        objdump._aicore_binary_meta_printed = set()
+        version_records = b"".join(
+            struct.pack("<HHI", msobjdump_main.B_TYPE_VERSION, 4, value)
+            for value in range(1, 6)
+        )
+        resource_id = b"a" * 64
+        sk_info = struct.pack("<IQQQQQQ", 0, 3, 0x10, 0x20, 0x30, 0x40, 0x50)
+        content = version_records + struct.pack("<HH", 5, len(sk_info)) + sk_info
+        content += struct.pack("<HH", 6, len(resource_id)) + resource_id
+        content += struct.pack("<HHHH", 7, 4, 1, 0)
+        objdump._get_segment_content = lambda *_: content
+
+        captured_output = StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            objdump._get_elf_ascend_meta_op_tlv(
+                [msobjdump_main.AscendMetaSection(".ascend.meta", 0, len(content))]
+            )
+        output = captured_output.getvalue()
+        for value in range(1, 6):
+            self.assertIn(f"VERSION: {value}", output)
+        self.assertIn("SK_INFO: reserved=0, cap=0x3, global=0x10", output)
+        self.assertIn("SPECIALIZATION_RESOURCE_ID: " + "a" * 64, output)
+        self.assertIn("ICACHE_PRELOAD: flag=1, reserved=0", output)
+
+    def test_binary_meta_fusion_deduplicates_only_identical_records(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_AICORE_BINARY
+        objdump._aicore_binary_meta_printed = set()
+        captured_output = StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            objdump._show_ascend_meta_op_tlv(b"\x01\x00\x00\x00", 0, 4, 0)
+            objdump._show_ascend_meta_op_tlv(b"\x01\x00\x00\x00", 0, 4, 0)
+            objdump._show_ascend_meta_op_tlv(b"\x02\x00\x00\x00", 0, 4, 0)
+        self.assertEqual(
+            captured_output.getvalue().strip().splitlines(),
+            ["VERSION: 1", "VERSION: 2"],
+        )
+
+    def test_function_meta_dfx_and_block_num(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+        objdump._aicore_binary_meta_printed = set()
+        dfx_arg = bytes(range(16))
+        dfx_value = struct.pack(">HH", 5, 2) + dfx_arg
+        content = struct.pack("<HH", 4, len(dfx_value)) + dfx_value
+        content += struct.pack("<HHI", 15, 4, 8)
+        content += struct.pack("<HHI", 1, 4, 99)
+        objdump._get_segment_content = lambda *_: content
+
+        captured_output = StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            objdump._get_elf_ascend_meta_tlv(
+                [
+                    msobjdump_main.AscendMetaSection(
+                        ".ascend.meta.kernel", 0, len(content)
+                    )
+                ]
+            )
+        output = captured_output.getvalue()
+        self.assertIn("DFX_INFO: offset=0x0, length=20", output)
+        self.assertIn(
+            "DFX_ARG_INFO[0]: offset=0x4, type=5, length_words=2, value_bytes=16",
+            output,
+        )
+        self.assertIn("BLOCK_NUM: 8", output)
+        self.assertIn("KERNEL_TYPE: UNKNOWN(99)", output)
+
+    def test_function_meta_rejects_short_known_value_without_cross_record_read(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+        objdump._aicore_binary_meta_printed = set()
+        content = struct.pack("<HHB", 1, 1, 3) + struct.pack("<HHI", 11, 4, 1)
+        objdump._get_segment_content = lambda *_: content
+
+        captured_output = StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            objdump._get_elf_ascend_meta_tlv(
+                [
+                    msobjdump_main.AscendMetaSection(
+                        ".ascend.meta.kernel", 0, len(content)
+                    )
+                ]
+            )
+        output = captured_output.getvalue()
+        self.assertIn("expected 4 bytes", output)
+        self.assertIn("ENABLE_EARLY_START: 1", output)
+
+    def test_function_meta_compiler_emitted_simt_section(self):
+        # Verbatim .ascend.meta._Z19simt_stack_overflowPiPfj from DevKit's
+        # examples/03_simt_api/05_troubleshooting/stack_overflow (SCENARIO_NUM=1).
+        # bisheng clang-5c68a1cb1231, dav-3510, --enable-simt -O3 --cce-res-usage.
+        # Compiler reports Stack size: 1280 bytes. Kernel args: int*, float*, uint32.
+        content = bytes.fromhex(
+            "010004000300000010000c000300000014000000000000001100240000000000"
+            "0000000000000000080000000800020000000000000000000000000000000000"
+            "1100240000000000010000000800000008000000080002000000000000000000"
+            "0000000000000000110024000000000002000000100000000400000004000100"
+            "000000000000000000000000000000000c000400030000000700040000200000"
+            "080004006001000009000400000500000a00040000000000140002000004"
+        )
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump._get_segment_content = lambda *_: content
+        captured_output = StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            objdump._get_elf_ascend_meta_tlv(
+                [
+                    msobjdump_main.AscendMetaSection(
+                        ".ascend.meta.kernel", 0, len(content)
+                    )
+                ]
+            )
+        self.assertEqual(
+            captured_output.getvalue().strip().splitlines()[1:],
+            [
+                "KERNEL_TYPE: AIV",
+                "PARAM_SUMMARY: paraNums=3, paramTotalSize=20",
+                "PARAM_INFO: index=0, ordinal=0, offset=0, size=8, align=8, "
+                "paramType=2, spaceIndex=0, spaceType=0, space=0, resv=0",
+                "PARAM_INFO: index=0, ordinal=1, offset=8, size=8, align=8, "
+                "paramType=2, spaceIndex=0, spaceType=0, space=0, resv=0",
+                "PARAM_INFO: index=0, ordinal=2, offset=16, size=4, align=4, "
+                "paramType=1, spaceIndex=0, spaceType=0, space=0, resv=0",
+                "AIV_TYPE_FLAG: 3",
+                "COMPILER_ALLOC_UB_SIZE: 8192",
+                "SU_STACK_SIZE: 352",
+                "SIMT_WARP_STACK_SIZE: 1280",
+                "SIMT_DVG_WARP_STACK_SIZE: 0",
+                "SIMT_LAUNCH_BOUNDS: 1024",
+            ],
+        )
+
+    def test_function_meta_tik_flag_adump_layout(self):
+        # ADump QueryDfxIsTikInfo reads the leading uint32 and recognizes 1 as TIK.
+        # These are controlled input values, not evidence of producer encodings.
+        for value in (0, 1, 2):
+            with self.subTest(value=value):
+                content = struct.pack("<HHI", 6, 4, value)
+                objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+                objdump._get_segment_content = lambda *_: content
+                captured_output = StringIO()
+                with contextlib.redirect_stdout(captured_output):
+                    objdump._get_elf_ascend_meta_tlv(
+                        [
+                            msobjdump_main.AscendMetaSection(
+                                ".ascend.meta.kernel", 0, len(content)
+                            )
+                        ]
+                    )
+                self.assertEqual(
+                    captured_output.getvalue().strip().splitlines()[1:],
+                    [
+                        f"L0_EXCEPTION_DFX_IS_TIK: {value}",
+                    ],
+                )
+
+    def test_function_meta_param_records_match_runtime_layout(self):
+        # Layout confirmed by compiler emission and Runtime ElfParamBody declarations.
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        summary = struct.pack("<HHIQ", 16, 12, 5, 0x100000100)
+        param = struct.pack("<HH4I2H4I", 17, 36, 2, 3, 128, 64, 8, 1, 4, 5, 6, 7)
+        # Repeated parameter records must remain visible and in section order.
+        content = summary + param + param
+        objdump._get_segment_content = lambda *_: content
+        captured_output = StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            objdump._get_elf_ascend_meta_tlv(
+                [
+                    msobjdump_main.AscendMetaSection(
+                        ".ascend.meta.kernel", 0, len(content)
+                    )
+                ]
+            )
+        lines = captured_output.getvalue().strip().splitlines()
+        self.assertEqual(
+            lines[1:],
+            [
+                "PARAM_SUMMARY: paraNums=5, paramTotalSize=4294967552",
+                "PARAM_INFO: index=2, ordinal=3, offset=128, size=64, align=8, "
+                "paramType=1, spaceIndex=4, spaceType=5, space=6, resv=7",
+                "PARAM_INFO: index=2, ordinal=3, offset=128, size=64, align=8, "
+                "paramType=1, spaceIndex=4, spaceType=5, space=6, resv=7",
+            ],
+        )
+
+    def test_function_meta_fixed_lengths_warn_and_preserve_next_record(self):
+        # Protocol lengths independent of the implementation's format table.
+        layouts = (
+            (1, 4),
+            (2, 4),
+            (3, 4),
+            (7, 4),
+            (8, 4),
+            (9, 4),
+            (10, 4),
+            (11, 4),
+            (12, 4),
+            (13, 4),
+            (14, 12),
+            (15, 4),
+            (16, 12),
+            (17, 36),
+            (18, 4),
+            (19, 4),
+            (20, 2),
+            (21, 4),
+        )
+        for meta_type, expected_length in layouts:
+            for actual_length in (0, expected_length - 1, expected_length + 1):
+                with self.subTest(meta_type=meta_type, actual_length=actual_length):
+                    objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+                    value = bytes(range(actual_length))
+                    content = struct.pack("<HH", meta_type, actual_length) + value
+                    content += struct.pack("<HHI", 11, 4, 1)
+                    objdump._get_segment_content = lambda *_: content
+                    captured_output = StringIO()
+                    with contextlib.redirect_stdout(captured_output):
+                        objdump._get_elf_ascend_meta_tlv(
+                            [
+                                msobjdump_main.AscendMetaSection(
+                                    ".ascend.meta.kernel", 0, len(content)
+                                )
+                            ]
+                        )
+                    output = captured_output.getvalue()
+                    self.assertEqual(
+                        output.splitlines()[1:],
+                        [
+                            f"[WARNING] FUNCTION_META type={meta_type} offset=4 "
+                            f"length={actual_length}, expected {expected_length} bytes, "
+                            f"raw={value.hex()}",
+                            "ENABLE_EARLY_START: 1",
+                        ],
+                    )
+
+    def test_binary_meta_fixed_lengths_warn_and_preserve_next_record(self):
+        layouts = (
+            (0, 4),
+            (1, 8),
+            (2, 4),
+            (3, 4),
+            (4, 4),
+            (5, 52),
+            (6, 64),
+            (7, 4),
+            (8, 4),
+        )
+        for meta_type, expected_length in layouts:
+            for actual_length in (0, expected_length - 1, expected_length + 1):
+                with self.subTest(meta_type=meta_type, actual_length=actual_length):
+                    objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+                    objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+                    objdump._aicore_binary_meta_printed = set()
+                    value = bytes(range(actual_length))
+                    content = struct.pack("<HH", meta_type, actual_length) + value
+                    content += struct.pack("<HHI", 0, 4, 1)
+                    objdump._get_segment_content = lambda *_: content
+                    captured_output = StringIO()
+                    with contextlib.redirect_stdout(captured_output):
+                        objdump._get_elf_ascend_meta_op_tlv(
+                            [
+                                msobjdump_main.AscendMetaSection(
+                                    ".ascend.meta", 0, len(content)
+                                )
+                            ]
+                        )
+                    self.assertEqual(
+                        captured_output.getvalue().splitlines(),
+                        [
+                            ".ascend.meta META INFO",
+                            f"[WARNING] BINARY_META type={meta_type} offset=4 "
+                            f"length={actual_length}, expected {expected_length} bytes, "
+                            f"raw={value.hex()}",
+                            "VERSION: 1",
+                        ],
+                    )
+
+    def test_function_meta_entry_flag_and_64_bit_value(self):
+        for flag in (0, 0x80, 0x01):
+            with self.subTest(flag=flag):
+                # Nonzero reserved bytes must not be mistaken for the flag or entry.
+                value = struct.pack("<BBHQ", flag, 0x12, 0x3456, 0x100000003)
+                content = b"prefix" + value
+                captured_output = StringIO()
+                with contextlib.redirect_stdout(captured_output):
+                    msobjdump_main.ObjDump._show_ascend_meta_tlv(content, 14, 12, 6)
+                self.assertEqual(
+                    captured_output.getvalue().strip(),
+                    f"FUNCTION_ENTRY: 4294967299, flag=0x{flag:02X}",
+                )
+
+    def test_binary_meta_aicpu_debug_and_unknown_feature(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+        objdump._aicore_binary_meta_printed = set()
+        # DevKit aicpu_dump.cpp emits the complete record {4, 4, 6}.
+        content = bytes.fromhex("0400040006000000") + struct.pack("<HHI", 4, 4, 99)
+        objdump._get_segment_content = lambda *_: content
+        captured_output = StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            objdump._get_elf_ascend_meta_op_tlv(
+                [msobjdump_main.AscendMetaSection(".ascend.meta", 0, len(content))]
+            )
+        self.assertEqual(
+            captured_output.getvalue().strip().splitlines()[1:],
+            [
+                "RUNTIME_IMPLICIT_INFO: AICPU Debug Flag",
+                "RUNTIME_IMPLICIT_INFO: UNKNOWN(99)",
+            ],
+        )
+
+    def test_metadata_detection_requires_exact_section_names(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj = "probe.o"
+        cases = (
+            (".ascend.meta", msobjdump_main.ObjType.TYPE_ASCEND_META),
+            (".ascend.meta.kernel", msobjdump_main.ObjType.TYPE_ASCEND_META),
+            (".rela.ascend.meta", None),
+            (".rel.ascend.meta.kernel", None),
+            (".ascend.metadata", None),
+        )
+        for name, expected in cases:
+            with (
+                self.subTest(name=name),
+                patch.object(utils, "get_symbols_in_file", return_value=""),
+                patch.object(
+                    utils,
+                    "get_section_headers_in_file",
+                    return_value=(
+                        f"  [ 3] {name} PROGBITS 0000000000000000 000040 000008 00 A 0 0 4\n"
+                    ),
+                ),
+            ):
+                objdump._detect_obj_type()
+                self.assertEqual(objdump.obj_type, expected)
+
+    def test_dump_meta_retains_duplicate_sections_and_function_named_meta(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj = "probe.o"
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+        objdump._aicore_binary_meta_printed = set()
+        param = struct.pack("<HH4I2H4I", 17, 36, 0, 0, 0, 8, 8, 2, 0, 0, 0, 0)
+        payloads = {
+            0x40: struct.pack("<HHI", 0, 4, 1),
+            0x48: struct.pack("<HHI", 0, 4, 2),
+            0x50: param,
+            0x78: param,
+        }
+        sections = (
+            "[ 3] .ascend.meta NOTE 00000000 000040 000008 00 A 0 0 4\n"
+            "[ 4] .ascend.meta NOTE 00000000 000048 000008 00 A 0 0 4\n"
+            "[ 5] .ascend.meta.meta NOTE 00000000 000050 000028 00 A 0 0 4\n"
+            "[ 6] .ascend.meta.meta NOTE 00000000 000078 000028 00 A 0 0 4\n"
+            "[ 7] .rela.ascend.meta RELA 00000000 0000a0 000018 18 I 0 3 8\n"
+            "[ 8] .rel.ascend.meta.meta REL 00000000 0000b8 000010 10 I 0 5 8\n"
+        )
+        objdump._get_segment_content = MagicMock(
+            side_effect=lambda offset, size: payloads[offset]
+        )
+        output = StringIO()
+        with (
+            patch.object(utils, "get_section_headers_in_file", return_value=sections),
+            patch.object(
+                utils,
+                "get_elf_header",
+                return_value=SimpleNamespace(stdout="Type: REL (Relocatable file)"),
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            objdump._show_elf_ascend_meta_obj()
+        text = output.getvalue()
+        self.assertIn("VERSION: 1\nVERSION: 2", text)
+        self.assertIn(".ascend.meta. [0]: meta", text)
+        self.assertIn(".ascend.meta. [1]: meta", text)
+        self.assertEqual(text.count("PARAM_INFO: index=0, ordinal=0"), 2)
+        self.assertEqual(objdump._get_segment_content.call_count, 4)
+
+    def test_fusion_binary_dedup_spans_duplicate_sections_only(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_AICORE_BINARY
+        objdump._aicore_binary_meta_printed = set()
+        first = struct.pack("<HHI", 0, 4, 1)
+        second = first + struct.pack("<HHI", 0, 4, 2)
+        objdump._get_segment_content = (
+            lambda offset, size: first if offset == 0 else second
+        )
+        sections = [
+            msobjdump_main.AscendMetaSection(".ascend.meta", 0, len(first)),
+            msobjdump_main.AscendMetaSection(".ascend.meta", len(first), len(second)),
+        ]
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            objdump._get_elf_ascend_meta_op_tlv(sections)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                ".ascend.meta META INFO",
+                "VERSION: 1",
+                "VERSION: 2",
+            ],
+        )
+
+    def test_device_function_types_do_not_use_kernel_type_enumeration(self):
+        content = b"".join(
+            struct.pack("<HHI", 19, 4, value)
+            for value in (1, 2, 3, 4, 5, 6, 6, 0, 7, 0xFFFFFFFF)
+        )
+        content += struct.pack("<HHI", 1, 4, 4)
+        content += struct.pack("<HHH", 20, 2, 256)
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump._get_segment_content = lambda *_: content
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            objdump._get_elf_ascend_meta_tlv(
+                [
+                    msobjdump_main.AscendMetaSection(
+                        ".ascend.meta.device_func", 0, len(content)
+                    ),
+                ]
+            )
+        self.assertEqual(
+            output.getvalue().splitlines()[1:],
+            [
+                "DEVICE_FUNC_TYPE: K_TYPE_AICORE (1)",
+                "DEVICE_FUNC_TYPE: K_TYPE_AICORE_AIC (2)",
+                "DEVICE_FUNC_TYPE: K_TYPE_AICORE_AIV (3)",
+                "DEVICE_FUNC_TYPE: K_TYPE_SIMD_ENTRY (4)",
+                "DEVICE_FUNC_TYPE: K_TYPE_SIMT_ENTRY (5)",
+                "DEVICE_FUNC_TYPE: K_TYPE_SIMT_CALLEE (6)",
+                "DEVICE_FUNC_TYPE: K_TYPE_SIMT_CALLEE (6)",
+                "DEVICE_FUNC_TYPE: UNKNOWN(0)",
+                "DEVICE_FUNC_TYPE: UNKNOWN(7)",
+                "DEVICE_FUNC_TYPE: UNKNOWN(4294967295)",
+                "KERNEL_TYPE: MIX_AIC_MAIN",
+                "SIMT_LAUNCH_BOUNDS: 256",
+            ],
+        )
+
+    def test_specialization_compatibility_and_launch_bounds_printing(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+        objdump._aicore_binary_meta_printed = set()
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            objdump._show_ascend_meta_op_tlv(struct.pack("<I", 0), 8, 4, 0)
+            objdump._show_ascend_meta_op_tlv(struct.pack("<I", 1), 8, 4, 0)
+            objdump._show_ascend_meta_op_tlv(struct.pack("<I", 7), 4, 4, 0)
+            objdump._show_ascend_meta_tlv(struct.pack("<H", 2048), 20, 2, 0)
+            objdump._show_ascend_meta_tlv(struct.pack("<I", 1), 21, 4, 0)
+            objdump._show_ascend_meta_tlv(struct.pack("<I", 0xFFFFFFFF), 21, 4, 0)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                "SPECIALIZATION_FLAG: 0",
+                "SPECIALIZATION_FLAG: 1",
+                "RUNTIME_IMPLICIT_INFO: CV11CompatCV12 Workspace",
+                "SIMT_LAUNCH_BOUNDS: 2048",
+                "COMPAT_MODE: 1",
+                "COMPAT_MODE: 0xFFFFFFFF",
+            ],
+        )
+
+    def test_tik_prefix_extensions_and_unknown_records_keep_following_tlv(self):
+        content = struct.pack("<HHI", 6, 6, 1) + b"\xab\xcd"
+        content += struct.pack("<HH", 22, 3) + b"\x01\x02\x03"
+        content += struct.pack("<HHH", 20, 2, 256)
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump._get_segment_content = lambda *_: content
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            objdump._get_elf_ascend_meta_tlv(
+                [
+                    msobjdump_main.AscendMetaSection(
+                        ".ascend.meta.kernel", 0, len(content)
+                    ),
+                ]
+            )
+        self.assertEqual(
+            output.getvalue().splitlines()[1:],
+            [
+                "L0_EXCEPTION_DFX_IS_TIK: 1, trailing_raw=abcd",
+                "UNKNOWN_FUNCTION_META: type=22 len=3 raw=010203",
+                "SIMT_LAUNCH_BOUNDS: 256",
+            ],
+        )
+
+    def test_tik_short_prefix_warns_without_reading_next_record(self):
+        for length in range(4):
+            with self.subTest(length=length):
+                value = bytes(range(length))
+                content = (
+                    struct.pack("<HH", 6, length)
+                    + value
+                    + struct.pack("<HHH", 20, 2, 128)
+                )
+                objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+                objdump._get_segment_content = lambda *_: content
+                output = StringIO()
+                with contextlib.redirect_stdout(output):
+                    objdump._get_elf_ascend_meta_tlv(
+                        [
+                            msobjdump_main.AscendMetaSection(
+                                ".ascend.meta.kernel", 0, len(content)
+                            ),
+                        ]
+                    )
+                self.assertIn("expected 4 bytes", output.getvalue())
+                self.assertTrue(output.getvalue().endswith("SIMT_LAUNCH_BOUNDS: 128\n"))
+
+    def test_truncated_section_does_not_hide_next_same_named_section(self):
+        for kind in ("BINARY_META", "FUNCTION_META"):
+            for bad in (b"\x01\x00", struct.pack("<HHB", 1, 8, 0xAB)):
+                with self.subTest(kind=kind, raw=bad.hex()):
+                    objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+                    objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+                    objdump._aicore_binary_meta_printed = set()
+                    if kind == "BINARY_META":
+                        name = ".ascend.meta"
+                        good = struct.pack("<HHI", 0, 4, 1)
+                        decode = objdump._get_elf_ascend_meta_op_tlv
+                        expected = "VERSION: 1"
+                    else:
+                        name = ".ascend.meta.kernel"
+                        good = struct.pack("<HHH", 20, 2, 128)
+                        decode = objdump._get_elf_ascend_meta_tlv
+                        expected = "SIMT_LAUNCH_BOUNDS: 128"
+                    objdump._get_segment_content = (
+                        lambda offset, size: bad if offset == 0 else good
+                    )
+                    sections = [
+                        msobjdump_main.AscendMetaSection(name, 0, len(bad)),
+                        msobjdump_main.AscendMetaSection(name, len(bad), len(good)),
+                    ]
+                    output = StringIO()
+                    with contextlib.redirect_stdout(output):
+                        decode(sections)
+                    self.assertIn(f"[WARNING] {kind}", output.getvalue())
+                    self.assertIn("remaining=", output.getvalue())
+                    self.assertTrue(output.getvalue().endswith(expected + "\n"))
+
+    def test_sk_entry_values_are_explicitly_raw_for_relocatable_elf(self):
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
+        objdump._aicore_binary_meta_printed = set()
+        objdump._meta_relocatable = True
+        value = struct.pack("<I6Q", 0, 15, 0, 0, 0, 0, 0)
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            objdump._show_ascend_meta_op_tlv(value, 5, len(value), 0)
+        self.assertIn(
+            "entries=raw (relocatable ELF; relocations not applied)", output.getvalue()
+        )
+
+    def _dfx_output(self, payload):
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            msobjdump_main.ObjDump._show_ascend_meta_tlv(
+                b"\x00" * 4 + payload, 4, len(payload), 4
+            )
+        return output.getvalue()
+
+    def test_dfx_devkit_dynamic_output_layout(self):
+        # Layout from devkit dynamic serializer; tiling bytes from its golden test.
+        output_arg = bytes.fromhex("0000000000030003ffffffffffffffff0000000000000004")
+        tiling_arg = bytes.fromhex("0000000000010007000000000000006c")
+        payload = struct.pack(">HH", 5, 3) + output_arg
+        payload += struct.pack(">HH", 5, 2) + tiling_arg
+        output = self._dfx_output(payload)
+        self.assertIn("param_type: OUTPUT (3)", output)
+        self.assertIn("point_type: LEVEL_2_WITH_SHAPE (3)", output)
+        self.assertIn("param_size: -1 (unspecified)", output)
+        self.assertIn("param_dtype: 4", output)
+        self.assertIn("param_type: TILING (7)", output)
+        self.assertIn("param_size: 108", output)
+        self.assertNotIn("WARNING", output)
+
+    def test_dfx_static_shape_and_duplicate_arguments(self):
+        arg = struct.pack(">5Q", 0x10002, 1024, 2, 16, 16)
+        record = struct.pack(">HH", 5, 5) + arg
+        output = self._dfx_output(record * 2)
+        self.assertEqual(output.count("param_shape: [16, 16]"), 2)
+        self.assertIn("DFX_ARG_INFO[1]: offset=0x30", output)
+        self.assertIn("param_dim: 2", output)
+        self.assertNotIn("WARNING", output)
+        self.assertNotIn("raw=", output)
+
+    def test_dfx_dynamic_workspace_and_unknown_values(self):
+        workspace = struct.pack(">HHQ", 5, 1, 0x10004)
+        output = self._dfx_output(workspace)
+        self.assertIn("WORKSPACE (4)", output)
+        self.assertNotIn("param_size", output)
+        self.assertNotIn("WARNING", output)
+        unknown = struct.pack(">HHQQ", 5, 2, 0x10063, 123)
+        output = self._dfx_output(unknown)
+        self.assertIn("UNKNOWN (99)", output)
+        self.assertIn("raw=000000000000007b", output)
+
+    def test_dfx_corruption_diagnostics(self):
+        cases = [
+            (b"\x00", "truncated header"),
+            (struct.pack(">HHQ", 5, 2, 0x10002), "truncated value"),
+            (struct.pack(">HH", 5, 0), "invalid value length"),
+            (struct.pack(">HHQ", 5, 1, 0x10002), "missing param_size"),
+            (struct.pack(">HHQQ", 5, 2, 0x30002, 8), "missing param_dtype"),
+            (struct.pack(">HHQQQQ", 5, 4, 0x10002, 8, 2, 1), "param_shape truncated"),
+        ]
+        for payload, message in cases:
+            with self.subTest(message=message):
+                output = self._dfx_output(payload)
+                self.assertIn(message, output)
+                self.assertIn("offset=0x", output)
+                self.assertIn("raw=", output)
+
+    def test_dfx_extra_words_preserved(self):
+        payload = struct.pack(">HHQQQ", 5, 3, 0x10007, 16, 99)
+        output = self._dfx_output(payload)
+        self.assertIn("param_size: 16", output)
+        self.assertIn("undecoded:", output)
+        self.assertIn("raw=0000000000000063", output)
+
     def test_utils_helper_functions(self):
         self.assertEqual(
             utils.split_str_with_space("  foo\t bar   baz  "), ["foo", "bar", "baz"]

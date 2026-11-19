@@ -48,19 +48,70 @@ KERNEL_TYPE_MAP = {"0": "mix", "1": "aiv", "2": "aic"}
 F_TYPE_KTYPE = 1
 F_TYPE_CROSS_CORE_SYNC = 2
 F_TYPE_MIX_TASK_RATION = 3
+F_TYPE_DFX_INFO = 4
+F_TYPE_DFX_ARG_INFO = 5
+F_TYPE_L0_EXCEPTION_DFX_IS_TIK = 6
+F_TYPE_COMPILER_ALLOC_UB_SIZE = 7
+F_TYPE_SU_STACK_SIZE = 8
+F_TYPE_SIMT_WARP_STACK_SIZE = 9
+F_TYPE_SIMT_DVG_WARP_STACK_SIZE = 10
 F_TYPE_ENABLE_EARLY_START = 11
+F_TYPE_AIV_TYPE_FLAG = 12
 F_TYPE_DETERMINISTIC_INFO = 13
 F_TYPE_FUNCTION_ENTRY = 14
 F_TYPE_BLOCK_NUM = 15
+F_TYPE_PARAM_SUMMARY = 16
+F_TYPE_PARAM_INFO = 17
+F_TYPE_SCHED_MODE = 18
+F_TYPE_DEVICE_FUNC_TYPE = 19
+F_TYPE_SIMT_LAUNCH_BOUNDS = 20
+F_TYPE_COMPAT_MODE = 21
+DEFAULT_COMPAT_MODE = 0xFFFFFFFF
 
 F_TYPE_MAP = {
     F_TYPE_KTYPE: "KERNEL_TYPE",
     F_TYPE_CROSS_CORE_SYNC: "CROSS_CORE_SYNC",
     F_TYPE_MIX_TASK_RATION: "MIX_TASK_RATION",
+    F_TYPE_DFX_INFO: "DFX_INFO",
+    F_TYPE_DFX_ARG_INFO: "DFX_ARG_INFO",
+    F_TYPE_L0_EXCEPTION_DFX_IS_TIK: "L0_EXCEPTION_DFX_IS_TIK",
+    F_TYPE_COMPILER_ALLOC_UB_SIZE: "COMPILER_ALLOC_UB_SIZE",
+    F_TYPE_SU_STACK_SIZE: "SU_STACK_SIZE",
+    F_TYPE_SIMT_WARP_STACK_SIZE: "SIMT_WARP_STACK_SIZE",
+    F_TYPE_SIMT_DVG_WARP_STACK_SIZE: "SIMT_DVG_WARP_STACK_SIZE",
     F_TYPE_ENABLE_EARLY_START: "ENABLE_EARLY_START",
+    F_TYPE_AIV_TYPE_FLAG: "AIV_TYPE_FLAG",
     F_TYPE_DETERMINISTIC_INFO: "DETERMINISTIC_INFO",
     F_TYPE_FUNCTION_ENTRY: "FUNCTION_ENTRY",
     F_TYPE_BLOCK_NUM: "BLOCK_NUM",
+    F_TYPE_PARAM_SUMMARY: "PARAM_SUMMARY",
+    F_TYPE_PARAM_INFO: "PARAM_INFO",
+    F_TYPE_SCHED_MODE: "SCHED_MODE",
+    F_TYPE_DEVICE_FUNC_TYPE: "DEVICE_FUNC_TYPE",
+    F_TYPE_SIMT_LAUNCH_BOUNDS: "SIMT_LAUNCH_BOUNDS",
+    F_TYPE_COMPAT_MODE: "COMPAT_MODE",
+}
+
+# Fixed-length function metadata values; DFX records have variable layouts.
+FUNCTION_META_FORMATS = {
+    F_TYPE_KTYPE: "<I",
+    F_TYPE_CROSS_CORE_SYNC: "<I",
+    F_TYPE_MIX_TASK_RATION: "<2H",
+    F_TYPE_COMPILER_ALLOC_UB_SIZE: "<I",
+    F_TYPE_SU_STACK_SIZE: "<I",
+    F_TYPE_SIMT_WARP_STACK_SIZE: "<I",
+    F_TYPE_SIMT_DVG_WARP_STACK_SIZE: "<I",
+    F_TYPE_ENABLE_EARLY_START: "<I",
+    F_TYPE_AIV_TYPE_FLAG: "<I",
+    F_TYPE_DETERMINISTIC_INFO: "<I",
+    F_TYPE_FUNCTION_ENTRY: "<BBHQ",
+    F_TYPE_BLOCK_NUM: "<I",
+    F_TYPE_PARAM_SUMMARY: "<IQ",
+    F_TYPE_PARAM_INFO: "<4I2H4I",
+    F_TYPE_SCHED_MODE: "<I",
+    F_TYPE_DEVICE_FUNC_TYPE: "<I",
+    F_TYPE_SIMT_LAUNCH_BOUNDS: "<H",
+    F_TYPE_COMPAT_MODE: "<I",
 }
 
 ############### Binary Meta Type ####################
@@ -69,6 +120,10 @@ B_TYPE_DEBUG = 1
 B_TYPE_DYNAMIC_PARAM = 2
 B_TYPE_OPTIONAL_PARAM = 3
 B_TYPE_RUNTIME_IMPLICIT_INFO = 4
+B_TYPE_SK_INFO = 5
+B_TYPE_SPECIALIZATION_RESOURCE_ID = 6
+B_TYPE_ICACHE_PRELOAD_FLAG = 7
+B_TYPE_SPECIALIZATION_FLAG = 8
 
 B_TYPE_MAP = {
     B_TYPE_VERSION: "VERSION",
@@ -76,6 +131,22 @@ B_TYPE_MAP = {
     B_TYPE_DYNAMIC_PARAM: "DYNAMIC_PARAM",
     B_TYPE_OPTIONAL_PARAM: "OPTIONAL_PARAM",
     B_TYPE_RUNTIME_IMPLICIT_INFO: "RUNTIME_IMPLICIT_INFO",
+    B_TYPE_SK_INFO: "SK_INFO",
+    B_TYPE_SPECIALIZATION_RESOURCE_ID: "SPECIALIZATION_RESOURCE_ID",
+    B_TYPE_ICACHE_PRELOAD_FLAG: "ICACHE_PRELOAD",
+    B_TYPE_SPECIALIZATION_FLAG: "SPECIALIZATION_FLAG",
+}
+
+BINARY_META_FORMATS = {
+    B_TYPE_VERSION: "<I",
+    B_TYPE_DEBUG: "<II",
+    B_TYPE_DYNAMIC_PARAM: "<HH",
+    B_TYPE_OPTIONAL_PARAM: "<HH",
+    B_TYPE_RUNTIME_IMPLICIT_INFO: "<I",
+    B_TYPE_SK_INFO: "<IQQQQQQ",
+    B_TYPE_SPECIALIZATION_RESOURCE_ID: "<64s",
+    B_TYPE_ICACHE_PRELOAD_FLAG: "<HH",
+    B_TYPE_SPECIALIZATION_FLAG: "<I",
 }
 
 K_TYPE_MAP = {
@@ -87,6 +158,18 @@ K_TYPE_MAP = {
     "6": "AIC_ROLLBACK",
     "7": "AIV_ROLLBACK",
 }
+
+
+class DeviceFuncType(Enum):
+    K_TYPE_AICORE = 1
+    K_TYPE_AICORE_AIC = 2
+    K_TYPE_AICORE_AIV = 3
+    K_TYPE_SIMD_ENTRY = 4
+    K_TYPE_SIMT_ENTRY = 5
+    K_TYPE_SIMT_CALLEE = 6
+
+
+DEVICE_FUNC_TYPE_MAP = {kind.value: kind.name for kind in DeviceFuncType}
 
 DEVICE_MACHINE_PATTERN = re.compile(r"(?:0x1029|\bhiipu\b)", re.IGNORECASE)
 SASS_INSTRUCTION_PATTERN = re.compile(r"^\s*[0-9a-fA-F]+:\s+[0-9a-fA-F]{8}\s+\S")
@@ -101,6 +184,8 @@ RUNTIME_IMPLICIT_INFO_MAP = {
     3: "L2Cache Hint Flag",
     4: "SIMT Printf Flag",
     5: "SIMD Assert Flag",
+    6: "AICPU Debug Flag",
+    7: "CV11CompatCV12 Workspace",
 }
 
 
@@ -117,6 +202,13 @@ class ParseObjMode(Enum):
     MODE_LIST_ELF = 2
     MODE_VERBOSE = 3
     MODE_SASS = 4
+
+
+@dataclass(frozen=True)
+class AscendMetaSection:
+    name: str
+    offset: int
+    size: int
 
 
 @dataclass
@@ -164,6 +256,7 @@ class ObjDump:
         )  # 落盘文件目录，用户未设置时当前路径
         self._aicore_binary_meta_printed = set()
         self._sass_tools = {}
+        self._meta_relocatable = False
         self.sass_lineinfo = getattr(args, "lineinfo", False)
         self.sass_source = getattr(args, "source", False)
         try:
@@ -175,28 +268,251 @@ class ObjDump:
             raise
 
     @staticmethod
+    def _unpack_meta_value(value: bytes, fmt: str, meta_kind: str, t: int, index: int):
+        expected = struct.calcsize(fmt)
+        if len(value) != expected:
+            print(
+                f"[WARNING] {meta_kind} type={t} offset={index} "
+                f"length={len(value)}, expected {expected} bytes, raw={value.hex()}"
+            )
+            return None
+        return struct.unpack(fmt, value)
+
+    @staticmethod
     def _show_ascend_meta_tlv(content: bytes, t: int, tlv_len: int, index: int):
+        value = content[index : index + tlv_len]
+        name = F_TYPE_MAP.get(t, f"UNKNOWN({t})")
+
+        # ADump reads a uint32 prefix and accepts longer values; the producer's
+        # complete layout is unknown, so preserve any trailing bytes.
+        if t == F_TYPE_L0_EXCEPTION_DFX_IS_TIK:
+            prefix = struct.Struct("<I")
+            if len(value) < prefix.size:
+                ObjDump._unpack_meta_value(
+                    value, prefix.format, "FUNCTION_META", t, index
+                )
+                return
+            output = f"{name}: {prefix.unpack_from(value)[0]}"
+            if len(value) > prefix.size:
+                output += f", trailing_raw={value[prefix.size :].hex()}"
+            print(output)
+            return
+
+        fmt = FUNCTION_META_FORMATS.get(t)
+        if fmt is not None:
+            values = ObjDump._unpack_meta_value(value, fmt, "FUNCTION_META", t, index)
+            if values is None:
+                return
+
         if t == F_TYPE_MIX_TASK_RATION:
-            v1, v2 = struct.unpack("2H", content[index : index + 4])
-            print(f"{F_TYPE_MAP.get(t)}: [{v1}:{v2}]")
-        elif t == F_TYPE_CROSS_CORE_SYNC:
-            (v,) = struct.unpack("I", content[index : index + 4])
-            print(f"{F_TYPE_MAP.get(t)}: {C_TYPE_MAP.get(str(v))}")
-        elif t == F_TYPE_KTYPE:
-            (v,) = struct.unpack("I", content[index : index + 4])
-            print(f"{F_TYPE_MAP.get(t)}: {K_TYPE_MAP.get(str(v))}")
-        elif t == F_TYPE_DETERMINISTIC_INFO:
-            (v,) = struct.unpack("I", content[index : index + 4])
-            print(f"{F_TYPE_MAP.get(t)}: {v}")
-        elif t == F_TYPE_ENABLE_EARLY_START:
-            (v,) = struct.unpack("I", content[index : index + 4])
-            print(f"{F_TYPE_MAP.get(t)}: {v}")
+            v1, v2 = values
+            print(f"{name}: [{v1}:{v2}]")
+        elif t in (
+            F_TYPE_KTYPE,
+            F_TYPE_CROSS_CORE_SYNC,
+            F_TYPE_DETERMINISTIC_INFO,
+            F_TYPE_ENABLE_EARLY_START,
+            F_TYPE_BLOCK_NUM,
+            F_TYPE_SIMT_LAUNCH_BOUNDS,
+            F_TYPE_COMPAT_MODE,
+        ):
+            (v,) = values
+            if t == F_TYPE_KTYPE:
+                decoded = K_TYPE_MAP.get(str(v), f"UNKNOWN({v})")
+                print(f"{name}: {decoded}")
+            elif t == F_TYPE_CROSS_CORE_SYNC:
+                decoded = C_TYPE_MAP.get(str(v), f"UNKNOWN({v})")
+                print(f"{name}: {decoded}")
+            elif t == F_TYPE_BLOCK_NUM and v == 0xFFFFFFFF:
+                print(f"{name}: 0xFFFFFFFF")
+            elif t == F_TYPE_COMPAT_MODE and v == DEFAULT_COMPAT_MODE:
+                print(f"{name}: 0xFFFFFFFF")
+            else:
+                print(f"{name}: {v}")
+        elif t == F_TYPE_DEVICE_FUNC_TYPE:
+            (func_type,) = values
+            decoded = DEVICE_FUNC_TYPE_MAP.get(func_type)
+            if decoded is None:
+                print(f"{name}: UNKNOWN({func_type})")
+            else:
+                print(f"{name}: {decoded} ({func_type})")
         elif t == F_TYPE_FUNCTION_ENTRY:
-            (v,) = struct.unpack("<Q", content[index + 4 : index + 12])
-            print(f"{F_TYPE_MAP.get(t)}: {v}")
-        elif t == F_TYPE_BLOCK_NUM:
-            v = "0xFFFFFFFF"
-            print(f"{F_TYPE_MAP.get(t)}: {v}")
+            flag, _, _, entry = values
+            print(f"{name}: {entry}, flag=0x{flag:02X}")
+        elif t == F_TYPE_DFX_INFO:
+            ObjDump._show_dfx(value, index)
+        elif t in (
+            F_TYPE_COMPILER_ALLOC_UB_SIZE,
+            F_TYPE_SU_STACK_SIZE,
+            F_TYPE_SIMT_WARP_STACK_SIZE,
+            F_TYPE_SIMT_DVG_WARP_STACK_SIZE,
+            F_TYPE_AIV_TYPE_FLAG,
+            F_TYPE_SCHED_MODE,
+        ):
+            (v,) = values
+            print(f"{name}: {v}")
+        elif t == F_TYPE_PARAM_SUMMARY:
+            para_nums, param_total_size = values
+            print(f"{name}: paraNums={para_nums}, paramTotalSize={param_total_size}")
+        elif t == F_TYPE_PARAM_INFO:
+            fields = (
+                "index",
+                "ordinal",
+                "offset",
+                "size",
+                "align",
+                "paramType",
+                "spaceIndex",
+                "spaceType",
+                "space",
+                "resv",
+            )
+            print(
+                f"{name}: "
+                + ", ".join(
+                    f"{field}={field_value}"
+                    for field, field_value in zip(fields, values)
+                )
+            )
+        elif t == F_TYPE_DFX_ARG_INFO:
+            print(f"{name}: len={tlv_len} raw={value.hex()}")
+        else:
+            print(f"UNKNOWN_FUNCTION_META: type={t} len={tlv_len} raw={value.hex()}")
+
+    @staticmethod
+    def _show_dfx(value: bytes, value_offset: int):
+        # Outer TLV follows ELF encoding; devkit serializes DFX words big-endian.
+        print(f"DFX_INFO: offset=0x{value_offset - 4:X}, length={len(value)}")
+        offset = 0
+        record = 0
+        while offset < len(value):
+            absolute = value_offset + offset
+            remaining = len(value) - offset
+            if remaining < 4:
+                print(
+                    f"[WARNING] DFX offset=0x{absolute:X}: truncated header, "
+                    f"expected=4, remaining={remaining}, raw={value[offset:].hex()}"
+                )
+                return
+            kind, words = struct.unpack_from(">HH", value, offset)
+            if kind != F_TYPE_DFX_ARG_INFO:
+                print(
+                    f"  UNKNOWN_DFX_TYPE: offset=0x{absolute:X}, type={kind}, "
+                    f"length_raw={words}, raw={value[offset:].hex()}"
+                )
+                return
+            size = words * 8
+            print(
+                f"  DFX_ARG_INFO[{record}]: offset=0x{absolute:X}, type={kind}, "
+                f"length_words={words}, value_bytes={size}"
+            )
+            offset += 4
+            remaining = len(value) - offset
+            if size > remaining:
+                print(
+                    f"[WARNING] DFX offset=0x{absolute:X}: truncated value, "
+                    f"expected={size}, remaining={remaining}, raw={value[offset:].hex()}"
+                )
+                return
+            payload = value[offset : offset + size]
+            ObjDump._show_dfx_arg(payload, value_offset + offset)
+            offset += size
+            record += 1
+
+    @staticmethod
+    def _show_dfx_arg(value: bytes, value_offset: int):
+        param_names = {
+            1: "TENSOR",
+            2: "INPUT",
+            3: "OUTPUT",
+            4: "WORKSPACE",
+            5: "ASCENDCLOG",
+            6: "MC2CTX",
+            7: "TILING",
+            8: "L1",
+            9: "L2",
+            10: "OVERFLOW",
+            11: "FFTS",
+            12: "SHAPE_TENSOR",
+        }
+        point_names = {
+            1: "LEVEL_1",
+            2: "LEVEL_2",
+            3: "LEVEL_2_WITH_SHAPE",
+            4: "LEVEL_1_FOR_SHAPE_TENSOR",
+        }
+
+        def warn(message):
+            print(
+                f"[WARNING] DFX_ARG_INFO offset=0x{value_offset:X}: "
+                f"{message}, raw={value.hex()}"
+            )
+
+        if len(value) < 8 or len(value) % 8:
+            warn(
+                f"invalid value length={len(value)}, expected uint64 words with args_type"
+            )
+            return
+        words = struct.unpack(">" + "Q" * (len(value) // 8), value)
+        args_type = words[0]
+        param_type = args_type & 0xFF
+        point_type = (args_type >> 16) & 0xFF
+        print(f"    args_type: 0x{args_type:016X}")
+        print(
+            f"    param_type: {param_names.get(param_type, 'UNKNOWN')} ({param_type})"
+        )
+        print(
+            f"    point_type: {point_names.get(point_type, 'UNKNOWN')} ({point_type})"
+        )
+        if (
+            args_type & ~0xFF00FF
+            or param_type not in param_names
+            or point_type not in point_names
+            or param_type not in (2, 3, 4, 7, 12)
+        ):
+            if len(value) > 8:
+                print(
+                    f"    undecoded: offset=0x{value_offset + 8:X}, raw={value[8:].hex()}"
+                )
+            return
+
+        def number(v):
+            return "-1 (unspecified)" if v == 0xFFFFFFFFFFFFFFFF else str(v)
+
+        # A dynamic workspace and some static tiling records contain args_type only.
+        if len(words) == 1:
+            if param_type in (2, 3, 12):
+                warn("missing param_size")
+            return
+        print(f"    param_size: {number(words[1])}")
+        consumed = 2
+        if param_type in (2, 3, 12) and point_type == 3:
+            if len(words) < 3:
+                warn("missing param_dtype")
+                return
+            # Producer uses bytes or bits depending on target; do not guess the unit.
+            print(f"    param_dtype: {number(words[2])}")
+            consumed = 3
+        elif param_type in (2, 3) and point_type in (1, 4) and len(words) > 2:
+            dim = words[2]
+            print(f"    param_dim: {number(dim)}")
+            if dim == 0xFFFFFFFFFFFFFFFF:
+                consumed = 3
+            else:
+                available = len(words) - 3
+                if dim > available:
+                    warn(
+                        f"param_shape truncated, declared_dim={dim}, available={available}"
+                    )
+                    return
+                shape = ", ".join(number(v) for v in words[3 : 3 + dim])
+                print(f"    param_shape: [{shape}]")
+                consumed = 3 + dim
+        if consumed < len(words):
+            print(
+                f"    undecoded: offset=0x{value_offset + consumed * 8:X}, "
+                f"raw={value[consumed * 8 :].hex()}"
+            )
 
     @staticmethod
     def _unpack_buff_content_by_type(
@@ -220,37 +536,63 @@ class ObjDump:
     def _show_ascend_meta_op_tlv(
         self, content: bytes, t: int, tlv_len: int, index: int
     ):
-        if t == B_TYPE_VERSION:
-            (v,) = struct.unpack("I", content[index : index + 4])
-            output = f"{B_TYPE_MAP.get(t)}: {v}"
-            self._print_ascend_meta_op_tlv(output)
-        if t == B_TYPE_DEBUG:
-            debugBufSize, debugOptions = struct.unpack("II", content[index : index + 8])
-            output = f"{B_TYPE_MAP.get(t)}: debugBufSize={debugBufSize}, debugOptions={debugOptions}"
-            self._print_ascend_meta_op_tlv(output)
-        elif t == B_TYPE_DYNAMIC_PARAM:
-            (dynamicParamMode,) = struct.unpack("H", content[index + 2 : index + 4])
-            output = f"{B_TYPE_MAP.get(t)}: dynamicParamMode={dynamicParamMode}"
-            self._print_ascend_meta_op_tlv(output)
-        elif t == B_TYPE_OPTIONAL_PARAM:
-            optionalInputMode, optionalOutputMode = struct.unpack(
-                "HH", content[index : index + 4]
-            )
-            output = (
-                f"{B_TYPE_MAP.get(t)}: optionalInputMode={optionalInputMode}, "
-                f"optionalOutputMode={optionalOutputMode}"
-            )
-            self._print_ascend_meta_op_tlv(output)
-        elif t == B_TYPE_RUNTIME_IMPLICIT_INFO:
-            (v,) = struct.unpack("I", content[index : index + 4])
-            output = f"{B_TYPE_MAP.get(t)}: {RUNTIME_IMPLICIT_INFO_MAP.get(v, v)}"
-            self._print_ascend_meta_op_tlv(output)
+        value = content[index : index + tlv_len]
+        name = B_TYPE_MAP.get(t, f"UNKNOWN({t})")
+        output = None
 
-    def _print_ascend_meta_op_tlv(self, output: str):
-        if self.obj_type == ObjType.TYPE_AICORE_BINARY:
-            if output in self._aicore_binary_meta_printed:
+        fmt = BINARY_META_FORMATS.get(t)
+        if fmt is not None:
+            values = ObjDump._unpack_meta_value(value, fmt, "BINARY_META", t, index)
+            if values is None:
                 return
-            self._aicore_binary_meta_printed.add(output)
+
+        if t in (B_TYPE_VERSION, B_TYPE_SPECIALIZATION_FLAG):
+            (v,) = values
+            output = f"{name}: {v}"
+        elif t == B_TYPE_DEBUG:
+            debug_buf_size, debug_options = values
+            output = (
+                f"{name}: debugBufSize={debug_buf_size}, debugOptions={debug_options}"
+            )
+        elif t == B_TYPE_DYNAMIC_PARAM:
+            _, dynamic_param_mode = values
+            output = f"{name}: dynamicParamMode={dynamic_param_mode}"
+        elif t == B_TYPE_OPTIONAL_PARAM:
+            optional_input_mode, optional_output_mode = values
+            output = (
+                f"{name}: optionalInputMode={optional_input_mode}, "
+                f"optionalOutputMode={optional_output_mode}"
+            )
+        elif t == B_TYPE_RUNTIME_IMPLICIT_INFO:
+            (v,) = values
+            decoded = RUNTIME_IMPLICIT_INFO_MAP.get(v, f"UNKNOWN({v})")
+            output = f"{name}: {decoded}"
+        elif t == B_TYPE_SK_INFO:
+            reserved, cap, global_func, sk0, sk1, sk2, sk3 = values
+            output = (
+                f"{name}: reserved={reserved}, cap=0x{cap:X}, "
+                f"global=0x{global_func:X}, sk0=0x{sk0:X}, sk1=0x{sk1:X}, "
+                f"sk2=0x{sk2:X}, sk3=0x{sk3:X}, entries=raw"
+            )
+            if getattr(self, "_meta_relocatable", False):
+                output += " (relocatable ELF; relocations not applied)"
+        elif t == B_TYPE_SPECIALIZATION_RESOURCE_ID:
+            resource_id = values[0].decode("ascii", errors="replace")
+            output = f"{name}: {resource_id}"
+        elif t == B_TYPE_ICACHE_PRELOAD_FLAG:
+            flag, reserved = values
+            output = f"{name}: flag={flag}, reserved={reserved}"
+        else:
+            output = f"UNKNOWN_BINARY_META: type={t} len={tlv_len} raw={value.hex()}"
+
+        self._print_ascend_meta_op_tlv(output, key=(t, bytes(value)))
+
+    def _print_ascend_meta_op_tlv(self, output: str, key=None):
+        if self.obj_type == ObjType.TYPE_AICORE_BINARY:
+            dedup_key = key if key is not None else output
+            if dedup_key in self._aicore_binary_meta_printed:
+                return
+            self._aicore_binary_meta_printed.add(dedup_key)
         print(output)
 
     def _set_out_dir(self):
@@ -325,7 +667,7 @@ class ObjDump:
             self.obj_type = ObjType.TYPE_BINARY_O_JSON
         output = utils.get_section_headers_in_file(self.obj)
 
-        if KEY_ASCEND_META in output:
+        if self._parse_ascend_meta_sections(output):
             self.obj_type = ObjType.TYPE_ASCEND_META
         if KEY_ASCEND_KERNEL in output:
             self.obj_type = ObjType.TYPE_ASCEND_KERNEL
@@ -936,75 +1278,89 @@ class ObjDump:
                         utils.get_all_section_symbols_in_file(kernel_info.kernel_file)
                     )
 
-    def _get_elf_ascend_meta_tlv(self, meta_infos: dict):
-        """
-        接收.ascend.meta. 字典数据， offset偏移获取TLV起始地址, size 获取TLV数据长度
-        循环遍历获取TLV数据并打印映射信息
-        """
-        meta_item_num = 0
-        for meta_name, meta_lists in meta_infos.items():
-            if meta_name == "meta":
+    @staticmethod
+    def _parse_ascend_meta_sections(output: str) -> List[AscendMetaSection]:
+        # Parse readelf -SW entries, excluding .rel/.rela sections and name substrings.
+        section_pattern = re.compile(
+            r"^\s*\[\s*\d+\]\s+(?P<name>\S+)\s+\S+\s+"
+            r"[0-9a-fA-F]+\s+(?P<offset>[0-9a-fA-F]+)\s+"
+            r"(?P<size>[0-9a-fA-F]+)\b"
+        )
+        sections = []
+        for line in output.splitlines():
+            match = section_pattern.match(line)
+            if match is None:
                 continue
-            content = self._get_segment_content(
-                int(meta_lists[1], HEX_NUM), int(meta_lists[2], HEX_NUM)
+            name = match.group("name")
+            if name != KEY_ASCEND_META_OP and not name.startswith(KEY_ASCEND_META):
+                continue
+            sections.append(
+                AscendMetaSection(
+                    name,
+                    int(match.group("offset"), HEX_NUM),
+                    int(match.group("size"), HEX_NUM),
+                )
             )
-            index = 0
-            print(f"{KEY_ASCEND_META} [{meta_item_num}]: {meta_name}")
-            while index < len(content):
-                if index + 4 > len(content):
-                    break
+        return sections
 
-                t, tlv_len = struct.unpack("2H", content[index : index + 4])
-                index += 4
-                if (index + tlv_len) <= len(content):
-                    self._show_ascend_meta_tlv(content, t, tlv_len, index)
-                index += tlv_len
+    @staticmethod
+    def _iter_meta_tlvs(content: bytes, meta_kind: str):
+        header = struct.Struct("<HH")
+        index = 0
+        while index < len(content):
+            remaining = len(content) - index
+            if remaining < header.size:
+                print(
+                    f"[WARNING] {meta_kind} truncated header at offset={index}, "
+                    f"remaining={remaining}, raw={content[index:].hex()}"
+                )
+                return
+            t, tlv_len = header.unpack_from(content, index)
+            value_index = index + header.size
+            remaining = len(content) - value_index
+            if tlv_len > remaining:
+                print(
+                    f"[WARNING] {meta_kind} type={t} offset={index} "
+                    f"length={tlv_len}, payload truncated, remaining={remaining}, "
+                    f"raw={content[value_index:].hex()}"
+                )
+                return
+            yield t, tlv_len, value_index
+            index = value_index + tlv_len
 
-    def _get_elf_ascend_meta_op_tlv(self, meta_infos: dict):
-        meta_name = "meta"
-        if meta_name in meta_infos.keys():
-            self._aicore_binary_meta_printed.clear()
-            meta_lists = meta_infos[meta_name]
-            content = self._get_segment_content(
-                int(meta_lists[1], HEX_NUM), int(meta_lists[2], HEX_NUM)
-            )
-            idx = 0
-            index = 0
-            print(f"{KEY_ASCEND_META_OP} META INFO")
-            while index < len(content) and (
-                idx < 4 or self.obj_type == ObjType.TYPE_AICORE_BINARY
-            ):
-                if index + 4 > len(content):
-                    break
-                t, tlv_len = struct.unpack("2H", content[index : index + 4])
-                index += 4
-                if index + tlv_len > len(content):
-                    break
+    def _get_elf_ascend_meta_tlv(self, sections: List[AscendMetaSection]):
+        function_index = 0
+        for section in sections:
+            if not section.name.startswith(KEY_ASCEND_META):
+                continue
+            content = self._get_segment_content(section.offset, section.size)
+            name = section.name[len(KEY_ASCEND_META) :]
+            print(f"{KEY_ASCEND_META} [{function_index}]: {name}")
+            for t, tlv_len, index in self._iter_meta_tlvs(content, "FUNCTION_META"):
+                self._show_ascend_meta_tlv(content, t, tlv_len, index)
+            function_index += 1
+
+    def _get_elf_ascend_meta_op_tlv(self, sections: List[AscendMetaSection]):
+        binary_sections = [s for s in sections if s.name == KEY_ASCEND_META_OP]
+        if not binary_sections:
+            return
+        # Keep identical-record display deduplication limited to fused binaries.
+        self._aicore_binary_meta_printed.clear()
+        print(f"{KEY_ASCEND_META_OP} META INFO")
+        for section in binary_sections:
+            content = self._get_segment_content(section.offset, section.size)
+            for t, tlv_len, index in self._iter_meta_tlvs(content, "BINARY_META"):
                 self._show_ascend_meta_op_tlv(content, t, tlv_len, index)
-                index += tlv_len
-                idx += 1
 
     def _show_elf_ascend_meta_obj(self):
-        """
-        展示.ascend.meta段信息
-        """
-        meta_infos = {}
         output = utils.get_section_headers_in_file(self.obj)
-        for line in output.split("\n"):
-            if KEY_ASCEND_META in line or KEY_ASCEND_META_OP in line:
-                if KEY_ASCEND_META in line:
-                    line = line.split(KEY_ASCEND_META)[1]
-                else:
-                    line = line.split(".ascend.")[1]
-                line_list = utils.split_str_with_space(line)
-                meta_name_id = 0
-                meta_name = line_list[meta_name_id]
-                meta_addr = hex(int(line_list[meta_name_id + 2], HEX_NUM))
-                meta_offset = hex(int(line_list[meta_name_id + 3], HEX_NUM))
-                meta_size = hex(int(line_list[meta_name_id + 4], HEX_NUM))
-                meta_infos[meta_name] = [meta_addr, meta_offset, meta_size]
-        self._get_elf_ascend_meta_op_tlv(meta_infos)
-        self._get_elf_ascend_meta_tlv(meta_infos)
+        sections = self._parse_ascend_meta_sections(output)
+        elf_header = self._completed_process_text(utils.get_elf_header(self.obj))
+        self._meta_relocatable = bool(
+            re.search(r"^\s*Type:\s+REL\b", elf_header, re.MULTILINE)
+        )
+        self._get_elf_ascend_meta_op_tlv(sections)
+        self._get_elf_ascend_meta_tlv(sections)
 
     def _get_file_name_o_json(self, obj_name: str) -> list:
         file_name = (

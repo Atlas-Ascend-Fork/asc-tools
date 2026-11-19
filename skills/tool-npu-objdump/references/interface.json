@@ -2,7 +2,7 @@
   "schema_version": 1,
   "tool": "msobjdump",
   "provenance": {
-    "asc_tools_commit": "9c2e17b",
+    "asc_tools_commit": "7d4c62fa",
     "generated_by": "skills/tool-npu-objdump/scripts/gen_interface.py",
     "note": "接口面语义快照（参数、字段映射、跟踪文案）。变更需重新生成并随 PR 评审；不做整文件哈希，无关重构不触发。"
   },
@@ -93,16 +93,34 @@
       "1": "DEBUG",
       "2": "DYNAMIC_PARAM",
       "3": "OPTIONAL_PARAM",
-      "4": "RUNTIME_IMPLICIT_INFO"
+      "4": "RUNTIME_IMPLICIT_INFO",
+      "5": "SK_INFO",
+      "6": "SPECIALIZATION_RESOURCE_ID",
+      "7": "ICACHE_PRELOAD",
+      "8": "SPECIALIZATION_FLAG"
     },
     "kernel_meta": {
       "1": "KERNEL_TYPE",
       "2": "CROSS_CORE_SYNC",
       "3": "MIX_TASK_RATION",
+      "4": "DFX_INFO",
+      "5": "DFX_ARG_INFO",
+      "6": "L0_EXCEPTION_DFX_IS_TIK",
+      "7": "COMPILER_ALLOC_UB_SIZE",
+      "8": "SU_STACK_SIZE",
+      "9": "SIMT_WARP_STACK_SIZE",
+      "10": "SIMT_DVG_WARP_STACK_SIZE",
       "11": "ENABLE_EARLY_START",
+      "12": "AIV_TYPE_FLAG",
       "13": "DETERMINISTIC_INFO",
       "14": "FUNCTION_ENTRY",
-      "15": "BLOCK_NUM"
+      "15": "BLOCK_NUM",
+      "16": "PARAM_SUMMARY",
+      "17": "PARAM_INFO",
+      "18": "SCHED_MODE",
+      "19": "DEVICE_FUNC_TYPE",
+      "20": "SIMT_LAUNCH_BOUNDS",
+      "21": "COMPAT_MODE"
     },
     "kernel_type": {
       "1": "AICORE",
@@ -113,6 +131,14 @@
       "6": "AIC_ROLLBACK",
       "7": "AIV_ROLLBACK"
     },
+    "device_function_type": {
+      "1": "K_TYPE_AICORE",
+      "2": "K_TYPE_AICORE_AIC",
+      "3": "K_TYPE_AICORE_AIV",
+      "4": "K_TYPE_SIMD_ENTRY",
+      "5": "K_TYPE_SIMT_ENTRY",
+      "6": "K_TYPE_SIMT_CALLEE"
+    },
     "cross_core_sync": {
       "0": "NO_USE_SYNC",
       "1": "USE_SYNC"
@@ -122,7 +148,9 @@
       "2": "Hardware Sync Flag",
       "3": "L2Cache Hint Flag",
       "4": "SIMT Printf Flag",
-      "5": "SIMD Assert Flag"
+      "5": "SIMD Assert Flag",
+      "6": "AICPU Debug Flag",
+      "7": "CV11CompatCV12 Workspace"
     }
   },
   "tracked_messages": [

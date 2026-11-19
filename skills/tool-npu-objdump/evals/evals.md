@@ -160,7 +160,7 @@ msobjdump 输出 KERNEL_TYPE: MIX_AIC_MAIN、MIX_TASK_RATION: [1:2]、BLOCK_NUM:
 
 ## Expected Output
 
-纠正三个误解：BLOCK_NUM 为当前实现占位值，配比不是耗时，FUNCTION_ENTRY 按工具文档表示 TilingKey 并保留完整整数。未知字段保留原值，不猜解释或性能；MIX_AIC_MAIN 表示产物的混合核类型配置。
+纠正三个误解：BLOCK_NUM当前未启用，示例中的0xFFFFFFFF为默认占位值，不表示实际执行核数，配比不是耗时，FUNCTION_ENTRY 按工具文档表示 TilingKey 并保留完整整数。未知字段保留原值，不猜解释或性能；MIX_AIC_MAIN 表示产物的混合核类型配置。
 
 ## Expectations
 

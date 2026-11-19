@@ -206,6 +206,10 @@ def extract_maps(source_root: Path) -> Dict[str, Dict[str, str]]:
         "binary_meta": {str(k): v for k, v in main_module.B_TYPE_MAP.items()},
         "kernel_meta": {str(k): v for k, v in main_module.F_TYPE_MAP.items()},
         "kernel_type": dict(main_module.K_TYPE_MAP),
+        "device_function_type": {
+            str(k): v
+            for k, v in getattr(main_module, "DEVICE_FUNC_TYPE_MAP", {}).items()
+        },
         "cross_core_sync": dict(main_module.C_TYPE_MAP),
         "runtime_implicit_info": {
             str(k): v for k, v in main_module.RUNTIME_IMPLICIT_INFO_MAP.items()
