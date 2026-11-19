@@ -124,8 +124,6 @@ std::string Number(double value)
     return output.str();
 }
 
-std::string Number(const Metric& value) { return value.has_value() ? Number(*value) : "NA"; }
-
 std::string Integer(uint16_t value) { return std::to_string(value); }
 
 std::string Counter(double value)
@@ -1323,7 +1321,8 @@ std::optional<double> PmuMetricBuilder::OperationDuration(const aclptiProfilingD
     }
     bool hasAic = false;
     bool hasAiv = false;
-    for (const auto& [key, row] : result.pmuLogs) {
+    for (const auto& entry : result.pmuLogs) {
+        const auto& key = entry.first;
         hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
         hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
     }

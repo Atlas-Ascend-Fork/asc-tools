@@ -44,6 +44,6 @@ target_link_libraries(npu_compute_launcher_core PUBLIC
 )
 
 add_executable(npu_compute_cli main.cpp)
-target_link_libraries(npu_compute_cli PRIVATE npu_compute_launcher_core)
+target_link_libraries(npu_compute_cli PRIVATE $<BUILD_INTERFACE:intf_pub> npu_compute_launcher_core)
 set_target_properties(npu_compute_cli PROPERTIES OUTPUT_NAME npu-compute)
 npu_compute_set_product_output(npu_compute_cli)

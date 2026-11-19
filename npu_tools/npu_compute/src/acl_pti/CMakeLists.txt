@@ -38,6 +38,7 @@ target_link_libraries(acl_pti PRIVATE c_sec_static)
 target_link_libraries(acl_pti
   PUBLIC npu_compute_backend_headers
   PRIVATE
+    $<BUILD_INTERFACE:intf_pub>
     npu_bit
     npu_compute_plog
     acl_tool_injection

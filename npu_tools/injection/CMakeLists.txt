@@ -151,7 +151,7 @@ target_include_directories(injection_plog INTERFACE
 target_link_libraries(injection_plog INTERFACE unified_dlog)
 
 target_link_libraries(acl_tool_injection PUBLIC injection_headers PRIVATE
-  injection_plog Threads::Threads injection_runtime_backend injection_prof_api_backend)
+  $<BUILD_INTERFACE:intf_pub> injection_plog Threads::Threads injection_runtime_backend injection_prof_api_backend)
 target_compile_options(acl_tool_injection PRIVATE -Wall -Wextra -Werror)
 target_link_options(acl_tool_injection PRIVATE -Wl,-z,defs)
 set_target_properties(acl_tool_injection PROPERTIES
