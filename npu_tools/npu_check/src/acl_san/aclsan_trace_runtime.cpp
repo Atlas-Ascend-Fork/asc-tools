@@ -1830,19 +1830,8 @@ aclError ResolveLaunchContext(PreparedTraceLaunch& prepared) noexcept
         ASCTOOL_ERROR("acl_san trace: cannot query current context");
         return ACL_ERROR_RT_INTERNAL_ERROR;
     }
-    const auto getDeviceInfo =
-        reinterpret_cast<aclrtGetDeviceInfoFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtGetDeviceInfo));
-    int64_t cubeCount = 0;
-    int64_t vectorCount = 0;
-    if (getDeviceInfo == nullptr ||
-        getDeviceInfo(prepared.deviceId, ACL_DEV_ATTR_CUBE_CORE_NUM, &cubeCount) != ACL_SUCCESS ||
-        getDeviceInfo(prepared.deviceId, ACL_DEV_ATTR_VECTOR_CORE_NUM, &vectorCount) != ACL_SUCCESS || cubeCount < 0 ||
-        vectorCount < 0 || cubeCount > ASCSAN_PHYSICAL_CORE_SLOT_COUNT ||
-        vectorCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT - cubeCount) {
-        ASCTOOL_ERROR("acl_san trace: cannot establish expected physical core count");
-        return ACL_ERROR_RT_INTERNAL_ERROR;
-    }
-    prepared.physicalCoreSlotCount = static_cast<uint32_t>(cubeCount + vectorCount);
+    // dav-3510 keeps the physical ID space and its trace slots even when some cores are disabled.
+    prepared.physicalCoreSlotCount = aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT;
     return ACL_SUCCESS;
 }
 
