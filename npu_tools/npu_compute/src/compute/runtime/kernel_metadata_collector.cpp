@@ -180,7 +180,7 @@ Function OriginalRuntimeFunction(const std::string& name)
     if (aclrtApiInjectionGetFunc(name.c_str(), &original, nullptr) != ACL_SUCCESS) {
         return nullptr;
     }
-    return reinterpret_cast<Function>(original);
+    return reinterpret_cast<Function>(reinterpret_cast<void*>(original));
 }
 
 // rtFunctionMetaType and payloads from CANN rt_external_base.h and kernel metadata:

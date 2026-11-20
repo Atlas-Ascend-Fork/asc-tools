@@ -38,7 +38,7 @@ void TryFlushL2Cache(std::int32_t device, std::size_t round)
     static const FlushApi api = [] {
         aclrtApiFunc original = nullptr;
         const auto status = aclrtApiInjectionGetFunc("aclrtDeviceL2CacheFlush", &original, nullptr);
-        return FlushApi{status, reinterpret_cast<FlushFunction>(original)};
+        return FlushApi{status, reinterpret_cast<FlushFunction>(reinterpret_cast<void*>(original))};
     }();
     if (api.status != ACL_SUCCESS || api.function == nullptr) {
         return;

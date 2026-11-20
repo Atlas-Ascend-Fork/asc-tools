@@ -124,8 +124,6 @@ std::string Number(double value)
     return output.str();
 }
 
-std::string Number(const Metric& value) { return value.has_value() ? Number(*value) : "NA"; }
-
 std::string Integer(uint16_t value) { return std::to_string(value); }
 
 std::string Counter(double value)
@@ -138,11 +136,11 @@ std::string Counter(double value)
     return output.str();
 }
 
-CsvCell ValueCell(std::string value) { return CsvCell{std::move(value), MissingReason::None}; }
+CsvCell ValueCell(std::string value) { return CsvCell{std::move(value), MissingReason::None, std::nullopt, false}; }
 
 CsvCell MissingCell(MissingReason reason)
 {
-    return CsvCell{"NA", reason == MissingReason::None ? MissingReason::Unknown : reason};
+    return CsvCell{"NA", reason == MissingReason::None ? MissingReason::Unknown : reason, std::nullopt, false};
 }
 
 CsvCell MetricCell(const Metric& value, MissingReason missingReason)
@@ -207,7 +205,7 @@ MissingReason RatioReason(const TypeMetrics& metrics, std::initializer_list<uint
     if (eventReason != MissingReason::Unknown) {
         return eventReason;
     }
-    return metrics.Cycles() == 0.0 ? MissingReason::InvalidDenominator : MissingReason::Unknown;
+    return std::fpclassify(metrics.Cycles()) == FP_ZERO ? MissingReason::InvalidDenominator : MissingReason::Unknown;
 }
 
 MissingReason EventBandwidthReason(
@@ -222,8 +220,10 @@ MissingReason EventBandwidthReason(
         return MissingReason::Unknown;
     }
     const MissingReason timeReason = TimeReason(metrics, frequencyMhz);
-    return timeReason == MissingReason::Unknown && metrics.Cycles() == 0.0 ? MissingReason::InvalidFrequencyOrDuration :
-                                                                             timeReason;
+    if (timeReason == MissingReason::Unknown && std::fpclassify(metrics.Cycles()) == FP_ZERO) {
+        return MissingReason::InvalidFrequencyOrDuration;
+    }
+    return timeReason;
 }
 
 MissingReason UsageRateReason(MissingReason bandwidthReason, double maxBandwidth)
@@ -587,7 +587,7 @@ CsvRow L2Row(const RowMetrics& row, const ReportConfig& config)
         SetMetric(
             fields, std::string(prefix) + "read_hit_rate(%)",
             !readHit.has_value() || !readTotal.has_value() ? std::nullopt :
-            *readTotal == 0.0                              ? Metric(0.0) :
+            std::fpclassify(*readTotal) == FP_ZERO         ? Metric(0.0) :
                                                              Metric(PERCENT_SCALE * *readHit / *readTotal),
             EventReason(*metrics, {0x424U, 0x425U, 0x426U, 0x427U, 0x428U, 0x429U}));
         const std::vector<std::string> writeNames = {"write_close_hit", "write_close_miss", "write_close_victim",
@@ -602,7 +602,8 @@ CsvRow L2Row(const RowMetrics& row, const ReportConfig& config)
         if (writeHit.has_value() && writeTotal.has_value()) {
             const double writeHitCount = writeHit.value();
             const double writeTotalCount = writeTotal.value();
-            writeHitRate = writeTotalCount == 0.0 ? 0.0 : PERCENT_SCALE * writeHitCount / writeTotalCount;
+            writeHitRate =
+                std::fpclassify(writeTotalCount) == FP_ZERO ? 0.0 : PERCENT_SCALE * writeHitCount / writeTotalCount;
         }
         SetMetric(
             fields, std::string(prefix) + "write_hit_rate(%)", writeHitRate,
@@ -1323,7 +1324,8 @@ std::optional<double> PmuMetricBuilder::OperationDuration(const aclptiProfilingD
     }
     bool hasAic = false;
     bool hasAiv = false;
-    for (const auto& [key, row] : result.pmuLogs) {
+    for (const auto& entry : result.pmuLogs) {
+        const auto& key = entry.first;
         hasAic = hasAic || key.coreType == ACLPTI_CORE_TYPE_AIC;
         hasAiv = hasAiv || key.coreType == ACLPTI_CORE_TYPE_AIV;
     }

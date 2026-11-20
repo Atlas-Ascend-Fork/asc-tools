@@ -529,7 +529,7 @@ void ToolManager::OnCallback(AclsanCallbackDomain domain, AclsanCallbackId cbid,
         aclrtApiFunc original = nullptr;
         aclError status = aclrtApiInjectionGetFunc("aclrtSetOpExecuteTimeOut", &original, nullptr);
         if (status == ACL_SUCCESS) {
-            const auto setTimeout = reinterpret_cast<SetOpExecuteTimeout>(original);
+            const auto setTimeout = reinterpret_cast<SetOpExecuteTimeout>(reinterpret_cast<void*>(original));
             status = setTimeout != nullptr ? setTimeout(*configure_.opExecuteTimeoutSec) : ACL_ERROR_UNINITIALIZE;
         }
         if (status != ACL_SUCCESS) {

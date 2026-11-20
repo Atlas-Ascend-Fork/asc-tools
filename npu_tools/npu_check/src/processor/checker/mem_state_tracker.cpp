@@ -133,6 +133,20 @@ bool ValidateRangeEvent(const AclsanDeviceMemoryAccessData& data)
     return true;
 }
 
+void SortActiveAxes(RangeLayout& layout)
+{
+    auto& axes = layout.axes;
+    for (uint32_t i = 1; i < layout.rank; ++i) {
+        const Axis axis = axes[i];
+        uint32_t position = i;
+        while (position > 0 && Magnitude(axis.stride) < Magnitude(axes[position - 1].stride)) {
+            axes[position] = axes[position - 1];
+            --position;
+        }
+        axes[position] = axis;
+    }
+}
+
 RangeLayout DecodeRangeLayout(const AclsanDeviceMemoryAccessData& data)
 {
     RangeLayout layout{};
@@ -173,9 +187,7 @@ RangeLayout DecodeRangeLayout(const AclsanDeviceMemoryAccessData& data)
             Invalid("zero layout dimension");
         }
     }
-    std::sort(axes.begin(), axes.begin() + rank, [](const Axis& lhs, const Axis& rhs) {
-        return Magnitude(lhs.stride) < Magnitude(rhs.stride);
-    });
+    SortActiveAxes(layout);
     return layout;
 }
 

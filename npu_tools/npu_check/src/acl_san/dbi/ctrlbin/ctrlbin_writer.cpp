@@ -59,7 +59,7 @@ struct CtrlbinBinding {
 
     void Serialize(std::stringstream& ss) const
     {
-        FuncInfo info{instrId, injectFuncId, static_cast<uint16_t>(paraMask.size())};
+        FuncInfo info{instrId, injectFuncId, static_cast<uint16_t>(paraMask.size()), {}};
         ss << ::Serialize(info);
         for (size_t index = 0; index < info.paraNum; ++index) {
             ss << ::Serialize(paraMask[index]);
@@ -113,7 +113,7 @@ public:
 
         CtrlInfo ctrlInfo{};
         ctrlInfo.splitOffset1 = static_cast<uint16_t>(bindingBytes);
-        const FuncNameList funcNameList{static_cast<uint32_t>(funcLists.size() + sizeof(FuncNameList))};
+        const FuncNameList funcNameList{static_cast<uint32_t>(funcLists.size() + sizeof(FuncNameList)), {}};
         buffer << ::Serialize(funcNameList);
         buffer << funcLists;
         // Preserve the established ctrl.bin layout without reading beyond funcLists.data().

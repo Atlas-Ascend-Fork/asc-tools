@@ -33,8 +33,9 @@ add_library(npu_compute_launcher_core STATIC
   report/rep_report_writer.cpp
   report/report_name.cpp
 )
+set_target_properties(npu_compute_launcher_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(npu_compute_launcher_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(npu_compute_launcher_core PRIVATE c_sec_static)
+target_link_libraries(npu_compute_launcher_core PRIVATE $<BUILD_INTERFACE:intf_pub> c_sec_static)
 target_link_libraries(npu_compute_launcher_core PUBLIC
   npu_compute_headers
   npu_compute_ipc
@@ -44,6 +45,6 @@ target_link_libraries(npu_compute_launcher_core PUBLIC
 )
 
 add_executable(npu_compute_cli main.cpp)
-target_link_libraries(npu_compute_cli PRIVATE npu_compute_launcher_core)
+target_link_libraries(npu_compute_cli PRIVATE $<BUILD_INTERFACE:intf_pub> npu_compute_launcher_core)
 set_target_properties(npu_compute_cli PROPERTIES OUTPUT_NAME npu-compute)
 npu_compute_set_product_output(npu_compute_cli)

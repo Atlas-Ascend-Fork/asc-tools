@@ -91,6 +91,7 @@ template <typename Key>
 bool ResolveOriginalEntry(
     const PmSamplingInstructionMap& instructions, Key key, aclrtFuncHandle function, std::uint64_t& entry)
 {
+    (void)function;
     const auto& entries = instructions.functionEntries;
     bool resolved = false;
     std::string alias;
@@ -127,6 +128,7 @@ template <typename Function, typename Key>
 aclError ResolveCompanionHandle(
     Function resolve, aclrtBinHandle binary, Key key, aclrtFuncHandle& companion, std::string& mixedAlias)
 {
+    (void)mixedAlias;
     auto status = resolve(binary, key, &companion);
     if constexpr (std::is_convertible<Key, const char*>::value) {
         if ((status != ACL_SUCCESS || companion == nullptr) && key != nullptr) {
@@ -194,6 +196,12 @@ aclptiResult BinaryRegistry::ResolveCompanionKey(
     Binary& state, Key key, aclrtFuncHandle function, Key& companionKey, std::uint64_t& companionElfEntry,
     bool& unavailable)
 {
+    (void)state;
+    (void)key;
+    (void)function;
+    (void)companionKey;
+    (void)companionElfEntry;
+    (void)unavailable;
     if constexpr (!std::is_convertible<Key, const char*>::value) {
         if (state.pmSamplingImage) {
             const auto& map = state.pmSamplingImage->instructions.relocatedEntries;
@@ -233,6 +241,10 @@ aclptiResult BinaryRegistry::RecordCompanionFunction(
     aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function, aclrtFuncHandle companion,
     std::uint64_t companionElfEntry, std::string mixedAlias)
 {
+    (void)binary;
+    (void)key;
+    (void)companionElfEntry;
+    (void)mixedAlias;
     try {
         if (state.pmSamplingImage) {
             const auto& entries = state.pmSamplingImage->instructions.functionEntries;
@@ -558,7 +570,8 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(
 bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& [handle, binary] : binaries_) {
+    for (const auto& registered : binaries_) {
+        const auto& binary = registered.second;
         const auto name = binary.names.find(original);
         const auto entry = binary.originalEntries.find(original);
         if (!binary.source.image || (name == binary.names.end() && entry == binary.originalEntries.end())) {
