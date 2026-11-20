@@ -102,7 +102,7 @@ void EvaluatePh04(const HintContext& context, HintAnalysis& analysis)
         FinishEvaluation(context, analysis, std::move(evaluation), {});
         return;
     }
-    if (*count == 0) {
+    if (std::abs(*count) <= std::numeric_limits<double>::epsilon()) {
         evaluation.skipReason = "zero_denominator: Memory.aiv_mte2_instructions";
         FinishEvaluation(context, analysis, std::move(evaluation), {});
         return;
@@ -142,6 +142,7 @@ void EvaluatePh05(const HintContext& context, HintAnalysis& analysis)
 }
 
 using Identity = std::tuple<uint16_t, uint16_t, aclptiCoreType>;
+constexpr std::size_t kCoreTypeIndex = 2;
 using Group = std::pair<aclptiCoreType, uint16_t>;
 
 struct IdentityHash {
@@ -152,7 +153,7 @@ struct IdentityHash {
         // Pack block ID, sub-block ID and the AIC/AIV discriminator into separate bit ranges.
         return (static_cast<size_t>(std::get<0>(identity)) << (kSubBlockIdBits + kCoreTypeBits)) |
                (static_cast<size_t>(std::get<1>(identity)) << kCoreTypeBits) |
-               static_cast<size_t>(std::get<2>(identity));
+               static_cast<size_t>(std::get<kCoreTypeIndex>(identity));
     }
 };
 
@@ -163,7 +164,7 @@ std::optional<double> ImbalanceCycles(
     bool invalid = false;
     const auto add = [&cycles, &invalid](const auto& data) {
         if (data.overflow || !std::isfinite(data.totalCycles) || data.totalCycles <= 0 ||
-            (cycles && *cycles != data.totalCycles)) {
+            (cycles.has_value() && std::abs(*cycles - data.totalCycles) > std::numeric_limits<double>::epsilon())) {
             invalid = true;
         } else {
             cycles = data.totalCycles;
@@ -217,7 +218,7 @@ std::map<aclptiCoreType, double> Ph06Imbalance(const aclptiProfilingDataResult& 
     };
     std::map<Group, Range> groups;
     for (const auto& [identity, cycles] : instances) {
-        auto& range = groups[{std::get<2>(identity), std::get<1>(identity)}];
+        auto& range = groups[{std::get<kCoreTypeIndex>(identity), std::get<1>(identity)}];
         if (cycles) {
             range.min = std::min(range.min, *cycles);
             range.max = std::max(range.max, *cycles);
@@ -243,8 +244,8 @@ void EvaluatePh06(const HintContext& context, HintAnalysis& analysis)
 {
     constexpr double kThreshold = .10;
     const auto config = SummaryReportConfig(context.metadata, context.config);
-    const auto imbalance = context.sections.count("PipeUtilization") ? Ph06Imbalance(context.result, config) :
-                                                                       std::map<aclptiCoreType, double>{};
+    const auto imbalance = context.sections.count("PipeUtilization") != 0 ? Ph06Imbalance(context.result, config) :
+                                                                            std::map<aclptiCoreType, double>{};
     for (const auto core : {ACLPTI_CORE_TYPE_AIC, ACLPTI_CORE_TYPE_AIV}) {
         auto evaluation = BeginEvaluation(context, "PH06", core, {"PipeUtilization"});
         if (!evaluation.skipReason.empty()) {

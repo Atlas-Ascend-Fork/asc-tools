@@ -15,7 +15,7 @@ namespace aclpti::callback {
 
 aclptiSubscribeHandle Dispatcher::SubscriberHandle() { return &subscriber_; }
 
-bool Dispatcher::IsValidSubscriber(aclptiSubscribeHandle subscriber) const { return subscriber == &subscriber_; }
+bool Dispatcher::IsValidSubscriber(const aclptiSubscriber_st* subscriber) const { return subscriber == &subscriber_; }
 
 std::uint64_t Dispatcher::MakeCallbackKey(aclptiCallbackDomain domain, aclptiCallbackId cbid)
 {

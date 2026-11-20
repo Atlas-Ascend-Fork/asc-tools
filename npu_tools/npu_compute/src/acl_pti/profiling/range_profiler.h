@@ -94,7 +94,7 @@ private:
         const data::ReplayResult& replayResult, aclptiResult releaseStatus) const;
 
     struct ReplayInvocation;
-    bool PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config);
+    bool PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config) const;
     aclptiResult SkipUnmappedSamplingRound(std::size_t round, const ProfilingRoundConfig& config);
     aclptiResult RecordWarmupFailure(std::size_t round, const ProfilingRoundConfig& config, aclptiResult status);
     aclptiResult ReplayProfilingRound(

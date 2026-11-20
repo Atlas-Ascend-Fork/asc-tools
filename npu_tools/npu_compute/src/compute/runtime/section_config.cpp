@@ -36,19 +36,19 @@ bool IsSupportedSection(const std::string& section)
 
 } // namespace
 
-bool SectionConfig::Load(const std::vector<std::string>& parsed_sections, std::string* error)
+bool SectionConfig::Load(const std::vector<std::string>& sections, std::string* error)
 {
     Reset();
-    for (const auto& section : parsed_sections) {
+    for (const auto& section : sections) {
         if (!IsSupportedSection(section)) {
             return Fail("unknown section: " + section, error);
         }
     }
-    const std::size_t section_count = parsed_sections.size();
+    const std::size_t section_count = sections.size();
     if (section_count == 0 || section_count > kSupportedSections.size()) {
         return Fail("section count is out of range", error);
     }
-    sections_ = std::move(parsed_sections);
+    sections_ = std::move(sections);
     const bool pipelineSection = std::find(sections_.begin(), sections_.end(), "Pipeline") != sections_.end();
     const bool pmSamplingSection = std::find(sections_.begin(), sections_.end(), "PmSampling") != sections_.end();
     sections_.erase(

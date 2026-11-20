@@ -107,7 +107,7 @@ Metric Sum(Metric left, Metric right)
 Metric Frequency(bool hasAic, bool hasAiv, Metric aic, Metric aiv)
 {
     if (hasAic && hasAiv) {
-        return aic && aiv && *aic == *aiv ? aic : std::nullopt;
+        return aic && aiv && std::abs(*aic - *aiv) <= std::numeric_limits<double>::epsilon() ? aic : std::nullopt;
     }
     return hasAic ? aic : hasAiv ? aiv : std::nullopt;
 }

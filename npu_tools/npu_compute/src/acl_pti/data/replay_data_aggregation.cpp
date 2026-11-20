@@ -106,7 +106,7 @@ void AddBlockPmuData(std::map<aclptiBlockKey, aclptiPmuDataRow>& rows, const Pmu
     row.values = record.pmuValues;
     row.overflow = row.overflow || record.overflow;
     row.systemCounters.push_back({record.taskStartSystemCounter, record.taskEndSystemCounter});
-    auto core = std::find_if(row.coreInfos.begin(), row.coreInfos.end(), [&](const auto& value) {
+    auto core = std::find_if(row.coreInfos.begin(), row.coreInfos.end(), [&record](const auto& value) {
         return value.coreType == record.coreType && value.coreId == record.coreId;
     });
     if (core == row.coreInfos.end()) {

@@ -83,7 +83,7 @@ public:
         Check(database_, sqlite::GetApi().reset(statement_));
         Check(database_, sqlite::GetApi().clearBindings(statement_));
     }
-    void Complete()
+    void Complete() const
     {
         const auto status = sqlite::GetApi().step(statement_);
         if (status != SQLITE_DONE) {
@@ -165,7 +165,7 @@ std::string CreateSql(const CsvSchema& schema)
 {
     std::string sql = "CREATE TABLE " + QuoteIdentifier(schema.tableName) + "(";
     for (std::size_t index = 0; index < schema.columns.size(); ++index) {
-        if (index) {
+        if (index != 0) {
             sql += ',';
         }
         sql += QuoteIdentifier(schema.columns[index].name) + ' ' + SqlType(schema.columns[index].type);

@@ -41,7 +41,7 @@ bool ValidateCapacity(double value, std::string_view field, std::string* error)
 
 std::string FormatCapacity(double value)
 {
-    if (value == 0.0) {
+    if (std::abs(value) <= std::numeric_limits<double>::epsilon()) {
         return "0";
     }
 
@@ -119,7 +119,8 @@ bool ParsePositiveUintField(std::string_view line, std::string_view field, std::
     const std::uint32_t maximum = std::numeric_limits<std::uint32_t>::max();
     while (end < line.size() && line[end] >= '0' && line[end] <= '9') {
         const char digitCharacter = line[end];
-        const std::uint32_t digit = static_cast<std::uint32_t>(digitCharacter - '0');
+        const std::uint32_t digit =
+            static_cast<std::uint32_t>(static_cast<unsigned char>(digitCharacter) - static_cast<unsigned char>('0'));
         if (parsed > (maximum - digit) / DECIMAL_RADIX) {
             return false;
         }

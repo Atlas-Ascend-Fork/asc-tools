@@ -31,10 +31,10 @@ public:
     aclptiResult Submit(std::shared_ptr<const aclptiProfilingDataResult> result);
     aclptiResult ShutdownAndDrain();
 
+    explicit PmuDataConsumer(Processor processor);
+
 private:
     class Impl;
-
-    explicit PmuDataConsumer(Processor processor);
     std::unique_ptr<Impl> impl_;
 };
 

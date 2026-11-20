@@ -17,7 +17,6 @@
 #include <boost/filesystem.hpp>
 
 #include <condition_variable>
-#include <cstdio>
 #include <exception>
 #include <memory>
 #include <mutex>

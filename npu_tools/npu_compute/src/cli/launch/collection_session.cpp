@@ -12,7 +12,6 @@
 #include "launch/launcher.h"
 #include <algorithm>
 #include <atomic>
-#include <cerrno>
 #include <cmath>
 #include <stdexcept>
 #include <thread>
@@ -107,7 +106,7 @@ void MonitorChild(ProcessHandle& child, ReceiverState& state, ChildResult* resul
 {
     auto killDeadline = ipc::Deadline::max();
     while (!child.Poll(&result->appResult, &result->appError)) {
-        if (child.PendingSignal() != 0 && !result->signal) {
+        if (child.PendingSignal() != 0 && result->signal == 0) {
             result->signal = child.PendingSignal();
             state.cancelled = true;
             // Let the communication owner attempt INTERRUPT before forwarding the signal.
@@ -128,7 +127,7 @@ void MonitorChild(ProcessHandle& child, ReceiverState& state, ChildResult* resul
     }
     state.childExited = true;
     while (!state.done) {
-        if (child.PendingSignal() != 0 && !result->signal) {
+        if (child.PendingSignal() != 0 && result->signal == 0) {
             result->signal = child.PendingSignal();
             state.cancelled = true;
         }
@@ -139,7 +138,7 @@ void MonitorChild(ProcessHandle& child, ReceiverState& state, ChildResult* resul
 int FinishSession(
     ProcessHandle& child, ReceiverState& state, ChildResult& result, CollectionOutcome& outcome, std::string* error)
 {
-    if (!result.signal) {
+    if (result.signal == 0) {
         result.signal = child.PendingSignal();
     }
     outcome.artifacts = state.client.ArtifactCount();
@@ -147,7 +146,7 @@ int FinishSession(
     outcome.childExit = child.ExitDescription();
     outcome.outcome = (state.failureDomain == "BOOTSTRAP" || state.failureDomain == "INTERNAL") ? "infra_failed" :
                                                                                                   "collection_failed";
-    if (result.signal) {
+    if (result.signal != 0) {
         outcome.outcome = "app_failed";
         outcome.childExit = "signal:" + std::to_string(result.signal);
         *error = "collection interrupted by signal " + std::to_string(result.signal);

@@ -177,7 +177,7 @@ std::shared_ptr<PmuDataConsumer> PmuDataConsumer::Create(Processor processor)
     if (!processor) {
         return nullptr;
     }
-    return std::shared_ptr<PmuDataConsumer>(new PmuDataConsumer(std::move(processor)));
+    return std::make_shared<PmuDataConsumer>(std::move(processor));
 }
 
 PmuDataConsumer::PmuDataConsumer(Processor processor) : impl_(std::make_unique<Impl>(std::move(processor))) {}

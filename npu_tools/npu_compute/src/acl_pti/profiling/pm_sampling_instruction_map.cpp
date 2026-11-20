@@ -148,7 +148,7 @@ struct Elf {
         SymbolGroups& symbols)
     {
         const auto& code = sections[index];
-        if ((code.flags & SHF_ALLOC) && !(code.flags & SHF_EXECINSTR)) {
+        if ((code.flags & SHF_ALLOC) != 0 && (code.flags & SHF_EXECINSTR) == 0) {
             Require(address >= code.address && address - code.address < code.size, "data symbol exceeds its section");
             // AICore may declare an alignment-sized object backed by a single pointer.
             const auto backedSize = std::min(size, code.size - (address - code.address));
@@ -175,7 +175,7 @@ struct Elf {
             ReadObjectSymbol(h, name, address, size, index, objectSymbols);
             return;
         }
-        if (!(code.flags & SHF_EXECINSTR)) {
+        if ((code.flags & SHF_EXECINSTR) == 0) {
             return;
         }
         Require(
@@ -419,7 +419,7 @@ const std::map<std::string, Elf::Function>::value_type& FunctionAtEntry(const El
 void ValidateDisassembly(const std::vector<Instruction>& instructions, const Elf& elf)
 {
     for (const auto& code : elf.sections) {
-        if (!(code.flags & SHF_EXECINSTR) || code.size == 0) {
+        if ((code.flags & SHF_EXECINSTR) == 0 || code.size == 0) {
             continue;
         }
         auto cursor = code.address;
@@ -436,7 +436,7 @@ void ValidateDisassembly(const std::vector<Instruction>& instructions, const Elf
             elf.sections.begin(), elf.sections.end(),
             [&instruction](const Elf::Section& value) { return value.name == instruction.section; });
         Require(
-            section != elf.sections.end() && (section->flags & SHF_EXECINSTR) &&
+            section != elf.sections.end() && (section->flags & SHF_EXECINSTR) != 0 &&
                 instruction.address >= section->address,
             "objdump address is not executable");
         const auto offset = instruction.address - section->address;
@@ -455,18 +455,18 @@ void ValidateDisassembly(const std::vector<Instruction>& instructions, const Elf
 } // namespace
 
 bool BuildPmSamplingFunctionMap(
-    const std::vector<char>& originalImage, const std::vector<char>& companionImage, PmSamplingInstructionMap& output,
+    const std::vector<char>& original, const std::vector<char>& companion, PmSamplingInstructionMap& output,
     std::string& diagnostic)
 {
     output = {};
     try {
-        const Elf original(originalImage), companion(companionImage);
+        const Elf originalElf(original), companionElf(companion);
         PmSamplingInstructionMap result;
-        for (const auto& named : original.functions) {
-            const auto found = companion.functions.find(named.first);
+        for (const auto& named : originalElf.functions) {
+            const auto found = companionElf.functions.find(named.first);
             Require(
-                found != companion.functions.end() &&
-                    companion.sections[found->second.section].name != ".bolt.org.text",
+                found != companionElf.functions.end() &&
+                    companionElf.sections[found->second.section].name != ".bolt.org.text",
                 "companion business function is missing");
             result.functionEntries.emplace(named.first, found->second.address);
             Require(
@@ -484,20 +484,20 @@ bool BuildPmSamplingFunctionMap(
 }
 
 bool BuildPmSamplingOriginalInstructionMap(
-    const std::vector<char>& image, const std::string& disassembly, PmSamplingInstructionMap& output,
+    const std::vector<char>& original, const std::string& disassembly, PmSamplingInstructionMap& output,
     std::string& diagnostic)
 {
     output = {};
     try {
-        const Elf original(image);
+        const Elf originalElf(original);
         const auto instructions = ReadInstructions(disassembly);
-        ValidateDisassembly(instructions, original);
+        ValidateDisassembly(instructions, originalElf);
         PmSamplingInstructionMap result;
         NormalizedInstructions entries;
-        for (const auto& named : original.functions) {
+        for (const auto& named : originalElf.functions) {
             result.functionEntries.emplace(named.first, named.second.address);
             result.relocatedEntries.emplace(named.second.address, named.second.address);
-            const auto function = FunctionInstructions(instructions, original, named.second);
+            const auto function = FunctionInstructions(instructions, originalElf, named.second);
             for (std::size_t index = 0; index < function.size(); ++index) {
                 Require(
                     result.business.emplace(function[index].address, function[index].address).second,
@@ -509,8 +509,8 @@ bool BuildPmSamplingOriginalInstructionMap(
             if (entry.second.kind != "SIMT entry") {
                 continue;
             }
-            const auto& function = FunctionAtEntry(original, entry.second.target).second;
-            for (const auto& instruction : FunctionInstructions(instructions, original, function)) {
+            const auto& function = FunctionAtEntry(originalElf, entry.second.target).second;
+            for (const auto& instruction : FunctionInstructions(instructions, originalElf, function)) {
                 result.simt.insert(instruction.address);
             }
         }

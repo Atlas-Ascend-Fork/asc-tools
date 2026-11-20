@@ -639,7 +639,7 @@ bool Run(std::vector<std::string> arguments, const fs::path& stdoutFile = {}, bo
         const std::string output{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
         std::fwrite(output.data(), 1, output.size(), stderr);
     }
-    if (error != 0 || waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    if (error != 0 || waited != child || WIFEXITED(status) == 0 || WEXITSTATUS(status) != 0) {
         ASCTOOL_ERROR(
             "[aclpti] kernel-end tool failed: %s spawn=%d status=%d"
             " code=%u",

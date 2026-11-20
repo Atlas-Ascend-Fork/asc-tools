@@ -480,7 +480,7 @@ Frame Channel::Receive(Deadline deadline, const std::function<bool()>& cancelled
             SystemError("UDS receive");
         }
         Check(received > 0, "UDS peer disconnected");
-        Check(!(message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)), "truncated UDS packet");
+        Check((message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) == 0, "truncated UDS packet");
         packet.resize(static_cast<size_t>(received));
         break;
     }

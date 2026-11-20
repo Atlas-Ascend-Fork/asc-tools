@@ -11,7 +11,6 @@
 #include "npu_compute_log.h"
 #include "runtime/npu_compute_runtime.h"
 #include <algorithm>
-#include <cstdio>
 #include <stdexcept>
 namespace npucompute {
 namespace {

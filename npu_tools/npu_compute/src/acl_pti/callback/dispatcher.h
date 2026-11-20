@@ -37,7 +37,7 @@ public:
     aclptiSubscribeHandle SubscriberHandle();
 
     /// Reports whether a handle identifies the process-wide subscriber.
-    bool IsValidSubscriber(aclptiSubscribeHandle subscriber) const;
+    bool IsValidSubscriber(const aclptiSubscriber_st* subscriber) const;
 
     /// Replaces the subscriber callback and user data and clears enabled callbacks.
     void Configure(aclptiCallbackFunc callback, void* userData);

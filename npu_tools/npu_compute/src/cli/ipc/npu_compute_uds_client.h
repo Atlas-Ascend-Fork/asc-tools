@@ -26,17 +26,17 @@ public:
 private:
     ipc::Channel Connect(
         const ipc::Bootstrap& bootstrap, pid_t childPid, const std::atomic<bool>& childExited,
-        const std::atomic<bool>& cancelled);
+        const std::atomic<bool>& cancelled) const;
     void Handshake(
         ipc::Channel& channel, const ipc::Bootstrap& bootstrap, const ipc::Config& config, pid_t targetPid,
-        const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled);
+        const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled) const;
     void ReceiveFrames(
         ipc::Channel& channel, const ipc::Config& config, const std::string& directory,
         const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled);
     bool FinishResult(
         ipc::Channel& channel, ArtifactReceiver& receiver, const ipc::Frame& frame, const ipc::Config& config,
         const std::atomic<bool>& cancelled);
-    void WaitForResultClose(ipc::Channel& channel, const std::atomic<bool>& cancelled);
+    void WaitForResultClose(ipc::Channel& channel, const std::atomic<bool>& cancelled) const;
 
     size_t artifact_count_ = 0;
     bool complete_ = false;

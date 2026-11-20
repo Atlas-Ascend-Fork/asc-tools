@@ -44,7 +44,8 @@ std::string Number(double value, double threshold)
     };
     for (int precision = 6; precision < std::numeric_limits<double>::max_digits10; ++precision) {
         const auto text = format(value, precision);
-        if (value == threshold || text != format(threshold, precision)) {
+        if (std::abs(value - threshold) <= std::numeric_limits<double>::epsilon() ||
+            text != format(threshold, precision)) {
             return text;
         }
     }
@@ -63,7 +64,7 @@ HintEvaluation BeginEvaluation(
         return evaluation;
     }
     for (const auto& section : evaluation.sections) {
-        if (!context.sections.count(section)) {
+        if (context.sections.count(section) == 0) {
             evaluation.skipReason = "section_not_selected: " + section;
             return evaluation;
         }
@@ -106,7 +107,7 @@ bool MaximumPipeline(
         }
     }
     const auto value = ReadField(context, evaluation, section, target);
-    return complete && value && *value == highest;
+    return complete && value && std::abs(*value - highest) <= std::numeric_limits<double>::epsilon();
 }
 
 void FinishEvaluation(

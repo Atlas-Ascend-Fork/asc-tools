@@ -67,7 +67,7 @@ void UdsClient::Run(
 
 ipc::Channel UdsClient::Connect(
     const ipc::Bootstrap& bootstrap, pid_t childPid, const std::atomic<bool>& childExited,
-    const std::atomic<bool>& cancelled)
+    const std::atomic<bool>& cancelled) const
 {
     const auto stopHandshake = [&childExited, &cancelled] { return childExited.load() || cancelled.load(); };
     // Scripts may compile or prepare inputs before a descendant loads the collector.
@@ -77,7 +77,7 @@ ipc::Channel UdsClient::Connect(
 
 void UdsClient::Handshake(
     ipc::Channel& channel, const ipc::Bootstrap& bootstrap, const ipc::Config& config, pid_t targetPid,
-    const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled)
+    const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled) const
 {
     const auto stopHandshake = [&childExited, &cancelled] { return childExited.load() || cancelled.load(); };
     const auto deadline = ipc::After(std::chrono::milliseconds(bootstrap.timeoutMs));
@@ -155,7 +155,7 @@ bool UdsClient::FinishResult(
     return complete;
 }
 
-void UdsClient::WaitForResultClose(ipc::Channel& channel, const std::atomic<bool>& cancelled)
+void UdsClient::WaitForResultClose(ipc::Channel& channel, const std::atomic<bool>& cancelled) const
 {
     const auto closeDeadline = ipc::After(ipc::kIoTimeout);
     for (;;) {

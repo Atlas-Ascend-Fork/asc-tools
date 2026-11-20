@@ -395,6 +395,8 @@ std::string SafeText(const std::string& text)
     constexpr unsigned char kUtf8C1Prefix = 0xc2;
     constexpr unsigned char kC1ControlCharacterStart = 0x80;
     constexpr unsigned char kC1ControlCharacterEnd = 0x9f;
+    constexpr int kUnicodeEscapeWidth = 4;
+    constexpr int kC1EscapeWidth = 2;
 
     std::ostringstream output;
     output.imbue(std::locale::classic());
@@ -402,9 +404,11 @@ std::string SafeText(const std::string& text)
         const auto character = static_cast<unsigned char>(text[i]);
         const auto next = i + 1 < text.size() ? static_cast<unsigned char>(text[i + 1]) : 0;
         if (character < kAsciiControlCharacterEnd || character == kAsciiDeleteCharacter) {
-            output << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<unsigned>(character);
+            output << "\\u" << std::hex << std::setw(kUnicodeEscapeWidth) << std::setfill('0')
+                   << static_cast<unsigned>(character);
         } else if (character == kUtf8C1Prefix && next >= kC1ControlCharacterStart && next <= kC1ControlCharacterEnd) {
-            output << "\\u00" << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(next);
+            output << "\\u00" << std::hex << std::setw(kC1EscapeWidth) << std::setfill('0')
+                   << static_cast<unsigned>(next);
             ++i;
         } else {
             output << text[i];

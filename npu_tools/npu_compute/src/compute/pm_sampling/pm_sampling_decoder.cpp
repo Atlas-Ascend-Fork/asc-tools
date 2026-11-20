@@ -46,9 +46,9 @@ PmSamplingDecoder::PmSamplingDecoder(std::uint64_t replayId, std::shared_ptr<con
     }
     if (!context_ || !context_->companionElf || context_->companionElf->empty() || !context_->businessInstructions ||
         context_->businessInstructions->empty() || !context_->simtInstructions ||
-        context_->elfEntry > kPmSamplingPcMask || (!context_->aicRuntimeEntry && !context_->aivRuntimeEntry) ||
-        (context_->aicRuntimeEntry && context_->aicRuntimeEntry < context_->elfEntry) ||
-        (context_->aivRuntimeEntry && context_->aivRuntimeEntry < context_->elfEntry)) {
+        context_->elfEntry > kPmSamplingPcMask || (context_->aicRuntimeEntry == 0 && context_->aivRuntimeEntry == 0) ||
+        (context_->aicRuntimeEntry != 0 && context_->aicRuntimeEntry < context_->elfEntry) ||
+        (context_->aivRuntimeEntry != 0 && context_->aivRuntimeEntry < context_->elfEntry)) {
         Fail("invalid PmSampling context");
         return;
     }
@@ -59,7 +59,7 @@ PmSamplingDecoder::PmSamplingDecoder(std::uint64_t replayId, std::shared_ptr<con
         }
     }
     for (const auto pc : *context_->simtInstructions) {
-        if (pc > kPmSamplingPcMask || !context_->businessInstructions->count(pc)) {
+        if (pc > kPmSamplingPcMask || context_->businessInstructions->count(pc) == 0) {
             Fail("invalid SIMT PmSampling instruction address");
             return;
         }
@@ -90,7 +90,7 @@ bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordB
             continue;
         }
         const auto pc = (rawPc - entry - context_->pcOffset + context_->originalEntry) & kPmSamplingPcMask;
-        if (!context_->businessInstructions->count(pc)) {
+        if (context_->businessInstructions->count(pc) == 0) {
             continue;
         }
         if (selected && *selected != pc) {
@@ -102,7 +102,7 @@ bool PmSamplingDecoder::Decode(const std::array<std::uint8_t, kPmSamplingRecordB
         // Runtime/probe PCs outside the verified business image are not reportable.
         return true;
     }
-    if (!context_->simtInstructions->count(*selected)) {
+    if (context_->simtInstructions->count(*selected) == 0) {
         return true;
     }
     PmSamplingStateCounts counts{};
@@ -154,7 +154,7 @@ bool PmSamplingDecoder::Consume(const aclptiRawDataChunk& chunk)
         }
         channel.offset += chunk.bytes.size();
         if (chunk.isLastChunk) {
-            if (channel.pendingSize) {
+            if (channel.pendingSize != 0) {
                 return Fail("truncated PmSampling packet record");
             }
             channel.offset = 0;
@@ -176,7 +176,7 @@ bool PmSamplingDecoder::Finish(PmSamplingResult& output)
         return Fail("PmSampling decoder already finished");
     }
     for (const auto& item : channels_) {
-        if (item.second.open || item.second.pendingSize) {
+        if (item.second.open || item.second.pendingSize != 0) {
             return Fail("unfinished PmSampling packet");
         }
     }

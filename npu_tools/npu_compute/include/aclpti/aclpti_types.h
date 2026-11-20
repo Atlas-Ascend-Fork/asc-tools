@@ -41,7 +41,6 @@ typedef enum aclptiResult {
 } aclptiResult;
 
 typedef struct aclptiSubscriber_st* aclptiSubscribeHandle;
-
 typedef struct aclptiSubscribeParams {
     uint64_t reserved;
 } aclptiSubscribeParams;

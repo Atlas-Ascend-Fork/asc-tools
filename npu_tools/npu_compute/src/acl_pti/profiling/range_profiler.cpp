@@ -600,7 +600,7 @@ aclptiResult RangeProfiler::ReplayKernel(
     }
 }
 
-bool RangeProfiler::PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config)
+bool RangeProfiler::PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config) const
 {
     PmSamplingBinarySnapshot snapshot;
     if (!invocation.binaryRegistry.GetPmSamplingSnapshot(invocation.originalFunction, snapshot)) {
