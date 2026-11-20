@@ -44,9 +44,11 @@ bool GeneratesCompleteDeterministicGroupSources()
         for (const auto& symbol : first.symbols) {
             const auto definition = FindProbeDefinition(first.source, symbol + "(");
             CHECK(!definition.empty());
+            const bool simtCallee = group == ProbeGroup::Simt && symbol != "__npu_check_probe_simt_call";
             CHECK(
                 definition.find(
-                    "extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void " + symbol + "(") !=
+                    "extern __attribute__((noinline)) __attribute__((weak)) " +
+                    std::string(simtCallee ? "__simt_callee__ " : "") + "__aicore__ void " + symbol + "(") !=
                 std::string_view::npos);
         }
         CHECK(!first.source.empty());
@@ -99,6 +101,18 @@ bool RendersNewPipelineDefinitions()
     CHECK(sync.success);
     CHECK(sync.source.find("__npu_check_probe_pipe_barrier") != std::string::npos);
     CHECK(sync.source.find("static_cast<uint16_t>(PIPE_S), 439") != std::string::npos);
+    const GeneratedProbeSource simt = GenerateProbeSource("dav-3510", ProbeGroup::Simt);
+    CHECK(simt.success);
+    CHECK(simt.source.find("__npu_check_probe_simt_ldg_b128") != std::string::npos);
+    CHECK(simt.source.find("__npu_check_probe_simt_stg_b128") != std::string::npos);
+    CHECK(simt.source.find("aclsan::WriteSimtTraceRecord") != std::string::npos);
+    const auto call = FindProbeDefinition(simt.source, "__npu_check_probe_simt_call");
+    CHECK(call.find("aclsan::WriteSimtCallContext(memInfo, pc)") != std::string_view::npos);
+    const std::string_view genericLoad = FindProbeDefinition(simt.source, "__npu_check_probe_simt_ld_u8");
+    CHECK(genericLoad.find("uint64_t base, int64_t offset") != std::string_view::npos);
+    CHECK(genericLoad.find("WriteSimtTraceRecord(memInfo, pc, bid, 95, base, offset, 1U)") != std::string_view::npos);
+    const std::string_view atomicAdd = FindProbeDefinition(simt.source, "__npu_check_probe_atom_add_g_u64");
+    CHECK(atomicAdd.find("WriteSimtTraceRecord(memInfo, pc, bid, 372, base, offset, 8U)") != std::string_view::npos);
     return true;
 }
 
@@ -348,4 +362,27 @@ TEST(ProbeSourceGenerator, IncludesMovemask93Binding)
     EXPECT_NE(definition.find("DeviceInstructionCategory::RegisterState"), std::string_view::npos);
     EXPECT_NE(definition.find("static_cast<uint16_t>(PIPE_S), 93,"), std::string_view::npos);
     EXPECT_NE(definition.find("maskIndex, mask, 0UL, 0UL, 0UL"), std::string_view::npos);
+}
+
+TEST(ProbeSourceGeneratorSimt, PreservesLoadStoreWidthsInLaneWriter)
+{
+    const auto generated = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Simt);
+    ASSERT_TRUE(generated.success) << generated.diagnostic;
+    for (const auto& item : std::vector<std::pair<std::string, unsigned>>{
+             {"ldg_u8", 1},
+             {"ldg_s8", 1},
+             {"ldg_u16", 2},
+             {"ldg_s16", 2},
+             {"ldg_b32", 4},
+             {"ldg_b64", 8},
+             {"ldg_b128", 16},
+             {"stg_b8", 1},
+             {"stg_b16", 2},
+             {"stg_b32", 4},
+             {"stg_b64", 8},
+             {"stg_b128", 16}}) {
+        const auto definition = aclsan::FindProbeDefinition(generated.source, "__npu_check_probe_simt_" + item.first);
+        EXPECT_NE(definition.find("base, offset, " + std::to_string(item.second) + "U"), std::string_view::npos)
+            << item.first;
+    }
 }

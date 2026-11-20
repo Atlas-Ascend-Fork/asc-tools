@@ -393,7 +393,7 @@ TEST(WireProtocolTest, RejectsReservedMustUnderstandFlags)
 
     // bit 3-7 任一置位即协议错误。
     auto corrupt = SampleFrame();
-    PutU16At(corrupt, OFFSET_FLAGS, static_cast<uint16_t>(0x0008u));
+    PutU16At(corrupt, OFFSET_FLAGS, static_cast<uint16_t>(0x0010u));
     EXPECT_FALSE(DecodeFrame(corrupt.data(), corrupt.size(), decoded, error));
     corrupt = SampleFrame();
     PutU16At(corrupt, OFFSET_FLAGS, static_cast<uint16_t>(0x0080u));

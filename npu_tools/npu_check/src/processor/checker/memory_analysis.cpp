@@ -11,6 +11,9 @@
 #include "checker/memory_analysis.h"
 #include "device_instr/common/instruction_id.h"
 #include "npu_tool_log.h"
+#include "securec.h"
+
+#include <cstddef>
 
 namespace npucheck {
 HostOrder::NodeId MemoryAnalysis::HostNode()
@@ -181,19 +184,20 @@ void MemoryAnalysis::StoreDeviceMemory(Launch& launch, const AclsanDeviceMemoryA
 bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
 {
     const auto& h = *static_cast<const AclsanDeviceEventHeader*>(data);
-    const size_t required = id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS ? sizeof(AclsanDeviceMemoryAccessData) :
-                            id == ACLSAN_CBID_DEVICE_VF            ? sizeof(AclsanDeviceVfData) :
-                            id == ACLSAN_CBID_DEVICE_STATE         ? sizeof(AclsanDeviceRegisterStateData) :
-                            id == ACLSAN_CBID_DEVICE_SYNC          ? sizeof(AclsanDeviceSyncData) :
-                                                                     sizeof(AclsanDeviceBarrierData);
+    const size_t required = id == ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS ? sizeof(AclsanDeviceMemoryAccessData) :
+                            id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS      ? offsetof(AclsanDeviceMemoryAccessData, simt) :
+                            id == ACLSAN_CBID_DEVICE_VF                 ? sizeof(AclsanDeviceVfData) :
+                            id == ACLSAN_CBID_DEVICE_STATE              ? sizeof(AclsanDeviceRegisterStateData) :
+                            id == ACLSAN_CBID_DEVICE_SYNC               ? sizeof(AclsanDeviceSyncData) :
+                                                                          sizeof(AclsanDeviceBarrierData);
     if (h.version != ACLSAN_API_VERSION || h.size < required || h.launchId == 0 || h.instrExecId == 0)
         return false;
     auto& launch = Get(h.launchId);
     // VF-expanded UB accesses and ordinary UB transfers must reach the same graph.
     if (race::ExceedsBudget(
             limits_.LaunchEventBudget(),
-            {launch.memory.size(), launch.sync.size(), launch.registers.size(), launch.dependencyOnly.size(),
-             launch.vfs.size(), launch.localBarriers.size(), 1})) {
+            {launch.memory.size(), launch.simtMemory.size(), launch.sync.size(), launch.registers.size(),
+             launch.dependencyOnly.size(), launch.vfs.size(), launch.localBarriers.size(), 1})) {
         if (launch.reasons.insert("event_budget").second) {
             ASCTOOL_WARNING(
                 "analysis budget: launch=%llu stage=ingress limit=%zu", static_cast<unsigned long long>(h.launchId),
@@ -201,8 +205,19 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
         }
         return true;
     }
-    if (id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
-        StoreDeviceMemory(launch, *static_cast<const AclsanDeviceMemoryAccessData*>(data));
+    if (id == ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS) {
+        const auto& access = *static_cast<const AclsanDeviceMemoryAccessData*>(data);
+        if ((h.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED |
+                        ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR)) == 0) {
+            launch.simtMemory.push_back(access);
+        }
+    } else if (id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {
+        AclsanDeviceMemoryAccessData access{};
+        if (memcpy_s(&access, sizeof(access), data, offsetof(AclsanDeviceMemoryAccessData, simt)) != EOK) {
+            return false;
+        }
+        access.header.size = sizeof(access);
+        StoreDeviceMemory(launch, access);
     } else if (id == ACLSAN_CBID_DEVICE_VF) {
         launch.vfs.push_back(*static_cast<const AclsanDeviceVfData*>(data));
     } else if (id == ACLSAN_CBID_DEVICE_STATE) {

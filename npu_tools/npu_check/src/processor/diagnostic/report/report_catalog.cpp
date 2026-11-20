@@ -42,27 +42,31 @@ const PatternCatalog& Catalog()
             ReportTool::MEMCHECK, NpuCheckReportPattern::MEMCHECK_INVALID_ACCESS, "invalid_access",
             "========= {{Severity}}:[MEMCHECK] Invalid {{space}} {{access}} of size {{accessBytes}} bytes\n"
             "=========     {{location}}\n"
-            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe ({{pipeName}})\n"
+            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}){{threadContext}} "
+            "pipe ({{pipeName}})\n"
             "=========     Address 0x{{address}} is out of bounds{{capacityContext}}\n"),
         MakePattern(
             ReportTool::MEMCHECK, NpuCheckReportPattern::MEMCHECK_MISALIGNED_ACCESS, "misaligned_access",
             "========= {{Severity}}:[MEMCHECK] Invalid {{space}} {{access}} of size {{accessBytes}} bytes\n"
             "=========     {{location}}\n"
-            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe ({{pipeName}})\n"
+            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}){{threadContext}} "
+            "pipe ({{pipeName}})\n"
             "=========     Address 0x{{address}} is misaligned\n"
             "=========     required alignment is {{requiredAlign}} bytes\n"),
         MakePattern(
             ReportTool::MEMCHECK, NpuCheckReportPattern::MEMCHECK_USE_AFTER_FREE, "use_after_free",
             "========= {{Severity}}:[MEMCHECK] Invalid {{space}} {{access}} of size {{accessBytes}} bytes\n"
             "=========     {{location}}\n"
-            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe ({{pipeName}})\n"
+            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}){{threadContext}} "
+            "pipe ({{pipeName}})\n"
             "=========     Address 0x{{address}} is used after free\n"
             "=========     and belongs to allocation at 0x{{base}} of size {{bytes}} bytes\n"),
         MakePattern(
             ReportTool::MEMCHECK, NpuCheckReportPattern::MEMCHECK_USE_BEFORE_ALLOC, "use_before_alloc",
             "========= {{Severity}}:[MEMCHECK] Invalid {{space}} {{access}} of size {{accessBytes}} bytes\n"
             "=========     {{location}}\n"
-            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}) pipe ({{pipeName}})\n"
+            "=========     by aicore ({{coreId}}) type ({{blockType}}) block ({{blockId}}){{threadContext}} "
+            "pipe ({{pipeName}})\n"
             "=========     Address 0x{{address}} is used before allocation is available\n"
             "=========     allocation 0x{{base}} of size {{bytes}} bytes was created at serial {{allocSerialNo}}\n"),
         MakePattern(

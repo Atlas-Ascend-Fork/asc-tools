@@ -58,14 +58,15 @@ __aicore__ inline bool WaitForTraceSpace(__gm__ AclsanTraceReadLine* readControl
 __aicore__ inline bool IsTraceSegmentValid(__gm__ AclsanTraceBufferHeader* header, uint32_t phyCoreId)
 {
     constexpr uint64_t slots = ASCSAN_PHYSICAL_CORE_SLOT_COUNT;
-    constexpr uint64_t simdBytes =
-        slots * (sizeof(AclsanTraceControl) +
-                 static_cast<uint64_t>(ASCSAN_TRACE_RECORDS_PER_CORE) * sizeof(AclsanRawTraceRecord));
+    const bool validTail = header->simtSegmentBytes == 0U ?
+                               header->simtSegmentOffset == 0U && header->segmentBytes == ASCSAN_SIMD_TRACE_END :
+                               header->simtSegmentOffset == ASCSAN_SIMT_SEGMENT_OFFSET &&
+                                   header->simtSegmentBytes == ASCSAN_SIMT_SEGMENT_BYTES &&
+                                   header->segmentBytes == ASCSAN_TRACE_END_WITH_SIMT;
     return header->magic == ASCSAN_TRACE_BUFFER_MAGIC && header->launchId != 0U && header->physicalCoreCount == slots &&
            phyCoreId < slots && header->blockCount != 0U &&
-           header->segmentBytes == sizeof(AclsanTraceBufferHeader) + simdBytes &&
-           header->simdSegmentOffset == sizeof(AclsanTraceBufferHeader) && header->simdSegmentBytes == simdBytes &&
-           header->simtSegmentOffset == 0U && header->simtSegmentBytes == 0U;
+           header->simdSegmentOffset == sizeof(AclsanTraceBufferHeader) &&
+           header->simdSegmentBytes == ASCSAN_SIMD_SEGMENT_BYTES && validTail;
 }
 
 __aicore__ inline void PublishTraceRecord(
@@ -139,6 +140,142 @@ __aicore__ inline void WriteTraceRecord(
     WriteTracePayload(record, pc, apiId, category, pipeline, blockId, arg0, arg1, arg2, arg3, arg4);
     PublishTraceRecord(record, writeControl, sequence);
 }
+
+// A scalar caller normally updates invocation state before the SIMT function.
+// Pure SIMT kernels can establish their first invocation lazily in the lane
+// writer below, so they do not depend on an application-side scalar call.
+__aicore__ inline void WriteSimtCallContext(__gm__ uint8_t* memInfo, int64_t pc)
+{
+    if (memInfo == nullptr) {
+        return;
+    }
+    auto* trace = reinterpret_cast<__gm__ AclsanTraceBufferHeader*>(memInfo);
+    const uint32_t coreId = static_cast<uint32_t>(get_coreid());
+    if (!IsTraceSegmentValid(trace, coreId) || trace->simtSegmentBytes != ASCSAN_SIMT_SEGMENT_BYTES) {
+        return;
+    }
+    auto* sidecar = reinterpret_cast<__gm__ const AclsanSimtTraceHeader*>(memInfo + ASCSAN_SIMT_SEGMENT_OFFSET);
+    if (sidecar->magic != ASCSAN_SIMT_TRACE_MAGIC || sidecar->version != ASCSAN_SIMT_TRACE_VERSION ||
+        sidecar->bytes != ASCSAN_SIMT_SEGMENT_BYTES || sidecar->physicalCoreCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT ||
+        sidecar->threadsPerCore != ASCSAN_SIMT_THREADS_PER_CORE ||
+        sidecar->recordsPerThread != ASCSAN_SIMT_RECORDS_PER_THREAD) {
+        return;
+    }
+    auto* core = reinterpret_cast<__gm__ AclsanSimtCoreHeader*>(
+        memInfo + ASCSAN_SIMT_SEGMENT_OFFSET + sizeof(AclsanSimtTraceHeader) +
+        static_cast<uint64_t>(coreId) * ASCSAN_SIMT_CORE_BYTES);
+    if (core->invocationId >= ASCSAN_SIMT_COMPLETION_BITS) {
+        core->flags = ASCSAN_SIMT_COVERAGE_INCOMPLETE;
+    } else {
+        core->invocationId = core->invocationId + 1U;
+    }
+    core->scalarPc = static_cast<uint64_t>(pc);
+    dcci(core, cache_line_t::ENTIRE_DATA_CACHE, dcci_dst_t::CACHELINE_OUT);
+}
+
+#if defined(NPU_CHECK_SIMT_PROBE) && defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510 && defined(__DAV_VEC__)
+// SIMT helpers must use the same execution mode as the injected callee. All
+// stores are lane-private; the scalar writer and its cache intrinsics are not
+// called from this path.
+__simt_callee__ __aicore__ inline void WriteSimtTraceRecord(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint32_t instructionId, uint64_t base, int64_t offset,
+    uint32_t elementBytes)
+{
+    (void)bid;
+    if (memInfo == nullptr) {
+        return;
+    }
+    auto* trace = reinterpret_cast<__gm__ const AclsanTraceBufferHeader*>(memInfo);
+    const uint32_t coreId = __cce_simt_get_COREID();
+    // The SIMT callee cannot call the scalar layout validator.
+    if (trace->magic != ASCSAN_TRACE_BUFFER_MAGIC || trace->launchId == 0U || trace->blockCount == 0U ||
+        trace->physicalCoreCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT || coreId >= ASCSAN_PHYSICAL_CORE_SLOT_COUNT ||
+        trace->simdSegmentOffset != sizeof(AclsanTraceBufferHeader) ||
+        trace->simdSegmentBytes != ASCSAN_SIMD_SEGMENT_BYTES ||
+        trace->simtSegmentOffset != ASCSAN_SIMT_SEGMENT_OFFSET ||
+        trace->simtSegmentBytes != ASCSAN_SIMT_SEGMENT_BYTES || trace->segmentBytes != ASCSAN_TRACE_END_WITH_SIMT) {
+        return;
+    }
+    auto* sidecar = reinterpret_cast<__gm__ const AclsanSimtTraceHeader*>(memInfo + ASCSAN_SIMT_SEGMENT_OFFSET);
+    if (sidecar->magic != ASCSAN_SIMT_TRACE_MAGIC || sidecar->version != ASCSAN_SIMT_TRACE_VERSION ||
+        sidecar->bytes != ASCSAN_SIMT_SEGMENT_BYTES || sidecar->physicalCoreCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT ||
+        sidecar->threadsPerCore != ASCSAN_SIMT_THREADS_PER_CORE ||
+        sidecar->recordsPerThread != ASCSAN_SIMT_RECORDS_PER_THREAD) {
+        return;
+    }
+    const uint32_t x = __cce_simt_get_TID_X();
+    const uint32_t y = __cce_simt_get_TID_Y();
+    const uint32_t z = __cce_simt_get_TID_Z();
+    const uint32_t dimX = __cce_simt_get_BLOCK_DIM_X();
+    const uint32_t dimY = __cce_simt_get_BLOCK_DIM_Y();
+    const uint32_t dimZ = __cce_simt_get_BLOCK_DIM_Z();
+    const uint64_t linear = x + static_cast<uint64_t>(dimX) * (y + static_cast<uint64_t>(dimY) * z);
+    auto* coreAddress = memInfo + ASCSAN_SIMT_SEGMENT_OFFSET + sizeof(AclsanSimtTraceHeader) +
+                        static_cast<uint64_t>(coreId) * ASCSAN_SIMT_CORE_BYTES;
+    auto* core = reinterpret_cast<__gm__ AclsanSimtCoreHeader*>(coreAddress);
+    // Out-of-budget lanes only set an idempotent sticky flag in partition 0.
+    // They never modify its cursor or overwrite another lane's access records.
+    auto* thread = reinterpret_cast<__gm__ AclsanSimtThreadHeader*>(
+        coreAddress + sizeof(AclsanSimtCoreHeader) +
+        (linear < ASCSAN_SIMT_THREADS_PER_CORE ? linear : 0U) * ASCSAN_SIMT_THREAD_BYTES);
+    if (linear >= ASCSAN_SIMT_THREADS_PER_CORE || dimX == 0 || dimY == 0 || dimZ == 0 || dimX > UINT16_MAX ||
+        dimY > UINT16_MAX || dimZ > UINT16_MAX) {
+        thread->invalidContext = 1U;
+        return;
+    }
+    if (core->invocationId == 0) {
+        // All lanes store the same first invocation value. This is the pure
+        // SIMT kernel-entry path; a scalar SIMT_CALL has already initialized
+        // the field for hybrid launches.
+        core->invocationId = 1U;
+        core->scalarPc = 0U;
+    }
+    const uint64_t invocation = core->invocationId;
+    if (invocation > ASCSAN_SIMT_COMPLETION_BITS) {
+        thread->invalidContext = 1U;
+        return;
+    }
+    if (thread->lastInvocation != invocation && thread->lastInvocation > thread->completedInvocation) {
+        thread->invalidContext = 1U;
+    }
+    thread->lastInvocation = invocation;
+    if (instructionId == ASCSAN_SIMT_END_INSTRUCTION_ID) {
+        thread->completedInvocation = invocation;
+        thread->completedInvocations |= 1ULL << (invocation - 1U);
+        return;
+    }
+    if (elementBytes == 0) {
+        thread->invalidContext = 1U; // Executed GM-capable instruction outside this phase's coverage.
+        return;
+    }
+    const uint32_t index = thread->recordCount;
+    if (index >= ASCSAN_SIMT_RECORDS_PER_THREAD) {
+        if (thread->overflowCount != UINT32_MAX) {
+            thread->overflowCount = thread->overflowCount + 1U;
+        }
+        return;
+    }
+    auto* record = reinterpret_cast<__gm__ AclsanSimtRawTraceRecord*>(
+                       reinterpret_cast<__gm__ uint8_t*>(thread) + sizeof(AclsanSimtThreadHeader)) +
+                   index;
+    record->pc = static_cast<uint64_t>(pc);
+    record->base = base;
+    record->offset = offset;
+    record->invocationId = invocation;
+    record->scalarPc = core->scalarPc;
+    record->instructionId = instructionId;
+    record->blockId = __cce_simt_get_BLOCKID();
+    record->threadX = x;
+    record->threadY = y;
+    record->threadZ = z;
+    record->blockDimX = dimX;
+    record->blockDimY = dimY;
+    record->blockDimZ = dimZ;
+    record->reserved = 0;
+    // Host consumes this sidecar only after successful stream synchronization.
+    thread->recordCount = index + 1U;
+}
+#endif
 
 } // namespace aclsan
 

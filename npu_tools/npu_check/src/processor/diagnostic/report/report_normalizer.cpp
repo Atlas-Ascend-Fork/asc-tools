@@ -69,6 +69,10 @@ ReportRecord ToReportRecord(const NpuCheckMemcheckReport& report)
                                     std::to_string(report.allocation.bytes) + " bytes, valid offsets [0, " +
                                     std::to_string(report.allocation.bytes) + "))";
     }
+    fields["threadContext"] = "";
+    if ((report.common.exec.simtContextFlags & ACLSAN_SIMT_CONTEXT_THREAD) != 0) {
+        fields["threadContext"] = " thread (" + fields["thread"] + ")";
+    }
     fields["apiName"] = report.apiName;
     fields["apiErrorName"] = report.apiErrorName;
     fields["apiErrorCode"] = std::to_string(report.apiErrorCode);

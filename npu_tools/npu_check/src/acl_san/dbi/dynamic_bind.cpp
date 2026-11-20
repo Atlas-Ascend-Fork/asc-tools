@@ -47,6 +47,51 @@ struct BindingSpec {
 };
 
 static const BindingSpec ALL_BINDINGS[] = {
+    {InstrType::SIMT_CALL, "__npu_check_probe_simt_call", {}},
+    {InstrType::SIMT_END, "__npu_check_probe_simt_end", {}},
+    {InstrType::SIMT_LDG_U8, "__npu_check_probe_simt_ldg_u8", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LDG_S8, "__npu_check_probe_simt_ldg_s8", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LDG_U16, "__npu_check_probe_simt_ldg_u16", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LDG_S16, "__npu_check_probe_simt_ldg_s16", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LDG_B32, "__npu_check_probe_simt_ldg_b32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LDG_B64, "__npu_check_probe_simt_ldg_b64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LDG_B128, "__npu_check_probe_simt_ldg_b128", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_STG_B8, "__npu_check_probe_simt_stg_b8", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_STG_B16, "__npu_check_probe_simt_stg_b16", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_STG_B32, "__npu_check_probe_simt_stg_b32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_STG_B64, "__npu_check_probe_simt_stg_b64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_STG_B128, "__npu_check_probe_simt_stg_b128", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LD_U8, "__npu_check_probe_simt_ld_u8", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LD_S8, "__npu_check_probe_simt_ld_s8", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LD_U16, "__npu_check_probe_simt_ld_u16", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LD_S16, "__npu_check_probe_simt_ld_s16", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_LD_B32, "__npu_check_probe_simt_ld_b32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_ST_B8, "__npu_check_probe_simt_st_b8", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_ST_B16, "__npu_check_probe_simt_st_b16", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::SIMT_ST_B32, "__npu_check_probe_simt_st_b32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::RED_G_BF16, "__npu_check_probe_red_g_bf16", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::RED_G_U32, "__npu_check_probe_red_g_u32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::RED_G_F16X2, "__npu_check_probe_red_g_f16x2", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::RED_G_S32, "__npu_check_probe_red_g_s32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::RED_G_FP32, "__npu_check_probe_red_g_fp32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::RED_G_BF16X2, "__npu_check_probe_red_g_bf16x2", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::RED_G_FP16, "__npu_check_probe_red_g_fp16", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_EXCH_G_U64, "__npu_check_probe_atom_exch_g_u64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_MIN_G_U64, "__npu_check_probe_atom_min_g_u64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_ADD_G_U64, "__npu_check_probe_atom_add_g_u64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_CAS_G_U64, "__npu_check_probe_atom_cas_g_u64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_MAX_G_U64, "__npu_check_probe_atom_max_g_u64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_ADD_G_S64, "__npu_check_probe_atom_add_g_s64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_MIN_G_S64, "__npu_check_probe_atom_min_g_s64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_MAX_G_S64, "__npu_check_probe_atom_max_g_s64", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_EXCH_G_U32, "__npu_check_probe_atom_exch_g_u32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_MIN_G_U32, "__npu_check_probe_atom_min_g_u32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_CAS_G_U32, "__npu_check_probe_atom_cas_g_u32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_MAX_G_U32, "__npu_check_probe_atom_max_g_u32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_ADD_G_U32, "__npu_check_probe_atom_add_g_u32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_ADD_G_S32, "__npu_check_probe_atom_add_g_s32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_MIN_G_S32, "__npu_check_probe_atom_min_g_s32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+    {InstrType::ATOM_MAX_G_S32, "__npu_check_probe_atom_max_g_s32", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
     // MTE2. Binding order is stable for ctrl.bin compatibility; probes follow instr.md order.
     // LOAD_OUT_TO_L1_2DV2.
     {InstrType::LOAD_GM_TO_CBUF_2DV2,
@@ -460,6 +505,20 @@ struct BindingGroupSpec {
 };
 
 static constexpr BindingGroupSpec BINDING_GROUPS[] = {
+    {ProbeGroup::Simt,
+     {InstrType::SIMT_CALL,      InstrType::SIMT_LDG_U8,     InstrType::SIMT_LDG_S8,    InstrType::SIMT_LDG_U16,
+      InstrType::SIMT_LDG_S16,   InstrType::SIMT_LDG_B32,    InstrType::SIMT_LDG_B64,   InstrType::SIMT_LDG_B128,
+      InstrType::SIMT_STG_B8,    InstrType::SIMT_STG_B16,    InstrType::SIMT_STG_B32,   InstrType::SIMT_STG_B64,
+      InstrType::SIMT_STG_B128,  InstrType::SIMT_END,        InstrType::SIMT_LD_U8,     InstrType::SIMT_LD_S8,
+      InstrType::SIMT_LD_U16,    InstrType::SIMT_LD_S16,     InstrType::SIMT_LD_B32,    InstrType::SIMT_ST_B8,
+      InstrType::SIMT_ST_B16,    InstrType::SIMT_ST_B32,     InstrType::RED_G_BF16,     InstrType::RED_G_U32,
+      InstrType::RED_G_F16X2,    InstrType::RED_G_S32,       InstrType::RED_G_FP32,     InstrType::RED_G_BF16X2,
+      InstrType::RED_G_FP16,     InstrType::ATOM_EXCH_G_U64, InstrType::ATOM_MIN_G_U64, InstrType::ATOM_ADD_G_U64,
+      InstrType::ATOM_CAS_G_U64, InstrType::ATOM_MAX_G_U64,  InstrType::ATOM_ADD_G_S64, InstrType::ATOM_MIN_G_S64,
+      InstrType::ATOM_MAX_G_S64, InstrType::ATOM_EXCH_G_U32, InstrType::ATOM_MIN_G_U32, InstrType::ATOM_CAS_G_U32,
+      InstrType::ATOM_MAX_G_U32, InstrType::ATOM_ADD_G_U32,  InstrType::ATOM_ADD_G_S32, InstrType::ATOM_MIN_G_S32,
+      InstrType::ATOM_MAX_G_S32}},
+
     {ProbeGroup::Mte1,
      {
          InstrType::LOAD_CBUF_TO_CB_TRANSPOSE_B8,
@@ -748,8 +807,8 @@ namespace aclsan {
 
 std::vector<ProbeGroup> AllProbeGroups()
 {
-    return {ProbeGroup::Mte1, ProbeGroup::Mte2,   ProbeGroup::Mte3,   ProbeGroup::Fixpipe, ProbeGroup::Scalar,
-            ProbeGroup::Sync, ProbeGroup::Matrix, ProbeGroup::Vector, ProbeGroup::Boundary};
+    return {ProbeGroup::Mte1, ProbeGroup::Mte2,   ProbeGroup::Mte3,   ProbeGroup::Fixpipe,  ProbeGroup::Scalar,
+            ProbeGroup::Sync, ProbeGroup::Matrix, ProbeGroup::Vector, ProbeGroup::Boundary, ProbeGroup::Simt};
 }
 
 std::vector<std::string> BindingSymbols(const std::vector<ProbeGroup>& groups)

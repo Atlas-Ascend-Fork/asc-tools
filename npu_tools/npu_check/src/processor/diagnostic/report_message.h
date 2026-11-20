@@ -240,6 +240,14 @@ struct NpuCheckReportExecContext {
     std::uint32_t siteId = 0;                      // Instrumentation site identifier; 0 means unavailable.
     std::uint32_t line = 0;                        // One-based source line; 0 means unknown.
     std::uint32_t column = 0;                      // One-based source column; 0 means unknown.
+    std::uint64_t invocationId = 0;
+    std::uint32_t threadX = 0;
+    std::uint32_t threadY = 0;
+    std::uint32_t threadZ = 0;
+    std::uint32_t blockDimX = 0;
+    std::uint32_t blockDimY = 0;
+    std::uint32_t blockDimZ = 0;
+    std::uint32_t simtContextFlags = 0;
 
     std::string function;
     std::string file;

@@ -246,7 +246,7 @@ bool DecodeFrame(const uint8_t* data, size_t size, Frame& frame, std::string& er
     if (size != length) {
         return Fail(error, "frame length does not match the received datagram");
     }
-    // bit 3-7 是 must-understand 的保留位，非零即协议错误。bit 8-15 是 must-ignore 的
+    // bit 4-7 是 must-understand 的保留位，非零即协议错误。bit 8-15 是 must-ignore 的
     // 保留位，这里不做任何校验，原样交给上层忽略。
     if ((flags & FLAGS_RESERVED_MUST_UNDERSTAND) != 0) {
         return Fail(error, "reserved must-understand flag bits are set");

@@ -11,9 +11,11 @@
 #include "checker/memcheck.h"
 #include "checker/memory_access_layout.h"
 #include "diagnostic/pipeline_name.h"
+#include "simt_memory_record.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -101,6 +103,20 @@ NpuCheckReportExecContext ToExecContext(const AclsanDeviceMemoryAccessData& data
     exec.pipeId = data.header.pipeline;
     exec.siteId = data.header.siteId;
     exec.pipeName = detail::DevicePipelineName(data.header.pipeline);
+    if ((data.simt.validFlags & ACLSAN_SIMT_CONTEXT_INVOCATION) != 0) {
+        exec.invocationId = data.simt.invocationId;
+    }
+    if ((data.simt.validFlags & ACLSAN_SIMT_CONTEXT_THREAD) != 0) {
+        exec.threadX = data.simt.threadX;
+        exec.threadY = data.simt.threadY;
+        exec.threadZ = data.simt.threadZ;
+    }
+    if ((data.simt.validFlags & ACLSAN_SIMT_CONTEXT_BLOCK_DIM) != 0) {
+        exec.blockDimX = data.simt.blockDimX;
+        exec.blockDimY = data.simt.blockDimY;
+        exec.blockDimZ = data.simt.blockDimZ;
+    }
+    exec.simtContextFlags = data.simt.validFlags;
     return exec;
 }
 
@@ -171,6 +187,15 @@ void Memcheck::OnFree(const AclsanResourceData& data)
             memoryState_->Release({data.deviceId, 0}, data.resourceId, reinterpret_cast<uint64_t>(data.ptr));
     if (status == AllocationUpdateStatus::OK) {
         ++stats_.frees;
+        for (auto& [launchId, snapshot] : launchAllocations_) {
+            (void)launchId;
+            const auto allocation = snapshot.allocations.find({data.deviceId, 0});
+            if (allocation != snapshot.allocations.end() &&
+                allocation->second.Classify(data.deviceId, reinterpret_cast<uint64_t>(data.ptr), 1).status ==
+                    RangeStatus::VALID) {
+                snapshot.lifetimeUncertain = true;
+            }
+        }
     }
 }
 
@@ -181,13 +206,26 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     const bool preload =
         (data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0 && bytes == 0;
     const uint64_t capacity = CubeCapacity(data.memorySpace);
+    const AllocationRegistry* allocations = &memoryState_->Allocations({data.header.deviceId, 0});
+    const bool standaloneSimt = !analysis_->Managed() && data.simt.validFlags != 0;
+    if (data.header.launchId != 0 && standaloneSimt) {
+        const auto snapshot = launchAllocations_.find(data.header.launchId);
+        if (snapshot == launchAllocations_.end()) {
+            ++stats_.droppedDeviceOperations;
+            return {};
+        }
+        static const AllocationRegistry empty;
+        const auto allocation = snapshot->second.allocations.find({data.header.deviceId, 0});
+        allocations = allocation == snapshot->second.allocations.end() ? &empty : &allocation->second;
+    }
     RangeResult range{};
     if (capacity != 0) {
         range.status =
             address <= capacity && bytes <= capacity - address ? RangeStatus::VALID : RangeStatus::OUT_OF_BOUNDS;
         range.allocation = Allocation{0, 0, capacity, data.header.deviceId, 0, 0};
     } else {
-        range = analysis_->ClassifyAccessRange(data, address, preload ? 1 : bytes);
+        range = standaloneSimt ? allocations->Classify(data.header.deviceId, address, preload ? 1 : bytes) :
+                                 analysis_->ClassifyAccessRange(data, address, preload ? 1 : bytes);
     }
     if (range.status == RangeStatus::VALID) {
         return {};
@@ -219,9 +257,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     report.access.rangeEnd = RangeEnd(address, bytes).value_or(std::numeric_limits<uint64_t>::max());
 
     report.allocation = ToReportAllocation(range.allocation);
-    const auto nearest =
-        range.allocation ? range.allocation :
-                           memoryState_->Allocations({data.header.deviceId, 0}).Nearest(data.header.deviceId, address);
+    const auto nearest = range.allocation ? range.allocation : allocations->Nearest(data.header.deviceId, address);
     report.nearestAllocation = ToReportAllocation(nearest);
     if (capacity != 0) {
         report.allocation.memorySpace = report.access.memorySpace;
@@ -258,6 +294,62 @@ std::vector<NpuCheckMemcheckReport> Memcheck::QueueDeviceMemoryAccess(const Acls
     auto reports = CheckObservedAccess(data);
     Count(reports);
     return reports;
+}
+
+void Memcheck::QueueSimtMemoryAccess(const SimtMemoryAccessRecord& record)
+{
+    if (record.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM ||
+        (record.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
+         record.accessMode != ACLSAN_DEVICE_MEMORY_ACCESS_WRITE)) {
+        ++stats_.droppedDeviceOperations;
+        return;
+    }
+    const auto range = ResolveSimtAccessRange(record);
+    if (!range.has_value()) {
+        ++stats_.droppedDeviceOperations;
+        return;
+    }
+    AclsanDeviceMemoryAccessData data{};
+    data.header.version = ACLSAN_API_VERSION;
+    data.header.size = sizeof(data);
+    data.header.launchId = record.launchId;
+    data.header.instrExecId = record.invocationId;
+    data.header.pc = record.pc;
+    data.header.deviceId = record.deviceId;
+    data.header.executor.phyCoreId = record.phyCoreId;
+    data.header.executor.blockId = record.blockId;
+    data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
+    data.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
+    data.header.sourceKind = ACLSAN_DEVICE_SOURCE_VECTOR;
+    data.address = range->first;
+    data.memorySpace = record.memorySpace;
+    data.accessMode = record.accessMode;
+    data.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
+    data.layout.range.bytes = record.accessBytes;
+    data.instructionId = record.instructionId;
+    data.simt.invocationId = record.invocationId;
+    data.simt.threadX = record.threadX;
+    data.simt.threadY = record.threadY;
+    data.simt.threadZ = record.threadZ;
+    data.simt.blockDimX = record.blockDimX;
+    data.simt.blockDimY = record.blockDimY;
+    data.simt.blockDimZ = record.blockDimZ;
+    data.simt.base = record.base;
+    data.simt.offset = record.offset;
+    data.simt.elementBytes = record.elementBytes;
+    data.simt.validFlags = ACLSAN_SIMT_CONTEXT_INVOCATION | ACLSAN_SIMT_CONTEXT_THREAD | ACLSAN_SIMT_CONTEXT_BLOCK_DIM |
+                           ACLSAN_SIMT_CONTEXT_ADDRESS;
+    if (analysis_->Managed()) {
+        if (!analysis_->BeginCallback(
+                ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &data)) {
+            ++stats_.droppedDeviceOperations;
+            return;
+        }
+        analysis_->EndCallback();
+    } else if (record.launchId != 0) {
+        launchAllocations_.try_emplace(record.launchId, LaunchAllocationSnapshot{memoryState_->allocations, nullptr});
+    }
+    QueueDeviceMemoryAccess(data);
 }
 
 std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
@@ -376,15 +468,21 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckObservedAccess(const AclsanDe
 void Memcheck::CollectLaunch(uint64_t launchId, std::vector<NpuCheckMemcheckReport>& reports)
 {
     const auto& shared = analysis_->Get(launchId);
-    for (const auto& access : shared.memory) {
-        if (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM ||
-            (access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0) {
-            continue;
+    const auto check = [&](const auto& accesses) {
+        for (const auto& access : accesses) {
+            if (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM ||
+                (access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0) {
+                continue;
+            }
+            auto found = CheckObservedAccess(access);
+            reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+            if (stats_.pendingDeviceOperations != 0U) {
+                --stats_.pendingDeviceOperations;
+            }
         }
-        auto found = CheckObservedAccess(access);
-        reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
-        --stats_.pendingDeviceOperations;
-    }
+    };
+    check(shared.memory);
+    check(shared.simtMemory);
 }
 
 std::vector<NpuCheckMemcheckReport> Memcheck::CollectCompletedLaunch(uint64_t launchId)
@@ -409,6 +507,13 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CollectCompletedLaunch(uint64_t la
                 return true;
             });
         pendingDeviceAccesses_.erase(end, pendingDeviceAccesses_.end());
+        const auto snapshot = launchAllocations_.find(launchId);
+        if (snapshot != launchAllocations_.end()) {
+            if (snapshot->second.lifetimeUncertain) {
+                ++stats_.droppedDeviceOperations;
+            }
+            launchAllocations_.erase(snapshot);
+        }
     }
     instructionGroups_.erase(launchId);
     Count(reports);
@@ -432,6 +537,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::OnSynchronization()
             reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
         }
         pendingDeviceAccesses_.clear();
+        launchAllocations_.clear();
         instructionGroups_.clear();
         stats_.pendingDeviceOperations = 0;
     }

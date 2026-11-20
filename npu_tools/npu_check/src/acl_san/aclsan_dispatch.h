@@ -24,6 +24,7 @@ public:
     static void DispatchMemoryWrite(const AclsanMemoryWriteData& cbData) noexcept;
     static void DispatchSynchronizeEnd(const AclsanSynchronizeData& cbData) noexcept;
     static void DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& cbData) noexcept;
+    static void DispatchSimtMemoryAccess(const AclsanDeviceMemoryAccessData& cbData) noexcept;
     static void DispatchDeviceState(const AclsanDeviceRegisterStateData& cbData) noexcept;
     static void DispatchDeviceSync(const AclsanDeviceSyncData& cbData) noexcept;
     static void DispatchDeviceBarrier(const AclsanDeviceBarrierData& cbData) noexcept;

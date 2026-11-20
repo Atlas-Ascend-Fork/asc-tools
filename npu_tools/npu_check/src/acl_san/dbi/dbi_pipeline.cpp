@@ -650,7 +650,8 @@ bool GetOrBuildGroupArtifact(
         return false;
     }
     const auto devkit = AscendcDevkitRoot(tools.bisheng);
-    const auto compilerFlags = ProbeCompileFlags(request.arch, devkit, request.coreType);
+    const auto compilerFlags =
+        ProbeCompileFlags(request.arch, devkit, group == ProbeGroup::Simt ? ProbeCoreType::Aiv : request.coreType);
     const std::string compilerIdentity = FileIdentity(tools.bisheng) + ":" + TextIdentity(compilerFlags) + ":" +
                                          std::string(EmbeddedProbeResourceIdentity());
     const std::string cacheKey = MakeCacheKey(
@@ -783,10 +784,13 @@ std::vector<ProbeGroup> ResolveProbeGroups(
     // the control table from the complete probe catalog for this path; using
     // only the active memory groups leaves scalar/control callsites absent
     // from the selected tiling-key variant.
-    if (useCompleteProbeSet && (coreType == ProbeCoreType::Aic || coreType == ProbeCoreType::Mix)) {
-        return AllProbeGroups();
+    auto groups = useCompleteProbeSet && (coreType == ProbeCoreType::Aic || coreType == ProbeCoreType::Mix) ?
+                      AllProbeGroups() :
+                      NormalizeProbeGroups(requestedGroups);
+    if (coreType == ProbeCoreType::Aic) {
+        groups.erase(std::remove(groups.begin(), groups.end(), ProbeGroup::Simt), groups.end());
     }
-    return NormalizeProbeGroups(requestedGroups);
+    return groups;
 }
 
 bool ToolchainPaths::Complete() const

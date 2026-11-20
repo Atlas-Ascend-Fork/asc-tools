@@ -49,5 +49,5 @@ target_include_directories(racecheck_integration_tests PRIVATE
   "${REPO_ROOT}/npu_tools/npu_check/src/acl_san"
   "${REPO_ROOT}/npu_tools/npu_check/include")
 target_link_libraries(racecheck_integration_tests PRIVATE
-  npu_check_core GTest::gtest Threads::Threads npu_sanitizer_plog)
+  npu_check_core GTest::gtest Threads::Threads npu_sanitizer_plog c_sec_static)
 add_test(NAME racecheck_integration_tests COMMAND racecheck_integration_tests)

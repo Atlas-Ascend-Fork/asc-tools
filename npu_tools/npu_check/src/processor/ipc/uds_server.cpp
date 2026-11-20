@@ -378,7 +378,8 @@ void UdsServer::SendError(npucheck::ipc::ErrorDomain domain, uint16_t code, cons
     }
 }
 
-bool UdsServer::SendResult(const std::string& report, bool hasErrors, bool truncated, std::string& error)
+bool UdsServer::SendResult(
+    const std::string& report, bool hasErrors, bool truncated, std::string& error, bool analysisComplete)
 {
     // 实时诊断与 Result 共用同一条连接和同一个发送序号。publisher 线程还活着时，两个
     // 分片之间随时可能被插入一帧 DIAGNOSTIC_STREAM —— 接收端按 MORE 位拼接，插进来的
@@ -410,6 +411,9 @@ bool UdsServer::SendResult(const std::string& report, bool hasErrors, bool trunc
             }
             if (truncated) {
                 flags |= npucheck::ipc::FLAG_TRUNCATED;
+            }
+            if (!analysisComplete) {
+                flags |= npucheck::ipc::FLAG_ANALYSIS_INCOMPLETE;
             }
         }
         const auto begin = report.begin() + static_cast<std::ptrdiff_t>(offset);

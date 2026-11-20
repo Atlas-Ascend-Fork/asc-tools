@@ -670,6 +670,7 @@ struct ReceivedReport {
     std::atomic<bool> resultComplete{false};
     std::atomic<bool> resultHasErrors{false};
     std::atomic<bool> resultTruncated{false};
+    std::atomic<bool> analysisIncomplete{false};
     std::atomic<uint64_t> resultFrames{0};
     std::atomic<bool> protocolComplete;
 };
@@ -719,6 +720,7 @@ void ReceiveReport(
             // 不带任何结论，所以这里必须读末帧的 flags 而不是任意一帧的。
             received.resultHasErrors = (frame.flags & npucheck::ipc::FLAG_HAS_ERRORS) != 0;
             received.resultTruncated = (frame.flags & npucheck::ipc::FLAG_TRUNCATED) != 0;
+            received.analysisIncomplete = (frame.flags & npucheck::ipc::FLAG_ANALYSIS_INCOMPLETE) != 0;
             received.resultComplete = true;
             break;
         }
@@ -774,6 +776,9 @@ int FinishApplication(
         output.Report(received.result);
         if (received.resultTruncated.load()) {
             output.Sanitizer("report truncated: the diagnostic buffer reached its size limit", true);
+        }
+        if (received.analysisIncomplete.load()) {
+            output.Sanitizer("analysis incomplete: some device accesses could not be checked", true);
         }
     } else if (handshake) {
         // 报告缺失或截断：已经收到的分片一律丢弃。半份报告看上去和完整报告没有区别，

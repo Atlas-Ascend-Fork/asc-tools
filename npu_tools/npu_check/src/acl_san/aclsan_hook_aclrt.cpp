@@ -1127,25 +1127,24 @@ aclError aclrtGetFuncBySymbolHook(const void* symbol, aclrtFuncHandle* funcHandl
     return result;
 }
 
-aclError aclrtLaunchKernelWithHostArgsHook(
+template <typename Launch>
+aclError LaunchKernelWithHostArgs(
     aclrtFuncHandle funcHandle, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void* hostArgs,
-    size_t argsSize, aclrtPlaceHolderInfo* placeHolderArray, size_t placeHolderNum) noexcept
+    size_t argsSize, aclrtPlaceHolderInfo* placeHolderArray, size_t placeHolderNum, const char* apiName,
+    Launch&& launch, uint32_t parameterPrefixBytes = 0) noexcept
 {
     DeferredLaunch deferred;
-    const auto fail = [&deferred, &funcHandle, &stream, &numBlocks](aclError status) {
+    const auto fail = [&deferred, &funcHandle, &stream, &numBlocks, apiName](aclError status) {
         deferred.Release();
-        const AclsanLaunchData callback{
-            MakeCallbackCommonData("aclrtLaunchKernelWithHostArgs", status, sizeof(AclsanLaunchData)),
-            0,
-            funcHandle,
-            stream,
-            nullptr,
-            numBlocks};
+        const AclsanLaunchData callback{MakeCallbackCommonData(apiName, status, sizeof(AclsanLaunchData)),
+                                        0,
+                                        funcHandle,
+                                        stream,
+                                        nullptr,
+                                        numBlocks};
         aclsan::AclsanCallbackDispatcher::DispatchLaunch(callback);
         return status;
     };
-    const auto original = GetOriginalRuntimeFunction<aclrtLaunchKernelWithHostArgsFunc>(
-        ACL_RT_API_aclrtLaunchKernelWithHostArgs, "aclrtLaunchKernelWithHostArgs");
     uint32_t traceOffset = 0;
     if (placeHolderNum != 0) {
         if (placeHolderArray == nullptr || hostArgs == nullptr) {
@@ -1172,6 +1171,7 @@ aclError aclrtLaunchKernelWithHostArgsHook(
         return fail(traceStatus);
     }
     prepared.binaryLease = deferred.variant;
+    prepared.parameterPrefixBytes = parameterPrefixBytes;
 
     const auto materializeStatus = aclsan::MaterializeTraceHostInputs(prepared);
     if (materializeStatus != ACL_SUCCESS) {
@@ -1187,15 +1187,15 @@ aclError aclrtLaunchKernelWithHostArgsHook(
     const size_t launchPlaceholderCount = prepared.instrumented ? prepared.placeholders.size() : placeHolderNum;
     const uint64_t launchId = prepared.launchId;
     ASCTOOL_DEBUG(
-        "aclrtLaunchKernelWithHostArgs: launch=%llu function=%p blocks=%u originalArgs=%zu traceOffset=%u "
+        "%s: launch=%llu function=%p blocks=%u originalArgs=%zu traceOffset=%u "
         "originalPlaceholders=%zu materializedInputs=%zu launchArgs=%zu launchPlaceholders=%zu",
-        static_cast<unsigned long long>(launchId), funcHandle, numBlocks, argsSize, prepared.traceArgumentOffset,
-        placeHolderNum, prepared.hostInputs.size(), launchArgumentBytes, launchPlaceholderCount);
-    AclsanLaunchData beforeCallback = MakeLaunchData(
-        launchId, funcHandle, stream, "aclrtLaunchKernelWithHostArgs", numBlocks, ACL_SUCCESS,
-        "aclrtLaunchKernelWithHostArgs");
+        apiName, static_cast<unsigned long long>(launchId), funcHandle, numBlocks, argsSize,
+        prepared.traceArgumentOffset, placeHolderNum, prepared.hostInputs.size(), launchArgumentBytes,
+        launchPlaceholderCount);
+    AclsanLaunchData beforeCallback =
+        MakeLaunchData(launchId, funcHandle, stream, apiName, numBlocks, ACL_SUCCESS, apiName);
     aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(beforeCallback);
-    const aclError result = original(
+    const aclError result = launch(
         funcHandle, numBlocks, stream, config, launchArguments, launchArgumentBytes, launchPlaceholders,
         launchPlaceholderCount);
     deferred.Release();
@@ -1205,30 +1205,27 @@ aclError aclrtLaunchKernelWithHostArgsHook(
         aclsan::AcquireTraceLaunchResources(prepared, funcHandle, stream);
     }
     ASCTOOL_DEBUG(
-        "aclrtLaunchKernelWithHostArgs: function=%p blocks=%u stream=%p instrumented=%u result=%d", funcHandle,
-        numBlocks, stream, static_cast<unsigned>(prepared.instrumented), result);
+        "%s: function=%p blocks=%u stream=%p instrumented=%u result=%d", apiName, funcHandle, numBlocks, stream,
+        static_cast<unsigned>(prepared.instrumented), result);
     std::string functionName;
     (void)aclsan::GetTraceFunctionName(funcHandle, functionName);
     const AclsanLaunchData callbackData =
-        MakeLaunchData(launchId, funcHandle, stream, functionName, numBlocks, result, "aclrtLaunchKernelWithHostArgs");
+        MakeLaunchData(launchId, funcHandle, stream, functionName, numBlocks, result, apiName);
     aclsan::AclsanCallbackDispatcher::DispatchLaunch(callbackData);
     aclsan::CompleteTraceLaunch(std::move(prepared), funcHandle, stream, result);
     return result;
 }
 
-aclError aclrtLaunchKernelWithArgsArrayHook(
-    void* func, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void** args) noexcept
+template <typename Launch>
+aclError LaunchKernelWithArgsArray(
+    void* func, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void** args, const char* apiName,
+    Launch&& launch, uint32_t parameterPrefixBytes = 0) noexcept
 {
     DeferredLaunch deferred;
-    const auto fail = [&deferred, &func, &stream, &numBlocks](aclError status) {
+    const auto fail = [&deferred, &func, &stream, &numBlocks, apiName](aclError status) {
         deferred.Release();
         const AclsanLaunchData callback{
-            MakeCallbackCommonData("aclrtLaunchKernelWithArgsArray", status, sizeof(AclsanLaunchData)),
-            0,
-            func,
-            stream,
-            nullptr,
-            numBlocks};
+            MakeCallbackCommonData(apiName, status, sizeof(AclsanLaunchData)), 0, func, stream, nullptr, numBlocks};
         aclsan::AclsanCallbackDispatcher::DispatchLaunch(callback);
         return status;
     };
@@ -1244,6 +1241,7 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
         return fail(traceStatus);
     }
     prepared.binaryLease = deferred.variant;
+    prepared.parameterPrefixBytes = parameterPrefixBytes;
 
     aclError result = ACL_SUCCESS;
     try {
@@ -1252,18 +1250,14 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
             result =
                 BuildInstrumentedArgsArray(func, prepared.deviceBuffer, prepared.traceArgumentOffset, args, launchArgs);
             if (result != ACL_SUCCESS) {
-                ASCTOOL_ERROR(
-                    "BuildInstrumentedArgsArray failed in aclrtLaunchKernelWithArgsArrayHook: result=%d", result);
+                ASCTOOL_ERROR("BuildInstrumentedArgsArray failed in %s: result=%d", apiName, result);
             }
         }
         if (result == ACL_SUCCESS) {
-            AclsanLaunchData beforeCallback = MakeLaunchData(
-                prepared.launchId, func, stream, "aclrtLaunchKernelWithArgsArray", numBlocks, ACL_SUCCESS,
-                "aclrtLaunchKernelWithArgsArray");
+            AclsanLaunchData beforeCallback =
+                MakeLaunchData(prepared.launchId, func, stream, apiName, numBlocks, ACL_SUCCESS, apiName);
             aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(beforeCallback);
-            const auto original = GetOriginalRuntimeFunction<aclrtLaunchKernelWithArgsArrayFunc>(
-                ACL_RT_API_aclrtLaunchKernelWithArgsArray, "aclrtLaunchKernelWithArgsArray");
-            result = original(func, numBlocks, stream, config, prepared.instrumented ? launchArgs.data() : args);
+            result = launch(func, numBlocks, stream, config, prepared.instrumented ? launchArgs.data() : args);
         }
     } catch (const std::bad_alloc&) {
         result = ACL_ERROR_BAD_ALLOC;
@@ -1276,11 +1270,92 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
     }
     std::string functionName;
     (void)aclsan::GetTraceFunctionName(func, functionName);
-    const AclsanLaunchData callbackData = MakeLaunchData(
-        prepared.launchId, func, stream, functionName, numBlocks, result, "aclrtLaunchKernelWithArgsArray");
+    const AclsanLaunchData callbackData =
+        MakeLaunchData(prepared.launchId, func, stream, functionName, numBlocks, result, apiName);
     aclsan::AclsanCallbackDispatcher::DispatchLaunch(callbackData);
     aclsan::CompleteTraceLaunch(std::move(prepared), func, stream, result);
     return result;
+}
+
+aclError aclrtLaunchKernelWithHostArgsHook(
+    aclrtFuncHandle funcHandle, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void* hostArgs,
+    size_t argsSize, aclrtPlaceHolderInfo* placeHolderArray, size_t placeHolderNum) noexcept
+{
+    const auto original = GetOriginalRuntimeFunction<aclrtLaunchKernelWithHostArgsFunc>(
+        ACL_RT_API_aclrtLaunchKernelWithHostArgs, "aclrtLaunchKernelWithHostArgs");
+    return LaunchKernelWithHostArgs(
+        funcHandle, numBlocks, stream, config, hostArgs, argsSize, placeHolderArray, placeHolderNum,
+        "aclrtLaunchKernelWithHostArgs", original);
+}
+
+aclError aclrtLaunchKernelWithArgsArrayHook(
+    void* func, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void** args) noexcept
+{
+    const auto original = GetOriginalRuntimeFunction<aclrtLaunchKernelWithArgsArrayFunc>(
+        ACL_RT_API_aclrtLaunchKernelWithArgsArray, "aclrtLaunchKernelWithArgsArray");
+    return LaunchKernelWithArgsArray(func, numBlocks, stream, config, args, "aclrtLaunchKernelWithArgsArray", original);
+}
+
+// On dav-3510, pure SIMT entry code reads a 24-byte Runtime launch header
+// immediately before get_para_base(). This prefix is
+// internal only for the pure SIMT launch APIs; ordinary launches keep no prefix.
+constexpr uint32_t PURE_SIMT_PARAMETER_PREFIX_BYTES = 6U * sizeof(uint32_t);
+
+// Trace records carry a linear logical block id. Keep the original three-dimensional
+// launch geometry for Runtime and use its checked product for trace bounds/lifecycle.
+aclError GetSimtBlockCount(dim3 grid, void* function, aclrtStream stream, const char* apiName, uint32_t& count) noexcept
+{
+    count = 1;
+    for (const uint32_t dimension : {grid.x, grid.y, grid.z}) {
+        if (dimension == 0 || count > UINT32_MAX / dimension) {
+            count = 0;
+            const auto callback = MakeLaunchData(0, function, stream, {}, 0, ACL_ERROR_INVALID_PARAM, apiName);
+            aclsan::AclsanCallbackDispatcher::DispatchLaunch(callback);
+            return ACL_ERROR_INVALID_PARAM;
+        }
+        count *= dimension;
+    }
+    return ACL_SUCCESS;
+}
+
+aclError aclrtLaunchSIMTKernelWithHostArgsHook(
+    void* func, dim3 gridDim, dim3 blockDim, size_t dynUbufSize, aclrtStream stream, aclrtLaunchKernelCfg* config,
+    void* hostArgs, size_t argsSize, aclrtPlaceHolderInfo* placeHolderArray, size_t placeHolderNum) noexcept
+{
+    constexpr const char* apiName = "aclrtLaunchSIMTKernelWithHostArgs";
+    uint32_t numBlocks = 0;
+    ACLSAN_RETURN_IF_ACL_ERROR(GetSimtBlockCount(gridDim, func, stream, apiName, numBlocks), "Invalid SIMT grid");
+    const auto original = GetOriginalRuntimeFunction<aclrtLaunchSIMTKernelWithHostArgsFunc>(
+        ACL_RT_API_aclrtLaunchSIMTKernelWithHostArgs, apiName);
+    const auto launch = [original, gridDim, blockDim, dynUbufSize](
+                            void* function, uint32_t, aclrtStream launchStream, aclrtLaunchKernelCfg* cfg,
+                            void* arguments, size_t bytes, aclrtPlaceHolderInfo* placeholders,
+                            size_t placeholderCount) {
+        return original(
+            function, gridDim, blockDim, dynUbufSize, launchStream, cfg, arguments, bytes, placeholders,
+            placeholderCount);
+    };
+    return LaunchKernelWithHostArgs(
+        func, numBlocks, stream, config, hostArgs, argsSize, placeHolderArray, placeHolderNum, apiName, launch,
+        PURE_SIMT_PARAMETER_PREFIX_BYTES);
+}
+
+aclError aclrtLaunchSIMTKernelWithArgsArrayHook(
+    void* func, dim3 gridDim, dim3 blockDim, size_t dynUbufSize, aclrtStream stream, aclrtLaunchKernelCfg* config,
+    void** args) noexcept
+{
+    constexpr const char* apiName = "aclrtLaunchSIMTKernelWithArgsArray";
+    uint32_t numBlocks = 0;
+    ACLSAN_RETURN_IF_ACL_ERROR(GetSimtBlockCount(gridDim, func, stream, apiName, numBlocks), "Invalid SIMT grid");
+    const auto original = GetOriginalRuntimeFunction<aclrtLaunchSIMTKernelWithArgsArrayFunc>(
+        ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray, apiName);
+    const auto launch = [original, gridDim, blockDim, dynUbufSize](
+                            void* function, uint32_t, aclrtStream launchStream, aclrtLaunchKernelCfg* cfg,
+                            void** arguments) {
+        return original(function, gridDim, blockDim, dynUbufSize, launchStream, cfg, arguments);
+    };
+    return LaunchKernelWithArgsArray(
+        func, numBlocks, stream, config, args, apiName, launch, PURE_SIMT_PARAMETER_PREFIX_BYTES);
 }
 
 // DONE
@@ -1449,7 +1524,7 @@ constexpr RuntimeHookBinding MakeRuntimeHookBinding(const char* hookName) noexce
 }
 
 // aclrtApiId + acl_tool_inject提供的注册aclrt的函数 + 我们实现的hook函数
-const std::array<RuntimeHookBinding, 17> RUNTIME_HOOK_BINDINGS = {{
+const std::array<RuntimeHookBinding, 19> RUNTIME_HOOK_BINDINGS = {{
     MakeRuntimeHookBinding<ACL_RT_API_aclrtMemset, acltoolRegisterAclrtMemsetCallbacks, aclrtMemsetHook>("aclrtMemset"),
     MakeRuntimeHookBinding<ACL_RT_API_aclrtMemcpy, acltoolRegisterAclrtMemcpyCallbacks, aclrtMemcpyHook>("aclrtMemcpy"),
     MakeRuntimeHookBinding<
@@ -1464,6 +1539,12 @@ const std::array<RuntimeHookBinding, 17> RUNTIME_HOOK_BINDINGS = {{
     MakeRuntimeHookBinding<
         ACL_RT_API_aclrtLaunchKernelWithArgsArray, acltoolRegisterAclrtLaunchKernelWithArgsArrayCallbacks,
         aclrtLaunchKernelWithArgsArrayHook>("aclrtLaunchKernelWithArgsArray"),
+    MakeRuntimeHookBinding<
+        ACL_RT_API_aclrtLaunchSIMTKernelWithHostArgs, acltoolRegisterAclrtLaunchSIMTKernelWithHostArgsCallbacks,
+        aclrtLaunchSIMTKernelWithHostArgsHook>("aclrtLaunchSIMTKernelWithHostArgs"),
+    MakeRuntimeHookBinding<
+        ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray, acltoolRegisterAclrtLaunchSIMTKernelWithArgsArrayCallbacks,
+        aclrtLaunchSIMTKernelWithArgsArrayHook>("aclrtLaunchSIMTKernelWithArgsArray"),
     MakeRuntimeHookBinding<
         ACL_RT_API_aclrtBinaryLoadFromData, acltoolRegisterAclrtBinaryLoadFromDataCallbacks,
         aclrtBinaryLoadFromDataHook>("aclrtBinaryLoadFromData"),

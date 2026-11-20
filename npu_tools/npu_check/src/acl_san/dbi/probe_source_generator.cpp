@@ -9,7 +9,7 @@
  */
 
 #include "dbi/probe_source_generator.h"
-#include "dbi/ctrlbin/ctrlbin_bindings.h"
+#include "dbi/simt_instruction_widths.h"
 
 #include <algorithm>
 #include <array>
@@ -39,9 +39,25 @@ struct ProbeDefinition {
     std::string_view category;
     std::string_view pipeline;
     std::string_view recordArguments;
+    bool simt = false;
+    uint32_t simtElementBytes = 0;
 };
 
-const std::array<ProbeDefinition, 198> DEFINITIONS{
+constexpr ProbeDefinition MakeSimtMemoryProbe(InstrType instruction, std::string_view symbol)
+{
+    return {
+        static_cast<uint16_t>(instruction),
+        ProbeGroup::Simt,
+        symbol,
+        "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t base, int64_t offset",
+        "MemoryAccess",
+        "PIPE_V",
+        "base, offset",
+        true,
+        SimtInstructionElementBytes(static_cast<uint32_t>(instruction))};
+}
+
+constexpr std::array<ProbeDefinition, 243> DEFINITIONS{
     {
         {static_cast<uint16_t>(InstrType::VF), ProbeGroup::Vector, "__npu_check_probe_vf",
          "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t entryPc, uint64_t instructionCount",
@@ -841,6 +857,54 @@ const std::array<ProbeDefinition, 198> DEFINITIONS{
         {static_cast<uint16_t>(InstrType::BEFORE_KERNEL_END), ProbeGroup::Boundary,
          "__npu_check_probe_before_kernel_end", R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid)PARAM",
          "Synchronization", "PIPE_S", R"ARGS(0UL, 0UL, 0UL, 0UL, 0UL)ARGS"},
+        MakeSimtMemoryProbe(InstrType::SIMT_LDG_U8, "__npu_check_probe_simt_ldg_u8"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LDG_S8, "__npu_check_probe_simt_ldg_s8"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LDG_U16, "__npu_check_probe_simt_ldg_u16"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LDG_S16, "__npu_check_probe_simt_ldg_s16"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LDG_B32, "__npu_check_probe_simt_ldg_b32"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LDG_B64, "__npu_check_probe_simt_ldg_b64"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LDG_B128, "__npu_check_probe_simt_ldg_b128"),
+        MakeSimtMemoryProbe(InstrType::SIMT_STG_B8, "__npu_check_probe_simt_stg_b8"),
+        MakeSimtMemoryProbe(InstrType::SIMT_STG_B16, "__npu_check_probe_simt_stg_b16"),
+        MakeSimtMemoryProbe(InstrType::SIMT_STG_B32, "__npu_check_probe_simt_stg_b32"),
+        MakeSimtMemoryProbe(InstrType::SIMT_STG_B64, "__npu_check_probe_simt_stg_b64"),
+        MakeSimtMemoryProbe(InstrType::SIMT_STG_B128, "__npu_check_probe_simt_stg_b128"),
+        {static_cast<uint16_t>(InstrType::SIMT_CALL), ProbeGroup::Simt, "__npu_check_probe_simt_call",
+         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid", "RegisterState", "PIPE_S", "0"},
+        {static_cast<uint16_t>(InstrType::SIMT_END), ProbeGroup::Simt, "__npu_check_probe_simt_end",
+         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid", "MemoryAccess", "PIPE_V", "0UL, 0LL, 0U", true},
+        // Generic GM memory definitions use the same SIMT address contract as LDG/STG.
+        MakeSimtMemoryProbe(InstrType::SIMT_LD_U8, "__npu_check_probe_simt_ld_u8"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LD_S8, "__npu_check_probe_simt_ld_s8"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LD_U16, "__npu_check_probe_simt_ld_u16"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LD_S16, "__npu_check_probe_simt_ld_s16"),
+        MakeSimtMemoryProbe(InstrType::SIMT_LD_B32, "__npu_check_probe_simt_ld_b32"),
+        MakeSimtMemoryProbe(InstrType::SIMT_ST_B8, "__npu_check_probe_simt_st_b8"),
+        MakeSimtMemoryProbe(InstrType::SIMT_ST_B16, "__npu_check_probe_simt_st_b16"),
+        MakeSimtMemoryProbe(InstrType::SIMT_ST_B32, "__npu_check_probe_simt_st_b32"),
+        MakeSimtMemoryProbe(InstrType::RED_G_BF16, "__npu_check_probe_red_g_bf16"),
+        MakeSimtMemoryProbe(InstrType::RED_G_U32, "__npu_check_probe_red_g_u32"),
+        MakeSimtMemoryProbe(InstrType::RED_G_F16X2, "__npu_check_probe_red_g_f16x2"),
+        MakeSimtMemoryProbe(InstrType::RED_G_S32, "__npu_check_probe_red_g_s32"),
+        MakeSimtMemoryProbe(InstrType::RED_G_FP32, "__npu_check_probe_red_g_fp32"),
+        MakeSimtMemoryProbe(InstrType::RED_G_BF16X2, "__npu_check_probe_red_g_bf16x2"),
+        MakeSimtMemoryProbe(InstrType::RED_G_FP16, "__npu_check_probe_red_g_fp16"),
+        MakeSimtMemoryProbe(InstrType::ATOM_EXCH_G_U64, "__npu_check_probe_atom_exch_g_u64"),
+        MakeSimtMemoryProbe(InstrType::ATOM_MIN_G_U64, "__npu_check_probe_atom_min_g_u64"),
+        MakeSimtMemoryProbe(InstrType::ATOM_ADD_G_U64, "__npu_check_probe_atom_add_g_u64"),
+        MakeSimtMemoryProbe(InstrType::ATOM_CAS_G_U64, "__npu_check_probe_atom_cas_g_u64"),
+        MakeSimtMemoryProbe(InstrType::ATOM_MAX_G_U64, "__npu_check_probe_atom_max_g_u64"),
+        MakeSimtMemoryProbe(InstrType::ATOM_ADD_G_S64, "__npu_check_probe_atom_add_g_s64"),
+        MakeSimtMemoryProbe(InstrType::ATOM_MIN_G_S64, "__npu_check_probe_atom_min_g_s64"),
+        MakeSimtMemoryProbe(InstrType::ATOM_MAX_G_S64, "__npu_check_probe_atom_max_g_s64"),
+        MakeSimtMemoryProbe(InstrType::ATOM_EXCH_G_U32, "__npu_check_probe_atom_exch_g_u32"),
+        MakeSimtMemoryProbe(InstrType::ATOM_MIN_G_U32, "__npu_check_probe_atom_min_g_u32"),
+        MakeSimtMemoryProbe(InstrType::ATOM_CAS_G_U32, "__npu_check_probe_atom_cas_g_u32"),
+        MakeSimtMemoryProbe(InstrType::ATOM_MAX_G_U32, "__npu_check_probe_atom_max_g_u32"),
+        MakeSimtMemoryProbe(InstrType::ATOM_ADD_G_U32, "__npu_check_probe_atom_add_g_u32"),
+        MakeSimtMemoryProbe(InstrType::ATOM_ADD_G_S32, "__npu_check_probe_atom_add_g_s32"),
+        MakeSimtMemoryProbe(InstrType::ATOM_MIN_G_S32, "__npu_check_probe_atom_min_g_s32"),
+        MakeSimtMemoryProbe(InstrType::ATOM_MAX_G_S32, "__npu_check_probe_atom_max_g_s32"),
     }};
 
 uint64_t HashText(uint64_t hash, std::string_view text)
@@ -884,7 +948,8 @@ bool IsKnownGroup(ProbeGroup group)
 {
     return group == ProbeGroup::Mte1 || group == ProbeGroup::Mte2 || group == ProbeGroup::Mte3 ||
            group == ProbeGroup::Fixpipe || group == ProbeGroup::Scalar || group == ProbeGroup::Sync ||
-           group == ProbeGroup::Matrix || group == ProbeGroup::Vector || group == ProbeGroup::Boundary;
+           group == ProbeGroup::Matrix || group == ProbeGroup::Vector || group == ProbeGroup::Boundary ||
+           group == ProbeGroup::Simt;
 }
 
 std::vector<const ProbeDefinition*> DefinitionsForGroup(ProbeGroup group)
@@ -926,24 +991,45 @@ GeneratedProbeSource GenerateProbeSource(std::string_view arch, ProbeGroup group
 
     std::ostringstream source;
     std::ostringstream sourceMap;
-    source << "// Generated by " << GENERATOR_SCHEMA << ". Do not edit.\n"
-           << "#include \"trace_record.h\"\n\n"
+    source << "// Generated by " << GENERATOR_SCHEMA << ". Do not edit.\n";
+    if (group == ProbeGroup::Simt) {
+        source << "#define NPU_CHECK_SIMT_PROBE 1\n";
+    }
+    source << "#include \"trace_record.h\"\n\n"
            << "#if (!defined(NPU_CHECK_PROBE_CUBE_ONLY) || defined(__DAV_CUBE__)) && \\\n"
            << "    (!defined(NPU_CHECK_PROBE_VECTOR_ONLY) || defined(__DAV_VEC__))\n\n";
+    if (group == ProbeGroup::Simt) {
+        source << "#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510 && defined(__DAV_VEC__)\n";
+    }
     sourceMap << "arch=" << arch << " group=" << ProbeGroupName(group) << '\n';
     for (const ProbeDefinition* definition : definitions) {
         source << "// probe-definition: " << std::setfill('0') << std::setw(PROBE_ID_DECIMAL_DIGITS)
                << definition->apiId << ' ' << definition->symbol << "\n"
-               << "extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void " << definition->symbol
-               << "(\n    " << definition->parameters << ")\n"
-               << "{\n"
-               << "    aclsan::WriteTraceRecord(\n"
-               << "        memInfo, pc, bid, aclsan::DeviceInstructionCategory::" << definition->category
-               << ", static_cast<uint16_t>(" << definition->pipeline << "), " << definition->apiId << ",\n"
-               << "        " << definition->recordArguments << ");\n"
-               << "}\n\n";
+               << "extern __attribute__((noinline)) __attribute__((weak)) "
+               << (definition->simt ? "__simt_callee__ " : "") << "__aicore__ void " << definition->symbol << "(\n    "
+               << definition->parameters << ")\n"
+               << "{\n";
+        if (definition->apiId == static_cast<uint16_t>(InstrType::SIMT_CALL)) {
+            source << "    (void)bid;\n    aclsan::WriteSimtCallContext(memInfo, pc);\n";
+        } else if (definition->simt) {
+            source << "    aclsan::WriteSimtTraceRecord(memInfo, pc, bid, " << definition->apiId << ", "
+                   << definition->recordArguments;
+            if (definition->simtElementBytes != 0U) {
+                source << ", " << definition->simtElementBytes << 'U';
+            }
+            source << ");\n";
+        } else {
+            source << "    aclsan::WriteTraceRecord(\n"
+                   << "        memInfo, pc, bid, aclsan::DeviceInstructionCategory::" << definition->category
+                   << ", static_cast<uint16_t>(" << definition->pipeline << "), " << definition->apiId << ",\n"
+                   << "        " << definition->recordArguments << ");\n";
+        }
+        source << "}\n\n";
         sourceMap << "apiId=" << definition->apiId << " symbol=" << definition->symbol << '\n';
         generated.symbols.emplace_back(definition->symbol);
+    }
+    if (group == ProbeGroup::Simt) {
+        source << "#endif\n";
     }
     source << "#endif\n";
     generated.source = source.str();
@@ -960,6 +1046,10 @@ std::string ProbeGeneratorIdentity()
         identity.append("\n").append(std::to_string(definition.apiId)).append(":").append(definition.symbol);
         identity.append(":").append(definition.parameters).append(":").append(definition.category);
         identity.append(":").append(definition.pipeline).append(":").append(definition.recordArguments);
+        identity.append(":").append(definition.simt ? "simt" : "regular");
+        if (definition.simtElementBytes != 0U) {
+            identity.append(":").append(std::to_string(definition.simtElementBytes));
+        }
     }
     return HexIdentity(identity);
 }

@@ -33,6 +33,9 @@ uint32_t ProbeGroupMaskForCallback(AclsanCallbackDomain domain, AclsanCallbackId
     if (id == ACLSAN_CBID_DEVICE_VF) {
         return PROBE_GROUP_VECTOR | PROBE_GROUP_SCALAR;
     }
+    if (id == ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS) {
+        return PROBE_GROUP_SIMT;
+    }
     if (id == ACLSAN_CBID_DEVICE_STATE) {
         return PROBE_GROUP_MTE1 | PROBE_GROUP_MTE2 | PROBE_GROUP_MTE3 | PROBE_GROUP_FIXPIPE | PROBE_GROUP_SCALAR |
                PROBE_GROUP_VECTOR;

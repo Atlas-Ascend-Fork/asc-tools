@@ -8,11 +8,14 @@
 
 #include "acl_san/aclsan_api.h"
 #include "checker/memcheck.h"
+#include "simt_memory_record.h"
+#include "securec.h"
 
 #include <gtest/gtest.h>
 
 #include <array>
 #include <cstdint>
+#include <cstddef>
 #include <limits>
 #include <string>
 
@@ -90,6 +93,206 @@ AclsanDeviceMemoryAccessData ScalarAccess(uint32_t instrId, uint64_t address, ui
     data.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
     data.layout.range.bytes = bytes;
     return data;
+}
+
+TEST(MemcheckTest, ManagedSimtUsesSharedLifetimeAndWaitsForOperatorCompletion)
+{
+    auto analysis = std::make_shared<npucheck::MemoryAnalysis>(true);
+    Memcheck checker{analysis};
+    CheckerReportList reports;
+    const auto send = [&](AclsanCallbackDomain domain, AclsanCallbackId id, const void* data) {
+        ASSERT_TRUE(analysis->BeginCallback(domain, id, data));
+        ASSERT_TRUE(checker.OnCallback(domain, id, data, reports));
+        analysis->EndCallback();
+    };
+    auto allocation = AllocationEvent(0x1000, 16, 1, 2);
+    send(ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC, &allocation);
+    AclsanLaunchData launch{};
+    InitCommon(launch);
+    launch.launchId = 42;
+    launch.stream = reinterpret_cast<void*>(0x7);
+    launch.numBlocks = 4;
+    send(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch);
+    auto access = Access(DeviceSourceKind::MTE2, 0x1008, 16);
+    access.header.deviceId = 2;
+    access.header.launchId = 42;
+    access.header.instrExecId = 1;
+    access.simt.validFlags = ACLSAN_SIMT_CONTEXT_THREAD;
+    access.simt.threadX = 7;
+    send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &access);
+    EXPECT_TRUE(analysis->Get(42).memory.empty());
+    EXPECT_EQ(analysis->Get(42).simtMemory.size(), 1U);
+    AclsanSynchronizeData sync{};
+    InitCommon(sync);
+    send(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync);
+    EXPECT_TRUE(reports.empty());
+    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 1U);
+    sync.stream = launch.stream;
+    sync.common.correlationId = launch.launchId;
+    send(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync);
+    EXPECT_TRUE(reports.empty());
+    AclsanOperatorExecutionData completion{};
+    InitCommon(completion, launch.launchId);
+    completion.launchId = launch.launchId;
+    completion.stream = launch.stream;
+    completion.deviceId = access.header.deviceId;
+    completion.numBlocks = launch.numBlocks;
+    send(ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion);
+    ASSERT_EQ(reports.size(), 1U);
+    const auto& report = std::get<NpuCheckMemcheckReport>(reports[0]);
+    EXPECT_EQ(report.allocation.allocId, 1U);
+    EXPECT_EQ(report.common.exec.threadX, 7U);
+    EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+}
+
+TEST(MemcheckTest, SimtGmAccessReportsLaneOutOfBounds)
+{
+    Memcheck checker;
+    checker.OnAllocation(AllocationEvent(0x1000, 0x10, 1));
+    SimtMemoryAccessRecord access{};
+    access.base = 0x1000;
+    access.elementBytes = 0x10;
+    access.accessBytes = 1;
+    access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+    checker.QueueSimtMemoryAccess(access);
+    EXPECT_TRUE(checker.OnSynchronization().empty());
+    access.offset = 1;
+    checker.QueueSimtMemoryAccess(access);
+    const auto reports = checker.OnSynchronization();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].access.address, 0x1010U);
+    EXPECT_EQ(reports[0].access.accessMode, NpuCheckReportAccessMode::WRITE);
+}
+
+TEST(MemcheckTest, SimtLossKeepsReliableReportsAndMarksAnalysisIncomplete)
+{
+    Memcheck checker;
+    CheckerReportList reports;
+    auto access = Access(DeviceSourceKind::MTE2, 0x1010, 16);
+    access.simt.validFlags =
+        ACLSAN_SIMT_CONTEXT_THREAD | ACLSAN_SIMT_CONTEXT_INVOCATION | ACLSAN_SIMT_CONTEXT_BLOCK_DIM;
+    access.simt.invocationId = 9;
+    access.simt.threadX = 7;
+    access.simt.blockDimX = 8;
+    access.simt.blockDimY = 1;
+    access.simt.blockDimZ = 1;
+    checker.OnAllocation(AllocationEvent(0x1000, 16, 1));
+    EXPECT_TRUE(checker.OnCallback(
+        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &access, reports));
+    access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR;
+    EXPECT_TRUE(checker.OnCallback(
+        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &access, reports));
+    const auto completed = checker.OnSynchronization();
+    ASSERT_EQ(completed.size(), 1U);
+    EXPECT_EQ(completed[0].common.exec.threadX, 7U);
+    EXPECT_EQ(completed[0].common.exec.invocationId, 9U);
+    EXPECT_FALSE(checker.AnalysisComplete());
+    std::string text;
+    ASSERT_EQ(
+        RenderNpuCheckReportRecord(NpuCheckReportRecord::From(completed[0]), {}, &text), ReportRenderStatus::SUCCESS);
+    EXPECT_NE(text.find("thread (7,0,0)"), std::string::npos);
+}
+
+TEST(MemcheckTest, SimtAddressRecoveryFailureIsIncomplete)
+{
+    Memcheck checker;
+    SimtMemoryAccessRecord access{};
+    access.base = 0;
+    access.offset = -1;
+    access.elementBytes = 8;
+    access.accessBytes = 8;
+    access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+    checker.QueueSimtMemoryAccess(access);
+    EXPECT_TRUE(checker.OnSynchronization().empty());
+    EXPECT_FALSE(checker.AnalysisComplete());
+}
+
+TEST(MemcheckTest, SimtLaunchSnapshotSurvivesAddressReuse)
+{
+    Memcheck checker;
+    CheckerReportList reports;
+    const auto original = AllocationEvent(0x1000, 16, 1);
+    checker.OnAllocation(original);
+    AclsanLaunchData launch{};
+    InitCommon(launch);
+    launch.launchId = 42;
+    launch.stream = reinterpret_cast<void*>(0x7);
+    checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports);
+    AclsanSynchronizeData sync{};
+    InitCommon(sync, 0, 1);
+    sync.stream = launch.stream;
+    checker.OnCallback(ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &sync, reports);
+    EXPECT_EQ(checker.Stats().failedSynchronizations, 1U);
+    checker.OnFree(original);
+    checker.OnAllocation(AllocationEvent(0x1000, 128, 2));
+    auto access = Access(DeviceSourceKind::MTE2, 0x1008, 16);
+    access.header.launchId = launch.launchId;
+    access.simt.validFlags = ACLSAN_SIMT_CONTEXT_THREAD;
+    checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &access, reports);
+    const auto completed = checker.OnSynchronization();
+    ASSERT_EQ(completed.size(), 1U);
+    EXPECT_EQ(completed[0].allocation.allocId, 1U);
+    EXPECT_EQ(completed[0].allocation.bytes, 16U);
+    EXPECT_FALSE(checker.AnalysisComplete()); // Free ordering relative to device access is unknown.
+}
+
+TEST(MemcheckTest, LegacyMemoryCallbackHasNoSimtTail)
+{
+    auto access = Access(DeviceSourceKind::MTE2, 0x1000, 4);
+    access.header.size = offsetof(AclsanDeviceMemoryAccessData, simt);
+    alignas(AclsanDeviceMemoryAccessData) std::array<uint8_t, offsetof(AclsanDeviceMemoryAccessData, simt)> prefix{};
+    ASSERT_EQ(memcpy_s(prefix.data(), prefix.size(), &access, prefix.size()), EOK);
+    Memcheck checker;
+    CheckerReportList reports;
+    checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, prefix.data(), reports);
+    const auto completed = checker.OnSynchronization();
+    ASSERT_EQ(completed.size(), 1U);
+    EXPECT_EQ(completed[0].common.exec.simtContextFlags, 0U);
+    EXPECT_TRUE(checker.AnalysisComplete());
+}
+
+TEST(MemcheckTest, SimtRejectsMissingLaunchSnapshotAndShortCallback)
+{
+    Memcheck checker;
+    CheckerReportList reports;
+    auto access = Access(DeviceSourceKind::MTE2, 0x1000, 4);
+    access.header.launchId = 42;
+    access.simt.validFlags = ACLSAN_SIMT_CONTEXT_THREAD;
+    checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &access, reports);
+    EXPECT_TRUE(checker.OnSynchronization().empty());
+    EXPECT_FALSE(checker.AnalysisComplete());
+    access.header.size = sizeof(AclsanDeviceEventHeader);
+    checker.OnCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &access, reports);
+    EXPECT_EQ(checker.Stats().droppedDeviceOperations, 2U);
+}
+
+TEST(MemcheckTest, SimtChecksWideAccessAcrossAdjacentAllocationsAndFreedRange)
+{
+    for (const uint32_t width : {8U, 16U}) {
+        Memcheck checker;
+        checker.OnAllocation(AllocationEvent(0x1000, 16, 1));
+        checker.OnAllocation(AllocationEvent(0x1010, 16, 2));
+        SimtMemoryAccessRecord access{};
+        access.base = 0x100c;
+        access.elementBytes = width;
+        access.accessBytes = width;
+        access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+        access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
+        checker.QueueSimtMemoryAccess(access);
+        const auto crossing = checker.OnSynchronization();
+        ASSERT_EQ(crossing.size(), 1U);
+        EXPECT_EQ(crossing[0].common.pattern, NpuCheckReportPattern::MEMCHECK_INVALID_ACCESS);
+        checker.OnAllocation(AllocationEvent(0x2000, 32, 3));
+        checker.OnFree(AllocationEvent(0x2000, 32, 3));
+        access.base = 0x2008;
+        checker.QueueSimtMemoryAccess(access);
+        const auto freed = checker.OnSynchronization();
+        ASSERT_EQ(freed.size(), 1U);
+        EXPECT_EQ(freed[0].common.pattern, NpuCheckReportPattern::MEMCHECK_USE_AFTER_FREE);
+        EXPECT_TRUE(checker.AnalysisComplete());
+    }
 }
 
 TEST(MemcheckTest, CubeLocalBoundsUseDav3510CapacityAndPreserveContext)

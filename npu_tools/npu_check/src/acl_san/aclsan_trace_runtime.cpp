@@ -9,6 +9,8 @@
  */
 
 #include "aclsan_trace_runtime.h"
+#include "aclsan_simt_trace.h"
+#include "aclsan_active_probe_plan.h"
 #include "securec.h"
 #include "aclsan_vf.h"
 
@@ -100,6 +102,9 @@ struct PendingTrace {
     std::vector<aclrtPlaceHolderInfo> placeholders;
     std::vector<PreparedTraceLaunch::HostInput> hostInputs;
     std::unique_ptr<dav3510::Dav3510RegisterStateManager> registerState;
+    uint32_t parameterPrefixBytes = 0;
+    bool simtCollected = false;
+    size_t simtSegmentBytes = 0;
     uint64_t parameterBytes = 0;
     std::vector<InternalMemoryRange> readOnlyBinaryRanges;
     std::shared_ptr<NpubitUbHandle> hibitHandle;
@@ -1316,12 +1321,103 @@ aclError OperatorExecutionResult(bool failed, bool partial) noexcept
     return failed ? ACL_ERROR_FAILURE : ACL_SUCCESS;
 }
 
+bool IsInternalSimtAccess(const PendingTrace& pending, const AclsanDeviceMemoryAccessData& data) noexcept
+{
+    const uint64_t begin = data.address;
+    const uint64_t bytes = data.layout.range.bytes;
+    const auto contains = [begin, bytes](uint64_t start, uint64_t size) {
+        return begin >= start && begin - start <= size && bytes <= size - (begin - start);
+    };
+    for (const auto& range : pending.hostInputs) {
+        if (contains(reinterpret_cast<uintptr_t>(range.address), range.bytes)) {
+            return true;
+        }
+    }
+    if (data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
+        for (const auto& range : pending.readOnlyBinaryRanges) {
+            if (contains(reinterpret_cast<uintptr_t>(range.address), range.bytes)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Called under collectionMutex after actual completion and before the operator completion callback.
+bool CollectSimtTrace(PendingTrace& pending)
+{
+    std::vector<uint8_t> buffer(pending.simtSegmentBytes);
+    {
+        std::lock_guard<std::mutex> lock(pending.mutex);
+        size_t simdBytes = 0;
+        if (!BindTraceContext(pending) || !TraceBufferBytes(pending.physicalCoreSlotCount, &simdBytes)) {
+            return false;
+        }
+        const auto copy = GetOriginalRuntimeFunction<aclrtMemcpyFunc>(ACL_RT_API_aclrtMemcpy, "aclrtMemcpy");
+        if (copy == nullptr || copy(
+                                   buffer.data(), buffer.size(), DeviceBytes(pending, SimtTraceOffset(simdBytes)),
+                                   buffer.size(), ACL_MEMCPY_DEVICE_TO_HOST) != ACL_SUCCESS) {
+            return false;
+        }
+    }
+    auto parsed = ParseSimtTraceSegment(
+        buffer.data(), buffer.size(), pending.physicalCoreSlotCount, pending.blockCount, pending.launchId,
+        pending.deviceId, true);
+    if (!parsed.ok) {
+        ASCTOOL_ERROR("acl_san SIMT trace: %s", parsed.error.c_str());
+        return false;
+    }
+    for (const auto& record : parsed.records) {
+        const auto access = TranslateSimtTraceRecord(record);
+        if (!access) {
+            ++parsed.droppedRecords;
+        } else if (!IsInternalSimtAccess(pending, *access)) {
+            AclsanCallbackDispatcher::DispatchSimtMemoryAccess(*access);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(pending.mutex);
+        pending.delivered += parsed.records.size();
+        pending.dropped += parsed.droppedRecords;
+        pending.simtCollected = true;
+    }
+    if (parsed.droppedRecords != 0U) {
+        TraceIntegrityMark(pending.launchId, parsed.droppedRecords, false);
+    }
+    return true;
+}
+
 // Publish only after a recorded runtime event completes and a later control
 // snapshot has been fully copied and dispatched. Stream synchronization remains
 // the fallback if the event API is unavailable or cannot confirm completion.
 void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool partial = false) noexcept
 {
     TraceDispatchScope callbackScope;
+    bool collectSimt = false;
+    {
+        std::lock_guard<std::mutex> lock(pending.mutex);
+        if (pending.abandoned || pending.operatorExecutionReported) {
+            return;
+        }
+        const bool earlyCompletion =
+            CanPublishBeforeFinalization(pending, TraceFullyCopied(pending), AllTraceRecordsDispatched(pending));
+        collectSimt = pending.simtSegmentBytes != 0U && !pending.simtCollected && !pending.resetRetired && !partial &&
+                      (finalizing || earlyCompletion);
+    }
+    if (collectSimt) {
+        bool copied = false;
+        try {
+            copied = CollectSimtTrace(pending);
+        } catch (...) {
+            ASCTOOL_ERROR(
+                "acl_san SIMT trace: collection failed for launch=%llu",
+                static_cast<unsigned long long>(pending.launchId));
+        }
+        if (!copied) {
+            std::lock_guard<std::mutex> lock(pending.mutex);
+            FailTrace(pending, "cannot collect SIMT trace segment");
+        }
+    }
     AclsanOperatorExecutionData data{};
     uint32_t aicEnds = 0U;
     uint32_t aivEnds = 0U;
@@ -1342,8 +1438,10 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         if (requiresCompletionEvent && !pending.completionEvent.Release(CompletionEventApi(), false)) {
             FailTrace(pending, "cannot destroy completion event");
         }
-        const bool completeBoundary = pending.kernelEndTracker.Complete() && pending.dropped == 0U && !pending.failed &&
-                                      fullyCopied && dispatchedAll;
+        // Pure SIMT entry points can establish completion at stream sync without a scalar boundary marker.
+        const bool pureSimt = pending.parameterPrefixBytes != 0U && pending.simtCollected;
+        const bool completeBoundary = (pending.kernelEndTracker.Complete() || pureSimt) && pending.dropped == 0U &&
+                                      !pending.failed && fullyCopied && dispatchedAll;
         pending.operatorExecutionReported = true;
         data.common.version = ACLSAN_API_VERSION;
         data.common.size = static_cast<uint32_t>(sizeof(AclsanOperatorExecutionData));
@@ -1356,7 +1454,8 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         data.deviceId = pending.deviceId;
         data.numBlocks = pending.blockCount;
         data.flags = 0U;
-        if (partial || pending.failed || (!emptyTrace && !completeBoundary)) {
+        if (partial || pending.failed || (pending.simtSegmentBytes != 0U && !pending.simtCollected) ||
+            (!emptyTrace && !completeBoundary)) {
             data.flags |= ACLSAN_OPERATOR_EXECUTION_FLAG_INCOMPLETE;
         }
         if (pending.dropped != 0U) {
@@ -1464,7 +1563,8 @@ bool PollTrace(PendingTrace& pending)
             ACL_MEMCPY_DEVICE_TO_HOST)) {
         return false;
     }
-    if (!ValidateTraceSegmentHeader(pending.segment, pending.blockCount, pending.launchId)) {
+    if (!ValidateTraceSegmentHeader(pending.segment, pending.blockCount, pending.launchId) ||
+        pending.segment.simtSegmentBytes != pending.simtSegmentBytes) {
         FailTrace(pending, "invalid segment header");
         return false;
     }
@@ -2196,10 +2296,17 @@ aclError PrepareTraceLaunch(
         std::string error;
         // StrictModeEnabled is currently always true. Fail closed before enabling a non-strict path.
         if (!InitializeTraceBuffer(
-                prepared.hostBuffer, prepared.physicalCoreSlotCount, blockCount, prepared.launchId, error)) {
+                prepared.hostBuffer, prepared.physicalCoreSlotCount, blockCount, prepared.launchId, error,
+                (SnapshotActiveProbePlan() & PROBE_GROUP_SIMT) != 0)) {
             ASCTOOL_ERROR("acl_san trace: cannot initialize launch buffer: %s", error.c_str());
             StoreHiddenPointer(prepared, argumentMode);
             return StrictModeEnabled() ? ACL_ERROR_FAILURE : ACL_SUCCESS;
+        }
+        AclsanTraceBufferHeader segment{};
+        if (prepared.hostBuffer.size() < sizeof(segment) ||
+            memcpy_s(&segment, sizeof(segment), prepared.hostBuffer.data(), sizeof(segment)) != EOK) {
+            ASCTOOL_ERROR("acl_san trace: cannot copy launch trace header");
+            return ACL_ERROR_FAILURE;
         }
         const auto mallocFunction = GetOriginalRuntimeFunction<aclrtMallocFunc>(ACL_RT_API_aclrtMalloc, "aclrtMalloc");
         const auto memcpyFunction = GetOriginalRuntimeFunction<aclrtMemcpyFunc>(ACL_RT_API_aclrtMemcpy, "aclrtMemcpy");
@@ -2228,6 +2335,8 @@ aclError PrepareTraceLaunch(
         pending->context = prepared.context;
         pending->deviceBuffer = prepared.deviceBuffer;
         pending->blockCount = prepared.blockCount;
+        pending->segment = segment;
+        pending->simtSegmentBytes = pending->segment.simtSegmentBytes;
         pending->physicalCoreSlotCount = prepared.physicalCoreSlotCount;
         pending->deviceId = prepared.deviceId;
         pending->decoder = prepared.decoder;
@@ -2413,6 +2522,7 @@ void CompleteTraceLaunch(
         pending->parameterBytes = prepared.arguments.empty() ?
                                       static_cast<uint64_t>(prepared.traceArgumentOffset) + sizeof(void*) :
                                       prepared.arguments.size();
+        pending->parameterPrefixBytes = prepared.parameterPrefixBytes;
         pending->binaryLease = std::move(prepared.binaryLease);
         pending->arguments = std::move(prepared.arguments);
         pending->placeholders = std::move(prepared.placeholders);
@@ -2504,6 +2614,16 @@ bool DispatchTraceBatch(PendingTrace& pending, const TraceBatch& batch)
         parsed.records.end());
     for (auto& record : parsed.records) {
         record.parameterBytes = pending.parameterBytes;
+        if (record.record.parameterBase != 0U) {
+            if (record.record.parameterBase < pending.parameterPrefixBytes ||
+                record.parameterBytes > UINT64_MAX - pending.parameterPrefixBytes) {
+                std::lock_guard<std::mutex> lock(pending.mutex);
+                FailTrace(pending, "invalid launch parameter prefix");
+                return false;
+            }
+            record.record.parameterBase -= pending.parameterPrefixBytes;
+            record.parameterBytes += pending.parameterPrefixBytes;
+        }
     }
     if (pending.decoder != nullptr) {
         DispatchTraceRecords(

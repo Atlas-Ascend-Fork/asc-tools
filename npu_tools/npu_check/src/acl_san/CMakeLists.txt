@@ -201,6 +201,7 @@ add_library(acl_san SHARED
   aclsan_memory_cbdata.cpp
   aclsan_register_dependency.cpp
   aclsan_trace_buffer.cpp
+  aclsan_simt_trace.cpp
   aclsan_trace_runtime.cpp
   aclsan_vf.cpp
   aclsan_api.cpp

@@ -302,7 +302,7 @@ void ToolManager::Finalize()
     } else {
         const std::string reportText = report_.Take();
         std::string sendError;
-        if (!server_.SendResult(reportText, hasErrors, truncated, sendError)) {
+        if (!server_.SendResult(reportText, hasErrors, truncated, sendError, analysisComplete)) {
             ASCTOOL_ERROR("failed to deliver the session report: %s", sendError.c_str());
         }
     }

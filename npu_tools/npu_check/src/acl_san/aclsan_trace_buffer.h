@@ -39,9 +39,32 @@ struct TraceBufferParseResult {
     std::string error;
 };
 
+struct ParsedSimtTraceRecord {
+    AclsanSimtRawTraceRecord record{};
+    uint64_t instrExecId = 0;
+    uint64_t launchId = 0;
+    uint32_t phyCoreId = 0;
+    uint32_t deviceId = 0;
+};
+
+struct SimtTraceParseResult {
+    bool ok = false;
+    uint64_t droppedRecords = 0;
+    std::vector<ParsedSimtTraceRecord> records;
+    std::string error;
+};
+
 bool InitializeTraceBuffer(
     std::vector<uint8_t>& buffer, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,
-    std::string& error);
+    std::string& error, bool enableSimt = false);
+
+SimtTraceParseResult ParseSimtTraceBuffer(
+    const uint8_t* buffer, size_t bytes, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,
+    uint32_t deviceId, bool executionComplete);
+
+SimtTraceParseResult ParseSimtTraceSegment(
+    const uint8_t* buffer, size_t bytes, uint32_t physicalCoreCount, uint32_t blockCount, uint64_t launchId,
+    uint32_t deviceId, bool executionComplete);
 
 bool ValidateTraceSegmentHeader(const AclsanTraceBufferHeader& header, uint32_t blockCount, uint64_t launchId) noexcept;
 bool ValidateTraceFifoRecord(

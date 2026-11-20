@@ -28,6 +28,7 @@ set(NPU_TOOLS_LLT_ACL_SAN_DIR "${CMAKE_SOURCE_DIR}/npu_tools/npu_check/src/acl_s
 set(NPU_TOOLS_LLT_ACL_SAN_INTERNAL_SOURCES
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_api.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_active_probe_plan.cpp"
+  "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_simt_trace.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_trace_buffer.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_trace_runtime.cpp"
   "${NPU_TOOLS_LLT_ACL_SAN_DIR}/aclsan_vf.cpp"

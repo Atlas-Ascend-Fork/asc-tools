@@ -53,8 +53,19 @@ target_include_directories(npu_check_unit_tests PRIVATE
   "${INJECTION_ACL_INCLUDE_DIR}"
 )
 target_link_libraries(npu_check_unit_tests PRIVATE
-  npu_check_core acl_san npu_sanitizer_plog plog_test_library Threads::Threads GTest::gtest Boost::filesystem)
+  npu_check_core acl_san npu_sanitizer_plog plog_test_library Threads::Threads GTest::gtest Boost::filesystem c_sec_static)
 add_test(NAME npu_check_unit_tests COMMAND npu_check_unit_tests)
+
+add_executable(npu_check_simt_tests
+  "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp" "checker/simt_memory_record_test.cpp"
+  "${NPU_CHECK_DBI_ROOT}/aclsan_trace_buffer.cpp"
+  "${NPU_CHECK_DBI_ROOT}/aclsan_simt_trace.cpp")
+target_compile_features(npu_check_simt_tests PRIVATE cxx_std_17)
+target_compile_definitions(npu_check_simt_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
+target_include_directories(npu_check_simt_tests PRIVATE
+  "${NPU_CHECK_DBI_ROOT}" "${NPU_CHECK_DBI_ROOT}/../../include")
+target_link_libraries(npu_check_simt_tests PRIVATE GTest::gtest c_sec_static)
+add_test(NAME npu_check_simt_tests COMMAND npu_check_simt_tests)
 
 # Keep global allocator fault injection out of the main unit/LLT executables.
 add_executable(npu_check_memstate_allocation_tests

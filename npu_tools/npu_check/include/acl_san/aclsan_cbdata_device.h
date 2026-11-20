@@ -190,6 +190,29 @@ typedef struct AclsanMemValidNzLayout {
     uint32_t reserved;
     uint64_t baseAddress; // Original Nz origin, preserved when reads are split.
 } AclsanMemValidNzLayout;
+// Optional context emitted by SIMT GM probes. The base/offset pair is kept so
+// host-side checking can report the original lane addressing expression.
+typedef struct AclsanSimtAccessContext {
+    uint64_t invocationId;
+    uint64_t scalarPc;
+    uint32_t threadX;
+    uint32_t threadY;
+    uint32_t threadZ;
+    uint32_t blockDimX;
+    uint32_t blockDimY;
+    uint32_t blockDimZ;
+    uint64_t base;
+    int64_t offset;
+    uint32_t elementBytes;
+    uint32_t validFlags;
+} AclsanSimtAccessContext;
+
+typedef enum AclsanSimtAccessContextFlags {
+    ACLSAN_SIMT_CONTEXT_INVOCATION = 1u << 0u,
+    ACLSAN_SIMT_CONTEXT_THREAD = 1u << 1u,
+    ACLSAN_SIMT_CONTEXT_BLOCK_DIM = 1u << 2u,
+    ACLSAN_SIMT_CONTEXT_ADDRESS = 1u << 3u
+} AclsanSimtAccessContextFlags;
 
 typedef struct AclsanDeviceMemoryAccessData {
     AclsanDeviceEventHeader header;
@@ -225,6 +248,7 @@ typedef struct AclsanDeviceMemoryAccessData {
     // Local-memory storage owner; ignored for GM.
     AclsanCoreInfo memoryOwner;
     AclsanMemValidNzLayout validNz;
+    AclsanSimtAccessContext simt;
 } AclsanDeviceMemoryAccessData;
 
 typedef enum AclsanDeviceVfStatus {

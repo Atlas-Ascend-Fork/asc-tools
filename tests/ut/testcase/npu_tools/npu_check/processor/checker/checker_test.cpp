@@ -102,7 +102,12 @@ TEST(CheckerTest, CallbackUnionAndIndependentTools)
 {
     auto checkers = Both();
     const auto callbacks = RequiredCallbacks(checkers);
-    EXPECT_EQ(callbacks.size(), 9U);
+    EXPECT_EQ(callbacks.size(), 10U);
+    EXPECT_EQ(
+        std::count(
+            callbacks.begin(), callbacks.end(),
+            CallbackSpec{ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS}),
+        1);
     EXPECT_EQ(
         std::count(
             callbacks.begin(), callbacks.end(),

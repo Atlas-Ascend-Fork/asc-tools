@@ -45,6 +45,9 @@ public:
         void* stream = nullptr;
         bool registered = false;
         std::vector<AclsanDeviceMemoryAccessData> memory;
+        // SIMT bounds checks share launch/resource lifetime evidence, but do not
+        // enter the SIMD dependency graph used by initcheck and racecheck.
+        std::vector<AclsanDeviceMemoryAccessData> simtMemory;
         std::vector<AclsanDeviceMemoryAccessData> dependencyOnly;
         std::map<race::Domain, uint64_t> registerMasks;
         std::vector<AclsanDeviceSyncData> sync;

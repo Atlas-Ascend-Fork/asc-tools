@@ -14,6 +14,7 @@
 #include "injection/injection_hook.h"
 #include "injection/runtime_stub_api.h"
 #include "dbi/trace_buffer_abi.h"
+#include "securec.h"
 
 #include <algorithm>
 #include <atomic>
@@ -35,6 +36,12 @@ namespace {
             return 1;                                                                     \
         }                                                                                 \
     } while (false)
+
+template <size_t N>
+bool StringEquals(const char* value, const char (&expected)[N])
+{
+    return value != nullptr && std::strncmp(value, expected, N) == 0;
+}
 
 struct CapturedRecord {
     uint64_t launchId;
@@ -116,19 +123,19 @@ aclError OriginalBinaryGetFunction(aclrtBinHandle binary, const char* name, aclr
     if (name == nullptr || function == nullptr) {
         return ACL_ERROR_INVALID_PARAM;
     }
-    if ((binary == kOffset16Binary && std::strcmp(name, "Offset16") == 0) ||
-        (binary == kOffset8Binary && std::strcmp(name, "Offset8") == 0)) {
+    if ((binary == kOffset16Binary && StringEquals(name, "Offset16")) ||
+        (binary == kOffset8Binary && StringEquals(name, "Offset8"))) {
         *function = kFunction;
         return ACL_SUCCESS;
     }
     if (binary != kOffset24Binary) {
         return ACL_ERROR_INVALID_PARAM;
     }
-    if (std::strcmp(name, "OneArgument") == 0) {
+    if (StringEquals(name, "OneArgument")) {
         *function = kOneArgumentFunction;
-    } else if (std::strcmp(name, "ZeroArgument") == 0) {
+    } else if (StringEquals(name, "ZeroArgument")) {
         *function = kZeroArgumentFunction;
-    } else if (std::strcmp(name, "ThreeArguments") == 0) {
+    } else if (StringEquals(name, "ThreeArguments")) {
         *function = kThreeArgumentFunction;
     } else {
         return ACL_ERROR_INVALID_PARAM;
@@ -180,8 +187,7 @@ aclError OriginalMemcpy(void* dst, size_t dstMax, const void* src, size_t bytes,
     if (kind == ACL_MEMCPY_DEVICE_TO_HOST && bytes == 2 * sizeof(aclsan::AclsanRawTraceRecord)) {
         ++g_d2hCalls;
     }
-    std::memcpy(dst, src, bytes);
-    return ACL_SUCCESS;
+    return bytes == 0 || memcpy_s(dst, dstMax, src, bytes) == EOK ? ACL_SUCCESS : ACL_ERROR_INVALID_PARAM;
 }
 
 aclError OriginalLaunch(
@@ -191,7 +197,8 @@ aclError OriginalLaunch(
     if (g_failLaunch) {
         return ACL_ERROR_FAILURE;
     }
-    if (hostArgs == nullptr || argsSize != g_expectedLaunchArgumentBytes || blocks != 2) {
+    if (hostArgs == nullptr || argsSize != g_expectedLaunchArgumentBytes || blocks != 2 ||
+        g_expectedHiddenOffset > argsSize || sizeof(void*) > argsSize - g_expectedHiddenOffset) {
         return ACL_ERROR_INVALID_PARAM;
     }
     if (g_expectedPlaceholderDataOffset != 0 && (placeholderCount != 1 || placeholders == nullptr ||
@@ -203,7 +210,9 @@ aclError OriginalLaunch(
             return ACL_ERROR_INVALID_PARAM;
         }
         void* input = nullptr;
-        std::memcpy(&input, hostArgs, sizeof(input));
+        if (argsSize < sizeof(input) || memcpy_s(&input, sizeof(input), hostArgs, sizeof(input)) != EOK) {
+            return ACL_ERROR_INVALID_PARAM;
+        }
         if (input == nullptr || *static_cast<const uint64_t*>(input) != 2U) {
             return ACL_ERROR_INVALID_PARAM;
         }
@@ -217,7 +226,11 @@ aclError OriginalLaunch(
             }
         }
     }
-    std::memcpy(&deviceBuffer, static_cast<const uint8_t*>(hostArgs) + g_expectedHiddenOffset, sizeof(deviceBuffer));
+    if (memcpy_s(
+            &deviceBuffer, sizeof(deviceBuffer), static_cast<const uint8_t*>(hostArgs) + g_expectedHiddenOffset,
+            sizeof(deviceBuffer)) != EOK) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
     if (deviceBuffer == nullptr) {
         return ACL_ERROR_INVALID_PARAM;
     }
@@ -408,22 +421,29 @@ aclError OriginalArrayLaunch(
     size_t count = 0;
     OriginalGetParamCount(function, &count);
     uint64_t packed[4]{};
+    if (args == nullptr || count == 0 || count > std::size(packed)) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
     for (size_t index = 0; index + 1 < count; ++index) {
         if (args[index] == nullptr) {
             return 75;
         }
-        std::memcpy(&packed[index], args[index], sizeof(uint64_t));
+        if (memcpy_s(&packed[index], sizeof(packed[index]), args[index], sizeof(packed[index])) != EOK) {
+            return ACL_ERROR_INVALID_PARAM;
+        }
         if (packed[index] != (count == 2 ? 0x1234 : index + 1)) {
             return ACL_ERROR_INVALID_PARAM;
         }
     }
-    std::memcpy(&packed[3], args[count - 1], sizeof(void*));
+    if (args[count - 1] == nullptr || memcpy_s(&packed[3], sizeof(packed[3]), args[count - 1], sizeof(void*)) != EOK) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
     return OriginalLaunch(function, blocks, stream, config, packed, sizeof(packed), nullptr, 0);
 }
 
 int main(int argc, char** argv)
 {
-    g_loadFromFile = argc == 2 && std::strcmp(argv[1], "--file") == 0;
+    g_loadFromFile = argc == 2 && StringEquals(argv[1], "--file");
     CHECK(RuntimeStubSetOriginFunction("aclrtBinaryLoadFromFile", &OriginalFileLoad) == ACL_SUCCESS);
     setenv("NPU_CHECK_TRACE_RECORDS_PER_BLOCK", "2", 1);
     CHECK(RuntimeStubSetSocName("Ascend950PR_9589") == ACL_SUCCESS);
@@ -542,6 +562,7 @@ int main(int argc, char** argv)
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
     CHECK(aclrtSynchronizeStream(stream1) == ACL_ERROR_RT_STREAM_SYNC_TIMEOUT);
+    // The kernel may still be using the trace buffer after a timeout.
     CHECK(g_freeCalls == freesBeforeTimedOutSync);
     g_syncResult = ACL_SUCCESS;
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);

@@ -228,3 +228,26 @@ TEST(AclsanProbePlanCallback, BarrierUsesInstructionDomainAndIndependentId)
     EXPECT_EQ(deliveries, 1);
     EXPECT_EQ(aclsanUnsubscribe(subscriber), ACLSAN_STATUS_SUCCESS);
 }
+
+TEST(AclsanProbePlanCallback, VfAndSimtSubscriptionsRemainIndependent)
+{
+    aclsan_test::Boundary boundary;
+    boundary.applyRuntimeHooks = &ApplyRuntimeHooksTracking;
+    const aclsan_test::BoundaryGuard boundaryGuard{boundary};
+    EXPECT_EQ(ACLSAN_CBID_DEVICE_PIPE_BARRIER, 4);
+    EXPECT_EQ(ACLSAN_CBID_DEVICE_VF, 5);
+    EXPECT_EQ(ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, 7);
+
+    AclsanSubscriberHandle subscriber = nullptr;
+    ASSERT_EQ(aclsanSubscribe(&subscriber, &Callback, nullptr), ACLSAN_STATUS_SUCCESS);
+    const auto domain = ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION;
+    const uint32_t vfMask = aclsan::PROBE_GROUP_VECTOR | aclsan::PROBE_GROUP_SCALAR;
+    const uint32_t simtMask = aclsan::PROBE_GROUP_SIMT;
+    EXPECT_EQ(aclsanEnableCallback(1, subscriber, domain, ACLSAN_CBID_DEVICE_VF), ACLSAN_STATUS_SUCCESS);
+    EXPECT_EQ(
+        aclsanEnableCallback(1, subscriber, domain, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS), ACLSAN_STATUS_SUCCESS);
+    EXPECT_EQ(aclsan::SnapshotActiveProbePlan(), vfMask | simtMask | aclsan::PROBE_GROUP_BOUNDARY);
+    EXPECT_EQ(aclsanEnableCallback(0, subscriber, domain, ACLSAN_CBID_DEVICE_VF), ACLSAN_STATUS_SUCCESS);
+    EXPECT_EQ(aclsan::SnapshotActiveProbePlan(), simtMask | aclsan::PROBE_GROUP_BOUNDARY);
+    EXPECT_EQ(aclsanUnsubscribe(subscriber), ACLSAN_STATUS_SUCCESS);
+}

@@ -85,6 +85,8 @@ struct PreparedTraceLaunch {
     uint32_t deviceId = 0;
     // 隐藏参数 memInfo 在 kernel 连续参数布局中的字节偏移 例如[0~23为原始参数,24~31为memInfo的地址值]
     uint32_t traceArgumentOffset = 0;
+    // Runtime-owned launch header immediately preceding the captured parameter base.
+    uint32_t parameterPrefixBytes = 0;
     void* deviceBuffer = nullptr;
     aclrtContext context = nullptr;
     std::shared_ptr<void> reservation;

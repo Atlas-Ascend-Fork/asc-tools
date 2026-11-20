@@ -9,6 +9,8 @@
  */
 
 #include "checker/memcheck.h"
+#include "securec.h"
+#include <cstddef>
 #include <sstream>
 
 namespace npucheck {
@@ -20,21 +22,33 @@ const std::vector<CallbackSpec>& Memcheck::GetSubscribedID() const
         {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_ALLOC},
         {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS},
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
         {ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE},
         {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END}};
     return callbacks;
 }
 
-bool Memcheck::OnDeviceMemoryCallback(const void* data, CheckerReportList& reports)
+bool Memcheck::OnDeviceMemoryCallback(AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
 {
     const auto* header = static_cast<const AclsanDeviceEventHeader*>(data);
-    if (header == nullptr || header->version != ACLSAN_API_VERSION ||
-        header->size < sizeof(AclsanDeviceMemoryAccessData)) {
+    const bool simt = cbid == ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS;
+    const size_t required = simt ? sizeof(AclsanDeviceMemoryAccessData) : offsetof(AclsanDeviceMemoryAccessData, simt);
+    if (header == nullptr || header->version != ACLSAN_API_VERSION || header->size < required) {
         ++stats_.droppedDeviceOperations;
         return false;
     }
-    const auto& event = *static_cast<const AclsanDeviceMemoryAccessData*>(data);
+    if (simt && (header->flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED |
+                                  ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR)) != 0U) {
+        ++stats_.droppedDeviceOperations;
+        return true;
+    }
+    AclsanDeviceMemoryAccessData event{};
+    if (memcpy_s(&event, sizeof(event), data, required) != EOK) {
+        ++stats_.droppedDeviceOperations;
+        return false;
+    }
+    event.header.size = sizeof(event);
     auto immediate = QueueDeviceMemoryAccess(event);
     AppendCheckerReports(std::move(immediate), reports);
     return true;
@@ -55,13 +69,21 @@ bool Memcheck::OnCallback(
             OnFree(*event);
         }
     } else if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
-        return OnDeviceMemoryCallback(data, reports);
+        return OnDeviceMemoryCallback(cbid, data, reports);
     } else if (domain == ACLSAN_CB_DOMAIN_LAUNCH) {
         const auto* event = static_cast<const AclsanLaunchData*>(data);
         if (event->common.result != 0) {
             ++stats_.failedLaunches;
         } else if (analysis_->Managed() && event->launchId != 0) {
             observedLaunches_.insert(event->launchId);
+        } else if (!analysis_->Managed() && event->launchId != 0) {
+            constexpr size_t MAX_PENDING_LAUNCH_SNAPSHOTS = 1024;
+            if (launchAllocations_.size() >= MAX_PENDING_LAUNCH_SNAPSHOTS) {
+                ++stats_.droppedDeviceOperations;
+            } else {
+                launchAllocations_.try_emplace(
+                    event->launchId, LaunchAllocationSnapshot{memoryState_->allocations, event->stream});
+            }
         }
     } else if (domain == ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION) {
         const auto* event = static_cast<const AclsanOperatorExecutionData*>(data);
@@ -87,8 +109,9 @@ bool Memcheck::HasErrors() const { return Stats().errors != 0; }
 bool Memcheck::AnalysisComplete() const
 {
     const auto stats = Stats();
-    return !unfinishedLaunches_ && stats.pendingDeviceOperations == 0 && stats.droppedDeviceOperations == 0 &&
-           stats.failedLaunches == 0 && stats.failedSynchronizations == 0 && stats.incompleteHostOperations == 0;
+    return !unfinishedLaunches_ && launchAllocations_.empty() && stats.pendingDeviceOperations == 0 &&
+           stats.droppedDeviceOperations == 0 && stats.failedLaunches == 0 && stats.failedSynchronizations == 0 &&
+           stats.incompleteHostOperations == 0;
 }
 std::string Memcheck::Summary() const
 {

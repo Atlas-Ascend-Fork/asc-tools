@@ -261,8 +261,8 @@ TEST(ToolManagerTest, CombinedToolsReportBothAndSubscribeSharedCallbackOnce)
         {"npu-check", "--tool", "synccheck", "--tool", "memcheck", "--tool", "memcheck", "/bin/true"}, true, true);
     ASSERT_EQ(result.initialized, 0);
     ASSERT_TRUE(result.error.empty()) << result.error;
-    EXPECT_EQ(enableCalls, 9U);
-    EXPECT_EQ(enabled.size(), 9U);
+    EXPECT_EQ(enableCalls, 10U);
+    EXPECT_EQ(enabled.size(), 10U);
     EXPECT_NE(result.text.find("tool=memcheck"), std::string::npos);
     EXPECT_NE(result.text.find("tool=synccheck"), std::string::npos);
     EXPECT_NE(result.text.find("status=complete"), std::string::npos);
@@ -308,7 +308,7 @@ TEST(ToolManagerTest, RacecheckDoesNotSuppressOtherToolsReports)
         RunSession({"npu-check", "--tool", "racecheck", "--tool", "memcheck", "/bin/true"}, true, false);
     ASSERT_EQ(session.initialized, 0);
     ASSERT_TRUE(session.error.empty()) << session.error;
-    EXPECT_EQ(enabled.size(), 12U);
+    EXPECT_EQ(enabled.size(), 13U);
     EXPECT_NE(session.text.find("MEMCHECK SUMMARY: 1 errors"), std::string::npos);
     EXPECT_NE(session.text.find("tool=racecheck"), std::string::npos);
     EXPECT_NE(session.text.find("analysis_complete=true"), std::string::npos);
@@ -333,6 +333,7 @@ TEST(ToolManagerTest, ThreeToolsReportIndependentlyAndShareCallbacks)
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF},
         {ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS},
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
         {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END}};
     EXPECT_EQ(enabled, expected);
@@ -372,6 +373,7 @@ TEST(ToolManagerTest, SingleCheckerAndFailedSyncRetainIndependentState)
     EXPECT_NE(incomplete.text.find("unconfirmed_launches=true"), std::string::npos);
     EXPECT_EQ(incomplete.text.find("ERROR:[MEMCHECK]"), std::string::npos);
     EXPECT_NE(incomplete.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
+    EXPECT_NE(incomplete.flags & npucheck::ipc::FLAG_ANALYSIS_INCOMPLETE, 0U);
 }
 
 TEST(ToolManagerTest, NullCallbackIsCountedOnceAndDoesNotReachCheckers)
@@ -383,6 +385,7 @@ TEST(ToolManagerTest, NullCallbackIsCountedOnceAndDoesNotReachCheckers)
     EXPECT_NE(session.text.find("status=incomplete"), std::string::npos);
     EXPECT_NE(session.text.find("pending_device_operations=0"), std::string::npos);
     EXPECT_EQ(session.flags & npucheck::ipc::FLAG_HAS_ERRORS, 0U);
+    EXPECT_NE(session.flags & npucheck::ipc::FLAG_ANALYSIS_INCOMPLETE, 0U);
 }
 
 TEST(ToolManagerTest, AppliesConfiguredTimeoutBeforeEveryLaunch)

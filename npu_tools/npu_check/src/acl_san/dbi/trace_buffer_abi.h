@@ -156,14 +156,17 @@ constexpr size_t TraceRecordOffset(uint32_t slot, uint32_t sequence)
                sizeof(AclsanRawTraceRecord);
 }
 
+constexpr size_t ASCSAN_SIMD_SEGMENT_BYTES =
+    static_cast<size_t>(ASCSAN_PHYSICAL_CORE_SLOT_COUNT) *
+    (sizeof(AclsanTraceControl) + ASCSAN_TRACE_RECORDS_PER_CORE * sizeof(AclsanRawTraceRecord));
+constexpr size_t ASCSAN_SIMD_TRACE_END = sizeof(AclsanTraceBufferHeader) + ASCSAN_SIMD_SEGMENT_BYTES;
+
 constexpr bool TraceBufferBytes(uint32_t physicalCoreCount, size_t* bytes)
 {
     if (bytes == nullptr || physicalCoreCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT) {
         return false;
     }
-    *bytes = sizeof(AclsanTraceBufferHeader) +
-             static_cast<size_t>(physicalCoreCount) *
-                 (sizeof(AclsanTraceControl) + ASCSAN_TRACE_RECORDS_PER_CORE * sizeof(AclsanRawTraceRecord));
+    *bytes = ASCSAN_SIMD_TRACE_END;
     return true;
 }
 
@@ -182,6 +185,107 @@ static_assert(
     sizeof(AclsanRawTraceRecord) == 80U && offsetof(AclsanRawTraceRecord, reserved) == 64U &&
     offsetof(AclsanRawTraceRecord, padding) == 68U && offsetof(AclsanRawTraceRecord, parameterBase) == 72U);
 static_assert(TraceRecordOffset(0U, 0U) == 13888U);
+
+// Optional SIMT sidecar follows the unchanged scalar segment. Each physical
+// core and linear thread owns a fixed partition; no lane shares a write cursor.
+constexpr uint64_t ASCSAN_SIMT_TRACE_MAGIC = 0x53494D5454524331ULL;
+constexpr uint32_t ASCSAN_SIMT_TRACE_VERSION = 3U;
+constexpr uint32_t ASCSAN_SIMT_END_INSTRUCTION_ID = 477U; // TRI SIMT_END.
+constexpr uint32_t ASCSAN_SIMT_THREADS_PER_CORE = 2048U;
+constexpr size_t ASCSAN_SIMT_CORE_BYTES = 10U * 1024U * 1024U;
+constexpr size_t ASCSAN_SIMT_THREAD_BYTES = ASCSAN_SIMT_CORE_BYTES / ASCSAN_SIMT_THREADS_PER_CORE;
+constexpr uint32_t ASCSAN_SIMT_COMPLETION_BITS = 64U;
+constexpr uint32_t ASCSAN_SIMT_COVERAGE_INCOMPLETE = 1U << 0U;
+constexpr size_t ASCSAN_TRACE_CACHE_LINE_BYTES = 64U;
+
+constexpr size_t SimtTraceOffset(size_t scalarBytes)
+{
+    return (scalarBytes + ASCSAN_TRACE_CACHE_LINE_BYTES - 1U) / ASCSAN_TRACE_CACHE_LINE_BYTES *
+           ASCSAN_TRACE_CACHE_LINE_BYTES;
+}
+
+struct AclsanSimtTraceHeader {
+    uint64_t magic;
+    uint64_t bytes;
+    uint32_t version;
+    uint32_t physicalCoreCount;
+    uint32_t threadsPerCore;
+    uint32_t recordsPerThread;
+    uint64_t reserved[4]; // Keep each scalar context on its own cache line.
+};
+
+struct AclsanSimtCoreHeader {
+    uint64_t invocationId; // Scalar SIMT_CALL increments this; pure SIMT initializes its first value lazily.
+    uint64_t scalarPc;
+    uint32_t flags; // Scalar-only sticky coverage flags.
+    uint32_t reserved;
+    uint64_t cacheLinePadding[5]; // dcci of the scalar context must not touch a SIMT lane cursor.
+};
+static_assert(
+    sizeof(AclsanSimtTraceHeader) == ASCSAN_TRACE_CACHE_LINE_BYTES, "SIMT sidecar header must occupy one cache line");
+static_assert(
+    sizeof(AclsanSimtCoreHeader) == ASCSAN_TRACE_CACHE_LINE_BYTES,
+    "Scalar SIMT context must not share a cache line with lane state");
+
+struct AclsanSimtThreadHeader {
+    uint32_t recordCount;
+    uint32_t overflowCount;
+    uint64_t lastInvocation;
+    uint64_t completedInvocation;
+    uint64_t completedInvocations; // END bitmap for invocations 1..64.
+    uint32_t invalidContext;       // Sticky flag: all writers only store 1.
+    uint32_t reserved;
+};
+
+struct AclsanSimtRawTraceRecord {
+    uint64_t pc;
+    uint64_t base;
+    int64_t offset;
+    uint64_t invocationId;
+    uint64_t scalarPc;
+    uint32_t instructionId;
+    uint32_t blockId;
+    uint16_t threadX;
+    uint16_t threadY;
+    uint16_t threadZ;
+    uint16_t blockDimX;
+    uint16_t blockDimY;
+    uint16_t blockDimZ;
+    uint32_t reserved;
+};
+static_assert(sizeof(AclsanSimtRawTraceRecord) == 64U, "SIMT trace wire size must remain stable");
+
+// In every slot the lane cursor starts one cache line in. In slot zero
+// that first line holds the scalar core context, inside the 10 MiB budget.
+static_assert(
+    ASCSAN_SIMT_THREAD_BYTES * ASCSAN_SIMT_THREADS_PER_CORE == ASCSAN_SIMT_CORE_BYTES &&
+        ASCSAN_SIMT_THREAD_BYTES % ASCSAN_TRACE_CACHE_LINE_BYTES == 0 &&
+        sizeof(AclsanSimtCoreHeader) + sizeof(AclsanSimtThreadHeader) + sizeof(AclsanSimtRawTraceRecord) <=
+            ASCSAN_SIMT_THREAD_BYTES,
+    "SIMT slots must partition the core into whole cache lines");
+constexpr uint32_t ASCSAN_SIMT_RECORDS_PER_THREAD = static_cast<uint32_t>(
+    (ASCSAN_SIMT_THREAD_BYTES - sizeof(AclsanSimtThreadHeader) - sizeof(AclsanSimtCoreHeader)) /
+    sizeof(AclsanSimtRawTraceRecord));
+
+constexpr size_t SimtTraceBytes(uint32_t physicalCoreCount)
+{
+    return sizeof(AclsanSimtTraceHeader) + static_cast<size_t>(physicalCoreCount) * ASCSAN_SIMT_CORE_BYTES;
+}
+
+constexpr size_t ASCSAN_SIMT_SEGMENT_OFFSET = SimtTraceOffset(ASCSAN_SIMD_TRACE_END);
+constexpr size_t ASCSAN_SIMT_SEGMENT_BYTES = SimtTraceBytes(ASCSAN_PHYSICAL_CORE_SLOT_COUNT);
+constexpr size_t ASCSAN_TRACE_END_WITH_SIMT = ASCSAN_SIMT_SEGMENT_OFFSET + ASCSAN_SIMT_SEGMENT_BYTES;
+
+constexpr bool TraceSegmentSizesMatch(
+    uint64_t segmentBytes, uint64_t simtSegmentOffset, uint64_t simtSegmentBytes, size_t simdEnd)
+{
+    if (simtSegmentBytes == 0U) {
+        return simtSegmentOffset == 0U && segmentBytes == simdEnd;
+    }
+    return simtSegmentOffset == SimtTraceOffset(simdEnd) &&
+           simtSegmentBytes == SimtTraceBytes(ASCSAN_PHYSICAL_CORE_SLOT_COUNT) &&
+           segmentBytes == simtSegmentOffset + simtSegmentBytes;
+}
 
 } // namespace aclsan
 

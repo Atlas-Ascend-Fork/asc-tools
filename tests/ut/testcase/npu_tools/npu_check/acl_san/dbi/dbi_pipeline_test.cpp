@@ -58,7 +58,7 @@ TEST(DbiPipelineTest, ObjectAndCtrlbinPlansAgreeForEveryProbeMask)
         {PROBE_GROUP_MTE3, ProbeGroup::Mte3},         {PROBE_GROUP_FIXPIPE, ProbeGroup::Fixpipe},
         {PROBE_GROUP_SYNC, ProbeGroup::Sync},         {PROBE_GROUP_SCALAR, ProbeGroup::Scalar},
         {PROBE_GROUP_MATRIX, ProbeGroup::Matrix},     {PROBE_GROUP_VECTOR, ProbeGroup::Vector},
-        {PROBE_GROUP_BOUNDARY, ProbeGroup::Boundary},
+        {PROBE_GROUP_BOUNDARY, ProbeGroup::Boundary}, {PROBE_GROUP_SIMT, ProbeGroup::Simt},
     };
     for (uint32_t mask = 0; mask <= PROBE_GROUP_ALL; ++mask) {
         std::vector<ProbeGroup> rawGroups;
@@ -77,8 +77,20 @@ TEST(DbiPipelineTest, NamesNewPipelineGroups)
 {
     EXPECT_EQ(ProbeGroupName(ProbeGroup::Matrix), "matrix");
     EXPECT_EQ(ProbeGroupName(ProbeGroup::Vector), "vector");
+    EXPECT_EQ(ProbeGroupName(ProbeGroup::Simt), "simt");
     EXPECT_EQ(PROBE_GROUP_ALL & PROBE_GROUP_MATRIX, PROBE_GROUP_MATRIX);
     EXPECT_EQ(PROBE_GROUP_ALL & PROBE_GROUP_VECTOR, PROBE_GROUP_VECTOR);
+}
+
+TEST(DbiPipelineTest, SimtUsesOneGroupForCallAndThreadProbes)
+{
+    const auto groups = ProbeGroupsFromMask(PROBE_GROUP_SIMT);
+    ASSERT_EQ(groups.size(), 1U);
+    const auto bindings = BindingSymbols(groups);
+    for (const auto* symbol :
+         {"__npu_check_probe_simt_call", "__npu_check_probe_simt_ldg_b32", "__npu_check_probe_simt_end"}) {
+        EXPECT_NE(std::find(bindings.begin(), bindings.end(), symbol), bindings.end()) << symbol;
+    }
 }
 
 TEST(DbiPipelineTest, ValidatesRequestFields)
@@ -214,7 +226,9 @@ TEST(DbiPipelineTest, DetectsProbeCoreTypeFromSelectedKernelAndPipeSymbols)
 TEST(DbiPipelineTest, CompleteProbeSetCoversAicAndMixKernels)
 {
     const std::vector<ProbeGroup> requested{ProbeGroup::Mte2};
-    EXPECT_EQ(ResolveProbeGroups(requested, ProbeCoreType::Aic, true), AllProbeGroups());
+    auto cubeGroups = AllProbeGroups();
+    cubeGroups.erase(std::remove(cubeGroups.begin(), cubeGroups.end(), ProbeGroup::Simt), cubeGroups.end());
+    EXPECT_EQ(ResolveProbeGroups(requested, ProbeCoreType::Aic, true), cubeGroups);
     EXPECT_EQ(ResolveProbeGroups(requested, ProbeCoreType::Mix, true), AllProbeGroups());
     EXPECT_EQ(
         ResolveProbeGroups(requested, ProbeCoreType::Aiv, true),

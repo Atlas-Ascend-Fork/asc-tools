@@ -61,6 +61,13 @@ void AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(const AclsanDeviceMemo
     Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &cbData, "DEVICE_MEMORY_ACCESS");
 }
 
+void AclsanCallbackDispatcher::DispatchSimtMemoryAccess(const AclsanDeviceMemoryAccessData& cbData) noexcept
+{
+    Dispatch(
+        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &cbData,
+        "DEVICE_SIMT_MEMORY_ACCESS");
+}
+
 void AclsanCallbackDispatcher::DispatchDeviceState(const AclsanDeviceRegisterStateData& cbData) noexcept
 {
     Dispatch(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_STATE, &cbData, "DEVICE_STATE");

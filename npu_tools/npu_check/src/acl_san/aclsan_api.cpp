@@ -101,6 +101,13 @@ const std::map<CallbackKey, std::vector<aclrtApiId>> CALLBACK_ROUTES = {
       ACL_RT_API_aclrtSynchronizeStream, ACL_RT_API_aclrtSynchronizeStreamWithTimeout, ACL_RT_API_aclrtGetFuncBySymbol,
       ACL_RT_API_aclrtBinaryUnLoad, ACL_RT_API_aclrtResetDevice, ACL_RT_API_aclrtMalloc, ACL_RT_API_aclrtMallocWithCfg,
       ACL_RT_API_aclrtMallocAlign32, ACL_RT_API_aclrtBinaryLoadFromFile}},
+    {{ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS},
+     {ACL_RT_API_aclrtBinaryLoadFromData, ACL_RT_API_aclrtBinaryGetFunction, ACL_RT_API_aclrtBinaryGetFunctionByEntry,
+      ACL_RT_API_aclrtLaunchKernelWithHostArgs, ACL_RT_API_aclrtLaunchKernelWithArgsArray,
+      ACL_RT_API_aclrtLaunchSIMTKernelWithHostArgs, ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray,
+      ACL_RT_API_aclrtSynchronizeStream, ACL_RT_API_aclrtSynchronizeStreamWithTimeout, ACL_RT_API_aclrtGetFuncBySymbol,
+      ACL_RT_API_aclrtBinaryUnLoad, ACL_RT_API_aclrtResetDevice, ACL_RT_API_aclrtMalloc, ACL_RT_API_aclrtMallocWithCfg,
+      ACL_RT_API_aclrtMallocAlign32, ACL_RT_API_aclrtBinaryLoadFromFile}},
     {{ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SYNC},
      {ACL_RT_API_aclrtBinaryLoadFromData, ACL_RT_API_aclrtBinaryGetFunction, ACL_RT_API_aclrtBinaryGetFunctionByEntry,
       ACL_RT_API_aclrtLaunchKernelWithHostArgs, ACL_RT_API_aclrtLaunchKernelWithArgsArray,
@@ -126,10 +133,12 @@ const std::map<CallbackKey, std::vector<aclrtApiId>> CALLBACK_ROUTES = {
     {{ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
      {ACL_RT_API_aclrtBinaryLoadFromData, ACL_RT_API_aclrtBinaryGetFunction, ACL_RT_API_aclrtBinaryGetFunctionByEntry,
       ACL_RT_API_aclrtGetFuncBySymbol, ACL_RT_API_aclrtLaunchKernelWithHostArgs,
-      ACL_RT_API_aclrtLaunchKernelWithArgsArray, ACL_RT_API_aclrtBinaryUnLoad, ACL_RT_API_aclrtResetDevice,
+      ACL_RT_API_aclrtLaunchKernelWithArgsArray, ACL_RT_API_aclrtLaunchSIMTKernelWithHostArgs,
+      ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray, ACL_RT_API_aclrtBinaryUnLoad, ACL_RT_API_aclrtResetDevice,
       ACL_RT_API_aclrtBinaryLoadFromFile}},
     {{ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL_BEFORE},
-     {ACL_RT_API_aclrtLaunchKernelWithHostArgs, ACL_RT_API_aclrtLaunchKernelWithArgsArray}},
+     {ACL_RT_API_aclrtLaunchKernelWithHostArgs, ACL_RT_API_aclrtLaunchKernelWithArgsArray,
+      ACL_RT_API_aclrtLaunchSIMTKernelWithHostArgs, ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray}},
     // 算子执行完毕事件由 trace runtime 在采集完成时直接派发，不对应额外的 host runtime hook。
     {{ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE}, {}},
 };
@@ -199,7 +208,8 @@ bool AclsanSubscriber::IsValidCallbackId(AclsanCallbackDomain domain, AclsanCall
         case ACLSAN_CB_DOMAIN_RESOURCE:
             return callbackId >= ACLSAN_CBID_RESOURCE_MEMORY_ALLOC && callbackId <= ACLSAN_CBID_RESOURCE_MEMORY_FREE;
         case ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION:
-            return callbackId >= ACLSAN_CBID_DEVICE_MEMORY_ACCESS && callbackId <= ACLSAN_CBID_DEVICE_VF;
+            return (callbackId >= ACLSAN_CBID_DEVICE_MEMORY_ACCESS && callbackId <= ACLSAN_CBID_DEVICE_VF) ||
+                   callbackId == ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS;
         case ACLSAN_CB_DOMAIN_SYNCHRONIZE:
             return callbackId == ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END;
         case ACLSAN_CB_DOMAIN_LAUNCH:

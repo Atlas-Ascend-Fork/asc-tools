@@ -26,7 +26,7 @@
 ===== memcheck.invalid_access =====
 ========= ERROR:[MEMCHECK] Invalid <space> <access> of size <accessBytes> bytes
 =========     <location>
-=========     by aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>)
+=========     by aicore (<coreId>) type (<blockType>) block (<blockId>)<threadContext> pipe (<pipeName>)
 =========     Address 0x<address> is out of bounds<capacityContext>
 
 ===== memcheck.invalid_free =====
@@ -42,21 +42,21 @@
 ===== memcheck.misaligned_access =====
 ========= ERROR:[MEMCHECK] Invalid <space> <access> of size <accessBytes> bytes
 =========     <location>
-=========     by aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>)
+=========     by aicore (<coreId>) type (<blockType>) block (<blockId>)<threadContext> pipe (<pipeName>)
 =========     Address 0x<address> is misaligned
 =========     required alignment is <requiredAlign> bytes
 
 ===== memcheck.use_after_free =====
 ========= ERROR:[MEMCHECK] Invalid <space> <access> of size <accessBytes> bytes
 =========     <location>
-=========     by aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>)
+=========     by aicore (<coreId>) type (<blockType>) block (<blockId>)<threadContext> pipe (<pipeName>)
 =========     Address 0x<address> is used after free
 =========     and belongs to allocation at 0x<base> of size <bytes> bytes
 
 ===== memcheck.use_before_alloc =====
 ========= ERROR:[MEMCHECK] Invalid <space> <access> of size <accessBytes> bytes
 =========     <location>
-=========     by aicore (<coreId>) type (<blockType>) block (<blockId>) pipe (<pipeName>)
+=========     by aicore (<coreId>) type (<blockType>) block (<blockId>)<threadContext> pipe (<pipeName>)
 =========     Address 0x<address> is used before allocation is available
 =========     allocation 0x<base> of size <bytes> bytes was created at serial <allocSerialNo>
 

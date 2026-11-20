@@ -18,7 +18,7 @@
 
 namespace aclsan {
 
-enum class ProbeGroup : uint8_t { Mte1, Mte2, Mte3, Fixpipe, Scalar, Sync, Matrix, Vector, Boundary };
+enum class ProbeGroup : uint8_t { Mte1, Mte2, Mte3, Fixpipe, Scalar, Sync, Matrix, Vector, Boundary, Simt };
 
 enum class ProbeCoreType : uint8_t { Unknown, Aic, Aiv, Mix };
 
@@ -33,8 +33,10 @@ enum ProbeGroupMask : uint32_t {
     PROBE_GROUP_VECTOR = 1U << 7U,
     // always-on 的 kernel 边界 marker 组（397 before kernel end / 398 before kernel stack frame）。
     PROBE_GROUP_BOUNDARY = 1U << 8U,
+    PROBE_GROUP_SIMT = 1U << 9U,
     PROBE_GROUP_ALL = PROBE_GROUP_MTE1 | PROBE_GROUP_MTE2 | PROBE_GROUP_MTE3 | PROBE_GROUP_FIXPIPE | PROBE_GROUP_SYNC |
-                      PROBE_GROUP_SCALAR | PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR | PROBE_GROUP_BOUNDARY,
+                      PROBE_GROUP_SCALAR | PROBE_GROUP_MATRIX | PROBE_GROUP_VECTOR | PROBE_GROUP_BOUNDARY |
+                      PROBE_GROUP_SIMT,
 };
 
 struct ToolchainPaths {

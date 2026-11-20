@@ -26,6 +26,8 @@
 
 namespace npucheck {
 
+struct SimtMemoryAccessRecord;
+
 struct MemcheckStats {
     uint64_t allocations = 0;
     uint64_t frees = 0;
@@ -57,6 +59,7 @@ public:
     void OnAllocation(const AclsanResourceData& data);
     void OnFree(const AclsanResourceData& data);
     std::vector<npucheck::NpuCheckMemcheckReport> QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data);
+    void QueueSimtMemoryAccess(const SimtMemoryAccessRecord& record);
     std::vector<npucheck::NpuCheckMemcheckReport> OnSynchronization();
     MemcheckStats Stats() const;
 
@@ -67,7 +70,7 @@ private:
     std::vector<npucheck::NpuCheckMemcheckReport> CheckDeviceMemoryAccess(
         const AclsanDeviceMemoryAccessData& data, uint64_t groupId);
     void OnHostMemory(const AclsanCallbackCommonData& common, CheckerReportList& reports);
-    bool OnDeviceMemoryCallback(const void* data, CheckerReportList& reports);
+    bool OnDeviceMemoryCallback(AclsanCallbackId cbid, const void* data, CheckerReportList& reports);
     void Count(const std::vector<npucheck::NpuCheckMemcheckReport>& reports);
     std::vector<npucheck::NpuCheckMemcheckReport> CheckObservedAccess(const AclsanDeviceMemoryAccessData& access);
     void CollectLaunch(uint64_t launchId, std::vector<npucheck::NpuCheckMemcheckReport>& reports);
@@ -79,6 +82,12 @@ private:
     bool unfinishedLaunches_ = false;
     std::shared_ptr<MemoryAnalysis> analysis_;
     std::shared_ptr<MemoryState> memoryState_;
+    struct LaunchAllocationSnapshot {
+        std::map<InitStateKey, AllocationRegistry> allocations;
+        const void* stream = nullptr;
+        bool lifetimeUncertain = false;
+    };
+    std::map<uint64_t, LaunchAllocationSnapshot> launchAllocations_;
     std::vector<AclsanDeviceMemoryAccessData> pendingDeviceAccesses_;
     MemcheckStats stats_{};
     uint64_t nextReportId_ = 1;

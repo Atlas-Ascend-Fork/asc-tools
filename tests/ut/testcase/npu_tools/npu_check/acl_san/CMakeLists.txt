@@ -39,6 +39,7 @@ if(ENABLE_TEST)
     ${SANITIZER_API_SOURCE_DIR}/aclsan_active_probe_plan.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_memory_cbdata.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_register_dependency.cpp
+    ${SANITIZER_API_SOURCE_DIR}/aclsan_simt_trace.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_trace_buffer.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_trace_runtime.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_vf.cpp
@@ -98,7 +99,7 @@ if(ENABLE_TEST)
       ${SANITIZER_API_SOURCE_DIR}
       ${SANITIZER_API_TEST_DIR}/dbi
     )
-    target_link_libraries(aclsan_trace_d2h_hook PRIVATE acl_san_test acl_tool_injection_test acl_runtime_stub)
+    target_link_libraries(aclsan_trace_d2h_hook PRIVATE acl_san_test acl_tool_injection_test acl_runtime_stub c_sec_static)
 
     add_executable(aclsan_launch_with_host_args_hook ${SANITIZER_API_TEST_DIR}/aclsan_launch_with_host_args_hook.cpp)
     target_compile_features(aclsan_launch_with_host_args_hook PRIVATE cxx_std_17)

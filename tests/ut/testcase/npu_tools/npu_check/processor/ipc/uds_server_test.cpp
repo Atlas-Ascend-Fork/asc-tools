@@ -322,7 +322,7 @@ TEST(UdsServerTest, FragmentsResultAcrossFramesAndFlagsOnlyTheLastOne)
     const bool readySucceeded = handshakeSucceeded && server.SendReady(serverError);
     bool resultSucceeded = false;
     if (readySucceeded) {
-        resultSucceeded = server.SendResult(report, true, false, serverError);
+        resultSucceeded = server.SendResult(report, true, false, serverError, false);
     }
     client.join();
     server.Shutdown();
@@ -342,6 +342,7 @@ TEST(UdsServerTest, FragmentsResultAcrossFramesAndFlagsOnlyTheLastOne)
         const bool isLast = index + 1 == clientResult.frames.size();
         EXPECT_EQ((frame.flags & FLAG_MORE) != 0, !isLast);
         EXPECT_EQ((frame.flags & FLAG_HAS_ERRORS) != 0, isLast);
+        EXPECT_EQ((frame.flags & FLAG_ANALYSIS_INCOMPLETE) != 0, isLast);
         EXPECT_FALSE((frame.flags & FLAG_TRUNCATED) != 0);
         received.append(frame.payload.begin(), frame.payload.end());
     }

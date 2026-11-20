@@ -103,6 +103,8 @@ typedef enum AclsanCallbackIdDeviceInstruction {
     ACLSAN_CBID_DEVICE_STATE = 3,
     ACLSAN_CBID_DEVICE_PIPE_BARRIER = 4,
     ACLSAN_CBID_DEVICE_VF = 5,
+    // Same data type as DEVICE_MEMORY_ACCESS; only SIMT-aware tools opt in.
+    ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS = 7,
     ACLSAN_CBID_DEVICE_INSTRUCTION_INVALID = 0x7fffffff
 } AclsanCallbackIdDeviceInstruction;
 

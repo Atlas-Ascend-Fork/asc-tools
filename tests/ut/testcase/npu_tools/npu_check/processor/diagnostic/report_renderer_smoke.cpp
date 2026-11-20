@@ -200,6 +200,7 @@ ReportRecord MakeInitcheckRecord()
             {"launchId", "42"},
             {"address", "3000"},
             {"uninitBytes", "32"},
+            {"paddingNote", ""},
             {"firstUninitAddress", "3000"},
             {"base", "3000"},
             {"allocationInitializedBytes", "0"},

@@ -43,7 +43,8 @@ public:
     // 把整份报告作为一个 Result 分片序列发出。除末帧外都置 npucheck::ipc::FLAG_MORE，hasErrors 与
     // truncated 只体现在末帧上。内部会先停掉 publisher 线程，保证分片之间不被插入
     // 实时诊断帧。
-    bool SendResult(const std::string& report, bool hasErrors, bool truncated, std::string& error);
+    bool SendResult(
+        const std::string& report, bool hasErrors, bool truncated, std::string& error, bool analysisComplete = true);
     // 排空实时诊断队列并结束 publisher 线程。调用方需要在统计"丢弃了多少消息"之前
     // 先调它，否则拿到的是尚未落定的中间值。可重复调用。
     void StopPublisher();

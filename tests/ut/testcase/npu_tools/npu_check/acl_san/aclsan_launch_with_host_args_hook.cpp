@@ -26,6 +26,12 @@ namespace {
         }                                                                                 \
     } while (false)
 
+template <size_t N>
+bool StringEquals(const char* value, const char (&expected)[N])
+{
+    return value != nullptr && std::strncmp(value, expected, N) == 0;
+}
+
 struct LaunchArguments {
     aclrtFuncHandle function = nullptr;
     uint32_t blocks = 0;
@@ -75,7 +81,7 @@ void Callback(void*, AclsanCallbackDomain domain, AclsanCallbackId, const void* 
     if (domain == ACLSAN_CB_DOMAIN_LAUNCH) {
         const auto& launch = *static_cast<const AclsanLaunchData*>(data);
         g_lastNumBlocks = launch.numBlocks;
-        if (std::strcmp(launch.common.apiName, "aclrtLaunchKernelWithArgsArray") == 0 && launch.common.result == 73 &&
+        if (StringEquals(launch.common.apiName, "aclrtLaunchKernelWithArgsArray") && launch.common.result == 73 &&
             launch.launchId != 0) {
             ++g_launchCallbacks;
         }
