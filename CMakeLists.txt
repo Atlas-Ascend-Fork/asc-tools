@@ -42,7 +42,7 @@ if(BUILD_OPEN_PROJECT)
     message(STATUS "the PVMODEL_PATH is :${PVMODEL_PATH}")
 
     include(cmake/dependencies.cmake) # 其中会根据PVMODEL_PATH作为pvmodel相关依赖路径
-    include(cmake/intf_pub_linux.cmake)
+    add_cann_target_options()
     include(cmake/package.cmake)
 endif()
 
