@@ -1344,9 +1344,9 @@ class TestMsObjdump(unittest.TestCase):
                 ]
             )
         output = captured_output.getvalue()
-        self.assertIn("DFX_INFO: offset=0x0, length=20", output)
+        self.assertIn("DFX_INFO: length=20", output)
         self.assertIn(
-            "DFX_ARG_INFO[0]: offset=0x4, type=5, length_words=2, value_bytes=16",
+            "DFX_ARG_INFO: type=5, length_words=2",
             output,
         )
         self.assertIn("BLOCK_NUM: 8", output)
@@ -1858,24 +1858,67 @@ class TestMsObjdump(unittest.TestCase):
                     self.assertIn("remaining=", output.getvalue())
                     self.assertTrue(output.getvalue().endswith(expected + "\n"))
 
-    def test_sk_entries_keep_relocation_notice_without_pseudo_field(self):
+    def test_sk_entries_print_only_stored_fields(self):
         objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
         objdump.obj_type = msobjdump_main.ObjType.TYPE_ASCEND_META
         objdump._aicore_binary_meta_printed = set()
-        objdump._meta_relocatable = True
         value = struct.pack("<I6Q", 0, 15, 0, 0, 0, 0, 0)
-        output = StringIO()
-        with contextlib.redirect_stdout(output):
-            objdump._show_ascend_meta_op_tlv(value, 5, len(value), 0)
-        self.assertIn("(relocatable ELF; relocations not applied)", output.getvalue())
-        self.assertNotIn("entries=", output.getvalue())
-        objdump._meta_relocatable = False
         output = StringIO()
         with contextlib.redirect_stdout(output):
             objdump._show_ascend_meta_op_tlv(value, 5, len(value), 0)
         self.assertEqual(
             output.getvalue(),
             "SK_INFO: reserved=0, cap=0xF, global=0x0, sk0=0x0, sk1=0x0, sk2=0x0, sk3=0x0\n",
+        )
+
+    def test_function_alignment_padding_preserves_record_positions(self):
+        # Captured from the normally compiled AddN Function metadata at 0x10C.
+        content = bytes.fromhex(
+            "0d000400000000000f000400ffffffff000000000e000c00000000006400000000000000"
+        )
+        objdump = msobjdump_main.ObjDump.__new__(msobjdump_main.ObjDump)
+        records = list(objdump._iter_meta_tlvs(content, "FUNCTION_META"))
+        self.assertEqual([index for _, _, index in records], [4, 12, 20, 24])
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            for kind, size, index in records:
+                objdump._show_ascend_meta_tlv(content, kind, size, index)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                "DETERMINISTIC_INFO: 0",
+                "BLOCK_NUM: 0xFFFFFFFF",
+                "FUNCTION_ENTRY: 100, flag=0x00",
+            ],
+        )
+
+    def test_padding_filter_does_not_hide_unknown_function_records(self):
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            msobjdump_main.ObjDump._show_ascend_meta_tlv(b"abcd", 0, 4, 0)
+            msobjdump_main.ObjDump._show_ascend_meta_tlv(b"", 99, 0, 0)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                "UNKNOWN_FUNCTION_META: type=0 len=4 raw=61626364",
+                "UNKNOWN_FUNCTION_META: type=99 len=0 raw=",
+            ],
+        )
+
+    def test_dfx_prints_stored_fields_without_display_annotations(self):
+        payload = struct.pack(">HH3Q", 5, 3, 0x30002, 0xFFFFFFFFFFFFFFFF, 32)
+        output = self._dfx_output(payload)
+        self.assertEqual(
+            output.splitlines(),
+            [
+                "DFX_INFO: length=28",
+                "  DFX_ARG_INFO: type=5, length_words=3",
+                "    args_type: 0x0000000000030002",
+                "    param_type: INPUT (2)",
+                "    point_type: LEVEL_2_WITH_SHAPE (3)",
+                "    param_size: -1",
+                "    param_dtype: 32",
+            ],
         )
 
     def _dfx_output(self, payload):
@@ -1896,7 +1939,7 @@ class TestMsObjdump(unittest.TestCase):
         self.assertEqual(output.count("param_size: 32"), 2)
         self.assertEqual(output.count("param_dim: 1"), 2)
         self.assertEqual(output.count("param_shape: [16]"), 2)
-        self.assertIn("DFX_ARG_INFO[1]: offset=0x28", output)
+        self.assertEqual(output.count("DFX_ARG_INFO: type=5, length_words=4"), 2)
         self.assertNotIn("raw=", output)
         self.assertNotIn("WARNING", output)
 
@@ -1934,14 +1977,14 @@ class TestMsObjdump(unittest.TestCase):
         output = self._dfx_output(argument + unknown + argument)
         self.assertIn(
             "UNKNOWN_DFX_TYPE: offset=0x28, type=99, length_words=1, "
-            "value_bytes=8, raw=000000000000007b",
+            "raw=000000000000007b",
             output,
         )
         self.assertEqual(output.count("param_shape: [16]"), 2)
-        self.assertIn("DFX_ARG_INFO[1]: offset=0x34", output)
+        self.assertEqual(output.count("DFX_ARG_INFO: type=5, length_words=4"), 2)
         self.assertNotIn("WARNING", output)
         output = self._dfx_output(struct.pack(">HH", 99, 0) + argument)
-        self.assertIn("DFX_ARG_INFO[0]: offset=0x8", output)
+        self.assertIn("DFX_ARG_INFO: type=5, length_words=4", output)
         self.assertIn("param_shape: [16]", output)
 
     def test_dfx_unknown_record_with_truncated_value(self):
@@ -1961,7 +2004,7 @@ class TestMsObjdump(unittest.TestCase):
                 malformed += struct.pack(">" + "Q" * len(words), *words)
                 output = self._dfx_output(malformed + argument)
                 self.assertIn(message, output)
-                self.assertIn("DFX_ARG_INFO[1]", output)
+                self.assertEqual(output.count("DFX_ARG_INFO: type=5,"), 2)
                 self.assertEqual(output.count("param_shape: [16]"), 1)
 
     def test_dfx_devkit_dynamic_output_layout(self):
@@ -1973,7 +2016,7 @@ class TestMsObjdump(unittest.TestCase):
         output = self._dfx_output(payload)
         self.assertIn("param_type: OUTPUT (3)", output)
         self.assertIn("point_type: LEVEL_2_WITH_SHAPE (3)", output)
-        self.assertIn("param_size: -1 (unspecified)", output)
+        self.assertIn("param_size: -1", output)
         self.assertIn("param_dtype: 4", output)
         self.assertIn("param_type: TILING (7)", output)
         self.assertIn("param_size: 108", output)
@@ -1984,7 +2027,7 @@ class TestMsObjdump(unittest.TestCase):
         record = struct.pack(">HH", 5, 5) + arg
         output = self._dfx_output(record * 2)
         self.assertEqual(output.count("param_shape: [16, 16]"), 2)
-        self.assertIn("DFX_ARG_INFO[1]: offset=0x30", output)
+        self.assertEqual(output.count("DFX_ARG_INFO: type=5, length_words=5"), 2)
         self.assertIn("param_dim: 2", output)
         self.assertNotIn("WARNING", output)
         self.assertNotIn("raw=", output)

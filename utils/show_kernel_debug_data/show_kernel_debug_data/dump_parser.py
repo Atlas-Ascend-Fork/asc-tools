@@ -1199,14 +1199,7 @@ class FifoDumpBinFile:
         core_content = FifoDumpCoreContent()
 
         with open(self.dump_bin, "rb") as bin_file:
-            block_info_size = FifoBlockInfo.get_size()
-            block_info_buffer = bin_file.read(block_info_size)
-            if len(block_info_buffer) < block_info_size:
-                raise RuntimeError("FifoDumpBinFile: incomplete BlockInfo header")
-            block_info = FifoBlockInfo()
-            block_info.unpack(block_info_buffer)
-            if not block_info.is_valid():
-                raise RuntimeError("FifoDumpBinFile: invalid BlockInfo magic")
+            block_info = self._read_block_info(bin_file)
             core_content.block_info = block_info
             while True:
                 tl_head = bin_file.read(TLV.get_tl_size())
@@ -1238,21 +1231,36 @@ class FifoDumpBinFile:
                 if len(tlv.value) < tlv.length:
                     raise RuntimeError("FifoDumpBinFile: incomplete TLV value")
 
-                if tlv.tag in (
-                    DumpType.TENSOR_TYPE.value,
-                    DumpType.SUPER_TENSOR_TYPE.value,
-                    DumpType.SUPER_TENSOR_BODY_TYPE.value,
-                    DumpType.SCALAR_TYPE.value,
-                    DumpType.ASSERT_TYPE.value,
-                    DumpType.SIMT_PRINTF_TYPE.value,
-                    DumpType.SIMT_ASSERT_TYPE.value,
-                    DumpType.TIME_STAMP.value,
-                    DumpType.SHAPE_TYPE.value,
-                ):
-                    core_content.add_tlv_data(tlv)
-                    self.index_dtype_dt.update(core_content.index_dtype_dt)
+                self._add_fifo_tlv(core_content, tlv)
             core_content.ensure_super_tensor_complete()
         self.dump_core_contents.append(core_content)
+
+    @staticmethod
+    def _read_block_info(bin_file):
+        block_info_size = FifoBlockInfo.get_size()
+        block_info_buffer = bin_file.read(block_info_size)
+        if len(block_info_buffer) < block_info_size:
+            raise RuntimeError("FifoDumpBinFile: incomplete BlockInfo header")
+        block_info = FifoBlockInfo()
+        block_info.unpack(block_info_buffer)
+        if not block_info.is_valid():
+            raise RuntimeError("FifoDumpBinFile: invalid BlockInfo magic")
+        return block_info
+
+    def _add_fifo_tlv(self, core_content, tlv):
+        if tlv.tag in (
+            DumpType.TENSOR_TYPE.value,
+            DumpType.SUPER_TENSOR_TYPE.value,
+            DumpType.SUPER_TENSOR_BODY_TYPE.value,
+            DumpType.SCALAR_TYPE.value,
+            DumpType.ASSERT_TYPE.value,
+            DumpType.SIMT_PRINTF_TYPE.value,
+            DumpType.SIMT_ASSERT_TYPE.value,
+            DumpType.TIME_STAMP.value,
+            DumpType.SHAPE_TYPE.value,
+        ):
+            core_content.add_tlv_data(tlv)
+            self.index_dtype_dt.update(core_content.index_dtype_dt)
 
     def write_result(self, output_dir):
         if len(self.dump_core_contents) == 0:

@@ -300,7 +300,6 @@ class ObjDump:
         )  # 落盘文件目录，用户未设置时当前路径
         self._aicore_binary_meta_printed = set()
         self._sass_tools = {}
-        self._meta_relocatable = False
         self.sass_lineinfo = getattr(args, "lineinfo", False)
         self.sass_source = getattr(args, "source", False)
         try:
@@ -329,45 +328,72 @@ class ObjDump:
 
     @staticmethod
     def _show_ascend_meta_tlv(content: bytes, t: int, tlv_len: int, index: int):
+        # Linker alignment padding can occupy one empty Function TLV header.
+        # Keep the iterator's normal header-size step; suppress only its display.
+        if t == 0 and tlv_len == 0:
+            return
         value = content[index : index + tlv_len]
         name = F_TYPE_MAP.get(t, f"UNKNOWN({t})")
+        if t == F_TYPE_L0_EXCEPTION_DFX_IS_TIK:
+            ObjDump._show_tik_meta(value, index)
+            return
+        fmt = FUNCTION_META_FORMATS.get(t)
+        if fmt is None:
+            if t == F_TYPE_DFX_INFO:
+                ObjDump._show_dfx(value, index)
+            elif t == F_TYPE_DFX_ARG_INFO:
+                print(f"{name}: len={tlv_len} raw={value.hex()}")
+            else:
+                print(
+                    f"UNKNOWN_FUNCTION_META: type={t} len={tlv_len} raw={value.hex()}"
+                )
+            return
+        values = ObjDump._unpack_meta_value(value, fmt, "FUNCTION_META", t, index)
+        if values is None:
+            return
+        if t == F_TYPE_PARAM_INFO:
+            ObjDump._show_function_param_info(name, values)
+        elif t == F_TYPE_PARAM_SUMMARY:
+            para_nums, param_total_size = values
+            print(f"{name}: paraNums={para_nums}, paramTotalSize={param_total_size}")
+        elif t == F_TYPE_FUNCTION_ENTRY:
+            flag, _, _, entry = values
+            print(f"{name}: {entry}, flag=0x{flag:02X}")
+        else:
+            ObjDump._show_function_meta_value(name, t, values)
 
+    @staticmethod
+    def _show_tik_meta(value: bytes, index: int):
         # ADump reads a uint32 prefix and accepts longer values; the producer's
         # complete layout is unknown, so preserve any trailing bytes.
-        if t == F_TYPE_L0_EXCEPTION_DFX_IS_TIK:
-            prefix = struct.Struct("<I")
-            if len(value) < prefix.size:
-                ObjDump._unpack_meta_value(
-                    value, prefix.format, "FUNCTION_META", t, index
-                )
-                return
-            output = f"{name}: {prefix.unpack_from(value)[0]}"
-            if len(value) > prefix.size:
-                output += f", trailing_raw={value[prefix.size :].hex()}"
-            print(output)
+        prefix = struct.Struct("<I")
+        if len(value) < prefix.size:
+            ObjDump._unpack_meta_value(
+                value,
+                prefix.format,
+                "FUNCTION_META",
+                F_TYPE_L0_EXCEPTION_DFX_IS_TIK,
+                index,
+            )
             return
+        name = F_TYPE_MAP[F_TYPE_L0_EXCEPTION_DFX_IS_TIK]
+        output = f"{name}: {prefix.unpack_from(value)[0]}"
+        if len(value) > prefix.size:
+            output += f", trailing_raw={value[prefix.size :].hex()}"
+        print(output)
 
-        fmt = FUNCTION_META_FORMATS.get(t)
-        if fmt is not None:
-            values = ObjDump._unpack_meta_value(value, fmt, "FUNCTION_META", t, index)
-            if values is None:
-                return
-
+    @staticmethod
+    def _show_function_meta_value(name: str, t: int, values: tuple):
         if t in FUNCTION_META_ENUM_MAPS:
             (v,) = values
             print(f"{name}: {ObjDump._format_meta_enum(v, FUNCTION_META_ENUM_MAPS[t])}")
         elif t == F_TYPE_MIX_TASK_RATION:
             v1, v2 = values
             print(f"{name}: [{v1}:{v2}]")
-        elif t in (
-            F_TYPE_DETERMINISTIC_INFO,
-            F_TYPE_ENABLE_EARLY_START,
-            F_TYPE_BLOCK_NUM,
-            F_TYPE_SIMT_LAUNCH_BOUNDS,
-            F_TYPE_COMPAT_MODE,
-        ):
+        else:
             (v,) = values
-            if t == F_TYPE_BLOCK_NUM and v == 0xFFFFFFFF:
+            block_num_default = 0xFFFFFFFF
+            if t == F_TYPE_BLOCK_NUM and v == block_num_default:
                 print(f"{name}: 0xFFFFFFFF")
             elif t == F_TYPE_COMPAT_MODE:
                 decoded = (
@@ -378,60 +404,41 @@ class ObjDump:
                 print(f"{name}: {decoded}")
             else:
                 print(f"{name}: {v}")
-        elif t == F_TYPE_FUNCTION_ENTRY:
-            flag, _, _, entry = values
-            print(f"{name}: {entry}, flag=0x{flag:02X}")
-        elif t == F_TYPE_DFX_INFO:
-            ObjDump._show_dfx(value, index)
-        elif t in (
-            F_TYPE_COMPILER_ALLOC_UB_SIZE,
-            F_TYPE_SU_STACK_SIZE,
-            F_TYPE_SIMT_WARP_STACK_SIZE,
-            F_TYPE_SIMT_DVG_WARP_STACK_SIZE,
-        ):
-            (v,) = values
-            print(f"{name}: {v}")
-        elif t == F_TYPE_PARAM_SUMMARY:
-            para_nums, param_total_size = values
-            print(f"{name}: paraNums={para_nums}, paramTotalSize={param_total_size}")
-        elif t == F_TYPE_PARAM_INFO:
-            fields = (
-                "index",
-                "ordinal",
-                "offset",
-                "size",
-                "align",
-                "paramType",
-                "spaceIndex",
-                "spaceType",
-                "space",
-                "resv",
-            )
-            print(
-                f"{name}: "
-                + ", ".join(
-                    f"{field}="
-                    + (
-                        ObjDump._format_meta_enum(field_value, PARAM_TYPE_MAP)
-                        if field == "paramType"
-                        else str(field_value)
-                    )
-                    for field, field_value in zip(fields, values)
+
+    @staticmethod
+    def _show_function_param_info(name: str, values: tuple):
+        fields = (
+            "index",
+            "ordinal",
+            "offset",
+            "size",
+            "align",
+            "paramType",
+            "spaceIndex",
+            "spaceType",
+            "space",
+            "resv",
+        )
+        print(
+            f"{name}: "
+            + ", ".join(
+                f"{field}="
+                + (
+                    ObjDump._format_meta_enum(field_value, PARAM_TYPE_MAP)
+                    if field == "paramType"
+                    else str(field_value)
                 )
+                for field, field_value in zip(fields, values)
             )
-        elif t == F_TYPE_DFX_ARG_INFO:
-            print(f"{name}: len={tlv_len} raw={value.hex()}")
-        else:
-            print(f"UNKNOWN_FUNCTION_META: type={t} len={tlv_len} raw={value.hex()}")
+        )
 
     @staticmethod
     def _show_dfx(value: bytes, value_offset: int):
         # Outer TLV follows ELF encoding; DFX headers and uint64 words are big-endian.
         header = struct.Struct(">HH")
         word_size = struct.calcsize(">Q")
-        print(f"DFX_INFO: offset=0x{value_offset - header.size:X}, length={len(value)}")
+        print(f"DFX_INFO: length={len(value)}")
         offset = 0
-        record = 0
         while offset < len(value):
             absolute = value_offset + offset
             remaining = len(value) - offset
@@ -453,23 +460,27 @@ class ObjDump:
                 return
             payload = value[offset : offset + size]
             if kind == F_TYPE_DFX_ARG_INFO:
-                print(
-                    f"  DFX_ARG_INFO[{record}]: offset=0x{absolute:X}, type={kind}, "
-                    f"length_words={words}, value_bytes={size}"
-                )
+                print(f"  DFX_ARG_INFO: type={kind}, length_words={words}")
                 ObjDump._show_dfx_arg(payload, value_offset + offset)
-                record += 1
             else:
                 print(
                     f"  UNKNOWN_DFX_TYPE: offset=0x{absolute:X}, type={kind}, "
-                    f"length_words={words}, value_bytes={size}, raw={payload.hex()}"
+                    f"length_words={words}, raw={payload.hex()}"
                 )
             offset += size
 
     @staticmethod
     def _show_dfx_arg(value: bytes, value_offset: int):
-        param_types = {kind.value: kind for kind in DfxParamType}
-        point_types = {kind.value: kind for kind in DfxPointType}
+        word = struct.Struct(">Q")
+        if len(value) < word.size or len(value) % word.size:
+            ObjDump._warn_dfx_arg(
+                value,
+                value_offset,
+                f"invalid value length={len(value)}, expected uint64 words with args_type",
+            )
+            return
+        args_type, *fields = (item[0] for item in word.iter_unpack(value))
+        param_type, point_type, valid_encoding = ObjDump._show_dfx_arg_type(args_type)
         tensor_types = (
             DfxParamType.TENSOR,
             DfxParamType.INPUT,
@@ -477,36 +488,25 @@ class ObjDump:
             DfxParamType.SHAPE_TENSOR,
         )
         size_types = (DfxParamType.WORKSPACE, DfxParamType.TILING)
-        word = struct.Struct(">Q")
+        if (
+            not valid_encoding
+            or point_type is None
+            or param_type not in tensor_types + size_types
+        ):
+            ObjDump._show_dfx_remaining(value, value_offset, fields)
+            return
+        ObjDump._show_dfx_arg_fields(
+            fields, param_type in tensor_types, point_type, value, value_offset
+        )
+
+    @staticmethod
+    def _show_dfx_arg_type(args_type: int):
+        param_types = {kind.value: kind for kind in DfxParamType}
+        point_types = {kind.value: kind for kind in DfxPointType}
         # Runtime dump_args.h assigns 16 bits each to tensor and pointer types.
         type_field_bits = 16
         type_field_mask = (1 << type_field_bits) - 1
         args_type_mask = type_field_mask | (type_field_mask << type_field_bits)
-        unspecified = 0xFFFFFFFFFFFFFFFF
-
-        def warn(message):
-            print(
-                f"[WARNING] DFX_ARG_INFO offset=0x{value_offset:X}: "
-                f"{message}, raw={value.hex()}"
-            )
-
-        def number(v):
-            return "-1 (unspecified)" if v == unspecified else str(v)
-
-        def show_remaining(fields):
-            if fields:
-                consumed = len(value) - len(fields) * word.size
-                print(
-                    f"    undecoded: offset=0x{value_offset + consumed:X}, "
-                    f"raw={value[consumed:].hex()}"
-                )
-
-        if len(value) < word.size or len(value) % word.size:
-            warn(
-                f"invalid value length={len(value)}, expected uint64 words with args_type"
-            )
-            return
-        args_type, *fields = (item[0] for item in word.iter_unpack(value))
         param_value = args_type & type_field_mask
         point_value = (args_type >> type_field_bits) & type_field_mask
         param_type = param_types.get(param_value)
@@ -518,46 +518,74 @@ class ObjDump:
         print(
             f"    point_type: {point_type.name if point_type else 'UNKNOWN'} ({point_value})"
         )
-        if (
-            args_type & ~args_type_mask
-            or point_type is None
-            or param_type not in tensor_types + size_types
-        ):
-            show_remaining(fields)
-            return
+        return param_type, point_type, not (args_type & ~args_type_mask)
 
+    @staticmethod
+    def _show_dfx_arg_fields(fields, is_tensor, point_type, value, value_offset):
         # Dynamic workspace and some tiling records contain args_type only.
         if not fields:
-            if param_type in tensor_types:
-                warn("missing param_size")
+            if is_tensor:
+                ObjDump._warn_dfx_arg(value, value_offset, "missing param_size")
             return
         param_size, *fields = fields
-        print(f"    param_size: {number(param_size)}")
-        if param_type in tensor_types and point_type == DfxPointType.LEVEL_2_WITH_SHAPE:
+        print(f"    param_size: {ObjDump._dfx_number(param_size)}")
+        if is_tensor and point_type == DfxPointType.LEVEL_2_WITH_SHAPE:
             if not fields:
-                warn("missing param_dtype")
+                ObjDump._warn_dfx_arg(value, value_offset, "missing param_dtype")
                 return
             param_dtype, *fields = fields
             # Producer uses bytes or bits depending on target; retain its value.
-            print(f"    param_dtype: {number(param_dtype)}")
+            print(f"    param_dtype: {ObjDump._dfx_number(param_dtype)}")
         elif (
-            param_type in tensor_types
+            is_tensor
             and point_type
             in (DfxPointType.LEVEL_1, DfxPointType.LEVEL_1_FOR_SHAPE_TENSOR)
             and fields
         ):
-            dim, *fields = fields
-            print(f"    param_dim: {number(dim)}")
-            if dim != unspecified:
-                if dim > len(fields):
-                    warn(
-                        f"param_shape truncated, declared_dim={dim}, available={len(fields)}"
-                    )
-                    return
-                shape = ", ".join(number(v) for v in fields[:dim])
-                print(f"    param_shape: [{shape}]")
-                fields = fields[dim:]
-        show_remaining(fields)
+            fields = ObjDump._show_dfx_shape(fields, value, value_offset)
+            if fields is None:
+                return
+        ObjDump._show_dfx_remaining(value, value_offset, fields)
+
+    @staticmethod
+    def _show_dfx_shape(fields, value: bytes, value_offset: int):
+        unspecified = 0xFFFFFFFFFFFFFFFF
+        dim, *fields = fields
+        print(f"    param_dim: {ObjDump._dfx_number(dim)}")
+        if dim != unspecified:
+            if dim > len(fields):
+                ObjDump._warn_dfx_arg(
+                    value,
+                    value_offset,
+                    f"param_shape truncated, declared_dim={dim}, available={len(fields)}",
+                )
+                return None
+            shape = ", ".join(ObjDump._dfx_number(v) for v in fields[:dim])
+            print(f"    param_shape: [{shape}]")
+            fields = fields[dim:]
+        return fields
+
+    @staticmethod
+    def _warn_dfx_arg(value: bytes, value_offset: int, message: str):
+        print(
+            f"[WARNING] DFX_ARG_INFO offset=0x{value_offset:X}: "
+            f"{message}, raw={value.hex()}"
+        )
+
+    @staticmethod
+    def _dfx_number(value: int):
+        unspecified = 0xFFFFFFFFFFFFFFFF
+        return "-1" if value == unspecified else str(value)
+
+    @staticmethod
+    def _show_dfx_remaining(value: bytes, value_offset: int, fields):
+        if fields:
+            word_size = struct.calcsize(">Q")
+            consumed = len(value) - len(fields) * word_size
+            print(
+                f"    undecoded: offset=0x{value_offset + consumed:X}, "
+                f"raw={value[consumed:].hex()}"
+            )
 
     @staticmethod
     def _unpack_buff_content_by_type(
@@ -622,8 +650,6 @@ class ObjDump:
                 f"global=0x{global_func:X}, sk0=0x{sk0:X}, sk1=0x{sk1:X}, "
                 f"sk2=0x{sk2:X}, sk3=0x{sk3:X}"
             )
-            if getattr(self, "_meta_relocatable", False):
-                output += " (relocatable ELF; relocations not applied)"
         elif t == B_TYPE_SPECIALIZATION_RESOURCE_ID:
             resource_id = values[0].decode("ascii", errors="replace")
             output = f"{name}: {resource_id}"
@@ -1403,10 +1429,6 @@ class ObjDump:
     def _show_elf_ascend_meta_obj(self):
         output = utils.get_section_headers_in_file(self.obj)
         sections = self._parse_ascend_meta_sections(output)
-        elf_header = self._completed_process_text(utils.get_elf_header(self.obj))
-        self._meta_relocatable = bool(
-            re.search(r"^\s*Type:\s+REL\b", elf_header, re.MULTILINE)
-        )
         self._get_elf_ascend_meta_op_tlv(sections)
         self._get_elf_ascend_meta_tlv(sections)
 
@@ -1648,15 +1670,7 @@ class SassFileAction(argparse.Action):
         setattr(namespace, self.dest, os.path.realpath(values))
 
 
-def parse_args(argv=None):
-    parser = argparse.ArgumentParser(
-        prog="msobjdump",
-        description="objdump tool for Ascend C elf file",
-        epilog="Examples: msobjdump --sass kernel.o --lineinfo; "
-        "msobjdump --sass kernel.o --source; "
-        "msobjdump --sass kernel.o --lineinfo -s",
-    )
-    elf_operator_group = parser.add_argument_group()
+def _add_elf_arguments(elf_operator_group):
     elf_operator_group.add_argument(
         "--dump-elf",
         "-d",
@@ -1693,6 +1707,9 @@ def parse_args(argv=None):
         action=FileAction,
         help="List all the ELF files available in the fatbin.",
     )
+
+
+def _add_sass_arguments(elf_operator_group):
     elf_operator_group.add_argument(
         "--sass",
         dest="sass",
@@ -1714,6 +1731,37 @@ def parse_args(argv=None):
         help="Show source code interleaved with SASS disassembly. "
         "Requires --sass, debug line information and accessible source files.",
     )
+
+
+def _validate_args(parser, args):
+    if (args.lineinfo or args.source) and not args.sass:
+        parser.error(
+            "--lineinfo and --source/-s require --sass <input>. "
+            "Run 'msobjdump --help' for usage information."
+        )
+
+    if args.sass:
+        if args.dump_elf or args.extr_elf or args.list_elf:
+            parser.error("--sass cannot be combined with an existing ELF action")
+        if args.verbose or args.out_dir is not None:
+            parser.error("--sass cannot be combined with --verbose or --out-dir")
+    elif not (args.dump_elf or args.extr_elf or args.list_elf):
+        parser.error(
+            "one of --dump-elf, --extract-elf, --list-elf, or --sass is required"
+        )
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="msobjdump",
+        description="objdump tool for Ascend C elf file",
+        epilog="Examples: msobjdump --sass kernel.o --lineinfo; "
+        "msobjdump --sass kernel.o --source; "
+        "msobjdump --sass kernel.o --lineinfo -s",
+    )
+    elf_operator_group = parser.add_argument_group()
+    _add_elf_arguments(elf_operator_group)
+    _add_sass_arguments(elf_operator_group)
     parser.add_argument(
         "--out-dir",
         "-o",
@@ -1731,21 +1779,7 @@ def parse_args(argv=None):
 
     args = parser.parse_args(argv)
 
-    if (args.lineinfo or args.source) and not args.sass:
-        parser.error(
-            "--lineinfo and --source/-s require --sass <input>. "
-            "Run 'msobjdump --help' for usage information."
-        )
-
-    if args.sass:
-        if args.dump_elf or args.extr_elf or args.list_elf:
-            parser.error("--sass cannot be combined with an existing ELF action")
-        if args.verbose or args.out_dir is not None:
-            parser.error("--sass cannot be combined with --verbose or --out-dir")
-    elif not (args.dump_elf or args.extr_elf or args.list_elf):
-        parser.error(
-            "one of --dump-elf, --extract-elf, --list-elf, or --sass is required"
-        )
+    _validate_args(parser, args)
 
     return args
 
