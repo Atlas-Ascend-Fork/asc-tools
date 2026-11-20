@@ -120,9 +120,9 @@ bool Racechecker::HandleOperatorCompletion(const void* data, CheckerReportList& 
         return true;
     }
     Launch& launch = it->second;
-    if ((e.flags & ACLSAN_OPERATOR_EXECUTION_FLAG_INCOMPLETE) != 0)
+    if ((e.flags & static_cast<uint32_t>(ACLSAN_OPERATOR_EXECUTION_FLAG_INCOMPLETE)) != 0U)
         launch.reasons.insert("operator_execution_incomplete");
-    if ((e.flags & ACLSAN_OPERATOR_EXECUTION_FLAG_DROPPED) != 0)
+    if ((e.flags & static_cast<uint32_t>(ACLSAN_OPERATOR_EXECUTION_FLAG_DROPPED)) != 0U)
         launch.reasons.insert("trace_dropped");
     Finish(e.launchId, launch, reports);
     finished_.insert(e.launchId);
@@ -235,7 +235,7 @@ bool Racechecker::AcceptMemoryEvent(Launch& state, const AclsanDeviceMemoryAcces
     constexpr auto paddingFlag = static_cast<uint32_t>(ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING);
     const bool exact = h.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT && a.vectorMask0 == 0U && a.vectorMask1 == 0U &&
                        a.predicateMask0 == 0U && a.predicateMask1 == 0U && (a.memoryFlags & ~paddingFlag) == 0U;
-    if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN) != 0)
+    if ((h.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN)) != 0U)
         state.reasons.insert("atomic_configuration_unknown");
     if (!exact) {
         // A synthetic conversion-failure marker denotes a missing footprint.
@@ -401,7 +401,7 @@ void Racechecker::Finish(uint64_t id, Launch& l, CheckerReportList& reports)
     }
     for (const auto& reason : l.reasons)
         ++reasons_[reason];
-    incomplete_ |= !l.reasons.empty();
+    incomplete_ = incomplete_ || !l.reasons.empty();
 }
 
 // Per-launch analysis state. It is discarded after replay and never shared

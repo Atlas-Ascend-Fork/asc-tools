@@ -525,12 +525,13 @@ template <typename UInt>
 bool WriteLittleEndian(std::ostream& output, UInt value)
 {
     static_assert(std::is_unsigned<UInt>::value, "control record fields must be unsigned");
+    std::common_type_t<UInt, unsigned int> remaining = value;
     for (std::size_t byteIndex = 0; byteIndex < sizeof(UInt); ++byteIndex) {
-        const auto byte = static_cast<std::uint8_t>(value);
+        const auto byte = static_cast<std::uint8_t>(remaining);
         if (!output.write(reinterpret_cast<const char*>(&byte), static_cast<std::streamsize>(sizeof(byte)))) {
             return false;
         }
-        value >>= CHAR_BIT;
+        remaining >>= BITS_PER_BYTE;
     }
     return true;
 }

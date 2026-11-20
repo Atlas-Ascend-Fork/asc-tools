@@ -293,14 +293,14 @@ const PatternDescriptor* FindPatternDescriptor(const ReportTemplateKey& key)
     return found == Catalog().end() ? nullptr : &found->second;
 }
 
-const char* PatternName(ReportTool tool, NpuCheckReportPattern pattern)
+std::string PatternName(ReportTool tool, NpuCheckReportPattern pattern)
 {
     for (const auto& [key, descriptor] : Catalog()) {
         if (key.tool == tool && descriptor.value == pattern) {
-            return key.pattern.c_str();
+            return key.pattern;
         }
     }
-    return "";
+    return {};
 }
 
 const char* ToolName(ReportTool tool)

@@ -70,7 +70,8 @@ struct Elf {
             "truncated device ELF");
         std::uint64_t value = 0;
         for (unsigned i = 0; i < size; ++i) {
-            value |= std::uint64_t(static_cast<unsigned char>(bytes[offset + i])) << (CHAR_BIT * i);
+            const auto byte = static_cast<unsigned char>(bytes[offset + i]);
+            value |= std::uint64_t(byte) << (static_cast<unsigned int>(CHAR_BIT) * i);
         }
         return value;
     }
@@ -328,7 +329,7 @@ std::vector<Instruction> FunctionInstructions(
 }
 constexpr unsigned kBranchOffsetBits = 48;
 constexpr unsigned kAddressImmediateBits = 16;
-constexpr std::uint64_t kBranchImmediateMax = (std::uint64_t{1} << kAddressImmediateBits) - 1;
+constexpr std::uint64_t kBranchImmediateMax = (std::uint64_t{1} << kAddressImmediateBits) - std::uint64_t{1};
 constexpr int kDecimalBase = 10;
 using AddressReferences = std::map<std::uint64_t, BranchTarget>;
 struct NormalizedInstructions {
@@ -349,7 +350,7 @@ bool ParseUnsigned(const std::string& text, std::uint64_t& value)
 }
 std::uint64_t AddWordOffset(std::uint64_t address, std::uint64_t encoded)
 {
-    constexpr auto kSignBit = std::uint64_t{1} << (kBranchOffsetBits - 1);
+    constexpr auto kSignBit = std::uint64_t{1} << (kBranchOffsetBits - 1U);
     constexpr auto kOffsetRange = std::uint64_t{1} << kBranchOffsetBits;
     const bool negative = (encoded & kSignBit) != 0;
     const auto distance = (negative ? kOffsetRange - encoded : encoded) * kScalarInstructionBytes;

@@ -40,7 +40,7 @@ std::optional<uint64_t> ParseUnsigned(const char* text, uint64_t maximum)
         if (character < '0' || character > '9') {
             return std::nullopt;
         }
-        const uint64_t digit = static_cast<uint64_t>(character - '0');
+        const uint64_t digit = static_cast<uint64_t>(static_cast<int>(character) - static_cast<int>('0'));
         if (parsed > maximum / DECIMAL_BASE || (parsed == maximum / DECIMAL_BASE && digit > maximum % DECIMAL_BASE)) {
             return std::nullopt;
         }

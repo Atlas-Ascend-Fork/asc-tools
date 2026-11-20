@@ -118,11 +118,11 @@ bool PrepareNpubitInput(
     return true;
 }
 
-void LogNpubitRanges(int status, NpubitUbAddressRange* ranges, size_t count)
+void LogNpubitRanges(int status, const NpubitUbAddressRange* ranges, size_t count)
 {
     ASCTOOL_DEBUG(
         "acl_san NpubitGetUbAddressRanges result status=%d count=%zu data=%p", status, count,
-        static_cast<void*>(ranges));
+        static_cast<const void*>(ranges));
     if (ranges != nullptr && count <= MAX_VF_EVENTS) {
         for (size_t index = 0; index < count; ++index) {
             const auto& range = ranges[index];

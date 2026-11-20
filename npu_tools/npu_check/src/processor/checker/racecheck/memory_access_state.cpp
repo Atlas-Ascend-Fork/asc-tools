@@ -22,12 +22,12 @@ constexpr size_t PATCH_BOOKKEEPING_ALLOWANCE = 128U;
 constexpr size_t REPLACEMENT_BOOKKEEPING_ALLOWANCE = 64U;
 } // namespace
 
-size_t MemoryAccessState::Cost(const StatePtr& s)
+size_t MemoryAccessState::Cost(const StatePtr& state)
 {
     // Conservative logical accounting, including map/control-block allowances.
     // Shared states are charged per segment; this is not a process RSS measurement.
     return sizeof(Segment) + sizeof(uint64_t) + MAP_CONTROL_BLOCK_ALLOWANCE + sizeof(State) +
-           SEGMENT_METADATA_ALLOWANCE + (s ? s->readers.capacity() * sizeof(size_t) : 0);
+           SEGMENT_METADATA_ALLOWANCE + (state ? state->readers.capacity() * sizeof(size_t) : 0);
 }
 bool MemoryAccessState::Equal(const StatePtr& a, const StatePtr& b) { return a == b || (a && b && *a == *b); }
 bool MemoryAccessState::Visit(const Storage& storage, Interval range, const Visitor& visitor) const

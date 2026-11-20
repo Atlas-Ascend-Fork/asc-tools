@@ -20,12 +20,6 @@
 namespace npucheck::detail {
 namespace {
 
-const char* MemcheckPatternName(NpuCheckReportPattern pattern) { return PatternName(ReportTool::MEMCHECK, pattern); }
-
-const char* InitcheckPatternName(NpuCheckReportPattern pattern) { return PatternName(ReportTool::INITCHECK, pattern); }
-
-const char* SoccheckPatternName(NpuCheckReportPattern pattern) { return PatternName(ReportTool::SOCCHECK, pattern); }
-
 bool ValidateReportCommon(
     const NpuCheckReportCommon& common, ReportTool expectedTool, NpuCheckReportPattern envelopePattern)
 {
@@ -119,7 +113,7 @@ ReportRecord ToReportRecord(const NpuCheckMemcheckReport& report)
         fields["space"] = MemorySpaceName(report.allocation.memorySpace);
     }
     return ReportRecord{
-        {ReportTool::MEMCHECK, MemcheckPatternName(report.common.pattern)},
+        {ReportTool::MEMCHECK, PatternName(ReportTool::MEMCHECK, report.common.pattern)},
         report.common.severity,
         fields,
         ActiveCallStacks(report.common)};
@@ -163,7 +157,7 @@ ReportRecord ToReportRecord(const NpuCheckInitcheckReport& report)
         fields["space"] = MemorySpaceName(report.allocation.memorySpace);
     }
     return ReportRecord{
-        {ReportTool::INITCHECK, InitcheckPatternName(report.common.pattern)},
+        {ReportTool::INITCHECK, PatternName(ReportTool::INITCHECK, report.common.pattern)},
         report.common.severity,
         fields,
         ActiveCallStacks(report.common)};
@@ -186,7 +180,7 @@ ReportRecord ToReportRecord(const NpuCheckSoccheckReport& report)
     fields["expectedValue"] = Hex(report.state.expectedValue);
     fields["observedValue"] = Hex(report.state.observedValue);
     return ReportRecord{
-        {ReportTool::SOCCHECK, SoccheckPatternName(report.common.pattern)},
+        {ReportTool::SOCCHECK, PatternName(ReportTool::SOCCHECK, report.common.pattern)},
         report.common.severity,
         fields,
         ActiveCallStacks(report.common)};

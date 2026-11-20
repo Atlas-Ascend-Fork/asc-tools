@@ -87,8 +87,8 @@ struct PendingTrace {
     std::mutex dispatchMutex;
     std::recursive_mutex collectionMutex;
     uint64_t launchId = 0;
-    const void* function = nullptr;
-    const void* stream = nullptr;
+    aclrtFuncHandle function = nullptr;
+    aclrtStream stream = nullptr;
     aclrtContext context = nullptr;
     aclrtStream copyStream = nullptr;
     void* deviceBuffer = nullptr;
@@ -1017,7 +1017,7 @@ TraceKernelCoreType TraceKernelCoreTypeFromMeta(uint32_t metaKernelType) noexcep
     }
 }
 
-void ResolveKernelEndExpectation(void* function, uint32_t blockCount, PreparedTraceLaunch& prepared) noexcept
+void ResolveKernelEndExpectation(const void* function, uint32_t blockCount, PreparedTraceLaunch& prepared) noexcept
 {
     uint32_t metaKernelType = 0U;
     if (!ReadRuntimeFunctionMeta(function, RuntimeFunctionMetaTypeForKernelType(), metaKernelType)) {
@@ -1449,8 +1449,8 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         data.common.result = OperatorExecutionResult(pending.failed, partial);
         data.common.correlationId = pending.launchId;
         data.launchId = pending.launchId;
-        data.function = const_cast<void*>(pending.function);
-        data.stream = const_cast<void*>(pending.stream);
+        data.function = pending.function;
+        data.stream = pending.stream;
         data.deviceId = pending.deviceId;
         data.numBlocks = pending.blockCount;
         data.flags = 0U;
@@ -2303,7 +2303,7 @@ aclError PrepareTraceLaunch(
         }
         prepared.instrumented = true;
         prepared.blockCount = blockCount;
-        ResolveKernelEndExpectation(reinterpret_cast<void*>(function), blockCount, prepared);
+        ResolveKernelEndExpectation(function, blockCount, prepared);
         ACLSAN_RETURN_IF_ACL_ERROR(ResolveLaunchContext(prepared), "Failed to resolve trace launch context");
         const auto gate = DeviceGate(prepared.deviceId);
         auto gateLock = std::make_shared<std::shared_lock<std::shared_mutex>>(*gate, std::try_to_lock);
@@ -2521,7 +2521,7 @@ aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept
 }
 
 void CompleteTraceLaunch(
-    PreparedTraceLaunch&& prepared, const void* function, const void* stream, aclError launchResult) noexcept
+    PreparedTraceLaunch&& prepared, aclrtFuncHandle function, aclrtStream stream, aclError launchResult) noexcept
 {
     if (!prepared.instrumented || prepared.deviceBuffer == nullptr) {
         ReleaseHostInputs(prepared.hostInputs);
@@ -2565,8 +2565,7 @@ void CompleteTraceLaunch(
         pending->slotRecordLimit = TraceSlotRecordLimit(prepared.kernelEndExpectation);
         pending->kernelEndTracker.Reset(prepared.kernelEndExpectation);
         const auto& completionApi = CompletionEventApi();
-        if (!pending->completionEvent.Record(completionApi, reinterpret_cast<aclrtStream>(const_cast<void*>(stream))) &&
-            completionApi.Available()) {
+        if (!pending->completionEvent.Record(completionApi, stream) && completionApi.Available()) {
             ASCTOOL_WARNING(
                 "acl_san trace: launch=%llu cannot record completion event; waiting for stream synchronization",
                 static_cast<unsigned long long>(pending->launchId));

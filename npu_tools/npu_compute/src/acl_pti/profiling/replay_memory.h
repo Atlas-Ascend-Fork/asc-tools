@@ -37,7 +37,8 @@ public:
 
     /// Mirrors a supported copy into the corresponding shadow buffer.
     aclptiResult MirrorMemcpy(
-        void* destination, std::size_t destinationSize, const void* source, std::size_t count, aclrtMemcpyKind kind);
+        void* destination, std::size_t destinationSize, const void* source, std::size_t count,
+        aclrtMemcpyKind kind) const;
 
     /// Mirrors a device memset into the corresponding shadow buffer.
     aclptiResult MirrorMemset(void* devPtr, std::size_t maxCount, std::int32_t value, std::size_t count) const;

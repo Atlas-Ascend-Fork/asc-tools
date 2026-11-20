@@ -32,7 +32,7 @@ constexpr uint32_t CROSS_CORE_MODE_VECTOR = 1U;
 constexpr uint32_t CROSS_CORE_MODE_CROSS_TYPE = 2U;
 constexpr uint32_t CROSS_CORE_MODE_RECEIVER_FLAG = 4U;
 constexpr uint32_t RECEIVER_FLAG_SELECTOR_SHIFT = 4U;
-constexpr uint32_t RECEIVER_FLAG_SELECTOR_MASK = 1U;
+constexpr uint64_t RECEIVER_FLAG_SELECTOR_MASK = 1U;
 bool IsSupportedMemorySpace(AclsanDeviceMemorySpace space)
 {
     switch (space) {
@@ -419,7 +419,7 @@ private:
             }
             vfMetadata.emplace(key, vf);
             EnsureVf(key);
-            if ((vf.warningFlags & ACLSAN_DEVICE_VF_MASK_NOT_REFRESHED) != 0) {
+            if ((vf.warningFlags & static_cast<uint32_t>(ACLSAN_DEVICE_VF_MASK_NOT_REFRESHED)) != 0U) {
                 ++warnings;
                 ASCTOOL_WARNING(
                     "racecheck: VF mask never refreshed launch=%llu instr=%llu pc=0x%llx core=%u block=%u",
@@ -582,7 +582,8 @@ private:
             }
             uniqueBarriers.emplace(key, b);
             const Instruction parent = Key(b.header);
-            const uint32_t all = ACLSAN_DEVICE_LOCAL_MEM_VEC_ALL | ACLSAN_DEVICE_LOCAL_MEM_SCALAR_ALL;
+            constexpr uint32_t all = static_cast<uint32_t>(ACLSAN_DEVICE_LOCAL_MEM_VEC_ALL) |
+                                     static_cast<uint32_t>(ACLSAN_DEVICE_LOCAL_MEM_SCALAR_ALL);
             if (b.header.instrExecId == 0 || b.barrierKind != ACLSAN_DEVICE_BARRIER_LOCAL_MEM || b.srcMemType == 0 ||
                 b.dstMemType == 0 || ((b.srcMemType | b.dstMemType) & ~all) != 0 ||
                 b.header.pipeline != ACLSAN_DEVICE_PIPE_VECTOR || b.pipe != ACLSAN_DEVICE_PIPE_INVALID) {
@@ -1441,7 +1442,7 @@ private:
                     reasons.insert("graph_query_budget");
                     break;
                 }
-                future |= *path;
+                future = future || *path;
             }
             if (!future)
                 candidates.push_back(&stream);

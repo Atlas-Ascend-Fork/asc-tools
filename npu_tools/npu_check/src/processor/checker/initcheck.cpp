@@ -142,9 +142,9 @@ NpuCheckInitcheckReport BuildInitcheckMemoryReportBase(
 {
     NpuCheckInitcheckReport report{};
     report.common.tool = ReportTool::INITCHECK;
-    report.common.severity = (data.memoryFlags & ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING) != 0 ?
-                                 ReportSeverity::WARNING :
-                                 ReportSeverity::ERROR;
+    constexpr auto hardwarePadding = static_cast<uint32_t>(ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING);
+    report.common.severity =
+        (data.memoryFlags & hardwarePadding) != 0U ? ReportSeverity::WARNING : ReportSeverity::ERROR;
     report.common.flags = kNpuCheckReportCommonHasExecContext;
     auto& exec = report.common.exec;
     const auto& h = data.header;
@@ -211,7 +211,8 @@ constexpr uint32_t INCOMPLETE_FLAGS = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_
 
 bool IsCompleteInstructionAccess(const AclsanDeviceMemoryAccessData& access, size_t accessCount)
 {
-    return access.accessCount == accessCount && (access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_EXACT) != 0U &&
+    return access.accessCount == accessCount &&
+           (access.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_EXACT)) != 0U &&
            (access.header.flags & INCOMPLETE_FLAGS) == 0U;
 }
 
@@ -247,8 +248,8 @@ InitCheckStatus CollectInstructionOperands(
         if (!MatchesInitializationOwner(scope, access)) {
             return InitCheckStatus::INVALID_RECORD;
         }
-        if ((h.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) != 0U && access.predicateMask0 == 0 &&
-            access.predicateMask1 == 0)
+        if ((h.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_PREDICATED)) != 0U &&
+            access.predicateMask0 == 0 && access.predicateMask1 == 0)
             continue;
         Operand operand{&access, {}};
         if (!ExpandRanges(access, operand.ranges)) {
@@ -1233,7 +1234,7 @@ void ApplyReplayPadding(
         if (CoveredBy(accesses[evidence.first].ranges, padding)) {
             for (size_t i = 0; i < operands.size(); ++i)
                 if (operandSources[i] == evidence.first) {
-                    operands[i].memoryFlags |= ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING;
+                    operands[i].memoryFlags |= static_cast<uint32_t>(ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING);
                 }
         }
     }
@@ -1362,7 +1363,8 @@ void Initcheck::ReplayLaunch(
 namespace {
 
 static_assert(ACLSAN_DEVICE_REGISTER_COUNT < 64);
-constexpr uint64_t kSupportedRegisterMask = (UINT64_C(1) << static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_COUNT)) - 1;
+constexpr uint64_t kSupportedRegisterMask =
+    (UINT64_C(1) << static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_COUNT)) - UINT64_C(1);
 
 uint64_t TimestampNs()
 {
@@ -1675,7 +1677,7 @@ void Initcheck::ReportMissingRegisters(
     }
     while (missing != 0) {
         const uint32_t registerId = static_cast<uint32_t>(__builtin_ctzll(missing));
-        missing &= missing - 1;
+        missing &= missing - UINT64_C(1);
         const UsageKey usage{instruction, registerId};
         if (!reportedUsages_.insert(usage).second) {
             continue;

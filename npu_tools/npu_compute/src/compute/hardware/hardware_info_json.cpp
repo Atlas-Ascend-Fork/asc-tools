@@ -88,9 +88,10 @@ std::string EscapeJson(std::string_view value)
                 break;
             default:
                 if (character < 0x20) {
+                    const auto byte = static_cast<unsigned int>(character);
                     escaped += "\\u00";
-                    escaped.push_back(HEX[(character >> 4) & 0x0f]);
-                    escaped.push_back(HEX[character & 0x0f]);
+                    escaped.push_back(HEX[byte >> 4U]);
+                    escaped.push_back(HEX[byte & 0x0fU]);
                 } else {
                     escaped.push_back(static_cast<char>(character));
                 }
@@ -119,8 +120,7 @@ bool ParsePositiveUintField(std::string_view line, std::string_view field, std::
     const std::uint32_t maximum = std::numeric_limits<std::uint32_t>::max();
     while (end < line.size() && line[end] >= '0' && line[end] <= '9') {
         const char digitCharacter = line[end];
-        const std::uint32_t digit =
-            static_cast<std::uint32_t>(static_cast<unsigned char>(digitCharacter) - static_cast<unsigned char>('0'));
+        const std::uint32_t digit = static_cast<std::uint32_t>(digitCharacter) - static_cast<std::uint32_t>('0');
         if (parsed > (maximum - digit) / DECIMAL_RADIX) {
             return false;
         }

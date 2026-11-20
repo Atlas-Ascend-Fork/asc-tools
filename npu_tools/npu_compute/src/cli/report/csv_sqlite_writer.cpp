@@ -196,7 +196,7 @@ bool IntegerFitsReal(std::int64_t integer)
     return magnitude <= (std::uint64_t{1} << std::numeric_limits<double>::digits);
 }
 
-void BindValue(sqlite3* database, Statement& insert, int index, const CsvColumn& column, const std::string& value)
+void BindValue(sqlite3* database, const Statement& insert, int index, const CsvColumn& column, const std::string& value)
 {
     const auto& api = sqlite::GetApi();
     if (value == "NA") {

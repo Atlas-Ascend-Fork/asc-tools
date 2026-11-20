@@ -19,8 +19,13 @@
 extern "C" {
 #endif
 
+#ifdef __cplusplus
+#define ACLPTI_MAX_NUM_SECTIONS (static_cast<size_t>(64))
+#define ACLPTI_MAX_SECTION_NAME_LENGTH (static_cast<size_t>(64))
+#else
 #define ACLPTI_MAX_NUM_SECTIONS ((size_t)64)
 #define ACLPTI_MAX_SECTION_NAME_LENGTH ((size_t)64)
+#endif
 
 typedef enum aclptiCacheControl {
     ACLPTI_CACHE_CONTROL_NONE = 0,

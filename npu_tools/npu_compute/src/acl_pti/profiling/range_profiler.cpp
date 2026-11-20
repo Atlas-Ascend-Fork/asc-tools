@@ -607,9 +607,9 @@ aclptiResult RangeProfiler::ReplayRoofline(const ReplayInvocation& invocation, s
     BinarySource source;
     std::size_t round = firstRound;
     aclptiResult status = ACLPTI_SUCCESS;
-    const auto beforeReplay = [&] {
+    const auto beforeReplay = [this, deviceId = invocation.deviceId, &round] {
         if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
-            TryFlushL2Cache(invocation.deviceId, round);
+            TryFlushL2Cache(deviceId, round);
         }
         ++round;
     };

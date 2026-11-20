@@ -63,7 +63,7 @@ constexpr int UDS_MAX_RETRY_DELAY_MS = 100;
 constexpr int UDS_RETRY_BACKOFF_FACTOR = 2;
 constexpr int UDS_SOCKET_BACKLOG = 8;
 constexpr size_t UDS_RANDOM_BYTES = 16;
-constexpr uint8_t UDS_HEX_LOW_NIBBLE_MASK = 0x0F;
+constexpr unsigned int UDS_HEX_LOW_NIBBLE_MASK = 0x0FU;
 
 void Check(bool condition, const char* message)
 {
@@ -331,8 +331,9 @@ Bootstrap MakeBootstrap()
     constexpr char hex[] = "0123456789abcdef";
     result.name = "@npu-compute-";
     for (const auto byte : random) {
-        result.name += hex[byte >> 4];
-        result.name += hex[byte & UDS_HEX_LOW_NIBBLE_MASK];
+        const auto value = static_cast<unsigned int>(byte);
+        result.name += hex[value >> 4U];
+        result.name += hex[value & UDS_HEX_LOW_NIBBLE_MASK];
     }
     do {
         Random(&result.session, sizeof(result.session));

@@ -113,17 +113,18 @@ private:
     bool BuildInstrumentedBinaryState(
         Binary& state, const void* data, std::size_t size, bool pmSampling, bool pipeline);
     template <typename Key>
-    aclptiResult ResolveCompanionKey(
+    static aclptiResult ResolveCompanionKey(
         Binary& state, Key key, aclrtFuncHandle function, Key& companionKey, Key& elfLookupKey, bool& unavailable);
     template <typename Key>
-    aclptiResult RecordCompanionFunction(
+    static aclptiResult RecordCompanionFunction(
         aclrtBinHandle binary, Binary& state, Key elfLookupKey, aclrtFuncHandle function, aclrtFuncHandle companion,
         const std::string& mixedAlias);
-    aclptiResult LoadCompanions(Binary& state, const aclrtBinaryLoadOptions* options, aclrtBinaryLoadFromDataFunc load);
+    static aclptiResult LoadCompanions(
+        Binary& state, const aclrtBinaryLoadOptions* options, aclrtBinaryLoadFromDataFunc load);
     void BuildSamplingBinaryState(Binary& state, const void* data, std::size_t size);
-    void BuildSamplingCompanion(
+    static void BuildSamplingCompanion(
         Binary& state, const std::shared_ptr<PmSamplingBinaryImage>& image, const void* data, std::size_t size);
-    bool BuildPipelineBinaryState(Binary& state, const void* data, std::size_t size, bool pmSampling);
+    static bool BuildPipelineBinaryState(Binary& state, const void* data, std::size_t size, bool pmSampling);
     std::mutex mutex_;
     std::unordered_map<aclrtBinHandle, Binary> binaries_;
 };

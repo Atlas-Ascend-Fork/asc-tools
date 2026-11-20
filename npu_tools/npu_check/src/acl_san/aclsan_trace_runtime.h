@@ -140,7 +140,7 @@ aclError PrepareTraceLaunch(
     const aclrtPlaceHolderInfo* placeholders, size_t placeholderCount, TraceArgumentMode argumentMode,
     PreparedTraceLaunch& prepared) noexcept;
 void CompleteTraceLaunch(
-    PreparedTraceLaunch&& prepared, const void* function, const void* stream, aclError launchResult) noexcept;
+    PreparedTraceLaunch&& prepared, aclrtFuncHandle function, aclrtStream stream, aclError launchResult) noexcept;
 uint64_t TraceStreamFrontier(const void* stream) noexcept;
 aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept;
 // 按 stream 收尾尚未由 completion 事件路径发布完成的 launch；同步成功后的兜底，避免遗留 launch 阻塞同流后续 launch。

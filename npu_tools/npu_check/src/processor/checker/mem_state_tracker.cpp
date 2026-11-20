@@ -108,20 +108,21 @@ bool ValidateRangeEvent(const AclsanDeviceMemoryAccessData& data)
                                     static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED) |
                                     static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR) |
                                     static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
-    if ((data.header.flags & incomplete) != 0 || (data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_EXACT) == 0) {
+    constexpr auto exact = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    constexpr auto predicated = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_PREDICATED);
+    if ((data.header.flags & incomplete) != 0U || (data.header.flags & exact) == 0U) {
         throw RacecheckError(
             RacecheckErrorKind::IncompleteTrace, "racecheck requires an exact, complete memory access");
     }
-    constexpr uint32_t knownFlags = ACLSAN_DEVICE_EVENT_FLAG_EXACT | incomplete | ACLSAN_DEVICE_EVENT_FLAG_PREDICATED;
-    if ((data.header.flags & ~knownFlags) != 0 ||
+    constexpr uint32_t knownFlags = exact | incomplete | predicated;
+    if ((data.header.flags & ~knownFlags) != 0U ||
         (data.memoryFlags & ~static_cast<uint32_t>(ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING)) != 0U) {
         Unsupported("unknown memory flags");
     }
     if (data.vectorMask0 != 0 || data.vectorMask1 != 0) {
         Unsupported("vector mask must be resolved upstream");
     }
-    if ((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) != 0 && data.predicateMask0 == 0 &&
-        data.predicateMask1 == 0) {
+    if ((data.header.flags & predicated) != 0U && data.predicateMask0 == 0 && data.predicateMask1 == 0) {
         return false;
     }
     if (data.predicateMask0 != 0 || data.predicateMask1 != 0) {
@@ -381,6 +382,11 @@ bool IsInstructionReadBeforeWrite(
 
 // 状态相关的选择遵循 V2 第 2.5 节，而不是直接套用读写矩阵：
 // 之前接受的访问可能覆盖普通历史记录。
+size_t AtomicWriterGroup(AclsanDeviceMemoryAccessMode mode)
+{
+    return static_cast<size_t>(mode) - static_cast<size_t>(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+}
+
 template <class Visitor>
 void VisitCandidates(const MemState& segment, AclsanDeviceMemoryAccessMode current, Visitor&& visitor)
 {
@@ -409,7 +415,7 @@ void VisitCandidates(const MemState& segment, AclsanDeviceMemoryAccessMode curre
         }
     }
     for (size_t group = 0; group < segment.atomicWriters.size(); ++group) {
-        if (atomic && group == static_cast<size_t>(current - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD)) {
+        if (atomic && group == AtomicWriterGroup(current)) {
             continue;
         }
         for (CbIndex index : segment.atomicWriters[group]) {
@@ -460,7 +466,7 @@ void VisitReadWriteHistory(
         visitor(index);
     }
     for (size_t group = 0; group < atomicWriters.size(); ++group) {
-        if (group == static_cast<size_t>(normalized - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD)) {
+        if (group == AtomicWriterGroup(normalized)) {
             continue;
         }
         for (const auto index : atomicWriters[group]) {
@@ -679,7 +685,7 @@ void ApplyVf(MemState& segment, const AclsanDeviceMemoryAccessData& data, bool n
             break;
         default:
             if (racecheck::IsAtomicWrite(mode)) {
-                const auto group = static_cast<size_t>(mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+                const auto group = AtomicWriterGroup(mode);
                 AppendUnique(external.atomicWriters[group], index, newIndex);
                 segment.state = MemOpState::AtomicWrite;
             }
@@ -703,7 +709,7 @@ void Apply(MemState& segment, AclsanDeviceMemoryAccessMode mode, CbIndex index, 
         case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN:
         case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX: {
             segment.state = MemOpState::AtomicWrite;
-            const auto group = static_cast<size_t>(mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+            const auto group = AtomicWriterGroup(mode);
             AppendUnique(segment.atomicWriters[group], index, newIndex);
             break;
         }

@@ -145,7 +145,7 @@ aclptiResult ReplayMemory::RetryOrphanedShadows(aclrtFreeFunc freeFunction)
 }
 
 aclptiResult ReplayMemory::MirrorMemcpy(
-    void* destination, std::size_t destinationSize, const void* source, std::size_t count, aclrtMemcpyKind kind)
+    void* destination, std::size_t destinationSize, const void* source, std::size_t count, aclrtMemcpyKind kind) const
 {
     if (count > destinationSize) {
         return ACLPTI_ERROR_INVALID_PARAMETER;

@@ -775,7 +775,7 @@ aclptiResult CollectNpubitRoofline(
     bool hasSimd = false;
     bool hasSimt = false;
     const bool classified = source.image && ClassifyKernel(*source.image, hasSimd, hasSimt);
-    const auto include = [&](NpubitInstrumentationType type) -> bool {
+    const auto include = [classified, hasSimd, hasSimt](NpubitInstrumentationType type) -> bool {
         switch (type) {
             case NPUBIT_MTE_CONFIG_COLLECTION:
             case NPUBIT_MMAD_CONFIG_COLLECTION:

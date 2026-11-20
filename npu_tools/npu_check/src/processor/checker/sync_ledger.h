@@ -264,7 +264,7 @@ private:
     bool ValidateFlagMode(
         LaunchSyncState& state, const FlagUsageKey& key, uint32_t mode, const AclsanDeviceSyncData& trigger);
     static void ActivateSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round);
-    void ReleaseSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round);
+    static void ReleaseSetRoundUsage(LaunchSyncState& state, const SetChannelKey& key, const SetRound& round);
     void ProduceCounterToken(
         LaunchSyncState& state, const CounterContribution& contribution, const AclsanDeviceSyncData& trigger);
     static void CleanupFlagUsage(LaunchSyncState& state, const FlagUsageKey& key);

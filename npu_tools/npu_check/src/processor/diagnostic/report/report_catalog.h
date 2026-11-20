@@ -14,6 +14,7 @@
 #include "diagnostic/report_renderer.h"
 
 #include <map>
+#include <string>
 
 namespace npucheck::detail {
 
@@ -27,7 +28,7 @@ using PatternCatalog = std::map<ReportTemplateKey, PatternDescriptor>;
 const PatternCatalog& GetPatternCatalog();
 const PatternDescriptor* FindPatternDescriptor(ReportTool tool, NpuCheckReportPattern pattern);
 const PatternDescriptor* FindPatternDescriptor(const ReportTemplateKey& key);
-const char* PatternName(ReportTool tool, NpuCheckReportPattern pattern);
+std::string PatternName(ReportTool tool, NpuCheckReportPattern pattern);
 
 const char* ToolName(ReportTool tool);
 bool ParseToolName(const std::string& text, ReportTool* tool);
