@@ -196,9 +196,9 @@ NA表示当前Core不适用或所需数据不可用，不表示数值零。
 
 <a name="sourcecounter"></a>
 
-## SourceCounter（按原始指令地址汇总的访存指标）
+## SourceCounter（按原始指令地址汇总的执行计数和访存指标）
 
-`SourceCounter`指标直接写入`summary.db`的`SourceCounter`表和`FieldUnitMap`表。结果按原始ELF指令地址汇总。
+`SourceCounter`指标直接写入`summary.db`的`SourceCounter`表和`FieldUnitMap`表。结果按原始ELF指令地址汇总。缺失或不适用的值记为SQL `NULL`，采集到的零值记为`0`。
 
 | 字段名 | 字段解释 | 单位 |
 |---|---|---|
@@ -206,6 +206,8 @@ NA表示当前Core不适用或所需数据不可用，不表示数值零。
 | `avg_cache_lines_num` | 同一指令有效访存样本的平均Cache Line数量。 | `count` |
 | `avg_cache_line_utilization` | 同一指令有效访存样本的平均Cache Line利用率，以0～100的百分数保存。 | `%` |
 | `ub_bank_conflict` | 同一指令返回的有效UB Bank冲突值中的最大值。 | `count` |
+| `instructions_executed` | 标量指令所在基本块的执行次数，或SIMT指令所在基本块的warp执行次数，按核和子核累加。 | `count` |
+| `active_threads` | 执行SIMT指令的活跃线程次数，按核和子核累加。 | `count` |
 
 ## PipeUtilization（计算和搬运单元耗时占比）
 

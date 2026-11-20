@@ -566,24 +566,34 @@ TEST_F(NpuComputeSummarySqliteFinalizer, SourceCounterWritesDatabaseAndPreserves
     counters.rows = {
         {256, {1, 2.0, 50.0, 2}},
         {256, {3, 12.0, 300.0, 4}},
+        {256, {0, 0.0, 0.0, std::nullopt, 2, 32}},
+        {256, {0, 0.0, 0.0, std::nullopt, 3, 64}},
         {512, {0, 0.0, 0.0, 0}},
         {768, {4, 4.0, 100.0, std::nullopt}},
+        {1024, {0, 0.0, 0.0, std::nullopt, 0}},
     };
     uint64_t rows = 0;
     std::string error;
     ASSERT_TRUE(npucompute::WriteSourceCounterSqlite(database.string(), counters, rows, error)) << error;
-    EXPECT_EQ(rows, 3U);
+    EXPECT_EQ(rows, 4U);
     EXPECT_EQ(
         Query(
-            database, "SELECT address,avg_cache_lines_num,avg_cache_line_utilization,ub_bank_conflict "
+            database, "SELECT address,avg_cache_lines_num,avg_cache_line_utilization,ub_bank_conflict,"
+                      "instructions_executed,active_threads "
                       "FROM SourceCounter ORDER BY address"),
-        (Rows{{"256", "3.5", "87.5", "4"}, {"512", "<NULL>", "<NULL>", "0"}, {"768", "1.0", "25.0", "<NULL>"}}));
+        (Rows{
+            {"256", "3.5", "87.5", "4", "5", "96"},
+            {"512", "<NULL>", "<NULL>", "0", "<NULL>", "<NULL>"},
+            {"768", "1.0", "25.0", "<NULL>", "<NULL>", "<NULL>"},
+            {"1024", "<NULL>", "<NULL>", "<NULL>", "0", "<NULL>"}}));
     EXPECT_EQ(
         Query(database, "SELECT field_name,unit FROM FieldUnitMap ORDER BY field_name"),
         (Rows{
+            {"active_threads", "count"},
             {"address", "<NULL>"},
             {"avg_cache_line_utilization", "%"},
             {"avg_cache_lines_num", "count"},
+            {"instructions_executed", "count"},
             {"ub_bank_conflict", "count"}}));
     EXPECT_EQ(Query(database, "SELECT address,others FROM PcSampling"), (Rows{{"256", "8"}}));
     std::vector<uint8_t> encoded;

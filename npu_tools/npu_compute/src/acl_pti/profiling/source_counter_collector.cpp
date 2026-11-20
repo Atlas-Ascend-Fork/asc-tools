@@ -10,7 +10,7 @@
 #include "source_counter_collector.h"
 
 #if defined(NPUCOMPUTE_NPUBIT_SONAME)
-#include "binary_instrumenter.h"
+#include "kernel_instrumenter.h"
 #include "injection/injection_hook.h"
 #include "npu_compute_log.h"
 #include "npubit_collector.h"
@@ -180,6 +180,12 @@ struct SdkBuffer {
 bool ValidProcessedRecords(NpubitInstrumentationType type, const SdkBuffer& processed)
 {
     switch (type) {
+        case NPUBIT_SCALAR_BB_COUNT:
+            return processed.HasRecordsOf<NpubitScalarBBCountRecord>();
+        case NPUBIT_SIMT_BB_COUNT:
+            return processed.HasRecordsOf<NpubitSimtBBCountRecord>();
+        case NPUBIT_SIMT_THREAD_EXE_COUNT:
+            return processed.HasRecordsOf<NpubitSimtThreadExeCountRecord>();
         case NPUBIT_SIMT_GLOBAL_MEMORY_PATTERNS:
             return processed.HasRecordsOf<NpubitSimtGmPatternsRecord>();
         case NPUBIT_SIMT_BANK_CONFLICTS:
@@ -446,6 +452,26 @@ bool AppendSimdBank(const SdkBuffer& analyzed, aclptiSourceCounterData& data, st
     return true;
 }
 
+template <typename Record>
+bool AppendCounts(
+    const SdkBuffer& analyzed, std::optional<uint64_t> aclptiSourceCounterRow::*field, aclptiSourceCounterData& data,
+    std::string& error)
+{
+    if (!analyzed.HasRecordsOf<Record>()) {
+        error = "NPUbit returned an invalid SourceCounter count buffer";
+        return false;
+    }
+    const auto* records = static_cast<const Record*>(analyzed.data);
+    const auto count = analyzed.bytes / sizeof(Record);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& record = records[index];
+        aclptiSourceCounterRow row;
+        row.*field = record.execution_count;
+        data.rows.emplace_back(record.instruction_address, row);
+    }
+    return true;
+}
+
 struct CollectionContext {
     const NpubitApi& sdk;
     const RuntimeApi& runtime;
@@ -460,6 +486,15 @@ bool AppendRound(
     const SourceCounterInstructions& instructions, aclptiSourceCounterData& data, std::string& error)
 {
     switch (type) {
+        case NPUBIT_SCALAR_BB_COUNT:
+            return AppendCounts<ScalarInstructionCountAnalyzeData>(
+                analyzed, &aclptiSourceCounterRow::instructionsExecuted, data, error);
+        case NPUBIT_SIMT_BB_COUNT:
+            return AppendCounts<SimtInstructionCountAnalyzeData>(
+                analyzed, &aclptiSourceCounterRow::instructionsExecuted, data, error);
+        case NPUBIT_SIMT_THREAD_EXE_COUNT:
+            return AppendCounts<SimtThreadExecutionCountAnalyzeData>(
+                analyzed, &aclptiSourceCounterRow::activeThreads, data, error);
         case NPUBIT_SIMT_GLOBAL_MEMORY_PATTERNS:
             return AppendSimtGm(processed, analyzed, instructions, data, error);
         case NPUBIT_SIMT_BANK_CONFLICTS:
@@ -523,6 +558,9 @@ aclptiResult CollectRounds(const CollectionContext& context, aclptiSourceCounter
         {NPUBIT_SIMT_GLOBAL_MEMORY_PATTERNS, !instructions.simtGm.empty(), "SIMT GM Pattern"},
         {NPUBIT_SIMT_BANK_CONFLICTS, !instructions.simtBank.empty(), "SIMT Bank Conflict"},
         {NPUBIT_PUSH_PB_STATE, instructions.simdVf, "SIMD VF PUSH_PB"},
+        {NPUBIT_SCALAR_BB_COUNT, true, "Scalar BB Count"},
+        {NPUBIT_SIMT_BB_COUNT, instructions.simtVf, "SIMT BB Count"},
+        {NPUBIT_SIMT_THREAD_EXE_COUNT, instructions.simtVf, "SIMT Thread Execution Count"},
     };
     auto collectionStatus = ACLPTI_SUCCESS;
     std::size_t replayIndex = 0;
@@ -577,10 +615,6 @@ aclptiResult CollectSourceCounterData(
     data.originalDisassembly = std::move(disassembly);
     if (instructions.incomplete) {
         data.errors.emplace_back("not all VF targets could be classified for SourceCounter");
-    }
-    if (instructions.simtGm.empty() && instructions.simtBank.empty() && !instructions.simdVf) {
-        data.status = data.errors.empty() ? ACLPTI_SUCCESS : ACLPTI_ERROR_NOT_SUPPORTED;
-        return ACLPTI_SUCCESS;
     }
     const RuntimeApi runtime;
     SourceDevice device;

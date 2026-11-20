@@ -649,8 +649,11 @@ void ReadSourceVectorCalls(
         const auto opcode = Opcode(instruction.operation);
         if (opcode == "VF") {
             output.simdVf = true;
-        } else if (opcode == "VF_SIMT" && calls.vectorCalls.count(instruction.address) == 0) {
-            output.incomplete = true;
+        } else if (opcode == "VF_SIMT") {
+            output.simtVf = true;
+            if (calls.vectorCalls.count(instruction.address) == 0) {
+                output.incomplete = true;
+            }
         }
     }
     std::vector<std::uint64_t> simtTargets;

@@ -77,14 +77,15 @@ set(_npucompute_cann_roots
   "${NPUCOMPUTE_CANN_ROOT}" "${ASCEND_CANN_PACKAGE_PATH}" "$ENV{ASCEND_HOME_PATH}")
 list(FILTER _npucompute_cann_roots EXCLUDE REGEX "^$")
 find_path(NPUCOMPUTE_NPUBIT_INCLUDE_DIR NAMES npubit.h
-  HINTS ${_npucompute_cann_roots} "${NPUCOMPUTE_ACL_INCLUDE_DIR}"
-  PATH_SUFFIXES include "${CMAKE_SYSTEM_PROCESSOR}-linux/include"
+  HINTS "${NPU_BIT_LIB_PATH}" ${_npucompute_cann_roots} "${NPUCOMPUTE_ACL_INCLUDE_DIR}"
+  PATH_SUFFIXES include "${CMAKE_SYSTEM_PROCESSOR}-linux/include" tools/npu_bit/include
   NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 if(NOT NPUCOMPUTE_NPUBIT_LIBRARY)
   unset(NPUCOMPUTE_NPUBIT_LIBRARY CACHE)
   find_file(NPUCOMPUTE_NPUBIT_LIBRARY NAMES "${CMAKE_SHARED_LIBRARY_PREFIX}npu_bit${CMAKE_SHARED_LIBRARY_SUFFIX}"
-    HINTS ${_npucompute_cann_roots}
+    HINTS "${NPU_BIT_LIB_PATH}" ${_npucompute_cann_roots}
     PATH_SUFFIXES lib64 lib "${CMAKE_SYSTEM_PROCESSOR}-linux/lib64" "${CMAKE_SYSTEM_PROCESSOR}-linux/lib"
+      tools/npu_bit/lib64
     NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH
     DOC "NPUbit shared library supplied by the CANN package")
 endif()

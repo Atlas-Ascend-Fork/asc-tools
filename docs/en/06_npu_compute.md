@@ -19,7 +19,7 @@ The following Sections are currently supported:
 | <a name="section-memoryub"></a> `MemoryUB`                           | Unified Buffer access data                                         | `basic`, `full` |
 | <a name="section-pipeline"></a> `Pipeline`                           | Pipeline timeline data, written to `PipeTrace.json`                | `basic`, `full` |
 | <a name="section-pipeutilization"></a> `PipeUtilization`             | Compute and pipeline utilization data                              | `basic`, `full` |
-| <a name="section-sourcecounter"></a> `SourceCounter` | SIMT GM Pattern and SIMT/SIMD VF UB bank conflicts | `full` |
+| <a name="section-sourcecounter"></a> `SourceCounter` | Instruction execution counts, active SIMT thread counts, SIMT GM Pattern, and SIMT/SIMD VF UB bank conflicts | `full` |
 | <a name="section-pmsampling"></a> `PmSampling`                       | PC/state totals, disassembly and function/inline information       | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios           | `full`          |
 | <a name="section-roofline"></a> `Roofline`                           | Peak compute throughput and bandwidth, plus kernel operations, memory traffic, and duration | `full` |
@@ -251,7 +251,7 @@ Collected CSV data is automatically written to `summary.db` in the same result d
 | `PcSampling`            | `PmSampling` is selected | Sampling counts for eight wait or stall states, aggregated by business instruction address; see [PC Sampling States](appendix/npu_compute_performance_data.md#pcsampling-pc-sampling-state-totals). |
 | `PipeUtilization`       | Its CSV is imported successfully                                  | [PipeUtilization](#section-pipeutilization)                                                                                                                                                        |
 | `ResourceConflictRatio` | Its CSV is imported successfully                                  | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                                                                            |
-| `SourceCounter`         | When `SourceCounter` is selected | Instruction memory metrics aggregated by original instruction address; see [SourceCounter metrics](appendix/npu_compute_performance_data.md#sourcecounter). |
+| `SourceCounter`         | When `SourceCounter` is selected | Execution counts and memory metrics aggregated by original instruction address. See [SourceCounter metrics](appendix/npu_compute_performance_data.md#sourcecounter). |
 
 Database generation depends on a compatible SQLite shared library in the environment. If generation fails, the terminal reports the reason and other successful results can still be packaged.
 

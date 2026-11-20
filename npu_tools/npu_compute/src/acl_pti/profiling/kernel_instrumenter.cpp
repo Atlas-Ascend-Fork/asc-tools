@@ -8,7 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute_log.h"
-#include "binary_instrumenter.h"
+#include "kernel_instrumenter.h"
 #include "file_io.h"
 #include <sys/stat.h>
 

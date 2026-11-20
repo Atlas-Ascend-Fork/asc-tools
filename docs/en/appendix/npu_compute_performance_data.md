@@ -196,9 +196,9 @@ Instruction addresses and state totals collected by `PmSampling` are stored in t
 
 <a name="sourcecounter"></a>
 
-## SourceCounter (Instruction memory metrics aggregated by original address)
+## SourceCounter (Execution counts and memory metrics aggregated by original instruction address)
 
-`SourceCounter` writes its metrics directly to the `SourceCounter` and `FieldUnitMap` tables in `summary.db`. Results are aggregated by original ELF instruction address.
+`SourceCounter` writes its metrics directly to the `SourceCounter` and `FieldUnitMap` tables in `summary.db`. Results are aggregated by original ELF instruction address. Missing or inapplicable values are stored as SQL `NULL`. A measured zero is stored as `0`.
 
 | Field | Description | Unit |
 |---|---|---|
@@ -206,6 +206,8 @@ Instruction addresses and state totals collected by `PmSampling` are stored in t
 | `avg_cache_lines_num` | Average cache line count for valid memory samples of the instruction. | `count` |
 | `avg_cache_line_utilization` | Average cache line utilization for valid memory samples of the instruction, stored as a percentage from 0 to 100. | `%` |
 | `ub_bank_conflict` | Maximum valid UB bank conflict value returned for the instruction. | `count` |
+| `instructions_executed` | Execution count of the scalar instruction's basic block, or warp execution count of the SIMT instruction's basic block, summed across cores and subcores. | `count` |
+| `active_threads` | Number of active thread executions of a SIMT instruction, summed across cores and subcores. | `count` |
 
 ## PipeUtilization (Compute and transfer pipeline utilization)
 

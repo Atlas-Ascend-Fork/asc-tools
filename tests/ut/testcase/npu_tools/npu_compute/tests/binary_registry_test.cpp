@@ -10,7 +10,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 
-#include "acl_pti/profiling/binary_instrumenter.h"
+#include "acl_pti/profiling/kernel_instrumenter.h"
 #include "acl_pti/profiling/binary_registry.h"
 #include "acl_pti/profiling/npubit_collector.h"
 #include <cstdio>

@@ -42,6 +42,7 @@ struct SourceCounterInstructions {
     std::set<std::uint64_t> simtBank;
     std::string launchSymbol;
     bool simdVf = false;
+    bool simtVf = false;
     bool incomplete = false;
 };
 

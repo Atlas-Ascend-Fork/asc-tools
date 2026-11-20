@@ -19,7 +19,7 @@
 | <a name="section-memoryub"></a> `MemoryUB`                           | Unified Buffer访问数据                              | `basic`、`full` |
 | <a name="section-pipeline"></a> `Pipeline`                           | 流水时间线数据，输出为`PipeTrace.json`            | `basic`、`full` |
 | <a name="section-pipeutilization"></a> `PipeUtilization`             | 计算与流水线利用率数据                              | `basic`、`full` |
-| <a name="section-sourcecounter"></a> `SourceCounter` | SIMT GM Pattern及SIMT/SIMD VF指令的UB Bank冲突 | `full` |
+| <a name="section-sourcecounter"></a> `SourceCounter` | 指令执行次数、SIMT活跃线程次数、SIMT GM Pattern及SIMT/SIMD VF指令的UB Bank冲突 | `full` |
 | <a name="section-pmsampling"></a> `PmSampling`                       | 指令地址及各采样状态累计计数、反汇编和函数/内联信息 | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | 流水等待率与Vector资源冲突率                        | `full`          |
 | <a name="section-roofline"></a> `Roofline`                           | 理论算力和带宽，以及Kernel计算量、访存量和耗时       | `full`          |
@@ -251,7 +251,7 @@ CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常�
 | `PcSampling`            | 选择`PmSampling` | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数)。 |
 | `PipeUtilization`       | 对应CSV入库成功                 | [PipeUtilization](#section-pipeutilization)                                                                                               |
 | `ResourceConflictRatio` | 对应CSV入库成功                 | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                   |
-| `SourceCounter`         | 选择`SourceCounter`时 | 按原始指令地址汇总的访存指标，见[SourceCounter指标说明](appendix/npu_compute_performance_data.md#sourcecounter)。 |
+| `SourceCounter`         | 选择`SourceCounter`时 | 按原始指令地址汇总的执行计数和访存指标，见[SourceCounter指标说明](appendix/npu_compute_performance_data.md#sourcecounter)。 |
 
 数据库生成依赖环境中的SQLite动态库。生成失败时，终端提示原因，其他成功结果仍可生成报告。
 

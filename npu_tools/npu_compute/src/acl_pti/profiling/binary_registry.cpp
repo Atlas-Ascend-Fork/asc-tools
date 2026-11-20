@@ -12,7 +12,7 @@
 #include "binary_registry.h"
 #include <elf.h>
 #include <memory>
-#include "binary_instrumenter.h"
+#include "kernel_instrumenter.h"
 
 #include <algorithm>
 #include <fstream>

@@ -236,6 +236,8 @@ struct aclptiSourceCounterRow {
     double cacheLinesTotal = 0;
     double cacheLineUtilizationTotal = 0; // Sum of per-sample percentages, in [0, 100].
     std::optional<uint64_t> ubBankConflict;
+    std::optional<uint64_t> instructionsExecuted = std::nullopt;
+    std::optional<uint64_t> activeThreads = std::nullopt;
 };
 
 struct aclptiSourceCounterData {

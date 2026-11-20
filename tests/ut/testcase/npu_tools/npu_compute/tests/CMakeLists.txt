@@ -90,7 +90,7 @@ set_target_properties(npu_compute_binary_registry_test PROPERTIES
 add_test(NAME npu_compute.binary_registry COMMAND npu_compute_binary_registry_test)
 
 add_executable(npu_compute_binary_instrumenter_test binary_instrumenter_test.cpp
-  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_instrumenter.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/kernel_instrumenter.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/pm_sampling_instruction_map.cpp)
 target_compile_definitions(npu_compute_binary_instrumenter_test PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
 target_include_directories(npu_compute_binary_instrumenter_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
