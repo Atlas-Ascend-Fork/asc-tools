@@ -182,6 +182,11 @@ install(FILES
   include/kern_fwk.h
   include/tikicpulib.h
   include/kernel_raise_signal.h
+  include/simt_internal_functions.h
+  include/simt_asc_fp16.h
+  include/simt_asc_bf16.h
+  include/simt_asc_fp8.h
+  include/simt_device_functions.h
   include/simt_stub.h
   include/kernel_simt_cpu.h
   include/cpu_debug_launch.h

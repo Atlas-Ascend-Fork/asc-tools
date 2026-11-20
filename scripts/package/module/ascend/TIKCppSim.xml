@@ -82,6 +82,11 @@
         <file value="include/kernel_print_lock.h" />
         <file value="include/kern_fwk.h" />
         <file value="include/tikicpulib.h" />
+        <file value="include/simt_internal_functions.h" />
+        <file value="include/simt_asc_fp16.h" />
+        <file value="include/simt_asc_bf16.h" />
+        <file value="include/simt_asc_fp8.h" />
+        <file value="include/simt_device_functions.h" />
         <file value="include/simt_stub.h" />
         <file value="include/kernel_simt_cpu.h" />
         <file value="include/cpu_debug_launch.h" />
