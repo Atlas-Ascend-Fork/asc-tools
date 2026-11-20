@@ -64,6 +64,7 @@ aclptiResult ProfilingDataManager::Initialize(aclptiProfilingDataCallback callba
     sourceCounterData_.reset();
     callback_ = std::move(callback);
     rooflineData_.reset();
+    simtWarpData_.reset();
     shutdownStatus_ = ACLPTI_SUCCESS;
     if (!callback_) {
         callback_ = registeredCallback_;
@@ -131,6 +132,19 @@ aclptiResult ProfilingDataManager::SetRooflineData(aclptiRooflineData data)
     return ACLPTI_SUCCESS;
 }
 
+aclptiResult ProfilingDataManager::SetSimtWarpData(aclptiSimtWarpData data)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ != ManagerState::Running)
+        return ACLPTI_ERROR_NOT_INITIALIZED;
+    try {
+        simtWarpData_ = std::make_shared<const aclptiSimtWarpData>(std::move(data));
+        return ACLPTI_SUCCESS;
+    } catch (const std::bad_alloc&) {
+        return ACLPTI_ERROR_OUT_OF_MEMORY;
+    }
+}
+
 aclptiResult ProfilingDataManager::Shutdown() { return ShutdownImpl(false); }
 aclptiResult ProfilingDataManager::ForceShutdown() { return ShutdownImpl(true); }
 
@@ -146,13 +160,14 @@ aclptiResult ProfilingDataManager::PublishFinalResult()
             throw std::bad_alloc();
         }
 #endif
-        if (!processedResult && (sourceCounterData_ || rooflineData_)) {
+        if (!processedResult && (sourceCounterData_ || rooflineData_ || simtWarpData_)) {
             processedResult.emplace();
         }
         // Publish after the worker exits: the consumer owns a stable snapshot, not live state.
         if (processedResult) {
             processedResult->sourceCounterData = std::move(sourceCounterData_);
             processedResult->rooflineData = std::move(rooflineData_);
+            processedResult->simtWarpData = std::move(simtWarpData_);
             auto result = std::make_shared<aclptiProfilingDataResult>(std::move(*processedResult));
             callbackStatus = callback_(std::move(result));
         }

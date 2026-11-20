@@ -9,6 +9,7 @@
  */
 #include "npu_compute_log.h"
 #include "file_io.h"
+#include "ipc/ipc.h"
 #include "runtime/npu_compute_runtime.h"
 #include "report/source_counter_sqlite_writer.h"
 #include <vector>
@@ -31,8 +32,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <memory>
+#include <map>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <set>
@@ -59,6 +64,388 @@ constexpr std::array<aclptiCallbackId, 9> HARDWARE_INFO_TRIGGER_CALLBACK_IDS = {
 constexpr double A5_FALLBACK_FREQUENCY_MHZ = 1650.0;
 constexpr int REPORT_SEQUENCE_WIDTH = 4;
 constexpr double HZ_PER_MHZ = 1000000.0;
+
+std::string TraceJsonString(const std::string& value)
+{
+    std::ostringstream out;
+    out << '"';
+    for (unsigned char c : value) {
+        if (c == '"' || c == '\\') {
+            out << '\\' << static_cast<char>(c);
+        } else if (c < 0x20) {
+            constexpr char hex[] = "0123456789abcdef";
+            out << "\\u00" << hex[c >> 4] << hex[c & 15];
+        } else {
+            out << static_cast<char>(c);
+        }
+    }
+    out << '"';
+    return out.str();
+}
+
+uint32_t TraceCoreId(uint8_t aicoreId, uint8_t subcoreId)
+{
+    return 1U + (static_cast<uint32_t>(aicoreId) << 8U) + subcoreId;
+}
+
+uint32_t TraceCoreId(const aclptiSimtWarpRecord& record) { return TraceCoreId(record.aicoreId, record.subcoreId); }
+
+std::string WarpTraceCoreName(uint32_t pid)
+{
+    const uint32_t coreKey = pid - 1U;
+    const uint32_t coreId = coreKey >> 8U;
+    const uint32_t subcore = coreKey & UINT8_MAX;
+    // WarpOccupancyAnalyzeData preserves the SDK's VEC0/VEC1/CUBE codes.
+    constexpr uint32_t kVec1 = 1U;
+    constexpr uint32_t kCube = 2U;
+    constexpr uint32_t kVectorSubcoresPerCore = 2U;
+    if (subcore <= kVec1) {
+        return "aiv" + std::to_string(kVectorSubcoresPerCore * coreId + subcore);
+    }
+    if (subcore == kCube) {
+        return "aic" + std::to_string(coreId);
+    }
+    return "core " + std::to_string(coreId) + " / subcore " + std::to_string(subcore);
+}
+
+constexpr uint8_t kWarpAicSubcore = 2U;
+constexpr int kAivActivityTid = -1;
+constexpr uint32_t kHalfWarpClockRange = std::numeric_limits<uint32_t>::max() / 2U;
+
+struct WarpSubcoreTiming {
+    uint32_t firstClock = 0;
+    uint32_t clockMhz = 0;
+    bool usesRatedClock = false;
+};
+
+struct WarpTraceTiming {
+    std::map<uint32_t, WarpSubcoreTiming> subcores;
+    double syscntMhz = 0;
+};
+
+const char* SetWarpClockFrequencies(int32_t deviceId, WarpTraceTiming& timing)
+{
+    DynamicHardwareDeviceApi api;
+    double syscntHz = 0;
+    if (!api.GetSyscntFrequencyHz(deviceId, &syscntHz)) {
+        return "Device syscnt frequency unavailable";
+    }
+    timing.syscntMhz = syscntHz / HZ_PER_MHZ;
+    uint32_t aicMhz = 0;
+    uint32_t aivMhz = 0;
+    // The driver can provide the current frequency for either core type independently.
+    (void)api.GetCurrentAiCoreFrequencies(deviceId, &aicMhz, &aivMhz);
+    uint32_t ratedAicMhz = 0;
+    uint32_t ratedAivMhz = 0;
+    if (aicMhz == 0 || aivMhz == 0) {
+        (void)api.GetRatedAiCoreFrequencies(deviceId, &ratedAicMhz, &ratedAivMhz);
+    }
+    for (auto& [pid, subcore] : timing.subcores) {
+        const auto subcoreId = (pid - 1U) & 0xffU;
+        subcore.clockMhz = subcoreId == kWarpAicSubcore ? aicMhz : aivMhz;
+        if (subcore.clockMhz == 0) {
+            subcore.clockMhz = subcoreId == kWarpAicSubcore ? ratedAicMhz : ratedAivMhz;
+            subcore.usesRatedClock = true;
+        }
+        if (subcoreId > kWarpAicSubcore || subcore.clockMhz == 0) {
+            return "Current and rated subcore clock frequencies unavailable";
+        }
+    }
+
+    return nullptr;
+}
+
+using WarpGroup = std::vector<const aclptiSimtWarpRecord*>;
+using VfWindows = std::vector<const aclptiSimtVfAnchor*>;
+
+struct Round {
+    const aclptiSimtVfAnchor* window = nullptr;
+    uint32_t firstClock = 0;
+};
+
+using WarpRounds = std::map<const aclptiSimtWarpRecord*, Round>;
+
+std::vector<size_t> FindRoundEnds(const WarpGroup& warps, size_t windowCount)
+{
+    std::vector<std::pair<uint32_t, size_t>> gaps;
+    for (size_t i = 1; i < warps.size(); ++i) {
+        gaps.emplace_back(static_cast<uint32_t>(warps[i]->startTime - warps[i - 1]->startTime), i);
+    }
+    std::sort(gaps.rbegin(), gaps.rend());
+    const auto cutsNeeded = windowCount - 1;
+    if (cutsNeeded != 0 && (gaps[cutsNeeded - 1].first == 0 ||
+                            (cutsNeeded < gaps.size() && gaps[cutsNeeded - 1].first == gaps[cutsNeeded].first))) {
+        return {};
+    }
+    std::vector<size_t> ends;
+    for (size_t i = 0; i < cutsNeeded; ++i) {
+        ends.push_back(gaps[i].second);
+    }
+    std::sort(ends.begin(), ends.end());
+    ends.push_back(warps.size());
+    return ends;
+}
+
+bool WarpsFitWindow(const WarpGroup& warps, size_t first, size_t end, uint32_t mhz, double duration)
+{
+    std::set<uint32_t> ids;
+    const auto firstClock = warps[first]->startTime;
+    for (size_t i = first; i < end; ++i) {
+        const auto start = static_cast<uint32_t>(warps[i]->startTime - firstClock);
+        const auto endClock = static_cast<uint64_t>(start) + warps[i]->duration;
+        if (!ids.insert(warps[i]->warpId).second || static_cast<double>(endClock) / mhz > duration) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Recover chronological rounds from one launch, keeping all ticks in the unsigned clock domain.
+bool MatchRounds(WarpGroup warps, VfWindows windows, uint32_t origin, uint32_t mhz, double sysMhz, WarpRounds& rounds)
+{
+    if (windows.empty() || windows.size() > warps.size() || mhz == 0 || sysMhz <= 0) {
+        return false;
+    }
+    const auto offset = [origin](const auto* warp) { return static_cast<uint32_t>(warp->startTime - origin); };
+    std::stable_sort(warps.begin(), warps.end(), [&offset](auto* a, auto* b) { return offset(a) < offset(b); });
+    if (offset(warps.back()) > kHalfWarpClockRange) {
+        return false;
+    }
+    std::sort(windows.begin(), windows.end(), [](auto* a, auto* b) { return a->startSyscnt < b->startSyscnt; });
+    const auto ends = FindRoundEnds(warps, windows.size());
+    if (ends.empty()) {
+        return false;
+    }
+    size_t first = 0;
+    for (size_t j = 0; j < ends.size(); ++j) {
+        const auto* window = windows[j];
+        if (!window->startSyscnt || window->endSyscnt < window->startSyscnt ||
+            (j && window->startSyscnt < windows[j - 1]->endSyscnt)) {
+            return false;
+        }
+        const double duration = static_cast<double>(window->endSyscnt - window->startSyscnt) / sysMhz;
+        if (!WarpsFitWindow(warps, first, ends[j], mhz, duration)) {
+            return false;
+        }
+        first = ends[j];
+    }
+    // Publish matches only after validating every round on the subcore.
+    first = 0;
+    for (size_t j = 0; j < ends.size(); ++j) {
+        for (size_t i = first; i < ends[j]; ++i) {
+            rounds.emplace(warps[i], Round{windows[j], warps[first]->startTime});
+        }
+        first = ends[j];
+    }
+    return true;
+}
+
+VfWindows SelectSimtWindows(const WarpGroup& warps, const VfWindows& windows)
+{
+    const auto warpAddress = warps.front()->vfInstrAddress;
+    if (std::any_of(warps.begin(), warps.end(), [warpAddress](const auto* warp) {
+            return warp->vfInstrAddress != warpAddress;
+        })) {
+        return {};
+    }
+
+    VfWindows candidates;
+    for (const auto* window : windows) {
+        if (window->kind == aclptiSimtVfKind::Simd) {
+            continue;
+        }
+        if (!candidates.empty() && window->vfInstrAddress != candidates.front()->vfInstrAddress) {
+            return {};
+        }
+        candidates.push_back(window);
+    }
+    // The Warp pass sees the rewritten ELF. Match a unique SIMT site without comparing PCs across passes.
+    if (candidates.size() != windows.size() &&
+        std::any_of(candidates.begin(), candidates.end(), [](const auto* window) {
+            return window->kind != aclptiSimtVfKind::Simt;
+        })) {
+        return {};
+    }
+    return candidates;
+}
+
+void WriteTraceLane(std::ostream& out, uint32_t pid, int64_t tid, const std::string& label)
+{
+    out << "{\"name\":\"thread_name\",\"ph\":\"M\",\"pid\":" << pid << ",\"tid\":" << tid
+        << ",\"args\":{\"name\":" << TraceJsonString(label) << "}},";
+}
+
+struct WarpTraceLayout {
+    WarpTraceTiming timing;
+    std::map<uint32_t, VfWindows> windows;
+    WarpRounds rounds;
+    uint64_t origin = std::numeric_limits<uint64_t>::max();
+};
+
+WarpTraceLayout BuildWarpTraceLayout(const aclptiSimtWarpData& data)
+{
+    WarpTraceLayout layout;
+    auto& [timing, windows, rounds, origin] = layout;
+    std::map<uint32_t, WarpGroup> warps;
+    for (const auto& w : data.records) {
+        const auto pid = TraceCoreId(w);
+        auto& group = warps[pid];
+        auto& core = timing.subcores[pid];
+        if (group.empty() || w.startTime - core.firstClock > kHalfWarpClockRange) {
+            core.firstClock = w.startTime;
+        }
+        group.push_back(&w);
+    }
+    for (const auto& v : data.vfAnchors) {
+        if (v.startSyscnt && v.endSyscnt >= v.startSyscnt) {
+            windows[TraceCoreId(v.aicoreId, v.subcoreId)].push_back(&v);
+            origin = std::min(origin, v.startSyscnt);
+        }
+    }
+    const auto* frequencyError = SetWarpClockFrequencies(data.deviceId, timing);
+    for (const auto& [pid, group] : warps) {
+        if (frequencyError || !windows.count(pid)) {
+            continue;
+        }
+        auto candidates = SelectSimtWindows(group, windows.at(pid));
+        if (candidates.empty()) {
+            continue;
+        }
+        const auto& core = timing.subcores.at(pid);
+        MatchRounds(group, std::move(candidates), core.firstClock, core.clockMhz, timing.syscntMhz, rounds);
+    }
+    return layout;
+}
+
+void WriteTraceProcess(std::ostream& out, std::set<uint32_t>& named, uint32_t pid, const std::string& label)
+{
+    if (named.insert(pid).second) {
+        out << "{\"name\":\"process_name\",\"ph\":\"M\",\"pid\":" << pid
+            << ",\"tid\":0,\"args\":{\"name\":" << TraceJsonString(label) << "}},";
+    }
+}
+
+void WriteBlockTraceEvents(std::ostream& out, WarpTraceLayout& layout, std::set<uint32_t>& named)
+{
+    auto& [timing, windows, rounds, origin] = layout;
+    if (timing.syscntMhz <= 0) {
+        return;
+    }
+    std::set<const aclptiSimtVfAnchor*> matchedWindows;
+    for (const auto& entry : rounds) {
+        matchedWindows.insert(entry.second.window);
+    }
+    for (auto& [pid, vs] : windows) {
+        const auto unrelatedToSimt = [&matchedWindows](const auto* window) {
+            return window->kind != aclptiSimtVfKind::Simt && matchedWindows.count(window) == 0;
+        };
+        vs.erase(std::remove_if(vs.begin(), vs.end(), unrelatedToSimt), vs.end());
+        if (vs.empty()) {
+            continue;
+        }
+        WriteTraceProcess(out, named, pid, WarpTraceCoreName(pid));
+        WriteTraceLane(out, pid, kAivActivityTid, "block");
+        out << "{\"name\":\"thread_sort_index\",\"ph\":\"M\",\"pid\":" << pid
+            << ",\"tid\":-1,\"args\":{\"sort_index\":-1}},";
+        std::sort(vs.begin(), vs.end(), [](auto* a, auto* b) { return a->startSyscnt < b->startSyscnt; });
+        for (auto* v : vs) {
+            out << "{\"name\":\"block\",\"cat\":\"SIMT VF\",\"ph\":\"X\",\"pid\":" << pid
+                << ",\"tid\":-1,\"ts\":" << (v->startSyscnt - origin) / timing.syscntMhz
+                << ",\"dur\":" << (v->endSyscnt - v->startSyscnt) / timing.syscntMhz << ",\"args\":{\"start_syscnt\":\""
+                << v->startSyscnt << "\",\"end_syscnt\":\"" << v->endSyscnt
+                << "\",\"vf_instr_address\":" << v->vfInstrAddress << ",\"aicore_id\":" << unsigned(v->aicoreId)
+                << ",\"subcore_id\":" << unsigned(v->subcoreId) << "}},";
+        }
+    }
+}
+
+void WriteWarpTraceEvents(
+    std::ostream& out, const aclptiSimtWarpData& data, const WarpTraceLayout& layout, std::set<uint32_t>& named)
+{
+    const auto& timing = layout.timing;
+    const auto& rounds = layout.rounds;
+    const auto origin = layout.origin;
+    std::set<std::pair<uint32_t, uint32_t>> lanes;
+    for (size_t i = 0; i < data.records.size(); ++i) {
+        const auto& w = data.records[i];
+        const auto pid = TraceCoreId(w);
+        const auto& core = timing.subcores.at(pid);
+        const auto it = rounds.find(&w);
+        const bool aligned = it != rounds.end();
+        const auto lanePid = aligned ? pid : pid + (1U << 17U);
+        WriteTraceProcess(out, named, lanePid, WarpTraceCoreName(pid) + (aligned ? "" : " (local clock)"));
+        const auto name = "warp " + std::to_string(w.warpId);
+        if (lanes.emplace(lanePid, w.warpId).second)
+            WriteTraceLane(out, lanePid, w.warpId, name);
+        const double mhz = core.clockMhz ? core.clockMhz : 1;
+        const auto first = aligned ? it->second.firstClock : core.firstClock;
+        const double start =
+            (w.startTime - first) / mhz + (aligned ? (it->second.window->startSyscnt - origin) / timing.syscntMhz : 0);
+        out << "{\"name\":" << TraceJsonString(name) << ",\"cat\":\"SIMT Warp\",\"ph\":\"X\",\"pid\":" << lanePid
+            << ",\"tid\":" << w.warpId << ",\"ts\":" << start << ",\"dur\":" << w.duration / mhz
+            << ",\"args\":{\"function_name\":" << TraceJsonString(w.functionName) << ",\"warp_id\":" << w.warpId
+            << ",\"aicore_id\":" << unsigned(w.aicoreId) << ",\"subcore_id\":" << unsigned(w.subcoreId)
+            << ",\"vf_instr_address\":" << w.vfInstrAddress << ",\"start_time_raw\":" << w.startTime
+            << ",\"end_time_raw\":" << w.endTime << ",\"duration_raw\":" << w.duration
+            << ",\"clock_frequency_mhz\":" << core.clockMhz << ",\"clock_frequency_source\":\""
+            << (core.clockMhz ? (core.usesRatedClock ? "rated" : "current") : "unavailable_raw_ticks") << '"';
+        if (aligned)
+            out << ",\"vf_start_syscnt\":\"" << it->second.window->startSyscnt << '"';
+        out << "}}";
+        if (i + 1 < data.records.size())
+            out << ',';
+    }
+}
+
+std::string WarpTraceText(const aclptiSimtWarpData& data)
+{
+    auto layout = BuildWarpTraceLayout(data);
+    const auto& [timing, windows, rounds, origin] = layout;
+    std::ostringstream out;
+    out << std::setprecision(std::numeric_limits<double>::digits10);
+    const char* mode = rounds.empty()                       ? "per_subcore_clock" :
+                       rounds.size() == data.records.size() ? "same_replay_syscnt" :
+                                                              "partial_same_replay_syscnt";
+    out << "{\"alignmentMode\":" << TraceJsonString(mode)
+        << ",\"windowSource\":\"NPUBIT_VECTOR_FUNCTION_UTILIZATION\",\"syscntFrequencyMHz\":" << timing.syscntMhz
+        << ",\"alignedWarpCount\":" << rounds.size()
+        << ",\"unalignedWarpCount\":" << data.records.size() - rounds.size();
+    if (!windows.empty())
+        out << ",\"syscntOrigin\":\"" << origin << '"';
+    out << ",\"traceEvents\":[";
+    std::set<uint32_t> named;
+    WriteBlockTraceEvents(out, layout, named);
+    WriteWarpTraceEvents(out, data, layout, named);
+    out << "]}\n";
+    return out.str();
+}
+
+aclptiResult PublishWarpTrace(const aclptiSimtWarpData& data, ArtifactSink& sink, const std::string& prefix)
+{
+    if (data.status != ACLPTI_SUCCESS || data.records.empty()) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    std::string content;
+    try {
+        content = WarpTraceText(data);
+    } catch (const std::exception& error) {
+        ASCTOOL_WARNING("[npu-compute] occupancy report generation failed: %s", error.what());
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    bool begun = false;
+    try {
+        sink.Begin(prefix + ipc::kSimtOccupancyFileName);
+        begun = true;
+        sink.Write(content);
+        sink.Commit(data.records.size());
+        return ACLPTI_SUCCESS;
+    } catch (...) {
+        if (begun) {
+            sink.Abort();
+        }
+        return ACLPTI_ERROR_INTERNAL;
+    }
+}
 
 bool IsHardwareInfoTriggerCallback(aclptiCallbackId cbid)
 {
@@ -298,7 +685,7 @@ void DecodePmSampling(
     const std::string& prefix, bool& complete)
 {
     if (!info.error.empty()) {
-        MarkPmSamplingFailure(complete, prefix, "summary.db", "sample decoding", info.error);
+        MarkPmSamplingFailure(complete, prefix, ipc::kSummaryDbFileName, "sample decoding", info.error);
         return;
     }
     try {
@@ -324,7 +711,7 @@ void DecodePmSampling(
         }
     } catch (const std::exception& exception) {
         sampling = {};
-        MarkPmSamplingFailure(complete, prefix, "summary.db", "sample decoding", exception.what());
+        MarkPmSamplingFailure(complete, prefix, ipc::kSummaryDbFileName, "sample decoding", exception.what());
     }
 }
 
@@ -342,7 +729,7 @@ InstructionOutputs PrepareInstructionOutputs(
     bool collectSource, bool collectSampling)
 {
     InstructionOutputs output;
-    output.database = directory / "summary.db";
+    output.database = directory / ipc::kSummaryDbFileName;
     const auto& counters = result.sourceCounterData;
     const auto* sourceElf = collectSource && counters ? counters->originalElf.get() : nullptr;
     const auto sourceDisassembly = sourceElf ? std::string_view(counters->originalDisassembly) : std::string_view{};
@@ -870,17 +1257,28 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
     const KernelMetadata metadata = CollectReportMetadata(csvConfig, frequencyOverride);
     UpdateCollectionStats(*result);
     const auto prefix = ReportPrefix(report_sequence_);
+    auto pmuSections = section_config_.Sections();
+    const auto warp = std::find(pmuSections.begin(), pmuSections.end(), "occupancy");
+    const bool warpRequested = warp != pmuSections.end();
+    if (warpRequested) {
+        pmuSections.erase(warp);
+    }
     // Every kernel result has a summary, including sampling-only launches with no PMU sections.
     // Merged metric rows are independent of the raw replay data used by occupancy and other sections.
-    const aclptiResult csvStatus = validPmuRows ? WritePmuReport(
-                                                      *result, section_config_.Sections(), csvConfig, metadata,
-                                                      *artifact_sink_, prefix, &degraded_) :
-                                                  ACLPTI_ERROR_ASSEMBLE;
-
+    const aclptiResult csvStatus =
+        validPmuRows ? WritePmuReport(*result, pmuSections, csvConfig, metadata, *artifact_sink_, prefix, &degraded_) :
+                       ACLPTI_ERROR_ASSEMBLE;
     ++report_sequence_;
-    aclptiResult firstStatus = result->status == ACLPTI_SUCCESS ? csvStatus : result->status;
-
-    return ProcessAdditionalReports(*result, csvConfig, prefix, firstStatus);
+    const aclptiResult pmuResult = result->status == ACLPTI_SUCCESS ? csvStatus : result->status;
+    aclptiResult firstStatus = ProcessAdditionalReports(*result, csvConfig, prefix, pmuResult);
+    if (warpRequested) {
+        const bool warpRequired = pmuSections.empty() && !pipeline_enabled_ && !pm_sampling_enabled_;
+        const auto warpStatus = ProcessWarpReport(*result, prefix, warpRequired);
+        if (firstStatus == ACLPTI_SUCCESS) {
+            firstStatus = warpStatus;
+        }
+    }
+    return firstStatus;
 }
 
 aclptiResult NpuComputeRuntime::ProcessAdditionalReports(
@@ -938,6 +1336,20 @@ void NpuComputeRuntime::ProcessOccupancy(const aclptiProfilingDataResult& result
     }
 }
 
+aclptiResult NpuComputeRuntime::ProcessWarpReport(
+    const aclptiProfilingDataResult& result, const std::string& prefix, bool required)
+{
+    const auto status = result.simtWarpData ? PublishWarpTrace(*result.simtWarpData, *artifact_sink_, prefix) :
+                                              ACLPTI_ERROR_PROFILING_FAILED;
+    if (status == ACLPTI_SUCCESS) {
+        row_count_ += result.simtWarpData->records.size();
+    } else if (status == ACLPTI_ERROR_PROFILING_FAILED && !required) {
+        degraded_ = true;
+        return ACLPTI_SUCCESS;
+    }
+    return status;
+}
+
 aclptiResult NpuComputeRuntime::ProcessInstructionReports(
     const aclptiProfilingDataResult& result, const std::string& prefix, bool collectSource)
 {
@@ -975,14 +1387,14 @@ aclptiResult NpuComputeRuntime::PublishPipelineArtifacts()
         return ACLPTI_ERROR_INVALID_STATE;
     }
     try {
-        std::vector<boost::filesystem::path> files{pipeline_process_directory_ / "manifest.json"};
+        std::vector<boost::filesystem::path> files{pipeline_process_directory_ / ipc::kManifestFileName};
         for (const auto& fragment : pipeline_fragments_) {
             files.push_back(pipeline_process_directory_ / fragment.file);
         }
         aclptiResult result = ACLPTI_SUCCESS;
         for (const auto& path : files) {
             if (!PublishPipelineFile(path, *artifact_sink_)) {
-                if (path.filename() == "manifest.json") {
+                if (path.filename() == ipc::kManifestFileName) {
                     return ACLPTI_ERROR_TRACE_WRITE;
                 }
                 result = ACLPTI_ERROR_TRACE_WRITE;

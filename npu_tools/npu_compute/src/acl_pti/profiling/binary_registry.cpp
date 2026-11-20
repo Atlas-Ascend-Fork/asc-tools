@@ -275,14 +275,24 @@ aclptiResult BinaryRegistry::RecordCompanionFunction(
 
 aclptiResult BinaryRegistry::RegisterBinary(
     const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling,
-    bool pipeline, bool sourceCounter)
+    bool pipeline, bool sourceCounter, bool captureForWarp)
 {
-    return RegisterInstrumentedBinary(data, size, options, binary, pmSampling, pipeline, sourceCounter);
+    if (captureForWarp && !simtWarpSources_.RegisterBinary(binary, data, size, options)) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    if (captureForWarp && !sourceCounter && !pmSampling && !pipeline) {
+        return ACLPTI_SUCCESS;
+    }
+    const auto status = RegisterInstrumentedBinary(data, size, options, binary, pmSampling, pipeline, sourceCounter);
+    if (status != ACLPTI_SUCCESS && captureForWarp) {
+        simtWarpSources_.UnregisterBinary(binary);
+    }
+    return status;
 }
 
 aclptiResult BinaryRegistry::RegisterBinaryFromFile(
     const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling, bool pipeline,
-    bool sourceCounter)
+    bool sourceCounter, bool captureForWarp)
 {
     if (path == nullptr || path[0] == '\0' || binary == nullptr) {
         return ACLPTI_ERROR_PROFILING_FAILED;
@@ -301,8 +311,8 @@ aclptiResult BinaryRegistry::RegisterBinaryFromFile(
         if (!input.read(data.data(), static_cast<std::streamsize>(data.size()))) {
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
-        return RegisterInstrumentedBinary(
-            data.data(), data.size(), options, binary, pmSampling, pipeline, sourceCounter);
+        return RegisterBinary(
+            data.data(), data.size(), options, binary, pmSampling, pipeline, sourceCounter, captureForWarp);
     } catch (const std::bad_alloc&) {
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     } catch (...) {
@@ -495,12 +505,21 @@ bool BinaryRegistry::BuildPipelineBinaryState(Binary& state, const void* data, s
 
 aclptiResult BinaryRegistry::RegisterBinaryFunction(aclrtBinHandle binary, const char* name, aclrtFuncHandle function)
 {
+    // 只有 binary 在 Warp 注册表中时才保存名称；Pipeline 原有路径不受影响。
+    (void)simtWarpSources_.RegisterFunction(binary, function, name);
     return ResolveBinaryFunction<aclrtBinaryGetFunctionFunc>(ACL_RT_API_aclrtBinaryGetFunction, binary, name, function);
 }
 
 aclptiResult BinaryRegistry::RegisterBinaryFunction(
     aclrtBinHandle binary, std::uint64_t entry, aclrtFuncHandle function)
 {
+    // The instrumented ELF can move addresses, so resolve the original handle's
+    // stable name instead of reusing its original entry in the new image.
+    char name[4096]{};
+    if (function != nullptr && aclrtGetFunctionName(function, sizeof(name), name) == ACL_SUCCESS && name[0] != '\0' &&
+        name[sizeof(name) - 1] == '\0') {
+        (void)simtWarpSources_.RegisterFunction(binary, function, name);
+    }
     return ResolveBinaryFunction<aclrtBinaryGetFunctionByEntryFunc>(
         ACL_RT_API_aclrtBinaryGetFunctionByEntry, binary, entry, function);
 }
@@ -601,6 +620,11 @@ bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source, b
         return true;
     }
     return false;
+}
+
+bool BinaryRegistry::GetSimtWarpSource(aclrtFuncHandle function, SimtWarpBinarySource& source)
+{
+    return simtWarpSources_.GetSource(function, source);
 }
 
 aclrtFuncHandle BinaryRegistry::FindInstrumentedFunction(aclrtFuncHandle original)
@@ -770,6 +794,7 @@ aclptiResult BinaryRegistry::PrepareBinaryUnload(aclrtBinHandle binary, UnloadCo
 
 aclptiResult BinaryRegistry::CompleteBinaryUnload(UnloadContext& context)
 {
+    simtWarpSources_.UnregisterBinary(context.binary_);
     binaries_.erase(context.binary_);
     context.lock_.unlock();
     return ACLPTI_SUCCESS;

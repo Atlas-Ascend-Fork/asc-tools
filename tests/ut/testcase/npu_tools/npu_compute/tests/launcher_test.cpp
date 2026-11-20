@@ -12,6 +12,7 @@
 #include "import/imported_profile_results.h"
 #include "launch/launcher.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <boost/filesystem.hpp>
@@ -359,6 +360,33 @@ TEST(NpuComputeLauncher, IncompleteResultPublishesPartialReport)
     ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
     ASSERT_TRUE(boost::filesystem::is_regular_file(output));
     ASSERT_TRUE(error.find("collection incomplete") != std::string::npos);
+}
+
+TEST(NpuComputeLauncher, MissingWarpPreservesSuccessfulReports)
+{
+    TestDirectory workDirectory;
+    ASSERT_TRUE(!workDirectory.Path().empty());
+    const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
+    ASSERT_TRUE(currentDirectory.IsActive());
+    const auto output = workDirectory.Path() / "result.npu-rep";
+    CliConfig config = FixtureConfig(output, "missing-warp");
+    config.sections.push_back("occupancy");
+    config.sections.push_back("Pipeline");
+    config.collect_pipeline = true;
+    std::string report;
+    std::string error;
+
+    EXPECT_EQ(LaunchTarget(config, &report, &error), 0) << error;
+    ASSERT_EQ(report, output.string());
+    std::vector<ImportedProfileEntry> results;
+    ASSERT_TRUE(ReadImportedProfileResults(output, &results, &error)) << error;
+    const auto hasEntry = [&](const std::string& name) {
+        return std::any_of(results.begin(), results.end(), [&](const auto& result) { return result.name == name; });
+    };
+    EXPECT_TRUE(hasEntry("PipeUtilization.csv"));
+    EXPECT_TRUE(hasEntry("PipeTrace.json"));
+    EXPECT_TRUE(hasEntry("summary.jsonl"));
+    EXPECT_FALSE(hasEntry("SimtWarpOccupancy.json"));
 }
 
 TEST(NpuComputeLauncher, PublishingFailureRemovesCollectionDataDirectory)

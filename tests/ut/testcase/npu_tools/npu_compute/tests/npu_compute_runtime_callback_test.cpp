@@ -228,9 +228,95 @@ std::string CsvValue(const boost::filesystem::path& path, const std::string& row
     return {};
 }
 
-bool RunCsvSocNameChild(const boost::filesystem::path& output)
+bool RunWarpCsvChild(const boost::filesystem::path& output, const std::string& scenario)
 {
     CHECK(SetScenarioEnvironment(output));
+    NpuComputeTestConfigure(output.c_str(), "occupancy");
+    npucompute::test::ResetAclPtiCallbackStub();
+    CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
+    CHECK(g_profilingDataCallback != nullptr);
+    auto result = std::make_shared<aclptiProfilingDataResult>();
+    auto warp = std::make_shared<aclptiSimtWarpData>();
+    aclptiSimtWarpRecord record;
+    record.functionName = "kernel,\"test\"";
+    record.aicoreId = 2;
+    record.subcoreId = 1;
+    record.warpId = 7;
+    record.startTime = 10;
+    record.endTime = 14;
+    record.duration = 4;
+    warp->records.push_back(record);
+    record.aicoreId = 3;
+    record.subcoreId = 0;
+    record.warpId = 1;
+    record.startTime = 100;
+    record.endTime = 105;
+    record.duration = 5;
+    warp->records.push_back(record);
+    record.subcoreId = 2;
+    warp->records.push_back(record);
+    if (scenario != "warp-csv") {
+        constexpr uint64_t kFirstAnchor = UINT64_C(9007199254740993);
+        const bool noFrequency = scenario == "warp-csv-no-frequency" || scenario == "warp-csv-activity-no-frequency";
+        warp->deviceId = noFrequency ? -1 : 3;
+        if (scenario == "warp-csv-rated-frequency") {
+            warp->deviceId = 0;
+            g_summaryHardwareAvailable = true;
+        }
+        warp->vfAnchors = {
+            {2, 1, 0, kFirstAnchor, kFirstAnchor + 1500},
+            {3, 0, 0, kFirstAnchor + 3000, kFirstAnchor + 4800},
+            {3, 2, 0, kFirstAnchor + 5000, kFirstAnchor + 6000}};
+        record = warp->records.front();
+        if (scenario != "warp-csv-repeated-warp" && scenario != "warp-csv-multiple-vfs" &&
+            scenario != "warp-csv-activity-local") {
+            record.warpId = 8;
+        }
+        record.vfInstrAddress = scenario == "warp-csv-multiple-vfs" ? 42 : 0;
+        record.startTime = 14;
+        record.endTime = 22;
+        record.duration = 8;
+        warp->records.push_back(record);
+        if (scenario == "warp-csv-hybrid-vf" || scenario == "warp-csv-hybrid-unknown-vf") {
+            warp->vfAnchors.front().vfInstrAddress = 3172;
+            warp->vfAnchors.front().endSyscnt = kFirstAnchor + 1;
+            warp->vfAnchors.front().kind = aclptiSimtVfKind::Simd;
+            const auto kind = scenario == "warp-csv-hybrid-vf" ? aclptiSimtVfKind::Simt : aclptiSimtVfKind::Unknown;
+            warp->vfAnchors.push_back({2, 1, 3392, kFirstAnchor + 6000, kFirstAnchor + 8300, kind});
+            warp->records.front().vfInstrAddress = 4280;
+            warp->records.back().vfInstrAddress = 4280;
+        } else if (scenario == "warp-csv-activity-local") {
+            warp->vfAnchors.push_back({2, 1, 0, kFirstAnchor + 6000, kFirstAnchor + 8300});
+        } else if (scenario == "warp-csv-extra-anchor") {
+            warp->vfAnchors.push_back({2, 1, 0, kFirstAnchor + 7000});
+        } else if (scenario == "warp-csv-multiple-vfs") {
+            warp->vfAnchors.push_back({2, 1, record.vfInstrAddress, kFirstAnchor + 7000});
+        } else if (scenario == "warp-csv-address-mismatch") {
+            warp->vfAnchors.back().vfInstrAddress = UINT64_C(1) << 32;
+        } else if (scenario == "warp-csv-missing-anchor") {
+            warp->vfAnchors.pop_back();
+        } else if (scenario == "warp-csv-wrap") {
+            warp->records.front().startTime = UINT32_MAX - 1;
+            warp->records.front().endTime = 2;
+            warp->records.back().startTime = 2;
+            warp->records.back().endTime = 10;
+        }
+    }
+    result->simtWarpData = warp;
+    CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
+    npucompute::NpuComputeRuntime::Instance().Stop();
+    CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);
+    CHECK(boost::filesystem::is_regular_file(output / "SimtWarpOccupancy.json"));
+    CHECK(boost::filesystem::is_regular_file(output / "summary.jsonl"));
+    return true;
+}
+
+bool RunCsvSocNameChild(const boost::filesystem::path& output, bool missingWarp)
+{
+    CHECK(SetScenarioEnvironment(output));
+    if (missingWarp) {
+        NpuComputeTestConfigure(output.c_str(), "Memory,occupancy");
+    }
     CHECK(::setenv("NPU_COMPUTE_FREQUENCY_MHZ", "1000", 1) == 0);
     npucompute::test::ResetAclPtiCallbackStub();
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
@@ -252,6 +338,10 @@ bool RunCsvSocNameChild(const boost::filesystem::path& output)
     CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);
     CHECK(npucompute::NpuComputeRuntime::Instance().RowCount() == result->pmuLogs.size());
     CHECK(CsvValue(output / "Memory.csv", "vector0", "GM_to_UB_bw_usage_rate(%)") == "5.358925");
+    CHECK(boost::filesystem::is_regular_file(output / "summary.jsonl"));
+    if (missingWarp) {
+        CHECK(!boost::filesystem::exists(output / "SimtWarpOccupancy.json"));
+    }
     return true;
 }
 
@@ -668,8 +758,11 @@ bool RunChildScenario(const std::string& scenario, const boost::filesystem::path
     if (scenario == "stop-during-collection") {
         return RunStopDuringCollectionChild(output);
     }
-    if (scenario == "csv-soc-device-api") {
-        return RunCsvSocNameChild(output);
+    if (scenario.rfind("warp-csv", 0) == 0) {
+        return RunWarpCsvChild(output, scenario);
+    }
+    if (scenario == "csv-soc-device-api" || scenario == "csv-missing-warp") {
+        return RunCsvSocNameChild(output, scenario == "csv-missing-warp");
     }
     if (scenario.compare(0, 17, "summary-hardware-") == 0) {
         return RunSummaryHardwareChild(scenario, output);
@@ -809,6 +902,13 @@ TEST(NpuComputeRuntimeCallback, StopDuringCollectionDoesNotHoldRuntimeMutex)
     ASSERT_TRUE(LaunchChild(executable, "stop-during-collection", temporary.Path()));
 }
 
+TEST(NpuComputeRuntimeCallback, MissingWarpDoesNotFailPmuReport)
+{
+    TempDirectory temporary;
+    ASSERT_TRUE(!temporary.Path().empty());
+    ASSERT_TRUE(LaunchChild("/proc/self/exe", "csv-missing-warp", temporary.Path()));
+}
+
 TEST(NpuComputeRuntimeCallback, CsvSocNameSelection)
 {
     const char* executable = "/proc/self/exe";
@@ -884,7 +984,12 @@ extern "C" int halGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t i
             return 0;
         }
     }
-    if (deviceId != 3 || moduleType != 0 || infoType != 25 || value == nullptr) {
+    if (deviceId == 3 && infoType == 32 && value != nullptr && (moduleType == 4 || moduleType == 7)) {
+        *value = moduleType == 4 ? 1000 : 2000;
+        return 0;
+    }
+    const bool knownDevice = deviceId == 3 || (deviceId == 0 && g_summaryHardwareAvailable);
+    if (!knownDevice || moduleType != 0 || infoType != 25 || value == nullptr) {
         return 3;
     }
     *value = 1000000; // kHz: 1 GHz system counter

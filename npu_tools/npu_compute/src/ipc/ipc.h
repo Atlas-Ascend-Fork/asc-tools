@@ -36,6 +36,12 @@ inline constexpr std::chrono::milliseconds kDrainTimeout{30000};
 inline constexpr std::chrono::milliseconds kResultAckTimeout{30000};
 inline constexpr uint32_t kCacheControlModeAll = 0;
 inline constexpr uint32_t kCacheControlModeNone = 1;
+inline constexpr char kManifestFileName[] = "manifest.json";
+inline constexpr char kSimtOccupancyFileName[] = "SimtWarpOccupancy.json";
+inline constexpr char kLegacySimtOccupancyFileName[] = "simt_occupancy.json";
+inline constexpr char kSummaryDbFileName[] = "summary.db";
+inline constexpr char kObjdumpFileName[] = "objdump.txt";
+inline constexpr char kSymbolizerFileName[] = "symbolizer.json";
 enum class Type : uint16_t {
     Connect = 1,
     Interrupt = 2,

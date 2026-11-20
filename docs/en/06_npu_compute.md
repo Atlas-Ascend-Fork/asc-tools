@@ -23,8 +23,9 @@ The following Sections are currently supported:
 | <a name="section-pmsampling"></a> `PmSampling`                       | PC/state totals, disassembly and function/inline information       | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios           | `full`          |
 | <a name="section-roofline"></a> `Roofline`                           | Peak compute throughput and bandwidth, plus kernel operations, memory traffic, and duration | `full` |
+| <a name="section-occupancy"></a> `occupancy` | SIMT Warp activity timeline, written to `SimtWarpOccupancy.json` | Explicit selection |
 
-Two predefined sets are available: `basic` contains the seven Sections other than `PmSampling`, `ResourceConflictRatio`, `SourceCounter`, and `Roofline`, and `full` contains all eleven Sections. Every collection attempts to generate an `Occupancy.json` task/block trace without an additional Section.
+Two predefined sets are available: `basic` contains the seven Sections other than `PmSampling`, `ResourceConflictRatio`, `SourceCounter`, and `Roofline`, and `full` contains all eleven Sections. Every collection attempts to generate an `Occupancy.json` task/block trace without an additional Section. Use `--section occupancy` to enable the Warp timeline.
 
 For the meaning and calculation method of the fields in each Section, see [Performance Data](appendix/npu_compute_performance_data.md).
 
@@ -131,7 +132,7 @@ npu-compute \
   ./application
 ```
 
-Use `--set full` to collect the nine predefined Sections:
+Use `--set full` to collect the Sections in that set:
 
 ```bash
 npu-compute --set full ./application
@@ -160,6 +161,23 @@ Use `--cache-control all` to flush L2 before each kernel replay:
 ```bash
 npu-compute --cache-control all --section L2Cache ./application
 ```
+
+<a name="simt-warp-occupancy"></a>
+
+### Collecting a SIMT Warp Timeline
+
+Select `--section occupancy` to inspect Warp start times and active durations when analyzing load imbalance or tail blocks. The following example uses the NPUBIT `V100` platform, which defaults to two dies per device and 18 AI Cores per die. To use a different topology, set `NPU_COMPUTE_NPUBIT_DIE_COUNT` and `NPU_COMPUTE_NPUBIT_AICORE_PRE_DIE` to match the device.
+
+```bash
+export NPU_COMPUTE_NPUBIT_PLATFORM=V100
+npu-compute --section occupancy --section Memory -o ./simt-warp.npu-rep -- ./application
+mkdir -p ./restored
+npu-compute --import ./simt-warp.npu-rep --export ./restored
+```
+
+Open `chrome://tracing` in Chrome and use **Load** to open the extracted `SimtWarpOccupancy.json`. The report groups events by core. The `block` track shows the start and end of a SIMT vector function (VF) invocation. A `warp <ID>` track shows activity for that Warp. The earliest Warp in each invocation is aligned with that invocation's system counter start. Warps without a reliable match appear in a group labeled `(local clock)`. Their timestamps cannot be compared directly across cores.
+
+If the application produces no SIMT records or Warp collection encounters a recoverable error, a mixed collection still delivers the other successful results and warns that the Warp report is missing. If `occupancy` is the only selected Section, a missing Warp report results in a collection failure.
 
 ### Report Output
 
@@ -223,10 +241,11 @@ A report can contain the following files:
 | `summary.jsonl` | A kernel is executed | Performance summary, [performance hints](appendix/npu_compute_performance_data.md#performancehints), and operator overview. |
 | `Occupancy.json` | Attempted by default when collecting | Task and block intervals in Chrome Trace format, with replay identity and raw system counters. |
 | `PipeTrace.json` | `Pipeline` is selected | Pipeline timeline data in Chrome Trace format, viewable with Chrome Trace-compatible tools. |
+| `SimtWarpOccupancy.json` | `occupancy` is selected and valid Warp records are available | SIMT Warp activity timeline in Chrome Trace format. |
 | `summary.db` | When valid CSV data is imported successfully, `PmSampling` collection completes, or `SourceCounter` collection completes | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database). |
 | `objdump.txt` | When `SourceCounter` or `PmSampling` is selected; one file is generated when both are selected | Original operator disassembly. Compile with `-lineinfo` to include source line information. |
 | `symbolizer.json` | When `PmSampling` is selected | Function and inline information for sampled addresses. |
-| `<Section-name>.csv` | Metric data is collected (except for `Pipeline`, `PmSampling`, `SourceCounter`, and `Roofline`) | Metric data for the Section. |
+| `<Section-name>.csv` | Metric data is collected (except for `Pipeline`, `PmSampling`, `SourceCounter`, `Roofline`, and `occupancy`) | Metric data for the Section. |
 
 **AI Core Occupancy**: Shows the overall task window and when each block is active on its corresponding AI Core (AIC or AIV). All collection modes attempt to generate `Occupancy.json` by default without requiring an additional Section. If only this file fails, the tool logs a warning and delivers the other reports with a successful exit status.
 

@@ -1394,3 +1394,25 @@ TEST(NpuComputePtiDataModule, DecodesCANN93BlockCoreIdFromByte21)
     EXPECT_EQ(std::get<data::TaskLog32>(vectorDecoded.Value().payload).coreType, ACLPTI_CORE_TYPE_AIV);
     EXPECT_EQ(std::get<data::TaskLog32>(vectorDecoded.Value().payload).coreTypeId, 255);
 }
+
+TEST(NpuComputePtiDataModule, WarpOnlyResult)
+{
+    auto& module = data::ProfilingDataManager::Instance();
+    int callbacks = 0;
+    aclptiProfilingDataCallback callback = [&callbacks](const auto& result) {
+        ++callbacks;
+        if (!result || !result->simtWarpData || result->simtWarpData->records.size() != 1 ||
+            result->simtWarpData->records[0].warpId != 7) {
+            return ACLPTI_ERROR_PROFILING_FAILED;
+        }
+        return ACLPTI_SUCCESS;
+    };
+    ASSERT_EQ(module.Initialize(std::move(callback)), ACLPTI_SUCCESS);
+    aclptiSimtWarpData warp;
+    aclptiSimtWarpRecord record;
+    record.warpId = 7;
+    warp.records.push_back(record);
+    ASSERT_EQ(module.SetSimtWarpData(std::move(warp)), ACLPTI_SUCCESS);
+    ASSERT_EQ(module.Shutdown(), ACLPTI_SUCCESS);
+    EXPECT_EQ(callbacks, 1);
+}

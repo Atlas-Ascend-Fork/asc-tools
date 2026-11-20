@@ -237,6 +237,32 @@ TEST(NpuComputeUdsArtifact, IncompleteOtherSectionKeepsCommittedOccupancy)
         EXPECT_EQ(entry.path().filename(), "Occupancy.json");
     }
 }
+TEST(NpuComputeUdsArtifact, WarpArtifactManifest)
+{
+    TempDirectory temporary;
+    ArtifactReceiver receiver(temporary.Path());
+    const std::string csv = "{\"traceEvents\":[]}";
+    Begin(receiver, 1, "SimtWarpOccupancy.json");
+    TypedChunk(receiver, 1, DataKind::PipelineTrace, csv);
+    End(receiver, 1, csv.size());
+    Begin(receiver, 2, "HardwareInfo.jsonl");
+    HardwareChunk(receiver, 2, "{}\n");
+    End(receiver, 2, 3);
+    Begin(receiver, 3, "summary.jsonl");
+    TypedChunk(receiver, 3, DataKind::PmuCsv, "{}\n");
+    End(receiver, 3, 3);
+    Config config;
+    config.sections = {"occupancy"};
+    Result result;
+    result.sections = config.sections;
+    result.manifest = {
+        {1, "SimtWarpOccupancy.json", csv.size()}, {2, "HardwareInfo.jsonl", 3}, {3, "summary.jsonl", 3}};
+    receiver.Validate(result, config);
+    Check(ReadFile(fs::path(temporary.Path()) / "SimtWarpOccupancy.json") == csv);
+    auto broken = result;
+    broken.manifest.pop_back();
+    Reject([&] { receiver.Validate(broken, config); });
+}
 TEST(NpuComputeUdsArtifact, MalformedAndCleanup)
 {
     TempDirectory temporary;

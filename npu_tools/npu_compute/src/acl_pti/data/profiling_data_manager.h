@@ -41,6 +41,7 @@ public:
     // Releases only the closed reception context; aggregated data remains until Shutdown.
     aclptiResult ReleaseReplay(uint64_t replayId);
     aclptiResult SetRooflineData(aclptiRooflineData data);
+    aclptiResult SetSimtWarpData(aclptiSimtWarpData data);
     // Requires no active replay; drains the worker and publishes the result at most once.
     aclptiResult Shutdown();
     aclptiResult SetSourceCounterData(aclptiSourceCounterData data);
@@ -68,6 +69,7 @@ private:
     DataProcessor processor_;
     std::optional<aclptiSourceCounterData> sourceCounterData_;
     std::optional<aclptiRooflineData> rooflineData_;
+    std::shared_ptr<const aclptiSimtWarpData> simtWarpData_;
 };
 
 } // namespace aclpti::data

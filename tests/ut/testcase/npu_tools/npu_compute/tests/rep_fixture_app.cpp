@@ -175,7 +175,7 @@ int main(int argc, char** argv)
                     continue;
                 }
                 if (section == "Pipeline") {
-                    if (mode == "cli-echo" || mode.rfind("pm-sampling", 0) == 0) {
+                    if (mode == "cli-echo" || mode == "missing-warp" || mode.rfind("pm-sampling", 0) == 0) {
                         publish(
                             ".biu-staging/process-uds/manifest.json",
                             R"({"version":1,"state":"complete","status":0,"fragments":[{"resultSequence":"0","replayId":"0","deviceId":0,"file":"result-0.json","eventCount":"1"}]})");
@@ -216,6 +216,15 @@ int main(int argc, char** argv)
                     publish("collection-p1-0001/PipeUtilization.csv", kPipeCsv);
                     publish("collection-p1-0001/summary.jsonl", kSummary);
                     publisher.PublishOptional("collection-p1-0001/Occupancy.json", kOccupancy, 1);
+                }
+                if (section == "Roofline") {
+                    continue; // Roofline is carried in the summary below.
+                }
+                if (section == "occupancy") {
+                    if (mode != "missing-warp") {
+                        publish(npucompute::ipc::kSimtOccupancyFileName, R"({"traceEvents":[]})");
+                    }
+                    continue;
                 }
                 publish(
                     section + ".csv",

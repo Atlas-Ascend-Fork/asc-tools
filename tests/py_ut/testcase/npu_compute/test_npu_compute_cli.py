@@ -216,7 +216,8 @@ def test_list_sections_outputs_only_ids_in_alphabetical_order():
 
     assert result.returncode == 0
     assert result.stdout.splitlines() == sorted(
-        [*SECTIONS, "Pipeline", "PmSampling", "SourceCounter"], key=str.casefold
+        [*SECTIONS, "Pipeline", "PmSampling", "SourceCounter", "occupancy"],
+        key=str.casefold,
     )
     assert result.stderr == ""
 
@@ -238,7 +239,7 @@ def test_help_takes_precedence_over_list_sections(arguments, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("section", SECTIONS)
+@pytest.mark.parametrize("section", [*SECTIONS, "occupancy"])
 def test_each_supported_section_is_accepted(section, tmp_path):
     result = run_cli("--section", section, *fixture_command(), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
@@ -608,6 +609,17 @@ def test_help_has_one_definition_per_option():
     ("options", "sections"),
     [
         (("--set", "basic"), BASIC_SECTIONS),
+        (
+            ("--set", "full", "--section", "occupancy"),
+            [
+                *BASIC_SECTIONS,
+                "ResourceConflictRatio",
+                "PmSampling",
+                "SourceCounter",
+                "Roofline",
+                "occupancy",
+            ],
+        ),
         (
             ("--set", "full"),
             [

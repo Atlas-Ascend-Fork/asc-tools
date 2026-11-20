@@ -265,6 +265,36 @@ struct aclptiRooflineData {
     std::vector<std::string> errors;
 };
 
+struct aclptiSimtWarpRecord {
+    std::string functionName;
+    uint8_t aicoreId = 0;
+    uint8_t subcoreId = 0;
+    uint32_t vfInstrAddress = 0;
+    uint32_t warpId = 0;
+    uint32_t startTime = 0;
+    uint32_t endTime = 0;
+    uint32_t duration = 0;
+};
+enum class aclptiSimtVfKind : uint8_t { Unknown, Simd, Simt };
+
+struct aclptiSimtVfAnchor {
+    uint8_t aicoreId = 0;
+    uint8_t subcoreId = 0;
+    uint64_t vfInstrAddress = 0;
+    uint64_t startSyscnt = 0;
+    uint64_t endSyscnt = 0;
+    aclptiSimtVfKind kind = aclptiSimtVfKind::Unknown;
+};
+
+struct aclptiSimtWarpData {
+    aclptiResult status = ACLPTI_SUCCESS;
+    std::vector<aclptiSimtWarpRecord> records;
+    std::vector<std::string> errors;
+    int32_t deviceId = -1;
+    std::vector<aclptiSimtVfAnchor> vfAnchors;
+    std::string alignmentError;
+};
+
 // Complete collection for one original launch, including all of its profiling replays.
 // PMU events are merged before delivery; distinct original launches must never share a result.
 struct aclptiProfilingDataResult {
@@ -286,6 +316,7 @@ struct aclptiProfilingDataResult {
     } errorStats;
     // Appended to retain offsets of existing callback fields; rebuild consumers using this expanded result.
     std::map<uint64_t, aclptiReplayData> replayData;
+    std::shared_ptr<const aclptiSimtWarpData> simtWarpData;
 };
 
 using aclptiProfilingDataCallback = std::function<aclptiResult(std::shared_ptr<const aclptiProfilingDataResult>)>;

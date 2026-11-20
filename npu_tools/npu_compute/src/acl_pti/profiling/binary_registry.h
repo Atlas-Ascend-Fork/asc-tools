@@ -11,6 +11,7 @@
 #define NPU_TOOLS_NPU_COMPUTE_SRC_ACL_PTI_PROFILING_BINARY_REGISTRY_H
 
 #include "injection/injection_hook.h"
+#include "simt_warp_source_registry.h"
 #include "aclpti/aclpti_types.h"
 #include <cstddef>
 #include <cstdint>
@@ -62,10 +63,10 @@ public:
     };
     aclptiResult RegisterBinary(
         const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary,
-        bool pmSampling = false, bool pipeline = true, bool sourceCounter = false);
+        bool pmSampling = false, bool pipeline = true, bool sourceCounter = false, bool captureForWarp = false);
     aclptiResult RegisterBinaryFromFile(
         const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling = false,
-        bool pipeline = true, bool sourceCounter = false);
+        bool pipeline = true, bool sourceCounter = false, bool captureForWarp = false);
     aclptiResult RegisterBinaryFunction(aclrtBinHandle binary, const char* name, aclrtFuncHandle function);
     aclptiResult RegisterBinaryFunction(aclrtBinHandle binary, std::uint64_t entry, aclrtFuncHandle function);
     aclptiResult RegisterSymbolFunction(
@@ -75,6 +76,7 @@ public:
     // Capture while Runtime handles are valid. Shared immutable images outlive binary unload.
     bool GetSource(aclrtFuncHandle original, BinarySource& source, bool requireName = true);
     bool GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot);
+    bool GetSimtWarpSource(aclrtFuncHandle function, SimtWarpBinarySource& source);
     // Null means the function was not loaded with instrumentation enabled.
     aclrtFuncHandle FindInstrumentedFunction(aclrtFuncHandle original);
     // Returns the independent sampling companion, or the original for a non-SIMT kernel.
@@ -125,6 +127,7 @@ private:
     static void BuildSamplingCompanion(
         Binary& state, const std::shared_ptr<PmSamplingBinaryImage>& image, const void* data, std::size_t size);
     static bool BuildPipelineBinaryState(Binary& state, const void* data, std::size_t size, bool pmSampling);
+    SimtWarpSourceRegistry simtWarpSources_;
     std::mutex mutex_;
     std::unordered_map<aclrtBinHandle, Binary> binaries_;
 };

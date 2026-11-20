@@ -17,8 +17,18 @@ namespace npucompute {
 namespace {
 
 constexpr std::array kSupportedSections = {
-    "PipeUtilization",       "Memory",     "MemoryL0",      "MemoryUB", "L2Cache", "Pipeline", "ArithmeticUtilization",
-    "ResourceConflictRatio", "PmSampling", "SourceCounter", "Roofline",
+    "PipeUtilization",
+    "Memory",
+    "MemoryL0",
+    "MemoryUB",
+    "L2Cache",
+    "Pipeline",
+    "ArithmeticUtilization",
+    "ResourceConflictRatio",
+    "PmSampling",
+    "SourceCounter",
+    "Roofline",
+    "occupancy",
 };
 
 bool Fail(const std::string& message, std::string* error)

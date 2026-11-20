@@ -98,7 +98,7 @@ ManifestGroups CollectManifestGroups(
             groups.hardwareFound = true;
         } else if (parent == ".biu-staging/process-uds") {
             Require(pipelineExpected, "ARTIFACT: unexpected Pipeline data");
-            if (base == "manifest.json") {
+            if (base == ipc::kManifestFileName) {
                 groups.pipelineManifestFound = true;
             } else {
                 ++groups.pipelineFragments;
@@ -346,6 +346,8 @@ std::set<std::string> ExpectedPmuFiles(
             sourceExpected = true;
         } else if (section == "Roofline") {
             rooflineExpected = true;
+        } else if (section == "occupancy") {
+            expectedPmu.insert(ipc::kSimtOccupancyFileName);
         } else {
             expectedPmu.insert(section + ".csv");
         }
@@ -360,7 +362,7 @@ void WarnMissingSamplingFiles(const boost::filesystem::path& directory, const Ma
     // Missing sampling files can also mean that a SIMD kernel produced no PC data.
     for (const auto& group : groups.pmuGroups) {
         const auto sampling = groups.samplingGroups.find(group.first);
-        for (const auto* name : {"summary.db", "objdump.txt", "symbolizer.json"}) {
+        for (const auto* name : {ipc::kSummaryDbFileName, ipc::kObjdumpFileName, ipc::kSymbolizerFileName}) {
             if (sampling == groups.samplingGroups.end() || sampling->second.count(name) == 0) {
                 std::fprintf(
                     stderr, "[WARNING] npu-compute: PmSampling result file was not produced: %s\n",
@@ -371,13 +373,23 @@ void WarnMissingSamplingFiles(const boost::filesystem::path& directory, const Ma
 }
 
 void ValidatePmuGroups(
-    const ManifestGroups& groups, const std::set<std::string>& expectedPmu, CollectionValidation& validation)
+    const ManifestGroups& groups, const std::set<std::string>& expectedPmu, bool warpOptional,
+    CollectionValidation& validation)
 {
     if (!expectedPmu.empty()) {
         validation.Check(!groups.pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
         for (const auto& [parent, files] : groups.pmuGroups) {
             for (const auto& name : expectedPmu) {
-                validation.Check(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
+                if (files.count(name) != 0) {
+                    continue;
+                }
+                if (warpOptional && name == ipc::kSimtOccupancyFileName) {
+                    const auto path = parent.empty() ? name : parent + "/" + name;
+                    std::fprintf(
+                        stderr, "[WARNING] npu-compute: occupancy result file was not produced: %s\n", path.c_str());
+                } else {
+                    validation.Check(false, parent + "/" + name + ": required PMU artifact missing");
+                }
             }
         }
     } else {
@@ -426,7 +438,8 @@ bool ArtifactReceiver::Validate(
     for (const auto& [parent, files] : groups.samplingGroups) {
         ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, validation);
     }
-    ValidatePmuGroups(groups, expectedPmu, validation);
+    const bool warpOptional = config.sections.size() > 1;
+    ValidatePmuGroups(groups, expectedPmu, warpOptional, validation);
     return validation.complete;
 }
 } // namespace npucompute::cli

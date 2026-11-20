@@ -58,6 +58,8 @@ add_library(acl_pti_unit STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_memory.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_runtime.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_registry.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/simt_warp_source_registry.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_simt_warp_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/runtime_api_handlers.cpp
   binary_instrumenter_stub.cpp
 )
@@ -125,6 +127,8 @@ add_library(acl_pti_test SHARED
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_memory.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_runtime.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_registry.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/simt_warp_source_registry.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_simt_warp_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/runtime_api_handlers.cpp
   binary_instrumenter_stub.cpp
 )
@@ -1153,3 +1157,9 @@ add_custom_target(npu_compute_test_artifacts DEPENDS ${npu_compute_targets})
 foreach(target IN ITEMS acl_pti_replay_test acl_pti_hook_failure_domain_test acl_pti_runtime_failure_short_circuit_test acl_pti_data_module_test)
   target_link_libraries(${target} PRIVATE plog_test_library)
 endforeach()
+
+add_test(NAME npu_compute.warp_csv
+  COMMAND ${CMAKE_COMMAND} -E env
+    "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:acl_runtime_stub>:$ENV{LD_LIBRARY_PATH}"
+    ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/warp_csv_test.py
+    $<TARGET_FILE:npu_compute_runtime_callback_test>)

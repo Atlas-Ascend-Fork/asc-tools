@@ -145,6 +145,10 @@ add_library(acl_prof_api_backend INTERFACE)
 target_link_libraries(acl_runtime_backend INTERFACE injection_runtime_backend)
 target_link_libraries(acl_prof_api_backend INTERFACE injection_prof_api_backend)
 
+if(NOT TARGET npu_bit)
+  message(FATAL_ERROR "The npu_bit SDK target must be provided by the parent build")
+endif()
+
 add_subdirectory(src/acl_pti)
 add_subdirectory(src/ipc)
 

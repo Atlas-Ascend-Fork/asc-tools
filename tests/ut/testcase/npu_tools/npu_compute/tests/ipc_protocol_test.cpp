@@ -61,6 +61,16 @@ TEST(NpuComputeIpcProtocol, Codecs)
     const auto decoded = DecodeConfig(bytes);
     Check(decoded.sections == config.sections);
     Check(decoded.cacheControlMode == npucompute::ipc::kCacheControlModeNone);
+    auto withWarp = config;
+    withWarp.sections.push_back("occupancy");
+    Check(DecodeConfig(EncodeConfig(withWarp)).sections == withWarp.sections);
+    Check(TypeForKind(KindForName("SimtWarpOccupancy.json")) == Type::Pipeline);
+    Check(ArtifactTypeForName("SimtWarpOccupancy.json") == ArtifactType::Json);
+    Check(ArtifactTypeForName("collection-p123-2/SimtWarpOccupancy.json") == ArtifactType::Json);
+    Check(ArtifactTypeForName("simt_occupancy.json") == ArtifactType::Json);
+    auto duplicateWarp = withWarp;
+    duplicateWarp.sections.push_back("occupancy");
+    Reject([&] { EncodeConfig(duplicateWarp); });
     Check(static_cast<uint16_t>(Type::Hardware) == 0x0103);
     Check(static_cast<uint16_t>(Type::DataEnd) == 0x0104);
     Check(TypeForKind(KindForName("PipeUtilization.csv")) == Type::Pmu);

@@ -41,6 +41,7 @@ public:
     {
         return binaryRegistry_.GetPmSamplingSnapshot(function, snapshot);
     }
+    bool CollectSimtWarp() const { return rangeProfiler_.CollectSimtWarp(); }
     bool GetInstrumentedTraceArgumentOffset(aclrtFuncHandle function, std::uint32_t& offset)
     {
         return binaryRegistry_.GetInstrumentedTraceArgumentOffset(function, offset);

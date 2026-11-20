@@ -84,6 +84,7 @@ add_subdirectory(injection/tests)
 add_subdirectory(npu_compute/stubs/acl_pti_callback)
 add_subdirectory(npu_compute/stubs/hardware_api)
 add_subdirectory(npu_compute/tests)
+add_subdirectory(npu_compute/npubit_cmake_probe)
 
 add_subdirectory(npu_check)
 

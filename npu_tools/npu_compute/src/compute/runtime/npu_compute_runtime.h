@@ -67,6 +67,7 @@ private:
         aclptiResult firstStatus);
     KernelMetadata CollectReportMetadata(const ReportConfig& csvConfig, bool frequencyOverride);
     void UpdateCollectionStats(const aclptiProfilingDataResult& result);
+    aclptiResult ProcessWarpReport(const aclptiProfilingDataResult& result, const std::string& prefix, bool required);
     aclptiResult ProcessPipelineReplay(
         std::uint64_t replayId, const aclptiPipelineData& replay, DynamicHardwareDeviceApi& deviceApi);
     aclptiResult ProcessPipelineData(const aclptiProfilingDataResult& result, const ReportConfig& config);

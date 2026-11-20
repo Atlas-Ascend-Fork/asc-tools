@@ -31,6 +31,9 @@ add_library(acl_pti SHARED
   profiling/binary_registry.cpp
   profiling/kernel_instrumenter.cpp
   profiling/pm_sampling_instruction_map.cpp
+  profiling/npubit_simt_warp_collector.cpp
+  profiling/simt_warp_source_registry.cpp
+  profiling/simt_warp_writer.cpp
 )
 target_include_directories(acl_pti PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/..

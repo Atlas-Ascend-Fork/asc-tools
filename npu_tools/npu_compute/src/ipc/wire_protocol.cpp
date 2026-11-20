@@ -19,8 +19,19 @@
 
 namespace npucompute::ipc {
 namespace {
+constexpr char kHardwareInfoFileName[] = "HardwareInfo.jsonl";
+constexpr char kPipeTraceFileName[] = "PipeTrace.json";
+constexpr char kSummaryFileName[] = "summary.jsonl";
+constexpr char kPipeUtilizationFileName[] = "PipeUtilization.csv";
+constexpr char kMemoryFileName[] = "Memory.csv";
+constexpr char kMemoryL0FileName[] = "MemoryL0.csv";
+constexpr char kMemoryUBFileName[] = "MemoryUB.csv";
+constexpr char kL2CacheFileName[] = "L2Cache.csv";
+constexpr char kArithmeticUtilizationFileName[] = "ArithmeticUtilization.csv";
+constexpr char kResourceConflictRatioFileName[] = "ResourceConflictRatio.csv";
+constexpr char kSimtWarpCsvFileName[] = "SimtWarp.csv";
 constexpr size_t DEFAULT_STRING_BYTES = 128;
-constexpr size_t MAX_SECTION_COUNT = 11;
+constexpr size_t MAX_SECTION_COUNT = 12;
 constexpr size_t MAX_ARTIFACT_COUNT = 64;
 constexpr size_t MAX_ERROR_MESSAGE_BYTES = 4096;
 constexpr unsigned int BITS_PER_BYTE = std::numeric_limits<uint8_t>::digits;
@@ -194,7 +205,7 @@ void ValidateConfig(const Config& config)
             section == "PipeUtilization" || section == "Memory" || section == "MemoryL0" || section == "MemoryUB" ||
                 section == "L2Cache" || section == "Pipeline" || section == "ArithmeticUtilization" ||
                 section == "ResourceConflictRatio" || section == "PmSampling" || section == "SourceCounter" ||
-                section == "Roofline",
+                section == "Roofline" || section == "occupancy",
             "unknown section");
         Check(seen.insert(section).second, "duplicate section");
     }
@@ -208,26 +219,28 @@ DataKind KindForName(const std::string& name)
 {
     const auto components = ArtifactPathComponents(name);
     const std::string& base = components.back();
-    if (base == "HardwareInfo.jsonl" && components.size() == 1) {
+    if (base == kHardwareInfoFileName && components.size() == 1) {
         return DataKind::HardwareInfo;
     }
     const bool pipelinePath =
         components.size() == STAGING_PATH_COMPONENTS &&
-        (base == "manifest.json" || (base.rfind("result-", 0) == 0 && base.size() > RESULT_NAME_MIN_BYTES &&
-                                     base.compare(base.size() - JSON_SUFFIX_BYTES, JSON_SUFFIX_BYTES, ".json") == 0));
-    if ((base == "PipeTrace.json" && components.size() == 1) || pipelinePath) {
+        (base == kManifestFileName || (base.rfind("result-", 0) == 0 && base.size() > RESULT_NAME_MIN_BYTES &&
+                                       base.compare(base.size() - JSON_SUFFIX_BYTES, JSON_SUFFIX_BYTES, ".json") == 0));
+    if ((base == kPipeTraceFileName && components.size() == 1) || base == kSimtOccupancyFileName ||
+        base == kLegacySimtOccupancyFileName || pipelinePath) {
         return DataKind::PipelineTrace;
     }
-    if (base == "summary.db" || base == "objdump.txt" || base == "symbolizer.json") {
+    if (base == kSummaryDbFileName || base == kObjdumpFileName || base == kSymbolizerFileName) {
         Check(components.size() <= MAX_PM_SAMPLING_PATH_COMPONENTS, "invalid PmSampling artifact path");
         return DataKind::PmSampling;
     }
-    if (base == "summary.jsonl" || base == "PipeUtilization.csv" || base == kOccupancyArtifactName) {
+    if (base == kSummaryFileName || base == kPipeUtilizationFileName || base == kOccupancyArtifactName) {
         return DataKind::PmuCsv;
     }
     Check(
-        base == "Memory.csv" || base == "MemoryL0.csv" || base == "MemoryUB.csv" || base == "L2Cache.csv" ||
-            base == "ArithmeticUtilization.csv" || base == "ResourceConflictRatio.csv",
+        base == kMemoryFileName || base == kMemoryL0FileName || base == kMemoryUBFileName || base == kL2CacheFileName ||
+            base == kArithmeticUtilizationFileName || base == kResourceConflictRatioFileName ||
+            base == kSimtWarpCsvFileName,
         "artifact name is not allowed");
     return DataKind::PmuCsv;
 }
@@ -236,19 +249,19 @@ ArtifactType ArtifactTypeForName(const std::string& name)
     const auto kind = KindForName(name);
     const auto components = ArtifactPathComponents(name);
     const std::string& base = components.back();
-    if (base == "summary.db") {
+    if (base == kSummaryDbFileName) {
         return ArtifactType::Db;
     }
-    if (base == "objdump.txt") {
+    if (base == kObjdumpFileName) {
         return ArtifactType::Txt;
     }
-    if (base == "symbolizer.json" || base == kOccupancyArtifactName) {
+    if (base == kSymbolizerFileName || base == kOccupancyArtifactName) {
         return ArtifactType::Json;
     }
     if (kind == DataKind::PipelineTrace) {
         return ArtifactType::Json;
     }
-    if (base == "summary.jsonl" || base == "HardwareInfo.jsonl") {
+    if (base == kSummaryFileName || base == kHardwareInfoFileName) {
         return ArtifactType::Jsonl;
     }
     return ArtifactType::Csv;

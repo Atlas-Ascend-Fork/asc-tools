@@ -14,6 +14,8 @@
 #include "binary_registry.h"
 #include "source_counter_collector.h"
 #include "acl_pti/data/pmu_events.h"
+#include "npubit_simt_warp_collector.h"
+#include "simt_warp_environment.h"
 
 #include "profiling/prof_api.h"
 
@@ -22,6 +24,8 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>
+#include <limits>
 #include <new>
 #include <string_view>
 #include <unordered_set>
@@ -108,6 +112,7 @@ struct ParsedSectionConfig {
     std::vector<uint32_t> events;
     bool sourceCounter = false;
     bool roofline = false;
+    bool simtWarp = false;
 };
 
 aclptiResult ParseSectionConfig(const aclptiRangeProfilerSetConfigParams& params, ParsedSectionConfig& parsed)
@@ -128,7 +133,12 @@ aclptiResult ParseSectionConfig(const aclptiRangeProfilerSetConfigParams& params
                 NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
             return ACLPTI_ERROR_INVALID_PARAMETER;
         }
-        const SectionDefinition* section = FindSection(std::string_view(name, length));
+        const std::string_view sectionName(name, length);
+        if (sectionName == "occupancy") {
+            parsed.simtWarp = true;
+            continue;
+        }
+        const SectionDefinition* section = FindSection(sectionName);
         if (section == nullptr) {
             ASCTOOL_ERROR(
                 "[aclpti] section configuration rejected: unsupported section=%.*s code=%u", static_cast<int>(length),
@@ -276,6 +286,7 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
         pmuEvents_ = std::move(parsed.events);
         collectSourceCounter_ = parsed.sourceCounter;
         collectRoofline_ = parsed.roofline;
+        collectSimtWarp_ = parsed.simtWarp;
         blockResult_ = params->blockResult;
         collectPipeline_ = params->collectPipeline;
         if (collectPipeline_) {
@@ -589,10 +600,22 @@ aclptiResult RangeProfiler::ReplayKernel(
             }
         }
 
-        if (!collectRoofline_) {
-            return collectSourceCounter_ ? ReplaySourceCounter(invocation, rounds.size()) : ACLPTI_SUCCESS;
+        if (collectRoofline_) {
+            status = ReplayRoofline(invocation, rounds.size());
+        } else if (collectSourceCounter_) {
+            status = ReplaySourceCounter(invocation, rounds.size());
         }
-        return ReplayRoofline(invocation, rounds.size());
+        if (status != ACLPTI_SUCCESS) {
+            return status;
+        }
+        if (collectSimtWarp_) {
+            status = ReplaySimtWarp(invocation);
+            // The report consumer handles recoverable Warp failures. Preserve errors that compromise execution.
+            if (status == ACLPTI_ERROR_RESULT_UNRELIABLE) {
+                return status;
+            }
+        }
+        return ACLPTI_SUCCESS;
     } catch (const std::bad_alloc&) {
         ASCTOOL_ERROR(
             "[aclpti] error operation=replay_metadata_alloc status=%d"
@@ -673,6 +696,39 @@ aclptiResult RangeProfiler::ReplaySourceCounter(const ReplayInvocation& invocati
     }
     const auto publication = dataManager_.SetSourceCounterData(std::move(counters));
     return status == ACLPTI_SUCCESS ? publication : status;
+}
+
+aclptiResult RangeProfiler::ReplaySimtWarp(const ReplayInvocation& invocation)
+{
+    SimtWarpBinarySource source;
+    if (!invocation.binaryRegistry.GetSimtWarpSource(invocation.originalFunction, source)) {
+        std::fprintf(stderr, "[SimtWarp] original ELF/name unavailable\n");
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    SimtWarpCollectOptions options;
+    if (!GetWarpEnvironment(options.platform, options.hardware)) {
+        std::fprintf(
+            stderr, "[SimtWarp] set NPU_COMPUTE_NPUBIT_PLATFORM (V100/V121/V220), "
+                    "and use positive DIE_COUNT and AICORE_PRE_DIE values (or matching AICORE_PER_DIE). "
+                    "V100 defaults to 2 dies and 18 AI cores per die; other platforms require both values.\n");
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    if (!GetWarpTraceBufferBytes(options.traceFallbackBytes)) {
+        std::fprintf(
+            stderr, "[SimtWarp] NPU_COMPUTE_NPUBIT_TRACE_BUFFER_BYTES must be a positive "
+                    "byte count smaller than SIZE_MAX\n");
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    SimtWarpData warp;
+    const auto status = CollectNpubitSimtWarp(
+        source, invocation.replayMemory, invocation.launchFunction, invocation.synchronizeFunction, invocation.stream,
+        options, warp);
+    warp.deviceId = invocation.deviceId;
+    for (const auto& error : warp.errors) {
+        std::fprintf(stderr, "[SimtWarp] %s\n", error.c_str());
+    }
+    const auto publish = dataManager_.SetSimtWarpData(std::move(warp));
+    return status == ACLPTI_SUCCESS ? publish : status;
 }
 
 bool RangeProfiler::PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config) const

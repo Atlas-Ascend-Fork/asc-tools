@@ -278,6 +278,19 @@ TEST(NpuComputeBinaryRegistry, RegistersCompanionsAndPreservesOriginalsOnFailure
     ASSERT_TRUE(!registry.GetInstrumentedTraceArgumentOffset(f, traceOffset));
     ASSERT_TRUE(traceOffset == 0);
 
+    // A function obtained by entry must still be locatable for Warp collection.
+    aclrtBinHandle warpBinary = nullptr;
+    aclrtFuncHandle warpFunction = nullptr;
+    ASSERT_TRUE(Load(input, sizeof(input), nullptr, &warpBinary) == ACL_SUCCESS);
+    ASSERT_TRUE(
+        registry.RegisterBinary(input, sizeof(input), nullptr, warpBinary, false, false, false, true) ==
+        ACLPTI_SUCCESS);
+    ASSERT_TRUE(Entry(warpBinary, 42, &warpFunction) == ACL_SUCCESS);
+    ASSERT_TRUE(registry.RegisterBinaryFunction(warpBinary, std::uint64_t(42), warpFunction) == ACLPTI_SUCCESS);
+    aclpti::profiling::SimtWarpBinarySource warpSource;
+    ASSERT_TRUE(registry.GetSimtWarpSource(warpFunction, warpSource));
+    ASSERT_TRUE(warpSource.name == "kernel");
+
     aclrtBinHandle b = nullptr;
     aclrtFuncHandle g = nullptr;
     ASSERT_TRUE(Load(input, sizeof(input), nullptr, &b) == ACL_SUCCESS);
