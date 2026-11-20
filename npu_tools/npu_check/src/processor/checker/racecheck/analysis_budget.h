@@ -12,12 +12,13 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_ANALYSIS_BUDGET_H
 
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <tuple>
 
 namespace npucheck::race {
 // Defaults cover multi-core traces. Equal default values do not imply shared counters.
-inline constexpr size_t DEFAULT_EVENT_BUDGET = 4'194'304;
+inline constexpr size_t DEFAULT_EVENT_BUDGET = SIZE_MAX; // 条数受限会导致VF场景下数据量大时采集数据不完整导致失败
 inline constexpr size_t DEFAULT_SEGMENT_BUDGET = 8'388'608;
 inline constexpr size_t DEFAULT_EDGE_BUDGET = 16'777'216;
 inline constexpr size_t DEFAULT_COMPARISON_BUDGET = 10'000'000;
