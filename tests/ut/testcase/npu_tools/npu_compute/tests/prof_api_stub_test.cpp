@@ -21,6 +21,7 @@ namespace {
 
 int g_callbackCount = 0;
 MsprofRawData g_rawData{};
+MsprofRawData g_pmuData{};
 
 std::int32_t CaptureRawData(MsprofRawData* rawData)
 {
@@ -29,6 +30,9 @@ std::int32_t CaptureRawData(MsprofRawData* rawData)
     }
     ++g_callbackCount;
     g_rawData = *rawData;
+    if (rawData->type == PMU_DATA_TYPE) {
+        g_pmuData = *rawData;
+    }
     return 0;
 }
 
@@ -91,12 +95,23 @@ TEST(NpuComputeProfApiStub, EmitsConfiguredDataAndClearsCallbackOnReset)
     config.configInfo.attrs = &blockAttr;
     ASSERT_TRUE(MsprofStart(8, &config, sizeof(config)) == 0);
     ASSERT_TRUE(MsprofStop(8, &config, sizeof(config)) == 0);
-    ASSERT_TRUE(g_callbackCount == 4);
-    ASSERT_TRUE(g_rawData.chunkSize == 256);
-    std::memcpy(&magic, g_rawData.chunk + 128, sizeof(magic));
+    ASSERT_EQ(g_callbackCount, 5);
+    ASSERT_EQ(g_pmuData.chunkSize, 256);
+    std::memcpy(&magic, g_pmuData.chunk + 128, sizeof(magic));
     ASSERT_TRUE(magic == 0x6bd30029U);
+    ASSERT_EQ(g_rawData.type, LOG_DATA_TYPE);
+    ASSERT_EQ(g_rawData.chunkSize, 128);
+    const uint32_t functions[] = {0, 1, 0x24, 0x25};
+    const uint32_t counters[] = {1000, 2000, 1100, 1700};
+    for (std::size_t index = 0; index < std::size(functions); ++index) {
+        uint32_t counter = 0;
+        std::memcpy(&magic, g_rawData.chunk + index * 32, sizeof(magic));
+        std::memcpy(&counter, g_rawData.chunk + index * 32 + 8, sizeof(counter));
+        EXPECT_EQ(magic, 0x6bd30000U | functions[index]);
+        EXPECT_EQ(counter, counters[index]);
+    }
     ProfApiReset();
     ASSERT_TRUE(MsprofStart(8, &config, sizeof(config)) == 0);
     ASSERT_TRUE(MsprofStop(8, &config, sizeof(config)) == 0);
-    ASSERT_TRUE(g_callbackCount == 4);
+    ASSERT_EQ(g_callbackCount, 5);
 }

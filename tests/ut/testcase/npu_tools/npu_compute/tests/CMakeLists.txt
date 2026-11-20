@@ -145,6 +145,7 @@ npu_compute_set_test_output(acl_pti_test)
 
 set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/biu/biu_pipeline.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/occupancy/occupancy_trace.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_device_api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_device.cpp
@@ -544,6 +545,7 @@ add_test(NAME npu_compute.acl_pti_callback_stub
 set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/runtime_test_entry.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/biu/biu_pipeline.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/occupancy/occupancy_trace.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_device_api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_device.cpp
@@ -896,6 +898,50 @@ add_test(
     ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
     ${CMAKE_SOURCE_DIR}/tests/py_ut/testcase/npu_compute/test_npu_compute_install.py
 )
+
+add_executable(npu_compute_occupancy_runtime_test occupancy_runtime_test.cpp
+  ${NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES}
+  ${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp)
+target_include_directories(npu_compute_occupancy_runtime_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src ${NPU_COMPUTE_SOURCE_DIR}/src/compute
+  ${NPU_COMPUTE_SOURCE_DIR}/../utils/security)
+target_link_libraries(npu_compute_occupancy_runtime_test PRIVATE
+  acl_pti_callback_stub acl_runtime_stub npu_compute_test_headers acl_pti_test
+  ${CMAKE_DL_LIBS} Threads::Threads Boost::filesystem npu_compute_sqlite_runtime)
+set_target_properties(npu_compute_occupancy_runtime_test PROPERTIES ENABLE_EXPORTS YES)
+foreach(scenario IN ITEMS success invalid-frequency failed-replay no-callback sink-write sink-commit malformed)
+  add_test(NAME npu_compute.occupancy_runtime.${scenario} COMMAND npu_compute_occupancy_runtime_test ${scenario})
+endforeach()
+foreach(scenario IN ITEMS non-pmu-combo invalid-merged-pmu)
+  add_test(NAME npu_compute.occupancy_runtime.${scenario} COMMAND npu_compute_occupancy_runtime_test ${scenario})
+endforeach()
+foreach(section IN ITEMS PipeUtilization Memory MemoryL0 MemoryUB L2Cache ArithmeticUtilization ResourceConflictRatio)
+  add_test(
+    NAME npu_compute.occupancy_runtime.csv_failure_${section}
+    COMMAND npu_compute_occupancy_runtime_test csv-failure-${section})
+endforeach()
+foreach(section IN ITEMS
+    PipeUtilization Memory MemoryL0 MemoryUB L2Cache Pipeline ArithmeticUtilization ResourceConflictRatio PmSampling)
+  add_test(
+    NAME npu_compute.occupancy_runtime.section_failure_${section}
+    COMMAND npu_compute_occupancy_runtime_test section-failure-${section})
+endforeach()
+add_test(
+  NAME npu_compute.occupancy_runtime.pipeline_only
+  COMMAND npu_compute_occupancy_runtime_test pipeline-only)
+add_test(
+  NAME npu_compute.occupancy_runtime.pm_sampling_only
+  COMMAND npu_compute_occupancy_runtime_test pm-sampling-only)
+
+add_executable(npu_compute_occupancy_replay_test occupancy_replay_test.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../llt/gtest_main.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/section_config.cpp)
+target_include_directories(npu_compute_occupancy_replay_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
+target_link_libraries(npu_compute_occupancy_replay_test PRIVATE
+  acl_pti_unit ${NPU_COMPUTE_ACLPTI_UNIT_BACKENDS} GTest::gtest)
+set_target_properties(npu_compute_occupancy_replay_test PROPERTIES CXX_VISIBILITY_PRESET hidden)
+add_test(NAME npu_compute.occupancy_replay COMMAND npu_compute_occupancy_replay_test)
 
 add_executable(npu_compute_pm_sampling_config_test
   pm_sampling_config_test.cpp

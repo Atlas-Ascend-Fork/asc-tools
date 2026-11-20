@@ -79,12 +79,13 @@ def check_report(cli, directory, sections, environment):
     assert report.is_file()
     assert struct.unpack_from("<I", report.read_bytes(), 8)[0] == 0x10000
     files = report_files(report.read_bytes())
-    expected = {"HardwareInfo.jsonl", "summary.jsonl", *NAMES}
+    expected = {"HardwareInfo.jsonl", "summary.jsonl", "Occupancy.json", *NAMES}
     if "Memory" in sections:
         expected.add("Memory.csv")
     if "Pipeline" in sections:
         expected.add("PipeTrace.json")
     assert set(files) == expected
+    assert json.loads(files["Occupancy.json"][1])["traceEvents"]
     records = [json.loads(line) for line in files["summary.jsonl"][1].splitlines()]
     assert records[-2]["category"] == "PerformanceHints"
     assert records[-1]["category"] == "OpInfoSummary"
@@ -103,6 +104,8 @@ def check_report(cli, directory, sections, environment):
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
+    traces = list(imported.rglob("Occupancy.json"))
+    assert len(traces) == 1 and traces[0].read_bytes() == files["Occupancy.json"][1]
     databases = list(imported.rglob("summary.db"))
     assert len(databases) == 1
     root = databases[0].parent
@@ -315,7 +318,21 @@ def test_partial_sampling_report(tmp_path, failure):
     else:
         assert "collection incomplete" in result.stderr
     files = report_files((tmp_path / "partial.npu-rep").read_bytes())
-    assert {"HardwareInfo.jsonl", "Memory.csv"} <= files.keys()
+    assert {"HardwareInfo.jsonl", "Memory.csv", "Occupancy.json"} <= files.keys()
+    occupancy = json.loads(files["Occupancy.json"][1])
+    assert occupancy["status"] == "complete" and occupancy["traceEvents"]
+    imported = tmp_path / "partial-imported"
+    imported.mkdir()
+    restored = subprocess.run(
+        [cli, "--import", str(tmp_path / "partial.npu-rep"), "--export", str(imported)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    # Partial sampling outputs must not prevent delivery of the already committed occupancy.
+    traces = list(imported.rglob("Occupancy.json"))
+    assert traces, restored.stdout + restored.stderr
+    assert len(traces) == 1 and traces[0].read_bytes() == files["Occupancy.json"][1]
     if failure == "missing-summary":
         assert "summary.jsonl" not in files
     else:

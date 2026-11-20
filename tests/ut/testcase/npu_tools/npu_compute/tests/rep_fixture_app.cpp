@@ -30,6 +30,8 @@ constexpr std::string_view kHardwareInfo = "{\"category\":\"Host Info\",\"cpu ph
                                            "{\"category\":\"CPU Information\",\"control cpu count\":1}\n"
                                            "{\"category\":\"AI Core Information\",\"ai core count\":1}\n"
                                            "{\"category\":\"Memory Information\",\"hbm total(MB)\":1}\n";
+constexpr std::string_view kOccupancy =
+    R"({"status":"complete","traceEvents":[{"ph":"X","name":"Task","pid":1,"tid":0,"ts":0,"dur":1}]})";
 constexpr std::string_view kPipeCsv = "block_id,pipe_utilization\n0,75\n";
 constexpr std::string_view kMemoryCsv = "block_id,read_bytes\n0,128\n";
 constexpr std::string_view kL2CacheCsv = "block_id,hit_rate\n0,99\n";
@@ -158,6 +160,13 @@ int main(int argc, char** argv)
             publisher.Commit(1);
         };
         if (mode != "empty") {
+            if (mode != "missing-occupancy") {
+                if (mode == "empty-occupancy") {
+                    publisher.PublishOptional("Occupancy.json", {}, 0);
+                } else {
+                    publisher.PublishOptional("Occupancy.json", kOccupancy, 1);
+                }
+            }
             if (mode != "missing-hardware") {
                 publish("HardwareInfo.jsonl", kHardwareInfo);
             }
@@ -203,6 +212,7 @@ int main(int argc, char** argv)
                     publish("collection-p1-0001/Memory.csv", "block_id,read_bytes\n1,256\n");
                     publish("collection-p1-0001/PipeUtilization.csv", kPipeCsv);
                     publish("collection-p1-0001/summary.jsonl", kSummary);
+                    publisher.PublishOptional("collection-p1-0001/Occupancy.json", kOccupancy, 1);
                 }
                 publish(
                     section + ".csv",

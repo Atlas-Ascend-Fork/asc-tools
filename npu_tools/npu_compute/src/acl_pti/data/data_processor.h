@@ -95,11 +95,13 @@ private:
         std::map<aclptiBlockKey, std::vector<aclptiTaskLogRow>> blockLogs;
         std::map<aclptiBlockKey, aclptiPmuDataRow> pmuLogs;
         aclptiTaskPmuData taskPmuData;
+        std::vector<aclptiPmuIdentity> pmuRecords;
         std::map<aclptiPipelineKey, std::vector<uint32_t>> pipelineData;
         std::vector<aclptiRawDataChunk> pcSamplingData;
     };
 
     void AssembleProfilingResult();
+    void PreserveReplayData(uint64_t replayId, ReplayData& replay);
 
     // Result access follows the same phase ownership as PrepareReplay/Process/FinishActive.
     bool PrepareReplayResult(uint64_t replayId, ReplayKind kind);

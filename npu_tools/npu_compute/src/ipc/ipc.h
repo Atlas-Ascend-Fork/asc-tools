@@ -26,6 +26,7 @@ using Bytes = std::vector<uint8_t>;
 using Deadline = std::chrono::steady_clock::time_point;
 inline constexpr uint32_t kMaxValueBytes = 64 * 1024;
 inline constexpr size_t kChunkBytes = 48 * 1024;
+inline constexpr char kOccupancyArtifactName[] = "Occupancy.json";
 inline constexpr size_t kHeaderBytes = 12;
 inline constexpr size_t kPrefixBytes = 22;
 inline constexpr size_t kMaxFrameBytes = kHeaderBytes + kMaxValueBytes;

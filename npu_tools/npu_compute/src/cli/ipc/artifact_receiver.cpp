@@ -107,7 +107,9 @@ ManifestGroups CollectManifestGroups(
             Require(samplingExpected, "ARTIFACT: unexpected PmSampling artifact");
             Require(groups.samplingGroups[parent].insert(base).second, "ARTIFACT: duplicate PmSampling artifact");
         } else {
-            Require(expectedPmu.count(base) == 1, "ARTIFACT: unexpected PMU artifact");
+            Require(
+                base == ipc::kOccupancyArtifactName || expectedPmu.count(base) == 1,
+                "ARTIFACT: unexpected PMU artifact");
             Require(groups.pmuGroups[parent].insert(base).second, "ARTIFACT: duplicate PMU artifact");
         }
     }
@@ -155,12 +157,12 @@ ArtifactReceiver::ArtifactReceiver(const std::string& directory)
 }
 ArtifactReceiver::~ArtifactReceiver()
 {
-    Abort();
+    CleanupArtifactFile();
     if (directory_ >= 0) {
         close(directory_);
     }
 }
-void ArtifactReceiver::Abort() noexcept
+void ArtifactReceiver::CleanupArtifactFile() noexcept
 {
     if (file_ >= 0) {
         close(file_);
@@ -209,7 +211,7 @@ void ArtifactReceiver::OpenArtifactDirectory()
 }
 void ArtifactReceiver::BeginArtifact(const ipc::Frame& frame)
 {
-    Require(file_ < 0, "ARTIFACT: interleaved begin");
+    Require(active_.id == 0, "ARTIFACT: interleaved begin");
     auto begin = ipc::DecodeArtifactBegin(frame.payload);
     Require(
         begin.id != 0 && begin.kind == ipc::KindForName(begin.name) &&
@@ -220,6 +222,7 @@ void ArtifactReceiver::BeginArtifact(const ipc::Frame& frame)
     }
     Require(manifest_.size() < MAX_ARTIFACT_COUNT, "ARTIFACT: too many artifacts");
     active_ = std::move(begin);
+    offset_ = 0;
     OpenArtifactDirectory();
     temporary_ = "." + active_name_ + "." + std::to_string(active_.id) + ".tmp";
     file_ = openat(
@@ -229,13 +232,16 @@ void ArtifactReceiver::BeginArtifact(const ipc::Frame& frame)
         temporary_.clear();
         FileError("create artifact");
     }
-    offset_ = 0;
 }
 void ArtifactReceiver::ReceiveChunk(const ipc::Frame& frame)
 {
     Require(frame.type == ipc::TypeForKind(active_.kind), "ARTIFACT: data kind mismatch");
     auto chunk = ipc::DecodeArtifactChunk(frame.payload);
     Require(chunk.id == active_.id && chunk.offset == offset_, "ARTIFACT: invalid offset or id");
+    offset_ += chunk.data.size();
+    if (file_ < 0) {
+        return;
+    }
     size_t done = 0;
     while (done < chunk.data.size()) {
         const ssize_t count = write(file_, chunk.data.data() + done, chunk.data.size() - done);
@@ -247,12 +253,18 @@ void ArtifactReceiver::ReceiveChunk(const ipc::Frame& frame)
         }
         done += static_cast<size_t>(count);
     }
-    offset_ += done;
 }
 void ArtifactReceiver::EndArtifact(const ipc::Frame& frame)
 {
-    auto end = ipc::DecodeArtifactEnd(frame.payload);
+    const auto end = ipc::DecodeArtifactEnd(frame.payload);
     Require(end.id == active_.id && end.bytes == offset_, "ARTIFACT: invalid end length");
+    if (file_ >= 0) {
+        CommitArtifactFile();
+    }
+    CompleteArtifact();
+}
+void ArtifactReceiver::CommitArtifactFile()
+{
     if (fsync(file_) != 0) {
         FileError("fsync artifact");
     }
@@ -264,12 +276,20 @@ void ArtifactReceiver::EndArtifact(const ipc::Frame& frame)
     RenameNoReplace(active_directory_path_, temporary_, active_name_);
     temporary_.clear();
     if (fsync(active_directory_) != 0) {
+        const int syncError = errno;
+        if (active_name_ == ipc::kOccupancyArtifactName) {
+            unlinkat(active_directory_, active_name_.c_str(), 0);
+        }
+        errno = syncError;
         FileError("commit staging");
     }
+}
+void ArtifactReceiver::CompleteArtifact()
+{
+    // Match the sender's manifest even when an optional file was discarded locally.
     manifest_.push_back({active_.id, active_.name, offset_});
-    close(active_directory_);
-    active_directory_ = -1;
-    active_name_.clear();
+    CleanupArtifactFile();
+    active_.id = 0;
 }
 void ArtifactReceiver::Receive(const ipc::Frame& frame)
 {
@@ -278,7 +298,7 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
             BeginArtifact(frame);
             return;
         }
-        Require(file_ >= 0, "ARTIFACT: data without begin");
+        Require(active_.id != 0, "ARTIFACT: data without begin");
         switch (frame.type) {
             case ipc::Type::Pmu:
             case ipc::Type::Pipeline:
@@ -292,8 +312,20 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
             default:
                 throw std::runtime_error("ARTIFACT: unexpected message");
         }
+    } catch (const ipc::Exception& error) {
+        const bool skipFile = error.Detail().domain == "FILESYSTEM" && active_name_ == ipc::kOccupancyArtifactName;
+        CleanupArtifactFile();
+        if (!skipFile) {
+            active_.id = 0;
+            throw;
+        }
+        std::fprintf(stderr, "[WARNING] npu-compute: skipped %s: %s\n", active_.name.c_str(), error.what());
+        if (frame.type == ipc::Type::DataEnd) {
+            CompleteArtifact();
+        }
     } catch (...) {
-        Abort();
+        CleanupArtifactFile();
+        active_.id = 0;
         throw;
     }
 }
@@ -353,7 +385,7 @@ void ValidatePmuGroups(
 bool ArtifactReceiver::Validate(
     const ipc::Result& result, const ipc::Config& config, std::vector<std::string>* issues) const
 {
-    Require(file_ < 0, "ARTIFACT: unfinished artifact");
+    Require(active_.id == 0, "ARTIFACT: unfinished artifact");
     CollectionValidation validation{issues};
     validation.Check(
         result.status == 0 && result.code == 0 && result.complete && result.errorCount == 0 && result.droppedCount == 0,

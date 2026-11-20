@@ -109,12 +109,11 @@ private:
         Binary& state, const void* data, std::size_t size, bool pmSampling, bool pipeline);
     template <typename Key>
     aclptiResult ResolveCompanionKey(
-        Binary& state, Key key, aclrtFuncHandle function, Key& companionKey, std::uint64_t& companionElfEntry,
-        bool& unavailable);
+        Binary& state, Key key, aclrtFuncHandle function, Key& companionKey, Key& elfLookupKey, bool& unavailable);
     template <typename Key>
     aclptiResult RecordCompanionFunction(
-        aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function, aclrtFuncHandle companion,
-        std::uint64_t companionElfEntry, std::string mixedAlias);
+        aclrtBinHandle binary, Binary& state, Key elfLookupKey, aclrtFuncHandle function, aclrtFuncHandle companion,
+        const std::string& mixedAlias);
     aclptiResult LoadCompanions(Binary& state, const aclrtBinaryLoadOptions* options, aclrtBinaryLoadFromDataFunc load);
     void BuildSamplingBinaryState(Binary& state, const void* data, std::size_t size);
     void BuildSamplingCompanion(

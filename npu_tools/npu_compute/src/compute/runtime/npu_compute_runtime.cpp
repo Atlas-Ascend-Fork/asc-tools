@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "artifact_sink.h"
+#include "occupancy/occupancy_trace.h"
 #include "hardware/hardware_device_api.h"
 #include "report/report_writer.h"
 #include "pm_sampling/pm_sampling_decoder.h"
@@ -736,6 +737,9 @@ void NpuComputeRuntime::UpdateCollectionStats(const aclptiProfilingDataResult& r
     for (const auto& chunk : result.pcSamplingData) {
         replayIds.insert(chunk.replayId);
     }
+    for (const auto& entry : result.replayData) {
+        replayIds.insert(entry.first);
+    }
     replay_count_ += replayIds.size();
 }
 
@@ -813,45 +817,60 @@ KernelMetadata NpuComputeRuntime::CollectReportMetadata(const ReportConfig& csvC
     return metadata;
 }
 
+ReportConfig NpuComputeRuntime::LoadReportConfig(bool& frequencyOverride)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!csv_device_info_loaded_) {
+        LoadCsvDeviceInfo(&csv_config_, !csv_frequency_override_);
+        csv_device_info_loaded_ = true;
+    }
+    frequencyOverride = csv_frequency_override_;
+    return csv_config_;
+}
+
 aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfilingDataResult> result)
 {
     if (result == nullptr) {
         return ACLPTI_ERROR_INVALID_PARAMETER;
     }
-    if (!ValidPmuRows(*result)) {
-        return ACLPTI_ERROR_ASSEMBLE;
-    }
-    ReportConfig csvConfig;
+    const bool validPmuRows = ValidPmuRows(*result);
     bool frequencyOverride = false;
     // Kernel EXIT arrives after replay PMU data, so publish HardwareInfo before processing CSV output.
     hardware_info_collector_.CollectOnKernelLaunch();
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!csv_device_info_loaded_) {
-            LoadCsvDeviceInfo(&csv_config_, !csv_frequency_override_);
-            csv_device_info_loaded_ = true;
-        }
-        csvConfig = csv_config_;
-        frequencyOverride = csv_frequency_override_;
-    }
+    const ReportConfig csvConfig = LoadReportConfig(frequencyOverride);
     const KernelMetadata metadata = CollectReportMetadata(csvConfig, frequencyOverride);
     UpdateCollectionStats(*result);
     const auto prefix = ReportPrefix(report_sequence_);
     // Every kernel result has a summary, including sampling-only launches with no PMU sections.
-    const aclptiResult csvStatus =
-        WritePmuReport(*result, section_config_.Sections(), csvConfig, metadata, *artifact_sink_, prefix, &degraded_);
+    // Merged metric rows are independent of the raw replay data used by occupancy and other sections.
+    const aclptiResult csvStatus = validPmuRows ? WritePmuReport(
+                                                      *result, section_config_.Sections(), csvConfig, metadata,
+                                                      *artifact_sink_, prefix, &degraded_) :
+                                                  ACLPTI_ERROR_ASSEMBLE;
 
     ++report_sequence_;
     aclptiResult firstStatus = result->status == ACLPTI_SUCCESS ? csvStatus : result->status;
 
+    return ProcessAdditionalReports(*result, csvConfig, prefix, firstStatus);
+}
+
+aclptiResult NpuComputeRuntime::ProcessAdditionalReports(
+    const aclptiProfilingDataResult& result, const ReportConfig& config, const std::string& prefix,
+    aclptiResult firstStatus)
+{
     if (pipeline_enabled_) {
-        const aclptiResult pipelineStatus = ProcessPipelineData(*result, csvConfig);
+        const aclptiResult pipelineStatus = ProcessPipelineData(result, config);
         if (firstStatus == ACLPTI_SUCCESS) {
             firstStatus = pipelineStatus;
         }
     }
+    try {
+        ProcessOccupancy(result, prefix);
+    } catch (const std::exception& error) {
+        ASCTOOL_WARNING("[npu-compute] Occupancy processing failed: %s", error.what());
+    }
     if (pm_sampling_enabled_) {
-        const auto samplingStatus = ProcessPmSampling(*result, prefix);
+        const auto samplingStatus = ProcessPmSampling(result, prefix);
         if (samplingStatus != ACLPTI_SUCCESS) {
             ++pm_sampling_failures_;
             ++error_count_;
@@ -862,6 +881,31 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
     }
     // Preserve the source failure while still writing data from successful replays.
     return firstStatus;
+}
+
+void NpuComputeRuntime::ProcessOccupancy(const aclptiProfilingDataResult& result, const std::string& prefix)
+{
+    DynamicHardwareDeviceApi deviceApi;
+    std::map<int32_t, double> frequencies;
+    for (const auto& [replayId, replay] : result.replayData) {
+        static_cast<void>(replayId);
+        if (replay.kind != aclptiReplayKind::Pmu || frequencies.count(replay.deviceId) != 0) {
+            continue;
+        }
+        double frequency = 0;
+        if (deviceApi.GetSyscntFrequencyHz(replay.deviceId, &frequency)) {
+            frequencies.emplace(replay.deviceId, frequency);
+        }
+    }
+    const auto trace = BuildOccupancyTrace(result, frequencies, report_sequence_ - 1);
+    const auto status = PublishOccupancyTrace(trace, *artifact_sink_, prefix);
+    if (status != ACLPTI_SUCCESS) {
+        ASCTOOL_WARNING(
+            "[npu-compute] Occupancy processing failed: %s code=%u", trace.diagnostic.c_str(),
+            static_cast<unsigned>(status));
+    } else if (!trace.diagnostic.empty()) {
+        ASCTOOL_WARNING("[npu-compute] Occupancy: %s", trace.diagnostic.c_str());
+    }
 }
 
 aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix)

@@ -85,6 +85,7 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/uds_artifact_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/ipc/artifact_publisher.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/cli_test.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/occupancy_trace_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/option_registry_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/collection_file_validator_test.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_TESTS_DIR}/csv_reader_test.cpp"
@@ -168,6 +169,8 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/performance_hints/performance_hint_utils.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/report_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/runtime/kernel_metadata_collector.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/runtime/section_config.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/occupancy/occupancy_trace.cpp"
 )
 
 set_source_files_properties("${INJECTION_SOURCE_DIR}/src/injection_hook.cpp" PROPERTIES

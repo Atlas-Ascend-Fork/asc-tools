@@ -154,12 +154,14 @@ void CheckReportContents(const boost::filesystem::path& report)
     std::vector<ImportedProfileEntry> results;
     std::string error;
     ASSERT_TRUE(ReadImportedProfileResults(report, &results, &error));
-    ASSERT_TRUE(results.size() == 4U);
+    ASSERT_TRUE(results.size() == 5U);
     ASSERT_TRUE(results[0].name == "HardwareInfo.jsonl");
-    ASSERT_TRUE(results[1].name == "PipeUtilization.csv");
-    ASSERT_TRUE(results[2].name == "summary.db");
-    ASSERT_TRUE(results[2].type == npucompute::cli::NpuRepFileType::Sqlite);
-    ASSERT_TRUE(results[3].name == "summary.jsonl");
+    ASSERT_TRUE(results[1].name == "Occupancy.json");
+    ASSERT_TRUE(results[1].type == npucompute::cli::NpuRepFileType::Json);
+    ASSERT_TRUE(results[2].name == "PipeUtilization.csv");
+    ASSERT_TRUE(results[3].name == "summary.db");
+    ASSERT_TRUE(results[3].type == npucompute::cli::NpuRepFileType::Sqlite);
+    ASSERT_TRUE(results[4].name == "summary.jsonl");
 }
 
 TEST(NpuComputeLauncher, WithoutExportPublishesReportInCurrentDirectory)
@@ -315,6 +317,30 @@ TEST(NpuComputeLauncher, MissingHardwareInfoPublishesPartialReport)
     ASSERT_TRUE(!HasCollectionDirectoryIn(workDirectory.Path()));
     ASSERT_TRUE(boost::filesystem::is_regular_file(output));
     ASSERT_TRUE(error.find("collection incomplete") != std::string::npos);
+}
+
+TEST(NpuComputeLauncher, MissingOrEmptyOccupancyPublishesOtherReportsSuccessfully)
+{
+    for (const auto* mode : {"missing-occupancy", "empty-occupancy"}) {
+        SCOPED_TRACE(mode);
+        TestDirectory workDirectory;
+        ASSERT_TRUE(!workDirectory.Path().empty());
+        const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
+        ASSERT_TRUE(currentDirectory.IsActive());
+        const auto output = workDirectory.Path() / "result.npu-rep";
+        const auto config = FixtureConfig(output, mode);
+        std::string report;
+        std::string error;
+
+        EXPECT_EQ(LaunchTarget(config, &report, &error), 0) << error;
+        std::vector<ImportedProfileEntry> results;
+        ASSERT_TRUE(ReadImportedProfileResults(output, &results, &error)) << error;
+        ASSERT_EQ(results.size(), 4U);
+        EXPECT_EQ(results[0].name, "HardwareInfo.jsonl");
+        EXPECT_EQ(results[1].name, "PipeUtilization.csv");
+        EXPECT_EQ(results[2].name, "summary.db");
+        EXPECT_EQ(results[3].name, "summary.jsonl");
+    }
 }
 
 TEST(NpuComputeLauncher, IncompleteResultPublishesPartialReport)

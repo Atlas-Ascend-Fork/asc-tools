@@ -26,7 +26,7 @@ inline constexpr uint32_t kInvalidPmuEvent = 0xffffffffU;
 // Hardware slot order matters; unused slots form a suffix filled with kInvalidPmuEvent.
 using PmuSlots = std::array<uint32_t, kMaxPmuSlots>;
 
-enum class ReplayKind { Pmu, Pipeline, PcSampling, RooflinePmu };
+using ReplayKind = aclptiReplayKind;
 
 // Device and BIU format are learned from received data, not supplied by the caller.
 struct ReplayPrepareInfo {

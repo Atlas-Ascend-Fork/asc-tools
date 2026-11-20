@@ -26,11 +26,13 @@ public:
     void Write(std::string_view bytes) override;
     void Commit(uint64_t records) override;
     void Abort() noexcept override;
+    void PublishOptional(const std::string& name, std::string_view contents, uint64_t records) override;
     bool Finish(ipc::Result result);
     void Stop() noexcept;
     bool Cancelled() const { return interrupted_; }
 
 private:
+    ipc::ArtifactBegin PrepareArtifact(const std::string& name) const;
     void Enqueue(ipc::Frame frame);
     void Worker() noexcept;
     void PollControl();

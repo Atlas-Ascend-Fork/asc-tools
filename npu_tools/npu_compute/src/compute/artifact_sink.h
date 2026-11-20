@@ -25,6 +25,19 @@ public:
     virtual void Write(std::string_view bytes) = 0;
     virtual void Commit(std::uint64_t records) = 0;
     virtual void Abort() noexcept = 0;
+
+    // A sink that streams to a shared session must publish optional files as a unit.
+    virtual void PublishOptional(const std::string& name, std::string_view contents, std::uint64_t records)
+    {
+        Begin(name);
+        try {
+            Write(contents);
+            Commit(records);
+        } catch (...) {
+            Abort();
+            throw;
+        }
+    }
 };
 
 // Forward bounded pieces instead of retaining a whole CSV in memory.

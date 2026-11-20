@@ -57,18 +57,24 @@ aclptiResult BinaryRegistry::ResolveBinaryFunction(
 namespace {
 bool FindNamedFunctionEntry(
     const std::map<std::string, std::uint64_t>& entries, const std::string& name, std::uint64_t& entry,
-    std::string& alias)
+    const std::string& runtimeAlias = {})
 {
     const auto named = entries.find(name);
     if (named != entries.end()) {
         entry = named->second;
         return true;
     }
+    if (!runtimeAlias.empty()) {
+        const auto aliased = entries.find(runtimeAlias);
+        if (aliased == entries.end()) {
+            return false;
+        }
+        entry = aliased->second;
+        return true;
+    }
     for (const auto* suffix : {"_mix_aic", "_aic"}) {
-        const auto candidate = name + suffix;
-        const auto found = entries.find(candidate);
+        const auto found = entries.find(name + suffix);
         if (found != entries.end()) {
-            alias = candidate;
             entry = found->second;
             return true;
         }
@@ -94,12 +100,11 @@ bool ResolveOriginalEntry(
     (void)function;
     const auto& entries = instructions.functionEntries;
     bool resolved = false;
-    std::string alias;
     if constexpr (std::is_convertible<Key, const char*>::value) {
         if (key == nullptr) {
             return false;
         }
-        resolved = FindNamedFunctionEntry(entries, key, entry, alias);
+        resolved = FindNamedFunctionEntry(entries, key, entry);
     } else {
         const auto found = instructions.relocatedEntries.find(key);
         if (found != instructions.relocatedEntries.end()) {
@@ -110,7 +115,7 @@ bool ResolveOriginalEntry(
             if (!ReadRuntimeFunctionName(function, name)) {
                 return false;
             }
-            resolved = FindNamedFunctionEntry(entries, name, entry, alias);
+            resolved = FindNamedFunctionEntry(entries, name, entry);
         }
     }
     if (!resolved && entries.count("kernel") != 0) {
@@ -171,9 +176,9 @@ aclptiResult BinaryRegistry::ResolveFunctionState(
     state.functions.erase(function);
     state.elfEntries.erase(function);
     Key companionKey = key;
-    std::uint64_t companionElfEntry = 0;
+    Key elfLookupKey;
     bool unavailable = false;
-    const auto keyStatus = ResolveCompanionKey(state, key, function, companionKey, companionElfEntry, unavailable);
+    const auto keyStatus = ResolveCompanionKey(state, key, function, companionKey, elfLookupKey, unavailable);
     if (keyStatus != ACLPTI_SUCCESS || unavailable) {
         return keyStatus;
     }
@@ -188,13 +193,12 @@ aclptiResult BinaryRegistry::ResolveFunctionState(
             status, static_cast<unsigned>(static_cast<uint32_t>(status)));
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
-    return RecordCompanionFunction(binary, state, key, function, companion, companionElfEntry, std::move(mixedAlias));
+    return RecordCompanionFunction(binary, state, elfLookupKey, function, companion, mixedAlias);
 }
 
 template <typename Key>
 aclptiResult BinaryRegistry::ResolveCompanionKey(
-    Binary& state, Key key, aclrtFuncHandle function, Key& companionKey, std::uint64_t& companionElfEntry,
-    bool& unavailable)
+    Binary& state, Key key, aclrtFuncHandle function, Key& companionKey, Key& elfLookupKey, bool& unavailable)
 {
     (void)state;
     (void)key;
@@ -226,20 +230,22 @@ aclptiResult BinaryRegistry::ResolveCompanionKey(
                 if (named == entries.end()) {
                     return ACLPTI_ERROR_PROFILING_FAILED;
                 }
-                companionElfEntry = named->second;
+                elfLookupKey = named->second;
             } else {
                 companionKey = entry->second;
-                companionElfEntry = entry->second;
+                elfLookupKey = entry->second;
             }
+            return ACLPTI_SUCCESS;
         }
     }
+    elfLookupKey = key;
     return ACLPTI_SUCCESS;
 }
 
 template <typename Key>
 aclptiResult BinaryRegistry::RecordCompanionFunction(
-    aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function, aclrtFuncHandle companion,
-    std::uint64_t companionElfEntry, std::string mixedAlias)
+    aclrtBinHandle binary, Binary& state, Key elfLookupKey, aclrtFuncHandle function, aclrtFuncHandle companion,
+    const std::string& mixedAlias)
 {
     (void)binary;
     (void)key;
@@ -247,27 +253,18 @@ aclptiResult BinaryRegistry::RecordCompanionFunction(
     (void)mixedAlias;
     try {
         if (state.pmSamplingImage) {
-            const auto& entries = state.pmSamplingImage->instructions.functionEntries;
-            std::uint64_t entry = 0;
             if constexpr (std::is_convertible<Key, const char*>::value) {
-                const auto named = key == nullptr ? entries.end() : entries.find(key);
-                if (named == entries.end() && mixedAlias.empty() && key != nullptr) {
-                    FindNamedFunctionEntry(entries, key, entry, mixedAlias);
-                }
-                const auto aliased = mixedAlias.empty() ? entries.end() : entries.find(mixedAlias);
-                if (named == entries.end() && aliased == entries.end()) {
-                    // A named Runtime lookup remains valid for Pipeline even when
-                    // PmSampling could not recover the ELF function entry.
-                    if (state.pmSamplingImage->instructions.error.empty()) {
-                        return ACLPTI_ERROR_PROFILING_FAILED;
-                    }
-                } else {
-                    entry = named != entries.end() ? named->second : aliased->second;
+                const auto& instructions = state.pmSamplingImage->instructions;
+                std::uint64_t entry = 0;
+                if (elfLookupKey != nullptr &&
+                    FindNamedFunctionEntry(instructions.functionEntries, elfLookupKey, entry, mixedAlias)) {
                     state.elfEntries[function] = entry;
+                } else if (instructions.error.empty()) {
+                    // Missing entries are tolerated only after a PmSampling mapping failure.
+                    return ACLPTI_ERROR_PROFILING_FAILED;
                 }
             } else {
-                entry = companionElfEntry;
-                state.elfEntries[function] = entry;
+                state.elfEntries[function] = elfLookupKey;
             }
         }
         state.functions[function] = companion;

@@ -221,7 +221,7 @@ DataKind KindForName(const std::string& name)
         Check(components.size() <= MAX_PM_SAMPLING_PATH_COMPONENTS, "invalid PmSampling artifact path");
         return DataKind::PmSampling;
     }
-    if (base == "summary.jsonl" || base == "PipeUtilization.csv") {
+    if (base == "summary.jsonl" || base == "PipeUtilization.csv" || base == kOccupancyArtifactName) {
         return DataKind::PmuCsv;
     }
     Check(
@@ -241,7 +241,7 @@ ArtifactType ArtifactTypeForName(const std::string& name)
     if (base == "objdump.txt") {
         return ArtifactType::Txt;
     }
-    if (base == "symbolizer.json") {
+    if (base == "symbolizer.json" || base == kOccupancyArtifactName) {
         return ArtifactType::Json;
     }
     if (kind == DataKind::PipelineTrace) {

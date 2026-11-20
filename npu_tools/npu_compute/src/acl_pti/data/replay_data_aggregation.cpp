@@ -192,6 +192,9 @@ void DataProcessor::AddDecodedRecord(uint64_t replayId, const DecodedRecord& rec
         }
     } else {
         const auto& pmu = std::get<PmuRecord128>(record.payload);
+        replay.pmuRecords.push_back(
+            {pmu.funcType, pmu.taskId, pmu.rtStreamId, pmu.coreType, pmu.coreId, pmu.blockId, pmu.subBlockId,
+             pmu.taskStartSystemCounter, pmu.taskEndSystemCounter, pmu.totalCycles, pmu.overflow});
         if (pmu.funcType == kTaskPmuFunctionType) {
             AddTaskPmuData(replay.taskPmuData, pmu);
         } else {
@@ -241,12 +244,32 @@ aclptiResult DataProcessor::FinishReplayResult(
     return status;
 }
 
+void DataProcessor::PreserveReplayData(uint64_t replayId, ReplayData& replay)
+{
+    aclptiReplayData snapshot;
+    snapshot.deviceId = replay.deviceId;
+    snapshot.kind = replay.kind;
+    snapshot.status = replay.status;
+    snapshot.stats = replay.stats;
+    snapshot.pmuRecords = std::move(replay.pmuRecords);
+    for (const auto& [key, rows] : replay.taskLogs) {
+        static_cast<void>(key);
+        snapshot.taskLogs.insert(snapshot.taskLogs.end(), rows.begin(), rows.end());
+    }
+    for (const auto& [key, rows] : replay.blockLogs) {
+        static_cast<void>(key);
+        snapshot.blockLogs.insert(snapshot.blockLogs.end(), rows.begin(), rows.end());
+    }
+    result_.replayData.emplace(replayId, std::move(snapshot));
+}
+
 void DataProcessor::AssembleProfilingResult()
 {
     std::map<LogicalKey, RowAccumulator> pmuRows;
     const bool hasPmuReplay = std::any_of(
         replays_.begin(), replays_.end(), [](const auto& item) { return item.second.kind == ReplayKind::Pmu; });
     for (auto& [replayId, replay] : replays_) {
+        PreserveReplayData(replayId, replay);
         result_.stats.receivedBytes += replay.stats.receivedBytes;
         result_.stats.acceptedBytes += replay.stats.acceptedBytes;
         result_.stats.rejectedChunkCount += replay.stats.rejectedChunkCount;

@@ -102,6 +102,61 @@ const SectionDefinition* FindSection(std::string_view name)
     return nullptr;
 }
 
+aclptiResult AppendSectionEvents(
+    const char* name, std::size_t index, std::vector<uint32_t>& events, std::unordered_set<uint32_t>& seen,
+    bool& roofline)
+{
+    if (name == nullptr) {
+        ASCTOOL_ERROR(
+            "[aclpti] section configuration rejected: null section index=%zu code=%u", index,
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    const std::size_t length = ::strnlen(name, ACLPTI_MAX_SECTION_NAME_LENGTH + 1);
+    if (length == 0 || length > ACLPTI_MAX_SECTION_NAME_LENGTH) {
+        ASCTOOL_ERROR(
+            "[aclpti] section configuration rejected: invalid section index=%zu code=%u", index,
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    const SectionDefinition* section = FindSection(std::string_view(name, length));
+    if (section == nullptr) {
+        ASCTOOL_ERROR(
+            "[aclpti] section configuration rejected: unsupported section=%.*s code=%u", static_cast<int>(length), name,
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_NOT_SUPPORTED;
+    }
+    ASCTOOL_DEBUG("[aclpti] selected section name=%.*s", static_cast<int>(length), name);
+    if (section->name == "Roofline") {
+        roofline = true;
+        return ACLPTI_SUCCESS;
+    }
+    for (std::size_t eventIndex = 0; eventIndex < section->eventCount; ++eventIndex) {
+        const uint32_t event = section->events[eventIndex];
+        if (seen.insert(event).second) {
+            events.push_back(event);
+        }
+    }
+    return ACLPTI_SUCCESS;
+}
+
+aclptiResult BuildSectionEvents(
+    const aclptiRangeProfilerSetConfigParams& params, std::vector<uint32_t>& events, bool& roofline)
+{
+    std::unordered_set<uint32_t> seen;
+    for (std::size_t index = 0; index < params.numSections; ++index) {
+        const auto status = AppendSectionEvents(params.sections[index], index, events, seen, roofline);
+        if (status != ACLPTI_SUCCESS) {
+            return status;
+        }
+    }
+    // Occupancy needs an ordinary PMU round even when no selected section supplies its events.
+    if (events.empty() && params.blockResult == ACLPTI_BLOCK_RESULT_ALL) {
+        events.push_back(data::pmu::SCALAR_ACTIVE_CYCLES_EVENT);
+    }
+    return ACLPTI_SUCCESS;
+}
+
 } // namespace
 
 struct RangeProfiler::ReplayRound {
@@ -218,44 +273,9 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
     try {
         std::vector<uint32_t> events;
         bool roofline = false;
-        std::unordered_set<uint32_t> seen;
-        for (std::size_t index = 0; index < params->numSections; ++index) {
-            const char* name = params->sections[index];
-            if (name == nullptr) {
-                ASCTOOL_ERROR(
-                    "[aclpti] section configuration rejected: null section index=%zu"
-                    " code=%u",
-                    index, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-                return ACLPTI_ERROR_INVALID_PARAMETER;
-            }
-            const std::size_t length = ::strnlen(name, ACLPTI_MAX_SECTION_NAME_LENGTH + 1);
-            if (length == 0 || length > ACLPTI_MAX_SECTION_NAME_LENGTH) {
-                ASCTOOL_ERROR(
-                    "[aclpti] section configuration rejected: invalid section index=%zu"
-                    " code=%u",
-                    index, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-                return ACLPTI_ERROR_INVALID_PARAMETER;
-            }
-
-            const SectionDefinition* section = FindSection(std::string_view(name, length));
-            if (section == nullptr) {
-                ASCTOOL_ERROR(
-                    "[aclpti] section configuration rejected: unsupported section=%.*s"
-                    " code=%u",
-                    static_cast<int>(length), name, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-                return ACLPTI_ERROR_NOT_SUPPORTED;
-            }
-            ASCTOOL_DEBUG("[aclpti] selected section name=%.*s", static_cast<int>(length), name);
-            if (section->name == "Roofline") {
-                roofline = true;
-                continue;
-            }
-            for (std::size_t eventIndex = 0; eventIndex < section->eventCount; ++eventIndex) {
-                const uint32_t event = section->events[eventIndex];
-                if (seen.insert(event).second) {
-                    events.push_back(event);
-                }
-            }
+        const auto status = BuildSectionEvents(*params, events, roofline);
+        if (status != ACLPTI_SUCCESS) {
+            return status;
         }
         pmuEvents_ = std::move(events);
         collectRoofline_ = roofline;

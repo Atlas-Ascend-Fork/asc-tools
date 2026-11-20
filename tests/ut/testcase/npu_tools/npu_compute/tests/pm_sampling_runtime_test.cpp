@@ -9,6 +9,7 @@
  */
 #include "runtime/npu_compute_runtime.h"
 #include "artifact_sink.h"
+#include "occupancy_test_data.h"
 #include "pm_sampling/pm_sampling_types.h"
 #include "npu_compute/acl_pti_callback_stub.h"
 #include "sqlite_test_api.h"
@@ -86,14 +87,17 @@ std::uint64_t SamplingPcOffset(const std::string& mode, unsigned index)
 
 std::size_t ExpectedReplayCount(const std::string& mode)
 {
-    if (mode == "no-callback" || mode == "simd") {
+    if (mode == "no-callback") {
         return 0;
+    }
+    if (mode == "simd") {
+        return 1;
     }
     if (mode == "repeat" || mode == "mixed-results" || mode == "identity" || mode == "multiple-contexts" ||
         mode == "combo" || mode == "combo-failure" || mode == "map-failure") {
-        return 2;
+        return mode == "repeat" || mode == "mixed-results" ? 4 : 3;
     }
-    return 1;
+    return 2;
 }
 
 struct Directory {
@@ -235,6 +239,7 @@ public:
 std::shared_ptr<aclptiProfilingDataResult> Result(const std::string& mode)
 {
     auto result = std::make_shared<aclptiProfilingDataResult>();
+    npucompute::test::AddOccupancyReplay(*result);
     auto context = std::make_shared<aclptiPmSamplingContext>();
     context->originalElf = std::make_shared<const std::vector<char>>(std::vector<char>{0x7f, 'E', 'L', 'F', 'o'});
     context->companionElf = std::make_shared<const std::vector<char>>(std::vector<char>{0x7f, 'E', 'L', 'F', 'a'});
@@ -377,7 +382,9 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     CHECK(callback(Result("success")) == ACLPTI_ERROR_INVALID_STATE);
     if (mode == "no-callback") {
         CHECK(!fs::exists(sink.output / "summary.jsonl"));
+        CHECK(!fs::exists(sink.output / "Occupancy.json"));
     } else {
+        CHECK(fs::exists(sink.output / "Occupancy.json"));
         CheckSummary(
             sink.output / "summary.jsonl", config.sections == std::vector<std::string>{"PmSampling"},
             mode != "simd" && mode != "missing");

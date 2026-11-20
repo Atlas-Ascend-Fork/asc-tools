@@ -54,6 +54,7 @@ def test_no_pack_keeps_raw_results_in_export_parent_without_package(tmp_path, re
     assert re.fullmatch(r"report_[0-9]+_[0-9a-f]{8}", output.name)
     assert sorted(p.name for p in output.iterdir()) == [
         "HardwareInfo.jsonl",
+        "Occupancy.json",
         "PipeUtilization.csv",
         "summary.db",
         "summary.jsonl",
@@ -61,6 +62,8 @@ def test_no_pack_keeps_raw_results_in_export_parent_without_package(tmp_path, re
     assert (output / "HardwareInfo.jsonl").read_bytes() == HARDWARE_INFO
     assert (output / "PipeUtilization.csv").read_bytes() == PIPE_CSV
     assert (output / "summary.jsonl").read_bytes() == SUMMARY
+    occupancy = json.loads((output / "Occupancy.json").read_text())
+    assert occupancy["status"] == "complete" and occupancy["traceEvents"]
     assert not list(tmp_path.rglob("*.npu-rep"))
     assert not list(work.iterdir())
     assert sentinel.read_text() == "existing user data"
@@ -340,7 +343,8 @@ def test_no_pack_sampling_failure_preserves_other_artifacts(
         sections=("PmSampling",),
         extra=("--mode", f"pm-sampling-{failure}-{artifact}"),
     )
-    assert result.returncode == 3, result.stderr
+    # Missing sampling companions are warnings; malformed files make the collection incomplete.
+    assert result.returncode == (0 if failure == "missing" else 3), result.stderr
     output = extract_path(result.stderr, "directory")
     names = {
         "db": "summary.db",
@@ -349,6 +353,8 @@ def test_no_pack_sampling_failure_preserves_other_artifacts(
     }
     assert not (output / names[artifact]).exists()
     assert (output / "HardwareInfo.jsonl").read_bytes() == HARDWARE_INFO
+    occupancy = json.loads((output / "Occupancy.json").read_text())
+    assert occupancy["status"] == "complete" and occupancy["traceEvents"]
     for kind, name in names.items():
         if kind != artifact:
             assert (output / name).is_file()

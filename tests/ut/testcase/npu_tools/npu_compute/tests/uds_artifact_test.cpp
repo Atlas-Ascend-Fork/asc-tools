@@ -145,7 +145,14 @@ TEST(NpuComputeUdsArtifact, RoundTripAndManifest)
         {4, ".biu-staging/process-uds/manifest.json", 3},
         {5, ".biu-staging/process-uds/result-0-device-0-replay-0.json", 3},
     };
-    receiver.Validate(result, config);
+    std::vector<std::string> issues;
+    EXPECT_TRUE(receiver.Validate(result, config, &issues));
+    EXPECT_TRUE(issues.empty());
+    Begin(receiver, 6, "Occupancy.json");
+    TypedChunk(receiver, 6, DataKind::PmuCsv, "{}\n");
+    End(receiver, 6, 3);
+    result.manifest.push_back({6, "Occupancy.json", 3});
+    EXPECT_TRUE(receiver.Validate(result, config));
     auto broken = result;
     broken.manifest[0].bytes++;
     Reject([&] { receiver.Validate(broken, config); });
@@ -164,6 +171,71 @@ TEST(NpuComputeUdsArtifact, RoundTripAndManifest)
     Check(!receiver.Validate(broken, config));
     Reject([&] { Begin(receiver, 3, "MemoryL0.csv"); });
     Reject([&] { Begin(receiver, 1, "Memory.csv"); });
+
+    const std::string secondaryOccupancy = "collection-p1-0001/Occupancy.json";
+    Begin(receiver, 7, secondaryOccupancy);
+    Chunk(receiver, 7, 0, "{}\n");
+    End(receiver, 7, 3);
+    result.manifest.push_back({7, secondaryOccupancy, 3});
+    EXPECT_FALSE(receiver.Validate(result, config));
+}
+TEST(NpuComputeUdsArtifact, OccupancyFileCreationFailureKeepsOtherArtifacts)
+{
+    TempDirectory temporary;
+    const fs::path directory(temporary.Path());
+    // A collision blocks only the receiver's temporary Occupancy file.
+    const auto collision = directory / ".Occupancy.json.1.tmp";
+    ASSERT_TRUE(fs::create_directory(collision));
+    ArtifactReceiver receiver(temporary.Path());
+    Begin(receiver, 1, "Occupancy.json");
+    Chunk(receiver, 1, 0, "{}");
+    Chunk(receiver, 1, 2, "\n");
+    End(receiver, 1, 3);
+    Begin(receiver, 2, "HardwareInfo.jsonl");
+    HardwareChunk(receiver, 2, "{}\n");
+    End(receiver, 2, 3);
+    Begin(receiver, 3, "summary.jsonl");
+    Chunk(receiver, 3, 0, "{}\n");
+    End(receiver, 3, 3);
+
+    Config config;
+    config.sections = {"PmSampling"};
+    Result result;
+    result.sections = config.sections;
+    result.manifest = {{1, "Occupancy.json", 3}, {2, "HardwareInfo.jsonl", 3}, {3, "summary.jsonl", 3}};
+    EXPECT_TRUE(receiver.Validate(result, config));
+    EXPECT_FALSE(fs::exists(directory / "Occupancy.json"));
+    EXPECT_TRUE(fs::is_directory(collision));
+    EXPECT_EQ(ReadFile(directory / "summary.jsonl"), "{}\n");
+}
+
+TEST(NpuComputeUdsArtifact, IncompleteOtherSectionKeepsCommittedOccupancy)
+{
+    TempDirectory temporary;
+    const std::string data = "{\"status\":\"complete\",\"traceEvents\":[]}\n";
+    {
+        ArtifactReceiver receiver(temporary.Path());
+        Begin(receiver, 1, "Occupancy.json");
+        TypedChunk(receiver, 1, DataKind::PmuCsv, data);
+        End(receiver, 1, data.size());
+        Config config;
+        config.sections = {"Memory", "Pipeline", "PmSampling"};
+        Result result;
+        result.sections = config.sections;
+        result.complete = false;
+        result.status = result.code = 1;
+        result.manifest = {{1, "Occupancy.json", data.size()}};
+        EXPECT_FALSE(receiver.Validate(result, config));
+        EXPECT_EQ(ReadFile(fs::path(temporary.Path()) / "Occupancy.json"), data);
+        // Cleanup of an interrupted section must only remove that section's temporary artifact.
+        Begin(receiver, 2, "Memory.csv");
+        Chunk(receiver, 2, 0, "unfinished");
+    }
+    EXPECT_EQ(ReadFile(fs::path(temporary.Path()) / "Occupancy.json"), data);
+    EXPECT_FALSE(fs::exists(fs::path(temporary.Path()) / "Memory.csv"));
+    for (const auto& entry : fs::directory_iterator(temporary.Path())) {
+        EXPECT_EQ(entry.path().filename(), "Occupancy.json");
+    }
 }
 TEST(NpuComputeUdsArtifact, MalformedAndCleanup)
 {
@@ -196,7 +268,7 @@ TEST(NpuComputeUdsArtifact, PipelineOnlySummary)
     TempDirectory temporary;
     ArtifactReceiver receiver(temporary.Path());
     const std::vector<std::string> names = {
-        "HardwareInfo.jsonl", "summary.jsonl", ".biu-staging/process-uds/manifest.json",
+        "HardwareInfo.jsonl", "summary.jsonl", "Occupancy.json", ".biu-staging/process-uds/manifest.json",
         ".biu-staging/process-uds/result-0-device-0-replay-0.json"};
     const std::string summary = "{\"category\":\"OpInfoSummary\",\"aiv_flops\":\"NA\"}\n";
     Config config;
@@ -261,6 +333,7 @@ TEST(NpuComputeUdsArtifact, PublisherProcess)
     for (size_t i = 0; i < data.size(); ++i) {
         data[i] = static_cast<char>(i % 251);
     }
+    const std::string occupancy = "{\"traceEvents\":[]}" + std::string(kChunkBytes * 2, ' ');
     const auto bootstrap = MakeBootstrap();
     const pid_t child = fork();
     Check(child >= 0);
@@ -273,6 +346,7 @@ TEST(NpuComputeUdsArtifact, PublisherProcess)
             publisher.Begin("MemoryL0.csv");
             publisher.Write(data);
             publisher.Commit(1234);
+            publisher.PublishOptional("Occupancy.json", occupancy, 1);
             publisher.Begin("HardwareInfo.jsonl");
             publisher.Write("{}\n");
             publisher.Commit(1);
@@ -300,6 +374,7 @@ TEST(NpuComputeUdsArtifact, PublisherProcess)
                 Check(result.rowCount == 1234);
                 receiver.Validate(result, config);
                 Check(ReadFile(fs::path(temporary.Path()) / "MemoryL0.csv") == data);
+                Check(ReadFile(fs::path(temporary.Path()) / "Occupancy.json") == occupancy);
                 Check(ReadFile(fs::path(temporary.Path()) / "HardwareInfo.jsonl") == "{}\n");
                 Check(ReadFile(fs::path(temporary.Path()) / "summary.jsonl") == "{}\n");
                 client.Send(Type::ResultAck, {}, After(std::chrono::seconds(1)));
@@ -507,7 +582,7 @@ TEST(NpuComputeUdsArtifact, RooflineUsesSummaryWithoutCsvArtifact)
     config.sections = {"Roofline"};
     Result result;
     result.sections = config.sections;
-    const std::vector<std::string> names = {"HardwareInfo.jsonl", "summary.jsonl"};
+    const std::vector<std::string> names = {"HardwareInfo.jsonl", "summary.jsonl", "Occupancy.json"};
     for (std::size_t i = 0; i < names.size(); ++i) {
         const auto id = i + 1;
         const std::string data = "{}\n";

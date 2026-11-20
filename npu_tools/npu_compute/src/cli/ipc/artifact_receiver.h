@@ -25,7 +25,9 @@ public:
     size_t Count() const { return manifest_.size(); }
 
 private:
-    void Abort() noexcept;
+    void CleanupArtifactFile() noexcept;
+    void CommitArtifactFile();
+    void CompleteArtifact();
     void OpenArtifactDirectory();
     void BeginArtifact(const ipc::Frame& frame);
     void ReceiveChunk(const ipc::Frame& frame);

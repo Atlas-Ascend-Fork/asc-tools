@@ -190,10 +190,14 @@ extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofStop(uint32_t dataType, 
         record[2] = 100U;
         record[5] = 1U << 8U;
         record[6] = 1U << 16U;
+        record[28] = 1000U;
+        record[30] = 2000U;
         rawData.chunkSize = sizeof(record);
         std::memcpy(rawData.chunk, record.data(), sizeof(record));
         if (g_collectBlock) {
             record[0] = 0x6bd30029U;
+            record[28] = 1020U;
+            record[30] = 1900U;
             std::memcpy(rawData.chunk + sizeof(record), record.data(), sizeof(record));
             rawData.chunkSize += sizeof(record);
         }
@@ -204,6 +208,25 @@ extern "C" ACL_TOOL_INJECTION_EXPORT std::int32_t MsprofStop(uint32_t dataType, 
     }
     if (g_rawDataCallback != nullptr) {
         g_rawDataCallback(&rawData);
+        if (g_activeRawDataType == PMU_DATA_TYPE && g_collectBlock) {
+            // TASK_BLOCK=ALL also delivers task/block boundaries on the log channel.
+            // Exercise callback -> decoder -> replay grouping -> occupancy in CLI tests.
+            std::array<uint32_t, 32> logs{};
+            constexpr std::array<uint32_t, 4> functions{0U, 1U, 0x24U, 0x25U};
+            constexpr std::array<uint32_t, 4> counters{1000U, 2000U, 1100U, 1700U};
+            for (std::size_t index = 0; index < functions.size(); ++index) {
+                const auto word = index * 8;
+                logs[word] = 0x6bd30000U | functions[index];
+                logs[word + 1] = (1U << 16U) | 1U;
+                logs[word + 2] = counters[index];
+                logs[word + 5] = 1U << 8U;
+                logs[word + 6] = 1U << 16U;
+            }
+            rawData.type = LOG_DATA_TYPE;
+            rawData.chunkSize = sizeof(logs);
+            std::memcpy(rawData.chunk, logs.data(), sizeof(logs));
+            g_rawDataCallback(&rawData);
+        }
     }
     return 0;
 }

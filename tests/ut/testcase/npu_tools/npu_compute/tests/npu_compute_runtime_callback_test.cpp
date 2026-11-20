@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "test_process.h"
+#include "occupancy_test_data.h"
 #include <gtest/gtest.h>
 
 #include "npu_compute/acl_pti_callback_stub.h"
@@ -236,6 +237,7 @@ bool RunCsvSocNameChild(const boost::filesystem::path& output)
     CHECK(g_profilingDataCallback != nullptr);
 
     auto result = std::make_shared<aclptiProfilingDataResult>();
+    npucompute::test::AddOccupancyReplay(*result, 3);
     aclptiPmuDataRow row{};
     row.blockId = 0;
     row.subBlockId = 0;
@@ -266,6 +268,7 @@ bool RunSummaryHardwareChild(const std::string& scenario, const boost::filesyste
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
     CHECK(g_profilingDataCallback != nullptr);
     auto result = std::make_shared<aclptiProfilingDataResult>();
+    npucompute::test::AddOccupancyReplay(*result, 3);
     result->taskPmuData.aiv = aclptiTaskPmuCoreData{1000, false, {}};
     CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
     npucompute::NpuComputeRuntime::Instance().Stop();
@@ -302,6 +305,7 @@ bool RunPipelineClockChild(const boost::filesystem::path& output, bool failQuery
     CHECK(npucompute::test::CapturedAclPtiCollectPipeline());
     CHECK(g_profilingDataCallback != nullptr);
     auto result = std::make_shared<aclptiProfilingDataResult>();
+    npucompute::test::AddOccupancyReplay(*result, 3);
     auto& replay = result->pipelineData[7];
     replay.deviceId = failQuery ? 4 : 3;
     replay.format = aclptiBiuFormat::Chip6;

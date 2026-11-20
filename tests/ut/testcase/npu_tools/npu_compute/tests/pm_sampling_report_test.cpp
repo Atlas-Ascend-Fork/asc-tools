@@ -153,6 +153,9 @@ void RoundTrip(const std::string& mode = "success")
             publisher.Begin("HardwareInfo.jsonl");
             publisher.Write(hardware);
             publisher.Commit(1);
+            publisher.Begin("Occupancy.json");
+            publisher.Write("{\"traceEvents\":[]}");
+            publisher.Commit(1);
             if (mode != "missing-summary") {
                 publisher.Begin("summary.jsonl");
                 publisher.Write(summary);
@@ -185,7 +188,7 @@ void RoundTrip(const std::string& mode = "success")
         std::atomic<bool> exited{false}, cancelled{false};
         client.Run(bootstrap, child, config, received.path.string(), exited, cancelled);
         CHECK(client.Complete() == (mode == "success" || mode == "missing-file"));
-        CHECK(client.ArtifactCount() == (mode == "missing-file" || mode == "missing-summary" ? 4 : 5));
+        CHECK(client.ArtifactCount() == (mode == "missing-file" || mode == "missing-summary" ? 5 : 6));
         int status = 0;
         CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
     } catch (...) {
@@ -200,6 +203,7 @@ void RoundTrip(const std::string& mode = "success")
         CHECK(Read(source.path / name) == Read(received.path / name));
     }
     CHECK(Read(received.path / "summary.jsonl") == summary);
+    CHECK(Read(received.path / "Occupancy.json") == "{\"traceEvents\":[]}");
     CheckDatabase(received.path / names[0]);
     protocol::Bytes encoded;
     std::string error;
@@ -223,6 +227,7 @@ void RoundTrip(const std::string& mode = "success")
         CHECK(Read(source.path / name) == Read(restored.path / name));
     }
     CheckDatabase(restored.path / names[0]);
+    CHECK(Read(restored.path / "Occupancy.json") == Read(received.path / "Occupancy.json"));
 }
 void MissingAndInvalid()
 {
@@ -238,6 +243,7 @@ void MissingAndInvalid()
         result.rowCount = 1;
         Send(receiver, result, "HardwareInfo.jsonl", hardware);
         Send(receiver, result, "summary.jsonl", summary);
+        Send(receiver, result, "Occupancy.json", "{\"traceEvents\":[]}");
         for (const auto& name : names) {
             if (name != omitted) {
                 Send(receiver, result, name, Read(source.path / name));
@@ -251,7 +257,7 @@ void MissingAndInvalid()
         CHECK(cli::PackDirectoryToRep(output.path, &encoded, &error));
         cli::DecodedRep decoded;
         CHECK(cli::DecodeRep(encoded, &decoded, &error));
-        CHECK(decoded.entries.size() == 4);
+        CHECK(decoded.entries.size() == 5);
         for (const auto& entry : decoded.entries) {
             CHECK(entry.file_name != omitted);
         }
@@ -265,6 +271,7 @@ void MissingAndInvalid()
     noSamplingResult.complete = true;
     Send(noSamplingReceiver, noSamplingResult, "HardwareInfo.jsonl", hardware);
     Send(noSamplingReceiver, noSamplingResult, "summary.jsonl", summary);
+    Send(noSamplingReceiver, noSamplingResult, "Occupancy.json", "{\"traceEvents\":[]}");
     std::vector<std::string> noSamplingIssues;
     CHECK(noSamplingReceiver.Validate(noSamplingResult, noSamplingConfig, &noSamplingIssues));
     CHECK(noSamplingIssues.empty());
@@ -307,6 +314,7 @@ void MissingAndInvalid()
     result.rowCount = 1;
     Send(receiver, result, "HardwareInfo.jsonl", hardware);
     Send(receiver, result, "summary.jsonl", summary);
+    Send(receiver, result, "Occupancy.json", "{\"traceEvents\":[]}");
     for (const auto& name : names) {
         Send(receiver, result, name, Read(source.path / name));
     }
@@ -333,6 +341,7 @@ void MissingAndInvalid()
     Send(groups, failed, "HardwareInfo.jsonl", hardware);
     Send(groups, failed, "Memory.csv", "x\ny\n");
     Send(groups, failed, "summary.jsonl", summary);
+    Send(groups, failed, "Occupancy.json", "{\"traceEvents\":[]}");
     for (const auto& name : names) {
         Send(groups, failed, "collection-p1-0001/" + name, Read(source.path / name));
     }
@@ -342,6 +351,7 @@ void MissingAndInvalid()
         return issue.find("collection-p1-0001/summary.jsonl") != std::string::npos;
     }));
     Send(groups, failed, "collection-p1-0001/summary.jsonl", summary);
+    Send(groups, failed, "collection-p1-0001/Occupancy.json", "{\"traceEvents\":[]}");
     Send(groups, failed, "collection-p1-0001/Memory.csv", "x\ny\n");
     // Each launch needs its own summary and the requested PMU Sections.
     CHECK(groups.Validate(failed, config));
@@ -432,6 +442,7 @@ void EmptySimdDatabase()
         Send(receiver, result, name, Read(source.path / name));
     }
     Send(receiver, result, "summary.jsonl", summary);
+    Send(receiver, result, "Occupancy.json", "{\"traceEvents\":[]}");
     std::vector<std::string> issues;
     CHECK(receiver.Validate(result, config, &issues));
     CHECK(issues.empty());
@@ -465,6 +476,7 @@ void EmptySimtArtifacts()
     result.complete = true;
     Send(receiver, result, "HardwareInfo.jsonl", hardware);
     Send(receiver, result, "summary.jsonl", summary);
+    Send(receiver, result, "Occupancy.json", "{\"traceEvents\":[]}");
     for (const auto& name : names) {
         Send(receiver, result, name, Read(source.path / name));
     }
@@ -489,6 +501,7 @@ void EmptySamplingWithoutElfContext()
     result.complete = true;
     Send(receiver, result, "HardwareInfo.jsonl", hardware);
     Send(receiver, result, "summary.jsonl", summary);
+    Send(receiver, result, "Occupancy.json", "{\"traceEvents\":[]}");
     Send(receiver, result, names[0], Read(source.path / names[0]));
     Send(receiver, result, names[2], Read(source.path / names[2]));
     std::vector<std::string> issues;
@@ -511,6 +524,7 @@ void PmSamplingArtifactsValidateIndependently()
     result.complete = true;
     Send(receiver, result, "HardwareInfo.jsonl", hardware);
     Send(receiver, result, "summary.jsonl", summary);
+    Send(receiver, result, "Occupancy.json", "{\"traceEvents\":[]}");
     Send(receiver, result, names[0], Read(source.path / names[0]));
     Send(receiver, result, names[2], Read(source.path / names[2]));
     CHECK(receiver.Validate(result, config));

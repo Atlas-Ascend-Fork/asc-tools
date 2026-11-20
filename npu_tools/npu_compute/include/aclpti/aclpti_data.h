@@ -176,6 +176,34 @@ struct aclptiReplayStats {
     uint64_t failedRecordCount = 0;
 };
 
+// Unmerged 128-byte record identity; counters remain in original system-counter ticks.
+struct aclptiPmuIdentity {
+    uint8_t funcType = 0;
+    uint16_t taskId = 0;
+    uint16_t rtStreamId = 0;
+    aclptiCoreType coreType = ACLPTI_CORE_TYPE_AIC;
+    uint8_t coreId = 0;
+    uint16_t blockId = 0;
+    uint16_t subBlockId = 0;
+    uint64_t taskStartSystemCounter = 0;
+    uint64_t taskEndSystemCounter = 0;
+    uint64_t totalCycles = 0;
+    bool overflow = false;
+};
+
+enum class aclptiReplayKind { Pmu, Pipeline, PcSampling, RooflinePmu };
+
+// Preserved before cross-replay metric aggregation, including unsuccessful replay diagnostics.
+struct aclptiReplayData {
+    int32_t deviceId = -1;
+    aclptiReplayKind kind = aclptiReplayKind::Pmu;
+    aclptiResult status = ACLPTI_SUCCESS;
+    aclptiReplayStats stats;
+    std::vector<aclptiTaskLogRow> taskLogs;
+    std::vector<aclptiTaskLogRow> blockLogs;
+    std::vector<aclptiPmuIdentity> pmuRecords;
+};
+
 // One BIU capture stream; replay ID is the key in the complete profiling result.
 struct aclptiPipelineData {
     int32_t deviceId = -1;
@@ -236,6 +264,8 @@ struct aclptiProfilingDataResult {
         uint64_t failedRecordCount = 0;
         std::map<uint64_t, uint64_t> failedRecordCountByReplay;
     } errorStats;
+    // Appended to retain offsets of existing callback fields; rebuild consumers using this expanded result.
+    std::map<uint64_t, aclptiReplayData> replayData;
 };
 
 using aclptiProfilingDataCallback = std::function<aclptiResult(std::shared_ptr<const aclptiProfilingDataResult>)>;

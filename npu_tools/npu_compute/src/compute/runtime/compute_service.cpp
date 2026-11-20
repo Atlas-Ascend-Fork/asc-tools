@@ -20,6 +20,10 @@ public:
     void Begin(const std::string& name) override { Get().Begin(name); }
     void Write(std::string_view bytes) override { Get().Write(bytes); }
     void Commit(uint64_t records) override { Get().Commit(records); }
+    void PublishOptional(const std::string& name, std::string_view contents, uint64_t records) override
+    {
+        Get().PublishOptional(name, contents, records);
+    }
     void Abort() noexcept override
     {
         if (publisher_) {

@@ -97,6 +97,10 @@ extern "C" drvError_t halGetDeviceInfo(
         *value = 4;
         return DRV_ERROR_NONE;
     }
+    if (moduleType == MODULE_TYPE_SYSTEM && infoType == INFO_TYPE_DEV_OSC_FREQUE) {
+        *value = 1000000; // kHz, matching the occupancy fixture's system counters.
+        return DRV_ERROR_NONE;
+    }
     if ((moduleType == MODULE_TYPE_AICORE || moduleType == MODULE_TYPE_VECTOR_CORE) &&
         infoType == INFO_TYPE_CURRENT_FREQ) {
         return DRV_ERROR_INVALID_VALUE;

@@ -29,6 +29,7 @@ ORIGIN = 1
 HEAD = struct.Struct("<8sIHHIIIQ")
 FILE_INFO = struct.Struct("<8s128sHHIQQ")
 TYPE_NPU_REP = 1
+TYPE_JSON = 2
 TYPE_JSONL = 3
 TYPE_CSV = 4
 TYPE_SQLITE = 5
@@ -318,6 +319,7 @@ def assert_imported_fixture_files(output: Path):
     )
     assert files == [
         "HardwareInfo.jsonl",
+        "Occupancy.json",
         "PipeUtilization.csv",
         "summary.db",
         "summary.jsonl",
@@ -325,6 +327,8 @@ def assert_imported_fixture_files(output: Path):
     assert (output / "HardwareInfo.jsonl").read_bytes() == HARDWARE_INFO
     assert (output / "PipeUtilization.csv").read_bytes() == PIPE_CSV
     assert (output / "summary.jsonl").read_bytes() == SUMMARY
+    occupancy = json.loads((output / "Occupancy.json").read_text())
+    assert occupancy["status"] == "complete" and occupancy["traceEvents"]
     with sqlite3.connect(output / "summary.db") as database:
         assert database.execute("SELECT * FROM PipeUtilization").fetchall() == [(0, 75)]
     assert not (output / ".hardware_info.lock").exists()
@@ -347,21 +351,25 @@ def test_cli_recursively_packages_fixture_files(tmp_path):
     top = decode_rep(report.read_bytes())
     assert [entry.name for entry in top.entries] == [
         "HardwareInfo.jsonl",
+        "Occupancy.json",
         "PipeUtilization.csv",
         "summary.db",
         "summary.jsonl",
     ]
     assert [entry.file_type for entry in top.entries] == [
         TYPE_JSONL,
+        TYPE_JSON,
         TYPE_CSV,
         TYPE_SQLITE,
         TYPE_JSONL,
     ]
-    assert top.entries[0].offset == HEAD.size + 4 * FILE_INFO.size
+    assert top.entries[0].offset == HEAD.size + 5 * FILE_INFO.size
     assert top.entries[0].payload == HARDWARE_INFO
-    assert top.entries[1].payload == PIPE_CSV
-    assert top.entries[2].payload.startswith(b"SQLite format 3\0")
-    assert top.entries[3].payload == SUMMARY
+    occupancy = json.loads(top.entries[1].payload)
+    assert top.entries[2].payload == PIPE_CSV
+    assert occupancy["status"] == "complete" and occupancy["traceEvents"]
+    assert top.entries[3].payload.startswith(b"SQLite format 3\0")
+    assert top.entries[4].payload == SUMMARY
 
 
 def test_cli_uses_explicit_report_file_and_existing_report_directory(tmp_path):

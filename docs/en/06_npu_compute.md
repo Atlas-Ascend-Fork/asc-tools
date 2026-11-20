@@ -23,7 +23,7 @@ The following Sections are currently supported:
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios           | `full`          |
 | <a name="section-roofline"></a> `Roofline`                           | Peak compute throughput and bandwidth, plus kernel operations, memory traffic, and duration | `full` |
 
-Two predefined sets are available: `basic` contains the seven Sections other than `PmSampling`, `ResourceConflictRatio`, and `Roofline`, and `full` contains all ten Sections.
+Two predefined sets are available: `basic` contains the seven Sections other than `PmSampling`, `ResourceConflictRatio`, and `Roofline`, and `full` contains all ten Sections. Every collection attempts to generate an `Occupancy.json` task/block trace without an additional Section.
 
 For the meaning and calculation method of the fields in each Section, see [Performance Data](appendix/npu_compute_performance_data.md).
 
@@ -130,7 +130,7 @@ npu-compute \
   ./application
 ```
 
-Use `--set full` to collect all supported Sections:
+Use `--set full` to collect the nine predefined Sections:
 
 ```bash
 npu-compute --set full ./application
@@ -220,11 +220,14 @@ A report can contain the following files:
 | :--- | :--- | :--- |
 | `HardwareInfo.jsonl` | Every collection | Host and NPU hardware information. |
 | `summary.jsonl` | A kernel is executed | Performance summary, [performance hints](appendix/npu_compute_performance_data.md#performancehints), and operator overview. |
+| `Occupancy.json` | Attempted by default when collecting | Task and block intervals in Chrome Trace format, with replay identity and raw system counters. |
 | `PipeTrace.json` | `Pipeline` is selected | Pipeline timeline data in Chrome Trace format, viewable with Chrome Trace-compatible tools. |
 | `summary.db` | Valid CSV data is imported successfully, or `PmSampling` collection completes | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database). |
 | `objdump.txt` | When `PmSampling` is selected | Original operator disassembly. Compile with `-lineinfo` to include source line information. |
 | `symbolizer.json` | When `PmSampling` is selected | Function and inline information for sampled addresses. |
 | `<Section-name>.csv` | Metric data is collected (except for `Pipeline`, `PmSampling`, and `Roofline`) | Metric data for the Section. |
+
+**AI Core Occupancy**: Shows the overall task window and when each block is active on its corresponding AI Core (AIC or AIV). All collection modes attempt to generate `Occupancy.json` by default without requiring an additional Section. If only this file fails, the tool logs a warning and delivers the other reports with a successful exit status.
 
 `Pipeline` uses sampling to generate the pipeline diagram, independent of the number of cores enabled; even when all cores are enabled, the diagram shows data for at most six sampled Groups.
 
@@ -284,3 +287,23 @@ The result directory contains the collected files listed in [Report Files](#repo
 - When collecting `Pipeline` or `PmSampling` data for a SIMT operator, `noinline` `__aicore__` functions are not supported, including `printf` and `asc_dump`.
 - The target program must have execute permission, can be an executable or a script, must run independently without `npu-compute`, and must successfully execute at least one NPU kernel during its run.
 - One collection command runs one target program; run separate commands to collect multiple programs. The target program and scripts started by it must not start another `npu-compute` collection. When nested collection is detected, the collection fails and no report is produced.
+
+## Task and block occupancy trace
+
+```bash
+mkdir -p occupancy
+npu-compute --no-pack -o occupancy ./application
+npu-compute --section PipeUtilization -o occupancy.npu-rep ./application
+```
+
+`Occupancy.json` contains Chrome Trace `traceEvents` with complete (`ph: X`) task and block intervals. Open the JSON in Chrome tracing or a compatible trace viewer. Default packed reports and `--import` preserve this JSON. Additional original launches use the existing `collection-p<pid>-<sequence>/Occupancy.json` directory prefix.
+
+Each replay/task/stream has its own process track and its own zero at task start. The display unit is microseconds, converted from the device system-counter frequency queried through `halGetDeviceInfo` (`INFO_TYPE_DEV_OSC_FREQUE`). AI-core MHz and `NPU_COMPUTE_FREQUENCY_MHZ` do not set this clock. Original counters are decimal strings in event arguments so large counter values remain exact.
+
+The Task window uses TaskLog boundaries (`0x00/0x01`). Each block's `blockStartCounter`, `blockEndCounter`, and displayed interval use the start/end system counters from its matching 128-byte block PMU record (`0x29`); `pmuTotalCycles` comes directly from the same record. Original BlockLog boundaries (`0x24/0x25`) remain available as `blockLogStartCounter` and `blockLogEndCounter`, with `blockCounterSource` set to `PMU 0x29`. PMU and BlockLog intervals may differ; a PMU interval does not establish continuous instruction execution throughout that interval.
+
+The trace is generated automatically and shares existing PMU replays when metric Sections are selected. Pipeline/PmSampling/Roofline-only collections add one PMU replay to obtain block counters. Replays are never joined. The trace retains launch, device, replay, task, stream, block, subblock and observed core identities. Each block has its own lane; lane names are `AIC0`, `AIC1`, …, `AIV0`, `AIV1`, …. Interval names include the execution type and original IDs, for example `AIC BLOCK2` and `AIV BLOCK2 SUBBLOCK0`. AIC and AIV numbering each starts at zero and resets for each replay/task/stream. These numbers are display indices, not physical core IDs; the original blockId, subBlockId, coreId32 and coreId128 remain in the event arguments. The Task window comes first, followed by AIC and AIV blocks in ascending numeric blockId/subBlockId order, which determines the display numbering. Conflicting 32/128-byte identity associations or overlapping PMU intervals on the same observed core produce diagnostics and every interval is retained. These labels do not establish Cube/Vector physical grouping.
+
+Collection fails visibly for an unavailable system clock, failed/malformed replay, missing or duplicate BlockLog boundaries or matching `0x29` records, reversed or out-of-task intervals, ambiguous identities, unsupported core types, or overlapping BlockLog intervals on an asserted core. No empty success trace is published. Other valid artifacts remain available when possible.
+
+ACLPTI SDK consumers using `aclptiProfilingDataResult` must rebuild against the updated header. Replay snapshots are appended after the existing fields; the range-profiler configuration struct is unchanged.

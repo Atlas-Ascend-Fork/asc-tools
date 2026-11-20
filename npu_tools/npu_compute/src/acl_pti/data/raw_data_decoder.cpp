@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "raw_data_decoder.h"
+#include "npu_compute_log.h"
 
 #include <map>
 
@@ -20,7 +21,7 @@ constexpr uint32_t SQE_TYPE_MASK = 0x3fU;
 constexpr uint32_t CORE_TYPE_BIT = 0;
 constexpr uint32_t CORE_ID_SHIFT = 8;
 constexpr uint32_t CORE_TYPE_MASK = 1;
-constexpr uint32_t CORE_ID_MASK = 0x7FU;
+constexpr uint32_t CORE_ID_MASK = 0xffU;
 constexpr uint32_t OVERFLOW_BIT = 10;
 constexpr uint32_t MAGIC_SHIFT = 16;
 constexpr uint32_t WORD_BITS = 32;
@@ -66,67 +67,8 @@ uint64_t Counter(const std::byte* data, std::size_t lowWord)
     return Word(data, lowWord) | (uint64_t(Word(data, lowWord + 1)) << WORD_BITS);
 }
 
-} // namespace
-
-DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t recordIndex)
+void DecodePmuEvents(const std::byte* data, const PmuSlots& pmuEventIds, PmuRecord128& record)
 {
-    PmuSlots noEvents{};
-    noEvents.fill(kInvalidPmuEvent);
-    return DecodeRawRecord(data, size, recordIndex, noEvents);
-}
-
-DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t recordIndex, const PmuSlots& pmuEventIds)
-{
-    if (data == nullptr || (size != TASK_LOG_BYTES && size != PMU_RECORD_BYTES)) {
-        return DecodeResult(ACLPTI_ERROR_INVALID_RAW_DATA);
-    }
-
-    const uint32_t header = Word(data, 0);
-    const uint32_t function = header & ((1U << FUNCTION_BITS) - 1U);
-    const uint32_t taskAndStream = Word(data, 1);
-    const auto taskId = static_cast<uint16_t>(taskAndStream >> 16U);
-    const auto streamId = static_cast<uint16_t>(taskAndStream);
-    if (size == TASK_LOG_BYTES) {
-        if ((header >> MAGIC_SHIFT) != PMU_MAGIC ||
-            (function != kTaskStartFunctionType && function != kTaskEndFunctionType &&
-             function != BLOCK_START_FUNCTION && function != BLOCK_END_FUNCTION)) {
-            return DecodeResult(ACLPTI_ERROR_DECODE);
-        }
-
-        TaskLog32 record{};
-        record.funcType = static_cast<uint8_t>(function);
-        record.sqeType = static_cast<uint8_t>((header >> SQE_TYPE_SHIFT) & SQE_TYPE_MASK);
-        record.taskId = taskId;
-        record.rtStreamId = streamId;
-        record.systemCounter = Counter(data, CYCLE_COUNTER_WORD);
-        if (function == BLOCK_START_FUNCTION || function == BLOCK_END_FUNCTION) {
-            record.blockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD) >> 16U);
-            record.subBlockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD));
-            record.coreType = (Word(data, CORE_ID_WORD) & CORE_TYPE_MASK) == CORE_TYPE_BIT ? ACLPTI_CORE_TYPE_AIC :
-                                                                                             ACLPTI_CORE_TYPE_AIV;
-            record.coreTypeId = static_cast<uint8_t>((Word(data, CORE_ID_WORD) >> CORE_TYPE_MASK) & CORE_ID_MASK);
-        }
-        return DecodeResult(DecodedRecord{recordIndex, record});
-    }
-
-    if ((header >> MAGIC_SHIFT) != PMU_MAGIC ||
-        (function != kBlockPmuFunctionType && function != kTaskPmuFunctionType)) {
-        return DecodeResult(ACLPTI_ERROR_DECODE);
-    }
-
-    PmuRecord128 record{};
-    record.funcType = static_cast<uint8_t>(function);
-    record.taskId = taskId;
-    record.rtStreamId = streamId;
-    record.totalCycles = Counter(data, CYCLE_COUNTER_WORD);
-    record.taskStartSystemCounter = Counter(data, TASK_START_COUNTER_WORD);
-    record.taskEndSystemCounter = Counter(data, TASK_END_COUNTER_WORD);
-    record.overflow = (Word(data, OVERFLOW_WORD) & (1U << OVERFLOW_BIT)) != 0;
-    record.coreType =
-        (Word(data, CORE_ID_WORD) & CORE_TYPE_MASK) == CORE_TYPE_BIT ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV;
-    record.coreId = static_cast<uint8_t>(Word(data, CORE_ID_WORD) >> CORE_ID_SHIFT);
-    record.blockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD) >> 16U);
-    record.subBlockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD));
     struct EventAccumulator {
         long double sum = 0.0L;
         std::size_t count = 0;
@@ -146,7 +88,90 @@ DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t r
         record.pmuValues.emplace(
             eventId, static_cast<double>(accumulator.sum / static_cast<long double>(accumulator.count)));
     }
+}
+
+DecodeResult DecodeTaskLog(
+    const std::byte* data, uint64_t recordIndex, uint32_t header, uint16_t taskId, uint16_t streamId)
+{
+    const uint32_t function = header & ((1U << FUNCTION_BITS) - 1U);
+    if (function != kTaskStartFunctionType && function != kTaskEndFunctionType && function != BLOCK_START_FUNCTION &&
+        function != BLOCK_END_FUNCTION) {
+        return DecodeResult(ACLPTI_ERROR_DECODE);
+    }
+
+    TaskLog32 record{};
+    record.funcType = static_cast<uint8_t>(function);
+    record.sqeType = static_cast<uint8_t>((header >> SQE_TYPE_SHIFT) & SQE_TYPE_MASK);
+    record.taskId = taskId;
+    record.rtStreamId = streamId;
+    record.systemCounter = Counter(data, CYCLE_COUNTER_WORD);
+    if (function == BLOCK_START_FUNCTION || function == BLOCK_END_FUNCTION) {
+        record.blockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD) >> 16U);
+        record.subBlockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD));
+        record.coreType =
+            (Word(data, CORE_ID_WORD) & CORE_TYPE_MASK) == CORE_TYPE_BIT ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV;
+        record.coreTypeId = static_cast<uint8_t>((Word(data, CORE_ID_WORD) >> CORE_ID_SHIFT) & CORE_ID_MASK);
+        // CANN 9.3 BlockLog stores core type at byte 20 and the full core ID at byte 21.
+        ASCTOOL_DEBUG(
+            "[aclpti-data] block identity word5=0x%08x task=%u stream=%u block=%u subBlock=%u coreId=%u",
+            Word(data, CORE_ID_WORD), static_cast<unsigned>(taskId), static_cast<unsigned>(streamId),
+            static_cast<unsigned>(record.blockId), static_cast<unsigned>(record.subBlockId),
+            static_cast<unsigned>(record.coreTypeId));
+    }
     return DecodeResult(DecodedRecord{recordIndex, record});
+}
+
+DecodeResult DecodePmuRecord(
+    const std::byte* data, uint64_t recordIndex, uint32_t function, uint16_t taskId, uint16_t streamId,
+    const PmuSlots& pmuEventIds)
+{
+    if (function != kBlockPmuFunctionType && function != kTaskPmuFunctionType) {
+        return DecodeResult(ACLPTI_ERROR_DECODE);
+    }
+
+    PmuRecord128 record{};
+    record.funcType = static_cast<uint8_t>(function);
+    record.taskId = taskId;
+    record.rtStreamId = streamId;
+    record.totalCycles = Counter(data, CYCLE_COUNTER_WORD);
+    record.taskStartSystemCounter = Counter(data, TASK_START_COUNTER_WORD);
+    record.taskEndSystemCounter = Counter(data, TASK_END_COUNTER_WORD);
+    record.overflow = (Word(data, OVERFLOW_WORD) & (1U << OVERFLOW_BIT)) != 0;
+    record.coreType =
+        (Word(data, CORE_ID_WORD) & CORE_TYPE_MASK) == CORE_TYPE_BIT ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV;
+    record.coreId = static_cast<uint8_t>(Word(data, CORE_ID_WORD) >> CORE_ID_SHIFT);
+    record.blockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD) >> 16U);
+    record.subBlockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD));
+    DecodePmuEvents(data, pmuEventIds, record);
+    return DecodeResult(DecodedRecord{recordIndex, record});
+}
+} // namespace
+
+DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t recordIndex)
+{
+    PmuSlots noEvents{};
+    noEvents.fill(kInvalidPmuEvent);
+    return DecodeRawRecord(data, size, recordIndex, noEvents);
+}
+
+DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t recordIndex, const PmuSlots& pmuEventIds)
+{
+    if (data == nullptr || (size != TASK_LOG_BYTES && size != PMU_RECORD_BYTES)) {
+        return DecodeResult(ACLPTI_ERROR_INVALID_RAW_DATA);
+    }
+
+    const uint32_t header = Word(data, 0);
+    if ((header >> MAGIC_SHIFT) != PMU_MAGIC) {
+        return DecodeResult(ACLPTI_ERROR_DECODE);
+    }
+    const uint32_t taskAndStream = Word(data, 1);
+    const auto taskId = static_cast<uint16_t>(taskAndStream >> 16U);
+    const auto streamId = static_cast<uint16_t>(taskAndStream);
+    if (size == TASK_LOG_BYTES) {
+        return DecodeTaskLog(data, recordIndex, header, taskId, streamId);
+    }
+    const uint32_t function = header & ((1U << FUNCTION_BITS) - 1U);
+    return DecodePmuRecord(data, recordIndex, function, taskId, streamId, pmuEventIds);
 }
 
 } // namespace aclpti::data

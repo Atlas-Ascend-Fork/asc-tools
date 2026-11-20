@@ -10,20 +10,20 @@
 
 当前支持以下Section：
 
-| Section                                                              | 说明                                                | 所属Set         |
-| :------------------------------------------------------------------- | :-------------------------------------------------- | :-------------- |
+| Section                                                                | 说明                                                | 所属Set             |
+| :--------------------------------------------------------------------- | :-------------------------------------------------- | :------------------ |
 | <a name="section-arithmeticutilization"></a> `ArithmeticUtilization` | Cube FP/INT指令数与Cube、Vector活跃周期占比         | `basic`、`full` |
 | <a name="section-l2cache"></a> `L2Cache`                             | L2 Cache访问数据                                    | `basic`、`full` |
 | <a name="section-memory"></a> `Memory`                               | 主存和片上存储访问数据                              | `basic`、`full` |
 | <a name="section-memoryl0"></a> `MemoryL0`                           | L0存储访问数据                                      | `basic`、`full` |
 | <a name="section-memoryub"></a> `MemoryUB`                           | Unified Buffer访问数据                              | `basic`、`full` |
-| <a name="section-pipeline"></a> `Pipeline`                           | 流水时间线数据，输出为`PipeTrace.json`              | `basic`、`full` |
+| <a name="section-pipeline"></a> `Pipeline`                           | 流水时间线数据，输出为`PipeTrace.json`            | `basic`、`full` |
 | <a name="section-pipeutilization"></a> `PipeUtilization`             | 计算与流水线利用率数据                              | `basic`、`full` |
 | <a name="section-pmsampling"></a> `PmSampling`                       | 指令地址及各采样状态累计计数、反汇编和函数/内联信息 | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | 流水等待率与Vector资源冲突率                        | `full`          |
 | <a name="section-roofline"></a> `Roofline`                           | 理论算力和带宽，以及Kernel计算量、访存量和耗时       | `full`          |
 
-当前提供`basic`和`full`两个预定义Set：`basic`包含除`PmSampling`、`ResourceConflictRatio`和`Roofline`外的7个Section，`full`包含全部10个Section。
+当前提供`basic`和`full`两个预定义Set：`basic`包含除`PmSampling`、`ResourceConflictRatio`和`Roofline`外的7个Section，`full`包含全部10个Section。每次采集均尝试生成`Occupancy.json`任务与block时间线，无需额外Section。
 
 各Section的字段含义和计算方法请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
 
@@ -55,31 +55,31 @@ npu-compute [options] [--] <program> [program-arguments]
 npu-compute --import <report-file> [--export <directory>]
 ```
 
-| 占位符                | 说明                                                                                                   |
-| :-------------------- | :----------------------------------------------------------------------------------------------------- |
-| `options`             | 工具选项，必须位于目标程序之前，见[选项](#选项)。                                                      |
+| 占位符                  | 说明                                                                                                     |
+| :---------------------- | :------------------------------------------------------------------------------------------------------- |
+| `options`             | 工具选项，必须位于目标程序之前，见[选项](#选项)。                                                         |
 | `<program>`           | 目标程序，可以使用绝对路径、相对路径或命令名指定；使用命令名时，该程序必须能够通过`PATH`环境变量找到。 |
-| `[program-arguments]` | 原样传递给目标程序的参数。                                                                             |
+| `[program-arguments]` | 原样传递给目标程序的参数。                                                                               |
 | `[--]`                | 可选分隔符，放在目标程序前，用于分隔工具选项和目标程序及其参数。目标程序名称以`-`开头时必须添加。      |
 | `<report-file>`       | 已有`.npu-rep`报告文件的路径。                                                                         |
-| `<directory>`         | 保存解包结果的已有目录。                                                                               |
+| `<directory>`         | 保存解包结果的已有目录。                                                                                 |
 
 目标程序后的所有内容均作为程序参数传递。
 
 ### 选项
 
-| 选项                     | 适用模式   | 输入            | 可重复 | 说明                                                                                    |
-| :----------------------- | :--------- | :-------------- | :----- | :-------------------------------------------------------------------------------------- |
-| `-h`、`--help`           | 全部       | 无              | 是     | 显示帮助信息。                                                                          |
-| `--list-sections`        | 查询       | 无              | 否     | 列出支持的指标组名称。                                                                  |
-| `--list-sets`            | 查询       | 无              | 否     | 列出`basic`、`full`及其包含的Section。                                                  |
-| `--section arg`          | 采集       | Section名称     | 是     | 按名称选择要采集的指标组，区分大小写。                                                  |
-| `--set arg`              | 采集       | `basic`、`full` | 是     | 选择预定义指标组集合，区分大小写。在采集选择上，等价于分别指定其包含的多个`--section`。 |
-| `--replay-mode arg`      | 采集       | `kernel`        | 否     | Kernel重放模式，当前仅支持`kernel`，默认值为`kernel`。                                  |
-| `--no-pack`              | 采集       | 无              | 否     | 直接保留原始结果目录，不生成`.npu-rep`。                                                |
-| `--cache-control arg`    | 采集       | `all`, `none`   | 否     | 控制每轮 Kernel 重放前的 L2 缓存处理。`all`：尝试清理 L2 缓存；`none`：不主动清理，为默认值。 |
-| `-i arg`、`--import arg` | 解包       | 报告文件路径    | 否     | 导入并解包`npu-compute`生成的`.npu-rep`报告。                                           |
-| `-o arg`、`--export arg` | 采集、解包 | 报告路径或目录  | 否     | 采集时指定报告文件路径或已有目录，解包时指定保存解包结果的已有目录。具体行为见下文。    |
+| 选项                         | 适用模式   | 输入                | 可重复 | 说明                                                                                              |
+| :--------------------------- | :--------- | :------------------ | :----- | :------------------------------------------------------------------------------------------------ |
+| `-h`、`--help`           | 全部       | 无                  | 是     | 显示帮助信息。                                                                                    |
+| `--list-sections`          | 查询       | 无                  | 否     | 列出支持的指标组名称。                                                                            |
+| `--list-sets`              | 查询       | 无                  | 否     | 列出`basic`、`full`及其包含的Section。                                                        |
+| `--section arg`            | 采集       | Section名称         | 是     | 按名称选择要采集的指标组，区分大小写。                                                            |
+| `--set arg`                | 采集       | `basic`、`full` | 是     | 选择预定义指标组集合，区分大小写。在采集选择上，等价于分别指定其包含的多个`--section`。         |
+| `--replay-mode arg`        | 采集       | `kernel`          | 否     | Kernel重放模式，当前仅支持`kernel`，默认值为`kernel`。                                        |
+| `--no-pack`                | 采集       | 无                  | 否     | 直接保留原始结果目录，不生成`.npu-rep`。                                                        |
+| `--cache-control arg`      | 采集       | `all`, `none`   | 否     | 控制每轮 Kernel 重放前的 L2 缓存处理。`all`：尝试清理 L2 缓存；`none`：不主动清理，为默认值。 |
+| `-i arg`、`--import arg` | 解包       | 报告文件路径        | 否     | 导入并解包`npu-compute`生成的`.npu-rep`报告。                                                 |
+| `-o arg`、`--export arg` | 采集、解包 | 报告路径或目录      | 否     | 采集时指定报告文件路径或已有目录，解包时指定保存解包结果的已有目录。具体行为见下文。              |
 
 组合规则：
 
@@ -130,7 +130,7 @@ npu-compute \
   ./application
 ```
 
-使用`--set full`采集全部支持的Section：
+使用`--set full`采集预定义的9个Section：
 
 ```bash
 npu-compute --set full ./application
@@ -220,11 +220,14 @@ npu-compute: directory= <parent-directory>/report_<timestamp-ms>_<8-lowercase-he
 | :--- | :--- | :--- |
 | `HardwareInfo.jsonl` | 每次采集时生成 | 主机和NPU硬件信息。 |
 | `summary.jsonl` | 执行Kernel时生成 | 性能汇总、[性能提示](appendix/npu_compute_performance_data.md#performancehints)及算子概览。 |
+| `Occupancy.json` | 采集时默认尝试生成 | 任务与block区间，Chrome Trace格式，保留replay身份与原始系统计数器。 |
 | `PipeTrace.json` | 选择`Pipeline`时生成 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
 | `summary.db` | 有效CSV成功入库，或完成`PmSampling`采集时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)。 |
 | `objdump.txt` | 选择`PmSampling`时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
 | `symbolizer.json` | 选择`PmSampling`时生成 | 采样地址对应的函数和内联调用信息。 |
 | `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`、`PmSampling`和`Roofline`除外） | 该Section的指标数据。 |
+
+**AI Core Occupancy**：展示任务的整体时间窗口，以及各 block 在对应 AI Core（AIC/AIV）上的活跃时间区间。各类采集任务默认尝试生成 `Occupancy.json` 报告，无需额外配置 Section。如果只有这个文件生成失败，工具会记录告警，其余报告照常交付，命令正常退出。
 
 `Pipeline` Section基于采样机制生成流水图，与用户启用的核数无直接关系；即使启用全部核，流水图最多展示6个采样Group的数据。
 
@@ -236,17 +239,17 @@ CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常�
 
 采集生成的CSV自动写入同一结果目录的`summary.db`，原CSV继续保留。数据库包含以下表，实际生成的表取决于采集结果：
 
-| 数据表                  | 生成条件                        | 内容                                                                                                                                      |
-| :---------------------- | :------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------- |
-| `ArithmeticUtilization` | 对应CSV入库成功                 | [ArithmeticUtilization](#section-arithmeticutilization)                                                                                   |
-| `L2Cache`               | 对应CSV入库成功                 | [L2Cache](#section-l2cache)                                                                                                               |
-| `Memory`                | 对应CSV入库成功                 | [Memory](#section-memory)                                                                                                                 |
-| `MemoryL0`              | 对应CSV入库成功                 | [MemoryL0](#section-memoryl0)                                                                                                             |
-| `MemoryUB`              | 对应CSV入库成功                 | [MemoryUB](#section-memoryub)                                                                                                             |
-| `PcSampling`            | 选择`PmSampling` | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数)。 |
-| `PipeUtilization`       | 对应CSV入库成功                 | [PipeUtilization](#section-pipeutilization)                                                                                               |
-| `ResourceConflictRatio` | 对应CSV入库成功                 | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                   |
-| `FieldUnitMap`          | 至少一个含数据记录的CSV成功入库 | `field_name`保存字段名，`unit`保存单位；无单位时为NULL。                                                                                  |
+| 数据表                    | 生成条件                        | 内容                                                                                                                                       |
+| :------------------------ | :------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------- |
+| `ArithmeticUtilization` | 对应CSV入库成功                 | [ArithmeticUtilization](#section-arithmeticutilization)                                                                                     |
+| `L2Cache`               | 对应CSV入库成功                 | [L2Cache](#section-l2cache)                                                                                                                 |
+| `Memory`                | 对应CSV入库成功                 | [Memory](#section-memory)                                                                                                                   |
+| `MemoryL0`              | 对应CSV入库成功                 | [MemoryL0](#section-memoryl0)                                                                                                               |
+| `MemoryUB`              | 对应CSV入库成功                 | [MemoryUB](#section-memoryub)                                                                                                               |
+| `PcSampling`            | 选择`PmSampling`              | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数)。 |
+| `PipeUtilization`       | 对应CSV入库成功                 | [PipeUtilization](#section-pipeutilization)                                                                                                 |
+| `ResourceConflictRatio` | 对应CSV入库成功                 | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                     |
+| `FieldUnitMap`          | 至少一个含数据记录的CSV成功入库 | `field_name`保存字段名，`unit`保存单位；无单位时为NULL。                                                                               |
 
 数据库生成依赖环境中的SQLite动态库。生成失败时，终端提示原因，其他成功结果仍可生成报告。
 
@@ -284,3 +287,23 @@ npu-compute --import ./reports/profile.npu-rep --export ./restored
 - 采集SIMT算子的`Pipeline`或`PmSampling`数据时，不支持使用`noinline`的`__aicore__`函数，比如`printf`和`asc_dump`。
 - 目标程序必须具有执行权限，可以是可执行文件或脚本，能够在未使用`npu-compute`时独立运行，并在运行过程中至少成功执行一次NPU核函数。
 - 一条采集命令只运行一个目标程序；需要采集多个程序时，分别执行多条命令。目标程序及其启动的脚本不能再次运行`npu-compute`，检测到嵌套采集时本次采集失败且不会生成报告。
+
+## 任务与 block 占用时间线
+
+```bash
+mkdir -p occupancy
+npu-compute --no-pack -o occupancy ./application
+npu-compute --section PipeUtilization -o occupancy.npu-rep ./application
+```
+
+`Occupancy.json`采用Chrome Trace的`traceEvents`格式，以完整区间（`ph: X`）展示任务和block，可在Chrome tracing或兼容查看器中打开。默认打包及`--import`均保留该JSON；后续原始launch沿用`collection-p<pid>-<sequence>/Occupancy.json`目录前缀。
+
+每个replay/task/stream使用独立进程轨道，以各自任务起点作为零点，显示单位为微秒。换算频率来自`halGetDeviceInfo`的设备系统计数器查询（`INFO_TYPE_DEV_OSC_FREQUE`），不使用AI Core MHz或`NPU_COMPUTE_FREQUENCY_MHZ`。原始计数器在事件参数中使用十进制字符串，保留大整数精度。
+
+Task window使用TaskLog（`0x00/0x01`）的起止边界。每个block的`blockStartCounter`、`blockEndCounter`及图上区间均使用匹配的128字节block PMU（`0x29`）记录中的起止system counter，`pmuTotalCycles`直接使用同一记录的周期计数。原始BlockLog（`0x24/0x25`）边界另存为`blockLogStartCounter`、`blockLogEndCounter`，`blockCounterSource`标记为`PMU 0x29`。PMU区间可与BlockLog区间不同，不能据此断言区间内每一时刻均在执行指令。
+
+时间线默认生成，复用指标Section已有的PMU replay；仅选择Pipeline、PmSampling或Roofline等不含普通PMU事件的Section时补充一个普通PMU replay用于采集block计数器，不跨replay拼接区间。事件保留launch、device、replay、task、stream、block、subblock及观测到的core身份。每个block使用独立轨道，轨道名为`AIC0`、`AIC1`、…、`AIV0`、`AIV1`、…；区间名按执行类型和原始ID显示，例如`AIC BLOCK2`、`AIV BLOCK2 SUBBLOCK0`；AIC、AIV分别从0连续编号，并在每个replay/task/stream中重新开始。编号仅用于显示，不代表物理core ID；原始blockId、subBlockId、coreId32和coreId128保留在事件参数中。Task window在首行，随后按AIC、AIV及blockId、subBlockId的数字升序排列并分配显示编号；32/128字节记录身份冲突或同一观测core上的PMU区间重叠时输出诊断，保留全部区间。这些标签不推断Cube/Vector物理分组。
+
+系统时钟不可用、replay失败或数据损坏、BlockLog起止记录或匹配的`0x29`记录缺失或重复、时间反向或超出任务窗口、身份歧义、不支持的core类型，以及同一声明core的BlockLog区间重叠会使采集明确失败，不发布空的成功时间线；其他有效产物尽可能保留。
+
+使用`aclptiProfilingDataResult`的ACLPTI SDK调用方须使用更新后的头文件重新编译。Replay快照追加在既有字段之后；range-profiler配置结构体保持不变。

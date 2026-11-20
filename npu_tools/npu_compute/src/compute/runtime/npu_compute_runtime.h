@@ -61,6 +61,10 @@ private:
 
     void DisableHardwareCallbacks() noexcept;
     aclptiResult ProcessPmuData(std::shared_ptr<const aclptiProfilingDataResult> result);
+    ReportConfig LoadReportConfig(bool& frequencyOverride);
+    aclptiResult ProcessAdditionalReports(
+        const aclptiProfilingDataResult& result, const ReportConfig& config, const std::string& prefix,
+        aclptiResult firstStatus);
     KernelMetadata CollectReportMetadata(const ReportConfig& csvConfig, bool frequencyOverride);
     void UpdateCollectionStats(const aclptiProfilingDataResult& result);
     aclptiResult ProcessPipelineReplay(
@@ -69,6 +73,7 @@ private:
     aclptiResult PublishPipelineArtifacts();
     // Called with mutex_ held after the PMU consumer has drained.
     aclptiResult FinalizePipeline(aclptiResult status);
+    void ProcessOccupancy(const aclptiProfilingDataResult& result, const std::string& prefix);
     aclptiResult ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix);
 
     std::mutex mutex_;

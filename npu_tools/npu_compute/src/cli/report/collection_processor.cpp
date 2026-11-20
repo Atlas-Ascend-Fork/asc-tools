@@ -9,6 +9,7 @@
  */
 #include "report/collection_processor.h"
 #include "file_io.h"
+#include "ipc/ipc.h"
 
 #include "report/collection_file_validator.h"
 #include "report/pm_sampling_file_validator.h"
@@ -290,7 +291,11 @@ bool ProcessDirectoryItem(
         if (context.mode == CollectionDirectoryMode::Retain) {
             context.discarded.push_back(item.path);
         }
-        AddIssue(context, item_error);
+        if (item.path.filename() == ipc::kOccupancyArtifactName) {
+            std::fprintf(stderr, "[WARNING] npu-compute: %s\n", item_error.c_str());
+        } else {
+            AddIssue(context, item_error);
+        }
         return true;
     }
     ++context.file_count;

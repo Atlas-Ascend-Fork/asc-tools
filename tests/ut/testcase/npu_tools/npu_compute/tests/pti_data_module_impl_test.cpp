@@ -65,7 +65,7 @@ std::array<std::byte, 32> TaskLog(
     StoreWord(bytes.data(), 1, (uint32_t(taskId) << 16U) | streamId);
     StoreWord(bytes.data(), 2, static_cast<uint32_t>(systemCounter));
     StoreWord(bytes.data(), 3, static_cast<uint32_t>(systemCounter >> 32U));
-    StoreWord(bytes.data(), 5, (uint32_t(coreTypeId) << 1U) | (coreType == ACLPTI_CORE_TYPE_AIV ? 1U : 0U));
+    StoreWord(bytes.data(), 5, (uint32_t(coreTypeId) << 8U) | (coreType == ACLPTI_CORE_TYPE_AIV ? 1U : 0U));
     StoreWord(bytes.data(), 6, (uint32_t(blockId) << 16U) | subBlockId);
     return bytes;
 }
@@ -220,7 +220,7 @@ TEST(NpuComputePtiDataModule, RawDataDecoder)
     ASSERT_TRUE(std::get<data::TaskLog32>(end.Value().payload).funcType == 0x01);
 
     StoreWord(taskLog.data(), 0, 0x6bd30024U);
-    StoreWord(taskLog.data(), 5, (0x5aU << 1U) | 1U);
+    StoreWord(taskLog.data(), 5, (0x5aU << 8U) | 1U);
     StoreWord(taskLog.data(), 6, 0x12345678U);
     const auto block = data::DecodeRawRecord(taskLog.data(), taskLog.size(), 6);
     ASSERT_TRUE(block.Ok());
@@ -1340,4 +1340,57 @@ TEST(NpuComputePtiDataModule, ProcessorPhaseBoundaries)
     auto result = processor.StopAndTakeResult();
     ASSERT_TRUE(result.has_value());
     ASSERT_TRUE(result->pmuLogs.size() == 1);
+}
+
+TEST(NpuComputePtiDataModule, RetainsUnmergedReplayIdentityAndFailureStatus)
+{
+    ResultSink sink;
+    auto& module = data::ProfilingDataManager::Instance();
+    ASSERT_EQ(module.Initialize([&sink](const auto& result) { return sink.Accept(result); }), ACLPTI_SUCCESS);
+    const auto callback = module.GetRawDataCallback();
+    for (const uint64_t replayId : {41U, 42U}) {
+        ASSERT_EQ(module.PrepareReplay({replayId, PmuEvents({0x701})}), ACLPTI_SUCCESS);
+        auto payload = PmuRecord(9, 12, 7, 123);
+        StoreWord(payload.data(), 5, static_cast<uint32_t>(replayId) << 8U);
+        StoreWord(payload.data(), 28, 1000);
+        StoreWord(payload.data(), 30, 2000);
+        auto raw = RawData(payload, PMU_DATA_TYPE, 3);
+        ASSERT_EQ(callback(&raw), 0);
+        const auto status = replayId == 41 ? ACLPTI_SUCCESS : ACLPTI_ERROR_PROFILING_FAILED;
+        EXPECT_EQ(module.RecordReplayStatus({replayId, status}).status, status);
+        ASSERT_EQ(module.ReleaseReplay(replayId), ACLPTI_SUCCESS);
+    }
+    ASSERT_EQ(module.Shutdown(), ACLPTI_SUCCESS);
+    const auto result = sink.Wait();
+    ASSERT_NE(result, nullptr);
+    ASSERT_EQ(result->replayData.size(), 2);
+    for (const auto& [id, replay] : result->replayData) {
+        EXPECT_EQ(replay.kind, aclptiReplayKind::Pmu);
+        EXPECT_EQ(replay.deviceId, 3);
+        EXPECT_EQ(replay.status, id == 41 ? ACLPTI_SUCCESS : ACLPTI_ERROR_PROFILING_FAILED);
+        EXPECT_EQ(replay.stats.acceptedBytes, 128);
+        ASSERT_EQ(replay.pmuRecords.size(), 1);
+        const auto& record = replay.pmuRecords.front();
+        EXPECT_EQ(record.taskId, 9);
+        EXPECT_EQ(record.rtStreamId, 12);
+        EXPECT_EQ(record.blockId, 7);
+        EXPECT_EQ(record.coreId, id);
+        EXPECT_EQ(record.taskStartSystemCounter, 1000);
+        EXPECT_EQ(record.taskEndSystemCounter, 2000);
+    }
+    EXPECT_EQ(result->pmuLogs.size(), 1);
+}
+
+TEST(NpuComputePtiDataModule, DecodesCANN93BlockCoreIdFromByte21)
+{
+    auto payload = TaskLog(0x24, 1, 2, 1000, 11, 0, ACLPTI_CORE_TYPE_AIC, 0);
+    StoreWord(payload.data(), 5, 0x00000b00U);
+    const auto decoded = data::DecodeRawRecord(payload.data(), payload.size(), 0);
+    ASSERT_TRUE(decoded.Ok());
+    EXPECT_EQ(std::get<data::TaskLog32>(decoded.Value().payload).coreTypeId, 11);
+    StoreWord(payload.data(), 5, 0x0000ff01U);
+    const auto vectorDecoded = data::DecodeRawRecord(payload.data(), payload.size(), 1);
+    ASSERT_TRUE(vectorDecoded.Ok());
+    EXPECT_EQ(std::get<data::TaskLog32>(vectorDecoded.Value().payload).coreType, ACLPTI_CORE_TYPE_AIV);
+    EXPECT_EQ(std::get<data::TaskLog32>(vectorDecoded.Value().payload).coreTypeId, 255);
 }

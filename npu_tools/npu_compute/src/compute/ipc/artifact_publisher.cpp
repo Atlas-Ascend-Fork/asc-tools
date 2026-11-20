@@ -49,9 +49,8 @@ void ArtifactPublisher::Enqueue(ipc::Frame frame)
     queue_.push_back(std::move(frame));
     available_.notify_all();
 }
-void ArtifactPublisher::Begin(const std::string& name)
+ipc::ArtifactBegin ArtifactPublisher::PrepareArtifact(const std::string& name) const
 {
-    std::unique_lock<std::mutex> lock(artifact_mutex_);
     if (finishing_ || interrupted_) {
         throw std::runtime_error("ARTIFACT: collection is draining");
     }
@@ -60,8 +59,12 @@ void ArtifactPublisher::Begin(const std::string& name)
             throw std::runtime_error("ARTIFACT: duplicate name");
         }
     }
-    const auto kind = ipc::KindForName(name);
-    current_ = {manifest_.size() + 1, kind, name, ipc::ArtifactTypeForName(name)};
+    return {manifest_.size() + 1, ipc::KindForName(name), name, ipc::ArtifactTypeForName(name)};
+}
+void ArtifactPublisher::Begin(const std::string& name)
+{
+    std::unique_lock<std::mutex> lock(artifact_mutex_);
+    current_ = PrepareArtifact(name);
     bytes_ = 0;
     Enqueue({ipc::Type::DataBegin, ipc::EncodeArtifactBegin(current_)});
     artifact_lock_ = std::move(lock);
@@ -87,6 +90,35 @@ void ArtifactPublisher::Commit(uint64_t records)
     Enqueue({ipc::Type::DataEnd, ipc::EncodeArtifactEnd({current_.id, bytes_, records})});
     manifest_.push_back({current_.id, current_.name, bytes_});
     artifact_lock_.unlock();
+}
+void ArtifactPublisher::PublishOptional(const std::string& name, std::string_view contents, uint64_t records)
+{
+    std::lock_guard<std::mutex> artifactLock(artifact_mutex_);
+    const auto artifact = PrepareArtifact(name);
+    const auto type = ipc::TypeForKind(artifact.kind);
+    std::deque<ipc::Frame> frames;
+    frames.push_back({ipc::Type::DataBegin, ipc::EncodeArtifactBegin(artifact)});
+    uint64_t offset = 0;
+    while (!contents.empty()) {
+        const size_t length = std::min(contents.size(), ipc::kChunkBytes);
+        const ipc::ArtifactChunk chunk{artifact.id, offset, ipc::Bytes(contents.begin(), contents.begin() + length)};
+        frames.push_back({type, ipc::EncodeArtifactChunk(chunk)});
+        offset += length;
+        contents.remove_prefix(length);
+    }
+    frames.push_back({ipc::Type::DataEnd, ipc::EncodeArtifactEnd({artifact.id, offset, records})});
+
+    // Keep at most one buffered optional artifact in the shared queue.
+    // Make all allocations before publishing any of its frames to the worker.
+    std::unique_lock<std::mutex> queueLock(queue_mutex_);
+    if (!available_.wait_until(
+            queueLock, IoDeadline(), [this] { return queue_.empty() || failed_ || stopping_ || interrupted_; }) ||
+        failed_ || stopping_ || interrupted_) {
+        throw std::runtime_error("ARTIFACT: publisher unavailable or backpressure timeout");
+    }
+    manifest_.push_back({artifact.id, name, offset});
+    queue_.swap(frames);
+    available_.notify_all();
 }
 void ArtifactPublisher::Abort() noexcept
 {
