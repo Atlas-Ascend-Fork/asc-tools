@@ -11,6 +11,7 @@
 #ifndef NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_TYPES_H
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_RACECHECK_TYPES_H
 #include "acl_san/aclsan_cbdata_device.h"
+#include "checker/memory_access_mode.h"
 #include <array>
 #include <memory>
 #include <cstddef>
@@ -95,11 +96,13 @@ bool ValidPipe(uint32_t pipe);
 // enumerates modes; they are not a READ/WRITE bitmask.
 inline bool ReadsMemory(uint32_t mode)
 {
+    mode = NormalizeMemoryAccessMode(mode);
     return mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ || (mode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD &&
                                                         mode <= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX);
 }
 inline bool WritesMemory(uint32_t mode)
 {
+    mode = NormalizeMemoryAccessMode(mode);
     return mode >= ACLSAN_DEVICE_MEMORY_ACCESS_WRITE && mode <= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX;
 }
 // Adapt ACLSan cross-core callbacks to the SET/WAIT representation used by dependency graphs.

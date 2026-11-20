@@ -61,6 +61,35 @@ ParsedTraceRecord Record(InstructionId id, uint64_t pc)
     r.record.pc = pc;
     return r;
 }
+void TestMixedVfPbBatches()
+{
+    const auto& decoder = dav3510::GetDeviceInstructionDecoder();
+    const std::vector<uint8_t> object{0x7f, 'E', 'L', 'F', 1};
+    auto handle = NpubitUbHandle::Create(object.data(), object.size());
+    VfPbState state;
+    // SIMD -> SIMT -> SIMT -> SIMD -> SIMD, with collection split at every record.
+    for (const bool simt : {false, true, true, false, false}) {
+        const auto queriesBefore = hibit_test::queries.size();
+        const auto completionsBefore = expansions.size();
+        auto push = Record(InstructionId::PushPb, 0x790);
+        push.record.args[0] = 0x180000000000e;
+        push.record.args[1] = simt ? 0x120000018c00 : 0x15fa000001000;
+        push.record.args[2] = push.record.args[1];
+        push.record.args[3] = push.record.args[1];
+        DispatchTraceRecords({push}, decoder, nullptr, nullptr, nullptr, handle.get(), &state);
+        auto call = Record(simt ? InstructionId::SimtCall : InstructionId::Vf, 0xa54);
+        call.record.args[1] = 3;
+        DispatchTraceRecords({call}, decoder, nullptr, nullptr, nullptr, handle.get(), &state);
+        assert(hibit_test::queries.size() == queriesBefore + (simt ? 0 : 1));
+        assert(expansions.size() == completionsBefore + (simt ? 0 : 1));
+        if (!simt) {
+            const auto& input = hibit_test::queries.back();
+            for (unsigned i = 0; i < PUSH_PB_STATE_COUNT_PER_VF; ++i) {
+                assert(input.states[i] == (i < PUSH_PB_VALUE_COUNT ? push.record.args[i] : 0));
+            }
+        }
+    }
+}
 } // namespace
 // Capture the real DispatchTraceRecords output at the existing callback boundary.
 namespace aclsan {
@@ -84,6 +113,11 @@ void AclsanCallbackDispatcher::DispatchDeviceBarrier(const AclsanDeviceBarrierDa
 int main()
 {
     plog_test::SetApi({EnableLog, CaptureLog});
+    TestMixedVfPbBatches();
+    hibit_test::queries.clear();
+    expansions.clear();
+    accesses.clear();
+    events.clear();
     auto push = Record(InstructionId::PushPb, 0x1cc);
     auto vf = Record(InstructionId::Vf, 0x1e8);
     push.record.args[0] = 0x1000000003e;
@@ -230,6 +264,16 @@ int main()
         accesses = originalAccesses;
     }
     npucheck::Memcheck checker;
+    AclsanLaunchData launch{};
+    launch.common.version = ACLSAN_API_VERSION;
+    launch.common.size = sizeof(launch);
+    launch.launchId = vf.launchId;
+    launch.ubMetadataValid = 1;
+    launch.kernelVfType = ACLSAN_KERNEL_VF_TYPE_SIMD_VF_ONLY;
+    launch.compilerAllocUbBytes = 8 * 1024; // No static bytes, default reserved region.
+    npucheck::CheckerReportList launchReports;
+    assert(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, launchReports));
+    assert(launchReports.empty());
     for (const auto& a : accesses) {
         checker.QueueDeviceMemoryAccess(a);
     }
@@ -254,7 +298,12 @@ int main()
         checker.QueueDeviceMemoryAccess(a);
     }
     const auto reports = checker.OnSynchronization();
-    assert(reports.empty()); // UB bounds checking is outside the current Memcheck scope.
+    // Crossing the user/reserved boundary and both overflowing physical ranges are invalid.
+    // A read ending at the boundary and a write entirely inside reserved UB are valid.
+    assert(reports.size() == 3);
+    assert(reports[0].access.address == ub - 4);
+    assert(reports[1].access.address == std::numeric_limits<uint64_t>::max());
+    assert(reports[2].access.address == 1);
     assert(accesses.size() == 5);
     // Four sequential pushes occupy all slots; the next batch clears slots 4..15.
     VfPbState slots;
@@ -360,7 +409,11 @@ int main()
         checker.QueueDeviceMemoryAccess(a);
     }
     const auto scalarReports = checker.OnSynchronization();
-    assert(scalarReports.empty());
+    assert(scalarReports.size() == 2);
+    for (const auto& report : scalarReports) {
+        assert(report.access.address == ub - 4 && report.access.accessBytes == 8);
+        assert(report.access.memorySpace == npucheck::NpuCheckReportMemorySpace::UB);
+    }
     // A returned PC of zero is valid and must not be replaced by the VF call PC.
     hibit_test::ranges = {{0, 0, 0, 4, NPUBIT_UB_ACCESS_VECTOR_READ}};
     const auto zeroPc = handle->Query(vf, {}, {UINT64_MAX, UINT64_MAX});

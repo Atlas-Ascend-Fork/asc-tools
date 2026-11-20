@@ -59,6 +59,9 @@ template <typename ParamField>
 constexpr bool IsMemoryAccessParamField() noexcept
 {
     return std::disjunction_v<
+        std::is_same<ParamField, aclsan::VtransposeParamField>, std::is_same<ParamField, aclsan::Vbs32ParamField>,
+        std::is_same<ParamField, aclsan::VmrgsortParamField>, std::is_same<ParamField, aclsan::VnchwconvParamField>,
+        std::is_same<ParamField, aclsan::LdvaParamField>,
         std::is_same<ParamField, aclsan::CopyGmToUbufAlignV2ParamField>,
         std::is_same<ParamField, aclsan::CopyUbufToUbufParamField>,
         std::is_same<ParamField, aclsan::CopyGmToCbufAlignV2ParamField>,
@@ -244,6 +247,22 @@ private:
                 static_cast<unsigned long long>(parsed.record.pc), parsed.blockType, parsed.blockId);
             return DeviceCallbackData{DeviceMemoryAccessDataList{}};
         }
+        if constexpr (
+            std::is_same_v<ParamField, ScalarGmParamField> || std::is_same_v<ParamField, ScalarDevParamField> ||
+            std::is_same_v<ParamField, ScalarAtomicParamField>) {
+            // An undecodable scalar access must remain visible to completeness checks.
+            ASCTOOL_ERROR(
+                "acl_san trace: incomplete memory access status=%s instrId=%llu pc=0x%llx",
+                MemoryCbdataStatusName(result.status), static_cast<unsigned long long>(parsed.record.instrId),
+                static_cast<unsigned long long>(parsed.record.pc));
+            result.requiresIncompleteEvent = true;
+        }
+        if constexpr (
+            std::is_same_v<ParamField, VtransposeParamField> || std::is_same_v<ParamField, Vbs32ParamField> ||
+            std::is_same_v<ParamField, VmrgsortParamField> || std::is_same_v<ParamField, VnchwconvParamField> ||
+            std::is_same_v<ParamField, LdvaParamField>) {
+            result.requiresIncompleteEvent = true;
+        }
         const bool missingRegister = result.status == MemoryCbdataStatus::MISSING_REGISTER_STATE &&
                                      (dependencies.mask0 != 0 || dependencies.mask1 != 0);
         if (missingRegister || result.requiresIncompleteEvent) {
@@ -401,7 +420,7 @@ std::optional<DeviceCallbackData> TranslateDecodedTraceToCallbackData(
     // 判断是否找到对应的paramfield  raw data -> param field
     if (std::holds_alternative<std::monostate>(decoded.params)) {
         ASCTOOL_DEBUG("[param] rawData -> paramField translation failed instrId=%u", parsed.record.instrId);
-        if (AccessesL0Operands(parsed.record.instrId)) {
+        if (AccessesL0Operands(parsed.record.instrId) || AccessesVectorUbOperands(parsed.record.instrId)) {
             AclsanDeviceMemoryAccessData marker{};
             marker.header = {
                 ACLSAN_API_VERSION,

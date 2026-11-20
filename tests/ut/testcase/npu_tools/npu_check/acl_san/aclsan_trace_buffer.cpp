@@ -13,6 +13,8 @@
 #include "acl_san/aclsan_cbdata_device.h"
 #include "aclsan_trace_buffer.h"
 #include "dbi/trace_buffer_abi.h"
+#include "dbi/ub_layout_bounds.h"
+#include "securec.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -360,6 +362,48 @@ bool RejectsInvalidShape()
 }
 
 } // namespace
+
+TEST(AclsanTraceBuffer, PureSimdComputesUserBounds)
+{
+    const auto layout = aclsan::ResolveDav3510UbLayoutBounds(ACLSAN_KERNEL_VF_TYPE_NO_VF, 0, 0);
+    ASSERT_TRUE(layout.valid);
+    EXPECT_EQ(layout.staticEnd, 0U);
+    EXPECT_EQ(layout.userEnd, 248U * 1024U);
+}
+
+TEST(AclsanTraceBuffer, SimdVfComputesFullDynamicBoundsForEveryHostRequest)
+{
+    for (const uint64_t request : {0U, 32U * 1024U, 64U * 1024U}) {
+        const auto layout =
+            aclsan::ResolveDav3510UbLayoutBounds(ACLSAN_KERNEL_VF_TYPE_SIMD_VF_ONLY, 64U * 1024U, request);
+        ASSERT_TRUE(layout.valid);
+        EXPECT_EQ(layout.staticEnd, 56U * 1024U);
+        EXPECT_EQ(layout.userEnd, 248U * 1024U);
+        EXPECT_EQ(layout.sharedEnd, 256U * 1024U);
+    }
+    EXPECT_FALSE(
+        aclsan::ResolveDav3510UbLayoutBounds(ACLSAN_KERNEL_VF_TYPE_SIMD_VF_ONLY, 64U * 1024U, 193U * 1024U).valid);
+}
+
+TEST(AclsanTraceBuffer, MixedUserBoundsExcludeReserveAndCache)
+{
+    constexpr uint64_t compilerBytes = 64U * 1024U;
+    constexpr uint64_t dynamicBytes = 32U * 1024U - 96U;
+    const auto layout =
+        aclsan::ResolveDav3510UbLayoutBounds(ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF, compilerBytes, dynamicBytes);
+    ASSERT_TRUE(layout.valid);
+    EXPECT_EQ(layout.staticEnd, 56U * 1024U);
+    EXPECT_EQ(layout.userEnd, 88U * 1024U);
+    EXPECT_EQ(layout.sharedEnd, 96U * 1024U);
+    EXPECT_EQ(
+        aclsan::ResolveDav3510UbLayoutBounds(ACLSAN_KERNEL_VF_TYPE_SIMD_VF_ONLY, compilerBytes, dynamicBytes).userEnd,
+        248U * 1024U);
+    EXPECT_EQ(
+        aclsan::ResolveDav3510UbLayoutBounds(ACLSAN_KERNEL_VF_TYPE_UNKNOWN, compilerBytes, dynamicBytes).userEnd, 0U);
+    EXPECT_EQ(
+        aclsan::ResolveDav3510UbLayoutBounds(ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF, compilerBytes, UINT64_MAX).userEnd,
+        0U);
+}
 
 TEST(AclsanTraceBuffer, InstructionIdsAreUniqueAcrossCoresAndLogicalBlocks)
 {

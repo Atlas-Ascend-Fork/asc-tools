@@ -11,11 +11,26 @@
 #ifndef NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DBI_KERNEL_PARAM_METADATA_H
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DBI_KERNEL_PARAM_METADATA_H
 
+#include "acl_san/aclsan_cbdata_launch.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace aclsan {
+struct KernelUbMetadata {
+    uint32_t kernelVfType = ACLSAN_KERNEL_VF_TYPE_UNKNOWN;
+    uint64_t compilerAllocUbBytes = 0;
+    bool compilerAllocUbValid = false;
+};
+
+// functionName is the complete metadata entry name (without .ascend.meta.),
+// not a base name to which tilingKey is appended. Callers select by name or by
+// tilingKey; supplying both requires the selected entry to satisfy both filters.
+bool GetKernelUbMetadata(
+    const std::string& elf, const std::string& functionName, KernelUbMetadata& metadata, std::string& diagnostic,
+    const uint64_t* tilingKey = nullptr);
+
 struct BinarySectionRange {
     uint64_t offset = 0;
     uint64_t bytes = 0;

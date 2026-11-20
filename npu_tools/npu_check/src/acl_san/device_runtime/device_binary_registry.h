@@ -14,6 +14,7 @@
 #include "aclsan_vf.h"
 #include "device_symbolizer.h"
 #include "dbi/kernel_param_metadata.h"
+#include "dbi/kernel_param_metadata.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -55,8 +56,10 @@ public:
         uintptr_t function, uintptr_t& binary, std::vector<BinarySegment>& segments,
         int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
     void RecordBinaryFunctionLookup(
-        uintptr_t binary, uintptr_t function, const char* functionName = nullptr,
-        int32_t deviceId = UNKNOWN_DEVICE) noexcept;
+        uintptr_t binary, uintptr_t function, const char* functionName = nullptr, int32_t deviceId = UNKNOWN_DEVICE,
+        const uint64_t* entry = nullptr) noexcept;
+    bool GetFunctionUbMetadata(
+        uintptr_t function, KernelUbMetadata& metadata, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
     void RecordLatestBinaryFunctionLookup(uintptr_t function, int32_t deviceId = UNKNOWN_DEVICE) noexcept;
     enum class TraceLookup { Instrumented, NotInstrumented, Unresolved };
     TraceLookup LookupFunctionTraceArgumentOffset(

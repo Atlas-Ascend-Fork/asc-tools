@@ -15,6 +15,7 @@
 #include <elf.h>
 #include <limits>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -390,6 +391,123 @@ bool GetReadOnlyBinarySections(const std::string& elf, std::vector<BinarySection
             result.push_back({address, section.size});
         }
         ranges.swap(result);
+        diagnostic.clear();
+        return true;
+    } catch (const std::exception& error) {
+        diagnostic = error.what();
+        return false;
+    }
+}
+namespace {
+bool EndsWith(const std::string& name, const std::string& suffix)
+{
+    return name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::optional<uint64_t> KernelFunctionEntry(const std::string& elf, const Section& section, const std::string& name)
+{
+    constexpr uint16_t entryTag = 14;
+    constexpr size_t entryOffset = 4;
+    constexpr uint8_t entryDisabled = 0x80;
+    bool found = false;
+    std::optional<uint64_t> explicitEntry;
+    for (const auto& tlv : ReadMetadata(elf, section).values) {
+        if (tlv.tag != entryTag) {
+            continue;
+        }
+        Require(!found && tlv.value.size() == entryOffset + sizeof(uint64_t), "invalid function entry TLV");
+        found = true;
+        const auto flag = Read(tlv.value, 0, sizeof(uint8_t));
+        Require(flag == 0 || flag == entryDisabled, "invalid function entry flag");
+        if (flag == 0) {
+            explicitEntry = Read(tlv.value, entryOffset, sizeof(uint64_t));
+        }
+    }
+    if (found) {
+        return explicitEntry;
+    }
+
+    // Runtime uses the numeric suffix only for legacy metadata. A name with
+    // no numeric suffix is registered with the default key 0.
+    const auto end = EndsWith(name, "_mix_aiv") ? name.size() - sizeof("_mix_aiv") + 1 : name.size();
+    const auto separator = end != 0 ? name.rfind('_', end - 1) : std::string::npos;
+    const auto begin = separator == std::string::npos ? 0 : separator + 1;
+    constexpr uint64_t decimalBase = 10;
+    uint64_t entry = 0;
+    for (size_t i = begin; i < end; ++i) {
+        if (name[i] < '0' || name[i] > '9') {
+            return 0;
+        }
+        const auto digit = static_cast<uint64_t>(name[i] - '0');
+        if (entry > (std::numeric_limits<uint64_t>::max() - digit) / decimalBase) {
+            return 0;
+        }
+        entry = entry * decimalBase + digit;
+    }
+    return entry;
+}
+
+KernelUbMetadata ReadUbMetadata(const std::string& elf, const Section& section)
+{
+    constexpr uint16_t kernelTypeTag = 12;
+    constexpr uint16_t compilerUbAllocationTag = 7;
+    KernelUbMetadata result;
+    for (const auto& tlv : ReadMetadata(elf, section).values) {
+        if (tlv.tag != kernelTypeTag && tlv.tag != compilerUbAllocationTag) {
+            continue;
+        }
+        Require(tlv.value.size() == sizeof(uint32_t), "invalid UB metadata value length");
+        const uint32_t value = static_cast<uint32_t>(Read(tlv.value, 0, sizeof(uint32_t)));
+        if (tlv.tag == kernelTypeTag) {
+            Require(
+                value >= ACLSAN_KERNEL_VF_TYPE_NO_VF && value <= ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF,
+                "unknown AIV kernel type");
+            Require(
+                result.kernelVfType == ACLSAN_KERNEL_VF_TYPE_UNKNOWN || result.kernelVfType == value,
+                "conflicting AIV kernel types");
+            result.kernelVfType = value;
+        } else {
+            Require(
+                !result.compilerAllocUbValid || result.compilerAllocUbBytes == value,
+                "conflicting compiler UB allocation sizes");
+            result.compilerAllocUbBytes = value;
+            result.compilerAllocUbValid = true;
+        }
+    }
+    Require(result.kernelVfType != ACLSAN_KERNEL_VF_TYPE_UNKNOWN, "missing AIV kernel type");
+    return result;
+}
+} // namespace
+
+bool GetKernelUbMetadata(
+    const std::string& elf, const std::string& functionName, KernelUbMetadata& metadata, std::string& diagnostic,
+    const uint64_t* tilingKey)
+{
+    metadata = {};
+    try {
+        Require(!functionName.empty() || tilingKey != nullptr, "kernel selector is missing");
+        const auto sections = ReadSections(elf);
+        const Section* selected = nullptr;
+        for (const auto& entry : sections) {
+            const std::string name = entry.first.substr(sizeof(".ascend.meta.") - 1);
+            // A mixed AIC/AIV kernel's UB belongs to its AIV half.
+            if (EndsWith(name, "_mix_aic")) {
+                continue;
+            }
+            if (!functionName.empty() && name != functionName && name != functionName + "_mix_aiv") {
+                continue;
+            }
+            if (tilingKey != nullptr) {
+                const auto kernelEntry = KernelFunctionEntry(elf, entry.second, name);
+                if (!kernelEntry.has_value() || *kernelEntry != *tilingKey) {
+                    continue;
+                }
+            }
+            Require(selected == nullptr, "ambiguous kernel UB metadata selector");
+            selected = &entry.second;
+        }
+        Require(selected != nullptr, "selected kernel UB metadata is missing");
+        metadata = ReadUbMetadata(elf, *selected);
         diagnostic.clear();
         return true;
     } catch (const std::exception& error) {

@@ -60,6 +60,8 @@ public:
     InitCheckStatus MarkInitialized(InitStateKey scope, uint64_t address, uint64_t bytes, uint8_t pipe = 0);
     // Local dependency replay restricts reads to table bytes covered by proven
     // preceding writes. Other stored writes must not establish visibility.
+    // Replay can restrict each original operand to its HB-node ranges without
+    // turning its discontiguous fragments into independent diagnostic operands.
     InitCheckResult CheckInstruction(
         InitStateKey scope, const std::vector<AclsanDeviceMemoryAccessData>& accesses,
         const InitializedRanges& precedingWrites = {}, bool commitWrites = true, bool restrictToPrecedingWrites = false,
@@ -118,6 +120,7 @@ private:
     NpuCheckInitcheckReport MakeReport(const AclsanDeviceMemoryAccessData& data, uint32_t registerId, uint64_t groupId);
     void OnSynchronization(const AclsanSynchronizeData& data);
     bool OnDeviceSync(AclsanCallbackId cbid, const void* data);
+    bool OnDeviceVf(const void* data);
     bool OnDeviceCallback(AclsanCallbackId cbid, const void* data, CheckerReportList& reports);
     bool OnOperatorExecution(const AclsanOperatorExecutionData& event, CheckerReportList& reports);
     void FlushMemoryAccesses(uint64_t launchId, CheckerReportList& reports);
@@ -158,6 +161,8 @@ private:
     std::set<void*> pendingLaunchStreams_;
     std::vector<AclsanDeviceMemoryAccessData> pendingMemoryAccesses_;
     std::vector<AclsanDeviceSyncData> pendingSyncEvents_;
+    std::map<uint64_t, std::vector<AclsanDeviceVfData>> vfCompletions_;
+    std::map<uint64_t, std::vector<AclsanDeviceBarrierData>> localBarriers_;
     std::map<uint64_t, void*> launchStreams_;
     std::map<uint64_t, std::set<std::string>> replayReasons_;
     std::map<std::string, uint64_t> replayFailures_;

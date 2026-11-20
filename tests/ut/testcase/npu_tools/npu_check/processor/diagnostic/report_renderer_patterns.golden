@@ -27,7 +27,7 @@
 ========= ERROR:[MEMCHECK] Invalid <space> <access> of size <accessBytes> bytes
 =========     <location>
 =========     by aicore (<coreId>) type (<blockType>) block (<blockId>)<threadContext> pipe (<pipeName>)
-=========     Address 0x<address> is out of bounds<capacityContext>
+=========     Address 0x<address> is out of bounds<capacityContext><ubContext>
 
 ===== memcheck.invalid_free =====
 ========= ERROR:[MEMCHECK] Malloc/Free error encountered : Invalid pointer to free

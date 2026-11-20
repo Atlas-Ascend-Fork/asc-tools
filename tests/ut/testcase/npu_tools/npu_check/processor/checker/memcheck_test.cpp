@@ -552,15 +552,18 @@ TEST(MemcheckTest, ReportsOutOfBoundsGmWrites)
     EXPECT_EQ(reports.front().access.memorySpace, NpuCheckReportMemorySpace::GM);
 }
 
-TEST(MemcheckTest, IgnoresUbWritesWithoutQueuingOrMarkingAnalysisIncomplete)
+TEST(MemcheckTest, ReportsUbPhysicalOverflowEvenWithoutLayoutMetadata)
 {
     Memcheck checker;
     auto access = Access(DeviceSourceKind::MTE3, 0x200000, 64);
     access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
     checker.QueueDeviceMemoryAccess(access);
-    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 0U);
+    EXPECT_EQ(checker.Stats().pendingDeviceOperations, 1U);
     EXPECT_EQ(checker.Stats().droppedDeviceOperations, 0U);
-    EXPECT_TRUE(checker.OnSynchronization().empty());
+    const auto reports = checker.OnSynchronization();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports.front().access.memorySpace, NpuCheckReportMemorySpace::UB);
+    EXPECT_EQ(reports.front().common.pattern, NpuCheckReportPattern::MEMCHECK_INVALID_ACCESS);
     EXPECT_TRUE(checker.AnalysisComplete());
 }
 

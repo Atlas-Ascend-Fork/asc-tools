@@ -9,6 +9,7 @@
  */
 #include "checker/memory_analysis.h"
 #include "checker/racecheck/analysis_phase_timer.h"
+#include "npu_tool_log.h"
 #include <algorithm>
 #include <limits>
 
@@ -28,6 +29,53 @@ RangeResult MemoryAnalysis::Classify(uint64_t launchId, const MemoryLocation& lo
     const auto result = resources_.Resolve(location, boundary->second.first, boundary->second.second, order_, *state);
     complete_ = complete_ && resources_.Complete();
     return result;
+}
+
+void MemoryAnalysis::RegisterUbLayout(const AclsanLaunchData& launch)
+{
+    if (launch.common.size < sizeof(launch) || launch.common.result != 0 || launch.launchId == 0) {
+        return;
+    }
+    Get(launch.launchId).ubLayout = BuildUbLayout(launch);
+}
+
+const UbLayout* MemoryAnalysis::FindUbLayout(uint64_t launchId) const
+{
+    const auto launch = launches_.find(launchId);
+    return launch != launches_.end() && launch->second.ubLayout.valid ? &launch->second.ubLayout : nullptr;
+}
+
+RangeResult MemoryAnalysis::ClassifyUbRange(
+    const AclsanDeviceMemoryAccessData& access, uint64_t address, uint64_t bytes)
+{
+    // Physical-capacity violations are certain even when finer layout inputs are missing.
+    if (bytes == 0) {
+        return {RangeStatus::VALID, std::nullopt};
+    }
+    if (access.address >= UB_CAPACITY || address >= UB_CAPACITY || bytes > UB_CAPACITY - address) {
+        return {RangeStatus::OUT_OF_BOUNDS, Allocation{0, 0, UB_CAPACITY, access.header.deviceId, 0, 0}};
+    }
+    auto& launch = Get(access.header.launchId);
+    if (!launch.ubLayout.valid) {
+        if (!launch.ubLayoutWarningLogged) {
+            ASCTOOL_WARNING(
+                "memcheck: UB layout unavailable device=%u launch=%llu reason=%s; "
+                "UB partition boundary checks are incomplete; other memory accesses continue to be checked",
+                access.header.deviceId, static_cast<unsigned long long>(access.header.launchId),
+                launch.ubLayout.unavailableReason);
+            launch.ubLayoutWarningLogged = true;
+        }
+        return {RangeStatus::AMBIGUOUS, std::nullopt};
+    }
+    const auto region = launch.ubLayout.Find(access.address);
+    if (!region.has_value()) {
+        return {RangeStatus::OUT_OF_BOUNDS, Allocation{0, 0, UB_CAPACITY, access.header.deviceId, 0, 0}};
+    }
+    const Allocation allocation{0, region->begin, region->end - region->begin, access.header.deviceId, 0, 0};
+    if (!region->AllowsSimdAccess() || !region->Contains(address, bytes)) {
+        return {RangeStatus::OUT_OF_BOUNDS, allocation};
+    }
+    return {RangeStatus::VALID, allocation};
 }
 
 RangeResult MemoryAnalysis::ClassifyAccessRange(

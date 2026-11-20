@@ -26,6 +26,7 @@ add_executable(racecheck_integration_tests
   "${REPO_ROOT}/npu_tools/npu_check/src/processor/checker/allocation_registry.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_translate_device_data.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_memory_cbdata.cpp"
+  "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_vector_cbdata.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_register_dependency.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/aclsan_device_data_log.cpp"
   "${REPO_ROOT}/npu_tools/npu_check/src/acl_san/device_instr/arch/dav_3510/decoder.cpp"

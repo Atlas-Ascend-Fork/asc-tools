@@ -132,7 +132,8 @@ void RecordTraceBinaryLoadFromData(
     size_t imageBytes) noexcept;
 void RecordTraceBinaryUnload(aclrtBinHandle binary) noexcept;
 void RecordTraceBinaryFunctionLookup(
-    aclrtBinHandle binary, aclrtFuncHandle function, const char* functionName) noexcept;
+    aclrtBinHandle binary, aclrtFuncHandle function, const char* functionName,
+    const uint64_t* entry = nullptr) noexcept;
 void RecordTraceFunctionLookup(aclrtFuncHandle function) noexcept;
 aclError PrepareTraceLaunch(
     aclrtFuncHandle function, uint32_t blockCount, const void* hostArgs, size_t argsSize,
@@ -146,6 +147,8 @@ aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept;
 TraceCollectionResult CollectTraceStream(aclrtStream stream, bool executionComplete = true) noexcept;
 void CollectTraceAfterExecutionException(aclrtStream stream, uint64_t frontier) noexcept;
 void ResetTraceRuntimeState() noexcept;
+bool GetTraceFunctionUbMetadata(aclrtFuncHandle function, uint32_t& type, uint64_t& compilerBytes) noexcept;
+
 bool QuiesceTraceDevice(int32_t deviceId, bool canBindContext, std::shared_ptr<void>& resetGuard) noexcept;
 void FinishTraceDeviceReset(int32_t deviceId, bool success) noexcept;
 bool IsTraceDispatchActive() noexcept;

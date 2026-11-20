@@ -484,8 +484,8 @@ int main(int argc, char** argv)
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
-    // Preparing a FIFO launch validates the topology before and after acquiring its device gate.
-    CHECK(g_deviceInfoCalls == 4);
+    // Physical trace slots remain fixed even when the runtime reports disabled cores.
+    CHECK(g_deviceInfoCalls == 0);
 
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream2, nullptr, arguments, sizeof(arguments), nullptr, 0) ==

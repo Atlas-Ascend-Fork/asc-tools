@@ -24,6 +24,21 @@ bool Dav3510CoreKey::operator==(const Dav3510CoreKey& other) const noexcept
 
 Dav3510RegisterStateManager::Dav3510RegisterStateManager(uint64_t launchId) noexcept : launchId_(launchId) {}
 
+void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const MoveVaParamField& params) noexcept
+{
+    auto& va = states_[key].va[params.index];
+    // A5 MOVEVA stores UB[17:5] in each 16-bit VA entry.
+    constexpr uint64_t ubAddressUnitsMask = 0x1fff;
+    va.entries[params.entry] = static_cast<uint16_t>((params.xn >> 5U) & ubAddressUnitsMask);
+    va.entries[params.entry + 1] = static_cast<uint16_t>((params.xm >> 5U) & ubAddressUnitsMask);
+    va.validEntries |= static_cast<uint8_t>(3U << params.entry);
+}
+
+void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const LdvaParamField& params) noexcept
+{
+    states_[key].va[params.index].validEntries = 0;
+}
+
 void Dav3510RegisterStateManager::Update(const Dav3510CoreKey& key, const CtrlRegisterParamField& params) noexcept
 {
     states_[key].ctrl = params;

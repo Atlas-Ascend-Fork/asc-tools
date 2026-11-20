@@ -38,6 +38,54 @@ const char* BlockTypeName(uint32_t blockType) noexcept
     }
 }
 
+void LogParamField(const aclsan::VtransposeParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=VtransposeParamField instrId=%u dstAddr=0x%llx srcAddr=0x%llx", value.instrId,
+        static_cast<unsigned long long>(value.dstAddr), static_cast<unsigned long long>(value.srcAddr));
+}
+
+void LogParamField(const aclsan::Vbs32ParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=Vbs32ParamField instrId=%u dataBits=%u dstAddr=0x%llx scoreAddr=0x%llx indexAddr=0x%llx "
+        "config=0x%llx",
+        value.instrId, value.dataBits, static_cast<unsigned long long>(value.dstAddr),
+        static_cast<unsigned long long>(value.scoreAddr), static_cast<unsigned long long>(value.indexAddr),
+        static_cast<unsigned long long>(value.config));
+}
+
+void LogParamField(const aclsan::VmrgsortParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=VmrgsortParamField instrId=%u dataBits=%u dstAddr=0x%llx srcListAddresses=0x%llx "
+        "srcListLengths=0x%llx config=0x%llx",
+        value.instrId, value.dataBits, static_cast<unsigned long long>(value.dstAddr),
+        static_cast<unsigned long long>(value.srcListAddresses), static_cast<unsigned long long>(value.srcListLengths),
+        static_cast<unsigned long long>(value.config));
+}
+
+void LogParamField(const aclsan::VnchwconvParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=VnchwconvParamField instrId=%u dataBits=%u dstVaIndex=%u srcVaIndex=%u "
+        "dstHighHalf=%u srcHighHalf=%u config=0x%llx",
+        value.instrId, value.dataBits, value.dstVaIndex, value.srcVaIndex, static_cast<unsigned>(value.dstHighHalf),
+        static_cast<unsigned>(value.srcHighHalf), static_cast<unsigned long long>(value.config));
+}
+void LogParamField(const aclsan::MoveVaParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=MoveVaParamField index=%u entry=%u xn=0x%llx xm=0x%llx", value.index, value.entry,
+        static_cast<unsigned long long>(value.xn), static_cast<unsigned long long>(value.xm));
+}
+void LogParamField(const aclsan::LdvaParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=LdvaParamField index=%u src=0x%llx high=%u", value.index,
+        static_cast<unsigned long long>(value.srcAddr), static_cast<unsigned>(value.highHalf));
+}
+
 void LogParamField(const aclsan::VectorMaskWriteParamField& value) noexcept
 {
     ASCTOOL_DEBUG(

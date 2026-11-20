@@ -162,6 +162,18 @@ enum class InstructionId : uint32_t {
     CopyUbufToCbuf = 173,     // LocalMemoryTransferParamField：L1 WRITE
     CopyUbufToUbuf = 174,     // CopyUbufToUbufParamField: UB READ / WRITE
 
+    // Non-VF Vector instructions (ctrlbin ABI IDs).
+    ScatterVnchwconvB16 = 175,
+    ScatterVnchwconvB32 = 176,
+    ScatterVnchwconvB8 = 177,
+    VtransposeB16 = 178,
+    MoveVa = 416,
+    Ldva = 417,
+    Vbs32F16 = 418,
+    Vbs32F32 = 419,
+    VmrgsortF16 = 420,
+    VmrgsortF32 = 421,
+
     // FIX
     FixL0cToOutF32 = 91,   // 已完成：FixL0cToOutParamField
     FixL0cToOutS32 = 92,   // 已完成：FixL0cToOutParamField
@@ -218,9 +230,18 @@ enum class InstructionId : uint32_t {
     HWaitFlag = 473,
     HWaitFlagI = 474,
 
-    Vf = 481,     // VfParamField
-    PushPb = 482, // PushPbParamField
+    SimtCall = 475, // Consumes the current PB batch.
+    Vf = 481,       // VfParamField
+    PushPb = 482,   // PushPbParamField
 };
+
+constexpr bool AccessesVectorUbOperands(uint32_t id) noexcept
+{
+    return (id >= static_cast<uint32_t>(InstructionId::ScatterVnchwconvB16) &&
+            id <= static_cast<uint32_t>(InstructionId::VtransposeB16)) ||
+           (id >= static_cast<uint32_t>(InstructionId::Ldva) &&
+            id <= static_cast<uint32_t>(InstructionId::VmrgsortF32));
+}
 
 constexpr bool AccessesL0Operands(uint32_t id) noexcept
 {
@@ -255,7 +276,10 @@ constexpr bool IsDefinedInstructionId(uint32_t instructionId) noexcept
             {InstructionId::Img2ColCbufToCaB32, InstructionId::CopyCbufToBtBf16},
             {InstructionId::PipeBarrier, InstructionId::WaitFlagI},
             {InstructionId::WaitFlagDev, InstructionId::HWaitFlagI},
+            {InstructionId::SimtCall, InstructionId::SimtCall},
             {InstructionId::Vf, InstructionId::PushPb},
+            {InstructionId::ScatterVnchwconvB16, InstructionId::VtransposeB16},
+            {InstructionId::MoveVa, InstructionId::VmrgsortF32},
         };
         std::array<bool, static_cast<uint32_t>(InstructionId::PushPb) + 1> lookup{};
         for (const auto range : ranges) {

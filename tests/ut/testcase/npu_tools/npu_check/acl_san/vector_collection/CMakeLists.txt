@@ -29,6 +29,7 @@ add_executable(vector_collection_test integration_test.cpp
   "${SAN}/device_instr/arch/dav_3510/decoder.cpp"
   "${SAN}/device_instr/arch/dav_3510/register_state_manager.cpp"
   "${SAN}/aclsan_memory_cbdata.cpp" "${SAN}/aclsan_register_dependency.cpp"
+  "${SAN}/aclsan_vector_cbdata.cpp"
   "${SAN}/aclsan_translate_device_data.cpp" "${SAN}/aclsan_device_data_log.cpp"
   "${COMMON_TEST}/plog_test_library.cpp")
 target_compile_features(vector_collection_test PRIVATE cxx_std_17)

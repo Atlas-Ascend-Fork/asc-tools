@@ -9,6 +9,7 @@
  */
 
 #include "aclsan_memory_cbdata.h"
+#include "aclsan_vector_cbdata.h"
 
 #include "acl_san/aclsan_api.h"
 #include "device_instr/common/instruction_id.h"
@@ -754,6 +755,25 @@ public:
           fixOutputSpace_(fixOutputSpace),
           fixOutputOwner_(fixOutputOwner)
     {}
+
+    MemoryCbdataResult operator()(const VtransposeParamField& field) const noexcept
+    {
+        return ConvertVtranspose(field, context_);
+    }
+
+    MemoryCbdataResult operator()(const Vbs32ParamField& field) const noexcept { return ConvertVbs32(field, context_); }
+
+    MemoryCbdataResult operator()(const VmrgsortParamField& field) const noexcept
+    {
+        return ConvertVmrgsort(field, context_);
+    }
+
+    MemoryCbdataResult operator()(const VnchwconvParamField& field) const noexcept
+    {
+        return ConvertVnchwconv(field, context_, registerState_);
+    }
+
+    MemoryCbdataResult operator()(const LdvaParamField& field) const noexcept { return ConvertLdva(field, context_); }
 
     MemoryCbdataResult operator()(const ScalarGmParamField& field) const noexcept
     {

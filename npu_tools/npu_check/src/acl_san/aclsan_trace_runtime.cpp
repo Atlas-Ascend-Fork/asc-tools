@@ -2044,8 +2044,14 @@ bool UpdateTraceRegisterState(
     const DeviceInstructionParamField& params, const dav3510::Dav3510CoreKey& key,
     dav3510::Dav3510RegisterStateManager& registerState)
 {
+    // LDVA updates VA state and still emits its UB read operand.
+    if (const auto* value = std::get_if<LdvaParamField>(&params)) {
+        registerState.Update(key, *value);
+    }
     bool stateInstruction = true;
-    if (const auto* value = std::get_if<CtrlRegisterParamField>(&params)) {
+    if (const auto* value = std::get_if<MoveVaParamField>(&params)) {
+        registerState.Update(key, *value);
+    } else if (const auto* value = std::get_if<CtrlRegisterParamField>(&params)) {
         registerState.Update(key, *value);
     } else if (const auto* value = std::get_if<VectorMaskWriteParamField>(&params)) {
         registerState.Update(key, *value);
@@ -2089,6 +2095,7 @@ void DispatchTranslatedTrace(
     const std::optional<dav3510::Dav3510CoreRegisterState> state = registerState.Get(key);
     MemoryRegisterState memoryState{};
     if (state.has_value()) {
+        memoryState.va = state->va;
         memoryState.ctrl = state->ctrl;
         memoryState.fmatrix = state->fmatrix;
         memoryState.l3dRpt = state->l3dRpt;
@@ -2142,6 +2149,12 @@ void DispatchTraceRecords(
     VfPbState& pbState = retainedPbState != nullptr ? *retainedPbState : localPbState;
     for (const ParsedTraceRecord& parsed : records) {
         if (!IsDefinedInstructionId(parsed.record.instrId)) {
+            continue;
+        }
+        if (parsed.record.instrId == static_cast<uint32_t>(InstructionId::SimtCall)) {
+            LogRawRecord(parsed);
+            // Both VF kinds consume a PB batch; only SIMD VF needs UB address expansion.
+            pbState.Consume(parsed);
             continue;
         }
         const auto decoded = decoder.decode(parsed.record);
@@ -2207,7 +2220,8 @@ void RecordTraceBinaryUnload(aclrtBinHandle binary) noexcept
     DeviceBinaries().RecordBinaryUnload(reinterpret_cast<uintptr_t>(binary), CurrentTraceDeviceId());
 }
 
-void RecordTraceBinaryFunctionLookup(aclrtBinHandle binary, aclrtFuncHandle function, const char* functionName) noexcept
+void RecordTraceBinaryFunctionLookup(
+    aclrtBinHandle binary, aclrtFuncHandle function, const char* functionName, const uint64_t* entry) noexcept
 {
     if (binary == nullptr || function == nullptr) {
         return;
@@ -2215,10 +2229,29 @@ void RecordTraceBinaryFunctionLookup(aclrtBinHandle binary, aclrtFuncHandle func
     try {
         DeviceBinaries().RecordBinaryFunctionLookup(
             reinterpret_cast<uintptr_t>(binary), reinterpret_cast<uintptr_t>(function), functionName,
-            CurrentTraceDeviceId());
+            CurrentTraceDeviceId(), entry);
     } catch (...) {
         ASCTOOL_ERROR("acl_san trace: failed to record function %p for binary %p", function, binary);
     }
+}
+
+bool GetTraceFunctionUbMetadata(aclrtFuncHandle function, uint32_t& type, uint64_t& compilerBytes) noexcept
+{
+    KernelUbMetadata metadata;
+    if (!DeviceBinaries().GetFunctionUbMetadata(
+            reinterpret_cast<uintptr_t>(function), metadata, CurrentTraceDeviceId())) {
+        ASCTOOL_DEBUG("acl_san UB metadata unavailable: function=%p reason=metadata_not_registered", function);
+        return false;
+    }
+    if (metadata.kernelVfType != ACLSAN_KERNEL_VF_TYPE_NO_VF && !metadata.compilerAllocUbValid) {
+        ASCTOOL_DEBUG(
+            "acl_san UB metadata unavailable: function=%p kernelVfType=%u reason=missing_compiler_ub_allocation",
+            function, metadata.kernelVfType);
+        return false;
+    }
+    type = metadata.kernelVfType;
+    compilerBytes = metadata.compilerAllocUbBytes;
+    return true;
 }
 
 bool GetTraceFunctionName(aclrtFuncHandle function, std::string& functionName) noexcept

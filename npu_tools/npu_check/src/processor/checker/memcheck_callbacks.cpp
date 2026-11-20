@@ -23,6 +23,7 @@ const std::vector<CallbackSpec>& Memcheck::GetSubscribedID() const
         {ACLSAN_CB_DOMAIN_RESOURCE, ACLSAN_CBID_RESOURCE_MEMORY_FREE},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS},
         {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS},
+        {ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF},
         {ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL},
         {ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE},
         {ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END}};
@@ -68,10 +69,25 @@ bool Memcheck::OnCallback(
         } else {
             OnFree(*event);
         }
+    } else if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && cbid == ACLSAN_CBID_DEVICE_VF) {
+        const auto* completion = static_cast<const AclsanDeviceVfData*>(data);
+        if (!completion || completion->header.version != ACLSAN_API_VERSION ||
+            completion->header.size < sizeof(*completion)) {
+            ++stats_.droppedDeviceOperations;
+            return false;
+        }
+        if (completion->status != ACLSAN_DEVICE_VF_SUCCESS ||
+            completion->header.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT ||
+            completion->accessCount > completion->eventCount || completion->eventCount > completion->rawEventCount) {
+            ++stats_.droppedDeviceOperations;
+        }
     } else if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
         return OnDeviceMemoryCallback(cbid, data, reports);
     } else if (domain == ACLSAN_CB_DOMAIN_LAUNCH) {
         const auto* event = static_cast<const AclsanLaunchData*>(data);
+        if (!analysis_->Managed()) {
+            analysis_->RegisterUbLayout(*event);
+        }
         if (event->common.result != 0) {
             ++stats_.failedLaunches;
         } else if (analysis_->Managed() && event->launchId != 0) {

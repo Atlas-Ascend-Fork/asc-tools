@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "ub_launch_config.h"
 #include "acl_san/aclsan_api.h"
 #include "dbi/binary_instrumenter.h"
 #include "device_runtime/device_symbolizer.h"
@@ -430,16 +431,28 @@ AclsanSynchronizeData MakeSynchronizeData(const char* apiName, aclrtStream strea
 
 AclsanLaunchData MakeLaunchData(
     uint64_t launchId, aclrtFuncHandle function, aclrtStream stream, const std::string& functionName,
-    uint32_t numBlocks, aclError launchResult, const char* apiName) noexcept
+    uint32_t numBlocks, aclError launchResult, const char* apiName, const aclrtLaunchKernelCfg* config) noexcept
 {
     const char* name = functionName.empty() ? nullptr : functionName.data();
-    return {
-        MakeCallbackCommonData(apiName, launchResult, static_cast<uint32_t>(sizeof(AclsanLaunchData))),
-        launchId,
-        function,
-        stream,
-        name,
-        numBlocks};
+    AclsanLaunchData result{};
+    result.common = MakeCallbackCommonData(apiName, launchResult, static_cast<uint32_t>(sizeof(AclsanLaunchData)));
+    result.launchId = launchId;
+    result.function = function;
+    result.stream = stream;
+    result.functionName = name;
+    result.numBlocks = numBlocks;
+    const bool hasMetadata =
+        aclsan::GetTraceFunctionUbMetadata(function, result.kernelVfType, result.compilerAllocUbBytes);
+    const bool hasDynamicBytes = aclsan::ReadDynamicUbBytes(config, result.dynamicUbBytes);
+    result.ubMetadataValid = hasMetadata && hasDynamicBytes;
+    ASCTOOL_DEBUG(
+        "acl_san UB launch: launch=%llu metadataValid=%u kernelVfType=%u compilerAllocUb=%llu dynamicUb=%llu "
+        "metadataAvailable=%u dynamicUbValid=%u",
+        static_cast<unsigned long long>(launchId), result.ubMetadataValid, result.kernelVfType,
+        static_cast<unsigned long long>(result.compilerAllocUbBytes),
+        static_cast<unsigned long long>(result.dynamicUbBytes), static_cast<unsigned>(hasMetadata),
+        static_cast<unsigned>(hasDynamicBytes));
+    return result;
 }
 
 // ==============================================
@@ -991,7 +1004,8 @@ aclError PrepareDeferredLaunch(
                     variant.binary, true, variant.traceOffset, launch.source->image.data(),
                     launch.source->image.size());
                 aclsan::RecordTraceBinaryFunctionLookup(
-                    variant.binary, variant.function, selected.byEntry ? nullptr : selected.name.c_str());
+                    variant.binary, variant.function, selected.byEntry ? nullptr : selected.name.c_str(),
+                    selected.byEntry ? &selected.entry : nullptr);
                 variant.registered = true;
             }
             function = variant.function;
@@ -1107,7 +1121,7 @@ aclError aclrtBinaryGetFunctionByEntryHook(
         } catch (...) {
             return ACL_ERROR_BAD_ALLOC;
         }
-        aclsan::RecordTraceBinaryFunctionLookup(binHandle, *funcHandle, nullptr);
+        aclsan::RecordTraceBinaryFunctionLookup(binHandle, *funcHandle, nullptr, &functionEntry);
     }
     return result;
 }
@@ -1136,12 +1150,11 @@ aclError LaunchKernelWithHostArgs(
     DeferredLaunch deferred;
     const auto fail = [&deferred, &funcHandle, &stream, &numBlocks, apiName](aclError status) {
         deferred.Release();
-        const AclsanLaunchData callback{MakeCallbackCommonData(apiName, status, sizeof(AclsanLaunchData)),
-                                        0,
-                                        funcHandle,
-                                        stream,
-                                        nullptr,
-                                        numBlocks};
+        AclsanLaunchData callback{};
+        callback.common = MakeCallbackCommonData(apiName, status, sizeof(AclsanLaunchData));
+        callback.function = funcHandle;
+        callback.stream = stream;
+        callback.numBlocks = numBlocks;
         aclsan::AclsanCallbackDispatcher::DispatchLaunch(callback);
         return status;
     };
@@ -1193,7 +1206,7 @@ aclError LaunchKernelWithHostArgs(
         prepared.traceArgumentOffset, placeHolderNum, prepared.hostInputs.size(), launchArgumentBytes,
         launchPlaceholderCount);
     AclsanLaunchData beforeCallback =
-        MakeLaunchData(launchId, funcHandle, stream, apiName, numBlocks, ACL_SUCCESS, apiName);
+        MakeLaunchData(launchId, funcHandle, stream, apiName, numBlocks, ACL_SUCCESS, apiName, config);
     aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(beforeCallback);
     const aclError result = launch(
         funcHandle, numBlocks, stream, config, launchArguments, launchArgumentBytes, launchPlaceholders,
@@ -1210,7 +1223,7 @@ aclError LaunchKernelWithHostArgs(
     std::string functionName;
     (void)aclsan::GetTraceFunctionName(funcHandle, functionName);
     const AclsanLaunchData callbackData =
-        MakeLaunchData(launchId, funcHandle, stream, functionName, numBlocks, result, apiName);
+        MakeLaunchData(launchId, funcHandle, stream, functionName, numBlocks, result, apiName, config);
     aclsan::AclsanCallbackDispatcher::DispatchLaunch(callbackData);
     aclsan::CompleteTraceLaunch(std::move(prepared), funcHandle, stream, result);
     return result;
@@ -1224,8 +1237,11 @@ aclError LaunchKernelWithArgsArray(
     DeferredLaunch deferred;
     const auto fail = [&deferred, &func, &stream, &numBlocks, apiName](aclError status) {
         deferred.Release();
-        const AclsanLaunchData callback{
-            MakeCallbackCommonData(apiName, status, sizeof(AclsanLaunchData)), 0, func, stream, nullptr, numBlocks};
+        AclsanLaunchData callback{};
+        callback.common = MakeCallbackCommonData(apiName, status, sizeof(AclsanLaunchData));
+        callback.function = func;
+        callback.stream = stream;
+        callback.numBlocks = numBlocks;
         aclsan::AclsanCallbackDispatcher::DispatchLaunch(callback);
         return status;
     };
@@ -1255,7 +1271,7 @@ aclError LaunchKernelWithArgsArray(
         }
         if (result == ACL_SUCCESS) {
             AclsanLaunchData beforeCallback =
-                MakeLaunchData(prepared.launchId, func, stream, apiName, numBlocks, ACL_SUCCESS, apiName);
+                MakeLaunchData(prepared.launchId, func, stream, apiName, numBlocks, ACL_SUCCESS, apiName, config);
             aclsan::AclsanCallbackDispatcher::DispatchLaunchBefore(beforeCallback);
             result = launch(func, numBlocks, stream, config, prepared.instrumented ? launchArgs.data() : args);
         }
@@ -1271,7 +1287,7 @@ aclError LaunchKernelWithArgsArray(
     std::string functionName;
     (void)aclsan::GetTraceFunctionName(func, functionName);
     const AclsanLaunchData callbackData =
-        MakeLaunchData(prepared.launchId, func, stream, functionName, numBlocks, result, apiName);
+        MakeLaunchData(prepared.launchId, func, stream, functionName, numBlocks, result, apiName, config);
     aclsan::AclsanCallbackDispatcher::DispatchLaunch(callbackData);
     aclsan::CompleteTraceLaunch(std::move(prepared), func, stream, result);
     return result;
@@ -1309,7 +1325,7 @@ aclError GetSimtBlockCount(dim3 grid, void* function, aclrtStream stream, const 
     for (const uint32_t dimension : {grid.x, grid.y, grid.z}) {
         if (dimension == 0 || count > UINT32_MAX / dimension) {
             count = 0;
-            const auto callback = MakeLaunchData(0, function, stream, {}, 0, ACL_ERROR_INVALID_PARAM, apiName);
+            const auto callback = MakeLaunchData(0, function, stream, {}, 0, ACL_ERROR_INVALID_PARAM, apiName, nullptr);
             aclsan::AclsanCallbackDispatcher::DispatchLaunch(callback);
             return ACL_ERROR_INVALID_PARAM;
         }

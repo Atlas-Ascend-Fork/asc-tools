@@ -253,14 +253,23 @@ TEST(ProbeSourceGenerator, VectorGroupIncludesUbufTransfer)
 {
     const auto generated = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Vector);
     ASSERT_TRUE(generated.success) << generated.diagnostic;
-    EXPECT_EQ(generated.symbols.size(), 13U);
-    EXPECT_EQ(generated.symbols, aclsan::BindingSymbols({aclsan::ProbeGroup::Vector}));
+    EXPECT_EQ(generated.symbols.size(), 15U);
+    const auto bindings = aclsan::BindingSymbols({aclsan::ProbeGroup::Vector});
+    EXPECT_TRUE(
+        std::is_permutation(generated.symbols.begin(), generated.symbols.end(), bindings.begin(), bindings.end()));
     EXPECT_NE(
         std::find(generated.symbols.begin(), generated.symbols.end(), "__npu_check_probe_copy_ubuf_to_ubuf"),
         generated.symbols.end());
     EXPECT_NE(generated.source.find("static_cast<uint16_t>(PIPE_V), 174"), std::string::npos);
     EXPECT_NE(generated.source.find("__npu_check_probe_vtranspose"), std::string::npos);
     EXPECT_NE(generated.source.find("__npu_check_probe_ldva"), std::string::npos);
+    EXPECT_NE(generated.source.find("__npu_check_probe_simt_call"), std::string::npos);
+    const auto call = aclsan::FindProbeDefinition(generated.source, "__npu_check_probe_simt_call");
+    EXPECT_NE(call.find("aclsan::WriteSimtCallContext(memInfo, pc)"), std::string_view::npos);
+    EXPECT_NE(call.find("aclsan::WriteTraceRecord"), std::string_view::npos);
+    const auto simt = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Simt);
+    ASSERT_TRUE(simt.success) << simt.diagnostic;
+    EXPECT_EQ(call, aclsan::FindProbeDefinition(simt.source, "__npu_check_probe_simt_call"));
 }
 
 TEST(ProbeSourceGeneratorScalarDev, IncludesAllWidthsAndByteOffsets)

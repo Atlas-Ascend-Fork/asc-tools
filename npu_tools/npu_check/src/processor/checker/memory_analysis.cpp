@@ -83,6 +83,7 @@ bool MemoryAnalysis::RegisterLaunch(const AclsanLaunchData& launch)
     auto& output = Get(launch.launchId);
     output.stream = launch.stream;
     output.registered = true;
+    RegisterUbLayout(launch);
     // Submission publishes this thread's program order to the stream. Consecutive
     // launches on one stream are ordinary program order inside the stream actor.
     const auto stream = order_.StreamActor(launch.stream);

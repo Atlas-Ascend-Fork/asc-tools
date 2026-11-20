@@ -173,7 +173,9 @@ add_library(npu_check_dbi_engine STATIC
   dbi/tool_runner.cpp
 )
 target_compile_features(npu_check_dbi_engine PUBLIC cxx_std_17)
-target_include_directories(npu_check_dbi_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(npu_check_dbi_engine PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
 target_compile_options(npu_check_dbi_engine PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(npu_check_dbi_engine PRIVATE c_sec_static)
 target_link_libraries(npu_check_dbi_engine
@@ -199,6 +201,7 @@ add_library(acl_san SHARED
   device_instr/arch/dav_3510/register_state_manager.cpp
   aclsan_active_probe_plan.cpp
   aclsan_memory_cbdata.cpp
+  aclsan_vector_cbdata.cpp
   aclsan_register_dependency.cpp
   aclsan_trace_buffer.cpp
   aclsan_simt_trace.cpp

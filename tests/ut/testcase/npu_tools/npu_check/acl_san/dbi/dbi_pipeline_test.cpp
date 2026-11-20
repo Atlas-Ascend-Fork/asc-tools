@@ -91,6 +91,8 @@ TEST(DbiPipelineTest, SimtUsesOneGroupForCallAndThreadProbes)
          {"__npu_check_probe_simt_call", "__npu_check_probe_simt_ldg_b32", "__npu_check_probe_simt_end"}) {
         EXPECT_NE(std::find(bindings.begin(), bindings.end(), symbol), bindings.end()) << symbol;
     }
+    const auto mixed = BindingSymbols({ProbeGroup::Vector, ProbeGroup::Simt});
+    EXPECT_EQ(std::count(mixed.begin(), mixed.end(), "__npu_check_probe_simt_call"), 1);
 }
 
 TEST(DbiPipelineTest, ValidatesRequestFields)
@@ -301,6 +303,40 @@ TEST(CtrlbinGeneratorTest, SyncInstructionBindingsPreserveOperandPositions)
     }
 }
 
+TEST(DbiPipelineTest, ScalarRegisterLoadsCapturePostIndexOperand)
+{
+    const auto path = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("ld-reg-%%%%-%%%%.bin");
+    std::string diagnostic;
+    ASSERT_TRUE(GenerateCtrlBin(path.string(), {ProbeGroup::Scalar}, diagnostic)) << diagnostic;
+    const std::string bytes = ReadGeneratedFile(path);
+    boost::filesystem::remove(path);
+    ASSERT_GE(bytes.size(), 12U);
+    const auto word = [&bytes](size_t offset) {
+        return static_cast<uint16_t>(
+            static_cast<uint8_t>(bytes.at(offset)) |
+            (static_cast<uint16_t>(static_cast<uint8_t>(bytes.at(offset + 1))) << 8));
+    };
+    const size_t end = 12U + word(6);
+    ASSERT_LE(end, bytes.size());
+    size_t loads = 0;
+    for (size_t offset = 12; offset < end;) {
+        ASSERT_LE(offset + 6, end);
+        const auto id = word(offset);
+        const auto count = word(offset + 4);
+        ASSERT_LE(offset + 6 + 2U * count, end);
+        // ctrlbin LD_B64/B32/B16/B8_REG are IDs 48..51.
+        if (id >= 48 && id <= 51) {
+            ASSERT_EQ(count, 3U);
+            EXPECT_EQ(word(offset + 6), 1U);
+            EXPECT_EQ(word(offset + 8), 2U);
+            EXPECT_EQ(word(offset + 10), 3U) << "LD_REG instruction " << id;
+            ++loads;
+        }
+        offset += 6 + 2U * count;
+    }
+    EXPECT_EQ(loads, 4U);
+}
+
 TEST(CtrlbinGeneratorTest, RejectsEmbeddedNullAndSymbolicLinkOutputPaths)
 {
     const auto root = boost::filesystem::temp_directory_path() / "ctrlbin-invalid-path-test";
@@ -351,10 +387,14 @@ TEST(CtrlbinGeneratorTest, FiltersBindingsToSelectedProbeGroups)
 
     EXPECT_EQ(BindingSymbols({ProbeGroup::Matrix}).size(), 16U);
     const auto vectorSymbols = BindingSymbols({ProbeGroup::Vector});
-    EXPECT_EQ(vectorSymbols.size(), 13U);
+    EXPECT_EQ(vectorSymbols.size(), 15U);
+    EXPECT_NE(
+        std::find(vectorSymbols.begin(), vectorSymbols.end(), "__npu_check_probe_simt_call"), vectorSymbols.end());
     EXPECT_NE(
         std::find(vectorSymbols.begin(), vectorSymbols.end(), "__npu_check_probe_copy_ubuf_to_ubuf"),
         vectorSymbols.end());
+    EXPECT_NE(std::find(vectorSymbols.begin(), vectorSymbols.end(), "__npu_check_probe_ldva"), vectorSymbols.end());
+    EXPECT_NE(std::find(vectorSymbols.begin(), vectorSymbols.end(), "__npu_check_probe_moveva"), vectorSymbols.end());
 }
 
 TEST(CtrlbinGeneratorTest, IncludesScalarStateBindingsForMte3AndFixpipeConsumers)
@@ -378,7 +418,13 @@ TEST(CtrlbinGeneratorTest, GeneratedCatalogMatchesEveryBindingSymbol)
     for (const ProbeGroup group : AllProbeGroups()) {
         const GeneratedProbeSource generated = GenerateProbeSource("dav-3510", group);
         ASSERT_TRUE(generated.success) << generated.diagnostic;
-        generatedSymbols.insert(generatedSymbols.end(), generated.symbols.begin(), generated.symbols.end());
+        for (const auto& symbol : generated.symbols) {
+            // SIMT_CALL is the same weak probe in both independently selectable groups.
+            // Count its canonical SIMT definition once, matching its single ctrlbin binding.
+            if (group != ProbeGroup::Vector || symbol != "__npu_check_probe_simt_call") {
+                generatedSymbols.push_back(symbol);
+            }
+        }
     }
     auto bindingSymbols = BindingSymbols(AllProbeGroups());
     std::sort(generatedSymbols.begin(), generatedSymbols.end());

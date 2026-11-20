@@ -105,11 +105,11 @@ int main()
 
     int functionStorage = 0;
     int streamStorage = 0;
-    int configStorage = 0;
+    aclrtLaunchKernelCfg configStorage{};
     unsigned char hostArgsStorage[64]{};
     const auto function = reinterpret_cast<aclrtFuncHandle>(&functionStorage);
     const auto stream = reinterpret_cast<aclrtStream>(&streamStorage);
-    auto* config = reinterpret_cast<aclrtLaunchKernelCfg*>(&configStorage);
+    auto* config = &configStorage;
     aclrtPlaceHolderInfo placeholders[] = {{0, 24}, {8, 32}, {16, 40}};
 
     CHECK(

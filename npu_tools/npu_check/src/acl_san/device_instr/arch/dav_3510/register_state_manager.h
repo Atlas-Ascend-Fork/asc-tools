@@ -13,6 +13,7 @@
 
 #include "device_instr/common/device_instr_struct_dma.h"
 #include "device_instr/common/device_instr_struct_register.h"
+#include "device_instr/common/device_instr_struct_vector.h"
 
 #include <array>
 #include <cstddef>
@@ -32,6 +33,7 @@ struct Dav3510CoreKey {
 };
 
 struct Dav3510CoreRegisterState {
+    std::array<VaRegisterState, VA_REGISTER_COUNT> va{};
     std::optional<CtrlRegisterParamField> ctrl;
     std::array<std::optional<FmatrixParamField>, MATRIX_REGISTER_BANK_COUNT> fmatrix{}; // normal / _B register banks
     std::array<std::optional<L3dRptParamField>, MATRIX_REGISTER_BANK_COUNT> l3dRpt{};
@@ -52,6 +54,8 @@ class Dav3510RegisterStateManager final {
 public:
     explicit Dav3510RegisterStateManager(uint64_t launchId) noexcept;
 
+    void Update(const Dav3510CoreKey& key, const MoveVaParamField& params) noexcept;
+    void Update(const Dav3510CoreKey& key, const LdvaParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const CtrlRegisterParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const VectorMaskParamField& params) noexcept;
     void Update(const Dav3510CoreKey& key, const VectorMaskWriteParamField& params) noexcept;

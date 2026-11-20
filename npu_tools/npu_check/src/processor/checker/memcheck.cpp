@@ -9,6 +9,7 @@
  */
 
 #include "checker/memcheck.h"
+#include "checker/memory_access_mode.h"
 #include "checker/memory_access_layout.h"
 #include "diagnostic/pipeline_name.h"
 #include "simt_memory_record.h"
@@ -160,6 +161,70 @@ void SetDistance(
     report.distanceKind = NpuCheckReportDistanceKind::INSIDE;
 }
 
+const char* UbRegionName(UbRegionKind kind)
+{
+    switch (kind) {
+        case UbRegionKind::USER:
+            return "USER";
+        case UbRegionKind::STATIC:
+            return "STATIC";
+        case UbRegionKind::DYNAMIC:
+            return "DYNAMIC";
+        case UbRegionKind::RESERVED:
+            return "RESERVED";
+        case UbRegionKind::SIMD_FORBIDDEN:
+            return "SIMD_FORBIDDEN";
+    }
+    return "UNKNOWN";
+}
+
+std::string UbAddressRegion(const UbLayout* layout, uint64_t address)
+{
+    if (address >= UB_CAPACITY) {
+        return "OUTSIDE_UB";
+    }
+    const auto region = layout != nullptr ? layout->Find(address) : std::nullopt;
+    return region.has_value() ? UbRegionName(region->kind) : "UNKNOWN";
+}
+
+NpuCheckReportUbContext DescribeUbViolation(
+    const UbLayout* layout, uint64_t operandAddress, uint64_t address, uint64_t bytes)
+{
+    NpuCheckReportUbContext context;
+    context.capacityBytes = UB_CAPACITY;
+    context.operandAddress = operandAddress;
+    context.fragmentBytes = bytes;
+    context.originRegion = UbAddressRegion(layout, operandAddress);
+    if (layout != nullptr) {
+        context.kernelVfType = layout->kernelVfType;
+        for (const auto& region : layout->regions) {
+            context.regions.push_back({UbRegionName(region.kind), region.begin, region.end});
+        }
+    }
+    // Match the classifier's physical-capacity precedence, including unknown layouts.
+    if (operandAddress >= UB_CAPACITY || address >= UB_CAPACITY || bytes > UB_CAPACITY - address) {
+        const bool fragmentOutside = address >= UB_CAPACITY || bytes > UB_CAPACITY - address;
+        // Negative strides may move the reported fragment below the operand base.
+        // If this fragment is inside UB, only the invalid original base is known.
+        context.firstInvalidAddress = fragmentOutside ? std::max(address, UB_CAPACITY) : operandAddress;
+        context.boundaryAddress = UB_CAPACITY;
+        context.invalidRegion = "OUTSIDE_UB";
+        return context;
+    }
+    const auto origin = layout != nullptr ? layout->Find(operandAddress) : std::nullopt;
+    if (origin.has_value() && !origin->AllowsSimdAccess()) {
+        context.violation = NpuCheckReportUbViolation::FORBIDDEN_REGION;
+        context.firstInvalidAddress = operandAddress;
+    } else if (origin.has_value()) {
+        context.violation = NpuCheckReportUbViolation::OUTSIDE_REGION;
+        context.boundaryAddress = address < origin->begin ? origin->begin : origin->end;
+        // A strided access reports its actual fragment, never an unaccessed hole.
+        context.firstInvalidAddress = address < origin->begin ? address : std::max(address, origin->end);
+    }
+    context.invalidRegion = UbAddressRegion(layout, context.firstInvalidAddress);
+    return context;
+}
+
 } // namespace
 
 void Memcheck::OnAllocation(const AclsanResourceData& data)
@@ -219,7 +284,9 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
         allocations = allocation == snapshot->second.allocations.end() ? &empty : &allocation->second;
     }
     RangeResult range{};
-    if (capacity != 0) {
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+        range = analysis_->ClassifyUbRange(data, address, bytes);
+    } else if (capacity != 0) {
         range.status =
             address <= capacity && bytes <= capacity - address ? RangeStatus::VALID : RangeStatus::OUT_OF_BOUNDS;
         range.allocation = Allocation{0, 0, capacity, data.header.deviceId, 0, 0};
@@ -230,7 +297,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     if (range.status == RangeStatus::VALID) {
         return {};
     }
-    if (analysis_->Managed() && range.status == RangeStatus::AMBIGUOUS) {
+    if (range.status == RangeStatus::AMBIGUOUS) {
         ++stats_.droppedDeviceOperations;
         return {};
     }
@@ -255,6 +322,10 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     report.access.address = address;
     report.access.rangeBegin = address;
     report.access.rangeEnd = RangeEnd(address, bytes).value_or(std::numeric_limits<uint64_t>::max());
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+        report.ubContext =
+            DescribeUbViolation(analysis_->FindUbLayout(data.header.launchId), data.address, address, bytes);
+    }
 
     report.allocation = ToReportAllocation(range.allocation);
     const auto nearest = range.allocation ? range.allocation : allocations->Nearest(data.header.deviceId, address);
@@ -269,7 +340,16 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
 
 std::vector<NpuCheckMemcheckReport> Memcheck::QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data)
 {
-    // ATOMIC_CONFIG_UNKNOWN does not affect bounds; ESTIMATED makes the range uncertain.
+    if (data.header.size < sizeof(data)) {
+        ++stats_.droppedDeviceOperations;
+        return {};
+    }
+    // SIMT memory belongs to the SIMT checker, not the SIMD adapter.
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB && IsSimtMemoryInstruction(data.instructionId)) {
+        return {};
+    }
+    // 原子配置未知但范围已还原的 WRITE 仍按普通写检查边界。
+    // ATOMIC_CONFIG_UNKNOWN 不影响 Memcheck；ESTIMATED 表示访问范围也不精确。
     if ((data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0) {
         ++stats_.inexactDeviceOperations;
         return {};
@@ -278,9 +358,6 @@ std::vector<NpuCheckMemcheckReport> Memcheck::QueueDeviceMemoryAccess(const Acls
         return {};
     }
     ++stats_.deviceOperations;
-    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
-        return {};
-    }
     if (!analysis_->Managed()) {
         pendingDeviceAccesses_.push_back(data);
         stats_.pendingDeviceOperations = pendingDeviceAccesses_.size();
@@ -355,7 +432,8 @@ void Memcheck::QueueSimtMemoryAccess(const SimtMemoryAccessRecord& record)
 std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
     const AclsanDeviceMemoryAccessData& data, uint64_t groupId)
 {
-    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB && data.layoutKind == ACLSAN_MEM_LAYOUT_RANGE &&
+        data.layout.range.bytes == 0) {
         return {};
     }
     const auto markIncomplete = [this]() {
@@ -364,7 +442,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
     };
 
     NpuCheckReportAccessMode accessMode;
-    switch (data.accessMode) {
+    switch (NormalizeMemoryAccessMode(data.accessMode)) {
         case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
             accessMode = NpuCheckReportAccessMode::READ;
             break;

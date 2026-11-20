@@ -1184,6 +1184,7 @@ TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmWrites)
         for (uint64_t address : {0x1000u, 0x2000u}) {
             SCOPED_TRACE(::testing::Message() << "id=" << id << " address=" << address);
             ParsedTraceRecord parsed{};
+            parsed.launchId = 1;
             parsed.record.instrId = id;
             parsed.record.args[0] = address;
             parsed.instrExecId = 23;
@@ -1214,6 +1215,15 @@ TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmWrites)
             allocation.resourceId = 1;
             allocation.memorySpace = ACLSAN_MEMORY_SPACE_DEVICE;
             checker.OnAllocation(allocation);
+            // UB->GM checks both endpoints, so provide the source UB layout.
+            AclsanLaunchData launch{};
+            launch.common = {ACLSAN_API_VERSION, sizeof(launch)};
+            launch.launchId = parsed.launchId;
+            launch.ubMetadataValid = 1;
+            launch.kernelVfType = ACLSAN_KERNEL_VF_TYPE_NO_VF;
+            npucheck::CheckerReportList launchReports;
+            ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, launchReports));
+            ASSERT_TRUE(launchReports.empty());
             for (const auto& access : accesses) {
                 if (access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
                     const uint32_t expectedFlags =
@@ -1231,6 +1241,7 @@ TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmWrites)
             const auto reports = checker.OnSynchronization();
             ASSERT_EQ(reports.size(), address == 0x2000 ? 1u : 0u);
             if (!reports.empty()) {
+                EXPECT_EQ(reports[0].access.memorySpace, npucheck::NpuCheckReportMemorySpace::GM);
                 EXPECT_EQ(reports[0].access.accessMode, npucheck::NpuCheckReportAccessMode::WRITE);
                 EXPECT_EQ(reports[0].access.address, address);
             }

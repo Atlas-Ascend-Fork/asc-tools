@@ -53,6 +53,43 @@ bool ValidateReportCommon(
     return true;
 }
 
+void PutUbContextFields(const NpuCheckMemcheckReport& report, ReportFields& fields)
+{
+    fields["ubContext"] = "";
+    if (report.access.memorySpace != NpuCheckReportMemorySpace::UB || !report.ubContext.has_value()) {
+        return;
+    }
+    const auto& ub = *report.ubContext;
+    std::string layout = "UB layout";
+    if (ub.kernelVfType == ACLSAN_KERNEL_VF_TYPE_UNKNOWN) {
+        layout += ": UNKNOWN; physical UB [0x0, 0x" + Hex(ub.capacityBytes) + ")";
+    } else {
+        layout += " (type " + std::to_string(ub.kernelVfType) + "): ";
+        for (size_t i = 0; i < ub.regions.size(); ++i) {
+            const auto& region = ub.regions[i];
+            layout += (i == 0 ? "" : ", ") + region.name + " [0x" + Hex(region.begin) + ", 0x" + Hex(region.end) + ")";
+        }
+    }
+    std::string violation;
+    if (ub.violation == NpuCheckReportUbViolation::FORBIDDEN_REGION) {
+        violation = "operand starts in " + ub.originRegion;
+    } else if (ub.violation == NpuCheckReportUbViolation::OUTSIDE_REGION) {
+        violation = "outside " + ub.originRegion + " (boundary 0x" + Hex(ub.boundaryAddress) + ")";
+    } else {
+        violation = "outside physical UB (end 0x" + Hex(ub.capacityBytes) + ")";
+    }
+    violation += "; first invalid address 0x" + Hex(ub.firstInvalidAddress) + " in " + ub.invalidRegion;
+    const auto address = report.access.address;
+    const std::string end =
+        ub.fragmentBytes > UINT64_MAX - address ? "overflow" : "0x" + Hex(address + ub.fragmentBytes);
+    fields["ubLayout"] = layout;
+    fields["ubViolation"] = violation;
+    fields["ubOperandAddress"] = Hex(ub.operandAddress);
+    fields["ubContext"] = "\n=========     " + layout + "\n=========     UB access: operand=0x" +
+                          Hex(ub.operandAddress) + ", fragment=[0x" + Hex(address) + ", " + end +
+                          "); origin=" + ub.originRegion + "\n=========     UB violation: " + violation;
+}
+
 ReportRecord ToReportRecord(const NpuCheckMemcheckReport& report)
 {
     ReportFields fields;
@@ -77,6 +114,7 @@ ReportRecord ToReportRecord(const NpuCheckMemcheckReport& report)
     fields["apiErrorName"] = report.apiErrorName;
     fields["apiErrorCode"] = std::to_string(report.apiErrorCode);
     fields["apiErrorMessage"] = report.apiErrorMessage;
+    PutUbContextFields(report, fields);
     if (report.common.pattern == NpuCheckReportPattern::MEMCHECK_LEAK) {
         fields["space"] = MemorySpaceName(report.allocation.memorySpace);
     }
@@ -112,6 +150,15 @@ ReportRecord ToReportRecord(const NpuCheckInitcheckReport& report)
     fields["registerName"] = report.registerName;
     fields["setterInstruction"] = report.setterInstruction;
     fields["consumerInstruction"] = report.consumerInstruction;
+    if (report.access.memorySpace == NpuCheckReportMemorySpace::UB &&
+        report.allocation.bytes <= UINT64_MAX - report.allocation.base) {
+        const auto location = fields.find("location");
+        if (location != fields.end()) {
+            location->second = "UB address space: [0x" + Hex(report.allocation.base) + ", 0x" +
+                               Hex(report.allocation.base + report.allocation.bytes) +
+                               ")\n=========     " + location->second;
+        }
+    }
     if (report.common.pattern == NpuCheckReportPattern::INITCHECK_UNUSED_MEMORY) {
         fields["space"] = MemorySpaceName(report.allocation.memorySpace);
     }

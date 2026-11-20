@@ -51,6 +51,14 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
         reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), 0UL, 0UL, 0UL);
 }
 
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_moveva(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t index, uint64_t entry, uint64_t xn, uint64_t xm)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::RegisterState, static_cast<uint16_t>(PIPE_V), 416, index,
+        entry, xn, xm, 0UL);
+}
+
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_ldva(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, uint64_t src, uint64_t h)
 {

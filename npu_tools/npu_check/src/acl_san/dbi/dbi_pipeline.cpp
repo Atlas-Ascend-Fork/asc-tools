@@ -20,7 +20,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
-#include <cstring>
 #include <cstdlib>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>

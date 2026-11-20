@@ -1010,6 +1010,42 @@ TEST(VfRacecheck, ManagedAnalysisSharesVfGraphAndRetainsUbAccesses)
     EXPECT_EQ(h.analysis->GraphBuilds(), 1U);
 }
 
+TEST(VfRacecheck, ManagedRacecheckRetainsDmaAccessesAroundVf)
+{
+    for (bool writerFirst : {false, true}) {
+        for (bool synchronized : {false, true}) {
+            Harness h({}, true);
+            auto dma = Access(writerFirst ? 1 : 20, 0, 0, VST, 1);
+            dma.vfInstrValid = 0;
+            dma.instructionId = 0;
+            dma.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+            dma.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
+            if (writerFirst) {
+                h.Add(dma);
+            } else {
+                h.Add(Access(10, 0, 0, VLD, 1));
+                h.Complete(10, 1, 1);
+            }
+            if (synchronized) {
+                const auto src = writerFirst ? ACLSAN_DEVICE_PIPE_MTE2 : ACLSAN_DEVICE_PIPE_VECTOR;
+                const auto dst = writerFirst ? ACLSAN_DEVICE_PIPE_VECTOR : ACLSAN_DEVICE_PIPE_MTE2;
+                h.Flag(writerFirst ? 2 : 11, ACLSAN_DEVICE_SYNC_ACTION_SET, src, dst);
+                h.Flag(writerFirst ? 3 : 12, ACLSAN_DEVICE_SYNC_ACTION_WAIT, src, dst);
+            }
+            if (writerFirst) {
+                h.Add(Access(10, 0, 0, VLD, 1));
+                h.Complete(10, 1, 1);
+            } else {
+                h.Add(dma);
+            }
+            h.End();
+            ASSERT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+            EXPECT_EQ(h.reports.empty(), synchronized) << "writerFirst=" << writerFirst << " " << h.checker.Summary();
+            EXPECT_EQ(h.analysis->GraphBuilds(), 1U);
+        }
+    }
+}
+
 TEST(VfRacecheck, SequenceGapsDoNotImplyMissingEvents)
 {
     Harness h;

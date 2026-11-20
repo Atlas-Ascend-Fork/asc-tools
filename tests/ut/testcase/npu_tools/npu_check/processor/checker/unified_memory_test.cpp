@@ -148,6 +148,24 @@ TEST(UnifiedMemoryTest, AllocationIsAppliedOnceAndPagesAreLazy)
     EXPECT_EQ(s.analysis->state->initialized.Find({0, 0}), nullptr);
     EXPECT_EQ(s.analysis->state->Allocations().Classify(0, 0x10000, 4096).status, RangeStatus::VALID);
 }
+TEST(UnifiedMemoryTest, UnknownUbLayoutDoesNotSuppressAnIndependentGmRead)
+{
+    Session s;
+    s.raceEnabled = false;
+    s.Allocate();
+    s.Launch(1);
+    s.Memory(
+        1, 1, ACLSAN_DEVICE_PIPE_VECTOR, ACLSAN_DEVICE_MEMORY_SPACE_UB, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 128, 32);
+    s.Sync();
+    EXPECT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
+    ASSERT_TRUE(s.reports.empty());
+
+    s.Transfer(ACLSAN_MEMORY_TRANSFER_DEVICE_TO_HOST, 0x10000, 0x20000, 4);
+    ASSERT_EQ(s.reports.size(), 1U);
+    const auto& report = std::get<NpuCheckInitcheckReport>(s.reports.front());
+    EXPECT_EQ(report.common.pattern, NpuCheckReportPattern::INITCHECK_API_READ_UNINITIALIZED);
+    EXPECT_EQ(report.uninitBytes, 4U);
+}
 TEST(UnifiedMemoryTest, UnitFlagReusesOneGraphForBothCheckers)
 {
     Session s;
@@ -378,14 +396,15 @@ TEST(UnifiedMemoryTest, CheckerSelectionAndOrderDoNotChangeBoundsOrInitializatio
         EXPECT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
     }
 }
-TEST(UnifiedMemoryTest, UbInitializationIsIgnored)
+TEST(UnifiedMemoryTest, UbInitializationDoesNotRequireLayout)
 {
     Session s;
     s.Launch(1);
     s.Memory(1, 1, ACLSAN_DEVICE_PIPE_VECTOR, ACLSAN_DEVICE_MEMORY_SPACE_UB, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0, 128);
     s.Memory(1, 2, ACLSAN_DEVICE_PIPE_VECTOR, ACLSAN_DEVICE_MEMORY_SPACE_UB, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 0, 256);
     s.Sync();
-    EXPECT_TRUE(s.reports.empty());
+    ASSERT_EQ(s.reports.size(), 1U);
+    EXPECT_EQ(std::get<NpuCheckInitcheckReport>(s.reports.front()).uninitBytes, 128U);
     EXPECT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
 }
 
@@ -421,7 +440,7 @@ TEST(UnifiedMemoryTest, VfUbAccessDoesNotHideUninitializedGmRead)
     s.Send(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF, completion);
     s.Sync();
     ASSERT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
-    ASSERT_EQ(s.reports.size(), 1U);
+    ASSERT_EQ(s.reports.size(), 2U);
     EXPECT_EQ(std::get<NpuCheckInitcheckReport>(s.reports.front()).firstUninitAddress, 0x10000U);
 }
 TEST(UnifiedMemoryTest, ReversedCheckersShareKernelWriteWithoutInitcheckEnabled)
@@ -918,7 +937,7 @@ AclsanDeviceMemoryAccessData LocalCopyOperand(uint32_t index, uint32_t space, ui
     return data;
 }
 
-TEST(UnifiedMemoryTest, IgnoredUbOperandKeepsGmFragmentsComplete)
+TEST(UnifiedMemoryTest, UbOperandKeepsGmFragmentsComplete)
 {
     Session s;
     s.Allocate();

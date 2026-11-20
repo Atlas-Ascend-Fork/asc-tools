@@ -153,9 +153,9 @@ TEST(UbMemory, UbToUbDecodesAndGeneratesIndependentReadAndWrite)
     }
 }
 
-TEST(UbMemory, OtherVectorIdsRemainUndecoded)
+TEST(UbMemory, UnknownVectorIdsRemainUndecoded)
 {
-    for (uint32_t id : {175u, 176u, 177u, 178u, 417u, 418u, 419u, 420u, 421u}) {
+    for (uint32_t id : {483u, 484u, 485u}) {
         AclsanRawTraceRecord raw{};
         raw.instrId = id;
         EXPECT_FALSE(dav3510::GetDeviceInstructionDecoder().decode(raw));

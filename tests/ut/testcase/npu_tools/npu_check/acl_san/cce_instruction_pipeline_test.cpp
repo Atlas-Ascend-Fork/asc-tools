@@ -100,6 +100,28 @@ void TestUnknownInstructionReturnsNoDecodedResult()
     assert(!decoder->decode(record).has_value());
 }
 
+void ExpectOnlyIncompleteScalarAccess(
+    const aclsan::ParsedTraceRecord& parsed, const aclsan::DecodedInstruction& decoded)
+{
+    const auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, decoded);
+    ASSERT_TRUE(callback.has_value());
+    const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
+    ASSERT_NE(accesses, nullptr);
+    ASSERT_EQ(accesses->size(), 1U);
+    const auto& marker = accesses->front();
+    EXPECT_EQ(marker.header.flags, ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED);
+    EXPECT_EQ(marker.header.pc, parsed.record.pc);
+    EXPECT_EQ(marker.header.launchId, parsed.launchId);
+    EXPECT_EQ(marker.header.instrExecId, parsed.instrExecId);
+    EXPECT_EQ(marker.header.pipeline, ACLSAN_DEVICE_PIPE_SCALAR);
+    EXPECT_EQ(marker.instructionId, parsed.record.instrId);
+    EXPECT_EQ(marker.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN);
+    EXPECT_EQ(marker.accessMode, 0U);
+    EXPECT_EQ(marker.layoutKind, 0U);
+    EXPECT_EQ(marker.accessIndex, 0U);
+    EXPECT_EQ(marker.accessCount, 1U);
+}
+
 } // namespace
 
 TEST(CceInstructionPipeline, UbCopyProducesReadAndWriteWithSameExecutionIdentity)
@@ -191,7 +213,7 @@ TEST(CceInstructionPipeline, ScalarDevWidthsAndSignedByteOffsets)
     }
 }
 
-TEST(CceInstructionPipeline, ScalarDevRejectsAddressOverflow)
+TEST(CceInstructionPipeline, ScalarDevAddressOverflowPublishesOnlyIncompleteMarker)
 {
     const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
     ASSERT_NE(decoder, nullptr);
@@ -208,12 +230,16 @@ TEST(CceInstructionPipeline, ScalarDevRejectsAddressOverflow)
     for (uint32_t id : {64U, 68U}) {
         for (const auto& test : cases) {
             aclsan::ParsedTraceRecord parsed{};
+            parsed.launchId = 9;
+            parsed.instrExecId = 11;
+            parsed.record.pc = 0x200;
+            parsed.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
             parsed.record.instrId = id;
             parsed.record.args[0] = test.address;
             parsed.record.args[1] = static_cast<uint64_t>(test.offset);
             const auto decoded = decoder->decode(parsed.record);
             ASSERT_TRUE(decoded.has_value());
-            EXPECT_FALSE(aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded).has_value());
+            ExpectOnlyIncompleteScalarAccess(parsed, *decoded);
         }
     }
 }
@@ -288,7 +314,7 @@ TEST(CceInstructionPipeline, ScalarAtomicWithoutConfigurationPublishesOrdinaryWr
     }
 }
 
-TEST(CceInstructionPipeline, ScalarAtomicRejectsUnsupportedPostAndOverflow)
+TEST(CceInstructionPipeline, ScalarAtomicInvalidPostAndOverflowPublishOnlyIncompleteMarker)
 {
     const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
     ASSERT_NE(decoder, nullptr);
@@ -304,6 +330,10 @@ TEST(CceInstructionPipeline, ScalarAtomicRejectsUnsupportedPostAndOverflow)
         for (const auto& test : rejected) {
             SCOPED_TRACE(::testing::Message() << "id=" << id << " post=" << test.post);
             aclsan::ParsedTraceRecord parsed{};
+            parsed.launchId = 9;
+            parsed.instrExecId = 11;
+            parsed.record.pc = 0x200;
+            parsed.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
             parsed.record.instrId = id;
             parsed.record.args[0] = test.address;
             parsed.record.args[1] = static_cast<uint64_t>(test.offset);
@@ -312,7 +342,7 @@ TEST(CceInstructionPipeline, ScalarAtomicRejectsUnsupportedPostAndOverflow)
             parsed.record.args[4] = aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
             const auto decoded = decoder->decode(parsed.record);
             ASSERT_TRUE(decoded.has_value());
-            EXPECT_FALSE(aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded).has_value());
+            ExpectOnlyIncompleteScalarAccess(parsed, *decoded);
         }
     }
 }

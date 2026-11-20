@@ -31,12 +31,21 @@ if(ENABLE_TEST)
     "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/kernel_param_metadata_test.cpp"
     "${NPU_CHECK_DBI_SOURCE_DIR}/kernel_param_metadata.cpp"
+    "${SANITIZER_API_SOURCE_DIR}/device_runtime/device_binary_registry.cpp"
+    "${SANITIZER_API_SOURCE_DIR}/device_runtime/device_symbolizer.cpp"
+    "${SANITIZER_API_SOURCE_DIR}/aclsan_vf.cpp"
+    "${CMAKE_SOURCE_DIR}/npu_tools/utils/security/file_io.cpp"
   )
   target_compile_features(npu_check_dbi_kernel_param_metadata_tests PRIVATE cxx_std_17)
   target_compile_options(npu_check_dbi_kernel_param_metadata_tests PRIVATE -UNDEBUG -Wall -Wextra -Werror)
   target_compile_definitions(npu_check_dbi_kernel_param_metadata_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
-  target_include_directories(npu_check_dbi_kernel_param_metadata_tests PRIVATE "${NPU_CHECK_DBI_INCLUDE_DIR}")
-  target_link_libraries(npu_check_dbi_kernel_param_metadata_tests PRIVATE Threads::Threads GTest::gtest)
+  target_include_directories(npu_check_dbi_kernel_param_metadata_tests PRIVATE
+    "${NPU_CHECK_DBI_INCLUDE_DIR}"
+    "${SANITIZER_API_SOURCE_DIR}/../../include"
+    "${CMAKE_SOURCE_DIR}/npu_tools/utils/security")
+  target_link_libraries(npu_check_dbi_kernel_param_metadata_tests PRIVATE
+    injection_headers npu_sanitizer_plog c_sec_static npu_bit
+    Threads::Threads GTest::gtest Boost::filesystem)
   add_test(NAME npu_check_dbi_kernel_param_metadata COMMAND npu_check_dbi_kernel_param_metadata_tests)
 
   add_executable(npu_check_dbi_integration_tests

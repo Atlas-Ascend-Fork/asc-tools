@@ -32,6 +32,74 @@ constexpr uint64_t BOOLEAN_MAX_VALUE = 1U;
 
 constexpr uint32_t RawId(InstructionId instructionId) noexcept { return static_cast<uint32_t>(instructionId); }
 
+DecodedInstruction DecodeVtranspose(const AclsanRawTraceRecord& record) noexcept
+{
+    return {DeviceInstructionKind::Vtranspose, VtransposeParamField{record.instrId, record.args[0], record.args[1]}};
+}
+
+DecodedInstruction DecodeVbs32(const AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
+{
+    return {
+        DeviceInstructionKind::Vbs32,
+        Vbs32ParamField{record.instrId, dataBits, record.args[0], record.args[1], record.args[2], record.args[3]}};
+}
+
+DecodedInstruction DecodeVmrgsort(const AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
+{
+    return {
+        DeviceInstructionKind::Vmrgsort,
+        VmrgsortParamField{record.instrId, dataBits, record.args[0], record.args[1], record.args[2], record.args[3]}};
+}
+
+std::optional<DecodedInstruction> DecodeVnchwconv(const AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
+{
+    if (record.args[0] >= VA_REGISTER_COUNT || record.args[1] >= VA_REGISTER_COUNT || (record.args[0] & 1U) != 0 ||
+        (record.args[1] & 1U) != 0) {
+        return std::nullopt;
+    }
+    VnchwconvParamField f{};
+    f.instrId = record.instrId;
+    f.dataBits = dataBits;
+    f.dstVaIndex = static_cast<uint32_t>(record.args[0]);
+    f.srcVaIndex = static_cast<uint32_t>(record.args[1]);
+    f.config = record.args[2];
+    if (dataBits == DATA_BITS_B8) {
+        if (record.args[3] > 1 || record.args[4] > 1) {
+            return std::nullopt;
+        }
+        f.dstHighHalf = record.args[3] != 0;
+        f.srcHighHalf = record.args[4] != 0;
+    }
+    return DecodedInstruction{DeviceInstructionKind::Vnchwconv, f};
+}
+
+template <auto DecodeFamily, uint32_t dataBits>
+std::optional<DecodedInstruction> DecodeVectorUb(const AclsanRawTraceRecord& record) noexcept
+{
+    return DecodeFamily(record, dataBits);
+}
+
+std::optional<DecodedInstruction> DecodeMoveVa(const AclsanRawTraceRecord& record) noexcept
+{
+    if (record.args[0] >= VA_REGISTER_COUNT || record.args[1] >= VA_ENTRY_COUNT || (record.args[1] & 1U) != 0) {
+        return std::nullopt;
+    }
+    return DecodedInstruction{
+        DeviceInstructionKind::MoveVa, MoveVaParamField{
+                                           static_cast<uint32_t>(record.args[0]), static_cast<uint32_t>(record.args[1]),
+                                           record.args[2], record.args[3]}};
+}
+
+std::optional<DecodedInstruction> DecodeLdva(const AclsanRawTraceRecord& record) noexcept
+{
+    if (record.args[0] >= VA_REGISTER_COUNT || record.args[2] > 1) {
+        return std::nullopt;
+    }
+    return DecodedInstruction{
+        DeviceInstructionKind::Ldva,
+        LdvaParamField{static_cast<uint32_t>(record.args[0]), record.args[1], record.args[2] != 0}};
+}
+
 template <typename ParamField>
 ParamField DecodeMovAlignV2Params(const aclsan::AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
 {
@@ -952,7 +1020,25 @@ constexpr DecodeTable MakeDecodeTable() noexcept
     return table;
 }
 
-constexpr auto DECODE_TABLE = MakeDecodeTable();
+constexpr auto DECODE_TABLE = [] {
+    auto table = MakeDecodeTable();
+    RegisterDecoders(
+        table,
+        [](const AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeVtranspose(record);
+        },
+        InstructionId::VtransposeB16);
+    RegisterDecoders(table, DecodeVectorUb<DecodeVnchwconv, DATA_BITS_B8>, InstructionId::ScatterVnchwconvB8);
+    RegisterDecoders(table, DecodeVectorUb<DecodeVnchwconv, DATA_BITS_B16>, InstructionId::ScatterVnchwconvB16);
+    RegisterDecoders(table, DecodeVectorUb<DecodeVnchwconv, DATA_BITS_B32>, InstructionId::ScatterVnchwconvB32);
+    RegisterDecoders(table, DecodeVectorUb<DecodeVbs32, DATA_BITS_B16>, InstructionId::Vbs32F16);
+    RegisterDecoders(table, DecodeVectorUb<DecodeVbs32, DATA_BITS_B32>, InstructionId::Vbs32F32);
+    RegisterDecoders(table, DecodeVectorUb<DecodeVmrgsort, DATA_BITS_B16>, InstructionId::VmrgsortF16);
+    RegisterDecoders(table, DecodeVectorUb<DecodeVmrgsort, DATA_BITS_B32>, InstructionId::VmrgsortF32);
+    RegisterDecoders(table, DecodeMoveVa, InstructionId::MoveVa);
+    RegisterDecoders(table, DecodeLdva, InstructionId::Ldva);
+    return table;
+}();
 
 std::optional<DecodedInstruction> DecodeRegisteredInstruction(const aclsan::AclsanRawTraceRecord& record) noexcept
 {

@@ -394,6 +394,9 @@ static const BindingSpec ALL_BINDINGS[] = {
      "__npu_check_probe_scatter_vnchwconv_b8",
      {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3, PROBE_ARGUMENT_4}},
     {InstrType::VTRANSPOSE_B16, "__npu_check_probe_vtranspose", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1}},
+    {InstrType::MOVEVA,
+     "__npu_check_probe_moveva",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
     {InstrType::LDVA, "__npu_check_probe_ldva", {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
     {InstrType::VBS32_F16,
      "__npu_check_probe_vbs32_f16",
@@ -437,6 +440,7 @@ static const BindingSpec ALL_BINDINGS[] = {
     {InstrType::LD_B32_IMM, "__npu_check_probe_ld_b32_imm", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
     {InstrType::LD_B16_IMM, "__npu_check_probe_ld_b16_imm", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
     {InstrType::LD_B8_IMM, "__npu_check_probe_ld_b8_imm", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
+    // LD_REG operands 1, 2 and 3 provide the base address, register offset and post-index flag.
     {InstrType::LD_B64_REG, "__npu_check_probe_ld_b64_reg", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
     {InstrType::LD_B32_REG, "__npu_check_probe_ld_b32_reg", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
     {InstrType::LD_B16_REG, "__npu_check_probe_ld_b16_reg", {PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3}},
@@ -725,6 +729,7 @@ static constexpr BindingGroupSpec BINDING_GROUPS[] = {
      }},
     {ProbeGroup::Vector,
      {
+         InstrType::SIMT_CALL,
          InstrType::VF,
          InstrType::PUSH_PB,
          InstrType::MOVEMASK,
@@ -733,6 +738,7 @@ static constexpr BindingGroupSpec BINDING_GROUPS[] = {
          InstrType::SCATTER_VNCHWCONV_B32,
          InstrType::SCATTER_VNCHWCONV_B8,
          InstrType::VTRANSPOSE_B16,
+         InstrType::MOVEVA,
          InstrType::LDVA,
          InstrType::VBS32_F16,
          InstrType::VBS32_F32,
@@ -764,11 +770,12 @@ aclsan::ProbeGroup BindingGroup(const BindingSpec& binding)
     return ProbeGroup::Sync;
 }
 
-bool IsSelected(const BindingSpec& binding)
+bool IsSelected(const BindingSpec& binding, const std::vector<aclsan::ProbeGroup>& groups)
 {
-    return g_selectedGroups == nullptr ||
-           std::find(g_selectedGroups->begin(), g_selectedGroups->end(), BindingGroup(binding)) !=
-               g_selectedGroups->end();
+    // SIMT_CALL is shared by SIMD VF PB tracking and SIMT invocation tracking.
+    return std::find(groups.begin(), groups.end(), BindingGroup(binding)) != groups.end() ||
+           (binding.instrType == InstrType::SIMT_CALL &&
+            std::find(groups.begin(), groups.end(), ProbeGroup::Vector) != groups.end());
 }
 
 bool ValidateBindings(const std::vector<aclsan::ProbeGroup>& groups, std::string& diagnostic)
@@ -776,7 +783,7 @@ bool ValidateBindings(const std::vector<aclsan::ProbeGroup>& groups, std::string
     std::set<uint16_t> instrIds;
     std::set<std::string> symbols;
     for (const auto& binding : ALL_BINDINGS) {
-        if (std::find(groups.begin(), groups.end(), BindingGroup(binding)) == groups.end()) {
+        if (!IsSelected(binding, groups)) {
             continue;
         }
         const uint16_t instrId = static_cast<uint16_t>(binding.instrType);
@@ -797,7 +804,7 @@ bool ValidateBindings(const std::vector<aclsan::ProbeGroup>& groups, std::string
 extern "C" void RegisterCtrlbinBindings()
 {
     for (const auto& binding : ALL_BINDINGS) {
-        if (IsSelected(binding)) {
+        if (g_selectedGroups == nullptr || IsSelected(binding, *g_selectedGroups)) {
             RegisterCtrlbinBinding(binding.instrType, binding.stubName, binding.paraMask);
         }
     }
@@ -816,7 +823,7 @@ std::vector<std::string> BindingSymbols(const std::vector<ProbeGroup>& groups)
     std::vector<std::string> symbols;
     const auto selected = NormalizeBindingGroups(groups);
     for (const auto& binding : ALL_BINDINGS) {
-        if (std::find(selected.begin(), selected.end(), BindingGroup(binding)) != selected.end()) {
+        if (IsSelected(binding, selected)) {
             symbols.emplace_back(binding.stubName);
         }
     }

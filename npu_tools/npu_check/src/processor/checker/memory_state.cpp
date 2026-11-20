@@ -9,6 +9,7 @@
  */
 
 #include "checker/memory_state.h"
+#include "dbi/trace_buffer_abi.h"
 #include <algorithm>
 #include <stdexcept>
 namespace npucheck {
@@ -266,9 +267,9 @@ L0CInitStateTable::L0CInitStateTable() : LocalInitStateTable(kCapacity) {}
 uint64_t InitStateTableIndex::LocalCapacity(uint32_t space)
 {
     switch (space) {
-        // Ascend950 platform_config: ub_size=253952 bytes (248 KiB).
+        // Initcheck tracks the full physical UB independently of memcheck partitions.
         case ACLSAN_DEVICE_MEMORY_SPACE_UB:
-            return 248U * 1024U;
+            return aclsan::DAV3510_UB_CAPACITY_BYTES;
         case ACLSAN_DEVICE_MEMORY_SPACE_L0A:
         case ACLSAN_DEVICE_MEMORY_SPACE_L0B:
             return 64U * 1024U;

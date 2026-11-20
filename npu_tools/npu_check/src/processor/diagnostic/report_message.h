@@ -12,6 +12,7 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_REPORT_MESSAGE_H
 
 #include "acl_san/aclsan_cbdata_device.h"
+#include "acl_san/aclsan_cbdata_launch.h"
 
 #include <array>
 #include <optional>
@@ -358,6 +359,27 @@ struct NpuCheckSocStateRef {
     std::uint64_t observedValue = 0;
 };
 
+struct NpuCheckReportUbRegion {
+    std::string name;
+    std::uint64_t begin = 0;
+    std::uint64_t end = 0;
+};
+
+enum class NpuCheckReportUbViolation { OUTSIDE_PHYSICAL_UB, OUTSIDE_REGION, FORBIDDEN_REGION };
+
+struct NpuCheckReportUbContext {
+    std::uint32_t kernelVfType = ACLSAN_KERNEL_VF_TYPE_UNKNOWN;
+    std::uint64_t capacityBytes = 0;
+    std::vector<NpuCheckReportUbRegion> regions;
+    std::uint64_t operandAddress = 0;
+    std::uint64_t fragmentBytes = 0;
+    std::string originRegion;
+    std::string invalidRegion;
+    std::uint64_t firstInvalidAddress = 0;
+    std::uint64_t boundaryAddress = 0;
+    NpuCheckReportUbViolation violation = NpuCheckReportUbViolation::OUTSIDE_PHYSICAL_UB;
+};
+
 struct NpuCheckMemcheckReport {
     NpuCheckReportCommon common;
     NpuCheckReportMemoryAccess access;
@@ -372,6 +394,7 @@ struct NpuCheckMemcheckReport {
     std::string apiName;
     std::string apiErrorName;
     std::string apiErrorMessage;
+    std::optional<NpuCheckReportUbContext> ubContext;
 };
 
 struct NpuCheckInitcheckReport {

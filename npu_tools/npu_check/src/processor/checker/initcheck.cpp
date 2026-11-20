@@ -10,6 +10,7 @@
 
 #include "checker/initcheck_padding.h"
 #include "checker/initcheck.h"
+#include "checker/memory_access_mode.h"
 #include "checker/initcheck_report.h"
 #include "checker/memory_access_layout.h"
 #include "device_instr/common/instruction_id.h"
@@ -233,8 +234,8 @@ InitCheckStatus CollectInstructionOperands(
         if (h.version != ACLSAN_API_VERSION || h.size < sizeof(access) || h.deviceId != scope.deviceId ||
             race::Key(access) != race::Key(accesses.front()) || h.pipeline > MAX_WRITER_PIPELINE ||
             access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
-            access.accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
-            access.accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
+            NormalizeMemoryAccessMode(access.accessMode) < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
+            NormalizeMemoryAccessMode(access.accessMode) > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
             return InitCheckStatus::INVALID_RECORD;
         }
         if (!IsCompleteInstructionAccess(access, accesses.size())) {
@@ -250,8 +251,9 @@ InitCheckStatus CollectInstructionOperands(
             access.predicateMask1 == 0)
             continue;
         Operand operand{&access, {}};
-        if (!ExpandRanges(access, operand.ranges))
+        if (!ExpandRanges(access, operand.ranges)) {
             return InitCheckStatus::INVALID_RECORD;
+        }
         operands.push_back(std::move(operand));
     }
     return InitCheckStatus::OK;
@@ -642,7 +644,8 @@ bool Initcheck::OnDeviceSync(AclsanCallbackId cbid, const void* data)
         replayReasons_[h.launchId].insert("sync_coverage_unknown");
         return true;
     }
-    if (!analysis_->Managed() && pendingSyncEvents_.size() >= analysis_->AnalysisLimits().events) {
+    if (!analysis_->Managed() && (pendingSyncEvents_.size() >= analysis_->AnalysisLimits().events ||
+                                  localBarriers_[h.launchId].size() >= analysis_->AnalysisLimits().events)) {
         replayReasons_[h.launchId].insert("event_budget");
         return true;
     }
@@ -652,6 +655,10 @@ bool Initcheck::OnDeviceSync(AclsanCallbackId cbid, const void* data)
             replayReasons_[h.launchId].insert("unsupported_sync_kind");
         if (!analysis_->Managed())
             pendingSyncEvents_.push_back(race::NormalizeSync(sync));
+    } else if (static_cast<const AclsanDeviceBarrierData*>(data)->barrierKind == ACLSAN_DEVICE_BARRIER_LOCAL_MEM) {
+        if (!analysis_->Managed()) {
+            localBarriers_[h.launchId].push_back(*static_cast<const AclsanDeviceBarrierData*>(data));
+        }
     } else {
         AclsanDeviceSyncData sync{};
         sync.header = h;
@@ -698,6 +705,16 @@ void Initcheck::FlushMemoryAccesses(uint64_t launchId, CheckerReportList& report
     for (const auto& entry : unitFlagRegisters_)
         if (selected(entry.first))
             batches[entry.first];
+    for (const auto& entry : localBarriers_) {
+        if (selected(entry.first)) {
+            batches[entry.first];
+        }
+    }
+    for (const auto& entry : vfCompletions_) {
+        if (selected(entry.first)) {
+            batches[entry.first];
+        }
+    }
     for (const auto& entry : replayReasons_)
         if (selected(entry.first))
             batches[entry.first];
@@ -724,6 +741,8 @@ void Initcheck::ClearLaunchReplayState(uint64_t launchId)
     launchStreams_.erase(launchId);
     replayReasons_.erase(launchId);
     unitFlagRegisters_.erase(launchId);
+    vfCompletions_.erase(launchId);
+    localBarriers_.erase(launchId);
     for (auto it = initializedRegisters_.begin(); it != initializedRegisters_.end();) {
         if (std::get<1>(it->first) == launchId) {
             it = initializedRegisters_.erase(it);
@@ -754,7 +773,8 @@ void Initcheck::CheckReplayEventBudget(
     if (memoryInvalid_)
         reasons.insert("malformed_memory_event");
     if (race::ExceedsBudget(
-            limits.LaunchEventBudget(), {memoryCount, syncCount, unitFlagRegisters_[launchId].size()})) {
+            limits.LaunchEventBudget(), {memoryCount, syncCount, unitFlagRegisters_[launchId].size(),
+                                         vfCompletions_[launchId].size(), localBarriers_[launchId].size()})) {
         if (reasons.insert("event_budget").second)
             ASCTOOL_WARNING(
                 "analysis budget: launch=%llu stage=events memory=%zu sync=%zu registers=%zu limit=%zu",
@@ -898,11 +918,13 @@ std::set<InvalidInstruction> CollectInvalidReplayInstructions(
         if (analysis.Managed())
             break;
         const auto* bounds = std::get_if<NpuCheckMemcheckReport>(&report);
-        if (bounds == nullptr || bounds->common.tool != ReportTool::MEMCHECK ||
+        if (bounds == nullptr || bounds->access.memorySpace == NpuCheckReportMemorySpace::UB ||
+            bounds->common.tool != ReportTool::MEMCHECK ||
             (bounds->common.flags & kNpuCheckReportCommonHasExecContext) == 0U ||
             (bounds->common.pattern != NpuCheckReportPattern::MEMCHECK_INVALID_ACCESS &&
-             bounds->common.pattern != NpuCheckReportPattern::MEMCHECK_USE_AFTER_FREE))
+             bounds->common.pattern != NpuCheckReportPattern::MEMCHECK_USE_AFTER_FREE)) {
             continue;
+        }
         const auto& exec = bounds->common.exec;
         if (exec.launchId == launchId)
             invalidInstructions.emplace(
@@ -925,9 +947,6 @@ ReplayAccessIndex IndexReplayAccesses(
     std::map<race::Storage, std::vector<size_t>> writers;
     for (size_t i = 0; i < accesses.size(); ++i) {
         const auto& a = accesses[i].data;
-        // UB operands remain in the dependency graph, but initcheck does not check UB bytes.
-        if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB)
-            continue;
         const auto& h = a.header;
         if (invalidInstructions.count(
                 {h.deviceId, h.launchId, h.executor.blockType, h.executor.blockId, h.executor.phyCoreId, h.instrExecId,
@@ -1272,8 +1291,9 @@ void Initcheck::ReplayLaunch(
         ownedDependency = std::make_unique<DependencyGraph>(limits);
         dependency = ownedDependency.get();
         if (reasons.empty()) {
-            std::vector<AclsanDeviceVfData> vfs;
-            BuildDependencyGraph(memory, sync, {}, limits, reasons, *dependency, unitFlagRegisters_[launchId], vfs, {});
+            BuildDependencyGraph(
+                memory, sync, {}, limits, reasons, *dependency, unitFlagRegisters_[launchId], vfCompletions_[launchId],
+                localBarriers_[launchId]);
         }
     }
     auto& graph = dependency->graph;
@@ -1341,9 +1361,6 @@ void Initcheck::ReplayLaunch(
 
 namespace {
 
-// Owner metadata is part of the required callback schema. Reject older,
-// shorter records before copying or consulting the appended owner extension.
-constexpr size_t kMemoryAccessDependencySize = sizeof(AclsanDeviceMemoryAccessData);
 static_assert(ACLSAN_DEVICE_REGISTER_COUNT < 64);
 constexpr uint64_t kSupportedRegisterMask = (UINT64_C(1) << static_cast<uint32_t>(ACLSAN_DEVICE_REGISTER_COUNT)) - 1;
 
@@ -1605,8 +1622,8 @@ static bool IsMissingRegisterPlaceholder(const AclsanDeviceMemoryAccessData& dat
 
 bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, CheckerReportList& reports)
 {
-    if (data.header.version != ACLSAN_API_VERSION || data.header.size < kMemoryAccessDependencySize ||
-        data.regDependencyMask1 != 0 || (data.regDependencyMask0 & ~kSupportedRegisterMask) != 0) {
+    if (data.header.version != ACLSAN_API_VERSION || data.header.size < sizeof(data) || data.regDependencyMask1 != 0 ||
+        (data.regDependencyMask0 & ~kSupportedRegisterMask) != 0) {
         ++stats_.malformedEvents;
         memoryInvalid_ = true;
         replayReasons_[data.header.launchId].insert("malformed_memory_event");
@@ -1615,13 +1632,6 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
     ++stats_.deviceOperations;
     if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0A || data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0B)
         ++l0Operations_;
-    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB) {
-        // UB and L1 operands now share the issuing core's instruction identity.
-        // Preserve multi-operand instructions for dependency-graph validation.
-        if (!analysis_->Managed() && data.accessCount > 1)
-            pendingMemoryAccesses_.push_back(data);
-        return true;
-    }
     const CoreKey core{
         data.header.deviceId, data.header.launchId, data.header.executor.blockType, data.header.executor.blockId};
     const uint64_t initialized = initializedRegisters_[core];
@@ -1682,9 +1692,30 @@ void Initcheck::OnSynchronization(const AclsanSynchronizeData& data)
         ++stats_.failedSynchronizations;
 }
 
+bool Initcheck::OnDeviceVf(const void* data)
+{
+    const auto* completion = static_cast<const AclsanDeviceVfData*>(data);
+    if (!completion || completion->header.version != ACLSAN_API_VERSION ||
+        completion->header.size < sizeof(*completion)) {
+        ++stats_.malformedEvents;
+        return false;
+    }
+    if (!analysis_->Managed()) {
+        auto& pending = vfCompletions_[completion->header.launchId];
+        if (pending.size() >= analysis_->AnalysisLimits().events) {
+            replayReasons_[completion->header.launchId].insert("event_budget");
+        } else {
+            pending.push_back(*completion);
+        }
+    }
+    return true;
+}
+
 bool Initcheck::OnDeviceCallback(AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
 {
     switch (cbid) {
+        case ACLSAN_CBID_DEVICE_VF:
+            return OnDeviceVf(data);
         case ACLSAN_CBID_DEVICE_SYNC:
         case ACLSAN_CBID_DEVICE_PIPE_BARRIER:
             if (!OnDeviceSync(cbid, data)) {
@@ -1778,9 +1809,9 @@ bool Initcheck::HasErrors() const { return stats_.errors != 0; }
 bool Initcheck::AnalysisComplete() const
 {
     return pendingLaunchStreams_.empty() && pendingMemoryAccesses_.empty() && pendingSyncEvents_.empty() &&
-           unitFlagRegisters_.empty() && replayReasons_.empty() && replayFailures_.empty() &&
-           stats_.malformedEvents == 0 && stats_.failedLaunches == 0 && stats_.failedSynchronizations == 0 &&
-           stats_.failedHostWrites == 0 && !memoryInvalid_;
+           unitFlagRegisters_.empty() && vfCompletions_.empty() && localBarriers_.empty() && replayReasons_.empty() &&
+           replayFailures_.empty() && stats_.malformedEvents == 0 && stats_.failedLaunches == 0 &&
+           stats_.failedSynchronizations == 0 && stats_.failedHostWrites == 0 && !memoryInvalid_;
 }
 
 std::string Initcheck::Summary() const

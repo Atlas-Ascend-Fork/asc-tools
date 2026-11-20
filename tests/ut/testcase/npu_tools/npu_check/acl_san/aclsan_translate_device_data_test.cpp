@@ -27,6 +27,7 @@
 #include "aclsan_device_data_log.h"
 #include "aclsan_register_dependency.h"
 #include "device_instr/decoder_registry.h"
+#include "device_instr/common/instruction_id.h"
 
 namespace {
 
@@ -1132,7 +1133,15 @@ TEST(AclsanTranslateDeviceData, ScalarAddressClassificationCollectsUbAndSkipsPri
         ASSERT_TRUE(decoded.has_value());
         {
             PlogCapture capture;
-            EXPECT_FALSE(aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded).has_value());
+            const auto failure = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+            ASSERT_TRUE(failure.has_value());
+            const auto* markers = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*failure);
+            ASSERT_NE(markers, nullptr);
+            ASSERT_EQ(markers->size(), 1U);
+            EXPECT_NE(markers->front().header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED, 0U);
+            EXPECT_EQ(markers->front().instructionId, instructionId);
+            EXPECT_EQ(markers->front().accessCount, 1U);
+            EXPECT_EQ(markers->front().layoutKind, 0U);
             EXPECT_NE(capture.Text().find("incomplete memory access status=INVALID_ADDRESS_SPACE"), std::string::npos);
         }
         record.args[0] = UINT64_C(0x8000000200001000);
@@ -1141,9 +1150,42 @@ TEST(AclsanTranslateDeviceData, ScalarAddressClassificationCollectsUbAndSkipsPri
         ASSERT_TRUE(decoded.has_value());
         {
             PlogCapture capture;
-            EXPECT_FALSE(aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded).has_value());
+            const auto failure = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+            ASSERT_TRUE(failure.has_value());
+            const auto* markers = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*failure);
+            ASSERT_NE(markers, nullptr);
+            ASSERT_EQ(markers->size(), 1U);
+            EXPECT_NE(markers->front().header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED, 0U);
+            EXPECT_EQ(markers->front().instructionId, instructionId);
+            EXPECT_EQ(markers->front().accessCount, 1U);
+            EXPECT_EQ(markers->front().layoutKind, 0U);
             EXPECT_NE(
                 capture.Text().find("incomplete memory access status=MISSING_ADDRESS_CONTEXT"), std::string::npos);
         }
+    }
+}
+
+TEST(AclsanTranslateDeviceData, InvalidScalarPostProducesIncompleteMarker)
+{
+    for (const auto instruction : {aclsan::InstructionId::LdB32Imm, aclsan::InstructionId::LdB32Reg}) {
+        const auto instructionId = static_cast<uint32_t>(instruction);
+        auto parsed = MakeParsedTraceRecord(17, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR, 2, 3);
+        parsed.record.instrId = instructionId;
+        parsed.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+        parsed.record.args[0] = 0x81000;
+        parsed.record.args[1] = 1;
+        parsed.record.args[2] = 6; // post must be 0 or 1.
+        parsed.record.args[4] = aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
+        const auto decoded = DecodeRecord(parsed.record);
+        ASSERT_TRUE(decoded.has_value());
+        const auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+        ASSERT_TRUE(callback.has_value());
+        const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
+        ASSERT_NE(accesses, nullptr);
+        ASSERT_EQ(accesses->size(), 1U);
+        EXPECT_NE(accesses->front().header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED, 0U);
+        EXPECT_EQ(accesses->front().instructionId, instructionId);
+        EXPECT_EQ(accesses->front().layoutKind, 0U);
+        EXPECT_EQ(accesses->front().accessMode, 0U);
     }
 }

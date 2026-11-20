@@ -13,6 +13,7 @@
 #include "acl_san/aclsan_api.h"
 #include "acl_san/aclsan_cbdata.h"
 #include "checker/memory_state.h"
+#include "checker/ub_layout.h"
 #include "checker/memory_resources.h"
 #include "checker/host_order.h"
 #include "checker/racecheck/dependency_graph.h"
@@ -44,6 +45,8 @@ public:
     struct Launch {
         void* stream = nullptr;
         bool registered = false;
+        UbLayout ubLayout{};
+        bool ubLayoutWarningLogged = false;
         std::vector<AclsanDeviceMemoryAccessData> memory;
         // SIMT bounds checks share launch/resource lifetime evidence, but do not
         // enter the SIMD dependency graph used by initcheck and racecheck.
@@ -78,6 +81,9 @@ public:
           rangeBudget_(std::make_shared<race::RangeStorageBudget>(limits.LiveRangeIntervalBudget()))
     {}
     const race::Limits& AnalysisLimits() const { return limits_; }
+    void RegisterUbLayout(const AclsanLaunchData& launch);
+    const UbLayout* FindUbLayout(uint64_t launchId) const;
+    RangeResult ClassifyUbRange(const AclsanDeviceMemoryAccessData& access, uint64_t address, uint64_t bytes);
     bool Managed() const { return managed_; }
     Launch& Get(uint64_t id) { return launches_[id]; }
     const std::set<uint64_t>& Closing() const { return closing_; }

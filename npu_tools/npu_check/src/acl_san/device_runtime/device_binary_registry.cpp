@@ -10,6 +10,7 @@
 
 #include "device_binary_registry.h"
 #include "file_io.h"
+#include "npu_tool_log.h"
 #include "aclsan_trace_status.h"
 #include "securec.h"
 
@@ -159,6 +160,7 @@ struct DeviceBinaryRegistry::Impl {
         uint32_t traceArgumentOffset = 0;
         int32_t deviceId = DeviceBinaryRegistry::UNKNOWN_DEVICE;
         std::string sessionDirectory;
+        std::string metadataImage;
         std::unique_ptr<DeviceSymbolizer> symbolizer;
         std::string symbolizerError = "invalid_state";
         std::vector<BinarySegment> actualSegments;
@@ -215,6 +217,7 @@ struct DeviceBinaryRegistry::Impl {
     std::map<Key, BinaryEntry> binaries;
     std::map<Key, Key> functionBinaries;
     std::map<Key, std::string> functionNames;
+    std::map<Key, KernelUbMetadata> functionUbMetadata;
     std::map<Key, ImageEntry> readOnlySections;
     std::map<Key, LoadedImage> actualSegments;
 
@@ -268,6 +271,11 @@ struct DeviceBinaryRegistry::Impl {
             functionNode.key() = newFunction;
             functionNode.mapped() = adopted;
             functionBinaries.insert(std::move(functionNode));
+            auto metadataNode = functionUbMetadata.extract(oldFunction);
+            if (!metadataNode.empty()) {
+                metadataNode.key() = newFunction;
+                functionUbMetadata.insert(std::move(metadataNode));
+            }
             auto nameNode = functionNames.extract(oldFunction);
             if (!nameNode.empty()) {
                 nameNode.key() = newFunction;
@@ -368,6 +376,7 @@ struct DeviceBinaryRegistry::Impl {
         for (auto it = functionBinaries.begin(); it != functionBinaries.end();) {
             if (it->second == binary) {
                 functionNames.erase(it->first);
+                functionUbMetadata.erase(it->first);
                 it = functionBinaries.erase(it);
             } else {
                 ++it;
@@ -375,10 +384,29 @@ struct DeviceBinaryRegistry::Impl {
         }
     }
 
+    void RecordUbMetadata(
+        Key key, uintptr_t binaryHandle, const BinaryEntry& binary, const char* functionName, const uint64_t* entry)
+    {
+        KernelUbMetadata metadata;
+        std::string diagnostic;
+        if (GetKernelUbMetadata(
+                binary.metadataImage, functionName == nullptr ? "" : functionName, metadata, diagnostic, entry)) {
+            functionUbMetadata[key] = metadata;
+        } else {
+            ASCTOOL_DEBUG(
+                "acl_san UB metadata unavailable: function=0x%llx binary=0x%llx name=%s byEntry=%u entry=%llu "
+                "reason=%s",
+                static_cast<unsigned long long>(key.second), static_cast<unsigned long long>(binaryHandle),
+                functionName != nullptr ? functionName : "", static_cast<unsigned>(entry != nullptr),
+                static_cast<unsigned long long>(entry != nullptr ? *entry : 0), diagnostic.c_str());
+        }
+    }
+
     void RemoveFunctionOwnership(Key function) noexcept
     {
         functionBinaries.erase(function);
         functionNames.erase(function);
+        functionUbMetadata.erase(function);
     }
 };
 
@@ -409,6 +437,9 @@ bool DeviceBinaryRegistry::RecordBinaryLoadFromData(
         }
         if (actual != impl_->actualSegments.end()) {
             impl_->actualSegments.erase(actual);
+        }
+        if (image != nullptr && imageBytes != 0) {
+            entry.metadataImage.assign(static_cast<const char*>(image), imageBytes);
         }
         if (instrumented) {
             for (auto it = impl_->hibitObjects.begin(); it != impl_->hibitObjects.end();) {
@@ -504,7 +535,7 @@ void DeviceBinaryRegistry::RecordBinaryUnload(uintptr_t binary, int32_t deviceId
 }
 
 void DeviceBinaryRegistry::RecordBinaryFunctionLookup(
-    uintptr_t binary, uintptr_t function, const char* functionName, int32_t deviceId) noexcept
+    uintptr_t binary, uintptr_t function, const char* functionName, int32_t deviceId, const uint64_t* entry) noexcept
 {
     if (binary == 0 || function == 0) {
         return;
@@ -522,6 +553,7 @@ void DeviceBinaryRegistry::RecordBinaryFunctionLookup(
             if (functionName != nullptr) {
                 impl_->functionNames[key] = functionName;
             }
+            impl_->RecordUbMetadata(key, binary, loaded->second, functionName, entry);
         } else {
             for (const auto& [key, entry] : impl_->binaries) {
                 if (key.second == binary && entry.instrumented) {
@@ -532,6 +564,23 @@ void DeviceBinaryRegistry::RecordBinaryFunctionLookup(
         }
     } catch (...) {
         TraceIntegrityMark(0U, 0U, true);
+    }
+}
+
+bool DeviceBinaryRegistry::GetFunctionUbMetadata(
+    uintptr_t function, KernelUbMetadata& metadata, int32_t deviceId) const noexcept
+{
+    metadata = {};
+    try {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        const auto found = Impl::Find(impl_->functionUbMetadata, deviceId, function);
+        if (found == impl_->functionUbMetadata.end()) {
+            return false;
+        }
+        metadata = found->second;
+        return true;
+    } catch (...) {
+        return false;
     }
 }
 
@@ -773,6 +822,7 @@ void DeviceBinaryRegistry::Reset() noexcept
         impl_->actualSegments.clear();
         impl_->functionBinaries.clear();
         impl_->functionNames.clear();
+        impl_->functionUbMetadata.clear();
         impl_->latestBinaries.clear();
     } catch (...) {
     }

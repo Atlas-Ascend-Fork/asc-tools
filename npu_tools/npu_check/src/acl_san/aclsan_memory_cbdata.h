@@ -16,6 +16,7 @@
 #include "device_instr/common/device_instr_struct_scalar.h"
 #include "device_instr/common/device_instr_struct_register.h"
 #include "device_instr/common/device_instr_next_iter.h"
+#include "device_instr/common/device_instr_struct_vector.h"
 
 #include <array>
 #include <cstdint>
@@ -43,9 +44,11 @@ using MemoryInstructionField = std::variant<
     CopyGmToCbufMultiDn2NzParamField, CopyGmToCbufV2ParamField, CopyUbufToGmAlignV2ParamField, FixL0cToOutParamField,
     LoadGmToCbuf2DV2ParamField, NdDmaOutToUbufParamField, SetL12DParamField, MmadParamField, LoadL1MxParamField,
     LocalMemoryTransferParamField, LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField, Img2ColParamField,
-    ScalarGmParamField, ScalarDevParamField, ScalarPreloadParamField, ScalarAtomicParamField, CopyUbufToUbufParamField>;
+    ScalarGmParamField, ScalarDevParamField, ScalarPreloadParamField, ScalarAtomicParamField, CopyUbufToUbufParamField,
+    VtransposeParamField, Vbs32ParamField, VmrgsortParamField, VnchwconvParamField, LdvaParamField>;
 
 struct MemoryRegisterState {
+    std::array<VaRegisterState, VA_REGISTER_COUNT> va{};
     std::optional<CtrlRegisterParamField> ctrl;
     std::array<std::optional<FmatrixParamField>, MATRIX_REGISTER_BANK_COUNT> fmatrix{}; // normal / _B register banks
     std::array<std::optional<L3dRptParamField>, MATRIX_REGISTER_BANK_COUNT> l3dRpt{};

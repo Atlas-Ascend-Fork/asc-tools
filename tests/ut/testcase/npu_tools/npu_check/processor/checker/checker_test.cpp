@@ -102,11 +102,16 @@ TEST(CheckerTest, CallbackUnionAndIndependentTools)
 {
     auto checkers = Both();
     const auto callbacks = RequiredCallbacks(checkers);
-    EXPECT_EQ(callbacks.size(), 10U);
+    EXPECT_EQ(callbacks.size(), 11U);
     EXPECT_EQ(
         std::count(
             callbacks.begin(), callbacks.end(),
             CallbackSpec{ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS}),
+        1);
+    EXPECT_EQ(
+        std::count(
+            callbacks.begin(), callbacks.end(),
+            CallbackSpec{ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_VF}),
         1);
     EXPECT_EQ(
         std::count(
@@ -177,6 +182,35 @@ TEST(CheckerTest, BothProduceReportsFromTheSameSynchronization)
         EXPECT_TRUE(checker->HasErrors());
         EXPECT_TRUE(checker->AnalysisComplete());
         EXPECT_NE(checker->Summary().find("synchronizations=1"), std::string::npos);
+    }
+}
+
+TEST(CheckerTest, UbInitializationTextIncludesTrackedAddressSpace)
+{
+    for (const auto pattern :
+         {NpuCheckReportPattern::INITCHECK_UNINITIALIZED_READ,
+          NpuCheckReportPattern::INITCHECK_PARTIAL_UNINITIALIZED_READ}) {
+        NpuCheckInitcheckReport report{};
+        report.common.tool = ReportTool::INITCHECK;
+        report.common.severity = ReportSeverity::ERROR;
+        report.common.pattern = pattern;
+        report.access.memorySpace = NpuCheckReportMemorySpace::UB;
+        report.access.address = 0x1040;
+        report.access.accessBytes = 16;
+        report.allocation.memorySpace = NpuCheckReportMemorySpace::UB;
+        report.allocation.base = 0x1000;
+        report.allocation.bytes = 0x2000;
+        report.firstUninitAddress = 0x1040;
+        report.uninitBytes = 8;
+        std::string text;
+        ASSERT_EQ(
+            RenderNpuCheckReportRecord(NpuCheckReportRecord::From(report), {}, &text), ReportRenderStatus::SUCCESS);
+        EXPECT_NE(text.find("UB address space: [0x1000, 0x3000)"), std::string::npos);
+        report.access.memorySpace = NpuCheckReportMemorySpace::GM;
+        report.allocation.memorySpace = NpuCheckReportMemorySpace::GM;
+        ASSERT_EQ(
+            RenderNpuCheckReportRecord(NpuCheckReportRecord::From(report), {}, &text), ReportRenderStatus::SUCCESS);
+        EXPECT_EQ(text.find("UB address space:"), std::string::npos);
     }
 }
 

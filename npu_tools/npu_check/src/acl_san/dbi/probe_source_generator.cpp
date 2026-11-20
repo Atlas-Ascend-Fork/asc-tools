@@ -57,7 +57,7 @@ constexpr ProbeDefinition MakeSimtMemoryProbe(InstrType instruction, std::string
         SimtInstructionElementBytes(static_cast<uint32_t>(instruction))};
 }
 
-constexpr std::array<ProbeDefinition, 243> DEFINITIONS{
+constexpr std::array<ProbeDefinition, 244> DEFINITIONS{
     {
         {static_cast<uint16_t>(InstrType::VF), ProbeGroup::Vector, "__npu_check_probe_vf",
          "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t entryPc, uint64_t instructionCount",
@@ -591,6 +591,9 @@ constexpr std::array<ProbeDefinition, 243> DEFINITIONS{
          R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ubuf__ void* dst, __ubuf__ void* src)PARAM",
          "MemoryAccess", "PIPE_V",
          R"ARGS(reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), 0UL, 0UL, 0UL)ARGS"},
+        {static_cast<uint16_t>(InstrType::MOVEVA), ProbeGroup::Vector, "__npu_check_probe_moveva",
+         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t index, uint64_t entry, uint64_t xn, uint64_t xm",
+         "RegisterState", "PIPE_V", "index, entry, xn, xm, 0UL"},
         {static_cast<uint16_t>(InstrType::LDVA), ProbeGroup::Vector, "__npu_check_probe_ldva",
          R"PARAM(__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t dst, uint64_t src, uint64_t h)PARAM",
          "MemoryAccess", "PIPE_V", R"ARGS(dst, src, h, 0UL, 0UL)ARGS"},
@@ -870,7 +873,7 @@ constexpr std::array<ProbeDefinition, 243> DEFINITIONS{
         MakeSimtMemoryProbe(InstrType::SIMT_STG_B64, "__npu_check_probe_simt_stg_b64"),
         MakeSimtMemoryProbe(InstrType::SIMT_STG_B128, "__npu_check_probe_simt_stg_b128"),
         {static_cast<uint16_t>(InstrType::SIMT_CALL), ProbeGroup::Simt, "__npu_check_probe_simt_call",
-         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid", "RegisterState", "PIPE_S", "0"},
+         "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid", "RegisterState", "PIPE_S", "0UL, 0UL, 0UL, 0UL, 0UL"},
         {static_cast<uint16_t>(InstrType::SIMT_END), ProbeGroup::Simt, "__npu_check_probe_simt_end",
          "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid", "MemoryAccess", "PIPE_V", "0UL, 0LL, 0U", true},
         // Generic GM memory definitions use the same SIMT address contract as LDG/STG.
@@ -956,7 +959,9 @@ std::vector<const ProbeDefinition*> DefinitionsForGroup(ProbeGroup group)
 {
     std::vector<const ProbeDefinition*> selected;
     for (const ProbeDefinition& definition : DEFINITIONS) {
-        if (definition.group == group) {
+        // SIMD VF PB tracking also needs to observe calls into SIMT functions.
+        if (definition.group == group ||
+            (group == ProbeGroup::Vector && definition.apiId == static_cast<uint16_t>(InstrType::SIMT_CALL))) {
             selected.push_back(&definition);
         }
     }
@@ -1010,8 +1015,9 @@ GeneratedProbeSource GenerateProbeSource(std::string_view arch, ProbeGroup group
                << definition->parameters << ")\n"
                << "{\n";
         if (definition->apiId == static_cast<uint16_t>(InstrType::SIMT_CALL)) {
-            source << "    (void)bid;\n    aclsan::WriteSimtCallContext(memInfo, pc);\n";
-        } else if (definition->simt) {
+            source << "    aclsan::WriteSimtCallContext(memInfo, pc);\n";
+        }
+        if (definition->simt) {
             source << "    aclsan::WriteSimtTraceRecord(memInfo, pc, bid, " << definition->apiId << ", "
                    << definition->recordArguments;
             if (definition->simtElementBytes != 0U) {

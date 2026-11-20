@@ -534,6 +534,35 @@ TEST(RacecheckTranslation, MissingRegisterStateEstimatedCallbackMakesCoverageInc
     EXPECT_TRUE(reports.empty());
     EXPECT_NE(checker.Summary().find("skipped_memory_events=1"), std::string::npos);
 }
+void ExpectUbToL1InitializationReports(const npucheck::CheckerReportList& reports, uint32_t writeBytes, bool notify)
+{
+    if (!notify) {
+        EXPECT_TRUE(reports.empty());
+        return;
+    }
+    ASSERT_EQ(reports.size(), writeBytes < 128 ? 2U : 1U);
+    uint32_t ubReports = 0;
+    uint32_t l1Reports = 0;
+    for (const auto& output : reports) {
+        const auto* report = std::get_if<npucheck::NpuCheckInitcheckReport>(&output);
+        ASSERT_NE(report, nullptr);
+        EXPECT_EQ(report->access.accessMode, npucheck::NpuCheckReportAccessMode::READ);
+        if (report->access.memorySpace == npucheck::NpuCheckReportMemorySpace::UB) {
+            ++ubReports;
+            // The DMA source is intentionally unwritten.
+            EXPECT_EQ(report->access.accessBytes, writeBytes);
+            EXPECT_EQ(report->uninitBytes, writeBytes);
+        } else {
+            EXPECT_EQ(report->access.memorySpace, npucheck::NpuCheckReportMemorySpace::L1);
+            ++l1Reports;
+            EXPECT_EQ(report->access.accessBytes, 128U);
+            EXPECT_EQ(report->uninitBytes, 128 - writeBytes);
+        }
+    }
+    EXPECT_EQ(ubReports, 1U);
+    EXPECT_EQ(l1Reports, writeBytes < 128 ? 1U : 0U);
+}
+
 // Exercise actual UB->L1 translation, not synthetic callbacks that already
 // assume the write executes on its storage owner.
 TEST(InitcheckTranslation, UbToL1FollowsIssuingVectorNotification)
@@ -616,13 +645,7 @@ TEST(InitcheckTranslation, UbToL1FollowsIssuingVectorNotification)
                 ASSERT_TRUE(checker.OnCallback(
                     ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &end, reports));
                 EXPECT_EQ(checker.AnalysisComplete(), notify) << checker.Summary();
-                if (notify && writeBytes < 128) {
-                    ASSERT_EQ(reports.size(), 1U) << checker.Summary();
-                    const auto& report = std::get<npucheck::NpuCheckInitcheckReport>(reports.front());
-                    EXPECT_EQ(report.uninitBytes, 128 - writeBytes);
-                } else {
-                    EXPECT_TRUE(reports.empty()) << checker.Summary();
-                }
+                ExpectUbToL1InitializationReports(reports, writeBytes, notify);
                 if (!notify)
                     EXPECT_NE(checker.Summary().find("unordered_initialization"), std::string::npos);
             }
