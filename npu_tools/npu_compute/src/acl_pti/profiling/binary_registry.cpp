@@ -204,7 +204,6 @@ aclptiResult BinaryRegistry::ResolveCompanionKey(
     (void)key;
     (void)function;
     (void)companionKey;
-    (void)companionElfEntry;
     (void)unavailable;
     if constexpr (!std::is_convertible<Key, const char*>::value) {
         if (state.pmSamplingImage) {
@@ -248,8 +247,6 @@ aclptiResult BinaryRegistry::RecordCompanionFunction(
     const std::string& mixedAlias)
 {
     (void)binary;
-    (void)key;
-    (void)companionElfEntry;
     (void)mixedAlias;
     try {
         if (state.pmSamplingImage) {
