@@ -33,6 +33,7 @@ public:
     /// Applies the requested profiling collection configuration.
     aclptiResult SetConfig(const aclptiRangeProfilerSetConfigParams* params);
 
+    bool CollectSourceCounter() const { return rangeProfiler_.CollectSourceCounter(); }
     bool CollectPipeline() const { return rangeProfiler_.CollectPipeline(); }
     bool CollectPcSampling() const { return rangeProfiler_.CollectPcSampling(); }
     bool CollectRoofline() const { return rangeProfiler_.CollectRoofline(); }
@@ -79,12 +80,19 @@ public:
     aclptiResult ReplayKernel(
         aclrtFuncHandle originalFunction, const ReplayLaunchFunction& launchFunction, aclrtStream stream);
 
+    bool IsSourceCounterStreamAbandoned(aclrtStream stream) const;
+    aclError SynchronizeSourceCounterStreamWithTimeout(aclrtStream stream);
+
 private:
+    static constexpr std::int32_t kDefaultSourceCounterSyncTimeoutMs = 60000;
+    static std::int32_t ReadSourceCounterSyncTimeoutMs();
+
     /// Reports whether new profiling work may be started.
     bool ProfilingAvailable() const;
 
     /// Stops profiling after a failed optional operation and preserves its root status.
     aclptiResult HandleProfilingResult(aclptiResult status);
+    aclptiResult HandleBinaryResult(aclptiResult status);
 
     /// Frees launch-owned SIMT probe buffers after replay has completed.
     aclptiResult ReleasePmSamplingProbeBuffers();
@@ -98,6 +106,11 @@ private:
     RangeProfiler rangeProfiler_;
     std::mutex probeBufferMutex_;
     std::vector<std::pair<aclrtFuncHandle, void*>> probeBuffers_;
+    mutable std::mutex sourceCounterStreamMutex_;
+    // A single original launch owns this runtime's collection and replay stream.
+    aclrtStream abandonedSourceCounterStream_ = nullptr;
+    bool sourceCounterStreamAbandoned_ = false;
+    std::int32_t sourceCounterSyncTimeoutMs_ = kDefaultSourceCounterSyncTimeoutMs;
 };
 
 /// Returns the process-wide replay runtime.

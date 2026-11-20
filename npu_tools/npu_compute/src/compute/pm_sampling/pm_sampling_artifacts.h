@@ -14,6 +14,7 @@
 #include "pm_sampling_types.h"
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace npucompute {
 enum class PmSamplingElfSource { Original, Companion };
@@ -47,6 +48,19 @@ bool GeneratePmSamplingArtifacts(
 bool GeneratePmSamplingArtifacts(
     const std::string& stagingDirectory, const aclptiPmSamplingContext* context, const PmSamplingResult& sampling,
     const PmSamplingArtifactOptions& options, PmSamplingArtifacts& artifacts, std::string& error);
+struct InstructionArtifactInput {
+    const aclptiPmSamplingContext* samplingContext = nullptr;
+    const std::vector<char>* sourceElf = nullptr;
+    bool collectSource = false;
+    bool collectSampling = false;
+    std::string_view sourceDisassembly{};
+};
+
+// A SourceCounter request generates disassembly even without a PmSampling context.
+bool GenerateInstructionArtifacts(
+    const std::string& stagingDirectory, const InstructionArtifactInput& input, const PmSamplingResult& sampling,
+    const PmSamplingArtifactOptions& options, PmSamplingArtifacts& artifacts, std::string& error);
+
 } // namespace npucompute
 
 #endif // NPU_TOOLS_NPU_COMPUTE_SRC_COMPUTE_PM_SAMPLING_PM_SAMPLING_ARTIFACTS_H

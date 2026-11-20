@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "report/source_counter_sqlite_writer.h"
 #include "ipc/artifact_receiver.h"
 #include "ipc/npu_compute_uds_client.h"
 #include "compute/ipc/artifact_publisher.h"
@@ -573,6 +574,41 @@ void VersionsAndNested()
     CHECK(cli::UnpackImportedProfileResults(imported, recovered.path, &error));
     CheckDatabase(recovered.path / "collection-p1-0001/nested" / names[0]);
 }
+void SourceCounterReport()
+{
+    Directory source, output, imported;
+    aclptiSourceCounterData counters;
+    counters.rows = {{32, {0, 0, 0, 0}}};
+    uint64_t rows = 0;
+    std::string error;
+    CHECK(npucompute::WriteSourceCounterSqlite((source.path / names[0]).string(), counters, rows, error));
+    CHECK(rows == 1);
+    cli::ArtifactReceiver receiver(output.path.string());
+    protocol::Config config;
+    config.sections = {"SourceCounter"};
+    protocol::Result result;
+    result.sections = config.sections;
+    result.complete = true;
+    Send(receiver, result, "HardwareInfo.jsonl", hardware);
+    Send(receiver, result, "summary.jsonl", summary);
+    Send(receiver, result, names[0], Read(source.path / names[0]));
+    CHECK(!receiver.Validate(result, config));
+    Send(receiver, result, names[1], "  20: 11 22 33 44 LDS\n");
+    CHECK(receiver.Validate(result, config));
+
+    protocol::Bytes encoded;
+    CHECK(cli::PackDirectoryToRep(output.path, &encoded, &error));
+    const auto report = source.path / "source-counter.npu-rep";
+    Write(report, std::string(encoded.begin(), encoded.end()));
+    std::vector<cli::ImportedProfileEntry> entries;
+    CHECK(cli::ReadImportedProfileResults(report, &entries, &error));
+    CHECK(cli::UnpackImportedProfileResults(entries, imported.path, &error));
+    CHECK(Read(imported.path / names[0]) == Read(source.path / names[0]));
+    CHECK(fs::exists(imported.path / names[1]));
+    CHECK(!fs::exists(imported.path / "SourceCounter.csv"));
+    CHECK(!fs::exists(imported.path / "symbolizer.json"));
+}
+
 void ProtocolRejections()
 {
     for (const auto& name : names) {
@@ -581,7 +617,7 @@ void ProtocolRejections()
     }
     for (const auto& name :
          {"../summary.db", "/summary.db", "collection-p1/../summary.db", ".biu-staging/process-uds/summary.db",
-          "PmSampling.csv"}) {
+          "PmSampling.csv", "SourceCounter.csv"}) {
         Reject([&] { protocol::KindForName(name); });
     }
     Directory directory;
@@ -620,6 +656,7 @@ int main()
         EmptySamplingWithoutElfContext();
         PmSamplingArtifactsValidateIndependently();
         VersionsAndNested();
+        SourceCounterReport();
         ProtocolRejections();
         std::puts("PmSampling UDS/report roundtrip and rejection checks passed");
         return 0;

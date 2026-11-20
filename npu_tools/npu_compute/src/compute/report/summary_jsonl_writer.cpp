@@ -337,6 +337,42 @@ void OpInfo(
     output << "}\n";
 }
 
+aclptiResult WriteSelectedSummary(
+    std::ostream& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
+    const ReportConfig& config, const KernelMetadata& metadata, bool* degraded, HintSections& summarySections)
+{
+    const auto summaryConfig = SummaryReportConfig(metadata, config);
+    for (const auto& section : sections) {
+        if (section == "SourceCounter") {
+            continue;
+        }
+        if (section == "Roofline") {
+            if (!Roofline(output, result, config, metadata) && degraded != nullptr) {
+                *degraded = true;
+            }
+            continue;
+        }
+        if (PmuMetricBuilder::Header(section).empty()) {
+            return ACLPTI_ERROR_NOT_SUPPORTED;
+        }
+        summarySections.emplace(section, Section(output, section, result, summaryConfig));
+    }
+    std::vector<std::string> hints;
+    try {
+        hints = AnalyzePerformanceHints(result, summarySections, config, metadata).hints;
+    } catch (const std::exception& error) {
+        ASCTOOL_WARNING("[npu-compute] performance hint analysis failed: %s", error.what());
+    } catch (...) {
+        ASCTOOL_WARNING("[npu-compute] performance hint analysis failed: unexpected exception");
+    }
+    output << "{\"category\":\"PerformanceHints\",\"hints\":[";
+    for (size_t index = 0; index < hints.size(); ++index) {
+        output << (index == 0 ? "" : ",") << Quote(hints[index]);
+    }
+    output << "]}\n";
+    return ACLPTI_SUCCESS;
+}
+
 } // namespace
 
 aclptiResult WriteSummaryJsonl(
@@ -350,42 +386,19 @@ aclptiResult WriteSummaryJsonl(
         auto selectedSections = sections;
         std::sort(selectedSections.begin(), selectedSections.end());
         selectedSections.erase(std::unique(selectedSections.begin(), selectedSections.end()), selectedSections.end());
-        const auto summaryConfig = SummaryReportConfig(metadata, config);
         HintSections summarySections;
-        for (const auto& section : selectedSections) {
-            if (section == "Roofline") {
-                const bool complete = Roofline(output, result, config, metadata);
-                if (!complete && degraded != nullptr) {
-                    *degraded = true;
-                }
-                continue;
-            }
-            if (PmuMetricBuilder::Header(section).empty()) {
-                return ACLPTI_ERROR_NOT_SUPPORTED;
-            }
-            summarySections.emplace(section, Section(output, section, result, summaryConfig));
+        const aclptiResult summaryStatus =
+            WriteSelectedSummary(output, result, selectedSections, config, metadata, degraded, summarySections);
+        if (summaryStatus != ACLPTI_SUCCESS) {
+            return summaryStatus;
         }
-        std::vector<std::string> hints;
-        try {
-            hints = AnalyzePerformanceHints(result, summarySections, config, metadata).hints;
-        } catch (const std::exception& error) {
-            ASCTOOL_WARNING("[npu-compute] performance hint analysis failed: %s", error.what());
-        } catch (...) {
-            ASCTOOL_WARNING("[npu-compute] performance hint analysis failed: unexpected exception");
-        }
-        output << "{\"category\":\"PerformanceHints\",\"hints\":[";
-        for (size_t index = 0; index < hints.size(); ++index) {
-            output << (index == 0 ? "" : ",") << Quote(hints[index]);
-        }
-        output << "]}\n";
         OpInfo(output, result, selectedSections, config, metadata, summarySections["Memory"]);
         const std::string content = output.str();
+        const auto recordCount = static_cast<uint64_t>(std::count(content.begin(), content.end(), '\n'));
         sink.Begin(std::string(artifactPrefix) + "summary.jsonl");
         artifactStarted = true;
         sink.Write(content);
-        // PerformanceHints and OpInfoSummary are emitted in addition to the selected sections.
-        constexpr std::size_t kNonSectionSummaryRecords = 2;
-        sink.Commit(selectedSections.size() + kNonSectionSummaryRecords);
+        sink.Commit(recordCount);
         artifactStarted = false;
         return ACLPTI_SUCCESS;
     } catch (const std::exception& error) {

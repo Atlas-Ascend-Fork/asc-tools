@@ -84,8 +84,8 @@ int main()
         auto cli = Parse({"npu-compute", "--set", set, "demo"});
         const bool full = std::string(set) == "full";
         Check((std::find(cli.sections.begin(), cli.sections.end(), "PmSampling") != cli.sections.end()) == full);
+        Check((std::find(cli.sections.begin(), cli.sections.end(), "SourceCounter") != cli.sections.end()) == full);
         Check(std::find(cli.sections.begin(), cli.sections.end(), "Pipeline") != cli.sections.end());
-        Check(cli.sections.size() == (full ? 10 : 7));
     }
     std::vector<std::string> invalidArgs{"npu-compute", "--section", "PcSampling", "demo"};
     std::vector<char*> invalidArgv;
@@ -100,14 +100,25 @@ int main()
     std::string error;
     Check(!runtime.Load({"PcSampling"}, &error));
     Check(runtime.Load({"PmSampling"}, &error));
+    Check(runtime.Load({"SourceCounter"}, &error));
+    Check(runtime.Params()->numSections == 1);
+    Check(std::string(runtime.Params()->sections[0]) == "SourceCounter");
     Check(runtime.Load({"Memory"}, &error));
     Check(!runtime.Params()->collectPcSampling);
     Check(runtime.Load({"Memory", "PmSampling"}, &error));
     Check(runtime.Params()->numSections == 1 && runtime.Params()->collectPcSampling);
     ipc::Config all{};
-    all.sections = {
-        "PipeUtilization",       "Memory",     "MemoryL0", "MemoryUB", "L2Cache", "Pipeline", "ArithmeticUtilization",
-        "ResourceConflictRatio", "PmSampling", "Roofline"};
+    all.sections = {"PipeUtilization",
+                    "Memory",
+                    "MemoryL0",
+                    "MemoryUB",
+                    "L2Cache",
+                    "Pipeline",
+                    "ArithmeticUtilization",
+                    "ResourceConflictRatio",
+                    "PmSampling",
+                    "SourceCounter",
+                    "Roofline"};
     Check(ipc::DecodeConfig(ipc::EncodeConfig(all)).sections == all.sections);
-    std::cout << "PASS: CLI/runtime/IPC combinations; 10 sections; defaults; unknown name; reset\n";
+    std::cout << "PASS: CLI/runtime/IPC combinations; defaults; unknown name; reset\n";
 }

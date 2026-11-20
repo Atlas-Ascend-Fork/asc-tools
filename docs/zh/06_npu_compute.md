@@ -19,11 +19,12 @@
 | <a name="section-memoryub"></a> `MemoryUB`                           | Unified Buffer访问数据                              | `basic`、`full` |
 | <a name="section-pipeline"></a> `Pipeline`                           | 流水时间线数据，输出为`PipeTrace.json`            | `basic`、`full` |
 | <a name="section-pipeutilization"></a> `PipeUtilization`             | 计算与流水线利用率数据                              | `basic`、`full` |
+| <a name="section-sourcecounter"></a> `SourceCounter` | SIMT GM Pattern及SIMT/SIMD VF指令的UB Bank冲突 | `full` |
 | <a name="section-pmsampling"></a> `PmSampling`                       | 指令地址及各采样状态累计计数、反汇编和函数/内联信息 | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | 流水等待率与Vector资源冲突率                        | `full`          |
 | <a name="section-roofline"></a> `Roofline`                           | 理论算力和带宽，以及Kernel计算量、访存量和耗时       | `full`          |
 
-当前提供`basic`和`full`两个预定义Set：`basic`包含除`PmSampling`、`ResourceConflictRatio`和`Roofline`外的7个Section，`full`包含全部10个Section。每次采集均尝试生成`Occupancy.json`任务与block时间线，无需额外Section。
+当前提供`basic`和`full`两个预定义Set：`basic`包含除`PmSampling`、`ResourceConflictRatio`、`SourceCounter`和`Roofline`外的7个Section，`full`包含全部11个Section。每次采集均尝试生成`Occupancy.json`任务与block时间线，无需额外Section。
 
 各Section的字段含义和计算方法请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
 
@@ -222,10 +223,10 @@ npu-compute: directory= <parent-directory>/report_<timestamp-ms>_<8-lowercase-he
 | `summary.jsonl` | 执行Kernel时生成 | 性能汇总、[性能提示](appendix/npu_compute_performance_data.md#performancehints)及算子概览。 |
 | `Occupancy.json` | 采集时默认尝试生成 | 任务与block区间，Chrome Trace格式，保留replay身份与原始系统计数器。 |
 | `PipeTrace.json` | 选择`Pipeline`时生成 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
-| `summary.db` | 有效CSV成功入库，或完成`PmSampling`采集时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)。 |
-| `objdump.txt` | 选择`PmSampling`时生成 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
+| `summary.db` | 有效CSV成功入库，或完成`PmSampling`采集，或完成`SourceCounter`采集时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)。 |
+| `objdump.txt` | 选择`SourceCounter`或`PmSampling`时生成；同时选择时生成一份 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
 | `symbolizer.json` | 选择`PmSampling`时生成 | 采样地址对应的函数和内联调用信息。 |
-| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`、`PmSampling`和`Roofline`除外） | 该Section的指标数据。 |
+| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`、`PmSampling`、`SourceCounter`和`Roofline`除外） | 该Section的指标数据。 |
 
 **AI Core Occupancy**：展示任务的整体时间窗口，以及各 block 在对应 AI Core（AIC/AIV）上的活跃时间区间。各类采集任务默认尝试生成 `Occupancy.json` 报告，无需额外配置 Section。如果只有这个文件生成失败，工具会记录告警，其余报告照常交付，命令正常退出。
 
@@ -239,17 +240,18 @@ CSV中的`NA`表示该项指标未采集到有效值，其他指标仍可正常�
 
 采集生成的CSV自动写入同一结果目录的`summary.db`，原CSV继续保留。数据库包含以下表，实际生成的表取决于采集结果：
 
-| 数据表                    | 生成条件                        | 内容                                                                                                                                       |
-| :------------------------ | :------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------- |
-| `ArithmeticUtilization` | 对应CSV入库成功                 | [ArithmeticUtilization](#section-arithmeticutilization)                                                                                     |
-| `L2Cache`               | 对应CSV入库成功                 | [L2Cache](#section-l2cache)                                                                                                                 |
-| `Memory`                | 对应CSV入库成功                 | [Memory](#section-memory)                                                                                                                   |
-| `MemoryL0`              | 对应CSV入库成功                 | [MemoryL0](#section-memoryl0)                                                                                                               |
-| `MemoryUB`              | 对应CSV入库成功                 | [MemoryUB](#section-memoryub)                                                                                                               |
-| `PcSampling`            | 选择`PmSampling`              | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数)。 |
-| `PipeUtilization`       | 对应CSV入库成功                 | [PipeUtilization](#section-pipeutilization)                                                                                                 |
-| `ResourceConflictRatio` | 对应CSV入库成功                 | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                     |
-| `FieldUnitMap`          | 至少一个含数据记录的CSV成功入库 | `field_name`保存字段名，`unit`保存单位；无单位时为NULL。                                                                               |
+| 数据表                  | 生成条件                        | 内容                                                                                                                                      |
+| :---------------------- | :------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ArithmeticUtilization` | 对应CSV入库成功                 | [ArithmeticUtilization](#section-arithmeticutilization)                                                                                   |
+| `FieldUnitMap`          | 存在带单位映射的数据表，或至少一个含数据记录的CSV成功入库时 | `field_name`保存字段名，`unit`保存单位；无单位时为NULL。                                                                                  |
+| `L2Cache`               | 对应CSV入库成功                 | [L2Cache](#section-l2cache)                                                                                                               |
+| `Memory`                | 对应CSV入库成功                 | [Memory](#section-memory)                                                                                                                 |
+| `MemoryL0`              | 对应CSV入库成功                 | [MemoryL0](#section-memoryl0)                                                                                                             |
+| `MemoryUB`              | 对应CSV入库成功                 | [MemoryUB](#section-memoryub)                                                                                                             |
+| `PcSampling`            | 选择`PmSampling` | 按业务指令地址汇总八种等待或阻塞状态的采样计数，见[PC采样状态说明](appendix/npu_compute_performance_data.md#pcsamplingpc采样状态累计计数)。 |
+| `PipeUtilization`       | 对应CSV入库成功                 | [PipeUtilization](#section-pipeutilization)                                                                                               |
+| `ResourceConflictRatio` | 对应CSV入库成功                 | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                   |
+| `SourceCounter`         | 选择`SourceCounter`时 | 按原始指令地址汇总的访存指标，见[SourceCounter指标说明](appendix/npu_compute_performance_data.md#sourcecounter)。 |
 
 数据库生成依赖环境中的SQLite动态库。生成失败时，终端提示原因，其他成功结果仍可生成报告。
 
@@ -284,6 +286,7 @@ npu-compute --import ./reports/profile.npu-rep --export ./restored
 - `Pipeline`采集受硬件限制：同一Device上只能有一个进程采集`Pipeline`；多个进程同时采集时，只有一个进程能正常输出，其他进程采集失败。
 - `PmSampling`采集受硬件限制：同一Device上，`PmSampling`不能与其他进程的`PmSampling`或`Pipeline`采集同时执行；并发采集可能导致采样数据缺失或采集失败。
 - `PmSampling`用于分析算子运行时SIMT指令的阻塞情况。硬件按周期采样，当算子中的SIMT代码执行时间过短时，可能因未命中采样时刻而无法获得有效样本，导致`PcSampling`表为空。其他采集项的成功结果仍会保留。
+- `SourceCounter`的SIMT UB Bank冲突仅支持SIMT Kernel中线程直接通过`__ubuf__`指针对线程块共享UB数据进行读写的访问。SIMD VF Bank冲突仅支持当前采集模式能够识别的`asc_load`和`asc_store`向量UB读写形式，即从UB读取数据到向量寄存器或从向量寄存器写回UB。
 - 采集SIMT算子的`Pipeline`或`PmSampling`数据时，不支持使用`noinline`的`__aicore__`函数，比如`printf`和`asc_dump`。
 - 目标程序必须具有执行权限，可以是可执行文件或脚本，能够在未使用`npu-compute`时独立运行，并在运行过程中至少成功执行一次NPU核函数。
 - 一条采集命令只运行一个目标程序；需要采集多个程序时，分别执行多条命令。目标程序及其启动的脚本不能再次运行`npu-compute`，检测到嵌套采集时本次采集失败且不会生成报告。

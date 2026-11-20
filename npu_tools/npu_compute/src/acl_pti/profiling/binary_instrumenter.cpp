@@ -1075,55 +1075,71 @@ bool InstrumentSimtSampling(
     return InstrumentProbe(data, size, output, probeArgumentOffset, pmSamplingMap, true);
 }
 
-bool BuildOriginalPmSamplingInstructionMap(const void* data, std::size_t size, PmSamplingInstructionMap& output)
+bool ReadOriginalDisassembly(
+    const void* data, std::size_t size, std::string& text, std::string& diagnostic, DisassemblyDetail detail)
 {
-    output = {};
     if (data == nullptr || size == 0) {
-        output.error = "empty device ELF";
+        diagnostic = "empty device ELF";
         return false;
     }
     const char* cann = std::getenv("ASCEND_HOME_PATH");
     if (cann == nullptr || cann[0] == '\0') {
-        output.error = "ASCEND_HOME_PATH is unavailable";
+        diagnostic = "ASCEND_HOME_PATH is unavailable";
         return false;
     }
     fs::path objdump;
     if (!FindTool(fs::path(cann) / "tools/bisheng_compiler/bin", "llvm-objdump", objdump)) {
-        output.error = "cannot find llvm-objdump for PmSampling instruction mapping";
+        diagnostic = "cannot find llvm-objdump for instruction mapping";
         return false;
     }
-    char pattern[] = "/tmp/npu-compute-pm-sampling-map-XXXXXX";
+    char pattern[] = "/tmp/npu-compute-disassembly-XXXXXX";
     if (mkdtemp(pattern) == nullptr) {
-        output.error = "cannot create PmSampling mapping directory";
+        diagnostic = "cannot create instruction mapping directory";
         return false;
     }
     TemporaryDirectory temporary{pattern};
     const auto input = temporary.path / "input.o";
     {
         if (!asctools::security::ValidatePath(input.string(), asctools::security::PathKind::FileOrNew)) {
-            output.error = "cannot write device ELF for PmSampling mapping";
+            diagnostic = "cannot write device ELF for instruction mapping";
             return false;
         }
         std::ofstream file(input.string(), std::ios::binary);
         file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
         if (!file) {
-            output.error = "cannot write device ELF for PmSampling mapping";
+            diagnostic = "cannot write device ELF for instruction mapping";
             return false;
         }
     }
     const auto disassembly = temporary.path / "original.txt";
-    if (!Run({objdump.string(), "-d", input.string()}, disassembly)) {
-        output.error = "llvm-objdump failed during PmSampling instruction mapping";
+    std::vector<std::string> arguments{objdump.string(), "-d"};
+    if (detail == DisassemblyDetail::WithSource) {
+        arguments.emplace_back("-l");
+        arguments.emplace_back("-S");
+    }
+    arguments.push_back(input.string());
+    if (!Run(std::move(arguments), disassembly)) {
+        diagnostic = "llvm-objdump failed during instruction mapping";
         return false;
     }
     if (!asctools::security::ValidatePath(disassembly.string(), asctools::security::PathKind::ExistingFile)) {
-        output.error = "cannot read PmSampling disassembly";
+        diagnostic = "cannot read device ELF disassembly";
         return false;
     }
     std::ifstream file(disassembly.string(), std::ios::binary);
-    const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
     if (file.bad()) {
-        output.error = "cannot read PmSampling disassembly";
+        diagnostic = "cannot read device ELF disassembly";
+        return false;
+    }
+    return true;
+}
+
+bool BuildOriginalPmSamplingInstructionMap(const void* data, std::size_t size, PmSamplingInstructionMap& output)
+{
+    output = {};
+    std::string text;
+    if (!ReadOriginalDisassembly(data, size, text, output.error)) {
         return false;
     }
     std::vector<char> image(static_cast<const char*>(data), static_cast<const char*>(data) + size);

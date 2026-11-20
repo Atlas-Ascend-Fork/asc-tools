@@ -752,7 +752,12 @@ aclError AclrtSynchronizeStreamHandler(aclrtStream stream)
     aclptiAclrtSynchronizeStreamParams params{stream};
     return InvokeRuntimeCallback<aclrtSynchronizeStreamFunc>(
         ACLPTI_RUNTIME_CBID_aclrtSynchronizeStream, ACL_RT_API_aclrtSynchronizeStream, "aclrtSynchronizeStream", params,
-        [&params](aclrtSynchronizeStreamFunc function) { return function(params.stream); });
+        [&params](aclrtSynchronizeStreamFunc function) {
+            auto& runtime = profiling::GetReplayRuntime();
+            return runtime.IsSourceCounterStreamAbandoned(params.stream) ?
+                       runtime.SynchronizeSourceCounterStreamWithTimeout(params.stream) :
+                       function(params.stream);
+        });
 }
 
 aclError AclrtBinaryGetFunctionByEntryHandler(

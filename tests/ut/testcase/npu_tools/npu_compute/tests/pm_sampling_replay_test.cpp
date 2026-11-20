@@ -283,5 +283,46 @@ int main()
         }
     }
     CHECK(unsetenv("NPU_COMPUTE_TEST_PM_MAP_FAILURE") == 0);
-    std::puts("PASS: PmSampling replay selection, instruction modes, failure stop/release");
+    for (unsigned iteration = 0; iteration < 2; ++iteration) {
+        RangeProfiler profiler;
+        BinaryRegistry registry;
+        ReplayMemory memory;
+        const char* section = "SourceCounter";
+        aclptiRangeProfilerSetConfigParams config{};
+        config.sections = &section;
+        config.numSections = 1;
+        CHECK(profiler.SetConfig(&config) == ACLPTI_SUCCESS);
+        CHECK(profiler.CollectSourceCounter());
+        std::shared_ptr<const aclptiProfilingDataResult> result;
+        auto& manager = aclpti::data::ProfilingDataManager::Instance();
+        CHECK(manager.Initialize([&](std::shared_ptr<const aclptiProfilingDataResult> value) {
+            result = std::move(value);
+            return ACLPTI_SUCCESS;
+        }) == ACLPTI_SUCCESS);
+        CHECK(profiler.Initialize() == ACLPTI_SUCCESS);
+        const char elf[] = "ELF";
+        CHECK(registry.RegisterBinary(elf, sizeof(elf), nullptr, &binary, false, false, true) == ACLPTI_SUCCESS);
+        CHECK(registry.RegisterBinaryFunction(&binary, "kernel", &original) == ACLPTI_SUCCESS);
+        calls.clear();
+        modes.clear();
+        warmupSyncFails = false;
+        syncFails = false;
+        CHECK(
+            profiler.ReplayKernel(
+                memory, registry, &original,
+                [&](aclrtFuncHandle, bool) {
+                    calls += 'L';
+                    return ACL_SUCCESS;
+                },
+                nullptr, {}, &Sync) == ACLPTI_SUCCESS);
+        CHECK(profiler.Shutdown() == ACLPTI_SUCCESS);
+        CHECK(calls == "S" && modes.empty());
+        CHECK(result && result->sourceCounterData);
+        CHECK(result->sourceCounterData->status == ACLPTI_ERROR_NOT_SUPPORTED);
+        CHECK(result->sourceCounterData->rows.empty());
+        CHECK(
+            result->sourceCounterData->errors ==
+            std::vector<std::string>{"CANN NPUbit SDK unavailable for SourceCounter"});
+    }
+    std::puts("PASS: sampling replay and SourceCounter-only unavailable API publication without Msprof");
 }

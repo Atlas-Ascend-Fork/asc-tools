@@ -13,6 +13,7 @@
 #include <boost/filesystem.hpp>
 #include <cmath>
 #include <cstdio>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <limits>
 #include <map>
@@ -22,6 +23,7 @@
 #include <utility>
 #include <unistd.h>
 
+#include <driver/ascend_hal_base.h>
 #include <npubit.h>
 
 namespace aclpti::profiling {
@@ -35,10 +37,31 @@ constexpr std::uint64_t kSingleInstructionCount = 1U;
 constexpr double kFmaOperations = 2.0;
 constexpr double kBitsPerByte = 8.0;
 constexpr std::size_t kObjdumpLineBufferSize = 4096U;
-constexpr std::uint32_t kV100DieCount = 2U;
-constexpr std::uint32_t kV100AicorePerDie = 18U;
-
 } // namespace
+
+bool ReadNpubitTopology(std::int32_t deviceId, AiCoreTopology& topology)
+{
+    if (deviceId < 0) {
+        return false;
+    }
+    const auto close = [](void* library) { (void)dlclose(library); };
+    const std::unique_ptr<void, decltype(close)> hal(dlopen("libascend_hal.so", RTLD_NOW | RTLD_LOCAL), close);
+    if (!hal) {
+        return false;
+    }
+    const auto getInfo = reinterpret_cast<decltype(&halGetDeviceInfo)>(dlsym(hal.get(), "halGetDeviceInfo"));
+    const auto id = static_cast<std::uint32_t>(deviceId);
+    std::int64_t dies = 0;
+    std::int64_t cores = 0;
+    if (!getInfo || getInfo(id, MODULE_TYPE_AICORE, INFO_TYPE_DIE_NUM, &dies) != DRV_ERROR_NONE ||
+        getInfo(id, MODULE_TYPE_AICORE, INFO_TYPE_CORE_NUM, &cores) != DRV_ERROR_NONE || dies <= 0 || cores <= 0 ||
+        dies > std::numeric_limits<std::uint32_t>::max() || cores % dies != 0 ||
+        cores / dies > std::numeric_limits<std::uint32_t>::max()) {
+        return false;
+    }
+    topology = {static_cast<std::uint32_t>(dies), static_cast<std::uint32_t>(cores / dies)};
+    return true;
+}
 
 std::optional<double> RooflineVectorOperations(std::uint32_t bitWidth, std::uint64_t instructionCount)
 {
@@ -221,8 +244,7 @@ bool ValidateTrace(const std::vector<std::uint8_t>& raw, std::string& error)
         return false;
     }
     // Per-core slices start with a uint64_t 'written_bytes' header; npubit's NpubitProcess
-    // parses the layout and reports truncation/overflow itself. A zero-length buffer is the
-    // only upfront rejection we can make without the (unchanged) V100 die/core topology.
+    // parses the layout and reports truncation/overflow itself.
     return true;
 }
 
@@ -650,11 +672,12 @@ bool ClassifyKernel(const std::vector<char>& elf, bool& hasSimd, bool& hasSimt)
 }
 
 aclptiResult CollectPass(
-    NpubitInstrumentationType type, const BinarySource& source, const ReplayMemory& memory,
-    const ReplayLaunchFunction& launch, aclrtSynchronizeStreamFunc synchronize, aclrtStream stream,
-    const std::function<void()>& beforeReplay, NpubitOutput& analysis, std::string& error,
+    NpubitInstrumentationType type, const AiCoreTopology& topology, const BinarySource& source,
+    const ReplayMemory& memory, const ReplayLaunchFunction& launch, aclrtSynchronizeStreamFunc synchronize,
+    aclrtStream stream, const std::function<void()>& beforeReplay, NpubitOutput& analysis, std::string& error,
     aclptiRooflineData* rooflineData = nullptr, std::map<std::uint64_t, NpubitDataType>* simtDtypeByAddr = nullptr)
 {
+    const NpubitHwContext hardwareContext{topology.dieCount, topology.coresPerDie};
     NpubitHandle handle{};
     if (!CheckNpubit(
             NpubitCreateHandle(source.image->data(), source.image->size(), &handle, V100, true), "NpubitCreateHandle",
@@ -665,11 +688,7 @@ aclptiResult CollectPass(
         NpubitHandle handle;
         ~ReleaseHandle() { NpubitReleaseHandle(handle); }
     } release{handle};
-    // Set hardware context
-    NpubitHwContext hwCtx{};
-    hwCtx.die_count = kV100DieCount;
-    hwCtx.aicore_per_die = kV100AicorePerDie;
-    if (NpubitSetHardwareContext(handle, &hwCtx) != NPUBIT_SUCCESS) {
+    if (NpubitSetHardwareContext(handle, &hardwareContext) != NPUBIT_SUCCESS) {
         error = "NpubitSetHardwareContext failed";
         return ACLPTI_SUCCESS;
     }
@@ -736,10 +755,16 @@ aclptiResult CollectPass(
 
 aclptiResult CollectNpubitRoofline(
     const BinarySource& source, const ReplayMemory& memory, const ReplayLaunchFunction& launch,
-    aclrtSynchronizeStreamFunc synchronize, aclrtStream stream, const std::function<void()>& beforeReplay,
-    aclptiRooflineData& data)
+    aclrtSynchronizeStreamFunc synchronize, aclrtStream stream, std::int32_t deviceId,
+    const std::function<void()>& beforeReplay, aclptiRooflineData& data)
 {
     data.status = ACLPTI_SUCCESS;
+    AiCoreTopology topology{};
+    if (!ReadNpubitTopology(deviceId, topology)) {
+        data.errors.emplace_back("cannot determine NPUbit AI core topology");
+        data.status = ACLPTI_ERROR_PROFILING_FAILED;
+        return ACLPTI_SUCCESS;
+    }
     // A handle accepts one pass only. Each type owns a separate image, buffer and replay.
     // Choose which passes to run from a static disassembly of the original ELF:
     //  - SIMD (VF) present       -> run PUSH_PB_STATE
@@ -777,7 +802,8 @@ aclptiResult CollectNpubitRoofline(
         std::string error;
         NpubitOutput analysis;
         const auto status = CollectPass(
-            type, source, memory, launch, synchronize, stream, beforeReplay, analysis, error, &data, &simtDtypeByAddr);
+            type, topology, source, memory, launch, synchronize, stream, beforeReplay, analysis, error, &data,
+            &simtDtypeByAddr);
         if (!error.empty()) {
             data.errors.push_back("pass=" + std::to_string(static_cast<int>(type)) + ": " + error);
             data.status = ACLPTI_ERROR_PROFILING_FAILED;

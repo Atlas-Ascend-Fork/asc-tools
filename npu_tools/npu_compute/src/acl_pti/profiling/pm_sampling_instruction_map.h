@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -35,6 +36,18 @@ bool BuildPmSamplingFunctionMap(
 bool BuildPmSamplingOriginalInstructionMap(
     const std::vector<char>& original, const std::string& disassembly, PmSamplingInstructionMap& output,
     std::string& diagnostic);
+
+struct SourceCounterInstructions {
+    std::set<std::uint64_t> simtGm;
+    std::set<std::uint64_t> simtBank;
+    std::string launchSymbol;
+    bool simdVf = false;
+    bool incomplete = false;
+};
+
+bool BuildSourceCounterInstructions(
+    const std::vector<char>& image, const std::string& disassembly, const std::string& name,
+    std::optional<std::uint64_t> entry, SourceCounterInstructions& output, std::string& diagnostic);
 
 } // namespace aclpti::profiling
 

@@ -52,6 +52,7 @@ add_library(acl_pti_unit STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/replay_data_aggregation.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/api.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/source_counter_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/range_profiler.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_memory.cpp
@@ -118,6 +119,7 @@ add_library(acl_pti_test SHARED
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/replay_data_aggregation.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/api.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/source_counter_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/range_profiler.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_memory.cpp
@@ -159,6 +161,7 @@ set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_data_consumer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/source_counter_sqlite_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/pmu_csv_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_jsonl_writer.cpp
@@ -425,6 +428,13 @@ target_link_libraries(acl_pti_hook_failure_domain_test
   PRIVATE acl_pti_test ${NPU_COMPUTE_ACLPTI_DSO_BACKENDS}
 )
 set_target_properties(acl_pti_hook_failure_domain_test PROPERTIES ENABLE_EXPORTS YES)
+foreach(scenario IN ITEMS
+    SourceCounterTimeoutKeepsBusinessSyncBounded
+    SourceCounterSyncTimeoutUsesOverride
+    SourceCounterInvalidSyncTimeoutUsesDefault)
+  add_test(NAME npu_compute.hook_failure.${scenario}
+    COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.${scenario})
+endforeach()
 add_test(NAME npu_compute.hook_failure.shadow_malloc_stop
   COMMAND acl_pti_hook_failure_domain_test --gtest_filter=NpuComputeHookFailure.ShadowMallocStopsProfiling
 )
@@ -556,6 +566,7 @@ set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_artifacts.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/source_counter_sqlite_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/pmu_csv_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_jsonl_writer.cpp
@@ -1022,6 +1033,7 @@ set_tests_properties(npu_compute.pm_sampling_runtime PROPERTIES TIMEOUT 60)
 
 add_executable(npu_compute_pm_sampling_report_test
   pm_sampling_report_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/source_counter_sqlite_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/artifact_publisher.cpp
 )

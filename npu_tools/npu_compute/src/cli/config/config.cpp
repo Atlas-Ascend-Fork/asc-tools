@@ -22,8 +22,8 @@ namespace npucompute::cli {
 namespace {
 
 constexpr std::array kSupportedSections = {
-    "PipeUtilization",       "Memory",     "MemoryL0", "MemoryUB", "L2Cache", "Pipeline", "ArithmeticUtilization",
-    "ResourceConflictRatio", "PmSampling", "Roofline",
+    "PipeUtilization",       "Memory",     "MemoryL0",      "MemoryUB", "L2Cache", "Pipeline", "ArithmeticUtilization",
+    "ResourceConflictRatio", "PmSampling", "SourceCounter", "Roofline",
 };
 
 void AddError(const std::string& message, std::vector<std::string>* errors) { errors->push_back(message); }
@@ -48,8 +48,9 @@ std::vector<std::string> SetSections(const std::string& name)
     }
     for (const char* section : kSupportedSections) {
         if (std::string(section) != "Pipeline" &&
-            (name == "full" || (std::string(section) != "ResourceConflictRatio" &&
-                                std::string(section) != "PmSampling" && std::string(section) != "Roofline"))) {
+            (name == "full" ||
+             (std::string(section) != "ResourceConflictRatio" && std::string(section) != "PmSampling" &&
+              std::string(section) != "SourceCounter" && std::string(section) != "Roofline"))) {
             sections.emplace_back(section);
         }
     }

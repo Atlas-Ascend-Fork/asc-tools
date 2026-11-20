@@ -15,6 +15,7 @@
 #include "sqlite_test_api.h"
 #include "cli/report/summary_sqlite_finalizer.h"
 #include <boost/property_tree/json_parser.hpp>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -112,7 +113,7 @@ std::set<fs::path> StagingDirectories(const fs::path& parent)
 {
     std::set<fs::path> paths;
     for (const auto& entry : fs::directory_iterator(parent)) {
-        if (entry.path().filename().string().find(".npu-compute-pm-sampling-") == 0) {
+        if (entry.path().filename().string().find(".npu-compute-instructions-") == 0) {
             paths.insert(entry.path());
         }
     }
@@ -224,7 +225,7 @@ public:
         }
         current.close();
         if (name.find("summary.db") != std::string::npos) {
-            CHECK(records == (emptySampling ? 0U : 1U));
+            CHECK(records == (failure == "source-joint" ? 2U : (emptySampling ? 0U : 1U)));
         }
         committed.push_back(name);
     }
@@ -323,6 +324,30 @@ std::shared_ptr<aclptiProfilingDataResult> Result(const std::string& mode)
     }
     return result;
 }
+constexpr char kSourceCounterDisassembly[] = "Disassembly of section .text:\nsource.asc:42\n";
+
+void CheckSourceCounterArtifacts(const Sink& sink, bool joint)
+{
+    CHECK(std::count(sink.committed.begin(), sink.committed.end(), "objdump.txt") == 1);
+    CHECK(Read(sink.output / "objdump.txt") == kSourceCounterDisassembly);
+    CHECK(sink.samplingBegins == 1);
+    CHECK(!fs::exists(sink.output / "SourceCounter.csv"));
+    CHECK(fs::exists(sink.output / "symbolizer.json") == joint);
+    if (joint) {
+        CheckDatabase(sink.output / "summary.db", false);
+    }
+    sqlite3* db = nullptr;
+    const auto& api = sqlite::GetApi();
+    CHECK(api.openV2((sink.output / "summary.db").c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+    sqlite3_stmt* query = nullptr;
+    CHECK(
+        api.prepareV2(db, "SELECT ub_bank_conflict FROM SourceCounter WHERE address = 32", -1, &query, nullptr) ==
+        SQLITE_OK);
+    CHECK(api.step(query) == SQLITE_ROW && api.columnInt64(query, 0) == 3);
+    CHECK(api.finalize(query) == SQLITE_OK);
+    CHECK(api.close(db) == SQLITE_OK);
+}
+
 int DenyCreate(void*, int action, const char*, const char*, const char*, const char*)
 {
     return action == npucompute::test::SQLITE_CREATE_TABLE ? SQLITE_DENY : SQLITE_OK;
@@ -349,6 +374,12 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     if (mode == "combo" || mode == "combo-failure" || mode == "map-failure") {
         config.sections = {"Memory", "Pipeline", "PmSampling"};
     }
+    const bool source = mode == "source-only" || mode == "source-joint";
+    if (source) {
+        config.sections = mode == "source-only" ? std::vector<std::string>{"SourceCounter"} :
+                                                  std::vector<std::string>{"PmSampling", "SourceCounter"};
+        CHECK(setenv("SOURCE_OBJDUMP_CALLS", (root / "objdump-calls").c_str(), 1) == 0);
+    }
     Sink sink;
     sink.output = root / "received";
     sink.failure = mode;
@@ -365,13 +396,34 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
         CHECK(npucompute::test::SqliteAutoExtension(reinterpret_cast<void (*)()>(ConfigureSqliteFailure)) == SQLITE_OK);
     }
     if (mode != "no-callback") {
-        CHECK(callback(Result(mode)) == ACLPTI_SUCCESS);
+        auto result = Result(mode);
+        if (source) {
+            result->sourceCounterData.emplace();
+            result->sourceCounterData->status = ACLPTI_SUCCESS;
+            result->sourceCounterData->originalElf = result->pmSamplingContexts.begin()->second->originalElf;
+            result->sourceCounterData->originalDisassembly = kSourceCounterDisassembly;
+            result->sourceCounterData->rows = {{0x20, {0, 0, 0, 3}}};
+            if (mode == "source-only") {
+                result->pmSamplingContexts.clear();
+                result->pcSamplingData.clear();
+            } else {
+                result->sourceCounterData->originalElf =
+                    std::make_shared<const std::vector<char>>(*result->sourceCounterData->originalElf);
+            }
+        }
+        CHECK(callback(std::move(result)) == ACLPTI_SUCCESS);
         if (mode == "repeat" || mode == "mixed-results") {
             CHECK(callback(Result(mode == "mixed-results" ? "truncated" : mode)) == ACLPTI_SUCCESS);
         }
     }
     runtime.Stop();
     const auto status = runtime.ShutdownAfterPtiDrain();
+    if (source) {
+        CHECK(status == 0 && runtime.ErrorCount() == 0);
+        CHECK(!fs::exists(root / "objdump-calls"));
+        CheckSourceCounterArtifacts(sink, mode == "source-joint");
+        return;
+    }
     const bool success = IsSuccessfulScenario(mode);
     CHECK((status == 0) == success);
     CHECK((runtime.ErrorCount() == 0) == success);
@@ -485,6 +537,9 @@ int Tool(int argc, char** argv)
         return 8; // Artifact tools receive the original ELF.
     }
     if (name == "llvm-objdump") {
+        if (const auto* calls = std::getenv("SOURCE_OBJDUMP_CALLS")) {
+            std::ofstream(calls, std::ios::app) << '1';
+        }
         std::cout << "original disassembly\n";
         return 0;
     }
@@ -527,36 +582,13 @@ int main(int argc, char** argv)
             return 0;
         }
         const std::vector<std::string> modes = {
-            "success",
-            "simd",
-            "zero",
-            "repeat",
-            "simd-context",
-            "simd-records",
-            "combo",
-            "combo-failure",
-            "map-failure",
-            "no-callback",
-            "empty",
-            "simt-empty",
-            "missing",
-            "null-context",
-            "multiple-contexts",
-            "probes",
-            "truncated",
-            "unfinished",
-            "identity",
-            "unknown",
-            "source-failure",
-            "record-failure",
-            "sampling-record-failure",
-            "sqlite-failure",
-            "tool-failure",
-            "json-failure",
-            "sink-begin",
-            "sink-write",
-            "sink-commit",
-            "mixed-results"};
+            "success",        "source-only",       "source-joint",   "simd",           "zero",
+            "repeat",         "simd-context",      "simd-records",   "combo",          "combo-failure",
+            "map-failure",    "no-callback",       "empty",          "simt-empty",     "missing",
+            "null-context",   "multiple-contexts", "probes",         "truncated",      "unfinished",
+            "identity",       "unknown",           "source-failure", "record-failure", "sampling-record-failure",
+            "sqlite-failure", "tool-failure",      "json-failure",   "sink-begin",     "sink-write",
+            "sink-commit",    "mixed-results"};
         for (const auto& mode : modes) {
             std::string pattern = "/tmp/pm-sampling-runtime-test-XXXXXX";
             CHECK(mkdtemp(pattern.data()));

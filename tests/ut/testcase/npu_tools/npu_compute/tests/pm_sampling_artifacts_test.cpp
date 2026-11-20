@@ -203,12 +203,37 @@ int Real(int argc, char** argv)
     std::cout << "PASS: real CANN LLVM artifacts generated in " << argv[4] << '\n';
     return 0;
 }
+int SourceCounterReal(int argc, char** argv)
+{
+    CHECK(argc == 4);
+    const auto image = Image(argv[2]);
+    CHECK(!image->empty());
+    const auto root = fs::path(argv[3]);
+    fs::create_directories(root / "source");
+    fs::create_directories(root / "joint");
+    aclptiPmSamplingContext context;
+    context.originalElf = image;
+    PmSamplingArtifacts artifacts;
+    std::string error;
+    CHECK(npucompute::GenerateInstructionArtifacts(
+        (root / "source").string(), {nullptr, image.get(), true, false}, {}, {}, artifacts, error));
+    CHECK(Read(artifacts.disassemblyPath).find("STG") != std::string::npos);
+    CHECK(!fs::exists(root / "source" / "symbolizer.json"));
+    CHECK(npucompute::GenerateInstructionArtifacts(
+        (root / "joint").string(), {&context, image.get(), true, true}, {}, {}, artifacts, error));
+    CHECK(Read(artifacts.disassemblyPath).find("STG") != std::string::npos);
+    CHECK(Read(artifacts.pcStackPath) == "[]");
+    return 0;
+}
 } // namespace
 int main(int argc, char** argv)
 {
     const auto filename = fs::path(argv[0]).filename();
     if (filename == "llvm-objdump" || filename == "llvm-symbolizer") {
         return Tool(argc, argv);
+    }
+    if (argc > 1 && std::string(argv[1]) == "--source-counter-real") {
+        return SourceCounterReal(argc, argv);
     }
     if (argc > 1 && std::string(argv[1]) == "--reference") {
         return Reference(argc, argv);
@@ -304,6 +329,22 @@ int main(int argc, char** argv)
     CHECK(!emptyArtifacts.disassemblyPath.empty() && fs::exists(emptyStaging / "objdump.txt"));
     CHECK(fs::exists(emptyStaging / "symbolizer.json") && Read(emptyStaging / "symbolizer.json") == "[]");
     CHECK(::setenv("PM_SAMPLING_TOOL_TEST_MODE", "array", 1) == 0);
+    const auto sharedStaging = directory.path / "shared-disassembly";
+    fs::create_directory(sharedStaging);
+    PmSamplingArtifacts sharedArtifacts;
+    std::string sharedError;
+    CHECK(npucompute::GenerateInstructionArtifacts(
+        sharedStaging.string(), {nullptr, context.originalElf.get(), true, true}, {}, options, sharedArtifacts,
+        sharedError));
+    CHECK(Read(sharedArtifacts.disassemblyPath).find("ELFO") != std::string::npos);
+    CHECK(Read(sharedArtifacts.pcStackPath) == "[]");
+    // A SourceCounter disassembly cannot replace a requested companion disassembly.
+    auto companionPolicy = options;
+    companionPolicy.disassemblySource = PmSamplingElfSource::Companion;
+    CHECK(npucompute::GenerateInstructionArtifacts(
+        sharedStaging.string(), {&context, context.originalElf.get(), true, true, "cached original"}, {},
+        companionPolicy, sharedArtifacts, sharedError));
+    CHECK(Read(sharedArtifacts.disassemblyPath).find("ELFC") != std::string::npos);
     // Independently choose original disassembly and companion symbolization, then vice versa.
     for (int source = 0; source < 2; ++source) {
         auto policy = options;

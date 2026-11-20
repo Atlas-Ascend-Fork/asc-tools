@@ -228,6 +228,9 @@ aclptiResult WriteCsvSections(
     const auto operationDurationUs = CsvOperationDuration(result);
     try {
         for (const auto& section : sections) {
+            if (section == "SourceCounter") {
+                continue;
+            }
             if (PmuMetricBuilder::Header(section).empty()) {
                 ASCTOOL_ERROR(
                     "[npu-compute] CSV write rejected: unsupported section=%s"
@@ -237,6 +240,9 @@ aclptiResult WriteCsvSections(
             }
         }
         for (const auto& section : sections) {
+            if (section == "SourceCounter") {
+                continue;
+            }
             const auto status = WriteCsvSection(result, section, context, operationDurationUs);
             if (status != ACLPTI_SUCCESS) {
                 return status;

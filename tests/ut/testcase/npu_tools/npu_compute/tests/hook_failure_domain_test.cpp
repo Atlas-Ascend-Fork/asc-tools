@@ -61,6 +61,9 @@ std::size_t gFreeCalls = 0;
 std::size_t gMemcpyCalls = 0;
 std::size_t gLaunchCalls = 0;
 std::size_t gSyncCalls = 0;
+std::size_t gTimedSyncCalls = 0;
+std::int32_t gLastSyncTimeout = 0;
+aclError gTimedSyncStatus = ACL_SUCCESS;
 std::size_t gStartCalls = 0;
 std::size_t gShutdownCalls = 0;
 std::size_t gFailMallocCall = 0;
@@ -121,6 +124,13 @@ aclError RealSynchronize(void*)
 {
     ++gSyncCalls;
     return gSyncCalls == gFailSyncCall ? kSyncFailure : ACL_SUCCESS;
+}
+
+aclError RealSynchronizeWithTimeout(aclrtStream, std::int32_t timeout)
+{
+    ++gTimedSyncCalls;
+    gLastSyncTimeout = timeout;
+    return gTimedSyncStatus;
 }
 
 aclptiResult FailingShutdownCallback(void*) { return ACLPTI_ERROR_INTERNAL; }
@@ -224,6 +234,71 @@ TEST(NpuComputeHookFailure, InitialSynchronizeFailure)
     ASSERT_TRUE(gLaunchCalls == 1);
     ASSERT_TRUE(gStartCalls == 0);
     ASSERT_TRUE(gSyncCalls == 1);
+}
+
+TEST(NpuComputeHookFailure, SourceCounterTimeoutKeepsBusinessSyncBounded)
+{
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(unsetenv("NPU_COMPUTE_SOURCE_COUNTER_SYNC_TIMEOUT_MS"), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_EQ(
+        RuntimeStubSetOriginFunction("aclrtSynchronizeStreamWithTimeout", &RealSynchronizeWithTimeout), ACL_SUCCESS);
+    const char* section = "SourceCounter";
+    aclptiRangeProfilerSetConfigParams config{&section, 1};
+    ASSERT_EQ(aclptiRangeProfilerSetConfig(&config), ACLPTI_SUCCESS);
+    gTimedSyncStatus = ACL_ERROR_RT_STREAM_SYNC_TIMEOUT;
+
+    ASSERT_EQ(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr), ACL_ERROR_INTERNAL_ERROR);
+    ASSERT_EQ(gTimedSyncCalls, 1U);
+    ASSERT_EQ(gLastSyncTimeout, 60000);
+    ASSERT_EQ(gSyncCalls, 0U);
+    ASSERT_EQ(aclrtSynchronizeStream(nullptr), ACL_ERROR_RT_STREAM_SYNC_TIMEOUT);
+    ASSERT_EQ(gTimedSyncCalls, 2U);
+    ASSERT_EQ(gSyncCalls, 0U);
+
+    int otherStream;
+    ASSERT_EQ(aclrtSynchronizeStream(&otherStream), ACL_SUCCESS);
+    ASSERT_EQ(gSyncCalls, 1U);
+    gTimedSyncStatus = ACL_SUCCESS;
+    ASSERT_EQ(aclrtSynchronizeStream(nullptr), ACL_SUCCESS);
+    ASSERT_EQ(gTimedSyncCalls, 3U);
+    ASSERT_EQ(aclrtSynchronizeStream(nullptr), ACL_SUCCESS);
+    ASSERT_EQ(gTimedSyncCalls, 3U);
+    ASSERT_EQ(gSyncCalls, 2U);
+}
+
+TEST(NpuComputeHookFailure, SourceCounterSyncTimeoutUsesOverride)
+{
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_SOURCE_COUNTER_SYNC_TIMEOUT_MS", "7", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_EQ(
+        RuntimeStubSetOriginFunction("aclrtSynchronizeStreamWithTimeout", &RealSynchronizeWithTimeout), ACL_SUCCESS);
+    const char* section = "SourceCounter";
+    aclptiRangeProfilerSetConfigParams config{&section, 1};
+    ASSERT_EQ(aclptiRangeProfilerSetConfig(&config), ACLPTI_SUCCESS);
+    ASSERT_EQ(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr), ACL_SUCCESS);
+    ASSERT_EQ(gTimedSyncCalls, 1U);
+    ASSERT_EQ(gLastSyncTimeout, 7);
+    ASSERT_EQ(gSyncCalls, 0U);
+    ASSERT_EQ(aclrtSynchronizeStream(nullptr), ACL_SUCCESS);
+    ASSERT_EQ(gTimedSyncCalls, 1U);
+    ASSERT_EQ(gSyncCalls, 1U);
+}
+
+TEST(NpuComputeHookFailure, SourceCounterInvalidSyncTimeoutUsesDefault)
+{
+    NPU_COMPUTE_ISOLATE_TEST();
+    ASSERT_EQ(setenv("NPU_COMPUTE_SOURCE_COUNTER_SYNC_TIMEOUT_MS", "2147483648", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(Initialize());
+    ASSERT_EQ(
+        RuntimeStubSetOriginFunction("aclrtSynchronizeStreamWithTimeout", &RealSynchronizeWithTimeout), ACL_SUCCESS);
+    const char* section = "SourceCounter";
+    aclptiRangeProfilerSetConfigParams config{&section, 1};
+    ASSERT_EQ(aclptiRangeProfilerSetConfig(&config), ACLPTI_SUCCESS);
+    ASSERT_EQ(aclrtLaunchKernel(nullptr, 1, nullptr, 0, nullptr), ACL_SUCCESS);
+    ASSERT_EQ(gTimedSyncCalls, 1U);
+    ASSERT_EQ(gLastSyncTimeout, 60000);
 }
 
 TEST(NpuComputeHookFailure, ReplayInitialSynchronize)

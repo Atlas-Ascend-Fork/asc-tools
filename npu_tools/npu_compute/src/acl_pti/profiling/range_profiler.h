@@ -33,6 +33,7 @@ class BinaryRegistry;
 
 using ReplayLaunchFunction = std::function<aclError(aclrtFuncHandle, bool)>;
 using SamplingOffsetReader = std::function<aclptiResult(aclrtFuncHandle, std::uint64_t&)>;
+using SourceCounterSynchronize = std::function<aclError(aclrtStream)>;
 
 class RangeProfiler {
 public:
@@ -44,6 +45,7 @@ public:
 
     void SetCacheControl(aclptiCacheControl mode) { cacheControl_ = mode; }
 
+    bool CollectSourceCounter() const { return collectSourceCounter_; }
     bool CollectPipeline() const { return collectPipeline_; }
     bool CollectPcSampling() const { return collectPcSampling_; }
     bool CollectRoofline() const { return collectRoofline_; }
@@ -52,7 +54,8 @@ public:
     aclptiResult ReplayKernel(
         const ReplayMemory& replayMemory, BinaryRegistry& binaryRegistry, aclrtFuncHandle originalFunction,
         const ReplayLaunchFunction& launchFunction, aclrtStream stream,
-        const SamplingOffsetReader& readSamplingOffset = {});
+        const SamplingOffsetReader& readSamplingOffset = {},
+        const SourceCounterSynchronize& synchronizeSourceCounter = {});
 
     /// Drains raw profiling data and stops the data module.
     aclptiResult Shutdown();
@@ -64,7 +67,8 @@ private:
     /// Resolves replay dependencies and synchronizes the stream before profiling starts.
     aclptiResult PrepareReplayEnvironment(
         const ReplayLaunchFunction& launchFunction, aclrtStream stream, std::int32_t* deviceId,
-        aclrtSynchronizeStreamFunc* synchronizeFunction) const;
+        aclrtSynchronizeStreamFunc* synchronizeFunction,
+        const SourceCounterSynchronize& synchronizeSourceCounter) const;
 
     /// Expands the logical collection request into deterministic PMU and instruction rounds.
     std::vector<ReplayRound> BuildReplayRounds() const;
@@ -94,6 +98,8 @@ private:
         const data::ReplayResult& replayResult, aclptiResult releaseStatus) const;
 
     struct ReplayInvocation;
+    aclptiResult ReplaySourceCounter(const ReplayInvocation& invocation, std::size_t firstRound);
+    aclptiResult ReplayRoofline(const ReplayInvocation& invocation, std::size_t firstRound);
     bool PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config) const;
     aclptiResult SkipUnmappedSamplingRound(std::size_t round, const ProfilingRoundConfig& config);
     aclptiResult RecordWarmupFailure(std::size_t round, const ProfilingRoundConfig& config, aclptiResult status);
@@ -106,6 +112,7 @@ private:
     aclptiCacheControl cacheControl_ = ACLPTI_CACHE_CONTROL_NONE;
     std::vector<uint32_t> pmuEvents_;
     aclptiBlockResultMode blockResult_ = ACLPTI_BLOCK_RESULT_DISABLED;
+    bool collectSourceCounter_ = false;
     bool collectPipeline_ = false;
     bool collectPcSampling_ = false;
     bool collectRoofline_ = false;

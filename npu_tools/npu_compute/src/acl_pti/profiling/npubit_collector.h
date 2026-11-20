@@ -13,9 +13,17 @@
 #include "aclpti/aclpti_data.h"
 #include "binary_registry.h"
 #include "range_profiler.h"
+#include <cstdint>
 #include <optional>
 
 namespace aclpti::profiling {
+
+struct AiCoreTopology {
+    std::uint32_t dieCount;
+    std::uint32_t coresPerDie;
+};
+
+bool ReadNpubitTopology(std::int32_t deviceId, AiCoreTopology& topology);
 
 // Work per dynamic instruction. These coefficients already include x2.
 std::optional<double> RooflineVectorOperations(std::uint32_t bitWidth, std::uint64_t instructionCount);
@@ -24,8 +32,8 @@ std::optional<double> RooflineVectorOperations(std::uint32_t bitWidth, std::uint
 // Optional instrumentation failures stay in data; restore/launch/sync failures are returned.
 aclptiResult CollectNpubitRoofline(
     const BinarySource& source, const ReplayMemory& memory, const ReplayLaunchFunction& launch,
-    aclrtSynchronizeStreamFunc synchronize, aclrtStream stream, const std::function<void()>& beforeReplay,
-    aclptiRooflineData& data);
+    aclrtSynchronizeStreamFunc synchronize, aclrtStream stream, std::int32_t deviceId,
+    const std::function<void()>& beforeReplay, aclptiRooflineData& data);
 
 } // namespace aclpti::profiling
 

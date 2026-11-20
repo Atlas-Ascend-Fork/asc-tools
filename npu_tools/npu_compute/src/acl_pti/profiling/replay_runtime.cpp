@@ -12,11 +12,36 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <limits>
 #include <new>
+#include <string>
 
 namespace aclpti::profiling {
 namespace {
 constexpr std::size_t kPmSamplingProbeBufferBytes = 32;
+constexpr int kDecimalBase = 10;
+} // namespace
+
+std::int32_t ReplayRuntime::ReadSourceCounterSyncTimeoutMs()
+{
+    const char* configuredValue = std::getenv("NPU_COMPUTE_SOURCE_COUNTER_SYNC_TIMEOUT_MS");
+    if (configuredValue == nullptr) {
+        return kDefaultSourceCounterSyncTimeoutMs;
+    }
+    const std::string configured(configuredValue);
+    std::size_t parsedChars = 0;
+    std::int64_t timeoutMs = 0;
+    try {
+        timeoutMs = std::stoll(configured, &parsedChars, kDecimalBase);
+    } catch (...) {
+        parsedChars = 0;
+    }
+    if (parsedChars != configured.size() || timeoutMs <= 0 || timeoutMs > std::numeric_limits<std::int32_t>::max()) {
+        ASCTOOL_WARNING("[aclpti] invalid NPU_COMPUTE_SOURCE_COUNTER_SYNC_TIMEOUT_MS; using 60000 ms");
+        return kDefaultSourceCounterSyncTimeoutMs;
+    }
+    return static_cast<std::int32_t>(timeoutMs);
 }
 
 aclptiResult ReplayRuntime::Initialize()
@@ -49,52 +74,61 @@ aclptiResult ReplayRuntime::SetConfig(const aclptiRangeProfilerSetConfigParams* 
         return status;
     }
     rangeProfiler_.SetCacheControl(params->cacheControl);
+    if (CollectSourceCounter()) {
+        sourceCounterSyncTimeoutMs_ = ReadSourceCounterSyncTimeoutMs();
+    }
     return ACLPTI_SUCCESS;
 }
 
 aclptiResult ReplayRuntime::RegisterBinary(
     const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary)
 {
-    if ((!CollectPipeline() && !CollectPcSampling() && !CollectRoofline()) || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling() && !CollectSourceCounter() && !CollectRoofline()) ||
+        !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(
-        binaryRegistry_.RegisterBinary(data, size, options, binary, CollectPcSampling(), CollectPipeline()));
+    return HandleBinaryResult(binaryRegistry_.RegisterBinary(
+        data, size, options, binary, CollectPcSampling(), CollectPipeline(),
+        CollectSourceCounter() || CollectRoofline()));
 }
 
 aclptiResult ReplayRuntime::RegisterBinaryFromFile(
     const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary)
 {
-    if ((!CollectPipeline() && !CollectPcSampling() && !CollectRoofline()) || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling() && !CollectSourceCounter() && !CollectRoofline()) ||
+        !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(
-        binaryRegistry_.RegisterBinaryFromFile(path, options, binary, CollectPcSampling(), CollectPipeline()));
+    return HandleBinaryResult(binaryRegistry_.RegisterBinaryFromFile(
+        path, options, binary, CollectPcSampling(), CollectPipeline(), CollectSourceCounter() || CollectRoofline()));
 }
 
 aclptiResult ReplayRuntime::RegisterBinaryFunction(aclrtBinHandle binary, const char* name, aclrtFuncHandle function)
 {
-    if ((!CollectPipeline() && !CollectPcSampling() && !CollectRoofline()) || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling() && !CollectSourceCounter() && !CollectRoofline()) ||
+        !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(binaryRegistry_.RegisterBinaryFunction(binary, name, function));
+    return HandleBinaryResult(binaryRegistry_.RegisterBinaryFunction(binary, name, function));
 }
 
 aclptiResult ReplayRuntime::RegisterBinaryFunction(aclrtBinHandle binary, std::uint64_t entry, aclrtFuncHandle function)
 {
-    if ((!CollectPipeline() && !CollectPcSampling() && !CollectRoofline()) || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling() && !CollectSourceCounter() && !CollectRoofline()) ||
+        !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(binaryRegistry_.RegisterBinaryFunction(binary, entry, function));
+    return HandleBinaryResult(binaryRegistry_.RegisterBinaryFunction(binary, entry, function));
 }
 
 aclptiResult ReplayRuntime::RegisterSymbolFunction(aclrtFuncHandle function)
 {
-    if ((!CollectPipeline() && !CollectPcSampling() && !CollectRoofline()) || !ProfilingAvailable()) {
+    if ((!CollectPipeline() && !CollectPcSampling() && !CollectSourceCounter() && !CollectRoofline()) ||
+        !ProfilingAvailable()) {
         return ACLPTI_SUCCESS;
     }
-    return HandleProfilingResult(
-        binaryRegistry_.RegisterSymbolFunction(function, CollectPcSampling(), CollectPipeline(), CollectRoofline()));
+    return HandleBinaryResult(binaryRegistry_.RegisterSymbolFunction(
+        function, CollectPcSampling(), CollectPipeline(), CollectSourceCounter() || CollectRoofline()));
 }
 
 aclptiResult ReplayRuntime::PrepareBinaryUnload(aclrtBinHandle binary, BinaryRegistry::UnloadContext& context)
@@ -150,7 +184,8 @@ aclptiResult ReplayRuntime::ReplayKernel(
     }
     const aclptiResult status = rangeProfiler_.ReplayKernel(
         replayMemory_, binaryRegistry_, originalFunction, launchFunction, stream,
-        [this](aclrtFuncHandle function, std::uint64_t& offset) { return ReadPmSamplingOffset(function, offset); });
+        [this](aclrtFuncHandle function, std::uint64_t& offset) { return ReadPmSamplingOffset(function, offset); },
+        [this](aclrtStream replayStream) { return SynchronizeSourceCounterStreamWithTimeout(replayStream); });
     // One original launch owns all rounds above and exactly one complete result publication.
     const aclptiResult shutdownStatus = StopProfiling();
     ASCTOOL_DEBUG(
@@ -162,7 +197,41 @@ aclptiResult ReplayRuntime::ReplayKernel(
     return status;
 }
 
+bool ReplayRuntime::IsSourceCounterStreamAbandoned(aclrtStream stream) const
+{
+    std::lock_guard<std::mutex> lock(sourceCounterStreamMutex_);
+    return sourceCounterStreamAbandoned_ && abandonedSourceCounterStream_ == stream;
+}
+
+aclError ReplayRuntime::SynchronizeSourceCounterStreamWithTimeout(aclrtStream stream)
+{
+    const auto synchronize = reinterpret_cast<aclrtSynchronizeStreamWithTimeoutFunc>(
+        acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtSynchronizeStreamWithTimeout));
+    const aclError status =
+        synchronize != nullptr ? synchronize(stream, sourceCounterSyncTimeoutMs_) : ACL_ERROR_FEATURE_UNSUPPORTED;
+    std::lock_guard<std::mutex> lock(sourceCounterStreamMutex_);
+    if (status != ACL_SUCCESS) {
+        abandonedSourceCounterStream_ = stream;
+        sourceCounterStreamAbandoned_ = true;
+    } else if (abandonedSourceCounterStream_ == stream) {
+        abandonedSourceCounterStream_ = nullptr;
+        sourceCounterStreamAbandoned_ = false;
+    }
+    return status;
+}
+
 bool ReplayRuntime::ProfilingAvailable() const { return profilingAvailable_.load(std::memory_order_acquire); }
+
+aclptiResult ReplayRuntime::HandleBinaryResult(aclptiResult status)
+{
+    if (CollectPipeline() || CollectPcSampling() || (CollectRoofline() && !CollectSourceCounter())) {
+        return HandleProfilingResult(status);
+    }
+    if (status != ACLPTI_SUCCESS) {
+        ASCTOOL_WARNING("[aclpti] original binary capture failed: status=%d", status);
+    }
+    return ACLPTI_SUCCESS;
+}
 
 aclptiResult ReplayRuntime::HandleProfilingResult(aclptiResult status)
 {

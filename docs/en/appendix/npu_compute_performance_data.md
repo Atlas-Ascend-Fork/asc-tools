@@ -194,6 +194,19 @@ Instruction addresses and state totals collected by `PmSampling` are stored in t
 | `divergence_stack_spill` | Waiting for spill handling when the divergence stack has insufficient space. |
 | `others` | Other waiting or stall states outside the categories above. |
 
+<a name="sourcecounter"></a>
+
+## SourceCounter (Instruction memory metrics aggregated by original address)
+
+`SourceCounter` writes its metrics directly to the `SourceCounter` and `FieldUnitMap` tables in `summary.db`. Results are aggregated by original ELF instruction address.
+
+| Field | Description | Unit |
+|---|---|---|
+| `address` | Original ELF instruction address. | None |
+| `avg_cache_lines_num` | Average cache line count for valid memory samples of the instruction. | `count` |
+| `avg_cache_line_utilization` | Average cache line utilization for valid memory samples of the instruction, stored as a percentage from 0 to 100. | `%` |
+| `ub_bank_conflict` | Maximum valid UB bank conflict value returned for the instruction. | `count` |
+
 ## PipeUtilization (Compute and transfer pipeline utilization)
 
 PipeUtilization.csv contains compute and transfer pipeline active times, cycle ratios, active bandwidth, and instruction-cache miss rates. Use it to examine pipeline active times and cycle ratios. See the field descriptions in the table below for details.
@@ -348,7 +361,7 @@ The suffix `b8`, `b16`, or `b32` indicates the bit width of the data used by the
 |---|---|---|
 | `p_peak` | OP/s | Theoretical peak compute throughput, calculated from the device core count, core frequency, and bit width. |
 | `b_peak` | GB/s | Theoretical GM bandwidth used by the model: 1600 for SIMD and Cube, 800 for SIMT. |
-| `w` | OP | Operation count for the compute type and bit width, obtained from replays with NPUBIT instrumentation. |
+| `w` | OP | Operation count for the compute type and bit width, obtained from the dedicated operation-count replay. |
 | `t` | s | Task Duration from the dedicated Roofline replay. The tool uses valid task start and end records from the uninstrumented PMU replay and converts the duration from microseconds to seconds. |
 | `q` | B | Logical GM bytes read and written by the entire kernel. The tool adds the bytes from data transfer instructions and, for SIMT global memory reads and writes, multiplies the active thread execution counts by the corresponding data size in bytes. |
 

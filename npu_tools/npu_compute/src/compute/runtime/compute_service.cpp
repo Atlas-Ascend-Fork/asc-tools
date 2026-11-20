@@ -118,9 +118,11 @@ int ComputeService::FinalizeOnce(int status)
         std::find(config_.sections.begin(), config_.sections.end(), "Pipeline") != config_.sections.end();
     const bool samplingRequested =
         std::find(config_.sections.begin(), config_.sections.end(), "PmSampling") != config_.sections.end();
+    const bool sourceRequested =
+        std::find(config_.sections.begin(), config_.sections.end(), "SourceCounter") != config_.sections.end();
     result.complete = status == 0 && result.errorCount == 0 &&
-                      (result.rowCount > 0 || pipelineRequested || samplingRequested) && runtime.PmSamplingComplete() &&
-                      publisher_ && !publisher_->Cancelled();
+                      (result.rowCount > 0 || pipelineRequested || samplingRequested || sourceRequested) &&
+                      runtime.PmSamplingComplete() && publisher_ && !publisher_->Cancelled();
     result.status = result.complete ? 0 : 1;
     result.code = result.status;
     result_ = publisher_ && publisher_->Finish(std::move(result)) ? 0 : -1;

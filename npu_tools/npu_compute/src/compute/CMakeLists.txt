@@ -22,6 +22,7 @@ add_library(npu_compute SHARED
   pm_sampling/pm_sampling_decoder.cpp
   pm_sampling/pm_sampling_sqlite_writer.cpp
   pmu/pmu_data_consumer.cpp
+  report/source_counter_sqlite_writer.cpp
   report/pmu_csv_writer.cpp
   pmu/pmu_metric_builder.cpp
   performance_hints/performance_hint_analyzer.cpp

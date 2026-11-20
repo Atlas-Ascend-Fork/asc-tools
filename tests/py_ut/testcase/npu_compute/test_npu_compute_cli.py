@@ -35,7 +35,7 @@ FIXTURE = Path(
         "NPU_COMPUTE_REP_FIXTURE", str(BIN_DIR / "npu_compute_rep_fixture_app")
     )
 )
-BASIC_SECTIONS = ["Pipeline", *SECTIONS[:-1]]
+BASIC_SECTIONS = ["Pipeline", *SECTIONS[:-2]]
 
 
 def fixture_command(*arguments):
@@ -216,7 +216,7 @@ def test_list_sections_outputs_only_ids_in_alphabetical_order():
 
     assert result.returncode == 0
     assert result.stdout.splitlines() == sorted(
-        [*SECTIONS, "Pipeline", "PmSampling", "Roofline"], key=str.casefold
+        [*SECTIONS, "Pipeline", "PmSampling", "SourceCounter"], key=str.casefold
     )
     assert result.stderr == ""
 
@@ -610,7 +610,13 @@ def test_help_has_one_definition_per_option():
         (("--set", "basic"), BASIC_SECTIONS),
         (
             ("--set", "full"),
-            [*BASIC_SECTIONS, "ResourceConflictRatio", "PmSampling", "Roofline"],
+            [
+                *BASIC_SECTIONS,
+                "ResourceConflictRatio",
+                "PmSampling",
+                "SourceCounter",
+                "Roofline",
+            ],
         ),
         (
             (

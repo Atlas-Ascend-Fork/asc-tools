@@ -333,6 +333,7 @@ constexpr int kDecimalBase = 10;
 using AddressReferences = std::map<std::uint64_t, BranchTarget>;
 struct NormalizedInstructions {
     AddressReferences references;
+    std::set<std::uint64_t> vectorCalls;
 };
 bool ParseUnsigned(const std::string& text, std::uint64_t& value)
 {
@@ -402,6 +403,7 @@ void NormalizeVectorEntry(const std::vector<Instruction>& input, std::size_t ind
     const auto target = AddWordOffset(input[index].address, offset);
     const auto instructionPc = input[index + kMovImmediateIndex].address;
     output.references.emplace(instructionPc, BranchTarget{simt ? "SIMT entry" : "vector entry", target});
+    output.vectorCalls.insert(input[index + kVectorIndex].address);
 }
 const std::map<std::string, Elf::Function>::value_type& FunctionAtEntry(const Elf& elf, std::uint64_t address)
 {
@@ -520,6 +522,175 @@ bool BuildPmSamplingOriginalInstructionMap(
     } catch (const std::exception& error) {
         diagnostic = error.what();
         output.error = diagnostic;
+        return false;
+    }
+}
+
+namespace {
+std::string_view Opcode(std::string_view operation)
+{
+    if (!operation.empty() && operation.front() == '@') {
+        const auto end = operation.find(' ');
+        if (end == std::string_view::npos) {
+            return {};
+        }
+        operation.remove_prefix(end + 1);
+    }
+    return operation.substr(0, operation.find_first_of(". "));
+}
+
+std::string SourceLaunchSymbol(const Elf& elf, const std::string& name, std::optional<std::uint64_t> entry)
+{
+    // ACLNN Runtime entries can be tiling keys. Use the name of the function
+    // Runtime selected before interpreting the entry as an ELF address.
+    if (!name.empty()) {
+        if (elf.functions.count(name) != 0) {
+            return name;
+        }
+        for (const auto* suffix : {"_mix_aic", "_aic"}) {
+            const auto candidate = name + suffix;
+            if (elf.functions.count(candidate) != 0) {
+                return candidate;
+            }
+        }
+    }
+    if (entry) {
+        return FunctionAtEntry(elf, *entry).first;
+    }
+    throw std::runtime_error("launch function does not match an original ELF symbol");
+}
+
+std::optional<std::uint64_t> SimtCallTarget(const Instruction& instruction)
+{
+    constexpr std::string_view callPrefix = "CALL #";
+    std::string_view operand = instruction.operation;
+    if (operand.substr(0, callPrefix.size()) != callPrefix) {
+        return std::nullopt;
+    }
+    operand.remove_prefix(callPrefix.size());
+    operand = operand.substr(0, operand.find(' '));
+    const bool negative = !operand.empty() && operand.front() == '-';
+    if (negative) {
+        operand.remove_prefix(1);
+    }
+    std::uint64_t encodedDistance = 0;
+    const auto maximumMagnitude = static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) + 1U;
+    if (!ParseUnsigned(std::string(operand), encodedDistance) ||
+        encodedDistance > (negative ? maximumMagnitude : std::numeric_limits<std::uint32_t>::max())) {
+        return std::nullopt;
+    }
+    // llvm-objdump prints SIMT CALL displacements in bytes relative to the CALL PC.
+    std::int64_t displacement = 0;
+    if (negative) {
+        displacement = -static_cast<std::int64_t>(encodedDistance);
+    } else if (encodedDistance <= static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+        displacement = static_cast<std::int64_t>(encodedDistance);
+    } else {
+        displacement = static_cast<std::int64_t>(encodedDistance) -
+                       (static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max()) + 1);
+    }
+    if (displacement < 0) {
+        const auto distance = static_cast<std::uint64_t>(-displacement);
+        return distance <= instruction.address ? std::optional{instruction.address - distance} : std::nullopt;
+    }
+    const auto distance = static_cast<std::uint64_t>(displacement);
+    return distance <= std::numeric_limits<std::uint64_t>::max() - instruction.address ?
+               std::optional{instruction.address + distance} :
+               std::nullopt;
+}
+
+void ReadSourceSimtFunctions(
+    const Elf& elf, const std::vector<Instruction>& instructions, std::vector<std::uint64_t>& pending,
+    SourceCounterInstructions& output)
+{
+    std::set<std::uint64_t> visited;
+    while (!pending.empty()) {
+        const auto pc = pending.back();
+        pending.pop_back();
+        if (!visited.insert(pc).second) {
+            continue;
+        }
+        std::vector<Instruction> body;
+        try {
+            body = FunctionInstructions(instructions, elf, FunctionAtEntry(elf, pc).second);
+        } catch (const std::runtime_error&) {
+            output.incomplete = true;
+            continue;
+        }
+        for (const auto& instruction : body) {
+            const auto opcode = Opcode(instruction.operation);
+            if (opcode == "LDS" || opcode == "STS") {
+                output.simtBank.insert(instruction.address);
+            } else if (opcode == "LDG" || opcode == "STG") {
+                output.simtGm.insert(instruction.address);
+            } else if (opcode == "CALL") {
+                const auto target = SimtCallTarget(instruction);
+                if (target) {
+                    pending.push_back(*target);
+                } else {
+                    output.incomplete = true;
+                }
+            }
+        }
+    }
+}
+
+void ReadSourceVectorCalls(
+    const Elf& elf, const std::vector<Instruction>& instructions, const Elf::Function& caller,
+    SourceCounterInstructions& output)
+{
+    const auto body = FunctionInstructions(instructions, elf, caller);
+    NormalizedInstructions calls;
+    for (std::size_t index = 0; index < body.size(); ++index) {
+        NormalizeVectorEntry(body, index, calls);
+    }
+    for (const auto& instruction : body) {
+        const auto opcode = Opcode(instruction.operation);
+        if (opcode == "VF") {
+            output.simdVf = true;
+        } else if (opcode == "VF_SIMT" && calls.vectorCalls.count(instruction.address) == 0) {
+            output.incomplete = true;
+        }
+    }
+    std::vector<std::uint64_t> simtTargets;
+    for (const auto& call : calls.references) {
+        if (call.second.kind == "SIMT entry") {
+            simtTargets.push_back(call.second.target);
+        }
+    }
+    ReadSourceSimtFunctions(elf, instructions, simtTargets, output);
+}
+} // namespace
+
+bool BuildSourceCounterInstructions(
+    const std::vector<char>& image, const std::string& disassembly, const std::string& name,
+    std::optional<std::uint64_t> entry, SourceCounterInstructions& output, std::string& diagnostic)
+{
+    output = {};
+    try {
+        const Elf elf(image);
+        const auto instructions = ReadInstructions(disassembly);
+        ValidateDisassembly(instructions, elf);
+        output.launchSymbol = SourceLaunchSymbol(elf, name, entry);
+        ReadSourceVectorCalls(elf, instructions, elf.functions.at(output.launchSymbol), output);
+        for (const auto suffix : {std::string_view{"_mix_aic"}, std::string_view{"_aic"}}) {
+            const auto& symbol = output.launchSymbol;
+            if (symbol.size() <= suffix.size() ||
+                symbol.compare(symbol.size() - suffix.size(), suffix.size(), suffix)) {
+                continue;
+            }
+            const auto partner = elf.functions.find(symbol.substr(0, symbol.size() - 1) + "v");
+            if (partner != elf.functions.end()) {
+                ReadSourceVectorCalls(elf, instructions, partner->second, output);
+            } else if (suffix == "_mix_aic") {
+                output.incomplete = true;
+            }
+            break;
+        }
+        diagnostic.clear();
+        return true;
+    } catch (const std::exception& error) {
+        diagnostic = error.what();
         return false;
     }
 }

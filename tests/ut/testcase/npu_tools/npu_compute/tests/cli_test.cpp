@@ -385,6 +385,7 @@ int TestSets()
     auto full = basic;
     full.push_back("ResourceConflictRatio");
     full.push_back("PmSampling");
+    full.push_back("SourceCounter");
     full.push_back("Roofline");
     CHECK(Parse({"npu-compute", "--set", "basic", "./app"}, &config, &errors));
     CHECK(config.sections == basic && config.collect_pipeline);
@@ -400,7 +401,7 @@ int TestSets()
     CHECK(config.sections == reordered);
     CHECK(Parse(
         {"npu-compute", "--set", "basic", "--section", "ResourceConflictRatio", "--section", "PmSampling", "--section",
-         "Roofline", "--replay-mode=kernel", "-o", "x.npu-rep", "./app", "--set", "full"},
+         "SourceCounter", "--section", "Roofline", "--replay-mode=kernel", "-o", "x.npu-rep", "./app", "--set", "full"},
         &config, &errors));
     CHECK(config.sections == full);
     CHECK(config.program_arguments == std::vector<std::string>({"--set", "full"}));

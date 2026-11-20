@@ -43,6 +43,7 @@ public:
     aclptiResult SetRooflineData(aclptiRooflineData data);
     // Requires no active replay; drains the worker and publishes the result at most once.
     aclptiResult Shutdown();
+    aclptiResult SetSourceCounterData(aclptiSourceCounterData data);
 
     /// Releases an active replay, drains queued data, and shuts down the module.
     aclptiResult ForceShutdown();
@@ -65,6 +66,7 @@ private:
     ManagerState state_ = ManagerState::Created;
     aclptiResult shutdownStatus_ = ACLPTI_SUCCESS;
     DataProcessor processor_;
+    std::optional<aclptiSourceCounterData> sourceCounterData_;
     std::optional<aclptiRooflineData> rooflineData_;
 };
 

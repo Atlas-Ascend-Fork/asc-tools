@@ -12,6 +12,7 @@
 #include "npubit_collector.h"
 #include <memory>
 #include "binary_registry.h"
+#include "source_counter_collector.h"
 #include "acl_pti/data/pmu_events.h"
 
 #include "profiling/prof_api.h"
@@ -90,6 +91,7 @@ constexpr SectionDefinition kSectionCatalog[] = {
     {"MemoryL0", kMemoryL0, std::size(kMemoryL0)},
     {"MemoryUB", kMemoryUb, std::size(kMemoryUb)},
     {"L2Cache", kL2Cache, std::size(kL2Cache)},
+    {"SourceCounter", nullptr, 0},
 };
 
 const SectionDefinition* FindSection(std::string_view name)
@@ -102,57 +104,52 @@ const SectionDefinition* FindSection(std::string_view name)
     return nullptr;
 }
 
-aclptiResult AppendSectionEvents(
-    const char* name, std::size_t index, std::vector<uint32_t>& events, std::unordered_set<uint32_t>& seen,
-    bool& roofline)
-{
-    if (name == nullptr) {
-        ASCTOOL_ERROR(
-            "[aclpti] section configuration rejected: null section index=%zu code=%u", index,
-            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-        return ACLPTI_ERROR_INVALID_PARAMETER;
-    }
-    const std::size_t length = ::strnlen(name, ACLPTI_MAX_SECTION_NAME_LENGTH + 1);
-    if (length == 0 || length > ACLPTI_MAX_SECTION_NAME_LENGTH) {
-        ASCTOOL_ERROR(
-            "[aclpti] section configuration rejected: invalid section index=%zu code=%u", index,
-            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-        return ACLPTI_ERROR_INVALID_PARAMETER;
-    }
-    const SectionDefinition* section = FindSection(std::string_view(name, length));
-    if (section == nullptr) {
-        ASCTOOL_ERROR(
-            "[aclpti] section configuration rejected: unsupported section=%.*s code=%u", static_cast<int>(length), name,
-            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-        return ACLPTI_ERROR_NOT_SUPPORTED;
-    }
-    ASCTOOL_DEBUG("[aclpti] selected section name=%.*s", static_cast<int>(length), name);
-    if (section->name == "Roofline") {
-        roofline = true;
-        return ACLPTI_SUCCESS;
-    }
-    for (std::size_t eventIndex = 0; eventIndex < section->eventCount; ++eventIndex) {
-        const uint32_t event = section->events[eventIndex];
-        if (seen.insert(event).second) {
-            events.push_back(event);
-        }
-    }
-    return ACLPTI_SUCCESS;
-}
+struct ParsedSectionConfig {
+    std::vector<uint32_t> events;
+    bool sourceCounter = false;
+    bool roofline = false;
+};
 
-aclptiResult BuildSectionEvents(
-    const aclptiRangeProfilerSetConfigParams& params, std::vector<uint32_t>& events, bool& roofline)
+aclptiResult ParseSectionConfig(const aclptiRangeProfilerSetConfigParams& params, ParsedSectionConfig& parsed)
 {
     std::unordered_set<uint32_t> seen;
     for (std::size_t index = 0; index < params.numSections; ++index) {
-        const auto status = AppendSectionEvents(params.sections[index], index, events, seen, roofline);
-        if (status != ACLPTI_SUCCESS) {
-            return status;
+        const char* name = params.sections[index];
+        if (name == nullptr) {
+            ASCTOOL_ERROR(
+                "[aclpti] section configuration rejected: null section index=%zu code=%u", index,
+                NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+            return ACLPTI_ERROR_INVALID_PARAMETER;
+        }
+        const std::size_t length = ::strnlen(name, ACLPTI_MAX_SECTION_NAME_LENGTH + 1);
+        if (length == 0 || length > ACLPTI_MAX_SECTION_NAME_LENGTH) {
+            ASCTOOL_ERROR(
+                "[aclpti] section configuration rejected: invalid section index=%zu code=%u", index,
+                NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+            return ACLPTI_ERROR_INVALID_PARAMETER;
+        }
+        const SectionDefinition* section = FindSection(std::string_view(name, length));
+        if (section == nullptr) {
+            ASCTOOL_ERROR(
+                "[aclpti] section configuration rejected: unsupported section=%.*s code=%u", static_cast<int>(length),
+                name, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+            return ACLPTI_ERROR_NOT_SUPPORTED;
+        }
+        parsed.sourceCounter = parsed.sourceCounter || section->name == "SourceCounter";
+        parsed.roofline = parsed.roofline || section->name == "Roofline";
+        ASCTOOL_DEBUG("[aclpti] selected section name=%.*s", static_cast<int>(length), name);
+        if (section->name == "Roofline") {
+            continue;
+        }
+        for (std::size_t eventIndex = 0; eventIndex < section->eventCount; ++eventIndex) {
+            if (seen.insert(section->events[eventIndex]).second) {
+                parsed.events.push_back(section->events[eventIndex]);
+            }
         }
     }
     // Occupancy needs an ordinary PMU round even when no selected section supplies its events.
-    if (events.empty() && params.blockResult == ACLPTI_BLOCK_RESULT_ALL) {
-        events.push_back(data::pmu::SCALAR_ACTIVE_CYCLES_EVENT);
+    if (parsed.events.empty() && params.blockResult == ACLPTI_BLOCK_RESULT_ALL) {
+        parsed.events.push_back(data::pmu::SCALAR_ACTIVE_CYCLES_EVENT);
     }
     return ACLPTI_SUCCESS;
 }
@@ -271,14 +268,14 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
     }
 
     try {
-        std::vector<uint32_t> events;
-        bool roofline = false;
-        const auto status = BuildSectionEvents(*params, events, roofline);
-        if (status != ACLPTI_SUCCESS) {
-            return status;
+        ParsedSectionConfig parsed;
+        const aclptiResult parseStatus = ParseSectionConfig(*params, parsed);
+        if (parseStatus != ACLPTI_SUCCESS) {
+            return parseStatus;
         }
-        pmuEvents_ = std::move(events);
-        collectRoofline_ = roofline;
+        pmuEvents_ = std::move(parsed.events);
+        collectSourceCounter_ = parsed.sourceCounter;
+        collectRoofline_ = parsed.roofline;
         blockResult_ = params->blockResult;
         collectPipeline_ = params->collectPipeline;
         if (collectPipeline_) {
@@ -301,7 +298,7 @@ aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* 
 
 aclptiResult RangeProfiler::PrepareReplayEnvironment(
     const ReplayLaunchFunction& launchFunction, aclrtStream stream, std::int32_t* deviceId,
-    aclrtSynchronizeStreamFunc* synchronizeFunction) const
+    aclrtSynchronizeStreamFunc* synchronizeFunction, const SourceCounterSynchronize& synchronizeSourceCounter) const
 {
     const aclError deviceResult = aclrtGetDevice(deviceId);
     ASCTOOL_DEBUG("[aclpti] get current device result=%d device=%d", deviceResult, *deviceId);
@@ -315,7 +312,7 @@ aclptiResult RangeProfiler::PrepareReplayEnvironment(
 
     *synchronizeFunction =
         reinterpret_cast<aclrtSynchronizeStreamFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtSynchronizeStream));
-    if (!launchFunction || *synchronizeFunction == nullptr) {
+    if (!launchFunction || *synchronizeFunction == nullptr || (collectSourceCounter_ && !synchronizeSourceCounter)) {
         ASCTOOL_ERROR(
             "[aclpti] error operation=original_lookup status=%d launch_available=%d synchronize_available=%d"
             " code=%u",
@@ -325,7 +322,8 @@ aclptiResult RangeProfiler::PrepareReplayEnvironment(
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     ASCTOOL_DEBUG("[aclpti] synchronize stream before replay");
-    const int initialSyncResult = (*synchronizeFunction)(stream);
+    const int initialSyncResult =
+        collectSourceCounter_ ? synchronizeSourceCounter(stream) : (*synchronizeFunction)(stream);
     ASCTOOL_DEBUG("[aclpti] initial replay synchronization result=%d", initialSyncResult);
     if (initialSyncResult != ACL_SUCCESS) {
         ASCTOOL_ERROR(
@@ -561,16 +559,19 @@ struct RangeProfiler::ReplayInvocation {
     const SamplingOffsetReader& readSamplingOffset;
     std::int32_t deviceId;
     aclrtSynchronizeStreamFunc synchronizeFunction;
+    const SourceCounterSynchronize& synchronizeSourceCounter;
 };
 
 aclptiResult RangeProfiler::ReplayKernel(
     const ReplayMemory& replayMemory, BinaryRegistry& binaryRegistry, aclrtFuncHandle originalFunction,
-    const ReplayLaunchFunction& launchFunction, aclrtStream stream, const SamplingOffsetReader& readSamplingOffset)
+    const ReplayLaunchFunction& launchFunction, aclrtStream stream, const SamplingOffsetReader& readSamplingOffset,
+    const SourceCounterSynchronize& synchronizeSourceCounter)
 {
     try {
         std::int32_t deviceId = -1;
         aclrtSynchronizeStreamFunc synchronizeFunction = nullptr;
-        aclptiResult status = PrepareReplayEnvironment(launchFunction, stream, &deviceId, &synchronizeFunction);
+        aclptiResult status =
+            PrepareReplayEnvironment(launchFunction, stream, &deviceId, &synchronizeFunction, synchronizeSourceCounter);
         if (status != ACLPTI_SUCCESS) {
             return status;
         }
@@ -578,8 +579,9 @@ aclptiResult RangeProfiler::ReplayKernel(
         const std::vector<ReplayRound> rounds = BuildReplayRounds();
         ASCTOOL_DEBUG("[aclpti] replay rounds=%zu events=%zu", rounds.size(), pmuEvents_.size());
 
-        const ReplayInvocation invocation{replayMemory, binaryRegistry,     originalFunction, launchFunction,
-                                          stream,       readSamplingOffset, deviceId,         synchronizeFunction};
+        const ReplayInvocation invocation{
+            replayMemory,       binaryRegistry, originalFunction,    launchFunction,          stream,
+            readSamplingOffset, deviceId,       synchronizeFunction, synchronizeSourceCounter};
         for (std::size_t round = 0; round < rounds.size(); ++round) {
             status = ReplayProfilingRound(invocation, rounds[round], round);
             if (status != ACLPTI_SUCCESS) {
@@ -588,29 +590,9 @@ aclptiResult RangeProfiler::ReplayKernel(
         }
 
         if (!collectRoofline_) {
-            return ACLPTI_SUCCESS;
+            return collectSourceCounter_ ? ReplaySourceCounter(invocation, rounds.size()) : ACLPTI_SUCCESS;
         }
-        BinarySource source;
-        std::size_t round = rounds.size();
-        const auto beforeReplay = [&] {
-            if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
-                TryFlushL2Cache(deviceId, round);
-            }
-            ++round;
-        };
-        aclptiRooflineData roofline;
-        if (binaryRegistry.GetSource(originalFunction, source)) {
-            status = CollectNpubitRoofline(
-                source, replayMemory, launchFunction, synchronizeFunction, stream, beforeReplay, roofline);
-        } else {
-            roofline.errors.emplace_back(
-                "original ELF/function locator unavailable; enable collection before binary load");
-        }
-        for (const auto& error : roofline.errors) {
-            ASCTOOL_WARNING("[aclpti] Roofline data incomplete: %s", error.c_str());
-        }
-        const auto publish = dataManager_.SetRooflineData(std::move(roofline));
-        return status != ACLPTI_SUCCESS ? status : publish;
+        return ReplayRoofline(invocation, rounds.size());
     } catch (const std::bad_alloc&) {
         ASCTOOL_ERROR(
             "[aclpti] error operation=replay_metadata_alloc status=%d"
@@ -618,6 +600,79 @@ aclptiResult RangeProfiler::ReplayKernel(
             ACLPTI_ERROR_OUT_OF_MEMORY, static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_OUT_OF_MEMORY)));
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     }
+}
+
+aclptiResult RangeProfiler::ReplayRoofline(const ReplayInvocation& invocation, std::size_t firstRound)
+{
+    BinarySource source;
+    std::size_t round = firstRound;
+    aclptiResult status = ACLPTI_SUCCESS;
+    const auto beforeReplay = [&] {
+        if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
+            TryFlushL2Cache(invocation.deviceId, round);
+        }
+        ++round;
+    };
+    aclptiRooflineData roofline;
+    if (invocation.binaryRegistry.GetSource(invocation.originalFunction, source)) {
+        status = CollectNpubitRoofline(
+            source, invocation.replayMemory, invocation.launchFunction, invocation.synchronizeFunction,
+            invocation.stream, invocation.deviceId, beforeReplay, roofline);
+    } else {
+        roofline.errors.emplace_back("original ELF/function locator unavailable; enable collection before binary load");
+    }
+    for (const auto& error : roofline.errors) {
+        ASCTOOL_WARNING("[aclpti] Roofline data incomplete: %s", error.c_str());
+    }
+    const auto publish = dataManager_.SetRooflineData(std::move(roofline));
+    if (status != ACLPTI_SUCCESS || publish != ACLPTI_SUCCESS) {
+        return status != ACLPTI_SUCCESS ? status : publish;
+    }
+    return collectSourceCounter_ ? ReplaySourceCounter(invocation, round) : ACLPTI_SUCCESS;
+}
+
+aclptiResult RangeProfiler::ReplaySourceCounter(const ReplayInvocation& invocation, std::size_t firstRound)
+{
+    BinarySource source;
+    invocation.binaryRegistry.GetSource(invocation.originalFunction, source, false);
+    ASCTOOL_DEBUG(
+        "[aclpti] SourceCounter replay source=%p imageBytes=%zu function=%p device=%d firstRound=%zu",
+        invocation.originalFunction, source.image == nullptr ? 0U : source.image->size(), invocation.originalFunction,
+        invocation.deviceId, firstRound);
+    const SourceCounterReplay replay = [&invocation, firstRound, this](aclrtFuncHandle function, std::size_t round) {
+        const auto restore = invocation.replayMemory.Restore();
+        if (restore != ACLPTI_SUCCESS) {
+            ASCTOOL_ERROR(
+                "[aclpti] SourceCounter replay stage=restore round=%zu status=%d", round, static_cast<int>(restore));
+            return SourceCounterReplayResult{restore, true};
+        }
+        if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
+            TryFlushL2Cache(invocation.deviceId, firstRound + round);
+        }
+        // NPUbit writes the trace address into the object; the launch still uses business arguments.
+        const auto launch = invocation.launchFunction(function, false);
+        if (launch != ACL_SUCCESS) {
+            ASCTOOL_ERROR(
+                "[aclpti] SourceCounter replay stage=launch round=%zu function=%p status=%d", round, function, launch);
+        }
+        const auto sync = invocation.synchronizeSourceCounter(invocation.stream);
+        if (sync != ACL_SUCCESS) {
+            ASCTOOL_ERROR(
+                "[aclpti] SourceCounter replay stage=sync round=%zu stream=%p status=%d", round, invocation.stream,
+                sync);
+        }
+        const auto status =
+            launch == ACL_SUCCESS && sync == ACL_SUCCESS ? ACLPTI_SUCCESS : ACLPTI_ERROR_RESULT_UNRELIABLE;
+        return SourceCounterReplayResult{status, sync == ACL_SUCCESS};
+    };
+    aclptiSourceCounterData counters;
+    counters.originalElf = source.image;
+    const auto status = CollectSourceCounterData(source, invocation.deviceId, replay, counters);
+    for (const auto& error : counters.errors) {
+        ASCTOOL_WARNING("[aclpti] SourceCounter incomplete: %s", error.c_str());
+    }
+    const auto publication = dataManager_.SetSourceCounterData(std::move(counters));
+    return status == ACLPTI_SUCCESS ? publication : status;
 }
 
 bool RangeProfiler::PrepareSamplingContext(const ReplayInvocation& invocation, ProfilingRoundConfig& config) const

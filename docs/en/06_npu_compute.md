@@ -19,11 +19,12 @@ The following Sections are currently supported:
 | <a name="section-memoryub"></a> `MemoryUB`                           | Unified Buffer access data                                         | `basic`, `full` |
 | <a name="section-pipeline"></a> `Pipeline`                           | Pipeline timeline data, written to `PipeTrace.json`                | `basic`, `full` |
 | <a name="section-pipeutilization"></a> `PipeUtilization`             | Compute and pipeline utilization data                              | `basic`, `full` |
+| <a name="section-sourcecounter"></a> `SourceCounter` | SIMT GM Pattern and SIMT/SIMD VF UB bank conflicts | `full` |
 | <a name="section-pmsampling"></a> `PmSampling`                       | PC/state totals, disassembly and function/inline information       | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | Pipeline wait ratios and Vector resource conflict ratios           | `full`          |
 | <a name="section-roofline"></a> `Roofline`                           | Peak compute throughput and bandwidth, plus kernel operations, memory traffic, and duration | `full` |
 
-Two predefined sets are available: `basic` contains the seven Sections other than `PmSampling`, `ResourceConflictRatio`, and `Roofline`, and `full` contains all ten Sections. Every collection attempts to generate an `Occupancy.json` task/block trace without an additional Section.
+Two predefined sets are available: `basic` contains the seven Sections other than `PmSampling`, `ResourceConflictRatio`, `SourceCounter`, and `Roofline`, and `full` contains all eleven Sections. Every collection attempts to generate an `Occupancy.json` task/block trace without an additional Section.
 
 For the meaning and calculation method of the fields in each Section, see [Performance Data](appendix/npu_compute_performance_data.md).
 
@@ -222,10 +223,10 @@ A report can contain the following files:
 | `summary.jsonl` | A kernel is executed | Performance summary, [performance hints](appendix/npu_compute_performance_data.md#performancehints), and operator overview. |
 | `Occupancy.json` | Attempted by default when collecting | Task and block intervals in Chrome Trace format, with replay identity and raw system counters. |
 | `PipeTrace.json` | `Pipeline` is selected | Pipeline timeline data in Chrome Trace format, viewable with Chrome Trace-compatible tools. |
-| `summary.db` | Valid CSV data is imported successfully, or `PmSampling` collection completes | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database). |
-| `objdump.txt` | When `PmSampling` is selected | Original operator disassembly. Compile with `-lineinfo` to include source line information. |
+| `summary.db` | When valid CSV data is imported successfully, `PmSampling` collection completes, or `SourceCounter` collection completes | SQLite database. For the tables it contains, see [SQLite Database](#sqlite-database). |
+| `objdump.txt` | When `SourceCounter` or `PmSampling` is selected; one file is generated when both are selected | Original operator disassembly. Compile with `-lineinfo` to include source line information. |
 | `symbolizer.json` | When `PmSampling` is selected | Function and inline information for sampled addresses. |
-| `<Section-name>.csv` | Metric data is collected (except for `Pipeline`, `PmSampling`, and `Roofline`) | Metric data for the Section. |
+| `<Section-name>.csv` | Metric data is collected (except for `Pipeline`, `PmSampling`, `SourceCounter`, and `Roofline`) | Metric data for the Section. |
 
 **AI Core Occupancy**: Shows the overall task window and when each block is active on its corresponding AI Core (AIC or AIV). All collection modes attempt to generate `Occupancy.json` by default without requiring an additional Section. If only this file fails, the tool logs a warning and delivers the other reports with a successful exit status.
 
@@ -242,6 +243,7 @@ Collected CSV data is automatically written to `summary.db` in the same result d
 | Table                   | Generated when                                                    | Content                                                                                                                                                                                            |
 | :---------------------- | :---------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ArithmeticUtilization` | Its CSV is imported successfully                                  | [ArithmeticUtilization](#section-arithmeticutilization)                                                                                                                                            |
+| `FieldUnitMap`          | When a table has unit mappings or at least one CSV with data records is imported successfully | `field_name` stores the column name and `unit` stores its unit, or NULL for a column without a unit.                                                                                               |
 | `L2Cache`               | Its CSV is imported successfully                                  | [L2Cache](#section-l2cache)                                                                                                                                                                        |
 | `Memory`                | Its CSV is imported successfully                                  | [Memory](#section-memory)                                                                                                                                                                          |
 | `MemoryL0`              | Its CSV is imported successfully                                  | [MemoryL0](#section-memoryl0)                                                                                                                                                                      |
@@ -249,7 +251,7 @@ Collected CSV data is automatically written to `summary.db` in the same result d
 | `PcSampling`            | `PmSampling` is selected | Sampling counts for eight wait or stall states, aggregated by business instruction address; see [PC Sampling States](appendix/npu_compute_performance_data.md#pcsampling-pc-sampling-state-totals). |
 | `PipeUtilization`       | Its CSV is imported successfully                                  | [PipeUtilization](#section-pipeutilization)                                                                                                                                                        |
 | `ResourceConflictRatio` | Its CSV is imported successfully                                  | [ResourceConflictRatio](#section-resourceconflictratio)                                                                                                                                            |
-| `FieldUnitMap`          | At least one CSV containing data records is imported successfully | `field_name` stores the column name and `unit` stores its unit, or NULL for a column without a unit.                                                                                               |
+| `SourceCounter`         | When `SourceCounter` is selected | Instruction memory metrics aggregated by original instruction address; see [SourceCounter metrics](appendix/npu_compute_performance_data.md#sourcecounter). |
 
 Database generation depends on a compatible SQLite shared library in the environment. If generation fails, the terminal reports the reason and other successful results can still be packaged.
 
@@ -284,6 +286,7 @@ The result directory contains the collected files listed in [Report Files](#repo
 - `Pipeline` collection is limited by hardware: only one process on the same device can collect `Pipeline` at a time. If multiple processes collect `Pipeline` concurrently, only one produces output normally; the others fail.
 - `PmSampling` collection is limited by hardware: on the same device, `PmSampling` cannot run concurrently with `PmSampling` or `Pipeline` collection in other processes. Concurrent collection may leave samples missing or cause collection to fail.
 - `PmSampling` helps analyze stalls in SIMT instructions during operator execution. Hardware sampling is periodic. If the SIMT code in an operator runs for too short a time, it may finish between sampling instants, leaving no valid samples and an empty `PcSampling` table. Successful results from other Sections are retained.
+- `SourceCounter` collects SIMT UB bank conflicts only when SIMT kernel threads directly read or write thread-block-shared UB data through `__ubuf__` pointers. SIMD VF UB bank conflicts are limited to the `asc_load` and `asc_store` vector UB access forms recognized by the current collection mode, which read UB data into vector registers or write vector-register data back to UB.
 - When collecting `Pipeline` or `PmSampling` data for a SIMT operator, `noinline` `__aicore__` functions are not supported, including `printf` and `asc_dump`.
 - The target program must have execute permission, can be an executable or a script, must run independently without `npu-compute`, and must successfully execute at least one NPU kernel during its run.
 - One collection command runs one target program; run separate commands to collect multiple programs. The target program and scripts started by it must not start another `npu-compute` collection. When nested collection is detected, the collection fails and no report is produced.

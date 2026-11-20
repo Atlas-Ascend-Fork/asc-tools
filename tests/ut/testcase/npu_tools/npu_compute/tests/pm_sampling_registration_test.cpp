@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "acl_pti/profiling/replay_runtime.h"
+#include "acl_pti/profiling/source_counter_collector.h"
 #include "injection/runtime_stub_api.h"
 #include <cstdio>
 #include <cstdlib>
@@ -30,14 +31,21 @@ extern "C" std::int32_t MsprofRegisterDataCallback(std::uint32_t, void*) { retur
 int main()
 {
     using aclpti::profiling::ReplayRuntime;
+    using aclpti::profiling::SourceCounterBufferSize;
+    const auto traceLike = std::numeric_limits<std::size_t>::max();
+    if (SourceCounterBufferSize(traceLike, 4) != 4U * 1024U * 1024U ||
+        SourceCounterBufferSize(traceLike, 64) != 64U * 1024U * 1024U || SourceCounterBufferSize(8192, 4) != 8192 ||
+        SourceCounterBufferSize(8192, 64) != 8192 || SourceCounterBufferSize(0, 64) != 0) {
+        return 10;
+    }
     if (RuntimeStubSetOriginFunction("aclrtBinaryLoadFromData", &Load) != ACL_SUCCESS) {
         return 1;
     }
-    for (const auto mode : {0, 1, 2, 3}) {
+    for (const auto mode : {0, 1, 2, 3, 4}) {
         ReplayRuntime runtime;
         aclptiRangeProfilerSetConfigParams config{};
-        const char* section = "Memory";
-        if (mode == 0) {
+        const char* section = mode == 4 ? "SourceCounter" : "Memory";
+        if (mode == 0 || mode == 4) {
             config.numSections = 1;
             config.sections = &section;
         }
@@ -49,7 +57,7 @@ int main()
         int binary;
         const char image[] = "ELF";
         const auto before = companionLoads;
-        const int expectedLoads = mode == 0 ? 0 : (mode == 3 ? 2 : 1);
+        const int expectedLoads = (mode == 0 || mode == 4) ? 0 : (mode == 3 ? 2 : 1);
         const auto firstRegistration = runtime.RegisterBinary(image, sizeof(image), nullptr, &binary);
         const auto secondRegistration = runtime.RegisterBinary(image, sizeof(image), nullptr, &binary);
         if (firstRegistration != ACLPTI_SUCCESS || secondRegistration != ACLPTI_SUCCESS) {

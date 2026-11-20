@@ -61,6 +61,7 @@ aclptiResult ProfilingDataManager::Initialize(aclptiProfilingDataCallback callba
     if (state_ != ManagerState::Created && state_ != ManagerState::Stopped) {
         return ACLPTI_ERROR_INVALID_STATE;
     }
+    sourceCounterData_.reset();
     callback_ = std::move(callback);
     rooflineData_.reset();
     shutdownStatus_ = ACLPTI_SUCCESS;
@@ -110,6 +111,16 @@ aclptiResult ProfilingDataManager::ReleaseReplay(uint64_t replayId)
     return state_ == ManagerState::Running ? processor_.ReleaseReplay(replayId) : ACLPTI_ERROR_NOT_INITIALIZED;
 }
 
+aclptiResult ProfilingDataManager::SetSourceCounterData(aclptiSourceCounterData data)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ != ManagerState::Running) {
+        return ACLPTI_ERROR_NOT_INITIALIZED;
+    }
+    sourceCounterData_ = std::move(data);
+    return ACLPTI_SUCCESS;
+}
+
 aclptiResult ProfilingDataManager::SetRooflineData(aclptiRooflineData data)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -135,8 +146,12 @@ aclptiResult ProfilingDataManager::PublishFinalResult()
             throw std::bad_alloc();
         }
 #endif
+        if (!processedResult && (sourceCounterData_ || rooflineData_)) {
+            processedResult.emplace();
+        }
         // Publish after the worker exits: the consumer owns a stable snapshot, not live state.
         if (processedResult) {
+            processedResult->sourceCounterData = std::move(sourceCounterData_);
             processedResult->rooflineData = std::move(rooflineData_);
             auto result = std::make_shared<aclptiProfilingDataResult>(std::move(*processedResult));
             callbackStatus = callback_(std::move(result));

@@ -162,6 +162,7 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/hardware/hardware_info_json.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/pmu/pmu_data_consumer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/pmu/pmu_metric_builder.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/source_counter_sqlite_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/pmu_csv_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/summary_jsonl_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/report/summary_metrics.cpp"

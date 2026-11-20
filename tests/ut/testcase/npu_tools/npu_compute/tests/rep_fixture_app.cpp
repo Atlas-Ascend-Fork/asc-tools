@@ -171,6 +171,9 @@ int main(int argc, char** argv)
                 publish("HardwareInfo.jsonl", kHardwareInfo);
             }
             for (const auto& section : hello.config.sections) {
+                if (section == "Roofline" || section == "SourceCounter") {
+                    continue;
+                }
                 if (section == "Pipeline") {
                     if (mode == "cli-echo" || mode.rfind("pm-sampling", 0) == 0) {
                         publish(

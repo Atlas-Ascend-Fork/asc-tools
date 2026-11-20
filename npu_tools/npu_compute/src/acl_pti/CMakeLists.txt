@@ -22,6 +22,7 @@ add_library(acl_pti SHARED
   data/replay_data_aggregation.cpp
   data/raw_data_decoder.cpp
   profiling/api.cpp
+  profiling/source_counter_collector.cpp
   profiling/range_profiler.cpp
   profiling/npubit_collector.cpp
   profiling/replay_memory.cpp
@@ -53,3 +54,10 @@ set_target_properties(acl_pti PROPERTIES
   VISIBILITY_INLINES_HIDDEN YES
 )
 npu_compute_set_product_output(acl_pti)
+
+if(NPUCOMPUTE_NPUBIT_INCLUDE_DIR AND EXISTS "${NPUCOMPUTE_NPUBIT_LIBRARY}")
+  get_filename_component(_npubit_library_name "${NPUCOMPUTE_NPUBIT_LIBRARY}" NAME)
+  target_include_directories(acl_pti SYSTEM PRIVATE "${NPUCOMPUTE_NPUBIT_INCLUDE_DIR}")
+  target_compile_definitions(acl_pti PRIVATE
+    NPUCOMPUTE_NPUBIT_SONAME="${_npubit_library_name}")
+endif()

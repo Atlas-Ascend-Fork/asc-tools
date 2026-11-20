@@ -10,6 +10,7 @@
 #include "npu_compute_log.h"
 #include "file_io.h"
 #include "runtime/npu_compute_runtime.h"
+#include "report/source_counter_sqlite_writer.h"
 #include <vector>
 
 #include "artifact_sink.h"
@@ -327,54 +328,82 @@ void DecodePmSampling(
     }
 }
 
-struct PmSamplingOutputs {
+struct InstructionOutputs {
     boost::filesystem::path database;
     std::vector<boost::filesystem::path> files;
-    PmSamplingArtifacts artifacts;
-    bool databaseReady = false;
+    uint64_t rows = 0;
+    aclptiResult sourceStatus = ACLPTI_SUCCESS;
+    bool samplingComplete = true;
+    bool artifactsReady = false;
 };
 
-PmSamplingOutputs PreparePmSamplingOutputs(
-    const boost::filesystem::path& directory, const PmSamplingContextInfo& contextInfo,
-    const PmSamplingResult& sampling, const std::string& prefix, bool& complete)
+InstructionOutputs PrepareInstructionOutputs(
+    const boost::filesystem::path& directory, const aclptiProfilingDataResult& result, const std::string& prefix,
+    bool collectSource, bool collectSampling)
 {
-    PmSamplingOutputs output;
+    InstructionOutputs output;
     output.database = directory / "summary.db";
+    const auto& counters = result.sourceCounterData;
+    const auto* sourceElf = collectSource && counters ? counters->originalElf.get() : nullptr;
+    const auto sourceDisassembly = sourceElf ? std::string_view(counters->originalDisassembly) : std::string_view{};
+    const auto contextInfo = collectSampling ? ResolvePmSamplingContext(result) : PmSamplingContextInfo{};
+    PmSamplingResult sampling;
+    uint64_t sourceRows = 0;
     std::string error;
-    output.databaseReady = WritePmSamplingSqlite(output.database.string(), sampling, error);
-    if (output.databaseReady) {
+    bool samplingDatabaseReady = false;
+    if (collectSampling) {
+        DecodePmSampling(result, contextInfo, sampling, prefix, output.samplingComplete);
+        samplingDatabaseReady = WritePmSamplingSqlite(output.database.string(), sampling, error);
+        if (!samplingDatabaseReady) {
+            MarkPmSamplingFailure(output.samplingComplete, prefix, "summary.db", "database writing", error);
+            boost::filesystem::remove(output.database);
+        }
+    }
+    bool sourceDatabaseReady = false;
+    if (collectSource) {
+        const aclptiSourceCounterData empty;
+        output.sourceStatus = counters ? counters->status : empty.status;
+        sourceDatabaseReady =
+            WriteSourceCounterSqlite(output.database.string(), counters ? *counters : empty, sourceRows, error);
+        if (!sourceDatabaseReady) {
+            ASCTOOL_ERROR("SourceCounter %ssummary.db: %s", prefix.c_str(), error.c_str());
+            output.sourceStatus = ACLPTI_ERROR_TRACE_WRITE;
+        }
+    }
+    PmSamplingArtifacts artifacts;
+    output.artifactsReady = GenerateInstructionArtifacts(
+        directory.string(), {contextInfo.context.get(), sourceElf, collectSource, collectSampling, sourceDisassembly},
+        sampling, PmSamplingArtifactOptions{}, artifacts, error);
+    if (!output.artifactsReady) {
+        ASCTOOL_WARNING("Instruction report %s: %s", prefix.c_str(), error.c_str());
+    }
+    output.rows = (samplingDatabaseReady ? sampling.rows.size() : 0U) + sourceRows;
+    if (samplingDatabaseReady || sourceDatabaseReady) {
         output.files.push_back(output.database);
-    } else {
-        MarkPmSamplingFailure(complete, prefix, "summary.db", "database writing", error);
     }
-    if (!GeneratePmSamplingArtifacts(
-            directory.string(), contextInfo.context.get(), sampling, PmSamplingArtifactOptions{}, output.artifacts,
-            error)) {
-        complete = false;
-        std::fprintf(stderr, "[libnpu-compute] PmSampling LLVM generation: %s\n", error.c_str());
+    if (!artifacts.disassemblyPath.empty()) {
+        output.files.emplace_back(artifacts.disassemblyPath);
     }
-    if (!output.artifacts.disassemblyPath.empty()) {
-        output.files.emplace_back(output.artifacts.disassemblyPath);
-    }
-    if (!output.artifacts.pcStackPath.empty()) {
-        output.files.emplace_back(output.artifacts.pcStackPath);
+    if (!artifacts.pcStackPath.empty()) {
+        output.files.emplace_back(artifacts.pcStackPath);
     }
     return output;
 }
 
-void PublishPmSamplingFiles(
-    ArtifactSink& sink, const std::string& prefix, const PmSamplingOutputs& output, std::uint64_t rowCount)
+void PublishInstructionFiles(
+    ArtifactSink& sink, const std::string& prefix, const boost::filesystem::path& database,
+    const std::vector<boost::filesystem::path>& files, std::uint64_t rowCount)
 {
     // Transport errors abort collection because artifact boundaries and receiver state are then uncertain.
-    for (const auto& file : output.files) {
+    for (const auto& file : files) {
         bool started = false;
         try {
             if (!asctools::security::ValidatePath(file.string(), asctools::security::PathKind::ExistingFile)) {
-                throw std::runtime_error("cannot read PmSampling artifact");
+                throw std::runtime_error("cannot read instruction report artifact");
             }
             std::ifstream input(file.string(), std::ios::binary);
             if (!input) {
-                throw std::runtime_error("cannot read PmSampling artifact");
+                throw std::runtime_error("cannot read instruction report artifact");
             }
             sink.Begin(prefix + file.filename().string());
             started = true;
@@ -387,9 +416,9 @@ void PublishPmSamplingFiles(
                 }
             }
             if (!input.eof()) {
-                throw std::runtime_error("cannot read complete PmSampling artifact");
+                throw std::runtime_error("cannot read complete instruction report artifact");
             }
-            sink.Commit(file == output.database ? rowCount : 0);
+            sink.Commit(file == database ? rowCount : 0);
             started = false;
         } catch (...) {
             if (started) {
@@ -400,9 +429,9 @@ void PublishPmSamplingFiles(
     }
 }
 
-struct PmSamplingStaging {
+struct InstructionReportStaging {
     boost::filesystem::path directory;
-    ~PmSamplingStaging()
+    ~InstructionReportStaging()
     {
         boost::system::error_code ignored;
         if (!directory.empty()) {
@@ -869,17 +898,18 @@ aclptiResult NpuComputeRuntime::ProcessAdditionalReports(
     } catch (const std::exception& error) {
         ASCTOOL_WARNING("[npu-compute] Occupancy processing failed: %s", error.what());
     }
-    if (pm_sampling_enabled_) {
-        const auto samplingStatus = ProcessPmSampling(result, prefix);
-        if (samplingStatus != ACLPTI_SUCCESS) {
-            ++pm_sampling_failures_;
+    const auto& sections = section_config_.Sections();
+    const bool collectSource = std::find(sections.begin(), sections.end(), "SourceCounter") != sections.end();
+    if (pm_sampling_enabled_ || collectSource) {
+        const auto status = ProcessInstructionReports(result, prefix, collectSource);
+        if (status != ACLPTI_SUCCESS) {
+            degraded_ = true;
             ++error_count_;
             if (firstStatus == ACLPTI_SUCCESS) {
-                firstStatus = samplingStatus;
+                firstStatus = status;
             }
         }
     }
-    // Preserve the source failure while still writing data from successful replays.
     return firstStatus;
 }
 
@@ -908,41 +938,33 @@ void NpuComputeRuntime::ProcessOccupancy(const aclptiProfilingDataResult& result
     }
 }
 
-aclptiResult NpuComputeRuntime::ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix)
+aclptiResult NpuComputeRuntime::ProcessInstructionReports(
+    const aclptiProfilingDataResult& result, const std::string& prefix, bool collectSource)
 {
-    // This consumer worker is the sole writer of sampling artifacts.
-    PmSamplingStaging staging;
     try {
-        // Keep the shared ELF context alive through symbolization after application unload.
-        const auto contextInfo = ResolvePmSamplingContext(result);
-        PmSamplingResult sampling;
-        bool complete = true;
-        DecodePmSampling(result, contextInfo, sampling, prefix, complete);
-
-        const boost::filesystem::path parent("/tmp");
-        std::string pattern = (parent / ".npu-compute-pm-sampling-XXXXXX").string();
+        InstructionReportStaging staging;
+        std::string pattern = "/tmp/.npu-compute-instructions-XXXXXX";
         if (::mkdtemp(pattern.data()) == nullptr) {
-            throw std::runtime_error("cannot create PmSampling staging: " + std::string(std::strerror(errno)));
+            throw std::runtime_error("cannot create instruction report staging: " + std::string(std::strerror(errno)));
         }
         staging.directory = pattern;
-        const auto output = PreparePmSamplingOutputs(staging.directory, contextInfo, sampling, prefix, complete);
-        PublishPmSamplingFiles(*artifact_sink_, prefix, output, sampling.rows.size());
-        boost::filesystem::remove_all(staging.directory);
-        staging.directory.clear();
-        if (output.databaseReady) {
-            row_count_ += sampling.rows.size();
+        const auto output =
+            PrepareInstructionOutputs(staging.directory, result, prefix, collectSource, pm_sampling_enabled_);
+        PublishInstructionFiles(*artifact_sink_, prefix, output.database, output.files, output.rows);
+        row_count_ += output.rows;
+        if (pm_sampling_enabled_) {
+            if (output.samplingComplete && output.artifactsReady) {
+                ++pm_sampling_completed_;
+            } else {
+                ++pm_sampling_failures_;
+            }
         }
-        if (complete) {
-            ++pm_sampling_completed_;
-        }
-        ASCTOOL_DEBUG(
-            "PmSampling completed: rows=%llu unresolvedPCs=%llu", static_cast<unsigned long long>(sampling.rows.size()),
-            static_cast<unsigned long long>(output.artifacts.unresolvedPcCount));
-        return complete ? ACLPTI_SUCCESS : ACLPTI_ERROR_TRACE_INCOMPLETE;
+        return output.samplingComplete && output.artifactsReady ? output.sourceStatus : ACLPTI_ERROR_TRACE_INCOMPLETE;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "[libnpu-compute] PmSampling processing failed: %s\n", error.what());
-    } catch (...) {
-        std::fprintf(stderr, "[libnpu-compute] PmSampling processing failed: unexpected exception\n");
+        ASCTOOL_ERROR("Instruction report %s failed: %s", prefix.c_str(), error.what());
+    }
+    if (pm_sampling_enabled_) {
+        ++pm_sampling_failures_;
     }
     return ACLPTI_ERROR_TRACE_WRITE;
 }

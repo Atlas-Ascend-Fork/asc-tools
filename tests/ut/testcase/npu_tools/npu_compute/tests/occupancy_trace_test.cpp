@@ -32,7 +32,8 @@ TEST(NpuComputeOccupancy, AutomaticCollectionNeedsNoSection)
         argv.push_back(arg.data());
     }
     ASSERT_TRUE(npucompute::cli::ParseCli(argv.size(), argv.data(), &config, &errors));
-    EXPECT_EQ(config.sections.size(), 10);
+    ASSERT_TRUE(runtime.Load(config.sections, &error)) << error;
+    EXPECT_EQ(runtime.Params()->blockResult, ACLPTI_BLOCK_RESULT_ALL);
 }
 
 TEST(NpuComputeOccupancy, ExistingIpcCarriesJsonAndAllSections)

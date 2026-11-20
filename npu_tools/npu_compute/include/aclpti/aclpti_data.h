@@ -230,6 +230,23 @@ struct aclptiPmSamplingContext {
     uint64_t pcOffset = 0; // Probe-reported displacement from sampled code to the original kernel.
 };
 
+// Independent of NPUbit's ABI and allocation lifetime. GM totals retain sample weights.
+struct aclptiSourceCounterRow {
+    uint64_t memorySampleCount = 0;
+    double cacheLinesTotal = 0;
+    double cacheLineUtilizationTotal = 0; // Sum of per-sample percentages, in [0, 100].
+    std::optional<uint64_t> ubBankConflict;
+};
+
+struct aclptiSourceCounterData {
+    std::shared_ptr<const std::vector<char>> originalElf;
+    aclptiResult status = ACLPTI_ERROR_NOT_SUPPORTED;
+    // Entries may repeat across cores/subcores; the report merges them by original ELF address.
+    std::vector<std::pair<uint64_t, aclptiSourceCounterRow>> rows;
+    std::vector<std::string> errors;
+    std::string originalDisassembly; // llvm-objdump -d -l -S output for originalElf.
+};
+
 enum class aclptiRooflineChannel : uint8_t { Simd, Simt, Cube };
 
 // Owned npubit analysis, independent of the library's record layout and buffer lifetime.
@@ -254,6 +271,7 @@ struct aclptiProfilingDataResult {
     std::map<aclptiBlockKey, std::vector<aclptiTaskLogRow>> blockLogs;
     std::map<aclptiBlockKey, aclptiPmuDataRow> pmuLogs;
     aclptiTaskPmuData taskPmuData;
+    std::optional<aclptiSourceCounterData> sourceCounterData;
     std::optional<aclptiRooflineData> rooflineData;
     std::optional<uint64_t> rooflineReplayId;
     std::map<uint64_t, aclptiPipelineData> pipelineData;

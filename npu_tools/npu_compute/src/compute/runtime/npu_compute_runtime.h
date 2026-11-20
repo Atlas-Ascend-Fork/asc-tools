@@ -74,7 +74,8 @@ private:
     // Called with mutex_ held after the PMU consumer has drained.
     aclptiResult FinalizePipeline(aclptiResult status);
     void ProcessOccupancy(const aclptiProfilingDataResult& result, const std::string& prefix);
-    aclptiResult ProcessPmSampling(const aclptiProfilingDataResult& result, const std::string& prefix);
+    aclptiResult ProcessInstructionReports(
+        const aclptiProfilingDataResult& result, const std::string& prefix, bool collectSource);
 
     std::mutex mutex_;
     std::shared_ptr<PmuDataConsumer> pmu_consumer_;

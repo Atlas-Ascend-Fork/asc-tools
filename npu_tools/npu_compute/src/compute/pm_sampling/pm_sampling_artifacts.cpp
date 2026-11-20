@@ -246,12 +246,11 @@ std::string ResolveToolDirectory(const PmSamplingArtifactOptions& options)
 }
 
 void GenerateDisassembly(
-    const fs::path& temporary, const aclptiPmSamplingContext& context, const PmSamplingArtifactOptions& options,
+    const fs::path& temporary, const std::vector<char>& image, const PmSamplingArtifactOptions& options,
     const fs::path& disassembly, PmSamplingArtifacts& artifacts)
 {
     Require(options.timeoutMs > 0, "invalid LLVM execution timeout");
     const auto elf = temporary / "objdump.o";
-    const auto& image = Elf(context, options.disassemblySource);
     Write(elf, image.data(), image.size());
     Run({(fs::path(ResolveToolDirectory(options)) / "llvm-objdump").string(), "-d", "-l", "-S", elf.string()},
         "/dev/null", disassembly, temporary / "objdump.stderr", options);
@@ -367,10 +366,11 @@ bool GeneratePmSamplingArtifacts(
     return GeneratePmSamplingArtifacts(stagingDirectory, &context, sampling, options, artifacts, error);
 }
 
-bool GeneratePmSamplingArtifacts(
-    const std::string& stagingDirectory, const aclptiPmSamplingContext* context, const PmSamplingResult& sampling,
+bool GenerateInstructionArtifacts(
+    const std::string& stagingDirectory, const InstructionArtifactInput& input, const PmSamplingResult& sampling,
     const PmSamplingArtifactOptions& options, PmSamplingArtifacts& artifacts, std::string& error)
 {
+    const auto* context = input.samplingContext;
     artifacts = {};
     error.clear();
     try {
@@ -380,7 +380,7 @@ bool GeneratePmSamplingArtifacts(
             "missing PmSampling staging directory");
         const auto disassembly = fs::path(stagingDirectory) / "objdump.txt";
         const auto stackPath = fs::path(stagingDirectory) / "symbolizer.json";
-        if (!context && sampling.rows.empty()) {
+        if (!input.collectSource && !context && sampling.rows.empty()) {
             return AttemptArtifact(
                 stackPath, [&stackPath, &artifacts] { WriteEmptyPcStack(stackPath, artifacts); }, error);
         }
@@ -389,21 +389,39 @@ bool GeneratePmSamplingArtifacts(
         TemporaryDirectory temporary{pattern};
         const bool disassemblyOk = AttemptArtifact(
             disassembly,
-            [&temporary, context, &options, &disassembly, &artifacts] {
-                Require(context != nullptr, "missing PmSampling ELF context");
-                GenerateDisassembly(temporary.path, *context, options, disassembly, artifacts);
+            [&] {
+                const auto* image = input.sourceElf;
+                if (context && (!input.collectSource || (context->originalElf && !context->originalElf->empty()))) {
+                    image = &Elf(*context, options.disassemblySource);
+                }
+                Require(image && !image->empty(), "missing original ELF for disassembly");
+                if (!input.sourceDisassembly.empty() && input.sourceElf &&
+                    (image == input.sourceElf || *image == *input.sourceElf)) {
+                    Write(disassembly, input.sourceDisassembly.data(), input.sourceDisassembly.size());
+                    artifacts.disassemblyPath = disassembly.string();
+                    return;
+                }
+                GenerateDisassembly(temporary.path, *image, options, disassembly, artifacts);
             },
             error);
-        const bool stackOk = AttemptArtifact(
-            stackPath,
-            [&temporary, context, &sampling, &options, &stackPath, &artifacts] {
-                GeneratePcStack(temporary.path, context, sampling, options, stackPath, artifacts);
-            },
-            error);
+        const bool stackOk = !input.collectSampling ||
+                             AttemptArtifact(
+                                 stackPath,
+                                 [&temporary, context, &sampling, &options, &stackPath, &artifacts] {
+                                     GeneratePcStack(temporary.path, context, sampling, options, stackPath, artifacts);
+                                 },
+                                 error);
         return disassemblyOk && stackOk;
     } catch (const std::exception& failure) {
         error = "PmSampling LLVM artifact setup failed: " + std::string(failure.what());
         return false;
     }
+}
+bool GeneratePmSamplingArtifacts(
+    const std::string& stagingDirectory, const aclptiPmSamplingContext* context, const PmSamplingResult& sampling,
+    const PmSamplingArtifactOptions& options, PmSamplingArtifacts& artifacts, std::string& error)
+{
+    return GenerateInstructionArtifacts(
+        stagingDirectory, {context, nullptr, false, true}, sampling, options, artifacts, error);
 }
 } // namespace npucompute

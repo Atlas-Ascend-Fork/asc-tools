@@ -12,6 +12,8 @@
 #include "report/collection_processor.h"
 #include "shared/sqlite_runtime_loader.h"
 #include "sqlite_test_api.h"
+#include "report/source_counter_sqlite_writer.h"
+#include "report_test_sink.h"
 
 #include <gtest/gtest.h>
 #include <boost/filesystem.hpp>
@@ -555,4 +557,88 @@ TEST_F(NpuComputeSummarySqliteFinalizer, GeneratedDatabasePacksWithoutTemporaryA
     EXPECT_EQ(report.entries[1].file_type, npucompute::cli::NpuRepFileType::Sqlite);
     ExpectNoTemporaryFiles();
 }
+
+TEST_F(NpuComputeSummarySqliteFinalizer, SourceCounterWritesDatabaseAndPreservesSampling)
+{
+    const auto database = SeedPc();
+    aclptiSourceCounterData counters;
+    counters.status = ACLPTI_SUCCESS;
+    counters.rows = {
+        {256, {1, 2.0, 50.0, 2}},
+        {256, {3, 12.0, 300.0, 4}},
+        {512, {0, 0.0, 0.0, 0}},
+        {768, {4, 4.0, 100.0, std::nullopt}},
+    };
+    uint64_t rows = 0;
+    std::string error;
+    ASSERT_TRUE(npucompute::WriteSourceCounterSqlite(database.string(), counters, rows, error)) << error;
+    EXPECT_EQ(rows, 3U);
+    EXPECT_EQ(
+        Query(
+            database, "SELECT address,avg_cache_lines_num,avg_cache_line_utilization,ub_bank_conflict "
+                      "FROM SourceCounter ORDER BY address"),
+        (Rows{{"256", "3.5", "87.5", "4"}, {"512", "<NULL>", "<NULL>", "0"}, {"768", "1.0", "25.0", "<NULL>"}}));
+    EXPECT_EQ(
+        Query(database, "SELECT field_name,unit FROM FieldUnitMap ORDER BY field_name"),
+        (Rows{
+            {"address", "<NULL>"},
+            {"avg_cache_line_utilization", "%"},
+            {"avg_cache_lines_num", "count"},
+            {"ub_bank_conflict", "count"}}));
+    EXPECT_EQ(Query(database, "SELECT address,others FROM PcSampling"), (Rows{{"256", "8"}}));
+    std::vector<uint8_t> encoded;
+    std::vector<std::string> issues;
+    ASSERT_TRUE(npucompute::cli::PackDirectoryToRep(directory_, &encoded, &error, &issues)) << error;
+    EXPECT_TRUE(issues.empty());
+    npucompute::cli::DecodedRep report;
+    ASSERT_TRUE(npucompute::cli::DecodeRep(encoded, &report, &error)) << error;
+    ASSERT_EQ(report.entries.size(), 1U);
+    EXPECT_EQ(report.entries[0].file_name, "summary.db");
+    ExpectNoTemporaryFiles();
+}
+
+TEST_F(NpuComputeSummarySqliteFinalizer, SourceCounterRetainsSuccessfulBankRowsWithUnavailableGm)
+{
+    aclptiSourceCounterData counters;
+    counters.status = ACLPTI_ERROR_NOT_SUPPORTED;
+    counters.rows = {{256, {0, 0, 0, 3}}, {256, {0, 0, 0, 1}}};
+    uint64_t rows = 0;
+    std::string error;
+    ASSERT_TRUE(npucompute::WriteSourceCounterSqlite((directory_ / "summary.db").string(), counters, rows, error))
+        << error;
+    EXPECT_EQ(rows, 1U);
+    EXPECT_EQ(
+        Query(
+            directory_ / "summary.db",
+            "SELECT address,avg_cache_lines_num,avg_cache_line_utilization,ub_bank_conflict FROM SourceCounter"),
+        (Rows{{"256", "<NULL>", "<NULL>", "3"}}));
+}
+
+TEST_F(NpuComputeSummarySqliteFinalizer, SourceCounterWriteFailurePreservesSampling)
+{
+    const auto database = SeedPc();
+    aclptiSourceCounterData counters;
+    counters.rows = {{256, {0, 0, 0, 3}}, {512, {0, 0, 0, UINT64_MAX}}};
+    uint64_t rows = 0;
+    std::string error;
+    EXPECT_FALSE(npucompute::WriteSourceCounterSqlite(database.string(), counters, rows, error));
+    EXPECT_EQ(rows, 0U);
+    EXPECT_EQ(Query(database, "SELECT address,others FROM PcSampling"), (Rows{{"256", "8"}}));
+    EXPECT_TRUE(
+        Query(database, "SELECT name FROM sqlite_master WHERE name IN ('SourceCounter','FieldUnitMap')").empty());
+}
+
+TEST_F(NpuComputeSummarySqliteFinalizer, UnavailableSourceCounterDoesNotPublishFabricatedRows)
+{
+    aclptiSourceCounterData counters;
+    uint64_t rows = 0;
+    std::string error;
+    ASSERT_TRUE(npucompute::WriteSourceCounterSqlite((directory_ / "summary.db").string(), counters, rows, error))
+        << error;
+    EXPECT_EQ(rows, 0U);
+    EXPECT_FALSE(fs::exists(directory_ / "SourceCounter.csv"));
+    EXPECT_EQ(FinalizeSummarySqlite(directory_).databasesUpdated, 0U);
+    EXPECT_EQ(Query(directory_ / "summary.db", "SELECT count(*) FROM SourceCounter"), (Rows{{"0"}}));
+}
+
 } // namespace

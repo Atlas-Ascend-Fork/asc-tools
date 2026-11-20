@@ -275,13 +275,14 @@ aclptiResult BinaryRegistry::RecordCompanionFunction(
 
 aclptiResult BinaryRegistry::RegisterBinary(
     const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling,
-    bool pipeline)
+    bool pipeline, bool sourceCounter)
 {
-    return RegisterInstrumentedBinary(data, size, options, binary, pmSampling, pipeline);
+    return RegisterInstrumentedBinary(data, size, options, binary, pmSampling, pipeline, sourceCounter);
 }
 
 aclptiResult BinaryRegistry::RegisterBinaryFromFile(
-    const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling, bool pipeline)
+    const char* path, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling, bool pipeline,
+    bool sourceCounter)
 {
     if (path == nullptr || path[0] == '\0' || binary == nullptr) {
         return ACLPTI_ERROR_PROFILING_FAILED;
@@ -300,7 +301,8 @@ aclptiResult BinaryRegistry::RegisterBinaryFromFile(
         if (!input.read(data.data(), static_cast<std::streamsize>(data.size()))) {
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
-        return RegisterInstrumentedBinary(data.data(), data.size(), options, binary, pmSampling, pipeline);
+        return RegisterInstrumentedBinary(
+            data.data(), data.size(), options, binary, pmSampling, pipeline, sourceCounter);
     } catch (const std::bad_alloc&) {
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     } catch (...) {
@@ -342,54 +344,65 @@ aclptiResult BinaryRegistry::LoadCompanions(
 
 aclptiResult BinaryRegistry::RegisterInstrumentedBinary(
     const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling,
-    bool pipeline)
+    bool pipeline, bool sourceCounter)
 {
     const auto load =
         reinterpret_cast<aclrtBinaryLoadFromDataFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtBinaryLoadFromData));
-    if (load == nullptr || binary == nullptr || data == nullptr || size == 0) {
+    if (((pmSampling || pipeline) && load == nullptr) || binary == nullptr || data == nullptr || size == 0 ||
+        (options != nullptr && options->numOpt != 0 && options->options == nullptr)) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     try {
-        // Serialize the complete operation so two registrations cannot instrument/load the same handle twice.
         std::lock_guard<std::mutex> lock(mutex_);
         const auto existing = binaries_.find(binary);
         if (existing != binaries_.end()) {
-            const bool pipelineReady = existing->second.pipeline ? existing->second.pipeline->companion != nullptr :
-                                                                   existing->second.companion != nullptr;
-            return ((!pmSampling && !pipeline) || existing->second.companion != nullptr ||
-                    existing->second.pmSamplingImage) &&
-                           (!pmSampling || existing->second.pmSamplingImage) && (!pipeline || pipelineReady) ?
+            return ExistingBinaryReady(existing->second, pmSampling, pipeline, sourceCounter) ?
                        ACLPTI_SUCCESS :
                        ACLPTI_ERROR_PROFILING_FAILED;
         }
-        Binary state;
-        if (!BuildInstrumentedBinaryState(state, data, size, pmSampling, pipeline)) {
-            return ACLPTI_ERROR_PROFILING_FAILED;
-        }
-        if (state.pmSamplingImage) {
-            state.source.image = {state.pmSamplingImage, &state.pmSamplingImage->originalElf};
-        } else {
-            state.source.image = std::make_shared<const std::vector<char>>(
-                static_cast<const char*>(data), static_cast<const char*>(data) + size);
-        }
-        if (options != nullptr && options->numOpt > 0) {
-            state.source.options.assign(options->options, options->options + options->numOpt);
-        }
-        const auto inserted = binaries_.emplace(binary, std::move(state));
-        if (!inserted.second) {
-            return ACLPTI_ERROR_PROFILING_FAILED;
-        }
-        auto& registered = inserted.first->second;
-        const auto status = LoadCompanions(registered, options, load);
-        if (status != ACLPTI_SUCCESS) {
-            binaries_.erase(inserted.first);
-        }
-        return status;
+        return RegisterNewBinary(data, size, options, binary, pmSampling, pipeline, sourceCounter, load);
     } catch (const std::bad_alloc&) {
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     } catch (...) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
+}
+
+bool BinaryRegistry::ExistingBinaryReady(const Binary& state, bool pmSampling, bool pipeline, bool sourceCounter) const
+{
+    const bool pipelineReady = state.pipeline ? state.pipeline->companion != nullptr : state.companion != nullptr;
+    return ((!pmSampling && !pipeline) || state.companion != nullptr || state.pmSamplingImage) &&
+           (!sourceCounter || state.source.image) && (!pmSampling || state.pmSamplingImage) &&
+           (!pipeline || pipelineReady);
+}
+
+aclptiResult BinaryRegistry::RegisterNewBinary(
+    const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary, bool pmSampling,
+    bool pipeline, bool sourceCounter, aclrtBinaryLoadFromDataFunc load)
+{
+    Binary state;
+    if ((pmSampling || pipeline) && !BuildInstrumentedBinaryState(state, data, size, pmSampling, pipeline)) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    if (state.pmSamplingImage) {
+        state.source.image = {state.pmSamplingImage, &state.pmSamplingImage->originalElf};
+    } else if (sourceCounter) {
+        state.source.image = std::make_shared<const std::vector<char>>(
+            static_cast<const char*>(data), static_cast<const char*>(data) + size);
+    }
+    if (state.source.image && options != nullptr && options->numOpt > 0) {
+        state.source.options.assign(options->options, options->options + options->numOpt);
+    }
+    const auto inserted = binaries_.emplace(binary, std::move(state));
+    if (!inserted.second) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    auto& registered = inserted.first->second;
+    const auto status = LoadCompanions(registered, options, load);
+    if (status != ACLPTI_SUCCESS) {
+        binaries_.erase(inserted.first);
+    }
+    return status;
 }
 
 bool BinaryRegistry::BuildInstrumentedBinaryState(
@@ -492,7 +505,8 @@ aclptiResult BinaryRegistry::RegisterBinaryFunction(
         ACL_RT_API_aclrtBinaryGetFunctionByEntry, binary, entry, function);
 }
 
-aclptiResult BinaryRegistry::EnsureSamplingBinary(aclrtBinHandle binary, bool pipeline, bool pmSampling)
+aclptiResult BinaryRegistry::EnsureBinaryRegistered(
+    aclrtBinHandle binary, bool pmSampling, bool pipeline, bool sourceCounter)
 {
     bool registered = false;
     {
@@ -513,10 +527,11 @@ aclptiResult BinaryRegistry::EnsureSamplingBinary(aclrtBinHandle binary, bool pi
         std::vector<char> image(size);
         if (copy(image.data(), image.size(), address, size, ACL_MEMCPY_DEVICE_TO_HOST) != ACL_SUCCESS ||
             std::memcmp(image.data(), ELFMAG, SELFMAG) != 0) {
-            ASCTOOL_DEBUG("Preloaded binary has no recoverable ELF: binary=%p size=%zu", binary, size);
+            ASCTOOL_DEBUG("preloaded binary has no recoverable ELF: binary=%p size=%zu", binary, size);
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
-        const auto status = RegisterBinary(image.data(), image.size(), nullptr, binary, pmSampling, pipeline);
+        const auto status =
+            RegisterBinary(image.data(), image.size(), nullptr, binary, pmSampling, pipeline, sourceCounter);
         if (status != ACLPTI_SUCCESS) {
             return status;
         }
@@ -525,7 +540,7 @@ aclptiResult BinaryRegistry::EnsureSamplingBinary(aclrtBinHandle binary, bool pi
 }
 
 aclptiResult BinaryRegistry::RegisterSymbolFunction(
-    aclrtFuncHandle function, bool pmSampling, bool pipeline, bool captureSource)
+    aclrtFuncHandle function, bool pmSampling, bool pipeline, bool sourceCounter)
 {
     // Symbol lookup returns a Runtime handle, not a name/entry in the companion.
     // Ask Runtime for ownership to avoid matching a same-named kernel in another binary.
@@ -549,8 +564,8 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     try {
-        if (pmSampling || captureSource) {
-            const auto status = EnsureSamplingBinary(binary, pipeline, pmSampling);
+        if (pmSampling || sourceCounter) {
+            const auto status = EnsureBinaryRegistered(binary, pmSampling, pipeline, sourceCounter);
             if (status != ACLPTI_SUCCESS) {
                 return status;
             }
@@ -561,7 +576,7 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(
     }
 }
 
-bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source)
+bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source, bool requireName)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& registered : binaries_) {
@@ -574,8 +589,11 @@ bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source)
         source = binary.source;
         if (name != binary.names.end()) {
             source.name = name->second;
-        } else if (!ReadRuntimeFunctionName(original, source.name)) {
-            return false;
+        } else {
+            const bool resolvedName = ReadRuntimeFunctionName(original, source.name);
+            if (requireName && !resolvedName) {
+                return false;
+            }
         }
         if (entry != binary.originalEntries.end()) {
             source.entry = entry->second;

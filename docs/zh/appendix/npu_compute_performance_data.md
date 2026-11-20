@@ -194,6 +194,19 @@ NA表示当前Core不适用或所需数据不可用，不表示数值零。
 | `divergence_stack_spill` | 分支发散栈空间不足，需要溢出处理时的等待。 |
 | `others` | 未归入上述类别的其他等待或阻塞。 |
 
+<a name="sourcecounter"></a>
+
+## SourceCounter（按原始指令地址汇总的访存指标）
+
+`SourceCounter`指标直接写入`summary.db`的`SourceCounter`表和`FieldUnitMap`表。结果按原始ELF指令地址汇总。
+
+| 字段名 | 字段解释 | 单位 |
+|---|---|---|
+| `address` | 原始ELF指令地址。 | 无 |
+| `avg_cache_lines_num` | 同一指令有效访存样本的平均Cache Line数量。 | `count` |
+| `avg_cache_line_utilization` | 同一指令有效访存样本的平均Cache Line利用率，以0～100的百分数保存。 | `%` |
+| `ub_bank_conflict` | 同一指令返回的有效UB Bank冲突值中的最大值。 | `count` |
+
 ## PipeUtilization（计算和搬运单元耗时占比）
 
 计算和搬运单元的活跃时间、周期占比、活跃带宽及指令缓存未命中率保存在PipeUtilization.csv中。可用于查看各流水的活跃时间和周期占比。详情介绍请参见下表中的字段说明。
@@ -348,7 +361,7 @@ Section的`category`为对应名称：ArithmeticUtilization、L2Cache、Memory�
 |---|---|---|
 | `p_peak` | OP/s | 理论峰值算力，按设备对应核数、核频率及位宽计算。 |
 | `b_peak` | GB/s | 工具采用的理论GM带宽参考值：SIMD和Cube为1600，SIMT为800。 |
-| `w` | OP | 当前计算类型和位宽的实际运算量，通过NPUBIT插桩重放获取。 |
+| `w` | OP | 当前计算类型和位宽的实际运算量，通过专用计算量采集重放获取。 |
 | `t` | s | Roofline专用轮次的Task Duration。从未插桩PMU重放的有效任务起止记录计算，再从微秒换算为秒。 |
 | `q` | B | 整个Kernel的逻辑GM读写字节数。累加搬运指令的字节数，以及SIMT全局内存读写指令的活跃线程执行次数乘对应的数据字节数。 |
 

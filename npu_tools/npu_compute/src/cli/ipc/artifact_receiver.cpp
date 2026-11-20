@@ -80,7 +80,7 @@ struct ManifestGroups {
 
 ManifestGroups CollectManifestGroups(
     const ipc::Result& result, const std::vector<ipc::ManifestEntry>& manifest,
-    const std::set<std::string>& expectedPmu, bool pipelineExpected, bool samplingExpected)
+    const std::set<std::string>& expectedPmu, bool pipelineExpected, bool samplingExpected, bool sourceExpected)
 {
     std::set<uint64_t> ids;
     ManifestGroups groups;
@@ -104,7 +104,9 @@ ManifestGroups CollectManifestGroups(
                 ++groups.pipelineFragments;
             }
         } else if (ipc::KindForName(entry.name) == ipc::DataKind::PmSampling) {
-            Require(samplingExpected, "ARTIFACT: unexpected PmSampling artifact");
+            Require(
+                samplingExpected || (sourceExpected && base != "symbolizer.json"),
+                "ARTIFACT: unexpected instruction report artifact");
             Require(groups.samplingGroups[parent].insert(base).second, "ARTIFACT: duplicate PmSampling artifact");
         } else {
             Require(
@@ -330,7 +332,8 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
     }
 }
 namespace {
-std::set<std::string> ExpectedPmuFiles(const ipc::Config& config, bool& pipelineExpected, bool& samplingExpected)
+std::set<std::string> ExpectedPmuFiles(
+    const ipc::Config& config, bool& pipelineExpected, bool& samplingExpected, bool& sourceExpected)
 {
     std::set<std::string> expectedPmu;
     bool rooflineExpected = false;
@@ -339,13 +342,15 @@ std::set<std::string> ExpectedPmuFiles(const ipc::Config& config, bool& pipeline
             pipelineExpected = true;
         } else if (section == "PmSampling") {
             samplingExpected = true;
+        } else if (section == "SourceCounter") {
+            sourceExpected = true;
         } else if (section == "Roofline") {
             rooflineExpected = true;
         } else {
             expectedPmu.insert(section + ".csv");
         }
     }
-    if (!expectedPmu.empty() || pipelineExpected || samplingExpected || rooflineExpected) {
+    if (!expectedPmu.empty() || pipelineExpected || samplingExpected || sourceExpected || rooflineExpected) {
         expectedPmu.insert("summary.jsonl");
     }
     return expectedPmu;
@@ -395,17 +400,31 @@ bool ArtifactReceiver::Validate(
         "ARTIFACT: manifest mismatch");
     bool pipelineExpected = false;
     bool samplingExpected = false;
-    const auto expectedPmu = ExpectedPmuFiles(config, pipelineExpected, samplingExpected);
-    const auto groups = CollectManifestGroups(result, manifest_, expectedPmu, pipelineExpected, samplingExpected);
+    bool sourceExpected = false;
+    const auto expectedPmu = ExpectedPmuFiles(config, pipelineExpected, samplingExpected, sourceExpected);
+    const auto groups =
+        CollectManifestGroups(result, manifest_, expectedPmu, pipelineExpected, samplingExpected, sourceExpected);
     validation.Check(groups.hardwareFound, "HardwareInfo.jsonl: required artifact missing");
     validation.Check(
         pipelineExpected == (groups.pipelineManifestFound && groups.pipelineFragments > 0),
         "ARTIFACT: required Pipeline artifact missing");
     if (samplingExpected) {
         WarnMissingSamplingFiles(directory_path_, groups);
-        for (const auto& [parent, files] : groups.samplingGroups) {
-            ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, validation);
+    }
+    if (sourceExpected) {
+        for (const auto& group : groups.pmuGroups) {
+            const auto& parent = group.first;
+            const auto instructionFiles = groups.samplingGroups.find(parent);
+            validation.Check(
+                instructionFiles != groups.samplingGroups.end() && instructionFiles->second.count("objdump.txt") != 0,
+                (directory_path_ / parent / "objdump.txt").string() + ": required SourceCounter disassembly missing");
+            validation.Check(
+                instructionFiles != groups.samplingGroups.end() && instructionFiles->second.count("summary.db") != 0,
+                (directory_path_ / parent / "summary.db").string() + ": required SourceCounter database missing");
         }
+    }
+    for (const auto& [parent, files] : groups.samplingGroups) {
+        ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, validation);
     }
     ValidatePmuGroups(groups, expectedPmu, validation);
     return validation.complete;
