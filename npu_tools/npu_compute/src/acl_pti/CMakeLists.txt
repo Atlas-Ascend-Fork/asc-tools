@@ -21,6 +21,7 @@ add_library(acl_pti SHARED
   data/data_receiver.cpp
   data/replay_data_aggregation.cpp
   data/raw_data_decoder.cpp
+  data/communication_decoder.cpp
   profiling/api.cpp
   profiling/source_counter_collector.cpp
   profiling/range_profiler.cpp

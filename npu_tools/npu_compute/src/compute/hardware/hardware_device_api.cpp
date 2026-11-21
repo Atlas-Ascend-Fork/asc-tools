@@ -19,10 +19,12 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <ratio>
 #include <string>
 #include <type_traits>
 
@@ -308,6 +310,48 @@ bool DynamicHardwareDeviceApi::ReadAiCoreFrequencies(
     const bool readAic = readFrequency(MODULE_TYPE_AICORE, aicFrequencyMhz);
     const bool readAiv = readFrequency(MODULE_TYPE_VECTOR_CORE, aivFrequencyMhz);
     return readAic && readAiv;
+}
+
+aclpti::communication::DeviceClocks DynamicHardwareDeviceApi::GetCommunicationClocks(std::int32_t deviceId)
+{
+    aclpti::communication::DeviceClocks clocks;
+    clocks.deviceId = deviceId;
+    double frequency = 0;
+    if (!GetSyscntFrequencyHz(deviceId, &frequency) || frequency <= 0)
+        return clocks;
+    using Function = drvError_t (*)(uint32_t, int32_t, int32_t, int64_t*);
+    const auto query = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", HAL_LIBRARY));
+    if (!query)
+        return clocks;
+    const auto hostTime = []() -> uint64_t {
+        timespec ts{};
+        if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts) != 0)
+            return 0;
+        return static_cast<uint64_t>(ts.tv_sec) * std::nano::den + ts.tv_nsec;
+    };
+    constexpr unsigned clockSampleAttempts = 5;
+    constexpr uint64_t midpointDivisor = 2;
+    uint64_t best = UINT64_MAX;
+    for (unsigned i = 0; i < clockSampleAttempts; ++i) {
+        int64_t counter = 0;
+        const auto before = hostTime();
+        const auto status = query(deviceId, MODULE_TYPE_SYSTEM, INFO_TYPE_SYS_COUNT, &counter);
+        const auto after = hostTime();
+        if (status != DRV_ERROR_NONE || counter < 0 || before == 0 || after < before || after - before >= best)
+            continue;
+        best = after - before;
+        clocks.task = {
+            static_cast<uint64_t>(counter), before + best / midpointDivisor, static_cast<uint64_t>(frequency), true};
+    }
+    // KFC prof timestamps use device cntvct while L1 profiling is active.
+    clocks.aicpu = clocks.task;
+    std::string soc;
+    if (GetSocName(&soc) && (soc.rfind("Ascend950PR", 0) == 0 || soc.rfind("Ascend950DT", 0) == 0)) {
+        // Ascend950 CCU mission timestamps use the same device system counter as TaskLog.
+        // The reduced precision of the relative wait fields is handled when decoding the wait.
+        clocks.ccu = clocks.task;
+    }
+    return clocks;
 }
 
 bool DynamicHardwareDeviceApi::GetSyscntFrequencyHz(std::int32_t deviceId, double* frequencyHz)

@@ -8,9 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/pipe_trace_finalizer.h"
-#include "file_io.h"
+#include "common/trace_writer.h"
 
-#include <limits>
 #include <boost/filesystem.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -20,15 +19,13 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
-#include <iomanip>
+#include <limits>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
 #include <tuple>
 #include <vector>
-
-#include <unistd.h>
 
 namespace npucompute::cli {
 namespace {
@@ -204,33 +201,13 @@ bool ValidateProcessFiles(
     return true; // Listed fragments are checked individually before merging.
 }
 
-std::string EscapeJson(const std::string& value)
+std::string FinalProcessId(const Fragment& fragment, const std::string& pid, bool qualify)
 {
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (char character : value) {
-        switch (character) {
-            case '\\':
-                escaped += "\\\\";
-                break;
-            case '"':
-                escaped += "\\\"";
-                break;
-            case '\n':
-                escaped += "\\n";
-                break;
-            case '\r':
-                escaped += "\\r";
-                break;
-            case '\t':
-                escaped += "\\t";
-                break;
-            default:
-                escaped += character;
-                break;
-        }
+    if (!qualify) {
+        return pid;
     }
-    return escaped;
+    return "process" + std::to_string(fragment.processOrdinal) + ".result" + std::to_string(fragment.resultSequence) +
+           ".device" + std::to_string(fragment.deviceId) + ".replay" + std::to_string(fragment.replayId) + "." + pid;
 }
 
 bool WriteFinalTrace(
@@ -245,49 +222,32 @@ bool WriteFinalTrace(
     if (outputExists) {
         return Fail("PipeTrace.json already exists", error);
     }
-    const boost::filesystem::path temporaryPath =
-        collectionDirectory / ("PipeTrace.json.tmp." + std::to_string(static_cast<long long>(::getpid())));
-    if (!asctools::security::ValidatePath(temporaryPath.string(), asctools::security::PathKind::FileOrNew)) {
+    std::unique_ptr<TraceFileOutput> output;
+    try {
+        output = std::make_unique<TraceFileOutput>(outputPath, TraceFilePolicy::Replace, "PipeTrace");
+    } catch (const std::exception&) {
         return Fail("open final PipeTrace temporary file failed", error);
     }
-    std::ofstream output(temporaryPath.string(), std::ios::binary | std::ios::trunc);
-    if (!output.is_open()) {
-        return Fail("open final PipeTrace temporary file failed", error);
-    }
-    output << "{\"displayTimeUnit\":\"ns\",\"profilingType\":\"op\",\"schemaVersion\":1,\"traceEvents\":[";
-    bool first = true;
-    const bool qualifyPid = fragments.size() > 1U;
-    for (const Fragment& fragment : fragments) {
-        for (const TraceEvent& event : fragment.events) {
-            std::string pid = event.pid;
-            if (qualifyPid) {
-                pid = "process" + std::to_string(fragment.processOrdinal) + ".result" +
-                      std::to_string(fragment.resultSequence) + ".device" + std::to_string(fragment.deviceId) +
-                      ".replay" + std::to_string(fragment.replayId) + "." + pid;
+    try {
+        TraceWriter trace(*output, TraceLayout::Pipeline);
+        const bool qualifyPid = fragments.size() > 1U;
+        for (const Fragment& fragment : fragments) {
+            for (const TraceEvent& event : fragment.events) {
+                const auto pid = FinalProcessId(fragment, event.pid, qualifyPid);
+                trace.Duration(
+                    {TraceQuote(pid), TraceQuote(event.tid), event.name, TraceNumber(event.timestamp),
+                     TraceNumber(event.duration), event.color, std::nullopt});
             }
-            output << (first ? "" : ",") << "{\"cname\":\"" << EscapeJson(event.color)
-                   << "\",\"dur\":" << std::setprecision(std::numeric_limits<double>::max_digits10) << event.duration
-                   << ",\"name\":\"" << EscapeJson(event.name) << "\",\"ph\":\"X\",\"pid\":\"" << EscapeJson(pid)
-                   << "\",\"tid\":\"" << EscapeJson(event.tid)
-                   << "\",\"ts\":" << std::setprecision(std::numeric_limits<double>::max_digits10) << event.timestamp
-                   << "}";
-            first = false;
         }
-    }
-    output << "]}\n";
-    output.flush();
-    output.close();
-    if (output.fail()) {
-        boost::system::error_code ignored;
-        boost::filesystem::remove(temporaryPath, ignored);
+        trace.Finish();
+        output->Close();
+    } catch (const std::exception&) {
         return Fail("write final PipeTrace failed", error);
     }
-    boost::system::error_code renameError;
-    boost::filesystem::rename(temporaryPath, outputPath, renameError);
-    if (renameError) {
-        boost::system::error_code ignored;
-        boost::filesystem::remove(temporaryPath, ignored);
-        return Fail("commit final PipeTrace failed: " + renameError.message(), error);
+    try {
+        output->Publish();
+    } catch (const std::exception& exception) {
+        return Fail("commit final PipeTrace failed: " + std::string(exception.what()), error);
     }
     return true;
 }

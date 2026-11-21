@@ -14,6 +14,8 @@
 #include "launch/injection_path.h"
 #include "launch/process_launcher.h"
 #include "report/collection_processor.h"
+#include "communication/artifact_schema.h"
+#include "report/communication_finalizer.h"
 #include "report/pipe_trace_finalizer.h"
 #include "report/summary_sqlite_finalizer.h"
 #include "report/rep_report_writer.h"
@@ -198,12 +200,35 @@ public:
         auto issues = outcome.issues;
         if (config.replay_mode == ReplayMode::Kernel) {
             FinalizeKernelResults(config.collect_pipeline, issues);
+        } else if (outcome.artifacts > 0) {
+            FinalizeApplicationResults(issues);
         }
         return noPack_ ? RetainRawResults(issues, targetFailure, report_path, error) :
                          PublishReport(issues, targetFailure, report_path, error);
     }
 
 private:
+    void FinalizeApplicationResults(std::vector<std::string>& issues)
+    {
+        using namespace boost::filesystem;
+        const path root(Path());
+        if (exists(root / communication::kStagingDirectory)) {
+            FinalizeCommunication(root, &issues);
+            return;
+        }
+        boost::system::error_code scanError;
+        for (directory_iterator it(root, scanError), end; !scanError && it != end; it.increment(scanError)) {
+            const auto directory = it->path();
+            if (directory.filename().string().rfind("pid-", 0) == 0 && is_directory(symlink_status(directory)) &&
+                exists(directory / communication::kStagingDirectory)) {
+                FinalizeCommunication(directory, &issues);
+            }
+        }
+        if (scanError) {
+            issues.push_back("inspect application report directories failed: " + scanError.message());
+        }
+    }
+
     void FinalizeKernelResults(bool collectPipeline, std::vector<std::string>& issues)
     {
         boost::system::error_code hardware_error;

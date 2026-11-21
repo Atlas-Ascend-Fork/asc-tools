@@ -222,7 +222,7 @@ TEST(NpuComputeLauncher, ApplicationRanksPublishIndependentPackedReports)
     ASSERT_EQ(results.size(), 2U);
     for (const auto& rank : results) {
         EXPECT_EQ(rank.name.find("pid-"), 0U);
-        EXPECT_EQ(rank.children.size(), 3U);
+        EXPECT_EQ(rank.children.size(), 4U);
     }
     EXPECT_NE(results[0].name, results[1].name);
     EXPECT_FALSE(HasCollectionDirectoryIn(workDirectory.Path()));
@@ -271,9 +271,11 @@ TEST(NpuComputeLauncher, SingleApplicationRankKeepsFlatReport)
     std::string report;
     std::string error;
     ASSERT_EQ(LaunchTarget(config, &report, &error), 0) << error;
-    ASSERT_TRUE(boost::filesystem::is_regular_file(boost::filesystem::path(report) / "application_manifest.json"));
-    for (const auto& entry : boost::filesystem::directory_iterator(report)) {
-        EXPECT_FALSE(boost::filesystem::is_directory(entry.path()));
+    const boost::filesystem::path reportPath(report);
+    ASSERT_TRUE(boost::filesystem::is_regular_file(reportPath / "application_manifest.json"));
+    EXPECT_TRUE(boost::filesystem::is_regular_file(reportPath / "CommunicationTrace.json"));
+    for (const auto& entry : boost::filesystem::directory_iterator(reportPath)) {
+        EXPECT_NE(entry.path().filename().string().rfind("pid-", 0), 0U);
     }
 }
 

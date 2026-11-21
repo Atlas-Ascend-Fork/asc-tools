@@ -9,7 +9,11 @@
  */
 #include "runtime/compute_service.h"
 
+#include "acl_pti/data/communication_decoder.h"
 #include "acl_pti/initialization.h"
+#include "communication/communication_collector.h"
+#include "communication/spooling_artifact_sink.h"
+#include "hardware/hardware_device_api.h"
 #include "ipc/artifact_publisher.h"
 #include "ipc/npu_compute_uds_server.h"
 #include "npu_compute_log.h"
@@ -17,12 +21,14 @@
 #include "runtime/application_op_collector.h"
 #include "runtime/npu_compute_runtime.h"
 #include "runtime/profiling_result_snapshot.h"
+#include "securec.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <deque>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -35,6 +41,7 @@ using aclpti::profiling::ApplicationRawRecord;
 using aclpti::profiling::ApplicationSummary;
 
 constexpr std::size_t kApplicationReportQueueCapacity = 16384;
+constexpr std::size_t kCommunicationBatchRecords = 1024;
 constexpr auto kCancelPollInterval = std::chrono::milliseconds(20);
 thread_local bool reportWorker = false;
 std::mutex applicationCallbackMutex;
@@ -117,6 +124,22 @@ struct ComputeService::Session {
         }
     }
 
+    static void RecordCommunicationClock(int32_t deviceId) noexcept
+    {
+        if (auto* session = target.load(std::memory_order_acquire)) {
+            try {
+                std::lock_guard<std::mutex> lock(session->clockMutex);
+                // Keep one mapping per hardware device for the report, including after a profiling restart.
+                auto& clocks = session->communicationClocks[deviceId];
+                if (!clocks.task.calibrated) {
+                    clocks = DynamicHardwareDeviceApi().GetCommunicationClocks(deviceId);
+                }
+            } catch (...) {
+                ++session->communicationClockErrors;
+            }
+        }
+    }
+
     static void KernelResult(const aclptiProfilingDataResult& value)
     {
         auto* session = target.load(std::memory_order_acquire);
@@ -150,10 +173,11 @@ struct ComputeService::Session {
                 throw std::runtime_error(error);
             }
             app = std::make_unique<ApplicationReport>(publisher);
+            communication = std::make_unique<CommunicationCollector>(communicationSpool, communicationMutex);
             ops = std::make_unique<ApplicationOpCollector>(aclpti::initialization::ApplicationDeviceEpoch);
             report = std::thread([this] { RunApplicationReport(); });
-            if (aclpti::initialization::PrepareApplicationSession(&ApplicationRecord, &ApplicationEnded, !fromAcl) !=
-                ACLPTI_SUCCESS) {
+            if (aclpti::initialization::PrepareApplicationSession(
+                    &ApplicationRecord, &ApplicationEnded, !fromAcl, &RecordCommunicationClock) != ACLPTI_SUCCESS) {
                 throw std::runtime_error("application profiling initialization failed");
             }
             aclPrepared = true;
@@ -247,31 +271,100 @@ struct ComputeService::Session {
                     records.pop_front();
                 }
                 queueChanged.notify_all();
-                try {
-                    app->Consume(record);
-                } catch (...) {
-                    if (record.decodeErrors == 0) {
-                        ++reportErrors;
-                    }
-                    {
-                        std::lock_guard<std::mutex> lock(queueMutex);
-                        reportFailed = true;
-                    }
-                    queueChanged.notify_all();
-                }
+                ConsumeApplicationRecord(record, reportErrors);
             }
             finalSummary.processingErrors += reportErrors;
             finalSummary.complete = finalSummary.complete && finalSummary.processingErrors == 0;
             FinishApplication(finalSummary);
         } catch (...) {
-            {
-                std::lock_guard<std::mutex> lock(queueMutex);
-                reportFailed = true;
-            }
-            queueChanged.notify_all();
+            MarkApplicationReportFailed();
             publisher.Stop();
             ASCTOOL_ERROR("[npu-compute] application reporting failed");
         }
+    }
+
+    void MarkApplicationReportFailed()
+    {
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            reportFailed = true;
+        }
+        queueChanged.notify_all();
+    }
+
+    void ConsumeApplicationRecord(const ApplicationRawRecord& record, uint64_t& reportErrors)
+    {
+        try {
+            ConsumeCommunication(record);
+        } catch (...) {
+            ++communicationErrors;
+            ASCTOOL_ERROR("[npu-compute] communication record processing failed");
+        }
+        try {
+            app->Consume(record);
+        } catch (...) {
+            if (record.decodeErrors == 0) {
+                ++reportErrors;
+            }
+            MarkApplicationReportFailed();
+        }
+    }
+
+    void ConsumeCommunication(const ApplicationRawRecord& record)
+    {
+        MsprofRawData raw{};
+        if (record.bytes.size() > sizeof(raw.chunk)) {
+            ++communicationErrors;
+            return;
+        }
+        static_assert(sizeof(raw.type) == sizeof(record.type));
+        if (memcpy_s(&raw.type, sizeof(raw.type), &record.type, sizeof(record.type)) != EOK) {
+            ++communicationErrors;
+            ASCTOOL_ERROR("[npu-compute] cannot copy communication raw type");
+            return;
+        }
+        raw.deviceId = record.deviceId;
+        raw.chunkModule = record.chunkModule;
+        raw.offset = record.offset;
+        raw.isLastChunk = record.isLastChunk;
+        raw.chunkSize = record.bytes.size();
+        std::copy(record.bytes.begin(), record.bytes.end(), raw.chunk);
+        if (!communicationDecoder.Feed(raw, communicationBatch.records)) {
+            ++communicationErrors;
+        }
+        if (communicationBatch.records.size() >= kCommunicationBatchRecords) {
+            FlushCommunication();
+        }
+    }
+
+    void FlushCommunication()
+    {
+        if (communication->Consume(communicationBatch) != ACLPTI_SUCCESS) {
+            ++communicationErrors;
+        }
+        communicationBatch.records.clear();
+    }
+
+    void FinishCommunication(ipc::Result& result, const ApplicationSummary& summary)
+    {
+        if (!communicationDecoder.Finish()) {
+            ++communicationErrors;
+        }
+        communicationBatch.diagnostic = communicationDecoder.Error();
+        communicationBatch.errors = communicationErrors + communicationClockErrors.load();
+        {
+            std::lock_guard<std::mutex> lock(clockMutex);
+            for (const auto& entry : communicationClocks) {
+                communicationBatch.clocks.push_back(entry.second);
+            }
+        }
+        communicationBatch.dropped = summary.droppedRecords;
+        FlushCommunication();
+        if (communication->Finish() != ACLPTI_SUCCESS) {
+            ++communicationErrors;
+        }
+        result.errorCount += communicationErrors + communicationClockErrors.load();
+        communicationSpool.Publish(publisher);
     }
 
     void FinishApplication(const ApplicationSummary& value)
@@ -299,6 +392,12 @@ struct ComputeService::Session {
         } catch (...) {
             ++result.errorCount;
             ASCTOOL_ERROR("[npu-compute] application artifact delivery failed");
+        }
+        try {
+            FinishCommunication(result, value);
+        } catch (...) {
+            ++result.errorCount;
+            ASCTOOL_ERROR("[npu-compute] communication artifact delivery failed");
         }
         result.complete = value.complete && value.tailConfirmed && result.errorCount == 0 && !publisher.Cancelled();
         result.status = result.complete ? 0 : 1;
@@ -359,6 +458,15 @@ struct ComputeService::Session {
     std::unique_ptr<ApplicationReport> app;
     std::unique_ptr<ApplicationOpCollector> ops;
     std::unique_ptr<NpuComputeRuntime> kernel;
+    aclpti::communication::Decoder communicationDecoder;
+    SpoolingArtifactSink communicationSpool;
+    std::mutex communicationMutex;
+    std::unique_ptr<CommunicationCollector> communication;
+    CommunicationBatch communicationBatch;
+    uint64_t communicationErrors = 0;
+    std::atomic<uint64_t> communicationClockErrors{0};
+    std::mutex clockMutex;
+    std::map<int32_t, aclpti::communication::DeviceClocks> communicationClocks;
     bool aclPrepared = false;
 
     std::mutex queueMutex;

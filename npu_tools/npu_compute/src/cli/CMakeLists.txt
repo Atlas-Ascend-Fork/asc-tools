@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 add_library(npu_compute_launcher_core STATIC
+  ../common/trace_writer.cpp
   ipc/artifact_receiver.cpp
   ipc/uds_client.cpp
   config/config.cpp
@@ -28,6 +29,7 @@ add_library(npu_compute_launcher_core STATIC
   report/csv_sqlite_writer.cpp
   report/summary_sqlite_finalizer.cpp
   report/pipe_trace_finalizer.cpp
+  report/communication_finalizer.cpp
   report/rep_decoder.cpp
   report/rep_encoder.cpp
   report/rep_report_writer.cpp

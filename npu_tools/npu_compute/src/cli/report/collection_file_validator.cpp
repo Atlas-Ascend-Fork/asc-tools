@@ -15,6 +15,7 @@
 #include <boost/system/error_code.hpp>
 
 #include <fstream>
+#include <cmath>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -104,9 +105,52 @@ SummaryJsonlInfo ParseSummaryJsonl(std::ifstream& input)
     return info;
 }
 
+void ParseAppSummary(std::ifstream& input)
+{
+    std::set<std::string> devices;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (input.eof())
+            throw std::runtime_error("app summary row is missing newline");
+        const auto value = boost::json::parse(line);
+        const auto& row = value.as_object();
+        const auto category = Text(row.if_contains("category"));
+        const auto device = Text(row.if_contains("Device Id"));
+        const auto scope = Text(row.if_contains("Scope"));
+        if (category != "DeviceCommunicationSummary" || scope != "Device" || !devices.insert(device).second) {
+            throw std::runtime_error("invalid or duplicate device summary");
+        }
+        const auto& id = row.at("Device Id");
+        if ((!id.is_int64() && !id.is_uint64()) || boost::json::value_to<double>(id) < 0)
+            throw std::runtime_error("device summary id must be a nonnegative integer");
+        for (const auto* field : {"Compute Duration(us)", "Communication Duration(us)", "Overlap Duration(us)"}) {
+            const auto* metric = row.if_contains(field);
+            if (metric == nullptr)
+                throw std::runtime_error("missing app duration");
+            if (metric->is_string() && metric->as_string() == "NA")
+                continue;
+            if (!metric->is_number())
+                throw std::runtime_error("app duration must be numeric or NA");
+            const double duration = boost::json::value_to<double>(*metric);
+            if (!std::isfinite(duration) || duration < 0)
+                throw std::runtime_error("invalid app duration");
+        }
+    }
+    if (input.bad() || devices.empty())
+        throw std::runtime_error("missing device communication summary");
+}
+
 bool ValidateJsonl(
     std::ifstream* input, const boost::filesystem::path& path, std::string* error, SummaryJsonlInfo* summary)
 {
+    if (path.filename() == "app_summary.jsonl") {
+        try {
+            ParseAppSummary(*input);
+            return true;
+        } catch (const std::exception& exception) {
+            return Fail("invalid app summary JSONL: " + std::string(exception.what()), error);
+        }
+    }
     if (path.filename() == "summary.jsonl") {
         try {
             auto parsed = ParseSummaryJsonl(*input);

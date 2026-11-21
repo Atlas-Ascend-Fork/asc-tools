@@ -60,6 +60,10 @@ constexpr uint8_t kTaskStartFunctionType = 0x00U;
 constexpr uint8_t kTaskEndFunctionType = 0x01U;
 constexpr uint8_t kBlockPmuFunctionType = 0x29U;
 constexpr uint8_t kTaskPmuFunctionType = 0x2aU;
+constexpr uint8_t kFusionStartFunction = 0x16U;
+constexpr uint8_t kFusionEndFunction = 0x17U;
+constexpr uint8_t kBlockStartFunction = 0x24U;
+constexpr uint8_t kBlockEndFunction = 0x25U;
 
 // Decoded fields, not a packed representation of the 32-byte wire record.
 struct TaskLog32 {
@@ -71,7 +75,15 @@ struct TaskLog32 {
     uint16_t subBlockId;
     aclptiCoreType coreType;
     uint8_t coreTypeId;
+    // Preserve the complete wire identity for Chip6; the legacy adapter uses the two 16-bit fields above.
+    uint32_t fullTaskId;
     uint8_t sqeType = ACLPTI_SQE_TYPE_UNAVAILABLE;
+    uint8_t fusionType;
+    uint8_t missionId;
+
+    bool IsTaskStart() const { return funcType == kTaskStartFunctionType || funcType == kFusionStartFunction; }
+    bool IsTaskEnd() const { return funcType == kTaskEndFunctionType || funcType == kFusionEndFunction; }
+    bool IsBlock() const { return funcType == kBlockStartFunction || funcType == kBlockEndFunction; }
 };
 
 // Counter values stay in hardware units here; frequency conversion occurs downstream.

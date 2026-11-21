@@ -7,9 +7,12 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "common/section_names.h"
+#include "communication/artifact_schema.h"
 #include "ipc.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cctype>
 #include <cstring>
@@ -35,8 +38,7 @@ constexpr std::string_view kDevicePrefix = "device";
 constexpr std::string_view kResultPrefix = "result-";
 constexpr std::string_view kJsonSuffix = ".json";
 constexpr size_t DEFAULT_STRING_BYTES = 128;
-constexpr size_t MAX_SECTION_COUNT = 13;
-
+constexpr size_t MAX_SECTION_COUNT = kSupportedSections.size();
 constexpr size_t MAX_ERROR_MESSAGE_BYTES = 4096;
 constexpr unsigned int BITS_PER_BYTE = std::numeric_limits<uint8_t>::digits;
 constexpr std::size_t MAX_PM_SAMPLING_PATH_COMPONENTS = 2;
@@ -164,6 +166,33 @@ void ValidateResult(const Result& result)
     }
 }
 
+void ValidateArtifactPathLayout(const std::vector<std::string>& components)
+{
+    Check(components.size() <= MAX_ARTIFACT_PATH_COMPONENTS, "artifact name is not allowed");
+    if (components.size() == COLLECTION_PATH_COMPONENTS) {
+        Check(
+            components[0].rfind("collection-p", PATH_START_OFFSET) == PATH_START_OFFSET,
+            "artifact name is not allowed");
+    } else if (components.size() == STAGING_PATH_COMPONENTS) {
+        constexpr size_t processDirectoryIndex = 1;
+        Check(
+            (components.front() == ".biu-staging" || components.front() == communication::kStagingDirectory) &&
+                components[processDirectoryIndex] == "process-uds",
+            "artifact name is not allowed");
+    } else if (components.size() == MAX_ARTIFACT_PATH_COMPONENTS) {
+        const auto decimal = [](std::string_view text) {
+            return !text.empty() &&
+                   std::all_of(text.begin(), text.end(), [](char ch) { return ch >= '0' && ch <= '9'; });
+        };
+        Check(
+            components[0].rfind(kDevicePrefix, 0) == 0 &&
+                decimal(std::string_view(components[0]).substr(kDevicePrefix.size())) &&
+                (components[1].rfind("op-", 0) == 0 || components[1].rfind("instance-", 0) == 0) &&
+                decimal(components[2]) && components[3] == "summary.jsonl",
+            "invalid application summary path");
+    }
+}
+
 std::vector<std::string> ArtifactPathComponents(const std::string& name)
 {
     Check(
@@ -189,26 +218,22 @@ std::vector<std::string> ArtifactPathComponents(const std::string& name)
         }
         start = separator + PATH_COMPONENT_INCREMENT;
     }
-    Check(components.size() <= MAX_ARTIFACT_PATH_COMPONENTS, "artifact name is not allowed");
-    if (components.size() == COLLECTION_PATH_COMPONENTS) {
-        Check(
-            components[0].rfind("collection-p", PATH_START_OFFSET) == PATH_START_OFFSET,
-            "artifact name is not allowed");
-    } else if (components.size() == STAGING_PATH_COMPONENTS) {
-        Check(components[0] == ".biu-staging" && components[1] == "process-uds", "artifact name is not allowed");
-    } else if (components.size() == MAX_ARTIFACT_PATH_COMPONENTS) {
-        const auto decimal = [](std::string_view text) {
-            return !text.empty() &&
-                   std::all_of(text.begin(), text.end(), [](char ch) { return ch >= '0' && ch <= '9'; });
-        };
-        Check(
-            components[0].rfind(kDevicePrefix, 0) == 0 &&
-                decimal(std::string_view(components[0]).substr(kDevicePrefix.size())) &&
-                (components[1].rfind("op-", 0) == 0 || components[1].rfind("instance-", 0) == 0) &&
-                decimal(components[2]) && components[3] == "summary.jsonl",
-            "invalid application summary path");
-    }
+    ValidateArtifactPathLayout(components);
     return components;
+}
+bool IsPipelineTraceArtifact(const std::vector<std::string>& components, const std::string& name)
+{
+    const bool stagingPath = components.size() == STAGING_PATH_COMPONENTS && components.front() == ".biu-staging";
+    if (name == kSimtOccupancyFileName || name == kLegacySimtOccupancyFileName) {
+        return true;
+    }
+    if (name == kPipeTraceFileName) {
+        return components.size() == 1;
+    }
+    return stagingPath && (name == kManifestFileName ||
+                           (name.rfind(kResultPrefix, PATH_START_OFFSET) == PATH_START_OFFSET &&
+                            name.size() > kResultPrefix.size() + kJsonSuffix.size() &&
+                            name.compare(name.size() - kJsonSuffix.size(), kJsonSuffix.size(), kJsonSuffix) == 0));
 }
 } // namespace
 
@@ -217,14 +242,13 @@ void ValidateConfig(const Config& config)
     Check(!config.sections.empty() && config.sections.size() <= MAX_SECTION_COUNT, "invalid section count");
     std::set<std::string> seen;
     for (const auto& section : config.sections) {
-        Check(
-            section == "PipeUtilization" || section == "Memory" || section == "MemoryL0" || section == "MemoryUB" ||
-                section == "L2Cache" || section == "Pipeline" || section == "ArithmeticUtilization" ||
-                section == "ResourceConflictRatio" || section == "PmSampling" || section == "SourceCounter" ||
-                section == "Roofline" || section == "occupancy" || section == "Communication",
-            "unknown section");
+        Check(IsSupportedSection(section), "unknown section");
         Check(seen.insert(section).second, "duplicate section");
     }
+    Check(
+        seen.count("Communication") == 0 ||
+            (IsCommunicationMode(config.sections) && config.cacheControlMode == kCacheControlModeNone),
+        "Communication must be selected alone without cache flushing");
     Check(config.replayMode == "kernel" || config.replayMode == "application", "unsupported replay mode");
     if (config.replayMode == "application") {
         Check(config.sections == std::vector<std::string>{"Communication"}, "application requires Communication only");
@@ -247,26 +271,36 @@ DataKind KindForName(const std::string& name)
     if (base == kHardwareInfoFileName && components.size() == 1) {
         return DataKind::HardwareInfo;
     }
-    const bool pipelinePath =
-        components.size() == STAGING_PATH_COMPONENTS &&
-        (base == kManifestFileName ||
-         (base.rfind(kResultPrefix, 0) == 0 && base.size() > kResultPrefix.size() + kJsonSuffix.size() &&
-          base.compare(base.size() - kJsonSuffix.size(), kJsonSuffix.size(), kJsonSuffix) == 0));
-    if ((base == kPipeTraceFileName && components.size() == 1) || base == kSimtOccupancyFileName ||
-        base == kLegacySimtOccupancyFileName || pipelinePath) {
+    if (components.size() == STAGING_PATH_COMPONENTS && components.front() == communication::kStagingDirectory) {
+        Check(
+            base == kManifestFileName || communication::IsRecordFileName(base), "invalid Communication artifact name");
+        return DataKind::Communication;
+    }
+    constexpr size_t rootPathComponents = 1;
+    if (components.size() == rootPathComponents && (base == "CommunicationTrace.json" || base == "app_summary.jsonl")) {
+        return DataKind::Communication;
+    }
+    if (IsPipelineTraceArtifact(components, base)) {
         return DataKind::PipelineTrace;
     }
     if (base == kSummaryDbFileName || base == kObjdumpFileName || base == kSymbolizerFileName) {
         Check(components.size() <= MAX_PM_SAMPLING_PATH_COMPONENTS, "invalid PmSampling artifact path");
         return DataKind::PmSampling;
     }
-    if (base == kSummaryFileName || base == kPipeUtilizationFileName || base == kOccupancyArtifactName) {
-        return DataKind::PmuCsv;
-    }
+    constexpr std::array pmuFileNames = {
+        kSummaryFileName,
+        kPipeUtilizationFileName,
+        kOccupancyArtifactName,
+        kMemoryFileName,
+        kMemoryL0FileName,
+        kMemoryUBFileName,
+        kL2CacheFileName,
+        kArithmeticUtilizationFileName,
+        kResourceConflictRatioFileName,
+        kSimtWarpCsvFileName,
+    };
     Check(
-        base == kMemoryFileName || base == kMemoryL0FileName || base == kMemoryUBFileName || base == kL2CacheFileName ||
-            base == kArithmeticUtilizationFileName || base == kResourceConflictRatioFileName ||
-            base == kSimtWarpCsvFileName,
+        std::find(pmuFileNames.begin(), pmuFileNames.end(), base) != pmuFileNames.end(),
         "artifact name is not allowed");
     return DataKind::PmuCsv;
 }
@@ -287,6 +321,12 @@ ArtifactType ArtifactTypeForName(const std::string& name)
     if (base == kSymbolizerFileName || base == kOccupancyArtifactName) {
         return ArtifactType::Json;
     }
+    if (kind == DataKind::Communication) {
+        constexpr std::string_view jsonlSuffix = ".jsonl";
+        const bool jsonl = base.size() >= jsonlSuffix.size() &&
+                           base.compare(base.size() - jsonlSuffix.size(), jsonlSuffix.size(), jsonlSuffix) == 0;
+        return jsonl ? ArtifactType::Jsonl : ArtifactType::Json;
+    }
     if (kind == DataKind::PipelineTrace) {
         return ArtifactType::Json;
     }
@@ -299,8 +339,11 @@ Type TypeForKind(DataKind kind)
 {
     Check(
         kind == DataKind::PmuCsv || kind == DataKind::PipelineTrace || kind == DataKind::HardwareInfo ||
-            kind == DataKind::PmSampling || kind == DataKind::Application,
+            kind == DataKind::PmSampling || kind == DataKind::Communication || kind == DataKind::Application,
         "unknown artifact kind");
+    if (kind == DataKind::Communication) {
+        return Type::Communication;
+    }
     if (kind == DataKind::Application) {
         return Type::Application;
     }

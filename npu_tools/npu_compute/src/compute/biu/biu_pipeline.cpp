@@ -8,7 +8,6 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "biu/biu_pipeline.h"
-#include "file_io.h"
 
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
@@ -16,8 +15,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <fstream>
-#include <iomanip>
 #include <limits>
 #include <map>
 #include <optional>
@@ -476,62 +473,17 @@ const char* CoreSuffix(aclptiBiuCoreKind kind)
     return "unknown";
 }
 
-std::string EscapeJson(const std::string& value)
-{
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (char character : value) {
-        switch (character) {
-            case '\\':
-                escaped += "\\\\";
-                break;
-            case '"':
-                escaped += "\\\"";
-                break;
-            case '\n':
-                escaped += "\\n";
-                break;
-            case '\r':
-                escaped += "\\r";
-                break;
-            case '\t':
-                escaped += "\\t";
-                break;
-            default:
-                escaped += character;
-                break;
-        }
-    }
-    return escaped;
-}
-
 aclptiResult AtomicWrite(const boost::filesystem::path& path, const std::string& content)
 {
-    boost::filesystem::path temporary = path;
-    temporary += ".tmp." + std::to_string(static_cast<long long>(::getpid()));
-    if (!asctools::security::ValidatePath(temporary.string(), asctools::security::PathKind::FileOrNew)) {
+    try {
+        TraceFileOutput output(path, TraceFilePolicy::Replace, "PipeTrace manifest");
+        output.Write(content);
+        output.Close();
+        output.Publish();
+        return ACLPTI_SUCCESS;
+    } catch (const std::exception&) {
         return ACLPTI_ERROR_TRACE_WRITE;
     }
-    std::ofstream output(temporary.string(), std::ios::binary | std::ios::trunc);
-    if (!output.is_open()) {
-        return ACLPTI_ERROR_TRACE_WRITE;
-    }
-    output << content;
-    output.flush();
-    output.close();
-    if (output.fail()) {
-        boost::system::error_code ignored;
-        boost::filesystem::remove(temporary, ignored);
-        return ACLPTI_ERROR_TRACE_WRITE;
-    }
-    boost::system::error_code renameError;
-    boost::filesystem::rename(temporary, path, renameError);
-    if (renameError) {
-        boost::system::error_code ignored;
-        boost::filesystem::remove(temporary, ignored);
-        return ACLPTI_ERROR_TRACE_WRITE;
-    }
-    return ACLPTI_SUCCESS;
 }
 
 } // namespace
@@ -633,20 +585,18 @@ aclptiResult PipeTraceWriter::Begin(const boost::filesystem::path& outputPath, s
         state_ = State::Failed;
         return ACLPTI_ERROR_TRACE_WRITE;
     }
-    statusError.clear();
-    outputPath_ = outputPath;
-    temporaryPath_ = outputPath;
-    temporaryPath_ += ".tmp." + std::to_string(static_cast<long long>(::getpid()));
-    output_ = std::make_unique<std::ofstream>(temporaryPath_.string(), std::ios::binary | std::ios::trunc);
-    if (!output_->is_open()) {
+    try {
+        output_ = std::make_unique<TraceFileOutput>(outputPath, TraceFilePolicy::Replace, "PipeTrace");
+    } catch (const std::exception&) {
         if (error != nullptr) {
             *error = "open PipeTrace temporary file failed";
         }
         state_ = State::Failed;
         return ACLPTI_ERROR_TRACE_WRITE;
     }
-    *output_ << "{\"displayTimeUnit\":\"ns\",\"profilingType\":\"op\",\"schemaVersion\":1,\"traceEvents\":[";
-    if (!output_->good()) {
+    try {
+        trace_ = std::make_unique<TraceWriter>(*output_, TraceLayout::Pipeline);
+    } catch (const std::exception&) {
         state_ = State::Failed;
         return ACLPTI_ERROR_TRACE_WRITE;
     }
@@ -666,17 +616,14 @@ aclptiResult PipeTraceWriter::Append(const BiuTraceEvent& event)
     std::ostringstream pid;
     pid << "group" << static_cast<unsigned int>(event.channel.groupId) << "." << CoreSuffix(event.channel.coreKind);
     const std::string eventName = event.isDfx ? event.name : descriptor.name;
-    *output_ << (firstEvent_ ? "" : ",") << "{\"cname\":\""
-             << EscapeJson(event.color.empty() ? descriptor.color : event.color)
-             << "\",\"dur\":" << std::setprecision(std::numeric_limits<double>::max_digits10) << event.durationUs
-             << ",\"name\":\"" << EscapeJson(eventName) << "\",\"ph\":\"X\",\"pid\":\"" << pid.str() << "\",\"tid\":\""
-             << descriptor.name << "\",\"ts\":" << std::setprecision(std::numeric_limits<double>::max_digits10)
-             << event.startUs << "}";
-    if (!output_->good()) {
+    try {
+        trace_->Duration(
+            {TraceQuote(pid.str()), TraceQuote(descriptor.name), eventName, TraceNumber(event.startUs),
+             TraceNumber(event.durationUs), event.color.empty() ? descriptor.color : event.color, std::nullopt});
+    } catch (const std::exception&) {
         state_ = State::Failed;
         return ACLPTI_ERROR_TRACE_WRITE;
     }
-    firstEvent_ = false;
     ++eventCount_;
     return ACLPTI_SUCCESS;
 }
@@ -686,22 +633,17 @@ aclptiResult PipeTraceWriter::Commit()
     if (state_ != State::Writing) {
         return ACLPTI_ERROR_INVALID_STATE;
     }
-    *output_ << "]}\n";
-    output_->flush();
-    output_->close();
-    if (output_->fail()) {
-        state_ = State::Failed;
-        return ACLPTI_ERROR_TRACE_WRITE;
-    }
-    boost::system::error_code renameError;
-    boost::filesystem::rename(temporaryPath_, outputPath_, renameError);
-    if (renameError) {
+    try {
+        trace_->Finish();
+        output_->Close();
+        output_->Publish();
+    } catch (const std::exception&) {
         state_ = State::Failed;
         return ACLPTI_ERROR_TRACE_WRITE;
     }
     state_ = State::Committed;
+    trace_.reset();
     output_.reset();
-    temporaryPath_.clear();
     return ACLPTI_SUCCESS;
 }
 
@@ -710,14 +652,8 @@ void PipeTraceWriter::Abort() noexcept
     if (state_ == State::Committed) {
         return;
     }
-    if (output_ != nullptr && output_->is_open()) {
-        output_->close();
-    }
+    trace_.reset();
     output_.reset();
-    if (!temporaryPath_.empty()) {
-        boost::system::error_code ignored;
-        boost::filesystem::remove(temporaryPath_, ignored);
-    }
     if (state_ == State::Writing) {
         state_ = State::Failed;
     }
@@ -777,12 +713,12 @@ aclptiResult WritePipeTraceManifest(
     for (std::size_t index = 0; index < fragments.size(); ++index) {
         const PipeTraceFragmentInfo& fragment = fragments[index];
         json << (index == 0 ? "" : ",") << "{\"resultSequence\":\"" << fragment.resultSequence << "\",\"replayId\":\""
-             << fragment.replayId << "\",\"deviceId\":" << fragment.deviceId << ",\"file\":\""
-             << EscapeJson(fragment.file) << "\",\"eventCount\":\"" << fragment.eventCount << "\"}";
+             << fragment.replayId << "\",\"deviceId\":" << fragment.deviceId
+             << ",\"file\":" << TraceQuote(fragment.file) << ",\"eventCount\":\"" << fragment.eventCount << "\"}";
     }
     json << "]";
     if (!failureMessage.empty()) {
-        json << ",\"error\":\"" << EscapeJson(failureMessage) << "\"";
+        json << ",\"error\":" << TraceQuote(failureMessage);
     }
     json << "}\n";
 

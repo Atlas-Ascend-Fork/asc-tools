@@ -284,6 +284,7 @@ TEST(NpuComputeUdsArtifact, ApplicationManifestMatchesReceivedArtifacts)
         {1, "application_raw.jsonl", 3},
         {2, "application_manifest.json", 3},
         {3, "HardwareInfo.jsonl", 3},
+        {4, ".communication-staging/process-uds/manifest.json", 3},
     };
     for (const auto& entry : result.manifest) {
         Begin(receiver, entry.id, entry.name);

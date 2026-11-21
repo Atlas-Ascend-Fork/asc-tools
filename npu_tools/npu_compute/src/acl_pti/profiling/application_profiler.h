@@ -75,6 +75,7 @@ struct ApplicationSummary {
 
 using ApplicationConsumer = std::function<void(const ApplicationRawRecord&)>;
 using ApplicationDrainedCallback = std::function<void(const ApplicationSummary&)>;
+using ApplicationDeviceStartCallback = void (*)(int32_t) noexcept;
 
 class NPU_COMPUTE_LOCAL ApplicationProfiler final {
 public:
@@ -86,7 +87,7 @@ public:
     using UploaderRegistration = int32_t (*)(MsprofRawDataCallback);
     aclptiResult Initialize(
         ApplicationConsumer consumer, ApplicationDrainedCallback onDrained,
-        UploaderRegistration registerUploader = nullptr);
+        UploaderRegistration registerUploader = nullptr, ApplicationDeviceStartCallback beforeDeviceStart = nullptr);
     aclError SetDevice(aclError (*original)(int32_t), int32_t deviceId);
     aclError ResetDevice(aclError (*original)(int32_t), int32_t deviceId, bool force);
     aclptiResult SetConfig(const aclptiRangeProfilerSetConfigParams* params);

@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "communication/artifact_schema.h"
 #include "report/collection_processor.h"
 #include "file_io.h"
 #include "ipc/ipc.h"
@@ -116,6 +117,9 @@ std::optional<bool> ProcessInternalItem(
         }
         return true;
     }
+    // Communication staging is internal; retain it for diagnosing partial sessions in --no-pack mode.
+    if (name == communication::kStagingDirectory)
+        return true;
     if (name == kStagingDirectoryName) {
         if (context.mode == CollectionDirectoryMode::Retain) {
             context.discarded.push_back(path);

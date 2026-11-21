@@ -11,11 +11,11 @@
 #define NPU_TOOLS_NPU_COMPUTE_SRC_COMPUTE_BIU_BIU_PIPELINE_H
 
 #include "aclpti/aclpti_data.h"
+#include "common/trace_writer.h"
 
 #include <boost/filesystem/path.hpp>
 
 #include <cstdint>
-#include <fstream>
 #include <functional>
 #include <memory>
 #include <string>
@@ -83,10 +83,8 @@ private:
     enum class State { Created, Writing, Committed, Failed };
 
     State state_ = State::Created;
-    boost::filesystem::path outputPath_;
-    boost::filesystem::path temporaryPath_;
-    std::unique_ptr<std::ofstream> output_;
-    bool firstEvent_ = true;
+    std::unique_ptr<TraceFileOutput> output_;
+    std::unique_ptr<TraceWriter> trace_;
     uint64_t eventCount_ = 0;
 };
 

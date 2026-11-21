@@ -40,6 +40,19 @@ public:
     }
 };
 
+// Caller serializes access to the sink. Failed writes never leave an active artifact.
+inline void WriteArtifact(ArtifactSink& sink, const std::string& name, std::string_view bytes, uint64_t records)
+{
+    sink.Begin(name);
+    try {
+        sink.Write(bytes);
+        sink.Commit(records);
+    } catch (...) {
+        sink.Abort();
+        throw;
+    }
+}
+
 // Forward bounded pieces instead of retaining a whole CSV in memory.
 class ArtifactStreamBuffer final : public std::streambuf {
 public:

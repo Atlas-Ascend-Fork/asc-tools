@@ -39,7 +39,8 @@ using ApplicationLifecycleCallback = void (*)() noexcept;
 ACLPTI_EXPORT aclptiResult
 RegisterApplicationLifecycle(ApplicationLifecycleCallback onInit, ApplicationLifecycleCallback onFinalize);
 ACLPTI_EXPORT aclptiResult PrepareApplicationSession(
-    ApplicationRecordCallback consumer, ApplicationSummaryCallback onDrained, bool registerFinalizeCallback = true);
+    ApplicationRecordCallback consumer, ApplicationSummaryCallback onDrained, bool registerFinalizeCallback = true,
+    profiling::ApplicationDeviceStartCallback beforeDeviceStart = nullptr);
 // The finalize callback holds Runtime lifecycle locks. Close admission and report whether all
 // remaining visits are local raw uploads, which can be drained without calling Runtime.
 ACLPTI_EXPORT bool CloseApplicationAdmissionForFinalize() noexcept;

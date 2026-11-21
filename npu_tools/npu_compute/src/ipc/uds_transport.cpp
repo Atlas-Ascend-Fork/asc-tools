@@ -260,6 +260,7 @@ void ValidateType(Type type)
         case Type::Pmu:
         case Type::Pipeline:
         case Type::Hardware:
+        case Type::Communication:
         case Type::PmSampling:
         case Type::Application:
             valid = true;

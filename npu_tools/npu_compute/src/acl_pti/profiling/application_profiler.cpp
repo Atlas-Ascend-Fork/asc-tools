@@ -323,6 +323,7 @@ struct ApplicationProfiler::Impl {
     ConfigurationState configuration = ConfigurationState::Unset;
     ApplicationConsumer consumer;
     ApplicationDrainedCallback onDrained;
+    ApplicationDeviceStartCallback beforeDeviceStart = nullptr;
     std::map<int32_t, ApplicationDeviceSummary> devices;
     std::map<int32_t, uint64_t> receiveEpochs;
     std::deque<ApplicationRawRecord> queue;
@@ -345,7 +346,8 @@ ApplicationProfiler::~ApplicationProfiler()
 }
 
 aclptiResult ApplicationProfiler::Initialize(
-    ApplicationConsumer consumer, ApplicationDrainedCallback onDrained, UploaderRegistration registerUploader)
+    ApplicationConsumer consumer, ApplicationDrainedCallback onDrained, UploaderRegistration registerUploader,
+    ApplicationDeviceStartCallback beforeDeviceStart)
 {
     if (!consumer || !onDrained) {
         return ACLPTI_ERROR_INVALID_PARAMETER;
@@ -364,6 +366,7 @@ aclptiResult ApplicationProfiler::Initialize(
     }
     impl_->consumer = std::move(consumer);
     impl_->onDrained = std::move(onDrained);
+    impl_->beforeDeviceStart = beforeDeviceStart;
     impl_->accepting = true;
     try {
         impl_->worker = std::thread([this] { impl_->Consume(); });
@@ -436,6 +439,9 @@ aclptiResult ApplicationProfiler::Impl::StartDevice(int32_t deviceId)
         receiveEpochs[deviceId] = 0;
     }
     const auto msprof = MakeDeviceConfig(deviceId);
+    if (beforeDeviceStart != nullptr) {
+        beforeDeviceStart(deviceId);
+    }
     device.startStatus = MsprofStart(kComputeCollectionType, &msprof, sizeof(msprof));
     device.state = device.startStatus == 0 ? ApplicationDeviceState::Active : ApplicationDeviceState::Unknown;
     if (device.startStatus == 0) {

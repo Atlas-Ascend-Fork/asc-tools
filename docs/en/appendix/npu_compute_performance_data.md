@@ -15,7 +15,7 @@ Matching metric names use the same units and base formulas, but their scope, fre
 
 ## Application Replay Communication Artifacts
 
-`--replay-mode application --section Communication` delivers raw callback data, lifecycle information, hardware information, and per-launch basic summaries. Communication interval metrics and traces require the later parsing implementation.
+`--replay-mode application --section Communication` delivers raw callback data, lifecycle information, hardware information, and per-launch basic summaries. It also exports a communication timeline and application-level interval metrics.
 
 | File | Contents |
 |---|---|
@@ -27,11 +27,13 @@ Matching metric names use the same units and base formulas, but their scope, fre
 With a Runtime that delivers all devices’ tail callbacks during `MsprofFinalize`, the official ACL finalize notification sets `tailConfirmed=true`. Without this notification it remains false, so delivered artifacts cannot prove full data completeness. `failureReason=acl_finalize_not_observed` identifies a missing notification; the field is null after a notification, while states and counters still report other collection errors. `isLastChunk` ends one Runtime file chunk, rather than the profiling session. Host records and records whose device or epoch cannot be established retain their raw device ID and use `deviceEpoch=0`. Late data after a device restart is not assigned to an epoch by guessing.
 
 
-The fixed configuration is `PROF_OP_TIMESTAMP_MASK | PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK` (`0x100000804`). The ten AICORE_METRICS slots contain 808, 1281, 0x422, 0x423, and six INVALID entries, with ALL_BLOCK enabled. This single pass collects the floating-point/vector activity, GM traffic, total cycles, and Task timing needed by the summary, without enabling other Sections.
+The fixed configuration is `PROF_OP_TIMESTAMP_MASK | PROF_TASK_TIME_MASK | PROF_TASK_TIME_L1_MASK | PROF_AICPU_TRACE_MASK | PROF_AICORE_METRICS_MASK` (`0x10000080e`). The ten AICORE_METRICS slots contain 808, 1281, 0x422, 0x423, and six INVALID entries, with ALL_BLOCK enabled. This single pass collects the floating-point/vector activity, GM traffic, total cycles, and Task timing needed by the summary, without enabling other Sections.
 
 `OpInfoSummary` reuses the formulas below. On 950, the two raw 16-bit task fields form a full taskSn, matched to launches by `deviceId/deviceEpoch/taskSn`. `Stream Id` retains the actual Runtime exposed stream ID; it must not be compared with the raw low 16 bits. Missing identities, reused taskSn values, uncertain epochs, or absent data produce `NA` with `unavailable_reasons`, without borrowing data across devices or epochs. `collection_status` describes session collection completeness, rather than guaranteeing every metric is available. `communication_time`, `compute_communication_overlap_time`, and `compute_overhead_time` remain `NA` with reason `communication_intervals_not_parsed`.
 
 The manifest adds `unidentifiedLaunches` and `result_units`. Each unit includes its original name, device, epoch, instance identifiers, launch_index, and summary_path. Bounded UDS continuation frames carry the final artifact manifest without a fixed total launch-count limit.
+
+The per-launch summaries still use the existing formulas. `CommunicationTrace.json` contains the AiCpu and CCU communication and compute events and overlap intervals. `app_summary.jsonl` summarizes available intervals by device and mode. Multi-process reports keep these files under the corresponding `pid-<pid>` directory.
 
 ## ArithmeticUtilization (Cube and Vector instruction utilization and counts)
 

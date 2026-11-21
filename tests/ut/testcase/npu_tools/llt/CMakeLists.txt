@@ -161,6 +161,8 @@ add_executable(npu_tools_utest
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/rep_report_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/report_name.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/pipe_trace_finalizer.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_CLI_DIR}/report/communication_finalizer.cpp"
+  "${NPU_TOOLS_LLT_COMPUTE_DIR}/src/common/trace_writer.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/hardware/hardware_device_api.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/hardware/hardware_info_collector.cpp"
   "${NPU_TOOLS_LLT_COMPUTE_SRC_DIR}/hardware/hardware_info_device.cpp"

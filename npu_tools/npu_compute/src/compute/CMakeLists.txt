@@ -9,6 +9,8 @@
 # ----------------------------------------------------------------------------------------------------------
 add_library(npu_compute SHARED
   biu/biu_pipeline.cpp
+  ../common/trace_writer.cpp
+  communication/communication_collector.cpp
   occupancy/occupancy_trace.cpp
   hardware/hardware_device_api.cpp
   hardware/hardware_info_collector.cpp

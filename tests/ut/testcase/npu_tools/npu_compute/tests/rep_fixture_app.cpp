@@ -112,6 +112,9 @@ int PublishApplicationRank(bool abortAfterArtifact)
     publish("HardwareInfo.jsonl", kHardwareInfo);
     publish("application_raw.jsonl", "{\"recordType\":\"metadata\"}\n");
     publish("application_manifest.json", "{\"complete\":true}\n");
+    publish(
+        ".communication-staging/process-uds/manifest.json",
+        R"({"schema":1,"complete":true,"dropped":0,"errors":0,"records":0,"files":[],"clocks":[]})");
     ipc::Result result;
     result.sections = config.sections;
     result.complete = true;

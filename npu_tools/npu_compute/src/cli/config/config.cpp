@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "config/config.h"
+#include "common/section_names.h"
 #include "config/option_registry.h"
 
 #include <algorithm>
@@ -21,21 +22,7 @@
 namespace npucompute::cli {
 namespace {
 
-constexpr std::array kSupportedSections = {
-    "PipeUtilization",
-    "Memory",
-    "MemoryL0",
-    "MemoryUB",
-    "L2Cache",
-    "Pipeline",
-    "ArithmeticUtilization",
-    "ResourceConflictRatio",
-    "PmSampling",
-    "SourceCounter",
-    "Roofline",
-    "occupancy",
-    "Communication",
-};
+constexpr auto& kSupportedSections = npucompute::kSupportedSections;
 
 void AddError(const std::string& message, std::vector<std::string>* errors) { errors->push_back(message); }
 

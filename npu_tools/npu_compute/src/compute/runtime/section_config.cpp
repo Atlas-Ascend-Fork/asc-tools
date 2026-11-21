@@ -7,30 +7,13 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "common/section_names.h"
 #include "runtime/section_config.h"
 
 #include <algorithm>
-#include <array>
-#include <utility>
 
 namespace npucompute {
 namespace {
-
-constexpr std::array kSupportedSections = {
-    "PipeUtilization",
-    "Memory",
-    "MemoryL0",
-    "MemoryUB",
-    "L2Cache",
-    "Pipeline",
-    "ArithmeticUtilization",
-    "ResourceConflictRatio",
-    "PmSampling",
-    "SourceCounter",
-    "Roofline",
-    "occupancy",
-    "Communication",
-};
 
 bool Fail(const std::string& message, std::string* error)
 {
@@ -38,11 +21,6 @@ bool Fail(const std::string& message, std::string* error)
         *error = message;
     }
     return false;
-}
-
-bool IsSupportedSection(const std::string& section)
-{
-    return std::find(kSupportedSections.begin(), kSupportedSections.end(), section) != kSupportedSections.end();
 }
 
 } // namespace
@@ -59,7 +37,10 @@ bool SectionConfig::Load(const std::vector<std::string>& sections, std::string* 
     if (section_count == 0 || section_count > kSupportedSections.size()) {
         return Fail("section count is out of range", error);
     }
-    sections_ = std::move(sections);
+    if (std::find(sections.begin(), sections.end(), "Communication") != sections.end() && sections.size() != 1) {
+        return Fail("Communication must be selected alone", error);
+    }
+    sections_ = sections;
     const bool pipelineSection = std::find(sections_.begin(), sections_.end(), "Pipeline") != sections_.end();
     const bool pmSamplingSection = std::find(sections_.begin(), sections_.end(), "PmSampling") != sections_.end();
     sections_.erase(

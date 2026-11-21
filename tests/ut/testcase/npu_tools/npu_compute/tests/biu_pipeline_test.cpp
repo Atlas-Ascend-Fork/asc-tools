@@ -12,6 +12,8 @@
 #include "biu/biu_pipeline.h"
 
 #include <boost/filesystem.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -319,6 +321,65 @@ TEST(NpuComputeBiuPipeline, PipeTraceWriter)
     ASSERT_TRUE(emptyWriter.Commit() == ACLPTI_SUCCESS);
     boost::system::error_code ignored;
     boost::filesystem::remove_all(directory, ignored);
+}
+
+TEST(NpuComputeBiuPipeline, TraceWriterPreservesWrapperEscapingPrecisionAndEmptyArray)
+{
+    const auto directory = boost::filesystem::temp_directory_path() / "communication-profiling" /
+                           boost::filesystem::unique_path("trace-reuse-ut-%%%%-%%%%");
+    ASSERT_TRUE(boost::filesystem::create_directories(directory));
+    npucompute::PipeTraceWriter writer;
+    ASSERT_EQ(writer.Begin(directory / "PipeTrace.json"), ACLPTI_SUCCESS);
+    npucompute::BiuTraceEvent event{{7, 0, 3, aclptiBiuCoreKind::Aiv1},
+                                    npucompute::BiuPipe::Vector,
+                                    5,
+                                    "Region\"\\\n\t",
+                                    "good",
+                                    1.0 / 3.0,
+                                    0.1,
+                                    true};
+    ASSERT_EQ(writer.Append(event), ACLPTI_SUCCESS);
+    ASSERT_EQ(writer.Append(event), ACLPTI_SUCCESS);
+    ASSERT_EQ(writer.EventCount(), 2);
+    ASSERT_EQ(writer.Commit(), ACLPTI_SUCCESS);
+    std::ifstream input((directory / "PipeTrace.json").string());
+    const std::string json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    const std::string eventJson =
+        R"({"cname":"good","dur":0.10000000000000001,"name":"Region\"\\\n\t","ph":"X","pid":"group3.veccore1","tid":"VECTOR","ts":0.33333333333333331})";
+    const std::string header = R"({"displayTimeUnit":"ns","profilingType":"op","schemaVersion":1,"traceEvents":[)";
+    EXPECT_EQ(json, header + eventJson + "," + eventJson + "]}\n");
+    npucompute::PipeTraceWriter empty;
+    ASSERT_EQ(empty.Begin(directory / "empty.json"), ACLPTI_SUCCESS);
+    ASSERT_EQ(empty.Commit(), ACLPTI_SUCCESS);
+    std::ifstream emptyInput((directory / "empty.json").string());
+    const std::string emptyJson((std::istreambuf_iterator<char>(emptyInput)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(emptyJson, header + "]}\n");
+    {
+        npucompute::PipeTraceWriter abandoned;
+        ASSERT_EQ(abandoned.Begin(directory / "abandoned.json"), ACLPTI_SUCCESS);
+        ASSERT_EQ(abandoned.Append(event), ACLPTI_SUCCESS);
+    }
+    EXPECT_FALSE(boost::filesystem::exists(directory / "abandoned.json"));
+    EXPECT_EQ(
+        std::distance(boost::filesystem::directory_iterator(directory), boost::filesystem::directory_iterator()), 2);
+}
+
+TEST(NpuComputeBiuPipeline, ManifestUsesSharedEscapingAndAtomicReplacement)
+{
+    const auto directory = boost::filesystem::temp_directory_path() / "communication-profiling" /
+                           boost::filesystem::unique_path("manifest-reuse-ut-%%%%-%%%%");
+    ASSERT_TRUE(boost::filesystem::create_directories(directory));
+    ASSERT_EQ(npucompute::WritePipeTraceManifest(directory, "collecting", ACLPTI_SUCCESS, {}), ACLPTI_SUCCESS);
+    const std::string diagnostic = "failure\n\t\b\f" + std::string(1, '\1') + "\"\\";
+    ASSERT_EQ(
+        npucompute::WritePipeTraceManifest(directory, "failed", ACLPTI_ERROR_TRACE_WRITE, {}, diagnostic),
+        ACLPTI_SUCCESS);
+    boost::property_tree::ptree manifest;
+    boost::property_tree::read_json((directory / "manifest.json").string(), manifest);
+    EXPECT_EQ(manifest.get<std::string>("state"), "failed");
+    EXPECT_EQ(manifest.get<std::string>("error"), diagnostic);
+    EXPECT_EQ(
+        std::distance(boost::filesystem::directory_iterator(directory), boost::filesystem::directory_iterator()), 1);
 }
 
 } // namespace

@@ -7,9 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "driver/ascend_hal_base.h"
 #include "injection/prof_api_stub.h"
 #include "injection/runtime_stub_api.h"
 #include "profiling/prof_api.h"
+#include "securec.h"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -32,6 +34,7 @@ std::map<int32_t, int> deviceReferences;
 int expectedStarts = 0;
 bool resourcesAlive = true;
 bool pauseReport = false;
+bool communicationPayload = false;
 bool silentFinalizeError = false;
 bool replaceLastTaskOnDeviceQuery = false;
 thread_local int32_t currentDevice = -1;
@@ -102,9 +105,49 @@ void EmitRaw(int32_t deviceId)
     raw.isLastChunk = true;
     raw.chunkSize = 3;
     std::memcpy(raw.chunk, "raw", raw.chunkSize);
+    if (!communicationPayload) {
+        Require(callback(&raw) == 0);
+        return;
+    }
+
+    const auto put = [&](size_t at, uint64_t value, size_t bytes) {
+        for (size_t i = 0; i < bytes; ++i) {
+            raw.chunk[at + i] = static_cast<uint8_t>(value >> (8 * i));
+        }
+    };
+    constexpr uint32_t taskId = (6U << 16) | 4U;
+    constexpr uint64_t start = 1000000;
+    constexpr uint64_t end = start + 1000;
+    const int32_t taskLogType = 7;
+    Require(memcpy_s(&raw.type, sizeof(raw.type), &taskLogType, sizeof(taskLogType)) == EOK);
+    std::memset(raw.chunk, 0, sizeof(raw.chunk));
+    raw.chunkSize = 64;
+    // An AICPU task has paired 32-byte Stars TaskLog records.
+    constexpr uint32_t aicpuHeader = (0x6bd3U << 16) | (4U << 10);
+    put(0, aicpuHeader, 4);
+    put(4, taskId, 4);
+    put(8, start, 8);
+    put(32, aicpuHeader | 1U, 4);
+    put(36, taskId, 4);
+    put(40, end, 8);
+    Require(callback(&raw) == 0);
+
+    const int32_t additionalType = 12;
+    Require(memcpy_s(&raw.type, sizeof(raw.type), &additionalType, sizeof(additionalType)) == EOK);
+    std::memset(raw.chunk, 0, sizeof(raw.chunk));
+    raw.chunkSize = 256;
+    // HCCL metadata carries the task identity and the start timestamp.
+    put(0, 0x5a5a, 2);
+    put(2, 6000, 2);
+    put(4, 13, 4);
+    put(12, 116, 4);
+    put(24 + 48, start, 8);
+    put(24 + 88, taskId, 4);
+    put(24 + 96, 4, 2);
     Require(callback(&raw) == 0);
     std::memset(raw.chunk, 0, raw.chunkSize);
 }
+
 int RunFinalizeWithActiveHook()
 {
     using namespace std::chrono_literals;
@@ -158,6 +201,7 @@ int RunForked(const std::string& scenario)
         Require(child >= 0);
         if (child == 0) {
             pauseReport = rank == 0 && scenario == "fork-gate";
+            communicationPayload = scenario == "fork-communication";
             Require(aclInit(nullptr) == ACL_SUCCESS);
             Require(aclrtSetDevice(rank) == ACL_SUCCESS);
             if (rank == 1 && scenario == "fork-disconnect") {
@@ -217,6 +261,22 @@ extern "C" aclError aclrtGetThreadLastTaskIdAndStreamId(uint32_t* task, uint32_t
     return ACL_SUCCESS;
 }
 
+extern "C" drvError_t halGetDeviceInfo(uint32_t, int32_t module, int32_t type, int64_t* value)
+{
+    if (module != MODULE_TYPE_SYSTEM || value == nullptr) {
+        return static_cast<drvError_t>(1);
+    }
+    if (type == INFO_TYPE_DEV_OSC_FREQUE) {
+        *value = 1000000;
+        return DRV_ERROR_NONE;
+    }
+    if (type == INFO_TYPE_SYS_COUNT) {
+        *value = 0;
+        return DRV_ERROR_NONE;
+    }
+    return static_cast<drvError_t>(1);
+}
+
 extern "C" int32_t MsprofRegisterDataCallback(uint32_t type, void* function)
 {
     Require(type == 0 && function != nullptr);
@@ -265,6 +325,7 @@ int main(int argc, char** argv)
     if (scenario.compare(0, 5, "fork-") == 0) {
         return RunForked(scenario);
     }
+    communicationPayload = scenario == "communication-finalize";
     const bool cleanupFailure = scenario == "cleanup-failure";
     const bool finalizes = scenario.find("finalize") != std::string::npos || cleanupFailure;
     const bool partialReset = scenario == "partial-reset-finalize";

@@ -109,7 +109,8 @@ void UdsClient::ReceiveFrames(
         const auto frame = ReceiveNextFrame(channel, childExited, cancelled);
         if (frame.type == ipc::Type::DataBegin || frame.type == ipc::Type::DataEnd || frame.type == ipc::Type::Pmu ||
             frame.type == ipc::Type::Pipeline || frame.type == ipc::Type::Hardware ||
-            frame.type == ipc::Type::PmSampling || frame.type == ipc::Type::Application) {
+            frame.type == ipc::Type::PmSampling || frame.type == ipc::Type::Application ||
+            frame.type == ipc::Type::Communication) {
             if (!manifest.empty()) {
                 throw std::runtime_error("PROTOCOL: artifact after result manifest");
             }

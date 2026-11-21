@@ -61,9 +61,17 @@ enum class Type : uint16_t {
     Hardware = 0x103,
     DataEnd = 0x104,
     PmSampling = 0x105,
-    Application = 0x106
+    Application = 0x106,
+    Communication = 0x107
 };
-enum class DataKind : uint16_t { PmuCsv = 1, PipelineTrace = 2, HardwareInfo = 3, PmSampling = 4, Application = 5 };
+enum class DataKind : uint16_t {
+    PmuCsv = 1,
+    PipelineTrace = 2,
+    HardwareInfo = 3,
+    PmSampling = 4,
+    Application = 5,
+    Communication = 6
+};
 enum class ArtifactType : uint16_t { Csv = 1, Jsonl = 2, Json = 3, Db = 4, Txt = 5 };
 struct Config {
     std::vector<std::string> sections;

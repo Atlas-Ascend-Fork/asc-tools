@@ -836,15 +836,6 @@ TEST(NpuComputeCli, NoPackRejectsLegacyDiskOptionAndPreservesAppArguments)
     EXPECT_EQ(config.program_arguments, (std::vector<std::string>{"--disk", "--no-pack"}));
 }
 
-TEST(NpuComputeCli, RooflineUsesTheExistingSectionOption)
-{
-    CliConfig config;
-    std::vector<std::string> errors;
-    EXPECT_TRUE(Parse({"npu-compute", "--section", "Roofline", "--section", "Memory", "./app"}, &config, &errors));
-    EXPECT_EQ(config.sections, (std::vector<std::string>{"Roofline", "Memory"}));
-    EXPECT_FALSE(Parse({"npu-compute", "--section", "roofline", "./app"}, &config, &errors));
-}
-
 TEST(NpuComputeCli, ApplicationRequiresExplicitCommunicationAndRejectsKernelOptions)
 {
     CliConfig config;
@@ -867,4 +858,13 @@ TEST(NpuComputeCli, ApplicationRequiresExplicitCommunicationAndRejectsKernelOpti
     }
     ASSERT_TRUE(Parse({"npu-compute", "--set", "full", "./app"}, &config, &errors));
     EXPECT_EQ(std::count(config.sections.begin(), config.sections.end(), "Communication"), 0);
+}
+
+TEST(NpuComputeCli, RooflineUsesTheExistingSectionOption)
+{
+    CliConfig config;
+    std::vector<std::string> errors;
+    EXPECT_TRUE(Parse({"npu-compute", "--section", "Roofline", "--section", "Memory", "./app"}, &config, &errors));
+    EXPECT_EQ(config.sections, (std::vector<std::string>{"Roofline", "Memory"}));
+    EXPECT_FALSE(Parse({"npu-compute", "--section", "roofline", "./app"}, &config, &errors));
 }

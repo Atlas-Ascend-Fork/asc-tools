@@ -350,6 +350,57 @@ def test_forked_application_sessions(
         assert json.loads(raw.read_text().splitlines()[1])["payloadHex"] == "726177"
 
 
+@pytest.mark.parametrize(
+    "scenario,pack,device_groups",
+    [
+        ("communication-finalize", False, [{0, 1}]),
+        ("fork-communication", False, [{0}, {1}]),
+        ("fork-communication", True, [{0}, {1}]),
+    ],
+)
+def test_communication_artifacts_follow_application_sessions(
+    tmp_path, application_binaries, scenario, pack, device_groups
+):
+    cli, probe = application_binaries
+    output = tmp_path / "communication.npu-rep" if pack else tmp_path
+    result = subprocess.run(
+        application_command(cli, probe, output, scenario, pack),
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    if pack:
+        restored = tmp_path / "restored"
+        restored.mkdir()
+        imported = subprocess.run(
+            [cli, "--import", str(output), "--export", str(restored)],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert imported.returncode == 0, imported.stdout + imported.stderr
+        output = restored
+
+    manifests = list(output.rglob("application_manifest.json"))
+    assert len(manifests) == len(device_groups)
+    observed_groups = []
+    for path in manifests:
+        manifest = json.loads(path.read_text())
+        assert manifest["complete"] and manifest["tailConfirmed"]
+        device_ids = {device["deviceId"] for device in manifest["devices"]}
+        observed_groups.append(device_ids)
+        if len(device_groups) > 1:
+            assert path.parent.name == f"pid-{manifest['processId']}"
+        trace = json.loads(path.with_name("CommunicationTrace.json").read_text())
+        tasks = [event for event in trace if event["name"] == "AiCpu-Comm-Task"]
+        assert len(tasks) == len(device_ids)
+        assert path.with_name("app_summary.jsonl").is_file()
+    assert {frozenset(ids) for ids in observed_groups} == {
+        frozenset(ids) for ids in device_groups
+    }
+
+
 def test_forked_application_finalize_waits_for_its_own_report(
     tmp_path, application_binaries
 ):

@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "common/section_names.h"
+#include "communication/artifact_schema.h"
 #include "artifact_receiver.h"
 #include "file_io.h"
 #include "report/pm_sampling_file_validator.h"
@@ -77,6 +79,7 @@ struct ManifestGroups {
     ArtifactGroups samplingGroups;
     bool hardwareFound = false;
     bool pipelineManifestFound = false;
+    bool communicationManifestFound = false;
     std::size_t pipelineFragments = 0;
 };
 
@@ -102,6 +105,10 @@ ManifestGroups CollectManifestGroups(
         if (entry.name == "HardwareInfo.jsonl") {
             Require(!groups.hardwareFound, "ARTIFACT: duplicate hardware information");
             groups.hardwareFound = true;
+        } else if (parent == communication::kProcessDirectory) {
+            Require(IsCommunicationMode(result.sections), "unexpected Communication data");
+            if (base == "manifest.json")
+                groups.communicationManifestFound = true;
         } else if (parent == ".biu-staging/process-uds") {
             Require(pipelineExpected, "ARTIFACT: unexpected Pipeline data");
             if (base == ipc::kManifestFileName) {
@@ -305,6 +312,7 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
             case ipc::Type::Pmu:
             case ipc::Type::Pipeline:
             case ipc::Type::Hardware:
+            case ipc::Type::Communication:
             case ipc::Type::PmSampling:
             case ipc::Type::Application:
                 ReceiveChunk(frame);
@@ -349,7 +357,7 @@ std::set<std::string> ExpectedPmuFiles(
             rooflineExpected = true;
         } else if (section == "occupancy") {
             expectedPmu.insert(ipc::kSimtOccupancyFileName);
-        } else {
+        } else if (section != "Communication") {
             expectedPmu.insert(section + ".csv");
         }
     }
@@ -398,6 +406,23 @@ void ValidatePmuGroups(
     }
 }
 
+void ValidateSourceCounterGroups(
+    const boost::filesystem::path& directory, const ManifestGroups& groups, CollectionValidation& validation)
+{
+    for (const auto& group : groups.pmuGroups) {
+        const auto& parent = group.first;
+        const auto instructionFiles = groups.samplingGroups.find(parent);
+        const std::set<std::string> emptyFiles;
+        const auto& files = instructionFiles == groups.samplingGroups.end() ? emptyFiles : instructionFiles->second;
+        validation.Check(
+            files.count(ipc::kObjdumpFileName) != 0,
+            (directory / parent / ipc::kObjdumpFileName).string() + ": required SourceCounter disassembly missing");
+        validation.Check(
+            files.count(ipc::kSummaryDbFileName) != 0,
+            (directory / parent / ipc::kSummaryDbFileName).string() + ": required SourceCounter database missing");
+    }
+}
+
 void ValidateApplicationManifest(
     const std::vector<ipc::ManifestEntry>& resultManifest, const std::vector<ipc::ManifestEntry>& manifest,
     CollectionValidation& validation)
@@ -406,7 +431,8 @@ void ValidateApplicationManifest(
     for (const auto& entry : resultManifest) {
         Require(HasManifestEntry(manifest, entry), "ARTIFACT: manifest length mismatch");
         Require(
-            ipc::KindForName(entry.name) == ipc::DataKind::Application || entry.name == "HardwareInfo.jsonl" ||
+            ipc::KindForName(entry.name) == ipc::DataKind::Application ||
+                ipc::KindForName(entry.name) == ipc::DataKind::Communication || entry.name == "HardwareInfo.jsonl" ||
                 (entry.name.rfind("device", 0) == 0 && entry.name.size() >= kSummaryFileName.size() &&
                  entry.name.compare(
                      entry.name.size() - kSummaryFileName.size(), kSummaryFileName.size(), kSummaryFileName.data()) ==
@@ -418,6 +444,9 @@ void ValidateApplicationManifest(
     validation.Check(
         names.count("application_manifest.json") != 0, "application_manifest.json: required artifact missing");
     validation.Check(names.count("HardwareInfo.jsonl") != 0, "HardwareInfo.jsonl: required artifact missing");
+    validation.Check(
+        names.count(std::string(communication::kArtifactPrefix) + ipc::kManifestFileName) != 0,
+        "Communication manifest missing");
 }
 
 } // namespace
@@ -443,7 +472,12 @@ bool ArtifactReceiver::Validate(
     const auto expectedPmu = ExpectedPmuFiles(config, pipelineExpected, samplingExpected, sourceExpected);
     const auto groups =
         CollectManifestGroups(result, manifest_, expectedPmu, pipelineExpected, samplingExpected, sourceExpected);
-    validation.Check(groups.hardwareFound, "HardwareInfo.jsonl: required artifact missing");
+    if (IsCommunicationMode(config.sections)) {
+        validation.Check(groups.communicationManifestFound, "Communication manifest missing");
+    }
+    if (!IsCommunicationMode(config.sections)) {
+        validation.Check(groups.hardwareFound, "HardwareInfo.jsonl: required artifact missing");
+    }
     validation.Check(
         pipelineExpected == (groups.pipelineManifestFound && groups.pipelineFragments > 0),
         "ARTIFACT: required Pipeline artifact missing");
@@ -451,18 +485,7 @@ bool ArtifactReceiver::Validate(
         WarnMissingSamplingFiles(directory_path_, groups);
     }
     if (sourceExpected) {
-        for (const auto& group : groups.pmuGroups) {
-            const auto& parent = group.first;
-            const auto instructionFiles = groups.samplingGroups.find(parent);
-            const std::set<std::string> emptyFiles;
-            const auto& files = instructionFiles == groups.samplingGroups.end() ? emptyFiles : instructionFiles->second;
-            validation.Check(
-                files.count("objdump.txt") != 0,
-                (directory_path_ / parent / "objdump.txt").string() + ": required SourceCounter disassembly missing");
-            validation.Check(
-                files.count("summary.db") != 0,
-                (directory_path_ / parent / "summary.db").string() + ": required SourceCounter database missing");
-        }
+        ValidateSourceCounterGroups(directory_path_, groups, validation);
     }
     for (const auto& [parent, files] : groups.samplingGroups) {
         ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, validation);

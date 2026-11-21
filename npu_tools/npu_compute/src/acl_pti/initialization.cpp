@@ -125,7 +125,8 @@ int32_t RegisterApplicationUploader(MsprofRawDataCallback callback)
 
 aclptiResult PrepareApplication(
     profiling::ApplicationProfiler& profiler, profiling::ApplicationConsumer consumer,
-    profiling::ApplicationDrainedCallback onDrained, bool registerFinalizeCallback)
+    profiling::ApplicationDrainedCallback onDrained, bool registerFinalizeCallback,
+    profiling::ApplicationDeviceStartCallback beforeDeviceStart = nullptr)
 {
     if (acltoolHookInit() != 0 || !handler::RegisterRuntimeApiHandlers(handler::RuntimeHandlerMode::Application)) {
         return ACLPTI_ERROR_INITIALIZATION_FAILED;
@@ -139,7 +140,7 @@ aclptiResult PrepareApplication(
             const CallbackFrame frame;
             onDrained(summary);
         },
-        &RegisterApplicationUploader);
+        &RegisterApplicationUploader, beforeDeviceStart);
     if (status != ACLPTI_SUCCESS) {
         return status;
     }
@@ -277,7 +278,8 @@ bool CloseApplicationAdmissionForFinalize() noexcept
 }
 
 aclptiResult PrepareApplicationSession(
-    ApplicationRecordCallback consumer, ApplicationSummaryCallback onDrained, bool registerFinalizeCallback)
+    ApplicationRecordCallback consumer, ApplicationSummaryCallback onDrained, bool registerFinalizeCallback,
+    profiling::ApplicationDeviceStartCallback beforeDeviceStart)
 {
     if (consumer == nullptr || onDrained == nullptr) {
         return ACLPTI_ERROR_INVALID_PARAMETER;
@@ -289,7 +291,8 @@ aclptiResult PrepareApplicationSession(
     try {
         auto dispatcher = std::make_unique<callback::Dispatcher>();
         auto profiler = std::make_unique<profiling::ApplicationProfiler>();
-        const auto status = PrepareApplication(*profiler, consumer, onDrained, registerFinalizeCallback);
+        const auto status =
+            PrepareApplication(*profiler, consumer, onDrained, registerFinalizeCallback, beforeDeviceStart);
         if (status != ACLPTI_SUCCESS) {
             handler::ClearRuntimeApiHandlers();
             applicationUploader = nullptr;

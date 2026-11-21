@@ -14,7 +14,6 @@
 
 namespace aclpti::data {
 namespace {
-constexpr uint32_t RAW_BYTE_BITS = 8;
 constexpr uint32_t FUNCTION_BITS = 6;
 constexpr uint32_t SQE_TYPE_SHIFT = 10;
 constexpr uint32_t SQE_TYPE_MASK = 0x3fU;
@@ -27,14 +26,7 @@ constexpr uint32_t MAGIC_SHIFT = 16;
 constexpr uint32_t WORD_BITS = 32;
 } // namespace
 
-uint32_t ReadLittleEndianWord(const uint8_t* bytes)
-{
-    uint32_t value = 0;
-    for (std::size_t index = 0; index < sizeof(value); ++index) {
-        value |= uint32_t(bytes[index]) << (index * RAW_BYTE_BITS);
-    }
-    return value;
-}
+uint32_t ReadLittleEndianWord(const uint8_t* bytes) { return ReadLittleEndian<uint32_t>(bytes); }
 
 namespace {
 // Word indices in the little-endian task-log / PMU record ABI.
@@ -48,13 +40,16 @@ constexpr std::size_t TASK_END_COUNTER_WORD = 30;
 constexpr std::size_t COUNTER_WORDS = sizeof(uint64_t) / sizeof(uint32_t);
 
 constexpr uint32_t PMU_MAGIC = 0x6bd3U;
-constexpr uint32_t BLOCK_START_FUNCTION = 0x24U;
-constexpr uint32_t BLOCK_END_FUNCTION = 0x25U;
+// Chip6 fusion payload word 4 contains engine mask[4:0] and mission[8:5].
+constexpr uint32_t FUSION_TYPE_MASK = 0x1fU;
+constexpr uint32_t MISSION_SHIFT = 5;
+constexpr uint32_t MISSION_MASK = 0xfU;
+constexpr std::size_t FUSION_WORD = 4;
 
 // Explicit little-endian reads avoid alignment and native-struct layout assumptions.
 uint32_t Word(const std::byte* data, std::size_t index)
 {
-    return ReadLittleEndianWord(reinterpret_cast<const uint8_t*>(data + index * sizeof(uint32_t)));
+    return ReadLittleEndian<uint32_t>(data + index * sizeof(uint32_t));
 }
 
 uint64_t Counter(const std::byte* data, std::size_t lowWord)
@@ -85,37 +80,6 @@ void DecodePmuEvents(const std::byte* data, const PmuSlots& pmuEventIds, PmuReco
     }
 }
 
-DecodeResult DecodeTaskLog(
-    const std::byte* data, uint64_t recordIndex, uint32_t header, uint16_t taskId, uint16_t streamId)
-{
-    const uint32_t function = header & ((1U << FUNCTION_BITS) - 1U);
-    if (function != kTaskStartFunctionType && function != kTaskEndFunctionType && function != BLOCK_START_FUNCTION &&
-        function != BLOCK_END_FUNCTION) {
-        return DecodeResult(ACLPTI_ERROR_NOT_SUPPORTED);
-    }
-
-    TaskLog32 record{};
-    record.funcType = static_cast<uint8_t>(function);
-    record.sqeType = static_cast<uint8_t>((header >> SQE_TYPE_SHIFT) & SQE_TYPE_MASK);
-    record.taskId = taskId;
-    record.rtStreamId = streamId;
-    record.systemCounter = Counter(data, CYCLE_COUNTER_WORD);
-    if (function == BLOCK_START_FUNCTION || function == BLOCK_END_FUNCTION) {
-        record.blockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD) >> 16U);
-        record.subBlockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD));
-        record.coreType =
-            (Word(data, CORE_ID_WORD) & CORE_TYPE_MASK) == CORE_TYPE_BIT ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV;
-        record.coreTypeId = static_cast<uint8_t>((Word(data, CORE_ID_WORD) >> CORE_ID_SHIFT) & CORE_ID_MASK);
-        // CANN 9.3 BlockLog stores core type at byte 20 and the full core ID at byte 21.
-        ASCTOOL_DEBUG(
-            "[aclpti-data] block identity word5=0x%08x task=%u stream=%u block=%u subBlock=%u coreId=%u",
-            Word(data, CORE_ID_WORD), static_cast<unsigned>(taskId), static_cast<unsigned>(streamId),
-            static_cast<unsigned>(record.blockId), static_cast<unsigned>(record.subBlockId),
-            static_cast<unsigned>(record.coreTypeId));
-    }
-    return DecodeResult(DecodedRecord{recordIndex, record});
-}
-
 DecodeResult DecodePmuRecord(
     const std::byte* data, uint64_t recordIndex, uint32_t function, uint16_t taskId, uint16_t streamId,
     const PmuSlots& pmuEventIds)
@@ -142,6 +106,43 @@ DecodeResult DecodePmuRecord(
 }
 } // namespace
 
+aclptiResult DecodeTaskLog(const std::byte* data, std::size_t size, TaskLog32& record)
+{
+    if (data == nullptr || size != TASK_LOG_BYTES) {
+        return ACLPTI_ERROR_INVALID_RAW_DATA;
+    }
+    const uint32_t header = Word(data, 0);
+    if ((header >> MAGIC_SHIFT) != PMU_MAGIC) {
+        return ACLPTI_ERROR_DECODE;
+    }
+    record = {};
+    record.funcType = static_cast<uint8_t>(header & ((1U << FUNCTION_BITS) - 1U));
+    record.fullTaskId = Word(data, 1);
+    record.taskId = static_cast<uint16_t>(record.fullTaskId >> 16U);
+    record.rtStreamId = static_cast<uint16_t>(record.fullTaskId);
+    record.systemCounter = Counter(data, CYCLE_COUNTER_WORD);
+    record.sqeType = static_cast<uint8_t>((header >> SQE_TYPE_SHIFT) & SQE_TYPE_MASK);
+    if (record.funcType == kFusionStartFunction || record.funcType == kFusionEndFunction) {
+        const uint32_t fusion = Word(data, FUSION_WORD);
+        record.fusionType = static_cast<uint8_t>(fusion & FUSION_TYPE_MASK);
+        record.missionId = static_cast<uint8_t>((fusion >> MISSION_SHIFT) & MISSION_MASK);
+    }
+    if (record.IsBlock()) {
+        record.blockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD) >> 16U);
+        record.subBlockId = static_cast<uint16_t>(Word(data, BLOCK_ID_WORD));
+        record.coreType =
+            (Word(data, CORE_ID_WORD) & CORE_TYPE_MASK) == CORE_TYPE_BIT ? ACLPTI_CORE_TYPE_AIC : ACLPTI_CORE_TYPE_AIV;
+        record.coreTypeId = static_cast<uint8_t>((Word(data, CORE_ID_WORD) >> CORE_ID_SHIFT) & CORE_ID_MASK);
+        // CANN 9.3 BlockLog stores core type at byte 20 and the full core ID at byte 21.
+        ASCTOOL_DEBUG(
+            "[aclpti-data] block identity word5=0x%08x task=%u stream=%u block=%u subBlock=%u coreId=%u",
+            Word(data, CORE_ID_WORD), static_cast<unsigned>(record.taskId), static_cast<unsigned>(record.rtStreamId),
+            static_cast<unsigned>(record.blockId), static_cast<unsigned>(record.subBlockId),
+            static_cast<unsigned>(record.coreTypeId));
+    }
+    return ACLPTI_SUCCESS;
+}
+
 DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t recordIndex)
 {
     PmuSlots noEvents{};
@@ -155,6 +156,19 @@ DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t r
         return DecodeResult(ACLPTI_ERROR_INVALID_RAW_DATA);
     }
 
+    if (size == TASK_LOG_BYTES) {
+        TaskLog32 record{};
+        const auto status = DecodeTaskLog(data, size, record);
+        if (status != ACLPTI_SUCCESS) {
+            return DecodeResult(status);
+        }
+        // Replay aggregation consumes ordinary tasks and blocks. Application also consumes fusion tasks.
+        if (record.funcType != kTaskStartFunctionType && record.funcType != kTaskEndFunctionType && !record.IsBlock()) {
+            return DecodeResult(ACLPTI_ERROR_NOT_SUPPORTED);
+        }
+        return DecodeResult(DecodedRecord{recordIndex, record});
+    }
+
     const uint32_t header = Word(data, 0);
     if ((header >> MAGIC_SHIFT) != PMU_MAGIC) {
         return DecodeResult(ACLPTI_ERROR_DECODE);
@@ -162,9 +176,6 @@ DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t r
     const uint32_t taskAndStream = Word(data, 1);
     const auto taskId = static_cast<uint16_t>(taskAndStream >> 16U);
     const auto streamId = static_cast<uint16_t>(taskAndStream);
-    if (size == TASK_LOG_BYTES) {
-        return DecodeTaskLog(data, recordIndex, header, taskId, streamId);
-    }
     const uint32_t function = header & ((1U << FUNCTION_BITS) - 1U);
     return DecodePmuRecord(data, recordIndex, function, taskId, streamId, pmuEventIds);
 }

@@ -51,6 +51,7 @@ add_library(acl_pti_unit STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/data_receiver.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/replay_data_aggregation.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/communication_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/source_counter_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/range_profiler.cpp
@@ -124,6 +125,7 @@ add_library(acl_pti_test SHARED
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/data_receiver.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/replay_data_aggregation.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/communication_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/source_counter_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/range_profiler.cpp
@@ -148,7 +150,7 @@ target_sources(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security
 target_include_directories(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(acl_pti_test
   PUBLIC npu_compute_test_headers
-  PRIVATE npu_bit c_sec_static acl_tool_injection_test acl_runtime_stub acl_prof_api_stub Threads::Threads Boost::filesystem
+  PRIVATE npu_bit c_sec_static acl_tool_injection_test acl_prof_api_stub Threads::Threads Boost::filesystem
 )
 set_target_properties(acl_pti_test PROPERTIES
   OUTPUT_NAME acl_pti_test
@@ -159,6 +161,7 @@ npu_compute_set_test_output(acl_pti_test)
 
 set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/biu/biu_pipeline.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/common/trace_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/occupancy/occupancy_trace.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_device_api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_collector.cpp
@@ -169,6 +172,7 @@ set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/ipc/uds_server.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/npu_compute.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/npu_compute_runtime.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/communication/communication_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_artifacts.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
@@ -231,6 +235,8 @@ add_library(npu_compute_launcher_core_test STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/collection_file_validator.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/collection_processor.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/pipe_trace_finalizer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/report/communication_finalizer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/common/trace_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/config.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/option_registry.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/cli/import/import_output_directory.cpp
@@ -524,6 +530,7 @@ target_sources(acl_pti_data_module_test PRIVATE
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/data_receiver.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/replay_data_aggregation.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/communication_decoder.cpp
 )
 target_include_directories(acl_pti_data_module_test BEFORE PRIVATE
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute
@@ -543,8 +550,10 @@ add_test(NAME npu_compute.acl_pti_data_module
 add_executable(npu_compute_biu_pipeline_test
   biu_pipeline_test.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/biu/biu_pipeline.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/common/trace_writer.cpp
 )
 target_include_directories(npu_compute_biu_pipeline_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute
 )
 target_sources(npu_compute_biu_pipeline_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security/file_io.cpp")
@@ -572,6 +581,7 @@ add_test(NAME npu_compute.acl_pti_callback_stub
 set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/runtime_test_entry.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/biu/biu_pipeline.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/common/trace_writer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/occupancy/occupancy_trace.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_device_api.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_collector.cpp
@@ -579,6 +589,7 @@ set(NPU_COMPUTE_RUNTIME_IMPLEMENTATION_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_host.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/hardware/hardware_info_json.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/npu_compute_runtime.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/communication/communication_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_data_consumer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_decoder.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pm_sampling/pm_sampling_sqlite_writer.cpp
@@ -1171,12 +1182,52 @@ foreach(target IN ITEMS acl_pti_replay_test acl_pti_hook_failure_domain_test acl
   target_link_libraries(${target} PRIVATE plog_test_library)
 endforeach()
 
-add_test(NAME npu_compute.warp_csv
-  COMMAND ${CMAKE_COMMAND} -E env
-    "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:acl_runtime_stub>:$ENV{LD_LIBRARY_PATH}"
-    ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/warp_csv_test.py
-    $<TARGET_FILE:npu_compute_runtime_callback_test>)
+function(npu_compute_enable_gcov target)
+  target_link_options(${target} PRIVATE
+    $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage>
+  )
+  target_link_libraries(${target} PRIVATE
+    $<$<BOOL:${ENABLE_GCOV}>:-lgcov>
+  )
+endfunction()
 
+add_executable(npu_compute_communication_config_test communication_config_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/section_config.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/config.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/cli/config/option_registry.cpp)
+target_include_directories(npu_compute_communication_config_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src/cli ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
+target_link_libraries(npu_compute_communication_config_test PRIVATE npu_compute_test_headers npu_compute_ipc)
+add_test(NAME npu_compute.communication_config COMMAND npu_compute_communication_config_test)
+add_executable(npu_compute_communication_decoder_test communication_decoder_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/communication_decoder.cpp)
+target_include_directories(npu_compute_communication_decoder_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data
+)
+target_link_libraries(npu_compute_communication_decoder_test PRIVATE npu_compute_test_headers c_sec_static)
+add_test(NAME npu_compute.communication_decoder COMMAND npu_compute_communication_decoder_test)
+add_executable(npu_compute_communication_intervals_test communication_intervals_test.cpp)
+target_include_directories(npu_compute_communication_intervals_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+add_test(NAME npu_compute.communication_intervals COMMAND npu_compute_communication_intervals_test)
+add_executable(npu_compute_communication_report_test communication_report_test.cpp)
+target_include_directories(npu_compute_communication_report_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+target_link_libraries(npu_compute_communication_report_test PRIVATE npu_compute_launcher_core GTest::gtest_main GTest::gtest)
+npu_compute_enable_gcov(npu_compute_communication_report_test)
+add_test(NAME npu_compute.communication_report COMMAND npu_compute_communication_report_test)
+add_executable(npu_compute_communication_artifacts_test communication_artifacts_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/communication/communication_collector.cpp)
+target_include_directories(npu_compute_communication_artifacts_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
+target_link_libraries(npu_compute_communication_artifacts_test PRIVATE npu_compute_launcher_core)
+npu_compute_enable_gcov(npu_compute_communication_artifacts_test)
+add_test(NAME npu_compute.communication_artifacts COMMAND npu_compute_communication_artifacts_test)
+
+
+# Reuse the existing legacy finalizer cases for a focused host regression run.
+add_executable(npu_compute_pipe_trace_finalizer_test pipe_trace_finalizer_test.cpp)
+target_link_libraries(npu_compute_pipe_trace_finalizer_test PRIVATE npu_compute_launcher_core GTest::gtest_main GTest::gtest)
+npu_compute_enable_gcov(npu_compute_pipe_trace_finalizer_test)
+add_test(NAME npu_compute.pipe_trace_finalizer COMMAND npu_compute_pipe_trace_finalizer_test)
 # Application replay controls use only CPU stubs; no physical device is exercised.
 add_executable(npu_compute_application_profiler_test
   application_profiler_test.cpp
@@ -1231,7 +1282,9 @@ add_dependencies(npu_compute_test_artifacts
 set_target_properties(npu_compute_application_handlers_test PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
 add_executable(npu_compute_application_replay_probe application_replay_probe.cpp)
-target_link_libraries(npu_compute_application_replay_probe PRIVATE npu_compute_test_headers acl_runtime_stub acl_prof_api_stub)
+target_include_directories(npu_compute_application_replay_probe PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+target_link_libraries(npu_compute_application_replay_probe PRIVATE
+  npu_compute_test_headers npu_compute_backend_headers acl_runtime_stub acl_prof_api_stub c_sec_static)
 set_target_properties(npu_compute_application_replay_probe PROPERTIES ENABLE_EXPORTS YES)
 add_dependencies(npu_compute_test_artifacts npu_compute_application_replay_probe)
 
@@ -1277,3 +1330,13 @@ endforeach()
 
 target_include_directories(npu_compute_application_handlers_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
 target_include_directories(npu_compute_application_initialization_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+
+add_dependencies(npu_compute_test_artifacts npu_compute_communication_config_test
+  npu_compute_communication_decoder_test npu_compute_communication_intervals_test
+  npu_compute_communication_report_test
+  npu_compute_communication_artifacts_test)
+add_test(NAME npu_compute.warp_csv
+  COMMAND ${CMAKE_COMMAND} -E env
+    "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:acl_runtime_stub>:$ENV{LD_LIBRARY_PATH}"
+    ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/warp_csv_test.py
+    $<TARGET_FILE:npu_compute_runtime_callback_test>)

@@ -11,6 +11,7 @@
 #define NPU_TOOLS_NPU_COMPUTE_SRC_COMPUTE_HARDWARE_HARDWARE_DEVICE_API_H
 
 #include "hardware/hardware_info_device.h"
+#include "aclpti/aclpti_communication.h"
 
 #include <cstdint>
 #include <memory>
@@ -52,6 +53,7 @@ public:
     bool GetRatedAiCoreFrequencies(
         std::int32_t deviceId, uint32_t* aicFrequencyMhz, uint32_t* aivFrequencyMhz) override;
     // Device oscillator query returns kHz; expose Hz for BIU syscnt conversion.
+    aclpti::communication::DeviceClocks GetCommunicationClocks(std::int32_t deviceId);
     bool GetSyscntFrequencyHz(std::int32_t deviceId, double* frequencyHz);
     bool GetChipVersion(std::int32_t deviceId, std::string* value) override;
     bool GetHbmUsage(std::int32_t deviceId, uint64_t* freeBytes, uint64_t* totalBytes) override;
