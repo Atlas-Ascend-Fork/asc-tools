@@ -101,7 +101,7 @@ ReportRecord ToReportRecord(const NpuCheckMemcheckReport& report)
                                     std::to_string(report.allocation.bytes) + "))";
     }
     fields["threadContext"] = "";
-    if ((report.common.exec.simtContextFlags & ACLSAN_SIMT_CONTEXT_THREAD) != 0) {
+    if ((report.common.exec.simtContextFlags & static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_THREAD)) != 0U) {
         fields["threadContext"] = " thread (" + fields["thread"] + ")";
     }
     fields["apiName"] = report.apiName;

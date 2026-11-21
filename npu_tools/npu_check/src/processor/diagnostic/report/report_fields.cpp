@@ -170,14 +170,14 @@ void PutExecFields(const NpuCheckReportExecContext& exec, ReportFields* fields)
     (*fields)["launchId"] = FormatLaunchId(exec.launchId);
     (*fields)["binaryId"] = std::to_string(exec.binaryId);
     (*fields)["functionId"] = std::to_string(exec.functionId);
-    if ((exec.simtContextFlags & ACLSAN_SIMT_CONTEXT_INVOCATION) != 0) {
+    if ((exec.simtContextFlags & static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_INVOCATION)) != 0U) {
         (*fields)["invocationId"] = std::to_string(exec.invocationId);
     }
-    if ((exec.simtContextFlags & ACLSAN_SIMT_CONTEXT_THREAD) != 0) {
+    if ((exec.simtContextFlags & static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_THREAD)) != 0U) {
         (*fields)["thread"] =
             std::to_string(exec.threadX) + "," + std::to_string(exec.threadY) + "," + std::to_string(exec.threadZ);
     }
-    if ((exec.simtContextFlags & ACLSAN_SIMT_CONTEXT_BLOCK_DIM) != 0) {
+    if ((exec.simtContextFlags & static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_BLOCK_DIM)) != 0U) {
         (*fields)["blockDim"] = std::to_string(exec.blockDimX) + "," + std::to_string(exec.blockDimY) + "," +
                                 std::to_string(exec.blockDimZ);
     }

@@ -438,7 +438,7 @@ std::optional<uint64_t> KernelFunctionEntry(const std::string& elf, const Sectio
         if (name[i] < '0' || name[i] > '9') {
             return 0;
         }
-        const auto digit = static_cast<uint64_t>(name[i] - '0');
+        const auto digit = static_cast<uint64_t>(static_cast<int>(name[i]) - static_cast<int>('0'));
         if (entry > (std::numeric_limits<uint64_t>::max() - digit) / decimalBase) {
             return 0;
         }

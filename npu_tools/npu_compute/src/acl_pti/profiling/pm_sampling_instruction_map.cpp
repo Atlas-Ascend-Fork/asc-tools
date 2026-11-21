@@ -149,7 +149,8 @@ struct Elf {
         SymbolGroups& symbols)
     {
         const auto& code = sections[index];
-        if ((code.flags & SHF_ALLOC) != 0 && (code.flags & SHF_EXECINSTR) == 0) {
+        if ((code.flags & static_cast<uint64_t>(SHF_ALLOC)) != 0U &&
+            (code.flags & static_cast<uint64_t>(SHF_EXECINSTR)) == 0U) {
             Require(address >= code.address && address - code.address < code.size, "data symbol exceeds its section");
             // AICore may declare an alignment-sized object backed by a single pointer.
             const auto backedSize = std::min(size, code.size - (address - code.address));
@@ -176,7 +177,7 @@ struct Elf {
             ReadObjectSymbol(h, name, address, size, index, objectSymbols);
             return;
         }
-        if ((code.flags & SHF_EXECINSTR) == 0) {
+        if ((code.flags & static_cast<uint64_t>(SHF_EXECINSTR)) == 0U) {
             return;
         }
         Require(
@@ -352,7 +353,7 @@ std::uint64_t AddWordOffset(std::uint64_t address, std::uint64_t encoded)
 {
     constexpr auto kSignBit = std::uint64_t{1} << (kBranchOffsetBits - 1U);
     constexpr auto kOffsetRange = std::uint64_t{1} << kBranchOffsetBits;
-    const bool negative = (encoded & kSignBit) != 0;
+    const bool negative = (encoded & kSignBit) != 0U;
     const auto distance = (negative ? kOffsetRange - encoded : encoded) * kScalarInstructionBytes;
     Require(
         negative ? address >= distance : address <= std::numeric_limits<std::uint64_t>::max() - distance,
@@ -422,7 +423,7 @@ const std::map<std::string, Elf::Function>::value_type& FunctionAtEntry(const El
 void ValidateDisassembly(const std::vector<Instruction>& instructions, const Elf& elf)
 {
     for (const auto& code : elf.sections) {
-        if ((code.flags & SHF_EXECINSTR) == 0 || code.size == 0) {
+        if ((code.flags & static_cast<uint64_t>(SHF_EXECINSTR)) == 0U || code.size == 0) {
             continue;
         }
         auto cursor = code.address;
@@ -439,7 +440,7 @@ void ValidateDisassembly(const std::vector<Instruction>& instructions, const Elf
             elf.sections.begin(), elf.sections.end(),
             [&instruction](const Elf::Section& value) { return value.name == instruction.section; });
         Require(
-            section != elf.sections.end() && (section->flags & SHF_EXECINSTR) != 0 &&
+            section != elf.sections.end() && (section->flags & static_cast<uint64_t>(SHF_EXECINSTR)) != 0U &&
                 instruction.address >= section->address,
             "objdump address is not executable");
         const auto offset = instruction.address - section->address;

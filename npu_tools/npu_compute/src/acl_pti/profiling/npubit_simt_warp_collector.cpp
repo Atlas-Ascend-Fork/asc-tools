@@ -384,9 +384,10 @@ bool PreparePass(
         return false;
     }
 
-    const char* args = instrumentationArgs.empty() ? nullptr : instrumentationArgs.c_str();
     if (!CheckNpubit(
-            NpubitInstrument(handle.handle, pass, resources.traceDevice, resources.traceBytes, args),
+            NpubitInstrument(
+                handle.handle, pass, resources.traceDevice, resources.traceBytes,
+                instrumentationArgs.empty() ? nullptr : instrumentationArgs.c_str()),
             "NpubitInstrument", error) ||
         !InitializeBbMap(handle.handle, resources, error) ||
         !ExtractInstrumentedObject(handle.handle, *resources.patchedObject, error) || !ClearTrace(resources, error)) {

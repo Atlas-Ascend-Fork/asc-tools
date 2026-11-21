@@ -267,11 +267,11 @@ void AddMetadataSection(ParsedElf& elf, const ElfSection& section, const std::st
     const auto flags = ReadValue(data, section.header + offsetof(Elf64_Shdr, sh_flags), sizeof(Elf64_Shdr::sh_flags));
     if (section.name.compare(0, sizeof(KERNEL_METADATA_PREFIX) - 1, KERNEL_METADATA_PREFIX) == 0) {
         Require(
-            section.type == SHT_NOTE && (flags & SHF_ALLOC) == 0,
+            section.type == SHT_NOTE && (flags & static_cast<uint64_t>(SHF_ALLOC)) == 0U,
             "kernel metadata must be a non-allocated NOTE section");
         Require(
             section.alignment == 0 ||
-                ((section.alignment & (section.alignment - 1)) == 0 && section.alignment <= data.size()),
+                ((section.alignment & (section.alignment - 1U)) == 0U && section.alignment <= data.size()),
             "invalid metadata alignment");
         Require(
             elf.metadataSections.emplace(section.name, elf.sections.size()).second,

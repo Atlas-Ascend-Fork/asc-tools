@@ -74,7 +74,10 @@ std::string TraceJsonString(const std::string& value)
             out << '\\' << static_cast<char>(c);
         } else if (c < 0x20) {
             constexpr char hex[] = "0123456789abcdef";
-            out << "\\u00" << hex[c >> 4] << hex[c & 15];
+            constexpr unsigned int hexDigitBits = 4U;
+            constexpr unsigned int hexDigitMask = (1U << hexDigitBits) - 1U;
+            const auto byte = static_cast<unsigned int>(c);
+            out << "\\u00" << hex[byte >> hexDigitBits] << hex[byte & hexDigitMask];
         } else {
             out << static_cast<char>(c);
         }
@@ -94,7 +97,7 @@ std::string WarpTraceCoreName(uint32_t pid)
 {
     const uint32_t coreKey = pid - 1U;
     const uint32_t coreId = coreKey >> 8U;
-    const uint32_t subcore = coreKey & UINT8_MAX;
+    const uint32_t subcore = coreKey & static_cast<uint32_t>(UINT8_MAX);
     // WarpOccupancyAnalyzeData preserves the SDK's VEC0/VEC1/CUBE codes.
     constexpr uint32_t kVec1 = 1U;
     constexpr uint32_t kCube = 2U;
@@ -219,8 +222,8 @@ bool MatchRounds(WarpGroup warps, VfWindows windows, uint32_t origin, uint32_t m
     size_t first = 0;
     for (size_t j = 0; j < ends.size(); ++j) {
         const auto* window = windows[j];
-        if (!window->startSyscnt || window->endSyscnt < window->startSyscnt ||
-            (j && window->startSyscnt < windows[j - 1]->endSyscnt)) {
+        if (window->startSyscnt == 0U || window->endSyscnt < window->startSyscnt ||
+            (j != 0U && window->startSyscnt < windows[j - 1]->endSyscnt)) {
             return false;
         }
         const double duration = static_cast<double>(window->endSyscnt - window->startSyscnt) / sysMhz;
@@ -297,14 +300,14 @@ WarpTraceLayout BuildWarpTraceLayout(const aclptiSimtWarpData& data)
         group.push_back(&w);
     }
     for (const auto& v : data.vfAnchors) {
-        if (v.startSyscnt && v.endSyscnt >= v.startSyscnt) {
+        if (v.startSyscnt != 0U && v.endSyscnt >= v.startSyscnt) {
             windows[TraceCoreId(v.aicoreId, v.subcoreId)].push_back(&v);
             origin = std::min(origin, v.startSyscnt);
         }
     }
     const auto* frequencyError = SetWarpClockFrequencies(data.deviceId, timing);
     for (const auto& [pid, group] : warps) {
-        if (frequencyError || !windows.count(pid)) {
+        if (frequencyError != nullptr || windows.count(pid) == 0U) {
             continue;
         }
         auto candidates = SelectSimtWindows(group, windows.at(pid));
@@ -377,7 +380,7 @@ void WriteWarpTraceEvents(
         const auto name = "warp " + std::to_string(w.warpId);
         if (lanes.emplace(lanePid, w.warpId).second)
             WriteTraceLane(out, lanePid, w.warpId, name);
-        const double mhz = core.clockMhz ? core.clockMhz : 1;
+        const double mhz = core.clockMhz != 0U ? core.clockMhz : 1;
         const auto first = aligned ? it->second.firstClock : core.firstClock;
         const double start =
             (w.startTime - first) / mhz + (aligned ? (it->second.window->startSyscnt - origin) / timing.syscntMhz : 0);
@@ -388,7 +391,7 @@ void WriteWarpTraceEvents(
             << ",\"vf_instr_address\":" << w.vfInstrAddress << ",\"start_time_raw\":" << w.startTime
             << ",\"end_time_raw\":" << w.endTime << ",\"duration_raw\":" << w.duration
             << ",\"clock_frequency_mhz\":" << core.clockMhz << ",\"clock_frequency_source\":\""
-            << (core.clockMhz ? (core.usesRatedClock ? "rated" : "current") : "unavailable_raw_ticks") << '"';
+            << (core.clockMhz != 0U ? (core.usesRatedClock ? "rated" : "current") : "unavailable_raw_ticks") << '"';
         if (aligned)
             out << ",\"vf_start_syscnt\":\"" << it->second.window->startSyscnt << '"';
         out << "}}";

@@ -363,45 +363,45 @@ void Racechecker::Collect(void* stream, bool final, CheckerReportList& reports)
     }
 }
 void Racechecker::Finalize(CheckerReportList& reports) { Collect(nullptr, true, reports); }
-void Racechecker::Finish(uint64_t id, Launch& l, CheckerReportList& reports)
+void Racechecker::Finish(uint64_t id, Launch& launch, CheckerReportList& reports)
 {
     ++launchesCount_;
-    if (!l.registered)
-        l.reasons.insert("missing_launch");
+    if (!launch.registered)
+        launch.reasons.insert("missing_launch");
     if (analysis_->HasInvalidSynchronization(id))
-        l.reasons.insert("invalid_synchronization");
+        launch.reasons.insert("invalid_synchronization");
     constexpr uint64_t NO_UNSUPPORTED_UB_EVENTS = 0;
     const auto unsupported = analysis_->Managed() ? analysis_->Get(id).unsupportedUbEvents : NO_UNSUPPORTED_UB_EVENTS;
     const auto maximum = std::numeric_limits<uint64_t>::max();
     unsupportedUbEvents_ = unsupported <= maximum - unsupportedUbEvents_ ? unsupportedUbEvents_ + unsupported : maximum;
     std::optional<uint32_t> device;
-    const auto checkHeader = [&device, &l](const AclsanDeviceEventHeader& h) {
+    const auto checkHeader = [&device, &launch](const AclsanDeviceEventHeader& h) {
         if (device && *device != h.deviceId)
-            l.reasons.insert("device_mismatch");
+            launch.reasons.insert("device_mismatch");
         device = h.deviceId;
     };
-    for (const auto& a : l.memory)
+    for (const auto& a : launch.memory)
         checkHeader(a.header);
-    for (const auto& a : l.sync)
+    for (const auto& a : launch.sync)
         checkHeader(a.header);
-    for (const auto& a : l.vfs) {
+    for (const auto& a : launch.vfs) {
         checkHeader(a.header);
     }
-    for (const auto& a : l.localBarriers) {
+    for (const auto& a : launch.localBarriers) {
         checkHeader(a.header);
     }
     try {
-        Analyze(id, l, reports);
+        Analyze(id, launch, reports);
     } catch (const RacecheckError& error) {
-        l.reasons.insert(
+        launch.reasons.insert(
             error.Kind() == RacecheckErrorKind::MemoryAllocationFailed ? "allocation_failure" : "invalid_memory_state");
         ASCTOOL_ERROR("racecheck launch=%llu stopped: %s", static_cast<unsigned long long>(id), error.what());
     } catch (const std::bad_alloc&) {
-        l.reasons.insert("allocation_failure");
+        launch.reasons.insert("allocation_failure");
     }
-    for (const auto& reason : l.reasons)
+    for (const auto& reason : launch.reasons)
         ++reasons_[reason];
-    incomplete_ = incomplete_ || !l.reasons.empty();
+    incomplete_ = incomplete_ || !launch.reasons.empty();
 }
 
 // Per-launch analysis state. It is discarded after replay and never shared

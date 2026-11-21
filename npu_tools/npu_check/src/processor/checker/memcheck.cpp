@@ -104,15 +104,15 @@ NpuCheckReportExecContext ToExecContext(const AclsanDeviceMemoryAccessData& data
     exec.pipeId = data.header.pipeline;
     exec.siteId = data.header.siteId;
     exec.pipeName = detail::DevicePipelineName(data.header.pipeline);
-    if ((data.simt.validFlags & ACLSAN_SIMT_CONTEXT_INVOCATION) != 0) {
+    if ((data.simt.validFlags & static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_INVOCATION)) != 0U) {
         exec.invocationId = data.simt.invocationId;
     }
-    if ((data.simt.validFlags & ACLSAN_SIMT_CONTEXT_THREAD) != 0) {
+    if ((data.simt.validFlags & static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_THREAD)) != 0U) {
         exec.threadX = data.simt.threadX;
         exec.threadY = data.simt.threadY;
         exec.threadZ = data.simt.threadZ;
     }
-    if ((data.simt.validFlags & ACLSAN_SIMT_CONTEXT_BLOCK_DIM) != 0) {
+    if ((data.simt.validFlags & static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_BLOCK_DIM)) != 0U) {
         exec.blockDimX = data.simt.blockDimX;
         exec.blockDimY = data.simt.blockDimY;
         exec.blockDimZ = data.simt.blockDimZ;
@@ -269,7 +269,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     uint64_t groupId)
 {
     const bool preload =
-        (data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0 && bytes == 0;
+        (data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0U && bytes == 0;
     const uint64_t capacity = CubeCapacity(data.memorySpace);
     const AllocationRegistry* allocations = &memoryState_->Allocations({data.header.deviceId, 0});
     const bool standaloneSimt = !analysis_->Managed() && data.simt.validFlags != 0;
@@ -350,7 +350,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::QueueDeviceMemoryAccess(const Acls
     }
     // 原子配置未知但范围已还原的 WRITE 仍按普通写检查边界。
     // ATOMIC_CONFIG_UNKNOWN 不影响 Memcheck；ESTIMATED 表示访问范围也不精确。
-    if ((data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0) {
+    if ((data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0U) {
         ++stats_.inexactDeviceOperations;
         return {};
     }
@@ -462,7 +462,8 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
             return markIncomplete();
     }
 
-    if ((data.header.flags & kDeviceEventFlagPredicated) != 0 && data.predicateMask0 == 0 && data.predicateMask1 == 0) {
+    if ((data.header.flags & kDeviceEventFlagPredicated) != 0U && data.predicateMask0 == 0 &&
+        data.predicateMask1 == 0) {
         return {};
     }
 
@@ -546,10 +547,10 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckObservedAccess(const AclsanDe
 void Memcheck::CollectLaunch(uint64_t launchId, std::vector<NpuCheckMemcheckReport>& reports)
 {
     const auto& shared = analysis_->Get(launchId);
-    const auto check = [&](const auto& accesses) {
+    const auto check = [this, &reports](const auto& accesses) {
         for (const auto& access : accesses) {
             if (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM ||
-                (access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) != 0) {
+                (access.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED)) != 0U) {
                 continue;
             }
             auto found = CheckObservedAccess(access);

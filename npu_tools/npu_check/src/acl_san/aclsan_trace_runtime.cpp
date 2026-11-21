@@ -863,7 +863,7 @@ bool HasCannInstallMarker(const char* root) noexcept
     for (const char* marker : markers) {
         char path[PATH_MAX];
         struct stat info {};
-        if (ComposeTracePath(root, marker, path) && stat(path, &info) == 0 && S_ISREG(info.st_mode)) {
+        if (ComposeTracePath(root, marker, path) && stat(path, &info) == 0 && S_ISREG(info.st_mode) != 0) {
             return true;
         }
     }
@@ -1456,10 +1456,10 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         data.flags = 0U;
         if (partial || pending.failed || (pending.simtSegmentBytes != 0U && !pending.simtCollected) ||
             (!emptyTrace && !completeBoundary)) {
-            data.flags |= ACLSAN_OPERATOR_EXECUTION_FLAG_INCOMPLETE;
+            data.flags |= static_cast<uint32_t>(ACLSAN_OPERATOR_EXECUTION_FLAG_INCOMPLETE);
         }
         if (pending.dropped != 0U) {
-            data.flags |= ACLSAN_OPERATOR_EXECUTION_FLAG_DROPPED;
+            data.flags |= static_cast<uint32_t>(ACLSAN_OPERATOR_EXECUTION_FLAG_DROPPED);
         }
         aicEnds = pending.kernelEndTracker.AicEnds();
         aivEnds = pending.kernelEndTracker.AivEnds();
@@ -2330,7 +2330,7 @@ aclError PrepareTraceLaunch(
         // StrictModeEnabled is currently always true. Fail closed before enabling a non-strict path.
         if (!InitializeTraceBuffer(
                 prepared.hostBuffer, prepared.physicalCoreSlotCount, blockCount, prepared.launchId, error,
-                (SnapshotActiveProbePlan() & PROBE_GROUP_SIMT) != 0)) {
+                (SnapshotActiveProbePlan() & static_cast<uint32_t>(PROBE_GROUP_SIMT)) != 0U)) {
             ASCTOOL_ERROR("acl_san trace: cannot initialize launch buffer: %s", error.c_str());
             StoreHiddenPointer(prepared, argumentMode);
             return StrictModeEnabled() ? ACL_ERROR_FAILURE : ACL_SUCCESS;

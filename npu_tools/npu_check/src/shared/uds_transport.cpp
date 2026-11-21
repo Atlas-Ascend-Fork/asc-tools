@@ -138,16 +138,16 @@ IoStatus WaitFor(int fd, short events, DeadlineMs deadline, std::string& error)
             continue; // 时间片到期，回顶部重判绝对 deadline
         }
         if ((static_cast<unsigned int>(descriptor.revents) &
-             (static_cast<unsigned int>(POLLERR) | static_cast<unsigned int>(POLLNVAL))) != 0) {
+             (static_cast<unsigned int>(POLLERR) | static_cast<unsigned int>(POLLNVAL))) != 0U) {
             error = "socket error reported by poll";
             return IoStatus::SYSTEM_ERROR;
         }
         // 就绪位必须先于 POLLHUP 判断：对端"发完最后一帧再 close"会让两个位同时置起，
         // 先判 POLLHUP 就会把那一帧连同它携带的诊断信息一起丢掉。
-        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(events)) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(events)) != 0U) {
             return IoStatus::OK;
         }
-        if ((static_cast<unsigned int>(descriptor.revents) & POLLHUP) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(POLLHUP)) != 0U) {
             return IoStatus::CLOSED;
         }
     }

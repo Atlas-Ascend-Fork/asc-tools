@@ -34,7 +34,7 @@ struct Database {
             throw std::runtime_error(sqlite::GetApi().errmsg(handle));
         }
     }
-    void Exec(const char* sql) { Check(sqlite::GetApi().exec(handle, sql)); }
+    void Exec(const char* sql) const { Check(sqlite::GetApi().exec(handle, sql)); }
 };
 using Statement = std::unique_ptr<sqlite3_stmt, decltype(sqlite::GetApi().finalize)>;
 inline Statement Prepare(Database& db, const std::string& sql)

@@ -24,7 +24,7 @@ inline bool ParsePositiveWarpDecimal(std::string_view text, Uint& result)
         if (digit < '0' || digit > '9') {
             return false;
         }
-        const auto value = static_cast<Uint>(digit - '0');
+        const auto value = static_cast<Uint>(static_cast<int>(digit) - static_cast<int>('0'));
         if (parsed > (std::numeric_limits<Uint>::max() - value) / kDecimalBase) {
             return false;
         }

@@ -102,7 +102,7 @@ private:
     template <typename Function, typename Key>
     aclptiResult ResolveBinaryFunction(aclrtApiId id, aclrtBinHandle binary, Key key, aclrtFuncHandle function);
     template <typename Function, typename Key>
-    aclptiResult ResolveFunctionState(
+    static aclptiResult ResolveFunctionState(
         aclrtApiId id, aclrtBinHandle binary, Binary& state, Key key, aclrtFuncHandle function);
     aclptiResult EnsureBinaryRegistered(aclrtBinHandle binary, bool pmSampling, bool pipeline, bool sourceCounter);
     aclptiResult RegisterInstrumentedBinary(
@@ -123,7 +123,7 @@ private:
         const std::string& mixedAlias);
     static aclptiResult LoadCompanions(
         Binary& state, const aclrtBinaryLoadOptions* options, aclrtBinaryLoadFromDataFunc load);
-    void BuildSamplingBinaryState(Binary& state, const void* data, std::size_t size);
+    static void BuildSamplingBinaryState(Binary& state, const void* data, std::size_t size);
     static void BuildSamplingCompanion(
         Binary& state, const std::shared_ptr<PmSamplingBinaryImage>& image, const void* data, std::size_t size);
     static bool BuildPipelineBinaryState(Binary& state, const void* data, std::size_t size, bool pmSampling);

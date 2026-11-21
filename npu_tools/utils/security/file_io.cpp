@@ -89,7 +89,7 @@ int OpenChecked(const std::string& path, int flags, bool directory, mode_t mode 
     if (::fstat(descriptor.Get(), &status) != 0) {
         return INVALID_FILE_DESCRIPTOR;
     }
-    if (directory ? !S_ISDIR(status.st_mode) : !S_ISREG(status.st_mode)) {
+    if (directory ? S_ISDIR(status.st_mode) == 0 : S_ISREG(status.st_mode) == 0) {
         errno = directory ? ENOTDIR : EINVAL;
         return INVALID_FILE_DESCRIPTOR;
     }
@@ -170,7 +170,7 @@ bool NormalizePath(const std::string& path, PathKind kind, std::string& normaliz
         if (kind != PathKind::FileOrNew || errno != ENOENT) {
             return false;
         }
-    } else if (directory ? !S_ISDIR(status.st_mode) : !S_ISREG(status.st_mode)) {
+    } else if (directory ? S_ISDIR(status.st_mode) == 0 : S_ISREG(status.st_mode) == 0) {
         errno = EINVAL;
         return false;
     }

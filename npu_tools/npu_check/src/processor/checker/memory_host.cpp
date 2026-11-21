@@ -31,14 +31,14 @@ race::HappensBeforeGraph::Relation MemoryAnalysis::CompareHosts(size_t first, si
     return *forward ? Relation::Before : *backward ? Relation::After : Relation::Unordered;
 }
 
-race::HappensBeforeGraph::Relation MemoryAnalysis::CompareHostToLaunch(size_t node, uint64_t launchId)
+race::HappensBeforeGraph::Relation MemoryAnalysis::CompareHostToLaunch(size_t hostNode, uint64_t launchId)
 {
     using Relation = race::HappensBeforeGraph::Relation;
     const auto found = boundaries_.find(launchId);
     if (!complete_ || found == boundaries_.end())
         return Relation::Unknown;
-    const auto before = order_.Precedes(node, found->second.first);
-    const auto after = order_.Precedes(found->second.second, node);
+    const auto before = order_.Precedes(hostNode, found->second.first);
+    const auto after = order_.Precedes(found->second.second, hostNode);
     if (!before || !after)
         return Relation::Unknown;
     return *before ? Relation::Before : *after ? Relation::After : Relation::Unordered;

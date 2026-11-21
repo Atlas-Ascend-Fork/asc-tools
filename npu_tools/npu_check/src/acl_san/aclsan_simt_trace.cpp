@@ -95,16 +95,17 @@ std::optional<AclsanDeviceMemoryAccessData> TranslateSimtTraceRecord(const Parse
     data.header.executor.blockId = raw.blockId;
     data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     data.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
-    data.header.flags = range.has_value() ? ACLSAN_DEVICE_EVENT_FLAG_EXACT :
-                                            (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED);
+    constexpr uint32_t estimatedFlags = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
+                                        static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED);
+    data.header.flags = range.has_value() ? static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_EXACT) : estimatedFlags;
     data.address = range.has_value() ? range->first : 0;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
     data.accessMode = AccessMode(raw.instructionId);
     if (HasUnknownAtomicConfiguration(raw.instructionId)) {
-        data.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
+        data.header.flags |= static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
     }
     data.accessCount = 1U;
-    data.dataBits = width * CHAR_BIT;
+    data.dataBits = width * static_cast<uint32_t>(CHAR_BIT);
     data.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
     data.layout.range.bytes = width;
     data.instructionId = raw.instructionId;
@@ -119,7 +120,9 @@ std::optional<AclsanDeviceMemoryAccessData> TranslateSimtTraceRecord(const Parse
     data.simt.base = raw.base;
     data.simt.offset = raw.offset;
     data.simt.elementBytes = width;
-    data.simt.validFlags = ACLSAN_SIMT_CONTEXT_INVOCATION | ACLSAN_SIMT_CONTEXT_THREAD | ACLSAN_SIMT_CONTEXT_BLOCK_DIM |
+    data.simt.validFlags = static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_INVOCATION) |
+                           static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_THREAD) |
+                           static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_BLOCK_DIM) |
                            (range.has_value() ? static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_ADDRESS) : 0U);
     return data;
 }

@@ -119,7 +119,7 @@ TraceBufferParseResult DecodeTraceFifoRange(
 }
 
 SimtTraceParseResult ParseSimtTraceBuffer(
-    const uint8_t* buffer, size_t bytes, uint32_t physicalCoreCount, uint32_t blockCount, uint64_t launchId,
+    const uint8_t* buffer, size_t bytes, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,
     uint32_t deviceId, bool executionComplete)
 {
     SimtTraceParseResult result{};
@@ -132,7 +132,7 @@ SimtTraceParseResult ParseSimtTraceBuffer(
         result.error = "cannot copy SIMT trace buffer header";
         return result;
     }
-    if (trace.physicalCoreCount != physicalCoreCount || trace.segmentBytes != bytes ||
+    if (trace.physicalCoreCount != physicalCoreSlotCount || trace.segmentBytes != bytes ||
         !ValidateTraceSegmentHeader(trace, blockCount, launchId)) {
         result.error = "SIMT buffer does not match the owning launch";
         return result;
@@ -142,7 +142,7 @@ SimtTraceParseResult ParseSimtTraceBuffer(
         return result;
     }
     return ParseSimtTraceSegment(
-        buffer + trace.simtSegmentOffset, trace.simtSegmentBytes, physicalCoreCount, blockCount, launchId, deviceId,
+        buffer + trace.simtSegmentOffset, trace.simtSegmentBytes, physicalCoreSlotCount, blockCount, launchId, deviceId,
         executionComplete);
 }
 
@@ -178,7 +178,7 @@ void TrackSimtLaneCoverage(
     SimtTraceParseResult& result)
 {
     const bool current = coverage.invocationId != 0U && lane.lastInvocation == coverage.invocationId;
-    coverage.observedCurrentInvocation |= current;
+    coverage.observedCurrentInvocation = coverage.observedCurrentInvocation || current;
     if (executionComplete && current && lane.completedInvocation == coverage.invocationId &&
         coverage.invocationId <= ASCSAN_SIMT_COMPLETION_BITS &&
         (lane.completedInvocations & coverage.completionMask) == coverage.completionMask) {

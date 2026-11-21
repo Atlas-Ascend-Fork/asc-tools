@@ -111,10 +111,10 @@ void Wait(int fd, short events, Deadline deadline, const std::function<bool()>& 
             continue;
         }
         CheckCancellation(cancelled);
-        if ((static_cast<unsigned int>(descriptor.revents) & POLLNVAL) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(POLLNVAL)) != 0U) {
             throw Exception({UDS_POLL_ERROR_CODE, "UDS poll error", "transport", "poll"});
         }
-        if ((static_cast<unsigned int>(descriptor.revents) & POLLERR) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(POLLERR)) != 0U) {
             int error = 0;
             socklen_t size = sizeof(error);
             if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) < 0) {
@@ -124,10 +124,12 @@ void Wait(int fd, short events, Deadline deadline, const std::function<bool()>& 
             SystemError("UDS poll");
         }
         // Read buffered messages even when peer has closed the socket.
-        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(events)) != 0) {
+        if ((static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(events)) != 0U) {
             return;
         }
-        Check((static_cast<unsigned int>(descriptor.revents) & POLLHUP) == 0, "UDS peer disconnected");
+        Check(
+            (static_cast<unsigned int>(descriptor.revents) & static_cast<unsigned int>(POLLHUP)) == 0U,
+            "UDS peer disconnected");
     }
 }
 sockaddr_un Address(const std::string& name)
@@ -481,7 +483,9 @@ Frame Channel::Receive(Deadline deadline, const std::function<bool()>& cancelled
             SystemError("UDS receive");
         }
         Check(received > 0, "UDS peer disconnected");
-        Check((message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) == 0, "truncated UDS packet");
+        constexpr unsigned int truncationFlags =
+            static_cast<unsigned int>(MSG_TRUNC) | static_cast<unsigned int>(MSG_CTRUNC);
+        Check((static_cast<unsigned int>(message.msg_flags) & truncationFlags) == 0U, "truncated UDS packet");
         packet.resize(static_cast<size_t>(received));
         break;
     }

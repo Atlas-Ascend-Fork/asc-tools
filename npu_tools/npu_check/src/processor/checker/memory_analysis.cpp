@@ -208,8 +208,10 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
     }
     if (id == ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS) {
         const auto& access = *static_cast<const AclsanDeviceMemoryAccessData*>(data);
-        if ((h.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED |
-                        ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR)) == 0) {
+        constexpr uint32_t incompleteFlags = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
+                                             static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED) |
+                                             static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR);
+        if ((h.flags & incompleteFlags) == 0U) {
             launch.simtMemory.push_back(access);
         }
     } else if (id == ACLSAN_CBID_DEVICE_MEMORY_ACCESS) {

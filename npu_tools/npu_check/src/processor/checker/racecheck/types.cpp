@@ -16,7 +16,7 @@
 #include <limits>
 
 namespace npucheck::race {
-bool ValidPipe(uint32_t p) { return p <= ACLSAN_DEVICE_PIPE_MTE3 || p == ACLSAN_DEVICE_PIPE_FIXPIPE; }
+bool ValidPipe(uint32_t pipe) { return pipe <= ACLSAN_DEVICE_PIPE_MTE3 || pipe == ACLSAN_DEVICE_PIPE_FIXPIPE; }
 AclsanDeviceSyncData NormalizeSync(const AclsanDeviceSyncData& data)
 {
     auto sync = data;

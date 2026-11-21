@@ -39,8 +39,10 @@ bool Memcheck::OnDeviceMemoryCallback(AclsanCallbackId cbid, const void* data, C
         ++stats_.droppedDeviceOperations;
         return false;
     }
-    if (simt && (header->flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED |
-                                  ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR)) != 0U) {
+    constexpr uint32_t incompleteFlags = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
+                                         static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED) |
+                                         static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR);
+    if (simt && (header->flags & incompleteFlags) != 0U) {
         ++stats_.droppedDeviceOperations;
         return true;
     }

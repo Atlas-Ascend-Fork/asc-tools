@@ -389,7 +389,7 @@ bool GenerateInstructionArtifacts(
         TemporaryDirectory temporary{pattern};
         const bool disassemblyOk = AttemptArtifact(
             disassembly,
-            [&] {
+            [&input, &context, &options, &disassembly, &artifacts, &temporary] {
                 const auto* image = input.sourceElf;
                 if (context && (!input.collectSource || (context->originalElf && !context->originalElf->empty()))) {
                     image = &Elf(*context, options.disassemblySource);
