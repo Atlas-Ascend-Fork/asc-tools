@@ -64,4 +64,10 @@ bool BuildOriginalPmSamplingInstructionMap(const void*, std::size_t, PmSamplingI
     }
     return true;
 }
+
+bool ReadOriginalDisassembly(const void*, std::size_t, std::string&, std::string& diagnostic, DisassemblyDetail)
+{
+    diagnostic = "original disassembly unavailable in the Runtime stub";
+    return false;
+}
 } // namespace aclpti::profiling

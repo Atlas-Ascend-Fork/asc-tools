@@ -57,13 +57,3 @@ set_target_properties(acl_pti PROPERTIES
   VISIBILITY_INLINES_HIDDEN YES
 )
 npu_compute_set_product_output(acl_pti)
-
-if(NPUCOMPUTE_NPUBIT_INCLUDE_DIR AND EXISTS "${NPUCOMPUTE_NPUBIT_LIBRARY}")
-  get_filename_component(_npubit_library_name "${NPUCOMPUTE_NPUBIT_LIBRARY}" NAME)
-  get_filename_component(_npubit_library_dir "${NPUCOMPUTE_NPUBIT_LIBRARY}" DIRECTORY)
-  set_property(TARGET acl_pti APPEND PROPERTY BUILD_RPATH "${_npubit_library_dir}")
-  set_property(TARGET acl_pti APPEND PROPERTY INSTALL_RPATH "$ORIGIN/../../npu_bit/lib64")
-  target_include_directories(acl_pti SYSTEM PRIVATE "${NPUCOMPUTE_NPUBIT_INCLUDE_DIR}")
-  target_compile_definitions(acl_pti PRIVATE
-    NPUCOMPUTE_NPUBIT_SONAME="${_npubit_library_name}")
-endif()

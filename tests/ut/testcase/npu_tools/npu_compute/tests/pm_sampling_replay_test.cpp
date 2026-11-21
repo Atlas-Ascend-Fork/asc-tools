@@ -322,7 +322,7 @@ int main()
         CHECK(result->sourceCounterData->rows.empty());
         CHECK(
             result->sourceCounterData->errors ==
-            std::vector<std::string>{"CANN NPUbit SDK unavailable for SourceCounter"});
+            std::vector<std::string>{"original disassembly unavailable in the Runtime stub"});
     }
-    std::puts("PASS: sampling replay and SourceCounter-only unavailable API publication without Msprof");
+    std::puts("PASS: sampling replay and SourceCounter-only disassembly failure publication without Msprof");
 }

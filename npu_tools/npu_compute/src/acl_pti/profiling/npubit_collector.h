@@ -18,13 +18,6 @@
 
 namespace aclpti::profiling {
 
-struct AiCoreTopology {
-    std::uint32_t dieCount;
-    std::uint32_t coresPerDie;
-};
-
-bool ReadNpubitTopology(std::int32_t deviceId, AiCoreTopology& topology);
-
 // Work per dynamic instruction. These coefficients already include x2.
 std::optional<double> RooflineVectorOperations(std::uint32_t bitWidth, std::uint64_t instructionCount);
 

@@ -58,6 +58,7 @@ add_library(acl_pti_unit STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_memory.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_runtime.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_registry.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/pm_sampling_instruction_map.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/simt_warp_source_registry.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_simt_warp_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/runtime_api_handlers.cpp
@@ -127,6 +128,7 @@ add_library(acl_pti_test SHARED
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_memory.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/replay_runtime.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/binary_registry.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/pm_sampling_instruction_map.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/simt_warp_source_registry.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_simt_warp_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/runtime_api_handlers.cpp

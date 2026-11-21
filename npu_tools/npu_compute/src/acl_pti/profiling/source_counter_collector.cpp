@@ -8,22 +8,18 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "source_counter_collector.h"
-
-#if defined(NPUCOMPUTE_NPUBIT_SONAME)
 #include "kernel_instrumenter.h"
 #include "injection/injection_hook.h"
 #include "npu_compute_log.h"
-#include "npubit_collector.h"
+#include "npubit_device.h"
 
 #include <npubit.h>
 
 #include <cmath>
-#include <dlfcn.h>
 #include <map>
 #include <memory>
 #include <set>
 #include <tuple>
-#endif
 
 namespace aclpti::profiling {
 namespace {
@@ -35,72 +31,15 @@ std::size_t SourceCounterBufferSize(std::size_t reported, std::size_t defaultTra
     return reported == std::numeric_limits<std::size_t>::max() ? defaultTraceMiB * kBytesPerMiB : reported;
 }
 
-#if defined(NPUCOMPUTE_NPUBIT_SONAME)
 namespace {
 constexpr std::size_t kDefaultTraceMiB = 4;
 constexpr std::size_t kLargeTraceMiB = 64;
-
-struct CloseLibrary {
-    void operator()(void* library) const { (void)dlclose(library); }
-};
-using Library = std::unique_ptr<void, CloseLibrary>;
-
-template <typename Function>
-Function LibrarySymbol(const Library& library, const char* name)
-{
-    return library ? reinterpret_cast<Function>(dlsym(library.get(), name)) : nullptr;
-}
 
 template <typename Function>
 Function Original(aclrtApiId id)
 {
     return reinterpret_cast<Function>(acltoolGetOriginalRuntimeApi(id));
 }
-
-struct NpubitApi {
-    Library library{dlopen(NPUCOMPUTE_NPUBIT_SONAME, RTLD_NOW | RTLD_LOCAL)};
-    decltype(&NpubitGetVersion) getVersion = LibrarySymbol<decltype(getVersion)>(library, "NpubitGetVersion");
-    decltype(&NpubitCreateHandle) create = LibrarySymbol<decltype(create)>(library, "NpubitCreateHandle");
-    decltype(&NpubitReleaseHandle) release = LibrarySymbol<decltype(release)>(library, "NpubitReleaseHandle");
-    decltype(&NpubitSetHardwareContext) setHardware =
-        LibrarySymbol<decltype(setHardware)>(library, "NpubitSetHardwareContext");
-    decltype(&NpubitAllocateBasicBlockBuffer) allocateMap =
-        LibrarySymbol<decltype(allocateMap)>(library, "NpubitAllocateBasicBlockBuffer");
-    decltype(&NpubitInitializeBasicBlockBufferMap) initializeMap =
-        LibrarySymbol<decltype(initializeMap)>(library, "NpubitInitializeBasicBlockBufferMap");
-    decltype(&NpubitGetBufferSize) getBufferSize =
-        LibrarySymbol<decltype(getBufferSize)>(library, "NpubitGetBufferSize");
-    decltype(&NpubitInstrument) instrument = LibrarySymbol<decltype(instrument)>(library, "NpubitInstrument");
-    decltype(&NpubitGetObjectSize) getObjectSize =
-        LibrarySymbol<decltype(getObjectSize)>(library, "NpubitGetObjectSize");
-    decltype(&NpubitGetObject) getObject = LibrarySymbol<decltype(getObject)>(library, "NpubitGetObject");
-    decltype(&NpubitProcess) process = LibrarySymbol<decltype(process)>(library, "NpubitProcess");
-    decltype(&NpubitAnalyze) analyze = LibrarySymbol<decltype(analyze)>(library, "NpubitAnalyze");
-    decltype(&NpubitFree) free = LibrarySymbol<decltype(free)>(library, "NpubitFree");
-
-    bool Open(std::string& error) const
-    {
-        if (!library) {
-            error = "cannot load " NPUCOMPUTE_NPUBIT_SONAME;
-            return false;
-        }
-        if (!(getVersion && create && release && setHardware && allocateMap && initializeMap && getBufferSize &&
-              instrument && getObjectSize && getObject && process && analyze && free)) {
-            error = "NPUbit shared library lacks required SourceCounter APIs";
-            return false;
-        }
-        std::uint32_t major = 0;
-        std::uint32_t minor = 0;
-        std::uint32_t patch = 0;
-        if (getVersion(&major, &minor, &patch) != NPUBIT_SUCCESS ||
-            std::tie(major, minor, patch) !=
-                std::make_tuple(NPUBIT_VERSION_MAJOR, NPUBIT_VERSION_MINOR, NPUBIT_VERSION_PATCH)) {
-            error = "NPUbit headers and runtime library versions do not match";
-            return false;
-        }
-        return true;
-    }
-};
 
 struct RuntimeApi {
     aclrtMallocFunc allocate = Original<aclrtMallocFunc>(ACL_RT_API_aclrtMalloc);
@@ -114,30 +53,6 @@ struct RuntimeApi {
     bool Ready() const { return allocate && free && setMemory && copy && load && unload && getFunction; }
 };
 
-struct SourceDevice {
-    NpubitPlatformType platform = UNDEFINED;
-    AiCoreTopology topology{};
-};
-
-bool ReadSourceDevice(std::int32_t deviceId, SourceDevice& device, std::string& error)
-{
-    const auto getSoc = Original<aclrtGetSocNameFunc>(ACL_RT_API_aclrtGetSocName);
-    const auto* name = getSoc == nullptr ? nullptr : getSoc();
-    const std::string_view soc = name == nullptr ? "" : name;
-    constexpr std::string_view prPrefix = "Ascend950PR";
-    constexpr std::string_view dtPrefix = "Ascend950DT";
-    if (soc.compare(0, prPrefix.size(), prPrefix) != 0 && soc.compare(0, dtPrefix.size(), dtPrefix) != 0) {
-        error = "current Runtime SoC is not supported by NPUbit V100: " + std::string(soc);
-        return false;
-    }
-    device.platform = V100;
-    if (!ReadNpubitTopology(deviceId, device.topology)) {
-        error = "cannot determine NPUbit AI core topology";
-        return false;
-    }
-    return true;
-}
-
 bool SdkSucceeded(NpubitStatus status, const char* operation, std::string& error)
 {
     if (status == NPUBIT_SUCCESS) {
@@ -148,24 +63,22 @@ bool SdkSucceeded(NpubitStatus status, const char* operation, std::string& error
 }
 
 struct SdkHandle {
-    decltype(&NpubitReleaseHandle) release;
     NpubitHandle value = nullptr;
     ~SdkHandle()
     {
         if (value != nullptr) {
-            (void)release(value);
+            (void)NpubitReleaseHandle(value);
         }
     }
 };
 
 struct SdkBuffer {
-    decltype(&NpubitFree) free;
     void* data = nullptr;
     std::size_t bytes = 0;
     ~SdkBuffer()
     {
         if (data != nullptr) {
-            (void)free(&data);
+            (void)NpubitFree(&data);
         }
     }
 
@@ -204,7 +117,11 @@ struct DeviceRound {
     ~DeviceRound()
     {
         // An undrained launch may still reference the companion ELF, trace and map.
-        if (!streamDrained || (binary != nullptr && runtime.unload(binary) != ACL_SUCCESS)) {
+        bool canRelease = streamDrained;
+        if (streamDrained && binary != nullptr) {
+            canRelease = runtime.unload(binary) == ACL_SUCCESS;
+        }
+        if (!canRelease) {
             (void)image.release();
             ASCTOOL_WARNING("[aclpti] SourceCounter retaining resources for a companion that could not be unloaded");
             return;
@@ -233,29 +150,38 @@ bool AllocateTrace(
     const auto defaultTraceMiB =
         (type == NPUBIT_SIMT_BANK_CONFLICTS || type == NPUBIT_PUSH_PB_STATE) ? kLargeTraceMiB : kDefaultTraceMiB;
     round.traceBytes = SourceCounterBufferSize(reported, defaultTraceMiB);
-    if (round.traceBytes == 0 ||
-        runtime.allocate(&round.trace, round.traceBytes, ACL_MEM_MALLOC_HUGE_FIRST) != ACL_SUCCESS ||
-        round.trace == nullptr ||
-        runtime.setMemory(round.trace, round.traceBytes, 0, round.traceBytes) != ACL_SUCCESS) {
-        error = "cannot allocate or initialize SourceCounter trace";
+    if (round.traceBytes == 0) {
+        error = "invalid SourceCounter trace size";
+        return false;
+    }
+    const auto allocateStatus = runtime.allocate(&round.trace, round.traceBytes, ACL_MEM_MALLOC_HUGE_FIRST);
+    if (allocateStatus != ACL_SUCCESS || round.trace == nullptr) {
+        error = "cannot allocate SourceCounter trace";
+        return false;
+    }
+    if (runtime.setMemory(round.trace, round.traceBytes, 0, round.traceBytes) != ACL_SUCCESS) {
+        error = "cannot initialize SourceCounter trace";
         return false;
     }
     return true;
 }
 
-bool InstrumentRound(
-    const NpubitApi& sdk, NpubitHandle handle, NpubitInstrumentationType type, DeviceRound& round, std::string& error)
+bool InstrumentRound(NpubitHandle handle, NpubitInstrumentationType type, DeviceRound& round, std::string& error)
 {
-    SdkBuffer hostMap{sdk.free};
+    SdkBuffer hostMap{};
     if (!SdkSucceeded(
-            sdk.allocateMap(handle, &hostMap.data, &hostMap.bytes), "NpubitAllocateBasicBlockBuffer", error)) {
+            NpubitAllocateBasicBlockBuffer(handle, &hostMap.data, &hostMap.bytes), "NpubitAllocateBasicBlockBuffer",
+            error)) {
         return false;
     }
     std::string args;
     if (hostMap.bytes != 0) {
-        if (hostMap.data == nullptr ||
-            round.runtime.allocate(&round.map, hostMap.bytes, ACL_MEM_MALLOC_HUGE_FIRST) != ACL_SUCCESS ||
-            round.map == nullptr) {
+        if (hostMap.data == nullptr) {
+            error = "missing SourceCounter host basic-block map";
+            return false;
+        }
+        const auto allocateStatus = round.runtime.allocate(&round.map, hostMap.bytes, ACL_MEM_MALLOC_HUGE_FIRST);
+        if (allocateStatus != ACL_SUCCESS || round.map == nullptr) {
             error = "cannot allocate SourceCounter basic-block map";
             return false;
         }
@@ -263,20 +189,21 @@ bool InstrumentRound(
                ",bb-map-section-size:" + std::to_string(hostMap.bytes);
     }
     std::size_t reported = 0;
-    if (!SdkSucceeded(sdk.getBufferSize(handle, type, &reported), "NpubitGetBufferSize", error)) {
+    if (!SdkSucceeded(NpubitGetBufferSize(handle, type, &reported), "NpubitGetBufferSize", error)) {
         return false;
     }
     if (!AllocateTrace(round.runtime, type, reported, round, error)) {
         return false;
     }
     if (!SdkSucceeded(
-            sdk.instrument(handle, type, round.trace, round.traceBytes, args.empty() ? nullptr : args.c_str()),
+            NpubitInstrument(handle, type, round.trace, round.traceBytes, args.empty() ? nullptr : args.c_str()),
             "NpubitInstrument", error)) {
         return false;
     }
     if (hostMap.bytes != 0) {
         if (!SdkSucceeded(
-                sdk.initializeMap(handle, hostMap.data, hostMap.bytes), "NpubitInitializeBasicBlockBufferMap", error)) {
+                NpubitInitializeBasicBlockBufferMap(handle, hostMap.data, hostMap.bytes),
+                "NpubitInitializeBasicBlockBufferMap", error)) {
             return false;
         }
         if (round.runtime.copy(round.map, hostMap.bytes, hostMap.data, hostMap.bytes, ACL_MEMCPY_HOST_TO_DEVICE) !=
@@ -289,11 +216,10 @@ bool InstrumentRound(
 }
 
 aclrtFuncHandle LoadRound(
-    const NpubitApi& sdk, NpubitHandle handle, const BinarySource& source, const std::string& symbol,
-    DeviceRound& round, std::string& error)
+    NpubitHandle handle, const BinarySource& source, const std::string& symbol, DeviceRound& round, std::string& error)
 {
     std::size_t bytes = 0;
-    if (!SdkSucceeded(sdk.getObjectSize(handle, NPUBIT_OBJECT_INSTRUMENTED, &bytes), "NpubitGetObjectSize", error)) {
+    if (!SdkSucceeded(NpubitGetObjectSize(handle, NPUBIT_OBJECT_INSTRUMENTED, &bytes), "NpubitGetObjectSize", error)) {
         return nullptr;
     }
     if (bytes == 0) {
@@ -302,23 +228,27 @@ aclrtFuncHandle LoadRound(
     }
     round.image = std::make_unique<std::vector<char>>(bytes);
     if (!SdkSucceeded(
-            sdk.getObject(handle, NPUBIT_OBJECT_INSTRUMENTED, round.image->data(), bytes), "NpubitGetObject", error)) {
+            NpubitGetObject(handle, NPUBIT_OBJECT_INSTRUMENTED, round.image->data(), bytes), "NpubitGetObject",
+            error)) {
         return nullptr;
     }
     auto options = source.options;
     aclrtBinaryLoadOptions loadOptions{options.data(), options.size()};
     aclrtFuncHandle function = nullptr;
-    if (round.runtime.load(round.image->data(), bytes, &loadOptions, &round.binary) != ACL_SUCCESS ||
-        round.binary == nullptr) {
+    const auto loadStatus = round.runtime.load(round.image->data(), bytes, &loadOptions, &round.binary);
+    if (loadStatus != ACL_SUCCESS || round.binary == nullptr) {
         error = "cannot load SourceCounter companion ELF";
         return nullptr;
     }
-    if (!source.name.empty() && source.name != symbol &&
-        round.runtime.getFunction(round.binary, source.name.c_str(), &function) == ACL_SUCCESS && function != nullptr) {
-        return function;
+    if (!source.name.empty() && source.name != symbol) {
+        const auto lookupStatus = round.runtime.getFunction(round.binary, source.name.c_str(), &function);
+        if (lookupStatus == ACL_SUCCESS && function != nullptr) {
+            return function;
+        }
     }
     function = nullptr;
-    if (round.runtime.getFunction(round.binary, symbol.c_str(), &function) != ACL_SUCCESS || function == nullptr) {
+    const auto lookupStatus = round.runtime.getFunction(round.binary, symbol.c_str(), &function);
+    if (lookupStatus != ACL_SUCCESS || function == nullptr) {
         error = "cannot resolve SourceCounter companion function " + symbol;
         return nullptr;
     }
@@ -326,8 +256,8 @@ aclrtFuncHandle LoadRound(
 }
 
 bool ReadRound(
-    const NpubitApi& sdk, NpubitHandle handle, NpubitInstrumentationType type, const DeviceRound& round,
-    SdkBuffer& processed, SdkBuffer& analyzed, std::string& error)
+    NpubitHandle handle, NpubitInstrumentationType type, const DeviceRound& round, SdkBuffer& processed,
+    SdkBuffer& analyzed, std::string& error)
 {
     std::vector<std::uint8_t> storage(round.traceBytes);
     // The copy fills the host buffer before the SDK inspects it.
@@ -337,7 +267,7 @@ bool ReadRound(
         return false;
     }
     if (!SdkSucceeded(
-            sdk.process(handle, type, storage.data(), storage.size(), &processed.data, &processed.bytes),
+            NpubitProcess(handle, type, storage.data(), storage.size(), &processed.data, &processed.bytes),
             "NpubitProcess", error)) {
         return false;
     }
@@ -351,7 +281,7 @@ bool ReadRound(
         return true;
     }
     return SdkSucceeded(
-        sdk.analyze(handle, type, processed.data, processed.bytes, nullptr, 0, &analyzed.data, &analyzed.bytes),
+        NpubitAnalyze(handle, type, processed.data, processed.bytes, nullptr, 0, &analyzed.data, &analyzed.bytes),
         "NpubitAnalyze", error);
 }
 
@@ -473,9 +403,8 @@ bool AppendCounts(
 }
 
 struct CollectionContext {
-    const NpubitApi& sdk;
     const RuntimeApi& runtime;
-    const SourceDevice& device;
+    const NpubitDevice& device;
     const SourceCounterReplay& replay;
     const BinarySource& source;
     const SourceCounterInstructions& instructions;
@@ -510,23 +439,25 @@ aclptiResult CollectRound(
     const CollectionContext& context, NpubitInstrumentationType type, std::size_t replayIndex,
     aclptiSourceCounterData& data, std::string& error)
 {
-    const auto& sdk = context.sdk;
     const auto& source = context.source;
     const auto& instructions = context.instructions;
     const auto& topology = context.device.topology;
     const NpubitHwContext hardwareContext{topology.dieCount, topology.coresPerDie};
-    SdkHandle handle{sdk.release};
+    SdkHandle handle{};
     if (!SdkSucceeded(
-            sdk.create(source.image->data(), source.image->size(), &handle.value, context.device.platform, true),
-            "NpubitCreateHandle", error) ||
-        !SdkSucceeded(sdk.setHardware(handle.value, &hardwareContext), "NpubitSetHardwareContext", error)) {
+            NpubitCreateHandle(
+                source.image->data(), source.image->size(), &handle.value, context.device.platform, true),
+            "NpubitCreateHandle", error)) {
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    if (!SdkSucceeded(NpubitSetHardwareContext(handle.value, &hardwareContext), "NpubitSetHardwareContext", error)) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     DeviceRound round(context.runtime);
-    if (!InstrumentRound(sdk, handle.value, type, round, error)) {
+    if (!InstrumentRound(handle.value, type, round, error)) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
-    const auto function = LoadRound(sdk, handle.value, source, instructions.launchSymbol, round, error);
+    const auto function = LoadRound(handle.value, source, instructions.launchSymbol, round, error);
     if (function == nullptr) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
@@ -536,9 +467,9 @@ aclptiResult CollectRound(
         error = "SourceCounter replay failed: status=" + std::to_string(replayed.status);
         return replayed.status;
     }
-    SdkBuffer processed{sdk.free};
-    SdkBuffer analyzed{sdk.free};
-    if (!ReadRound(sdk, handle.value, type, round, processed, analyzed, error)) {
+    SdkBuffer processed{};
+    SdkBuffer analyzed{};
+    if (!ReadRound(handle.value, type, round, processed, analyzed, error)) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     ASCTOOL_DEBUG("[aclpti] SourceCounter type=%d analyzedBytes=%zu", type, analyzed.bytes);
@@ -588,7 +519,6 @@ aclptiResult CollectRounds(const CollectionContext& context, aclptiSourceCounter
     return ACLPTI_SUCCESS;
 }
 } // namespace
-#endif
 
 aclptiResult CollectSourceCounterData(
     const BinarySource& source, std::int32_t deviceId, const SourceCounterReplay& replay, aclptiSourceCounterData& data)
@@ -597,18 +527,15 @@ aclptiResult CollectSourceCounterData(
         data.errors.emplace_back("original ELF/function unavailable; enable SourceCounter before binary load");
         return ACLPTI_SUCCESS;
     }
-#if defined(NPUCOMPUTE_NPUBIT_SONAME)
-    NpubitApi sdk;
     std::string error;
-    if (!sdk.Open(error)) {
-        data.errors.push_back(std::move(error));
-        return ACLPTI_SUCCESS;
-    }
     SourceCounterInstructions instructions;
     std::string disassembly;
     if (!ReadOriginalDisassembly(
-            source.image->data(), source.image->size(), disassembly, error, DisassemblyDetail::WithSource) ||
-        !BuildSourceCounterInstructions(*source.image, disassembly, source.name, source.entry, instructions, error)) {
+            source.image->data(), source.image->size(), disassembly, error, DisassemblyDetail::WithSource)) {
+        data.errors.push_back(std::move(error));
+        return ACLPTI_SUCCESS;
+    }
+    if (!BuildSourceCounterInstructions(*source.image, disassembly, source.name, source.entry, instructions, error)) {
         data.errors.push_back(std::move(error));
         return ACLPTI_SUCCESS;
     }
@@ -617,22 +544,16 @@ aclptiResult CollectSourceCounterData(
         data.errors.emplace_back("not all VF targets could be classified for SourceCounter");
     }
     const RuntimeApi runtime;
-    SourceDevice device;
     if (!runtime.Ready()) {
         data.errors.emplace_back("original Runtime APIs for SourceCounter are unavailable");
         return ACLPTI_SUCCESS;
     }
-    if (!ReadSourceDevice(deviceId, device, error)) {
+    NpubitDevice device;
+    if (!ReadNpubitDevice(deviceId, device, error)) {
         data.errors.push_back(std::move(error));
         return ACLPTI_SUCCESS;
     }
-    return CollectRounds({sdk, runtime, device, replay, source, instructions}, data);
-#else
-    (void)deviceId;
-    (void)replay;
-    data.errors.emplace_back("CANN NPUbit SDK unavailable for SourceCounter");
-    return ACLPTI_SUCCESS;
-#endif
+    return CollectRounds({runtime, device, replay, source, instructions}, data);
 }
 
 } // namespace aclpti::profiling

@@ -347,7 +347,8 @@ aclptiResult WriteSelectedSummary(
             continue;
         }
         if (section == "Roofline") {
-            if (!Roofline(output, result, config, metadata) && degraded != nullptr) {
+            const bool rooflineWritten = Roofline(output, result, config, metadata);
+            if (!rooflineWritten && degraded != nullptr) {
                 *degraded = true;
             }
             continue;

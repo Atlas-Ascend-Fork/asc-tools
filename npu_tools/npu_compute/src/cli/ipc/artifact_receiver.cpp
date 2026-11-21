@@ -427,11 +427,13 @@ bool ArtifactReceiver::Validate(
         for (const auto& group : groups.pmuGroups) {
             const auto& parent = group.first;
             const auto instructionFiles = groups.samplingGroups.find(parent);
+            const std::set<std::string> emptyFiles;
+            const auto& files = instructionFiles == groups.samplingGroups.end() ? emptyFiles : instructionFiles->second;
             validation.Check(
-                instructionFiles != groups.samplingGroups.end() && instructionFiles->second.count("objdump.txt") != 0,
+                files.count("objdump.txt") != 0,
                 (directory_path_ / parent / "objdump.txt").string() + ": required SourceCounter disassembly missing");
             validation.Check(
-                instructionFiles != groups.samplingGroups.end() && instructionFiles->second.count("summary.db") != 0,
+                files.count("summary.db") != 0,
                 (directory_path_ / parent / "summary.db").string() + ": required SourceCounter database missing");
         }
     }

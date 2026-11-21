@@ -576,8 +576,10 @@ std::optional<std::uint64_t> SimtCallTarget(const Instruction& instruction)
     }
     std::uint64_t encodedDistance = 0;
     const auto maximumMagnitude = static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) + 1U;
-    if (!ParseUnsigned(std::string(operand), encodedDistance) ||
-        encodedDistance > (negative ? maximumMagnitude : std::numeric_limits<std::uint32_t>::max())) {
+    if (!ParseUnsigned(std::string(operand), encodedDistance)) {
+        return std::nullopt;
+    }
+    if (encodedDistance > (negative ? maximumMagnitude : std::numeric_limits<std::uint32_t>::max())) {
         return std::nullopt;
     }
     // llvm-objdump prints SIMT CALL displacements in bytes relative to the CALL PC.
@@ -679,8 +681,10 @@ bool BuildSourceCounterInstructions(
         ReadSourceVectorCalls(elf, instructions, elf.functions.at(output.launchSymbol), output);
         for (const auto suffix : {std::string_view{"_mix_aic"}, std::string_view{"_aic"}}) {
             const auto& symbol = output.launchSymbol;
-            if (symbol.size() <= suffix.size() ||
-                symbol.compare(symbol.size() - suffix.size(), suffix.size(), suffix)) {
+            if (symbol.size() <= suffix.size()) {
+                continue;
+            }
+            if (symbol.compare(symbol.size() - suffix.size(), suffix.size(), suffix) != 0) {
                 continue;
             }
             const auto partner = elf.functions.find(symbol.substr(0, symbol.size() - 1) + "v");

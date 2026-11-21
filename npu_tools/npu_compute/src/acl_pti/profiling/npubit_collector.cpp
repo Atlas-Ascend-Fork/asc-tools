@@ -8,7 +8,10 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npubit_collector.h"
+#include "injection/injection_hook.h"
 #include "npu_compute_log.h"
+#include "npubit_device.h"
+#include <acl/acl_platform.h>
 #include <array>
 #include <boost/filesystem.hpp>
 #include <cmath>
@@ -37,29 +40,69 @@ constexpr std::uint64_t kSingleInstructionCount = 1U;
 constexpr double kFmaOperations = 2.0;
 constexpr double kBitsPerByte = 8.0;
 constexpr std::size_t kObjdumpLineBufferSize = 4096U;
-} // namespace
-
 bool ReadNpubitTopology(std::int32_t deviceId, AiCoreTopology& topology)
 {
-    if (deviceId < 0) {
-        return false;
-    }
     const auto close = [](void* library) { (void)dlclose(library); };
     const std::unique_ptr<void, decltype(close)> hal(dlopen("libascend_hal.so", RTLD_NOW | RTLD_LOCAL), close);
     if (!hal) {
         return false;
     }
     const auto getInfo = reinterpret_cast<decltype(&halGetDeviceInfo)>(dlsym(hal.get(), "halGetDeviceInfo"));
-    const auto id = static_cast<std::uint32_t>(deviceId);
-    std::int64_t dies = 0;
-    std::int64_t cores = 0;
-    if (!getInfo || getInfo(id, MODULE_TYPE_AICORE, INFO_TYPE_DIE_NUM, &dies) != DRV_ERROR_NONE ||
-        getInfo(id, MODULE_TYPE_AICORE, INFO_TYPE_CORE_NUM, &cores) != DRV_ERROR_NONE || dies <= 0 || cores <= 0 ||
-        dies > std::numeric_limits<std::uint32_t>::max() || cores % dies != 0 ||
-        cores / dies > std::numeric_limits<std::uint32_t>::max()) {
+    if (getInfo == nullptr) {
         return false;
     }
-    topology = {static_cast<std::uint32_t>(dies), static_cast<std::uint32_t>(cores / dies)};
+    const auto id = static_cast<std::uint32_t>(deviceId);
+    std::int64_t dies = 0;
+    if (getInfo(id, MODULE_TYPE_AICORE, INFO_TYPE_DIE_NUM, &dies) != DRV_ERROR_NONE) {
+        return false;
+    }
+    std::int64_t cores = 0;
+    if (getInfo(id, MODULE_TYPE_AICORE, INFO_TYPE_CORE_NUM, &cores) != DRV_ERROR_NONE) {
+        return false;
+    }
+    constexpr auto maxCount = std::numeric_limits<std::uint32_t>::max();
+    if (dies <= 0 || cores <= 0 || dies > maxCount) {
+        return false;
+    }
+    if (cores % dies != 0) {
+        return false;
+    }
+    const auto coresPerDie = cores / dies;
+    if (coresPerDie > maxCount) {
+        return false;
+    }
+    topology = {static_cast<std::uint32_t>(dies), static_cast<std::uint32_t>(coresPerDie)};
+    return true;
+}
+} // namespace
+
+bool ReadNpubitDevice(std::int32_t deviceId, NpubitDevice& device, std::string& error)
+{
+    if (deviceId < 0) {
+        error = "invalid device ID for NPUbit";
+        return false;
+    }
+    const auto getInfo =
+        reinterpret_cast<aclrtGetDeviceInfoFunc>(acltoolGetOriginalRuntimeApi(ACL_RT_API_aclrtGetDeviceInfo));
+    if (getInfo == nullptr) {
+        error = "Runtime device architecture query is unavailable";
+        return false;
+    }
+    std::int64_t architecture = 0;
+    if (getInfo(static_cast<std::uint32_t>(deviceId), ACL_DEV_ATTR_NPU_ARCH, &architecture) != ACL_SUCCESS) {
+        error = "cannot query NPU device architecture";
+        return false;
+    }
+    if (architecture != DAV_3510) {
+        error = "NPUbit collection is unsupported for NPU architecture " + std::to_string(architecture);
+        return false;
+    }
+    AiCoreTopology topology{};
+    if (!ReadNpubitTopology(deviceId, topology)) {
+        error = "cannot determine NPUbit AI core topology";
+        return false;
+    }
+    device = {V100, topology};
     return true;
 }
 
@@ -672,16 +715,16 @@ bool ClassifyKernel(const std::vector<char>& elf, bool& hasSimd, bool& hasSimt)
 }
 
 aclptiResult CollectPass(
-    NpubitInstrumentationType type, const AiCoreTopology& topology, const BinarySource& source,
-    const ReplayMemory& memory, const ReplayLaunchFunction& launch, aclrtSynchronizeStreamFunc synchronize,
-    aclrtStream stream, const std::function<void()>& beforeReplay, NpubitOutput& analysis, std::string& error,
+    NpubitInstrumentationType type, const NpubitDevice& device, const BinarySource& source, const ReplayMemory& memory,
+    const ReplayLaunchFunction& launch, aclrtSynchronizeStreamFunc synchronize, aclrtStream stream,
+    const std::function<void()>& beforeReplay, NpubitOutput& analysis, std::string& error,
     aclptiRooflineData* rooflineData = nullptr, std::map<std::uint64_t, NpubitDataType>* simtDtypeByAddr = nullptr)
 {
-    const NpubitHwContext hardwareContext{topology.dieCount, topology.coresPerDie};
+    const NpubitHwContext hardwareContext{device.topology.dieCount, device.topology.coresPerDie};
     NpubitHandle handle{};
     if (!CheckNpubit(
-            NpubitCreateHandle(source.image->data(), source.image->size(), &handle, V100, true), "NpubitCreateHandle",
-            error)) {
+            NpubitCreateHandle(source.image->data(), source.image->size(), &handle, device.platform, true),
+            "NpubitCreateHandle", error)) {
         return ACLPTI_SUCCESS;
     }
     struct ReleaseHandle {
@@ -759,9 +802,10 @@ aclptiResult CollectNpubitRoofline(
     const std::function<void()>& beforeReplay, aclptiRooflineData& data)
 {
     data.status = ACLPTI_SUCCESS;
-    AiCoreTopology topology{};
-    if (!ReadNpubitTopology(deviceId, topology)) {
-        data.errors.emplace_back("cannot determine NPUbit AI core topology");
+    NpubitDevice device;
+    std::string deviceError;
+    if (!ReadNpubitDevice(deviceId, device, deviceError)) {
+        data.errors.push_back(std::move(deviceError));
         data.status = ACLPTI_ERROR_PROFILING_FAILED;
         return ACLPTI_SUCCESS;
     }
@@ -802,7 +846,7 @@ aclptiResult CollectNpubitRoofline(
         std::string error;
         NpubitOutput analysis;
         const auto status = CollectPass(
-            type, topology, source, memory, launch, synchronize, stream, beforeReplay, analysis, error, &data,
+            type, device, source, memory, launch, synchronize, stream, beforeReplay, analysis, error, &data,
             &simtDtypeByAddr);
         if (!error.empty()) {
             data.errors.push_back("pass=" + std::to_string(static_cast<int>(type)) + ": " + error);
