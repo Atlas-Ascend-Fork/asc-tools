@@ -7,18 +7,46 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-/**
- * @file runtime_api_handlers.h
- * @brief Declares registration of ACL PTI runtime API handlers.
- */
-#ifndef NPU_TOOLS_NPU_COMPUTE_SRC_ACL_PTI_HANDLER_RUNTIME_API_HANDLERS_H
-#define NPU_TOOLS_NPU_COMPUTE_SRC_ACL_PTI_HANDLER_RUNTIME_API_HANDLERS_H
+#ifndef NPU_COMPUTE_RUNTIME_API_HANDLERS_H
+#define NPU_COMPUTE_RUNTIME_API_HANDLERS_H
+
+#include "injection/injection_hook.h"
 
 namespace aclpti::handler {
+enum class RuntimeHandlerMode { Kernel, Application };
 
-/// Registers every supported runtime API handler with the injection hook.
+struct RuntimeHandlerSet {
+    aclrtLaunchKernelWithHostArgsFunc launchKernelWithHostArgs = nullptr;
+    aclrtLaunchSIMTKernelWithHostArgsFunc launchSIMTKernelWithHostArgs = nullptr;
+    aclrtLaunchKernelWithArgsArrayFunc launchKernelWithArgsArray = nullptr;
+    aclrtLaunchSIMTKernelWithArgsArrayFunc launchSIMTKernelWithArgsArray = nullptr;
+    aclrtMemcpyFunc memcpy = nullptr;
+    aclrtBinaryLoadFromDataFunc binaryLoadFromData = nullptr;
+    aclrtBinaryLoadFromFileFunc binaryLoadFromFile = nullptr;
+    aclrtBinaryGetFunctionFunc binaryGetFunction = nullptr;
+    aclrtMallocFunc malloc = nullptr;
+    aclrtMallocAlign32Func mallocAlign32 = nullptr;
+    aclrtMallocWithCfgFunc mallocWithCfg = nullptr;
+    aclrtMemsetFunc memset = nullptr;
+    aclrtFreeFunc free = nullptr;
+    aclrtCreateStreamFunc createStream = nullptr;
+    aclrtDestroyStreamFunc destroyStream = nullptr;
+    aclrtSetDeviceFunc setDevice = nullptr;
+    aclrtResetDeviceFunc resetDevice = nullptr;
+    aclrtSynchronizeStreamFunc synchronizeStream = nullptr;
+    aclrtBinaryGetFunctionByEntryFunc binaryGetFunctionByEntry = nullptr;
+    aclrtLaunchKernelFunc launchKernel = nullptr;
+    aclrtLaunchKernelWithConfigFunc launchKernelWithConfig = nullptr;
+    aclrtGetFuncBySymbolFunc getFuncBySymbol = nullptr;
+    aclrtBinaryUnLoadFunc binaryUnLoad = nullptr;
+    aclrtResetDeviceForceFunc resetDeviceForce = nullptr;
+};
+
+RuntimeHandlerSet BuildKernelRuntimeHandlers();
+RuntimeHandlerSet BuildApplicationRuntimeHandlers();
 bool RegisterRuntimeApiHandlers();
+bool RegisterRuntimeApiHandlers(RuntimeHandlerMode mode);
+void ClearRuntimeApiHandlers() noexcept;
 
 } // namespace aclpti::handler
-
-#endif // NPU_TOOLS_NPU_COMPUTE_SRC_ACL_PTI_HANDLER_RUNTIME_API_HANDLERS_H
+#endif

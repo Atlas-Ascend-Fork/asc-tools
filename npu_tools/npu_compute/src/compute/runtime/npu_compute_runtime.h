@@ -23,8 +23,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <atomic>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -39,9 +37,11 @@ inline constexpr int kInitializeFailed = -1;
 
 class NpuComputeRuntime {
 public:
-    static NpuComputeRuntime& Instance();
-
-    int Initialize(const RuntimeConfig& config, ArtifactSink& sink, std::function<int(int)> onDrained);
+    ~NpuComputeRuntime();
+    int Initialize(const RuntimeConfig& config, ArtifactSink& sink, aclptiCallbackFunc sessionCallback);
+    aclptiResult Submit(std::shared_ptr<const aclptiProfilingDataResult> snapshot);
+    void ObserveRuntime(aclptiCallbackDomain domain, aclptiCallbackId cbid, const aclptiCallbackData* data) noexcept;
+    void Rollback() noexcept;
     void Stop() noexcept;
     int ShutdownAfterPtiDrain();
     std::uint64_t RowCount() const { return row_count_; }
@@ -55,21 +55,21 @@ public:
     }
 
 private:
-    static void HardwareInfoTriggerCallback(
-        void* userData, aclptiCallbackDomain domain, aclptiCallbackId cbid,
-        const aclptiCallbackData* callbackData) noexcept;
-
+    bool ConfigureReports(const RuntimeConfig& config);
+    bool PreparePipelineStaging();
+    int StartReportCollection();
+    void DrainPmuConsumer();
+    int InitializeHardwareCallbacks(aclptiCallbackFunc sessionCallback);
     void DisableHardwareCallbacks() noexcept;
+    void CaptureReportEnvironment();
     aclptiResult ProcessPmuData(std::shared_ptr<const aclptiProfilingDataResult> result);
-    ReportConfig LoadReportConfig(bool& frequencyOverride);
     aclptiResult ProcessAdditionalReports(
         const aclptiProfilingDataResult& result, const ReportConfig& config, const std::string& prefix,
         aclptiResult firstStatus);
-    KernelMetadata CollectReportMetadata(const ReportConfig& csvConfig, bool frequencyOverride);
+    KernelMetadata CollectReportMetadata(const ReportConfig& csvConfig, bool frequencyOverride, int32_t deviceId);
     void UpdateCollectionStats(const aclptiProfilingDataResult& result);
     aclptiResult ProcessWarpReport(const aclptiProfilingDataResult& result, const std::string& prefix, bool required);
-    aclptiResult ProcessPipelineReplay(
-        std::uint64_t replayId, const aclptiPipelineData& replay, DynamicHardwareDeviceApi& deviceApi);
+    aclptiResult ProcessPipelineReplay(std::uint64_t replayId, const aclptiPipelineData& replay);
     aclptiResult ProcessPipelineData(const aclptiProfilingDataResult& result, const ReportConfig& config);
     aclptiResult PublishPipelineArtifacts();
     // Called with mutex_ held after the PMU consumer has drained.
@@ -84,6 +84,8 @@ private:
     std::size_t enabled_hardware_callback_count_ = 0;
     bool csv_frequency_override_ = false;
     bool csv_device_info_loaded_ = false;
+    KernelMetadata report_metadata_;
+    double syscnt_frequency_hz_ = 0.0;
     bool pm_sampling_enabled_ = false;
     std::uint64_t pm_sampling_completed_ = 0;
     std::uint64_t pm_sampling_failures_ = 0;
@@ -96,16 +98,14 @@ private:
     boost::filesystem::path pipeline_process_directory_;
     boost::filesystem::path pipeline_temporary_root_;
     std::vector<PipeTraceFragmentInfo> pipeline_fragments_;
-    HardwareInfoCollector hardware_info_collector_;
+    HardwareInfoCollector hardware_info_collector_{false};
     KernelMetadataCollector kernel_metadata_collector_;
     ArtifactSink* artifact_sink_ = nullptr;
-    std::function<int(int)> on_drained_;
     std::uint64_t row_count_ = 0;
     std::uint64_t error_count_ = 0;
     std::uint64_t replay_count_ = 0;
     std::uint64_t report_sequence_ = 0;
     bool degraded_ = false;
-    std::atomic<bool> initializing_{false};
 };
 
 } // namespace npucompute

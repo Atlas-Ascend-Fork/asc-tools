@@ -15,24 +15,36 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <thread>
 namespace npucompute {
 class ArtifactPublisher final : public ArtifactSink {
 public:
+    ArtifactPublisher();
     explicit ArtifactPublisher(ipc::Channel channel);
     ArtifactPublisher(ipc::Channel channel, ipc::Deadline readyDeadline);
     ~ArtifactPublisher() override;
+    void Attach(ipc::Channel channel);
+    void SendReady(ipc::Deadline deadline);
+    void FailStartup(ipc::Error error) noexcept;
     void Begin(const std::string& name) override;
     void Write(std::string_view bytes) override;
     void Commit(uint64_t records) override;
     void Abort() noexcept override;
     void PublishOptional(const std::string& name, std::string_view contents, uint64_t records) override;
+    void RequestFinish(ipc::Result result);
+    bool WaitForFinish() noexcept;
     bool Finish(ipc::Result result);
     void Stop() noexcept;
-    bool Cancelled() const { return interrupted_; }
+    bool Cancelled() const { return interrupted_ || failed_ || stopping_; }
 
 private:
     ipc::ArtifactBegin PrepareArtifact(const std::string& name) const;
+    enum class StartupAction { Wait, Publish, Ready };
+    bool StartPublishing();
+    void SendFailure(const ipc::Error& error) noexcept;
+    void MarkFailed();
+    void JoinWorker() noexcept;
     void Enqueue(ipc::Frame frame);
     void Worker() noexcept;
     void PollControl();
@@ -52,9 +64,11 @@ private:
     std::atomic<int64_t> drain_deadline_ms_{0};
     bool finishing_ = false;
     bool flush_requested_ = false;
+    bool channel_attached_ = false;
     bool started_ = false;
+    StartupAction startup_action_ = StartupAction::Wait;
     ipc::Deadline ready_deadline_{};
-    bool send_ready_ = false;
+    std::optional<ipc::Error> startup_error_;
     std::mutex join_mutex_;
     bool acknowledged_ = false;
     std::mutex artifact_mutex_;

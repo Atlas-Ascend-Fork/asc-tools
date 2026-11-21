@@ -61,13 +61,12 @@ void CheckCallbackFlow(const std::string& log, const std::string& callback)
         "[acl_pti_callback_stub] event domain=1 cbid=" + callback + " site=1 retval=0 dispatched=1";
     EXPECT_NE(log.find(event), std::string::npos) << log;
     EXPECT_EQ(CountOccurrences(log, "[acl_pti_callback_stub] event domain=1"), 1U) << log;
-    EXPECT_NE(log.find("runtime callback domain=1 cbid=" + callback + " site=1 retval=0 accepted=1"), std::string::npos)
-        << log;
     const std::string published =
         "[hardware_collection_stub_app] HardwareInfo.jsonl available after callback cbid=" + callback;
     const std::string cleaned = "[hardware_collection_stub_app] Device cleanup completed";
     ASSERT_EQ(CountOccurrences(log, published), 1U) << log;
     ASSERT_EQ(CountOccurrences(log, cleaned), 1U) << log;
+    EXPECT_LT(log.find(event), log.find(published));
     EXPECT_LT(log.find(published), log.find(cleaned));
     EXPECT_EQ(log.find("[libnpu-compute] HardwareInfo:"), std::string::npos) << log;
 }
@@ -188,11 +187,11 @@ void CheckHardwareInfo(const boost::filesystem::path& output)
         "Host Info", "Device Info", "CPU Information", "AI Core Information", "Memory Information"};
     const std::array<std::vector<std::string>, 5> keys = {
         {{"category", "cpu physical count", "cpu logical count", "memory total size(MB)", "disk total size(GB)"},
-         {"category", "npu count", "chip info", "arch info"},
-         {"category", "control cpu count", "ai cpu count", "ai cpu frequency(MHZ)"},
-         {"category", "ai core count", "ai cube count", "ai vector count", "ai cube frequency(MHZ)",
+         {"category", "Device Id", "npu count", "chip info", "arch info"},
+         {"category", "Device Id", "control cpu count", "ai cpu count", "ai cpu frequency(MHZ)"},
+         {"category", "Device Id", "ai core count", "ai cube count", "ai vector count", "ai cube frequency(MHZ)",
           "ai vector frequency(MHZ)"},
-         {"category", "hbm total(MB)", "hbm used(MB)", "hbm frequency(MHZ)"}}};
+         {"category", "Device Id", "hbm total(MB)", "hbm used(MB)", "hbm frequency(MHZ)"}}};
     for (std::size_t index = 0; index < records.size(); ++index) {
         SCOPED_TRACE(index);
         std::vector<std::string> actualKeys;
@@ -201,6 +200,9 @@ void CheckHardwareInfo(const boost::filesystem::path& output)
         }
         ASSERT_EQ(actualKeys, keys[index]);
         CheckString(records[index], lines[index], "category", categories[index]);
+        if (index > 0) {
+            CheckNumber(records[index], lines[index], "Device Id", 0);
+        }
     }
     for (const auto& key : keys[0]) {
         if (key == "category") {

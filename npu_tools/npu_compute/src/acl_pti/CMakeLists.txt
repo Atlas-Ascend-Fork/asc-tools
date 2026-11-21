@@ -28,6 +28,9 @@ add_library(acl_pti SHARED
   profiling/replay_memory.cpp
   profiling/replay_runtime.cpp
   handler/runtime_api_handlers.cpp
+  handler/kernel_runtime_handlers.cpp
+  handler/application_runtime_handlers.cpp
+  profiling/application_profiler.cpp
   profiling/binary_registry.cpp
   profiling/kernel_instrumenter.cpp
   profiling/pm_sampling_instruction_map.cpp
@@ -38,6 +41,7 @@ add_library(acl_pti SHARED
 target_include_directories(acl_pti PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
+target_link_options(acl_pti PRIVATE "LINKER:-z,nodelete")
 target_link_libraries(acl_pti PRIVATE c_sec_static)
 target_link_libraries(acl_pti
   PUBLIC npu_compute_backend_headers
@@ -46,6 +50,7 @@ target_link_libraries(acl_pti
     npu_bit
     npu_compute_plog
     acl_tool_injection
+    acl_runtime_backend
     acl_prof_api_backend
     Threads::Threads
     Boost::filesystem

@@ -19,9 +19,11 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iterator>
 #include <thread>
 #include <stdexcept>
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -157,6 +159,12 @@ TEST(NpuComputeUdsArtifact, RoundTripAndManifest)
     broken.manifest[0].bytes++;
     Reject([&] { receiver.Validate(broken, config); });
     broken = result;
+    broken.manifest[0].id = 99;
+    Reject([&] { receiver.Validate(broken, config); });
+    broken = result;
+    broken.manifest[0].name = "Memory.csv";
+    Reject([&] { receiver.Validate(broken, config); });
+    broken = result;
     broken.manifest.pop_back();
     Reject([&] { receiver.Validate(broken, config); });
     broken = result;
@@ -263,6 +271,47 @@ TEST(NpuComputeUdsArtifact, WarpArtifactManifest)
     broken.manifest.pop_back();
     Reject([&] { receiver.Validate(broken, config); });
 }
+TEST(NpuComputeUdsArtifact, ApplicationManifestMatchesReceivedArtifacts)
+{
+    TempDirectory temporary;
+    ArtifactReceiver receiver(temporary.Path());
+    Config config;
+    config.sections = {"Communication"};
+    config.replayMode = "application";
+    Result result;
+    result.sections = config.sections;
+    result.manifest = {
+        {1, "application_raw.jsonl", 3},
+        {2, "application_manifest.json", 3},
+        {3, "HardwareInfo.jsonl", 3},
+    };
+    for (const auto& entry : result.manifest) {
+        Begin(receiver, entry.id, entry.name);
+        TypedChunk(receiver, entry.id, KindForName(entry.name), "{}\n");
+        End(receiver, entry.id, 3);
+    }
+    EXPECT_TRUE(receiver.Validate(result, config));
+
+    const std::vector<ManifestEntry> mismatches = {
+        {99, "application_raw.jsonl", 3},
+        {1, "device0/op-x/0/summary.jsonl", 3},
+        {1, "application_raw.jsonl", 4},
+    };
+    for (const auto& entry : mismatches) {
+        auto broken = result;
+        broken.manifest.front() = entry;
+        try {
+            receiver.Validate(broken, config);
+            FAIL() << "manifest mismatch was accepted: " << entry.id << '/' << entry.name << '/' << entry.bytes;
+        } catch (const Exception& error) {
+            EXPECT_EQ(error.Detail().code, 1U);
+            EXPECT_EQ(error.Detail().domain, "ARTIFACT");
+            EXPECT_EQ(error.Detail().phase, "receive");
+            EXPECT_STREQ(error.what(), "ARTIFACT: manifest length mismatch");
+        }
+    }
+}
+
 TEST(NpuComputeUdsArtifact, MalformedAndCleanup)
 {
     TempDirectory temporary;
@@ -352,6 +401,80 @@ TEST(NpuComputeUdsArtifact, NoOverwrite)
     Check(ReadFile(root / "sentinel") == "preserve");
     Check(fs::is_symlink(root / ".Memory.csv.2.tmp"));
 }
+void TestDeferredPublisher(bool failStartup)
+{
+    const auto bootstrap = MakeBootstrap();
+    Listener listener(bootstrap.name);
+    const auto deadline = bootstrap.handshakeDeadline;
+    auto connecting = std::async(std::launch::async, [&] {
+        return Channel::Connect(bootstrap.name, bootstrap.session, getpid(), getuid(), deadline);
+    });
+    auto channel = listener.Accept(bootstrap.session, getpid(), getuid(), deadline);
+    auto peer = connecting.get();
+    ArtifactPublisher publisher;
+    publisher.Attach(std::move(channel));
+    pollfd input{peer.Fd(), POLLIN, 0};
+    EXPECT_EQ(poll(&input, 1, 40), 0);
+
+    if (failStartup) {
+        publisher.FailStartup({8, "registration failed", "INJECTION", "initialize"});
+        const auto frame = peer.Receive(deadline);
+        ASSERT_EQ(frame.type, Type::Error);
+        EXPECT_EQ(DecodeError(frame.payload).message, "registration failed");
+        EXPECT_THROW(publisher.SendReady(deadline), std::runtime_error);
+        return;
+    }
+
+    publisher.SendReady(deadline);
+    const auto frame = peer.Receive(deadline);
+    ASSERT_EQ(frame.type, Type::ConnectAck);
+    EXPECT_EQ(DecodeReady(frame.payload).pid, static_cast<uint32_t>(getpid()));
+    EXPECT_THROW(publisher.SendReady(deadline), std::runtime_error);
+    EXPECT_EQ(poll(&input, 1, 40), 0);
+}
+
+TEST(NpuComputeUdsArtifact, DeferredPublisherSendsReadyOnce) { TestDeferredPublisher(false); }
+
+TEST(NpuComputeUdsArtifact, DeferredPublisherSendsStartupError) { TestDeferredPublisher(true); }
+
+TEST(NpuComputeUdsArtifact, PublisherReadyRespectsHandshakeDeadline)
+{
+    const auto bootstrap = MakeBootstrap();
+    Listener listener(bootstrap.name);
+    const auto deadline = bootstrap.handshakeDeadline;
+    auto connecting = std::async(std::launch::async, [&] {
+        return Channel::Connect(bootstrap.name, bootstrap.session, getpid(), getuid(), deadline);
+    });
+    ArtifactPublisher publisher;
+    publisher.Attach(listener.Accept(bootstrap.session, getpid(), getuid(), deadline));
+    auto peer = connecting.get();
+
+    EXPECT_THROW(publisher.SendReady(std::chrono::steady_clock::now()), std::runtime_error);
+    publisher.FailStartup({8, "READY failed", "INJECTION", "initialize"});
+    const auto frame = peer.Receive(deadline);
+    ASSERT_EQ(frame.type, Type::Error);
+    EXPECT_EQ(DecodeError(frame.payload).phase, "deadline");
+}
+
+TEST(NpuComputeUdsArtifact, PublisherReadySendDetectsDisconnect)
+{
+    const auto bootstrap = MakeBootstrap();
+    Listener listener(bootstrap.name);
+    const auto deadline = bootstrap.handshakeDeadline;
+    auto connecting = std::async(std::launch::async, [&] {
+        return Channel::Connect(bootstrap.name, bootstrap.session, getpid(), getuid(), deadline);
+    });
+    auto channel = listener.Accept(bootstrap.session, getpid(), getuid(), deadline);
+    auto peer = connecting.get();
+    ArtifactPublisher publisher;
+    publisher.Attach(std::move(channel));
+    peer.Close();
+
+    EXPECT_THROW(publisher.SendReady(deadline), std::runtime_error);
+    publisher.FailStartup({8, "READY failed", "INJECTION", "initialize"});
+    EXPECT_TRUE(publisher.Cancelled());
+}
+
 TEST(NpuComputeUdsArtifact, PublisherProcess)
 {
     TempDirectory temporary;
@@ -502,6 +625,10 @@ TEST(NpuComputeUdsArtifact, FlushPublishesResult) { TestPublisherControl(Type::F
 TEST(NpuComputeUdsArtifact, InterruptAbortsPublication) { TestPublisherControl(Type::Interrupt, false); }
 TEST(NpuComputeUdsArtifact, ErrorAbortsPublication) { TestPublisherControl(Type::Error, false); }
 TEST(NpuComputeUdsArtifact, UnexpectedFinalReplyFails) { TestPublisherControl(Type::ConnectAck, false, true); }
+TEST(NpuComputeUdsArtifact, InterruptAfterResultAbortsPublication)
+{
+    TestPublisherControl(Type::Interrupt, false, true);
+}
 
 namespace {
 void CheckRemoteFailure(bool afterReady)

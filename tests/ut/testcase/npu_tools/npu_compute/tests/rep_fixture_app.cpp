@@ -20,7 +20,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
@@ -64,6 +66,92 @@ std::string SamplingDatabase()
     return bytes;
 }
 
+int PublishApplicationRank(bool abortAfterArtifact)
+{
+    namespace ipc = npucompute::ipc;
+    if (std::getenv("NPU_COMPUTE_REPLAY_MODE") == nullptr) {
+        throw std::runtime_error("Application transport mode is missing");
+    }
+    const auto deadline = ipc::After(ipc::kHandshakeTimeout);
+    auto channel = ipc::Channel::Connect(
+        std::getenv("NPU_COMPUTE_UDS_NAME"), std::stoull(std::getenv("NPU_COMPUTE_SESSION_ID")),
+        static_cast<pid_t>(std::stol(std::getenv("NPU_COMPUTE_CLI_PID"))), getuid(), deadline);
+    const auto frame = channel.Receive(deadline);
+    if (frame.type != ipc::Type::Connect) {
+        throw std::runtime_error("Expected CONNECT");
+    }
+    const auto config = ipc::DecodeHello(frame.payload).config;
+    if (config.replayMode != "application") {
+        throw std::runtime_error("Expected Application replay");
+    }
+    if (abortAfterArtifact) {
+        channel.Send(
+            ipc::Type::ConnectAck,
+            ipc::EncodeReady({static_cast<uint32_t>(getpid()), static_cast<uint32_t>(getuid()), 0}), deadline);
+        channel.Send(
+            ipc::Type::DataBegin,
+            ipc::EncodeArtifactBegin({1, ipc::DataKind::HardwareInfo, "HardwareInfo.jsonl", ipc::ArtifactType::Jsonl}),
+            deadline);
+        channel.Send(
+            ipc::Type::Hardware,
+            ipc::EncodeArtifactChunk({1, 0, ipc::Bytes(kHardwareInfo.begin(), kHardwareInfo.end())}), deadline);
+        channel.Send(ipc::Type::DataEnd, ipc::EncodeArtifactEnd({1, kHardwareInfo.size(), 5}), deadline);
+        channel.Send(
+            ipc::Type::DataBegin,
+            ipc::EncodeArtifactBegin(
+                {2, ipc::DataKind::Application, "application_manifest.json", ipc::ArtifactType::Json}),
+            deadline);
+        return 23;
+    }
+    npucompute::ArtifactPublisher publisher(std::move(channel), deadline);
+    const auto publish = [&publisher](const std::string& name, std::string_view bytes) {
+        publisher.Begin(name);
+        publisher.Write(bytes);
+        publisher.Commit(1);
+    };
+    publish("HardwareInfo.jsonl", kHardwareInfo);
+    publish("application_raw.jsonl", "{\"recordType\":\"metadata\"}\n");
+    publish("application_manifest.json", "{\"complete\":true}\n");
+    ipc::Result result;
+    result.sections = config.sections;
+    result.complete = true;
+    return publisher.Finish(std::move(result)) ? 0 : 3;
+}
+
+int RunApplicationRanks(const std::string& mode)
+{
+    if (mode == "application-single") {
+        return PublishApplicationRank(false);
+    }
+    std::vector<pid_t> ranks;
+    for (int index = 0; index < 2; ++index) {
+        const pid_t rank = fork();
+        if (rank == 0) {
+            try {
+                _exit(PublishApplicationRank(mode == "application-abort" && index == 1));
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "[rep-fixture] %s\n", error.what());
+                _exit(2);
+            }
+        }
+        if (rank < 0) {
+            throw std::runtime_error("Cannot fork fixture rank");
+        }
+        ranks.push_back(rank);
+    }
+    int status = 0;
+    for (const auto rank : ranks) {
+        int childStatus = 0;
+        if (waitpid(rank, &childStatus, 0) != rank || !WIFEXITED(childStatus)) {
+            return 2;
+        }
+        if (WEXITSTATUS(childStatus) != 0) {
+            status = WEXITSTATUS(childStatus);
+        }
+    }
+    return status;
+}
+
 bool ParseExitCode(const char* value, int* exit_code)
 {
     if (value == nullptr || value[0] == '\0') {
@@ -87,7 +175,8 @@ int main(int argc, char** argv)
     std::string mode;
     std::vector<std::string> applicationArguments;
     for (int index = 1; index < argc; ++index) {
-        if ((mode == "cli-echo" || mode == "exec") && std::strcmp(argv[index], "--") == 0) {
+        if ((mode == "cli-echo" || mode == "exec" || mode == "protocol-bad-offset") &&
+            std::strcmp(argv[index], "--") == 0) {
             while (++index < argc) {
                 applicationArguments.emplace_back(argv[index]);
             }
@@ -105,6 +194,9 @@ int main(int argc, char** argv)
     }
 
     try {
+        if (mode.rfind("application-", 0) == 0) {
+            return RunApplicationRanks(mode);
+        }
         for (const char* legacy : {"NPU_COMPUTE_REPLAY_MODE"}) {
             if (std::getenv(legacy) != nullptr) {
                 throw std::runtime_error(std::string("legacy configuration leaked: ") + legacy);
@@ -151,6 +243,15 @@ int main(int argc, char** argv)
                 throw std::runtime_error("expected protocol rejection");
             }
             std::fprintf(stderr, "[rep-fixture] %s\n", ipc::DecodeError(response.payload).message.c_str());
+            if (!applicationArguments.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                std::ofstream marker(applicationArguments.front());
+                marker << "closed\n";
+                marker.close();
+                if (!marker) {
+                    return 3;
+                }
+            }
             return 0;
         }
         npucompute::ArtifactPublisher publisher(server.TakeChannel(), server.Deadline());

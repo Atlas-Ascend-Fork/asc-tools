@@ -29,6 +29,7 @@ constexpr std::array kSupportedSections = {
     "SourceCounter",
     "Roofline",
     "occupancy",
+    "Communication",
 };
 
 bool Fail(const std::string& message, std::string* error)

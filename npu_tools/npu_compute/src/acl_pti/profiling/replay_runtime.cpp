@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute_log.h"
+#include "acl_pti/initialization.h"
 #include "replay_runtime.h"
 
 #include <cstddef>
@@ -21,6 +22,7 @@ namespace aclpti::profiling {
 namespace {
 constexpr std::size_t kPmSamplingProbeBufferBytes = 32;
 constexpr int kDecimalBase = 10;
+std::atomic<ReplayRuntime*> activeRuntime{nullptr};
 } // namespace
 
 std::int32_t ReplayRuntime::ReadSourceCounterSyncTimeoutMs()
@@ -44,13 +46,14 @@ std::int32_t ReplayRuntime::ReadSourceCounterSyncTimeoutMs()
     return static_cast<std::int32_t>(timeoutMs);
 }
 
-aclptiResult ReplayRuntime::Initialize()
+aclptiResult ReplayRuntime::Initialize(
+    data::ProfilingDataManager::BorrowedResultCallback onData, MsprofRawDataCallback processorUploader)
 {
     if (initialized_) {
         ASCTOOL_DEBUG("[aclpti] replay runtime already initialized");
         return ACLPTI_SUCCESS;
     }
-    const aclptiResult result = rangeProfiler_.Initialize();
+    const aclptiResult result = rangeProfiler_.Initialize(onData, processorUploader);
     if (result != ACLPTI_SUCCESS) {
         ASCTOOL_ERROR(
             "[aclpti] replay runtime initialization failed"
@@ -59,6 +62,7 @@ aclptiResult ReplayRuntime::Initialize()
         return result;
     }
     initialized_ = true;
+    managedSession_ = processorUploader != nullptr;
     ASCTOOL_DEBUG("[aclpti] replay runtime initialized");
     return ACLPTI_SUCCESS;
 }
@@ -192,8 +196,14 @@ aclptiResult ReplayRuntime::ReplayKernel(
         replayMemory_, binaryRegistry_, originalFunction, launchFunction, stream,
         [this](aclrtFuncHandle function, std::uint64_t& offset) { return ReadPmSamplingOffset(function, offset); },
         [this](aclrtStream replayStream) { return SynchronizeSourceCounterStreamWithTimeout(replayStream); });
+    // RangeProfiler captured the symbolization context before the final stream
+    // synchronization. Release this binary's companions on the launch thread.
+    auto collectionStatus = status;
+    if (managedSession_ && status == ACLPTI_SUCCESS) {
+        collectionStatus = binaryRegistry_.ReleaseReplayedCompanions(originalFunction);
+    }
     // One original launch owns all rounds above and exactly one complete result publication.
-    const aclptiResult shutdownStatus = StopProfiling();
+    const aclptiResult shutdownStatus = StopProfiling(collectionStatus);
     ASCTOOL_DEBUG(
         "[aclpti] replay runtime result original=%p replay_status=%d shutdown_status=%d", originalFunction,
         static_cast<int>(status), static_cast<int>(shutdownStatus));
@@ -242,7 +252,7 @@ aclptiResult ReplayRuntime::HandleBinaryResult(aclptiResult status)
 aclptiResult ReplayRuntime::HandleProfilingResult(aclptiResult status)
 {
     if (status != ACLPTI_SUCCESS) {
-        (void)StopProfiling();
+        (void)StopProfiling(status);
     }
     return status;
 }
@@ -329,7 +339,7 @@ aclptiResult ReplayRuntime::ReleasePmSamplingProbeBuffers()
     return result;
 }
 
-aclptiResult ReplayRuntime::StopProfiling()
+aclptiResult ReplayRuntime::StopProfiling(aclptiResult reason)
 {
     bool expected = true;
     if (!profilingAvailable_.compare_exchange_strong(
@@ -339,20 +349,34 @@ aclptiResult ReplayRuntime::StopProfiling()
     try {
         const aclptiResult shutdownStatus = rangeProfiler_.Shutdown();
         const aclptiResult bufferStatus = ReleasePmSamplingProbeBuffers();
-        return shutdownStatus != ACLPTI_SUCCESS ? shutdownStatus : bufferStatus;
+        const auto result = shutdownStatus != ACLPTI_SUCCESS ? shutdownStatus : bufferStatus;
+        initialization::NoteKernelCompletion(reason == ACLPTI_SUCCESS ? result : reason);
+        return result;
     } catch (const std::bad_alloc&) {
         ASCTOOL_ERROR(
             "[aclpti] error operation=profiling_shutdown status=%d"
             " code=%u",
             ACLPTI_ERROR_OUT_OF_MEMORY, static_cast<unsigned>(static_cast<uint32_t>(ACLPTI_ERROR_OUT_OF_MEMORY)));
+        initialization::NoteKernelCompletion(ACLPTI_ERROR_OUT_OF_MEMORY);
         return ACLPTI_ERROR_OUT_OF_MEMORY;
     }
 }
 
+aclptiResult ReplayRuntime::ShutdownLocal()
+{
+    profilingAvailable_.store(false, std::memory_order_release);
+    return rangeProfiler_.Shutdown();
+}
+
 ReplayRuntime& GetReplayRuntime()
 {
-    static ReplayRuntime runtime;
-    return runtime;
+    if (auto* runtime = activeRuntime.load(std::memory_order_acquire)) {
+        return *runtime;
+    }
+    static ReplayRuntime standaloneRuntime;
+    return standaloneRuntime;
 }
+
+void BindReplayRuntime(ReplayRuntime* runtime) noexcept { activeRuntime.store(runtime, std::memory_order_release); }
 
 } // namespace aclpti::profiling

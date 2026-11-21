@@ -62,6 +62,9 @@ add_library(acl_pti_unit STATIC
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/simt_warp_source_registry.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_simt_warp_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/runtime_api_handlers.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/kernel_runtime_handlers.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/application_runtime_handlers.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/application_profiler.cpp
   binary_instrumenter_stub.cpp
 )
 target_compile_definitions(acl_pti_unit PRIVATE NPU_COMPUTE_ENABLE_TEST_CONTROLS=1)
@@ -132,6 +135,9 @@ add_library(acl_pti_test SHARED
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/simt_warp_source_registry.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/npubit_simt_warp_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/runtime_api_handlers.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/kernel_runtime_handlers.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/handler/application_runtime_handlers.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/application_profiler.cpp
   binary_instrumenter_stub.cpp
 )
 target_compile_definitions(acl_pti_test PRIVATE
@@ -142,7 +148,7 @@ target_sources(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security
 target_include_directories(acl_pti_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/../utils/security")
 target_link_libraries(acl_pti_test
   PUBLIC npu_compute_test_headers
-  PRIVATE npu_bit c_sec_static acl_tool_injection_test acl_prof_api_stub Threads::Threads Boost::filesystem
+  PRIVATE npu_bit c_sec_static acl_tool_injection_test acl_runtime_stub acl_prof_api_stub Threads::Threads Boost::filesystem
 )
 set_target_properties(acl_pti_test PROPERTIES
   OUTPUT_NAME acl_pti_test
@@ -175,6 +181,9 @@ set(NPU_COMPUTE_TEST_RUNTIME_SOURCES
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/performance_hints/performance_hint_analyzer.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/performance_hints/performance_hint_utils.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/report_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/application_report.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/application_summary_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/application_op_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/compute_service.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/kernel_metadata_collector.cpp
   ${NPU_COMPUTE_SOURCE_DIR}/src/compute/runtime/section_config.cpp
@@ -336,6 +345,8 @@ set_target_properties(acl_pti_callback_api_test PROPERTIES ENABLE_EXPORTS YES)
 add_test(NAME npu_compute.callback_api COMMAND acl_pti_callback_api_test)
 
 add_executable(acl_pti_replay_test replay_test.cpp)
+target_include_directories(acl_pti_replay_test PRIVATE "${NPU_COMPUTE_SOURCE_DIR}/src")
+add_test(NAME npu_compute.managed_replay COMMAND acl_pti_replay_test --gtest_filter=Decode/*:NpuComputeManagedReplayExit.*)
 target_link_libraries(acl_pti_replay_test
   PRIVATE acl_pti_test ${NPU_COMPUTE_ACLPTI_DSO_BACKENDS}
 )
@@ -1165,3 +1176,104 @@ add_test(NAME npu_compute.warp_csv
     "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:acl_runtime_stub>:$ENV{LD_LIBRARY_PATH}"
     ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/warp_csv_test.py
     $<TARGET_FILE:npu_compute_runtime_callback_test>)
+
+# Application replay controls use only CPU stubs; no physical device is exercised.
+add_executable(npu_compute_application_profiler_test
+  application_profiler_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/application_profiler.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp)
+target_include_directories(npu_compute_application_profiler_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+target_link_libraries(npu_compute_application_profiler_test PRIVATE
+  npu_compute_test_headers injection_test_headers GTest::gtest Threads::Threads)
+add_test(NAME npu_compute.application_profiler COMMAND npu_compute_application_profiler_test)
+
+add_executable(npu_compute_application_handlers_test application_runtime_handlers_test.cpp)
+target_link_libraries(npu_compute_application_handlers_test PRIVATE
+  acl_pti_unit acl_tool_injection_test_unit acl_runtime_stub_unit acl_prof_api_stub_unit
+  GTest::gtest npu_compute_test_process plog_test_library)
+add_test(NAME npu_compute.application_handlers COMMAND npu_compute_application_handlers_test)
+
+add_executable(npu_compute_application_initialization_test application_initialization_test.cpp)
+target_link_libraries(npu_compute_application_initialization_test PRIVATE
+  acl_pti_unit acl_tool_injection_test_unit acl_runtime_stub_unit acl_prof_api_stub_unit
+  GTest::gtest npu_compute_test_process)
+add_test(NAME npu_compute.application_initialization COMMAND npu_compute_application_initialization_test)
+
+add_executable(npu_compute_application_report_test application_report_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/application_report.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/application_summary_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_jsonl_writer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_metrics.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/performance_hints/performance_hint_analyzer.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/performance_hints/performance_hint_utils.cpp)
+target_include_directories(npu_compute_application_report_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
+target_link_libraries(npu_compute_application_report_test PRIVATE
+  npu_compute_test_headers npu_compute_plog_test_headers plog_test_library Boost::filesystem GTest::gtest)
+add_test(NAME npu_compute.application_report COMMAND npu_compute_application_report_test)
+
+add_executable(npu_compute_report_exit_test report_exit_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/report/summary_metrics.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/compute/pmu/pmu_metric_builder.cpp)
+target_include_directories(npu_compute_report_exit_test PRIVATE
+  ${NPU_COMPUTE_SOURCE_DIR}/src ${NPU_COMPUTE_SOURCE_DIR}/src/compute)
+target_link_libraries(npu_compute_report_exit_test PRIVATE
+  npu_compute_test_headers npu_compute_plog_test_headers plog_test_library)
+add_test(NAME npu_compute.report_exit COMMAND npu_compute_report_exit_test)
+set_tests_properties(npu_compute.report_exit PROPERTIES TIMEOUT 30 LABELS "npu_compute_ci_host")
+add_dependencies(npu_compute_test_artifacts npu_compute_report_exit_test)
+
+add_dependencies(npu_compute_test_artifacts
+  npu_compute_application_profiler_test npu_compute_application_handlers_test
+  npu_compute_application_initialization_test npu_compute_application_report_test)
+
+set_target_properties(npu_compute_application_handlers_test PROPERTIES CXX_VISIBILITY_PRESET hidden)
+
+add_executable(npu_compute_application_replay_probe application_replay_probe.cpp)
+target_link_libraries(npu_compute_application_replay_probe PRIVATE npu_compute_test_headers acl_runtime_stub acl_prof_api_stub)
+set_target_properties(npu_compute_application_replay_probe PROPERTIES ENABLE_EXPORTS YES)
+add_dependencies(npu_compute_test_artifacts npu_compute_application_replay_probe)
+
+# Check the emitted configuration against the installed Runtime headers as well as the test backend.
+add_executable(npu_compute_application_prof_config_test
+  application_profiler_test.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/profiling/application_profiler.cpp
+  ${NPU_COMPUTE_SOURCE_DIR}/src/acl_pti/data/raw_data_decoder.cpp)
+target_include_directories(npu_compute_application_prof_config_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+target_link_libraries(npu_compute_application_prof_config_test PRIVATE
+  npu_compute_backend_headers npu_compute_plog_test_headers plog_test_library GTest::gtest Threads::Threads)
+add_test(NAME npu_compute.application_prof_config COMMAND npu_compute_application_prof_config_test
+  --gtest_filter=ApplicationProfilerTest.CommunicationUsesOneSummaryPmuRoundOnEachDevice)
+add_dependencies(npu_compute_test_artifacts npu_compute_application_prof_config_test)
+
+add_test(NAME npu_compute.application_integration
+  COMMAND ${CMAKE_COMMAND} -E env
+    "NPU_COMPUTE_TEST_BIN_DIR=$<TARGET_FILE_DIR:npu_compute_cli_test_bin>"
+    "NPU_COMPUTE_APPLICATION_PROBE=$<TARGET_FILE:npu_compute_application_replay_probe>"
+    ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+    ${NPU_COMPUTE_PY_TEST_DIR}/test_application_replay.py)
+set_tests_properties(npu_compute.application_integration PROPERTIES
+  TIMEOUT 120 LABELS "npu_compute_ci_host"
+  ENVIRONMENT "LD_LIBRARY_PATH=${NPU_COMPUTE_TEST_LD_LIBRARY_PATH}")
+foreach(test_name IN ITEMS application_profiler application_handlers application_initialization application_report
+    application_prof_config)
+  set_tests_properties(npu_compute.${test_name} PROPERTIES
+    TIMEOUT 120 LABELS "npu_compute_ci_host"
+    ENVIRONMENT "LD_LIBRARY_PATH=${NPU_COMPUTE_TEST_LD_LIBRARY_PATH}")
+endforeach()
+list(APPEND NPU_COMPUTE_NATIVE_GTEST_TARGETS
+  npu_compute_application_profiler_test npu_compute_application_handlers_test
+  npu_compute_application_initialization_test npu_compute_application_report_test
+  npu_compute_application_prof_config_test)
+set(NPU_COMPUTE_NATIVE_GTEST_TARGETS "${NPU_COMPUTE_NATIVE_GTEST_TARGETS}" PARENT_SCOPE)
+
+foreach(target IN ITEMS npu_compute_application_profiler_test npu_compute_application_handlers_test
+    npu_compute_application_initialization_test npu_compute_application_report_test
+    npu_compute_application_prof_config_test)
+  target_sources(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../llt/gtest_main.cpp")
+  target_compile_definitions(${target} PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
+endforeach()
+
+target_include_directories(npu_compute_application_handlers_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)
+target_include_directories(npu_compute_application_initialization_test PRIVATE ${NPU_COMPUTE_SOURCE_DIR}/src)

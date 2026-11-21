@@ -151,9 +151,10 @@ target_include_directories(injection_plog INTERFACE
 target_link_libraries(injection_plog INTERFACE unified_dlog)
 
 target_link_libraries(acl_tool_injection PUBLIC injection_headers PRIVATE
-  $<BUILD_INTERFACE:intf_pub> injection_plog Threads::Threads injection_runtime_backend injection_prof_api_backend)
+  $<BUILD_INTERFACE:intf_pub> injection_plog Threads::Threads injection_runtime_backend injection_prof_api_backend ${CMAKE_DL_LIBS})
 target_compile_options(acl_tool_injection PRIVATE -Wall -Wextra -Werror)
-target_link_options(acl_tool_injection PRIVATE -Wl,-z,defs)
+# Runtime retains the hook entry points for the lifetime of the process.
+target_link_options(acl_tool_injection PRIVATE -Wl,-z,defs -Wl,-z,nodelete)
 set_target_properties(acl_tool_injection PROPERTIES
   OUTPUT_NAME acl_tool_injection
   CXX_VISIBILITY_PRESET hidden

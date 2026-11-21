@@ -10,9 +10,22 @@
 #include "npu_compute/npu_compute.h"
 #include "runtime/compute_service.h"
 
+#include "acl_pti/initialization.h"
+
+#include <cstdlib>
+#include <cstring>
+
 extern "C" NPU_COMPUTE_EXPORT int acltoolInitialize()
 {
     try {
+        const auto* mode = std::getenv("NPU_COMPUTE_REPLAY_MODE");
+        if (mode != nullptr && std::strcmp(mode, "application") == 0) {
+            return aclpti::initialization::RegisterApplicationLifecycle(
+                       &npucompute::ComputeService::InitializeFromAcl, &npucompute::ComputeService::FinalizeFromAcl) ==
+                           ACLPTI_SUCCESS ?
+                       0 :
+                       -1;
+        }
         return npucompute::ComputeService::Instance().Initialize();
     } catch (...) {
         return -1;

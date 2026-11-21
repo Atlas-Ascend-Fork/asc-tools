@@ -44,7 +44,7 @@ ProfilingDataManager& ProfilingDataManager::Instance()
 }
 ProfilingDataManager::~ProfilingDataManager() { (void)ForceShutdown(); }
 
-aclptiResult ProfilingDataManager::Initialize(aclptiProfilingDataCallback callback)
+aclptiResult ProfilingDataManager::Initialize(aclptiProfilingDataCallback callback, BorrowedResultCallback borrowed)
 {
 #if defined(NPU_COMPUTE_ENABLE_TEST_CONTROLS)
     const char* failure = std::getenv("NPU_COMPUTE_TEST_PTI_INITIALIZE_FAILURE");
@@ -65,6 +65,7 @@ aclptiResult ProfilingDataManager::Initialize(aclptiProfilingDataCallback callba
     callback_ = std::move(callback);
     rooflineData_.reset();
     simtWarpData_.reset();
+    borrowedCallback_ = borrowed;
     shutdownStatus_ = ACLPTI_SUCCESS;
     if (!callback_) {
         callback_ = registeredCallback_;
@@ -75,6 +76,8 @@ aclptiResult ProfilingDataManager::Initialize(aclptiProfilingDataCallback callba
     try {
         processor_.Start();
     } catch (...) {
+        callback_ = {};
+        borrowedCallback_ = nullptr;
         state_ = ManagerState::Stopped;
         shutdownStatus_ = ACLPTI_ERROR_INTERNAL;
         return shutdownStatus_;
@@ -168,8 +171,12 @@ aclptiResult ProfilingDataManager::PublishFinalResult()
             processedResult->sourceCounterData = std::move(sourceCounterData_);
             processedResult->rooflineData = std::move(rooflineData_);
             processedResult->simtWarpData = std::move(simtWarpData_);
-            auto result = std::make_shared<aclptiProfilingDataResult>(std::move(*processedResult));
-            callbackStatus = callback_(std::move(result));
+            if (borrowedCallback_ != nullptr) {
+                borrowedCallback_(*processedResult);
+            } else {
+                auto result = std::make_shared<aclptiProfilingDataResult>(std::move(*processedResult));
+                callbackStatus = callback_(std::move(result));
+            }
         }
     } catch (const std::bad_alloc&) {
         publicationStatus = ACLPTI_ERROR_OUT_OF_MEMORY;
@@ -219,20 +226,27 @@ aclptiResult ProfilingDataManager::ShutdownImpl(bool force)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         shutdownStatus_ = status;
+        callback_ = {};
+        borrowedCallback_ = nullptr;
         state_ = ManagerState::Stopped;
     }
     return status;
 }
 
 // The process-wide callback always targets the same object; state gates reception.
-std::int32_t ProfilingDataManager::RawDataThunk(MsprofRawData* raw)
+std::int32_t ProfilingDataManager::RawDataThunk(MsprofRawData* raw) { return Instance().ReceiveRawData(raw); }
+
+int32_t ProfilingDataManager::ReceiveRawData(MsprofRawData* raw) noexcept
 {
-    auto& manager = Instance();
-    std::lock_guard<std::mutex> lock(manager.mutex_);
-    if (manager.state_ != ManagerState::Running) {
-        return static_cast<std::int32_t>(ACLPTI_ERROR_NOT_INITIALIZED);
+    try {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ != ManagerState::Running) {
+            return ACLPTI_ERROR_NOT_INITIALIZED;
+        }
+        return processor_.ReceiveRawData(raw);
+    } catch (...) {
+        return ACLPTI_ERROR_INTERNAL;
     }
-    return static_cast<std::int32_t>(manager.processor_.ReceiveRawData(raw));
 }
 
 aclptiResult ProfilingDataManager::RegisterProfilingDataCallback(aclptiProfilingDataCallback callback)

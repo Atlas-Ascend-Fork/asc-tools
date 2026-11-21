@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/summary_metrics.h"
+#include "npu_compute_log.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -165,6 +166,13 @@ SummaryMetric Estimate(const aclptiProfilingDataResult& result, const ReportConf
     const std::string ratioName = aic ? "aic_cube_fp_ratio" : "aiv_vec_ratio";
     const auto cycleIndex = static_cast<size_t>(std::find(header.begin(), header.end(), cycleName) - header.begin());
     const auto ratioIndex = static_cast<size_t>(std::find(header.begin(), header.end(), ratioName) - header.begin());
+    if (cycleIndex >= fields.size() || ratioIndex >= fields.size()) {
+        ASCTOOL_ERROR(
+            "[npu-compute diagnostic] summary estimate index out of range: section=ArithmeticUtilization "
+            "aic=%d header=%zu values=%zu cycle_index=%zu ratio_index=%zu task_aic=%d task_aiv=%d",
+            aic, header.size(), fields.size(), cycleIndex, ratioIndex, result.taskPmuData.aic.has_value(),
+            result.taskPmuData.aiv.has_value());
+    }
     const auto cycles = fields.at(cycleIndex).value;
     const auto ratio = fields.at(ratioIndex).value;
     return cycles && ratio && Nonnegative(*cycles) && Nonnegative(*ratio) ?
@@ -211,6 +219,17 @@ SummaryFields BuildTaskSummarySection(
     const auto header = PmuMetricBuilder::Header(section, PmuDataLevel::Task);
     const auto values = PmuMetricBuilder::BuildTask(
         section, result.taskPmuData, config, PmuMetricBuilder::OperationDuration(result, PmuDataLevel::Task));
+    ASCTOOL_DEBUG(
+        "[npu-compute diagnostic] summary section: section=%s header=%zu values=%zu task_aic=%d task_aiv=%d",
+        section.c_str(), header.size(), values.size(), result.taskPmuData.aic.has_value(),
+        result.taskPmuData.aiv.has_value());
+    if (header.empty() || header.size() != values.size()) {
+        ASCTOOL_ERROR(
+            "[npu-compute diagnostic] summary section shape invalid: section=%s header=%zu values=%zu "
+            "task_logs=%zu block_pmu=%zu task_aic=%d task_aiv=%d",
+            section.c_str(), header.size(), values.size(), result.taskLogs.size(), result.pmuLogs.size(),
+            result.taskPmuData.aic.has_value(), result.taskPmuData.aiv.has_value());
+    }
     SummaryFields fields;
     for (size_t i = 0; i < header.size(); ++i) {
         fields.emplace(header[i], SummaryField{values.at(i).value, values.at(i).integer});

@@ -24,6 +24,7 @@
 #include <cstring>
 #include <condition_variable>
 #include <map>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -301,7 +302,7 @@ TEST(NpuComputePtiDataModule, RawDataDecoder)
     StoreWord(pmu.data(), 0, 0x0000002aU);
     ASSERT_TRUE(data::DecodeRawRecord(pmu.data(), pmu.size(), 0).Status() == ACLPTI_ERROR_DECODE);
     StoreWord(taskLog.data(), 0, 0x6bd30002U);
-    ASSERT_TRUE(data::DecodeRawRecord(taskLog.data(), taskLog.size(), 0).Status() == ACLPTI_ERROR_DECODE);
+    ASSERT_TRUE(data::DecodeRawRecord(taskLog.data(), taskLog.size(), 0).Status() == ACLPTI_ERROR_NOT_SUPPORTED);
 }
 
 TEST(NpuComputePtiDataModule, BlockAndTaskPmuAreAggregatedSeparately)
@@ -547,7 +548,7 @@ TEST(NpuComputePtiDataModule, FailedReplay)
     ASSERT_TRUE(module.Shutdown() == ACLPTI_ERROR_REPLAY_ACTIVE);
 
     auto invalidType = RawData(PmuRecord(1, 2, 3, 4), PMU_DATA_TYPE);
-    invalidType.type = static_cast<RawDataType>(0);
+    invalidType.type = PC_SAMPLING_DATA_TYPE;
     ASSERT_TRUE(module.GetRawDataCallback()(&invalidType) == static_cast<std::int32_t>(ACLPTI_ERROR_INVALID_RAW_DATA));
     const auto stopped = module.RecordReplayStatus({7, ACLPTI_SUCCESS});
     ASSERT_TRUE(stopped.status == ACLPTI_ERROR_PROFILING_FAILED);
@@ -633,6 +634,116 @@ TEST(NpuComputePtiDataModule, ReplayFailureIsPublished)
     ASSERT_TRUE(result != nullptr);
     ASSERT_TRUE(result->status == ACLPTI_ERROR_PROFILING_FAILED);
     ASSERT_TRUE(result->stats.failedRecordCount == 0);
+}
+
+TEST(NpuComputePtiDataModule, IgnoresAuxiliaryAndUnknownTypesInKernelReplay)
+{
+    ResultSink sink;
+    auto& module = data::ProfilingDataManager::Instance();
+    aclptiProfilingDataCallback moduleCallback = [&sink](const auto& result) { return sink.Accept(result); };
+    ASSERT_TRUE(module.Initialize(std::move(moduleCallback)) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(module.PrepareReplay({13, PmuEvents({0x500})}) == ACLPTI_SUCCESS);
+
+    const auto callback = module.GetRawDataCallback();
+    ASSERT_TRUE(callback != nullptr);
+    const std::array<std::byte, 17> auxiliaryBytes{};
+    for (int type : {0, 1, 3, 5, 12, 13, 14, 15, 16, 17, 99}) {
+        auto auxiliary = RawData(auxiliaryBytes, static_cast<RawDataType>(type), 64);
+        ASSERT_TRUE(callback(&auxiliary) == static_cast<std::int32_t>(ACLPTI_SUCCESS));
+    }
+
+    const auto pmu = PmuRecord(1, 2, 3, 4);
+    auto primary = RawData(pmu, PMU_DATA_TYPE, 0);
+    primary.isLastChunk = true;
+    ASSERT_TRUE(callback(&primary) == static_cast<std::int32_t>(ACLPTI_SUCCESS));
+    const auto stopped = module.RecordReplayStatus({13, ACLPTI_SUCCESS});
+    ASSERT_TRUE(stopped.status == ACLPTI_SUCCESS);
+    ASSERT_TRUE(stopped.callbackStats.copiedRecordCount == 1);
+    ASSERT_TRUE(stopped.callbackStats.copiedBytes == primary.chunkSize);
+    ASSERT_TRUE(stopped.callbackStats.receivedBytes == primary.chunkSize);
+    ASSERT_TRUE(module.ReleaseReplay(13) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(module.Shutdown() == ACLPTI_SUCCESS);
+
+    const auto result = sink.Wait();
+    ASSERT_TRUE(result != nullptr);
+    ASSERT_TRUE(result->status == ACLPTI_SUCCESS);
+    ASSERT_TRUE(result->stats.failedRecordCount == 0);
+    ASSERT_TRUE(result->stats.receivedBytes == primary.chunkSize);
+    ASSERT_TRUE(result->stats.acceptedBytes == primary.chunkSize);
+    ASSERT_TRUE(result->stats.rejectedChunkCount == 0);
+    ASSERT_TRUE(result->pmuLogs.size() == 1);
+    ASSERT_TRUE(result->pmuLogs.at(aclptiBlockKey{3, 0, ACLPTI_CORE_TYPE_AIC, 3}).values.at(0x500) == 4.0);
+}
+
+TEST(NpuComputePtiDataModule, AuxiliaryDataDoesNotChangeKernelPacketState)
+{
+    for (auto kind : {data::ReplayKind::Pipeline, data::ReplayKind::PcSampling}) {
+        data::DataProcessor processor;
+        processor.Start();
+        ASSERT_TRUE(processor.PrepareReplay({14, PmuEvents({}), kind}) == ACLPTI_SUCCESS);
+        const std::array<std::byte, 4> bytes{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+        const auto type = kind == data::ReplayKind::Pipeline ? BIU_PERF_DATA_TYPE : PC_SAMPLING_DATA_TYPE;
+        auto first = RawData(bytes, type, 2);
+        first.chunkModule = 0;
+        ASSERT_TRUE(processor.ReceiveRawData(&first) == ACLPTI_SUCCESS);
+
+        auto auxiliary = RawData(bytes, ADDITIONAL_DATA_TYPE, 64);
+        auxiliary.offset = 97;
+        auxiliary.isLastChunk = true;
+        ASSERT_TRUE(processor.ReceiveRawData(&auxiliary) == ACLPTI_SUCCESS);
+        auto last = first;
+        last.offset = bytes.size();
+        last.isLastChunk = true;
+        ASSERT_TRUE(processor.ReceiveRawData(&last) == ACLPTI_SUCCESS);
+        const auto stopped = processor.RecordReplayStatus({14, ACLPTI_SUCCESS});
+        ASSERT_TRUE(stopped.status == ACLPTI_SUCCESS);
+        ASSERT_TRUE(stopped.callbackStats.copiedRecordCount == 2);
+        ASSERT_TRUE(stopped.callbackStats.receivedBytes == 8);
+        ASSERT_TRUE(processor.ReleaseReplay(14) == ACLPTI_SUCCESS);
+        const auto result = processor.StopAndTakeResult();
+        ASSERT_TRUE(result.has_value());
+        ASSERT_TRUE(result->status == ACLPTI_SUCCESS);
+        ASSERT_TRUE(result->stats.failedRecordCount == 0);
+        ASSERT_TRUE(result->stats.acceptedBytes == 8);
+        if (kind == data::ReplayKind::Pipeline) {
+            const auto& replay = result->pipelineData.at(14);
+            ASSERT_TRUE(replay.deviceId == 2);
+            ASSERT_TRUE(
+                (replay.channels.at({0, aclptiBiuCoreKind::Aic}) == std::vector<uint32_t>{0x04030201U, 0x04030201U}));
+            ASSERT_TRUE(result->pcSamplingData.empty());
+        } else {
+            ASSERT_TRUE(result->pcSamplingData.size() == 2);
+            ASSERT_TRUE(result->pcSamplingData.back().deviceId == 2);
+            ASSERT_TRUE(result->pcSamplingData.back().offset == 4);
+            ASSERT_TRUE(result->pcSamplingData.back().isLastChunk);
+            ASSERT_TRUE(result->pipelineData.empty());
+        }
+    }
+}
+
+TEST(NpuComputePtiDataModule, RejectsMalformedAuxiliaryDataBeforeSkipping)
+{
+    data::DataProcessor processor;
+    processor.Start();
+    ASSERT_TRUE(processor.PrepareReplay({15, PmuEvents({})}) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(processor.ReceiveRawData(nullptr) == ACLPTI_ERROR_INVALID_RAW_DATA);
+    auto raw = RawData(std::array<std::byte, 1>{}, ADDITIONAL_DATA_TYPE, 64);
+    raw.chunkSize = 0;
+    ASSERT_TRUE(processor.ReceiveRawData(&raw) == ACLPTI_ERROR_INVALID_RAW_DATA);
+    raw.chunkSize = RAW_DATA_MAXSIZE + 1;
+    ASSERT_TRUE(processor.ReceiveRawData(&raw) == ACLPTI_ERROR_INVALID_RAW_DATA);
+    raw.chunkSize = 1;
+    raw.offset = std::numeric_limits<size_t>::max();
+    ASSERT_TRUE(processor.ReceiveRawData(&raw) == ACLPTI_ERROR_INVALID_RAW_DATA);
+    const auto stopped = processor.RecordReplayStatus({15, ACLPTI_SUCCESS});
+    ASSERT_TRUE(stopped.status == ACLPTI_ERROR_PROFILING_FAILED);
+    ASSERT_TRUE(stopped.callbackStats.copiedRecordCount == 0);
+    ASSERT_TRUE(processor.ReleaseReplay(15) == ACLPTI_SUCCESS);
+    const auto result = processor.StopAndTakeResult();
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->stats.failedRecordCount == 4);
+    ASSERT_TRUE(result->stats.receivedBytes == 0);
+    ASSERT_TRUE(result->stats.acceptedBytes == 0);
 }
 
 TEST(NpuComputePtiDataModule, OpaqueInstructionChunks)
@@ -1325,6 +1436,8 @@ TEST(NpuComputePtiDataModule, ProcessorPhaseBoundaries)
 {
     data::DataProcessor processor;
     processor.Start();
+    auto auxiliary = RawData(std::array<std::byte, 17>{}, ADDITIONAL_DATA_TYPE, 64);
+    ASSERT_TRUE(processor.ReceiveRawData(&auxiliary) == ACLPTI_SUCCESS);
     auto raw = RawData(PmuRecord(1, 2, 0, 100), PMU_DATA_TYPE);
     ASSERT_TRUE(processor.ReceiveRawData(&raw) == ACLPTI_ERROR_NO_ACTIVE_REPLAY);
     ASSERT_TRUE(processor.PrepareReplay({900, PmuEvents({0x701})}) == ACLPTI_SUCCESS);
@@ -1333,9 +1446,11 @@ TEST(NpuComputePtiDataModule, ProcessorPhaseBoundaries)
     ASSERT_TRUE(processor.RecordReplayStatus({901, ACLPTI_SUCCESS}).status == ACLPTI_ERROR_REPLAY_NOT_FOUND);
     ASSERT_TRUE(processor.ReceiveRawData(&raw) == ACLPTI_SUCCESS);
     ASSERT_TRUE(processor.RecordReplayStatus({900, ACLPTI_SUCCESS}).status == ACLPTI_SUCCESS);
+    ASSERT_TRUE(processor.ReceiveRawData(&auxiliary) == ACLPTI_SUCCESS);
     ASSERT_TRUE(processor.ReceiveRawData(&raw) == ACLPTI_ERROR_INVALID_STATE);
     ASSERT_TRUE(processor.CloseReplay(false) == ACLPTI_ERROR_REPLAY_ACTIVE);
     ASSERT_TRUE(processor.ReleaseReplay(900) == ACLPTI_SUCCESS);
+    ASSERT_TRUE(processor.ReceiveRawData(&auxiliary) == ACLPTI_SUCCESS);
     ASSERT_TRUE(processor.CloseReplay(false) == ACLPTI_SUCCESS);
     auto result = processor.StopAndTakeResult();
     ASSERT_TRUE(result.has_value());

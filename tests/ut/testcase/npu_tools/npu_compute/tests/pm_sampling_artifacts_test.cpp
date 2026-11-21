@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "pm_sampling/pm_sampling_artifacts.h"
+#include "runtime/profiling_result_snapshot.h"
 #include <iterator>
 #include <memory>
 #include <map>
@@ -39,6 +40,56 @@ using npucompute::PmSamplingArtifacts;
 using npucompute::PmSamplingElfSource;
 using npucompute::PmSamplingResult;
 namespace {
+int CheckProfilingResultSnapshot()
+{
+    aclptiProfilingDataResult snapshot;
+    std::weak_ptr<const aclptiPmSamplingContext> originalContext;
+    std::weak_ptr<const std::vector<char>> originalImage;
+    std::weak_ptr<const std::map<uint64_t, uint64_t>> originalInstructions;
+    std::weak_ptr<const std::set<uint64_t>> originalSimtInstructions;
+    {
+        aclptiProfilingDataResult source;
+        const auto image = std::make_shared<const std::vector<char>>(std::initializer_list<char>{'E', 'L', 'F'});
+        const auto instructions =
+            std::make_shared<const std::map<uint64_t, uint64_t>>(std::map<uint64_t, uint64_t>{{0x100, 0x123}});
+        const auto simtInstructions =
+            std::make_shared<const std::set<uint64_t>>(std::initializer_list<uint64_t>{0x100});
+        auto first = std::make_shared<aclptiPmSamplingContext>();
+        first->originalElf = image;
+        first->companionElf = image;
+        first->businessInstructions = instructions;
+        first->simtInstructions = simtInstructions;
+        first->pcOffset = 4;
+        auto second = std::make_shared<aclptiPmSamplingContext>(*first);
+        second->pcOffset = 8;
+        source.pmSamplingContexts = {{0, first}, {1, second}, {2, first}, {3, nullptr}};
+        source.pcSamplingData.push_back({0, 1, 2, 0, true, {10, 20}});
+        originalContext = first;
+        originalImage = image;
+        originalInstructions = instructions;
+        originalSimtInstructions = simtInstructions;
+        snapshot = npucompute::SnapshotProfilingResult(source);
+    }
+
+    CHECK(originalContext.expired());
+    CHECK(originalImage.expired());
+    CHECK(originalInstructions.expired());
+    CHECK(originalSimtInstructions.expired());
+    const auto& first = snapshot.pmSamplingContexts.at(0);
+    const auto& second = snapshot.pmSamplingContexts.at(1);
+    CHECK(snapshot.pmSamplingContexts.at(2) == first);
+    CHECK(snapshot.pmSamplingContexts.at(3) == nullptr);
+    CHECK(first->companionElf == first->originalElf);
+    CHECK(second->originalElf == first->originalElf);
+    CHECK(second->businessInstructions == first->businessInstructions);
+    CHECK(second->simtInstructions == first->simtInstructions);
+    CHECK(*second->originalElf == (std::vector<char>{'E', 'L', 'F'}));
+    CHECK(second->businessInstructions->at(0x100) == 0x123u);
+    CHECK(second->simtInstructions->count(0x100) == 1u);
+    CHECK(second->pcOffset == 8u);
+    CHECK(snapshot.pcSamplingData.at(0).bytes == (std::vector<uint8_t>{10, 20}));
+    return 0;
+}
 std::string Read(const fs::path& path)
 {
     std::ifstream file(path.string(), std::ios::binary);
@@ -241,6 +292,7 @@ int main(int argc, char** argv)
     if (argc > 1 && std::string(argv[1]) == "--real") {
         return Real(argc, argv);
     }
+    CHECK(CheckProfilingResultSnapshot() == 0);
     char pattern[] = "/tmp/pm-sampling-artifacts-XXXXXX";
     const char* created = ::mkdtemp(pattern);
     CHECK(created);

@@ -49,7 +49,7 @@ struct HardwareInfoDependencies {
 
 class HardwareInfoCollector {
 public:
-    HardwareInfoCollector();
+    explicit HardwareInfoCollector(bool allowDeviceSelection = true);
     explicit HardwareInfoCollector(HardwareInfoDependencies dependencies);
     ~HardwareInfoCollector();
 
@@ -59,7 +59,7 @@ public:
     HardwareInfoCollector& operator=(HardwareInfoCollector&&) = delete;
 
     bool Initialize(const boost::filesystem::path& probePath, HardwareInfoPublishFunction publish, std::string* error);
-    void CollectOnKernelLaunch() noexcept;
+    void CollectOnKernelLaunch(int32_t deviceId = 0) noexcept;
     void Stop() noexcept;
     HardwareCollectionState State() const noexcept;
 

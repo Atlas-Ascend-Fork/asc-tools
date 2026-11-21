@@ -9,6 +9,7 @@
  */
 #include "runtime/npu_compute_runtime.h"
 #include "artifact_sink.h"
+#include "npu_compute/acl_pti_callback_stub.h"
 #include <boost/property_tree/json_parser.hpp>
 #include <algorithm>
 #include <iostream>
@@ -20,7 +21,7 @@
 #include <vector>
 #include <unistd.h>
 namespace {
-aclptiProfilingDataCallback callback;
+npucompute::NpuComputeRuntime* activeRuntime = nullptr;
 bool invalidFrequency = false;
 void Check(bool value, const char* reason)
 {
@@ -188,16 +189,16 @@ extern "C" aclError aclrtGetDeviceCount(std::uint32_t* count)
     *count = 0;
     return ACL_SUCCESS;
 }
+extern "C" aclError aclrtGetDevice(int32_t* device)
+{
+    *device = 0;
+    return ACL_SUCCESS;
+}
 extern "C" const char* aclrtGetSocName() { return "Ascend950PR_9599"; }
 extern "C" int halGetDeviceInfo(std::uint32_t, std::int32_t, std::int32_t, std::int64_t* value)
 {
     *value = invalidFrequency ? 0 : 1000000;
     return 0;
-}
-aclptiResult aclptiRegisterProfilingDataCallback(aclptiProfilingDataCallback value)
-{
-    callback = std::move(value);
-    return ACLPTI_SUCCESS;
 }
 int main(int argc, char** argv)
 {
@@ -209,20 +210,20 @@ int main(int argc, char** argv)
         sink.failure = mode;
         npucompute::RuntimeConfig config;
         config.sections = SectionsFor(mode);
-        auto& runtime = npucompute::NpuComputeRuntime::Instance();
-        int finalStatus = 99;
-        Check(
-            runtime.Initialize(
-                config, sink,
-                [&finalStatus](int status) {
-                    finalStatus = status;
-                    return status;
-                }) == 0,
-            "initialize");
+        npucompute::NpuComputeRuntime runtime;
+        activeRuntime = &runtime;
+        const aclptiCallbackFunc metadata = [](void*, aclptiCallbackDomain domain, aclptiCallbackId cbid,
+                                               const aclptiCallbackData* data) {
+            activeRuntime->ObserveRuntime(domain, cbid, data);
+        };
+        Check(runtime.Initialize(config, sink, metadata) == 0, "initialize");
+        Check(npucompute::test::CapturedAclPtiCallback() == metadata, "managed callback identity");
+        Check(npucompute::test::CapturedAclPtiUserData() == nullptr, "managed callback user data");
         if (mode != "no-callback") {
-            Check(callback(Capture(mode)) == ACLPTI_SUCCESS, "submit result");
+            Check(npucompute::test::InvokeAclPtiRuntimeReady(), "successful launch");
+            Check(runtime.Submit(Capture(mode)) == ACLPTI_SUCCESS, "submit result");
             if (mode == "success") {
-                Check(callback(Capture(mode)) == ACLPTI_SUCCESS, "submit second result");
+                Check(runtime.Submit(Capture(mode)) == ACLPTI_SUCCESS, "submit second result");
             }
         }
         runtime.Stop();
@@ -232,7 +233,7 @@ int main(int argc, char** argv)
         const bool expectedComplete =
             mode == "success" || mode == "pm-sampling-only" || mode == "no-callback" || occupancyOnlyFailure;
         Check((status == 0) == expectedComplete, "completion status");
-        Check(finalStatus == status, "final callback status");
+        Check(runtime.Submit(Capture(mode)) == ACLPTI_ERROR_INVALID_STATE, "drained consumer rejects result");
         const bool noDataError = mode == "success" || mode == "pipeline-only" || mode == "pm-sampling-only" ||
                                  mode == "non-pmu-combo" || mode == "invalid-merged-pmu" || mode == "no-callback" ||
                                  occupancyOnlyFailure || mode.rfind("csv-failure-", 0) == 0;

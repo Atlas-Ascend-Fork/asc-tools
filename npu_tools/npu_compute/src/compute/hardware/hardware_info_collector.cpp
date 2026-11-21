@@ -32,14 +32,14 @@ void DefaultDiagnostic(std::string_view message)
     ASCTOOL_WARNING("[HardwareInfo] %.*s", static_cast<int>(message.size()), message.data());
 }
 
-HardwareInfoDependencies MakeDefaultDependencies()
+HardwareInfoDependencies MakeDefaultDependencies(bool allowDeviceSelection)
 {
     HardwareInfoDependencies dependencies;
     dependencies.collectHostInfo = [](const boost::filesystem::path& outputDirectory, HostInfo* host,
                                       DiagnosticSink* diagnostics) {
         return CollectHostInfo(outputDirectory, host, diagnostics);
     };
-    dependencies.deviceApi = std::make_shared<DynamicHardwareDeviceApi>();
+    dependencies.deviceApi = std::make_shared<DynamicHardwareDeviceApi>(allowDeviceSelection);
     dependencies.diagnostics = DefaultDiagnostic;
     return dependencies;
 }
@@ -93,7 +93,7 @@ public:
         return true;
     }
 
-    void CollectOnKernelLaunch() noexcept
+    void CollectOnKernelLaunch(int32_t deviceId) noexcept
     {
         try {
             {
@@ -110,7 +110,7 @@ public:
 
             HardwareCollectionState finalState = HardwareCollectionState::Failed;
             try {
-                finalState = Collect() ? HardwareCollectionState::Completed : HardwareCollectionState::Failed;
+                finalState = Collect(deviceId) ? HardwareCollectionState::Completed : HardwareCollectionState::Failed;
             } catch (const std::exception& exception) {
                 Report(std::string("HardwareInfo collection failed: ") + exception.what());
             } catch (...) {
@@ -184,17 +184,18 @@ private:
         stateCondition_.notify_all();
     }
 
-    bool Collect()
+    bool Collect(int32_t deviceId)
     {
         HardwareInfoSnapshot snapshot;
+        snapshot.deviceId = deviceId;
         DiagnosticSink* diagnostics = dependencies_.diagnostics ? &dependencies_.diagnostics : nullptr;
         if (!dependencies_.collectHostInfo(outputDirectory_, &snapshot.host, diagnostics)) {
             Report("Host HardwareInfo collection failed");
             return false;
         }
-        if (!CollectDevice0Info(
+        if (!CollectDeviceInfo(
                 *dependencies_.deviceApi, &snapshot.device, &snapshot.cpu, &snapshot.aiCore, &snapshot.memory,
-                diagnostics)) {
+                diagnostics, deviceId)) {
             Report("Device HardwareInfo collection failed");
             return false;
         }
@@ -221,7 +222,9 @@ private:
     HardwareCollectionState state_ = HardwareCollectionState::Created;
 };
 
-HardwareInfoCollector::HardwareInfoCollector() : impl_(std::make_unique<Impl>(MakeDefaultDependencies())) {}
+HardwareInfoCollector::HardwareInfoCollector(bool allowDeviceSelection)
+    : impl_(std::make_unique<Impl>(MakeDefaultDependencies(allowDeviceSelection)))
+{}
 
 HardwareInfoCollector::HardwareInfoCollector(HardwareInfoDependencies dependencies)
     : impl_(std::make_unique<Impl>(std::move(dependencies)))
@@ -229,7 +232,7 @@ HardwareInfoCollector::HardwareInfoCollector(HardwareInfoDependencies dependenci
 
 HardwareInfoCollector::~HardwareInfoCollector() = default;
 
-void HardwareInfoCollector::CollectOnKernelLaunch() noexcept { impl_->CollectOnKernelLaunch(); }
+void HardwareInfoCollector::CollectOnKernelLaunch(int32_t deviceId) noexcept { impl_->CollectOnKernelLaunch(deviceId); }
 
 bool HardwareInfoCollector::Initialize(
     const boost::filesystem::path& probePath, HardwareInfoPublishFunction publish, std::string* error)

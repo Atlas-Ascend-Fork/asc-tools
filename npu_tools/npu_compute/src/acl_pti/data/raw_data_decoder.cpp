@@ -54,12 +54,7 @@ constexpr uint32_t BLOCK_END_FUNCTION = 0x25U;
 // Explicit little-endian reads avoid alignment and native-struct layout assumptions.
 uint32_t Word(const std::byte* data, std::size_t index)
 {
-    const std::byte* bytes = data + index * sizeof(uint32_t);
-    uint32_t value = 0;
-    for (std::size_t index = 0; index < sizeof(value); ++index) {
-        value |= uint32_t(std::to_integer<uint8_t>(bytes[index])) << (index * RAW_BYTE_BITS);
-    }
-    return value;
+    return ReadLittleEndianWord(reinterpret_cast<const uint8_t*>(data + index * sizeof(uint32_t)));
 }
 
 uint64_t Counter(const std::byte* data, std::size_t lowWord)
@@ -96,7 +91,7 @@ DecodeResult DecodeTaskLog(
     const uint32_t function = header & ((1U << FUNCTION_BITS) - 1U);
     if (function != kTaskStartFunctionType && function != kTaskEndFunctionType && function != BLOCK_START_FUNCTION &&
         function != BLOCK_END_FUNCTION) {
-        return DecodeResult(ACLPTI_ERROR_DECODE);
+        return DecodeResult(ACLPTI_ERROR_NOT_SUPPORTED);
     }
 
     TaskLog32 record{};

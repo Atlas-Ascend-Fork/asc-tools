@@ -21,7 +21,6 @@ namespace npucompute {
 namespace {
 constexpr std::uint32_t DECIMAL_RADIX = 10;
 
-constexpr std::int32_t DEVICE_ID = 0;
 constexpr std::uint32_t AI_CORE_FREQUENCY_FALLBACK_MHZ = 1650;
 constexpr double BYTES_PER_MB = 1024.0 * 1024.0;
 
@@ -67,23 +66,25 @@ bool ParseUnsigned(std::string_view text, Integer* value)
 }
 
 bool ReadCountAttribute(
-    HardwareDeviceApi& api, std::int32_t attribute, std::string_view fieldName, uint32_t* result,
+    HardwareDeviceApi& api, int32_t deviceId, std::int32_t attribute, std::string_view fieldName, uint32_t* result,
     DiagnosticSink* diagnostics)
 {
     std::int64_t value = 0;
-    if (!api.GetDeviceAttribute(DEVICE_ID, attribute, &value)) {
-        Diagnose(diagnostics, "GetDeviceAttribute failed for Device 0: " + std::string(fieldName));
+    if (!api.GetDeviceAttribute(deviceId, attribute, &value)) {
+        Diagnose(
+            diagnostics,
+            "GetDeviceAttribute failed for device " + std::to_string(deviceId) + ": " + std::string(fieldName));
         return false;
     }
     if (value < 0 || static_cast<uint64_t>(value) > std::numeric_limits<uint32_t>::max()) {
-        Diagnose(diagnostics, "invalid " + std::string(fieldName) + " returned for Device 0");
+        Diagnose(diagnostics, "invalid " + std::string(fieldName) + " returned for device " + std::to_string(deviceId));
         return false;
     }
     *result = static_cast<uint32_t>(value);
     return true;
 }
 
-void CollectChipInfo(HardwareDeviceApi& api, DeviceInfo* device, DiagnosticSink* diagnostics)
+void CollectChipInfo(HardwareDeviceApi& api, int32_t deviceId, DeviceInfo* device, DiagnosticSink* diagnostics)
 {
     std::string socName;
     if (!api.GetSocName(&socName) || socName.empty()) {
@@ -93,47 +94,49 @@ void CollectChipInfo(HardwareDeviceApi& api, DeviceInfo* device, DiagnosticSink*
     }
 
     std::string chipVersion;
-    if (!api.GetChipVersion(DEVICE_ID, &chipVersion)) {
-        Diagnose(diagnostics, "GetChipVersion failed for Device 0");
+    if (!api.GetChipVersion(deviceId, &chipVersion)) {
+        Diagnose(diagnostics, "GetChipVersion failed for device " + std::to_string(deviceId));
     } else if (!device->chipInfo.empty() && !chipVersion.empty()) {
         device->chipInfo += " " + chipVersion;
     }
 }
 
-void CollectArchitecture(HardwareDeviceApi& api, DeviceInfo* device, DiagnosticSink* diagnostics)
+void CollectArchitecture(HardwareDeviceApi& api, int32_t deviceId, DeviceInfo* device, DiagnosticSink* diagnostics)
 {
     std::int64_t value = 0;
-    if (!api.GetDeviceAttribute(DEVICE_ID, ACL_DEV_ATTR_NPU_ARCH, &value)) {
-        Diagnose(diagnostics, "GetDeviceAttribute failed for Device 0: NPU architecture");
+    if (!api.GetDeviceAttribute(deviceId, ACL_DEV_ATTR_NPU_ARCH, &value)) {
+        Diagnose(
+            diagnostics, "GetDeviceAttribute failed for device " + std::to_string(deviceId) + ": NPU architecture");
         return;
     }
     if (value < 0) {
-        Diagnose(diagnostics, "invalid NPU architecture returned for Device 0");
+        Diagnose(diagnostics, "invalid NPU architecture returned for device " + std::to_string(deviceId));
         return;
     }
     device->archInfo = std::to_string(value);
 }
 
-void CollectCpuInfo(HardwareDeviceApi& api, CpuInfo* cpu, DiagnosticSink* diagnostics)
+void CollectCpuInfo(HardwareDeviceApi& api, int32_t deviceId, CpuInfo* cpu, DiagnosticSink* diagnostics)
 {
-    if (!api.GetControlCpuCount(DEVICE_ID, &cpu->controlCpuCount)) {
-        Diagnose(diagnostics, "GetControlCpuCount failed for Device 0");
+    if (!api.GetControlCpuCount(deviceId, &cpu->controlCpuCount)) {
+        Diagnose(diagnostics, "GetControlCpuCount failed for device " + std::to_string(deviceId));
     }
-    ReadCountAttribute(api, ACL_DEV_ATTR_AICPU_CORE_NUM, "AI CPU core count", &cpu->aiCpuCount, diagnostics);
-    if (!api.GetAiCpuFrequency(DEVICE_ID, &cpu->aiCpuFrequencyMhz)) {
-        Diagnose(diagnostics, "GetAiCpuFrequency failed for Device 0");
+    ReadCountAttribute(api, deviceId, ACL_DEV_ATTR_AICPU_CORE_NUM, "AI CPU core count", &cpu->aiCpuCount, diagnostics);
+    if (!api.GetAiCpuFrequency(deviceId, &cpu->aiCpuFrequencyMhz)) {
+        Diagnose(diagnostics, "GetAiCpuFrequency failed for device " + std::to_string(deviceId));
     }
 }
 
-void CollectAiCoreInfo(HardwareDeviceApi& api, AiCoreInfo* aiCore, DiagnosticSink* diagnostics)
+void CollectAiCoreInfo(HardwareDeviceApi& api, int32_t deviceId, AiCoreInfo* aiCore, DiagnosticSink* diagnostics)
 {
-    ReadCountAttribute(api, ACL_DEV_ATTR_AICORE_CORE_NUM, "AI Core count", &aiCore->aiCoreCount, diagnostics);
-    ReadCountAttribute(api, ACL_DEV_ATTR_CUBE_CORE_NUM, "Cube Core count", &aiCore->aiCubeCount, diagnostics);
-    ReadCountAttribute(api, ACL_DEV_ATTR_VECTOR_CORE_NUM, "Vector Core count", &aiCore->aiVectorCount, diagnostics);
-    CollectAiCoreFrequencies(api, &aiCore->aiCubeFrequencyMhz, &aiCore->aiVectorFrequencyMhz, diagnostics);
+    ReadCountAttribute(api, deviceId, ACL_DEV_ATTR_AICORE_CORE_NUM, "AI Core count", &aiCore->aiCoreCount, diagnostics);
+    ReadCountAttribute(api, deviceId, ACL_DEV_ATTR_CUBE_CORE_NUM, "Cube Core count", &aiCore->aiCubeCount, diagnostics);
+    ReadCountAttribute(
+        api, deviceId, ACL_DEV_ATTR_VECTOR_CORE_NUM, "Vector Core count", &aiCore->aiVectorCount, diagnostics);
+    CollectAiCoreFrequencies(api, &aiCore->aiCubeFrequencyMhz, &aiCore->aiVectorFrequencyMhz, diagnostics, deviceId);
 }
 
-void CollectMemoryInfo(HardwareDeviceApi& api, MemoryInfo* memory, DiagnosticSink* diagnostics)
+void CollectMemoryInfo(HardwareDeviceApi& api, int32_t deviceId, MemoryInfo* memory, DiagnosticSink* diagnostics)
 {
     std::string totalBytesText;
     uint64_t totalBytes = 0;
@@ -147,24 +150,24 @@ void CollectMemoryInfo(HardwareDeviceApi& api, MemoryInfo* memory, DiagnosticSin
 
     uint64_t freeBytes = 0;
     uint64_t allocatableBytes = 0;
-    if (!api.GetHbmUsage(DEVICE_ID, &freeBytes, &allocatableBytes)) {
-        Diagnose(diagnostics, "GetHbmUsage failed for Device 0");
+    if (!api.GetHbmUsage(deviceId, &freeBytes, &allocatableBytes)) {
+        Diagnose(diagnostics, "GetHbmUsage failed for device " + std::to_string(deviceId));
     } else if (freeBytes > allocatableBytes) {
-        Diagnose(diagnostics, "invalid HBM usage returned for Device 0");
+        Diagnose(diagnostics, "invalid HBM usage returned for device " + std::to_string(deviceId));
     } else {
         memory->hbmUsedMb = static_cast<double>(allocatableBytes - freeBytes) / BYTES_PER_MB;
     }
 
-    if (!api.GetHbmFrequency(DEVICE_ID, &memory->hbmFrequencyMhz)) {
-        Diagnose(diagnostics, "GetHbmFrequency failed for Device 0");
+    if (!api.GetHbmFrequency(deviceId, &memory->hbmFrequencyMhz)) {
+        Diagnose(diagnostics, "GetHbmFrequency failed for device " + std::to_string(deviceId));
     }
 }
 
 } // namespace
 
-bool CollectDevice0Info(
+bool CollectDeviceInfo(
     HardwareDeviceApi& api, DeviceInfo* device, CpuInfo* cpu, AiCoreInfo* aiCore, MemoryInfo* memory,
-    DiagnosticSink* diagnostics)
+    DiagnosticSink* diagnostics, int32_t deviceId)
 {
     if (device == nullptr || cpu == nullptr || aiCore == nullptr || memory == nullptr) {
         Diagnose(diagnostics, "HardwareInfo output is null");
@@ -190,16 +193,24 @@ bool CollectDevice0Info(
         return true;
     }
 
-    CollectChipInfo(api, device, diagnostics);
-    CollectArchitecture(api, device, diagnostics);
-    CollectCpuInfo(api, cpu, diagnostics);
-    CollectAiCoreInfo(api, aiCore, diagnostics);
-    CollectMemoryInfo(api, memory, diagnostics);
+    CollectChipInfo(api, deviceId, device, diagnostics);
+    CollectArchitecture(api, deviceId, device, diagnostics);
+    CollectCpuInfo(api, deviceId, cpu, diagnostics);
+    CollectAiCoreInfo(api, deviceId, aiCore, diagnostics);
+    CollectMemoryInfo(api, deviceId, memory, diagnostics);
     return true;
 }
 
+bool CollectDevice0Info(
+    HardwareDeviceApi& api, DeviceInfo* device, CpuInfo* cpu, AiCoreInfo* aiCore, MemoryInfo* memory,
+    DiagnosticSink* diagnostics)
+{
+    return CollectDeviceInfo(api, device, cpu, aiCore, memory, diagnostics, 0);
+}
+
 bool CollectAiCoreCounts(
-    HardwareDeviceApi& api, std::uint32_t* aiCubeCount, std::uint32_t* aiVectorCount, DiagnosticSink* diagnostics)
+    HardwareDeviceApi& api, std::uint32_t* aiCubeCount, std::uint32_t* aiVectorCount, DiagnosticSink* diagnostics,
+    int32_t deviceId)
 {
     if (aiCubeCount == nullptr || aiVectorCount == nullptr) {
         Diagnose(diagnostics, "AI Core count output is null");
@@ -209,9 +220,9 @@ bool CollectAiCoreCounts(
     std::uint32_t cubeCount = 0;
     std::uint32_t vectorCount = 0;
     const bool readCube =
-        ReadCountAttribute(api, ACL_DEV_ATTR_CUBE_CORE_NUM, "Cube Core count", &cubeCount, diagnostics);
+        ReadCountAttribute(api, deviceId, ACL_DEV_ATTR_CUBE_CORE_NUM, "Cube Core count", &cubeCount, diagnostics);
     const bool readVector =
-        ReadCountAttribute(api, ACL_DEV_ATTR_VECTOR_CORE_NUM, "Vector Core count", &vectorCount, diagnostics);
+        ReadCountAttribute(api, deviceId, ACL_DEV_ATTR_VECTOR_CORE_NUM, "Vector Core count", &vectorCount, diagnostics);
     *aiCubeCount = cubeCount;
     *aiVectorCount = vectorCount;
     return readCube && readVector;
@@ -219,7 +230,7 @@ bool CollectAiCoreCounts(
 
 bool CollectAiCoreFrequencies(
     HardwareDeviceApi& api, std::uint32_t* aiCubeFrequencyMhz, std::uint32_t* aiVectorFrequencyMhz,
-    DiagnosticSink* diagnostics)
+    DiagnosticSink* diagnostics, int32_t deviceId)
 {
     if (aiCubeFrequencyMhz == nullptr || aiVectorFrequencyMhz == nullptr) {
         Diagnose(diagnostics, "AI Core frequency output is null");
@@ -228,16 +239,17 @@ bool CollectAiCoreFrequencies(
 
     *aiCubeFrequencyMhz = AI_CORE_FREQUENCY_FALLBACK_MHZ;
     *aiVectorFrequencyMhz = AI_CORE_FREQUENCY_FALLBACK_MHZ;
-    if (api.GetAiCoreFrequencies(DEVICE_ID, aiCubeFrequencyMhz, aiVectorFrequencyMhz)) {
+    if (api.GetAiCoreFrequencies(deviceId, aiCubeFrequencyMhz, aiVectorFrequencyMhz)) {
         return true;
     }
     *aiCubeFrequencyMhz = AI_CORE_FREQUENCY_FALLBACK_MHZ;
     *aiVectorFrequencyMhz = AI_CORE_FREQUENCY_FALLBACK_MHZ;
-    Diagnose(diagnostics, "GetAiCoreFrequencies failed for Device 0; use 1650 MHz fallback");
+    Diagnose(
+        diagnostics, "GetAiCoreFrequencies failed for device " + std::to_string(deviceId) + "; use 1650 MHz fallback");
     return false;
 }
 
-SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, DiagnosticSink* diagnostics)
+SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, DiagnosticSink* diagnostics, int32_t deviceId)
 {
     SummaryHardwareInfo summary;
     summary.collected = true;
@@ -247,7 +259,7 @@ SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, Diagnosti
     }
     uint32_t aic = 0;
     uint32_t aiv = 0;
-    CollectAiCoreCounts(api, &aic, &aiv, diagnostics);
+    CollectAiCoreCounts(api, &aic, &aiv, diagnostics, deviceId);
     if (aic > 0) {
         summary.cubeCoreCount = aic;
     }
@@ -256,7 +268,7 @@ SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, Diagnosti
     }
     aic = 0;
     aiv = 0;
-    api.GetCurrentAiCoreFrequencies(DEVICE_ID, &aic, &aiv);
+    api.GetCurrentAiCoreFrequencies(deviceId, &aic, &aiv);
     if (aic > 0) {
         summary.currentAicFrequencyMhz = aic;
     }
@@ -265,7 +277,7 @@ SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, Diagnosti
     }
     aic = 0;
     aiv = 0;
-    api.GetRatedAiCoreFrequencies(DEVICE_ID, &aic, &aiv);
+    api.GetRatedAiCoreFrequencies(deviceId, &aic, &aiv);
     if (aic > 0) {
         summary.ratedAicFrequencyMhz = aic;
     }

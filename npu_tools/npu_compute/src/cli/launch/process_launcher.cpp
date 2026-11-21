@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <poll.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -36,9 +37,7 @@ constexpr int PROGRAM_NOT_EXECUTABLE_EXIT_CODE = 126;
 constexpr int PROGRAM_NOT_FOUND_EXIT_CODE = 127;
 constexpr std::array<int, 3> FORWARDED_SIGNALS = {SIGINT, SIGTERM, SIGHUP};
 
-volatile sig_atomic_t g_appProcessGroup = 0;
 volatile sig_atomic_t g_pendingSignal = 0;
-volatile sig_atomic_t g_deferSignal = 0;
 
 enum class ChildErrorStage : uint32_t {
     SetProcessGroup = 1,
@@ -58,17 +57,7 @@ struct SignalState {
     bool signals_blocked = false;
 };
 
-void ForwardSignal(int signal_number)
-{
-    g_pendingSignal = signal_number;
-    if (g_deferSignal != 0) {
-        return;
-    }
-    const sig_atomic_t process_group = g_appProcessGroup;
-    if (process_group > 0) {
-        kill(-static_cast<pid_t>(process_group), signal_number);
-    }
-}
+void ForwardSignal(int signal_number) { g_pendingSignal = signal_number; }
 
 void SetError(const std::string& message, std::string* error)
 {
@@ -89,7 +78,6 @@ void RestoreSignalState(SignalState* state)
     }
 
     sigprocmask(SIG_BLOCK, &state->forwarded_set, nullptr);
-    g_appProcessGroup = 0;
     for (std::size_t i = 0; i < state->installed_actions; ++i) {
         sigaction(FORWARDED_SIGNALS[i], &state->original_actions[i], nullptr);
     }
@@ -129,7 +117,6 @@ bool PrepareSignalState(SignalState* state, std::string* error)
 
 void RestoreChildSignals(const SignalState& state)
 {
-    g_appProcessGroup = 0;
     for (std::size_t i = 0; i < state.installed_actions; ++i) {
         sigaction(FORWARDED_SIGNALS[i], &state.original_actions[i], nullptr);
     }
@@ -230,6 +217,17 @@ int ExitCodeFromStatus(unsigned status, std::string* error)
 
 } // namespace
 
+void ProcessLaunchRequest::SetEnvironment(const std::string& name, const std::string& value)
+{
+    const auto prefix = name + "=";
+    environment.erase(
+        std::remove_if(
+            environment.begin(), environment.end(),
+            [&prefix](const auto& entry) { return entry.compare(0, prefix.size(), prefix) == 0; }),
+        environment.end());
+    environment.push_back(prefix + value);
+}
+
 class ProcessHandle::Impl {
 public:
     pid_t pid = -1;
@@ -250,7 +248,6 @@ ProcessHandle::~ProcessHandle()
     }
     if (impl_->signals.installed_actions != 0 || impl_->signals.signals_blocked) {
         RestoreSignalState(&impl_->signals);
-        g_deferSignal = 0;
     }
 }
 pid_t ProcessHandle::Pid() const { return impl_->pid; }
@@ -310,7 +307,6 @@ bool ProcessHandle::Start(
 
     SignalState& signal_state = impl_->signals;
     g_pendingSignal = 0;
-    g_deferSignal = 1;
     if (!PrepareSignalState(&signal_state, error)) {
         close(error_pipe[0]);
         close(error_pipe[1]);
@@ -347,7 +343,6 @@ bool ProcessHandle::Start(
     if (setpgid(child_pid, child_pid) != 0 && errno != EACCES && errno != ESRCH) {
         management_error = ErrnoMessage("setpgid", errno);
     }
-    g_appProcessGroup = static_cast<sig_atomic_t>(child_pid);
     const int unblock_error = UnblockParentSignals(&signal_state);
     if (unblock_error != 0 && management_error.empty()) {
         management_error = ErrnoMessage("sigprocmask", unblock_error);
@@ -421,7 +416,6 @@ bool ProcessHandle::Poll(int* exitCode, std::string* error)
             impl_->exitCode = ExitCodeFromStatus(static_cast<unsigned>(status), &impl_->exitError);
         }
         impl_->reaped = true;
-        g_appProcessGroup = 0;
     }
     *exitCode = impl_->exitCode;
     SetError(impl_->exitError, error);
@@ -441,23 +435,9 @@ int ProcessHandle::Wait(std::string* error)
             impl_->exitCode = ExitCodeFromStatus(static_cast<unsigned>(status), &impl_->exitError);
         }
         impl_->reaped = true;
-        g_appProcessGroup = 0;
     }
     SetError(impl_->exitError, error);
     return impl_->exitCode;
-}
-
-int LaunchProcessAndWait(const ProcessLaunchRequest& request, std::string* error)
-{
-    ProcessHandle child;
-    if (!child.Start(request, error)) {
-        return kInternalErrorExitCode;
-    }
-    g_deferSignal = 0;
-    if (g_pendingSignal != 0) {
-        child.Signal(g_pendingSignal);
-    }
-    return child.Wait(error);
 }
 
 } // namespace npucompute::cli

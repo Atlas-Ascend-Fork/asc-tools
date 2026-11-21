@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute_log.h"
+#include "acl_pti/initialization.h"
 #include "range_profiler.h"
 #include "npubit_collector.h"
 #include <memory>
@@ -220,9 +221,10 @@ void LogMsprofConfig(const MsprofConfig& config, std::size_t roundId)
     }
 }
 
-aclptiResult RangeProfiler::Initialize()
+aclptiResult RangeProfiler::Initialize(
+    data::ProfilingDataManager::BorrowedResultCallback onData, MsprofRawDataCallback processorUploader)
 {
-    const aclptiResult initializeStatus = dataManager_.Initialize();
+    const aclptiResult initializeStatus = dataManager_.Initialize({}, onData);
     ASCTOOL_DEBUG("[aclpti] RangeProfiler data module init result=%d", static_cast<std::int32_t>(initializeStatus));
     if (initializeStatus != ACLPTI_SUCCESS) {
         ASCTOOL_ERROR(
@@ -231,7 +233,8 @@ aclptiResult RangeProfiler::Initialize()
             static_cast<unsigned>(static_cast<uint32_t>(initializeStatus)));
         return initializeStatus;
     }
-    MsprofRawDataCallback callback = dataManager_.GetRawDataCallback();
+    managedSession_ = processorUploader != nullptr;
+    const auto callback = processorUploader != nullptr ? processorUploader : dataManager_.GetRawDataCallback();
     if (callback == nullptr) {
         ASCTOOL_ERROR(
             "[aclpti] RangeProfiler callback registration missing callback"
@@ -539,8 +542,9 @@ aclptiResult RangeProfiler::FinishProfilingRound(
     const aclptiResult roundStatus =
         launchStatus != ACL_SUCCESS || syncResult != ACL_SUCCESS || offsetStatus != ACLPTI_SUCCESS ?
             ACLPTI_ERROR_RESULT_UNRELIABLE :
-        stopResult != 0 ? ACLPTI_ERROR_PROFILING_FAILED :
-                          ACLPTI_SUCCESS;
+        stopResult != 0                                      ? ACLPTI_ERROR_PROFILING_FAILED :
+        managedSession_ && !initialization::CollectionOpen() ? ACLPTI_ERROR_TRACE_INCOMPLETE :
+                                                               ACLPTI_SUCCESS;
     const data::ReplayStopInfo stopInfo{round, roundStatus};
     ASCTOOL_DEBUG("[aclpti] record replay status round=%zu", round);
     const data::ReplayResult replayResult = dataManager_.RecordReplayStatus(stopInfo);
@@ -594,6 +598,9 @@ aclptiResult RangeProfiler::ReplayKernel(
             replayMemory,       binaryRegistry, originalFunction,    launchFunction,          stream,
             readSamplingOffset, deviceId,       synchronizeFunction, synchronizeSourceCounter};
         for (std::size_t round = 0; round < rounds.size(); ++round) {
+            if (managedSession_ && !initialization::CollectionOpen()) {
+                return ACLPTI_ERROR_TRACE_INCOMPLETE;
+            }
             status = ReplayProfilingRound(invocation, rounds[round], round);
             if (status != ACLPTI_SUCCESS) {
                 return status;

@@ -14,9 +14,9 @@
 #include "npu_compute_log.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
-#include <functional>
 #include <iomanip>
 #include <initializer_list>
 #include <map>
@@ -264,18 +264,8 @@ RowMetrics MakeRowMetrics(aclptiBlockKey key, const aclptiPmuDataRow& row)
         return metrics;
     }
 
-    aclptiPmuDataRow::CoreData fallback{};
-    fallback.coreType = row.coreType;
-    fallback.coreId = row.coreId;
-    fallback.sampleCount = 1;
-    fallback.totalCycles = row.totalCycles;
-    fallback.overflow = row.overflow;
-    fallback.values = row.values;
-    for (const auto& [eventId, value] : row.values) {
-        static_cast<void>(value);
-        fallback.valueCounts.emplace(eventId, 1);
-    }
-    AddCore(row.coreType == ACLPTI_CORE_TYPE_AIC ? metrics.aic : metrics.aiv, fallback);
+    (row.coreType == ACLPTI_CORE_TYPE_AIC ? metrics.aic : metrics.aiv) =
+        TypeMetrics{true, row.totalCycles, row.overflow, row.values};
     return metrics;
 }
 
@@ -385,8 +375,8 @@ std::optional<double> ValueRatio(const TypeMetrics& metrics, uint32_t eventId)
 
 std::optional<double> IcacheMissRate(const TypeMetrics& metrics)
 {
-    const auto numerator = metrics.Value(pmu::ICACHE_ACCESS_EVENT);
-    const auto denominator = metrics.Value(pmu::ICACHE_MISS_EVENT);
+    const auto numerator = metrics.Value(pmu::ICACHE_MISS_EVENT);
+    const auto denominator = metrics.Value(pmu::ICACHE_ACCESS_EVENT);
     if (!metrics.present || !numerator.has_value() || !denominator.has_value()) {
         return std::nullopt;
     }
@@ -1120,21 +1110,6 @@ CsvCell ComputeVfIpc(const TypeMetrics& aiv, uint32_t cycleEvent, Metric count)
     return MetricCell(value);
 }
 
-CsvCell ComputeSimdVfTime(const TypeMetrics& aiv, double frequencyMhz)
-{
-    return ComputeVfTime(aiv, pmu::SIMD_VF_ISSUE_CYCLES_EVENT, frequencyMhz);
-}
-
-CsvCell ComputeSimdVfIpc(const TypeMetrics& aiv)
-{
-    return ComputeVfIpc(aiv, pmu::SIMD_VF_ISSUE_CYCLES_EVENT, aiv.Value(pmu::SIMD_INSTRUCTION_ISSUE_EVENT));
-}
-
-CsvCell ComputeSimtVfTime(const TypeMetrics& aiv, double frequencyMhz)
-{
-    return ComputeVfTime(aiv, pmu::SIMT_VF_ISSUE_CYCLES_EVENT, frequencyMhz);
-}
-
 CsvCell ComputeSimtVfIpc(const TypeMetrics& aiv)
 {
     return ComputeVfIpc(
@@ -1158,21 +1133,19 @@ CsvRow ArithmeticRow(const RowMetrics& row, const ReportConfig& config)
     SetEvent(fields, "aic_cube_total_instr_number", row.aic, pmu::CUBE_TOTAL_INSTRUCTION_EVENT);
     SetEvent(fields, "aic_cube_fp_instr_number", row.aic, pmu::CUBE_FP_INSTRUCTION_EVENT);
     SetEvent(fields, "aic_cube_int_instr_number", row.aic, pmu::CUBE_INT_INSTRUCTION_EVENT);
-    const Metric aivRatio = ValueRatio(row.aiv, pmu::VECTOR_ACTIVE_CYCLES_EVENT);
-    const Metric simdVfRatio = ValueRatio(row.aiv, pmu::SIMD_VF_ISSUE_CYCLES_EVENT);
-    const Metric aivSfuRatio = ValueRatio(row.aiv, pmu::VECTOR_SFU_ACTIVE_CYCLES_EVENT);
-    const Metric simtVfRatio = ValueRatio(row.aiv, pmu::SIMT_VF_ISSUE_CYCLES_EVENT);
-    for (const auto& [name, event, metric] : std::initializer_list<std::tuple<const char*, uint32_t, Metric>>{
-             {"aiv_vec_ratio", pmu::VECTOR_ACTIVE_CYCLES_EVENT, aivRatio},
-             {"aiv_simd_vf_ratio", pmu::SIMD_VF_ISSUE_CYCLES_EVENT, simdVfRatio},
-             {"aiv_vec_sfu_ratio", pmu::VECTOR_SFU_ACTIVE_CYCLES_EVENT, aivSfuRatio},
-             {"aiv_simt_vf_ratio", pmu::SIMT_VF_ISSUE_CYCLES_EVENT, simtVfRatio}}) {
-        SetMetric(fields, name, metric, RatioReason(row.aiv, {event}));
+    for (const auto& [name, event] : std::initializer_list<std::pair<const char*, uint32_t>>{
+             {"aiv_vec_ratio", pmu::VECTOR_ACTIVE_CYCLES_EVENT},
+             {"aiv_simd_vf_ratio", pmu::SIMD_VF_ISSUE_CYCLES_EVENT},
+             {"aiv_vec_sfu_ratio", pmu::VECTOR_SFU_ACTIVE_CYCLES_EVENT},
+             {"aiv_simt_vf_ratio", pmu::SIMT_VF_ISSUE_CYCLES_EVENT}}) {
+        SetMetric(fields, name, ValueRatio(row.aiv, event), RatioReason(row.aiv, {event}));
     }
     const double frequencyMhz = AivFrequencyMhz(config);
-    fields.emplace("aiv_simd_vf_time", ComputeSimdVfTime(row.aiv, frequencyMhz));
-    fields.emplace("aiv_simd_vf_ipc", ComputeSimdVfIpc(row.aiv));
-    fields.emplace("aiv_simt_vf_time", ComputeSimtVfTime(row.aiv, frequencyMhz));
+    fields.emplace("aiv_simd_vf_time", ComputeVfTime(row.aiv, pmu::SIMD_VF_ISSUE_CYCLES_EVENT, frequencyMhz));
+    fields.emplace(
+        "aiv_simd_vf_ipc",
+        ComputeVfIpc(row.aiv, pmu::SIMD_VF_ISSUE_CYCLES_EVENT, row.aiv.Value(pmu::SIMD_INSTRUCTION_ISSUE_EVENT)));
+    fields.emplace("aiv_simt_vf_time", ComputeVfTime(row.aiv, pmu::SIMT_VF_ISSUE_CYCLES_EVENT, frequencyMhz));
     fields.emplace("aiv_simt_vf_ipc", ComputeSimtVfIpc(row.aiv));
     return BuildRow(ArithmeticHeader(), fields);
 }
@@ -1225,41 +1198,31 @@ CsvRow ResourceConflictRow(const RowMetrics& row, const ReportConfig& config)
 }
 
 struct SectionWriter {
+    std::string_view section;
     std::vector<std::string> (*header)();
-    std::function<CsvRow(const RowMetrics&, const ReportConfig&, Metric)> row;
+    CsvRow (*row)(const RowMetrics&, const ReportConfig&, Metric);
 };
 
-const std::map<std::string_view, SectionWriter>& SectionWriters()
-{
-    static const std::map<std::string_view, SectionWriter> writers = {
-        {"ArithmeticUtilization",
-         {&ArithmeticHeader,
-          [](const RowMetrics& row, const ReportConfig& config, Metric) { return ArithmeticRow(row, config); }}},
-        {"ResourceConflictRatio",
-         {&ResourceConflictHeader,
-          [](const RowMetrics& row, const ReportConfig& config, Metric) { return ResourceConflictRow(row, config); }}},
-        {"L2Cache",
-         {&L2Header, [](const RowMetrics& row, const ReportConfig& config, Metric) { return L2Row(row, config); }}},
-        {"Memory",
-         {&MemoryHeader, [](const RowMetrics& row, const ReportConfig& config,
-                            Metric duration) { return MemoryRow(row, config, duration); }}},
-        {"MemoryL0",
-         {&MemoryL0Header, [](const RowMetrics& row, const ReportConfig& config,
-                              Metric duration) { return MemoryL0Row(row, config, duration); }}},
-        {"MemoryUB",
-         {&MemoryUBHeader, [](const RowMetrics& row, const ReportConfig& config,
-                              Metric duration) { return MemoryUBRow(row, config, duration); }}},
-        {"PipeUtilization",
-         {&PipeHeader, [](const RowMetrics& row, const ReportConfig& config, Metric) { return PipeRow(row, config); }}},
-    };
-    return writers;
-}
+constexpr std::array<SectionWriter, 7> SECTION_WRITERS{{
+    {"ArithmeticUtilization", &ArithmeticHeader,
+     [](const RowMetrics& row, const ReportConfig& config, Metric) { return ArithmeticRow(row, config); }},
+    {"ResourceConflictRatio", &ResourceConflictHeader,
+     [](const RowMetrics& row, const ReportConfig& config, Metric) { return ResourceConflictRow(row, config); }},
+    {"L2Cache", &L2Header,
+     [](const RowMetrics& row, const ReportConfig& config, Metric) { return L2Row(row, config); }},
+    {"Memory", &MemoryHeader, &MemoryRow},
+    {"MemoryL0", &MemoryL0Header, &MemoryL0Row},
+    {"MemoryUB", &MemoryUBHeader, &MemoryUBRow},
+    {"PipeUtilization", &PipeHeader,
+     [](const RowMetrics& row, const ReportConfig& config, Metric) { return PipeRow(row, config); }},
+}};
 
 const SectionWriter* FindWriter(std::string_view section)
 {
-    const auto& writers = SectionWriters();
-    const auto it = writers.find(section);
-    return it == writers.end() ? nullptr : &it->second;
+    const auto it = std::find_if(
+        SECTION_WRITERS.begin(), SECTION_WRITERS.end(),
+        [section](const SectionWriter& writer) { return writer.section == section; });
+    return it == SECTION_WRITERS.end() ? nullptr : &*it;
 }
 
 } // namespace
@@ -1271,6 +1234,9 @@ std::vector<std::string> PmuMetricBuilder::Header(std::string_view section, PmuD
     if (level == PmuDataLevel::Task && header.size() >= BLOCK_IDENTITY_COLUMN_COUNT) {
         header.erase(header.begin(), header.begin() + BLOCK_IDENTITY_COLUMN_COUNT);
     }
+    ASCTOOL_DEBUG(
+        "[npu-compute diagnostic] metric_header: section=%.*s level=%d writer_found=%d fields=%zu",
+        static_cast<int>(section.size()), section.data(), static_cast<int>(level), writer != nullptr, header.size());
     return header;
 }
 
@@ -1287,6 +1253,11 @@ PmuMetricRow PmuMetricBuilder::BuildTask(
     std::optional<double> duration)
 {
     const auto* writer = FindWriter(section);
+    ASCTOOL_DEBUG(
+        "[npu-compute diagnostic] metric_task begin: section=%.*s writer_found=%d "
+        "task_aic=%d task_aiv=%d",
+        static_cast<int>(section.size()), section.data(), writer != nullptr, taskPmuData.aic.has_value(),
+        taskPmuData.aiv.has_value());
     if (writer == nullptr) {
         return {};
     }
@@ -1294,15 +1265,15 @@ PmuMetricRow PmuMetricBuilder::BuildTask(
     RowMetrics metrics;
     const auto assignCoreMetrics = [](TypeMetrics& coreMetrics, const std::optional<aclptiTaskPmuCoreData>& coreData) {
         if (coreData) {
-            coreMetrics.present = true;
-            coreMetrics.totalCycles = coreData->totalCycles;
-            coreMetrics.overflow = coreData->overflow;
-            coreMetrics.values = coreData->values;
+            coreMetrics = TypeMetrics{true, coreData->totalCycles, coreData->overflow, coreData->values};
         }
     };
     assignCoreMetrics(metrics.aic, taskPmuData.aic);
     assignCoreMetrics(metrics.aiv, taskPmuData.aiv);
     auto fields = writer->row(metrics, config, duration);
+    ASCTOOL_DEBUG(
+        "[npu-compute diagnostic] metric_task built: section=%.*s fields_before_identity_removal=%zu",
+        static_cast<int>(section.size()), section.data(), fields.size());
     fields.erase(fields.begin(), fields.begin() + BLOCK_IDENTITY_COLUMN_COUNT);
     return fields;
 }

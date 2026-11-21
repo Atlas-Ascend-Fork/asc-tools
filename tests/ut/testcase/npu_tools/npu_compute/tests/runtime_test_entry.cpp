@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute/npu_compute.h"
+#include "npu_compute/acl_pti_callback_stub.h"
 
 #include "runtime/npu_compute_runtime.h"
 #include "artifact_sink.h"
@@ -19,10 +20,19 @@
 #include <string>
 #include <vector>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <mutex>
+
+namespace npucompute::test {
+NpuComputeRuntime& Runtime()
+{
+    static NpuComputeRuntime runtime;
+    return runtime;
+}
+} // namespace npucompute::test
 
 namespace {
 
@@ -64,6 +74,20 @@ private:
     std::ofstream output_;
 };
 
+std::atomic<npucompute::NpuComputeRuntime*> g_callbackTarget{nullptr};
+
+} // namespace
+
+extern "C" NPU_COMPUTE_EXPORT void NpuComputeTestMetadata(
+    void*, aclptiCallbackDomain domain, aclptiCallbackId cbid, const aclptiCallbackData* data) noexcept
+{
+    if (auto* runtime = g_callbackTarget.load()) {
+        runtime->ObserveRuntime(domain, cbid, data);
+    }
+}
+
+namespace {
+
 FileArtifactSink g_sink;
 npucompute::RuntimeConfig g_config;
 
@@ -73,13 +97,16 @@ int g_initialize_result = npucompute::kInitializeFailed;
 int g_shutdown_result = 0;
 bool g_shutdown = false;
 
-void StopRuntimeAtExit() noexcept { npucompute::NpuComputeRuntime::Instance().Stop(); }
+void StopRuntimeAtExit() noexcept { (void)acltoolShutdown(); }
 
 void InitializeOnce() noexcept
 {
     try {
-        npucompute::NpuComputeRuntime& runtime = npucompute::NpuComputeRuntime::Instance();
-        g_initialize_result = runtime.Initialize(g_config, g_sink, {});
+        npucompute::NpuComputeRuntime& runtime = npucompute::test::Runtime();
+        g_initialize_result = runtime.Initialize(g_config, g_sink, &NpuComputeTestMetadata);
+        if (g_initialize_result == 0) {
+            g_callbackTarget.store(&runtime);
+        }
         if (g_initialize_result == 0 && std::atexit(StopRuntimeAtExit) != 0) {
             std::fprintf(stderr, "[libnpu-compute] register process exit handler failed\n");
             runtime.Stop();
@@ -125,7 +152,23 @@ extern "C" NPU_COMPUTE_EXPORT int acltoolShutdown()
     try {
         std::lock_guard<std::mutex> lock(g_lifecycle_mutex);
         if (!g_shutdown) {
-            g_shutdown_result = npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain();
+            g_callbackTarget.store(nullptr);
+            // This fixture owns the managed session's subscription teardown.
+            if (g_initialize_result == 0) {
+                const auto calls = npucompute::test::CapturedAclPtiEnableCalls();
+                for (auto call = calls.rbegin(); call != calls.rend(); ++call) {
+                    if (call->enable && call->result == ACLPTI_SUCCESS) {
+                        if (aclptiEnableCallback(false, call->subscriber, call->domain, call->cbid) != ACLPTI_SUCCESS) {
+                            g_shutdown_result = npucompute::kInitializeFailed;
+                        }
+                    }
+                }
+            }
+            npucompute::test::Runtime().Stop();
+            const int drainStatus = npucompute::test::Runtime().ShutdownAfterPtiDrain();
+            if (drainStatus != 0) {
+                g_shutdown_result = drainStatus;
+            }
             g_shutdown = true;
         }
         return g_shutdown_result;

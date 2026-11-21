@@ -529,3 +529,21 @@ TEST(NpuComputeHardwareDeviceApi, CurrentFrequencyRetainsValidSide)
     g_currentAicFrequency = 0;
     g_currentAivFrequency = 0;
 }
+
+TEST(NpuComputeHardwareDeviceApi, ApplicationMemoryQueryDoesNotSetDevice)
+{
+    ResetCalls();
+    auto resolver = std::make_shared<FakeDynamicSymbolResolver>();
+    resolver->AddLoadedAclSymbols();
+    resolver->loadedSymbols["aclrtGetDevice"] = Symbol(+[](int32_t* device) -> aclError {
+        *device = 1;
+        return ACL_SUCCESS;
+    });
+    npucompute::DynamicHardwareDeviceApi api(resolver, false);
+    uint64_t free = 0;
+    uint64_t total = 0;
+    EXPECT_TRUE(api.GetHbmUsage(1, &free, &total));
+    EXPECT_FALSE(api.GetHbmUsage(0, &free, &total));
+    EXPECT_TRUE(g_calls.setDeviceIds.empty());
+    EXPECT_EQ(g_calls.memoryAttributes.size(), 1U);
+}

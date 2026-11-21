@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -56,6 +57,7 @@ struct HardwareInfoSnapshot {
     CpuInfo cpu;
     AiCoreInfo aiCore;
     MemoryInfo memory;
+    std::optional<int32_t> deviceId;
 };
 
 using DiagnosticSink = std::function<void(std::string_view)>;

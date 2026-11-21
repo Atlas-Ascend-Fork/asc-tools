@@ -25,10 +25,12 @@ namespace npucompute::ipc {
 using Bytes = std::vector<uint8_t>;
 using Deadline = std::chrono::steady_clock::time_point;
 inline constexpr uint32_t kMaxValueBytes = 64 * 1024;
+// Larger result manifests use continuation frames; each frame stays within 64 KiB.
+inline constexpr size_t kMaxManifestEntriesPerFrame = 384;
 inline constexpr size_t kChunkBytes = 48 * 1024;
 inline constexpr char kOccupancyArtifactName[] = "Occupancy.json";
 inline constexpr size_t kHeaderBytes = 12;
-inline constexpr size_t kPrefixBytes = 22;
+inline constexpr size_t kPrefixBytes = 18;
 inline constexpr size_t kMaxFrameBytes = kHeaderBytes + kMaxValueBytes;
 inline constexpr std::chrono::milliseconds kHandshakeTimeout{10000};
 inline constexpr std::chrono::milliseconds kIoTimeout{30000};
@@ -52,14 +54,16 @@ enum class Type : uint16_t {
     Error = 7,
     Status = 8,
     Diagnostic = 9,
+    ResultManifest = 10,
     DataBegin = 0x100,
     Pmu = 0x101,
     Pipeline = 0x102,
     Hardware = 0x103,
     DataEnd = 0x104,
-    PmSampling = 0x105
+    PmSampling = 0x105,
+    Application = 0x106
 };
-enum class DataKind : uint16_t { PmuCsv = 1, PipelineTrace = 2, HardwareInfo = 3, PmSampling = 4 };
+enum class DataKind : uint16_t { PmuCsv = 1, PipelineTrace = 2, HardwareInfo = 3, PmSampling = 4, Application = 5 };
 enum class ArtifactType : uint16_t { Csv = 1, Jsonl = 2, Json = 3, Db = 4, Txt = 5 };
 struct Config {
     std::vector<std::string> sections;
@@ -195,9 +199,12 @@ public:
     Listener(const Listener&) = delete;
     Listener& operator=(const Listener&) = delete;
     Channel Accept(uint64_t session, pid_t peerPid, uid_t peerUid, Deadline deadline);
+    // Return an empty channel if no qualifying peer is ready. Keep listening for other peers.
+    Channel TryAcceptDescendant(uint64_t session, pid_t ancestorPid, uid_t peerUid);
     int Fd() const { return fd_; }
 
 private:
+    Channel TryAccept(uint64_t session);
     int fd_ = -1;
 };
 

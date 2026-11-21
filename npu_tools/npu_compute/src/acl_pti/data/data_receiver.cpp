@@ -108,7 +108,7 @@ aclptiResult DataProcessor::ReceiveDataChunk(const MsprofRawData& raw, std::opti
     }
     // BIU continuity is tracked independently for each (groupId, coreKind).
     const auto expected = state->packetOpen ? state->expectedOffset : 0;
-    if (raw.offset != expected || raw.offset > std::numeric_limits<size_t>::max() - raw.chunkSize) {
+    if (raw.offset != expected) {
         return ACLPTI_ERROR_INVALID_RAW_DATA;
     }
     DataItem item;
@@ -155,16 +155,13 @@ aclptiResult DataProcessor::ReportRawDataFailure(
 
 aclptiResult DataProcessor::ValidateRawData(const MsprofRawData* raw, size_t recordSize, bool& primary)
 {
-    if (raw == nullptr) {
-        return ACLPTI_ERROR_INVALID_RAW_DATA;
-    }
     auto& replay = *active_;
     const bool log = raw->type == LOG_DATA_TYPE;
     if (!primary && !log) {
         primary = true;
         return ACLPTI_ERROR_INVALID_RAW_DATA;
     }
-    if (raw->chunkSize == 0 || raw->chunkSize > sizeof(raw->chunk) || raw->chunkSize % recordSize != 0) {
+    if (raw->chunkSize % recordSize != 0) {
         return ACLPTI_ERROR_INVALID_RAW_DATA;
     }
     if (primary) {
@@ -204,6 +201,23 @@ aclptiResult DataProcessor::ReceiveFixedRecords(const MsprofRawData& raw, size_t
 
 aclptiResult DataProcessor::ReceiveRawData(const MsprofRawData* raw)
 {
+    const auto core = raw == nullptr ? std::nullopt : BiuCoreKind(raw->type);
+    const size_t recordSize = RawRecordSize(raw, core);
+    const bool kernelPrimary =
+        raw != nullptr && (core.has_value() || raw->type == PMU_DATA_TYPE || raw->type == PC_SAMPLING_DATA_TYPE);
+    const bool boundsValid = raw != nullptr && raw->chunkSize != 0 && raw->chunkSize <= sizeof(raw->chunk) &&
+                             raw->offset <= std::numeric_limits<size_t>::max() - raw->chunkSize;
+    if (!boundsValid) {
+        if (active_ && !active_->closed) {
+            return ReportRawDataFailure(raw, recordSize, ACLPTI_ERROR_INVALID_RAW_DATA, kernelPrimary);
+        }
+        return ACLPTI_ERROR_INVALID_RAW_DATA;
+    }
+
+    if (!kernelPrimary && raw->type != LOG_DATA_TYPE) {
+        // Msprof shares the callback with host and auxiliary records. Kernel replay consumes only its payload types.
+        return ACLPTI_SUCCESS;
+    }
     if (!active_) {
         return ACLPTI_ERROR_NO_ACTIVE_REPLAY;
     }
@@ -211,9 +225,7 @@ aclptiResult DataProcessor::ReceiveRawData(const MsprofRawData* raw)
         return ACLPTI_ERROR_INVALID_STATE;
     }
     auto& replay = *active_;
-    const auto core = raw == nullptr ? std::nullopt : BiuCoreKind(raw->type);
-    const size_t recordSize = RawRecordSize(raw, core);
-    bool primary = raw != nullptr && IsPrimaryPayload(replay.info.kind, raw->type, core.has_value());
+    bool primary = IsPrimaryPayload(replay.info.kind, raw->type, core.has_value());
     const auto validationStatus = ValidateRawData(raw, recordSize, primary);
     if (validationStatus != ACLPTI_SUCCESS) {
         return ReportRawDataFailure(raw, recordSize, validationStatus, primary);

@@ -10,11 +10,11 @@
 #include "npu_compute_log.h"
 #include "aclpti/aclpti_range_profiler.h"
 
-#include "acl_pti/profiling/replay_runtime.h"
+#include "acl_pti/initialization.h"
 
 extern "C" ACLPTI_EXPORT aclptiResult aclptiRangeProfilerSetConfig(aclptiRangeProfilerSetConfigParams* pParams)
 {
-    const aclptiResult result = aclpti::profiling::GetReplayRuntime().SetConfig(pParams);
+    const aclptiResult result = aclpti::initialization::SetRangeConfig(pParams);
     ASCTOOL_DEBUG("[aclpti] range config result=%d", static_cast<int>(result));
     if (result != ACLPTI_SUCCESS) {
         ASCTOOL_ERROR(

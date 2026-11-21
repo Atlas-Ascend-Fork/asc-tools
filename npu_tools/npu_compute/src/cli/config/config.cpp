@@ -34,6 +34,7 @@ constexpr std::array kSupportedSections = {
     "SourceCounter",
     "Roofline",
     "occupancy",
+    "Communication",
 };
 
 void AddError(const std::string& message, std::vector<std::string>* errors) { errors->push_back(message); }
@@ -58,6 +59,7 @@ std::vector<std::string> SetSections(const std::string& name)
     }
     for (const char* section : kSupportedSections) {
         if (std::string(section) != "Pipeline" && std::string(section) != "occupancy" &&
+            std::string(section) != "Communication" &&
             (name == "full" ||
              (std::string(section) != "ResourceConflictRatio" && std::string(section) != "PmSampling" &&
               std::string(section) != "SourceCounter" && std::string(section) != "Roofline"))) {
@@ -90,45 +92,50 @@ void AddSection(
     }
 }
 
-bool SkipCombinationValidation(const CliConfig& config, const std::vector<std::string>& errors)
+void ValidateImportOptions(const CliConfig& config, std::vector<std::string>* errors)
 {
-    return config.show_help || !errors.empty();
-}
-
-bool ValidateListSectionsMode(const CliConfig& config, std::vector<std::string>* errors)
-{
-    if (!config.list_sections) {
-        return false;
-    }
-    if (config.no_pack || config.replay_mode_specified || config.cache_control_specified ||
-        config.import_path.has_value() || config.export_path.has_value() || !config.sections.empty() ||
-        !config.program.empty()) {
-        AddError("use --list-sections as a standalone command.", errors);
-    }
-    return true;
-}
-
-bool ValidateImportMode(const CliConfig& config, std::vector<std::string>* errors)
-{
-    if (!config.import_path.has_value()) {
-        return false;
+    if (config.no_pack) {
+        AddError("--no-pack cannot be combined with --import.", errors);
+        return;
     }
     if (config.list_sets || config.list_sections || config.replay_mode_specified || config.cache_control_specified ||
         !config.sections.empty() || !config.program.empty()) {
         AddError("Use --import alone or with --export as the only additional option.", errors);
     }
-    return true;
 }
 
-void ValidateExportRequirement(const CliConfig& config, std::vector<std::string>* errors)
+void ValidateListingOptions(const CliConfig& config, std::vector<std::string>* errors)
 {
-    if (config.export_path.has_value() && config.sections.empty() && config.program.empty()) {
-        AddError("--export requires a collection command or --import.", errors);
+    if (config.no_pack || (config.list_sets && config.list_sections) || config.replay_mode_specified ||
+        config.cache_control_specified || config.export_path || !config.sections.empty() || !config.program.empty()) {
+        AddError(
+            config.list_sets ? "use --list-sets as a standalone command." :
+                               "use --list-sections as a standalone command.",
+            errors);
     }
 }
 
-void ValidateTargetProgram(const CliConfig& config, std::vector<std::string>* errors)
+void ValidateReplayOptions(const CliConfig& config, std::vector<std::string>* errors)
 {
+    if (config.replay_mode == ReplayMode::Application) {
+        if (config.sections != std::vector<std::string>{"Communication"}) {
+            AddError("application replay requires exactly --section Communication.", errors);
+        }
+        if (config.cache_control_specified) {
+            AddError("--cache-control is supported only in kernel replay mode.", errors);
+        }
+    } else if (std::find(config.sections.begin(), config.sections.end(), "Communication") != config.sections.end()) {
+        AddError("Communication requires --replay-mode application.", errors);
+    }
+}
+
+void ValidateCollectionOptions(const CliConfig& config, std::vector<std::string>* errors)
+{
+    if (config.export_path.has_value() && config.sections.empty() && config.program.empty()) {
+        AddError("--export requires a collection command or --import.", errors);
+        return;
+    }
+    ValidateReplayOptions(config, errors);
     if (config.program.empty()) {
         AddError("collection requires a target program after the tool options.", errors);
     }
@@ -136,31 +143,18 @@ void ValidateTargetProgram(const CliConfig& config, std::vector<std::string>* er
 
 void ValidateCombinations(const CliConfig& config, std::vector<std::string>* errors)
 {
-    if (SkipCombinationValidation(config, *errors)) {
+    if (config.show_help || !errors->empty()) {
         return;
     }
-    if (config.no_pack && config.import_path) {
-        AddError("--no-pack cannot be combined with --import.", errors);
+    if (config.import_path.has_value()) {
+        ValidateImportOptions(config, errors);
         return;
     }
-    if (ValidateImportMode(config, errors)) {
+    if (config.list_sets || config.list_sections) {
+        ValidateListingOptions(config, errors);
         return;
     }
-    if (config.list_sets) {
-        if (config.no_pack || config.list_sections || config.replay_mode_specified || config.cache_control_specified ||
-            config.import_path || config.export_path || !config.sections.empty() || !config.program.empty()) {
-            AddError("use --list-sets as a standalone command.", errors);
-        }
-        return;
-    }
-    if (ValidateListSectionsMode(config, errors)) {
-        return;
-    }
-    ValidateExportRequirement(config, errors);
-    if (!errors->empty()) {
-        return;
-    }
-    ValidateTargetProgram(config, errors);
+    ValidateCollectionOptions(config, errors);
 }
 
 OptionSpec FlagOption(std::string name, char alias, bool CliConfig::*field, RepeatPolicy repeat)
@@ -252,17 +246,23 @@ void RegisterReplayOptions(OptionRegistryBuilder& builder)
     replay.long_name = "--replay-mode";
     replay.arity = OptionArity::RequiredValue;
     replay.repeat = RepeatPolicy::Once;
-    replay.missing_message = "--replay-mode requires a mode. Supported value: kernel.";
+    replay.missing_message = "--replay-mode requires a mode. Supported values: kernel, application.";
     replay.on_seen = [](CliConfig& config) { config.replay_mode_specified = true; };
     replay.apply = [missing = replay.missing_message](
-                       const std::string& value, CliConfig&, std::vector<std::string>& errors) {
-        if (value != "kernel") {
+                       const std::string& value, CliConfig& config, std::vector<std::string>& errors) {
+        if (value == "application") {
+            config.replay_mode = ReplayMode::Application;
+        } else if (value != "kernel") {
             errors.push_back(
-                value.empty() ? missing : "unsupported replay mode '" + value + "'. Supported value: kernel.");
+                value.empty() ? missing :
+                                "unsupported replay mode '" + value + "'. Supported values: kernel, application.");
         }
     };
-    replay.help = "Kernel replay mode.\n"
-                  "Value: kernel. Default: kernel.";
+    replay.help =
+        "Replay mode: kernel or application. Default: kernel.\n"
+        "Application requires --section Communication.\n"
+        "Device reset is optional. Explicitly call aclFinalize after synchronizing application work and joining "
+        "device-using threads.";
     builder.Add(std::move(replay));
 }
 
@@ -342,7 +342,7 @@ OptionRegistry RegisterOptions()
 void ApplyDefaultSet(CliConfig* config, std::vector<std::string>* errors)
 {
     if (config->show_help || !errors->empty() || config->list_sets || config->list_sections || config->import_path ||
-        !config->sections.empty() || config->program.empty()) {
+        !config->sections.empty() || config->program.empty() || config->replay_mode == ReplayMode::Application) {
         return;
     }
     config->sets.push_back("basic");
@@ -371,15 +371,7 @@ bool ParseCli(int argc, char** argv, CliConfig* config, std::vector<std::string>
     return errors->empty();
 }
 
-std::string ReplayModeName(ReplayMode mode)
-{
-    if (mode == ReplayMode::Kernel) {
-        return "kernel";
-    }
-    // The CLI and IPC protocol currently support only kernel replay. Keep the
-    // existing kernel default if an invalid enum value reaches this boundary.
-    return "kernel";
-}
+std::string ReplayModeName(ReplayMode mode) { return mode == ReplayMode::Application ? "application" : "kernel"; }
 
 void PrintUsage(FILE* stream, const char* program)
 {

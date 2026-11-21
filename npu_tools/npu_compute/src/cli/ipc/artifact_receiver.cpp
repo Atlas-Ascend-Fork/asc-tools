@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
 #include <map>
 #include <set>
 #include <fcntl.h>
@@ -23,7 +24,8 @@
 #include <unistd.h>
 namespace npucompute::cli {
 namespace {
-constexpr std::size_t MAX_ARTIFACT_COUNT = 64;
+
+constexpr std::string_view kSummaryFileName = "summary.jsonl";
 
 void Require(bool condition, const char* message)
 {
@@ -78,6 +80,13 @@ struct ManifestGroups {
     std::size_t pipelineFragments = 0;
 };
 
+bool HasManifestEntry(const std::vector<ipc::ManifestEntry>& manifest, const ipc::ManifestEntry& entry)
+{
+    return std::any_of(manifest.begin(), manifest.end(), [&entry](const auto& value) {
+        return value.id == entry.id && value.name == entry.name && value.bytes == entry.bytes;
+    });
+}
+
 ManifestGroups CollectManifestGroups(
     const ipc::Result& result, const std::vector<ipc::ManifestEntry>& manifest,
     const std::set<std::string>& expectedPmu, bool pipelineExpected, bool samplingExpected, bool sourceExpected)
@@ -86,10 +95,7 @@ ManifestGroups CollectManifestGroups(
     ManifestGroups groups;
     for (const auto& entry : result.manifest) {
         Require(ids.insert(entry.id).second, "ARTIFACT: duplicate manifest entry");
-        const auto found = std::find_if(manifest.begin(), manifest.end(), [&entry](const auto& value) {
-            return value.id == entry.id && value.name == entry.name && value.bytes == entry.bytes;
-        });
-        Require(found != manifest.end(), "ARTIFACT: manifest length mismatch");
+        Require(HasManifestEntry(manifest, entry), "ARTIFACT: manifest length mismatch");
         const auto separator = entry.name.find_last_of('/');
         const std::string parent = separator == std::string::npos ? "" : entry.name.substr(0, separator);
         const std::string base = separator == std::string::npos ? entry.name : entry.name.substr(separator + 1);
@@ -191,23 +197,18 @@ void ArtifactReceiver::OpenArtifactDirectory()
     }
     if (separator != std::string::npos) {
         const std::string parent = active_.name.substr(0, separator);
-        if (parent.rfind("collection-p", 0) == 0) {
-            active_directory_path_ /= parent;
-            const int next = OpenOrCreateDirectoryAt(directory_, parent);
+        size_t start = 0;
+        while (start < parent.size()) {
+            const auto end = parent.find('/', start);
+            const auto component = parent.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            active_directory_path_ /= component;
+            const int next = OpenOrCreateDirectoryAt(active_directory_, component);
             close(active_directory_);
             active_directory_ = next;
-        } else {
-            active_directory_path_ /= ".biu-staging/process-uds";
-            const int staging = OpenOrCreateDirectoryAt(directory_, ".biu-staging");
-            try {
-                const int process = OpenOrCreateDirectoryAt(staging, "process-uds");
-                close(staging);
-                close(active_directory_);
-                active_directory_ = process;
-            } catch (...) {
-                close(staging);
-                throw;
+            if (end == std::string::npos) {
+                break;
             }
+            start = end + 1;
         }
     }
 }
@@ -222,7 +223,6 @@ void ArtifactReceiver::BeginArtifact(const ipc::Frame& frame)
     for (const auto& entry : manifest_) {
         Require(entry.id != begin.id && entry.name != begin.name, "ARTIFACT: duplicate artifact");
     }
-    Require(manifest_.size() < MAX_ARTIFACT_COUNT, "ARTIFACT: too many artifacts");
     active_ = std::move(begin);
     offset_ = 0;
     OpenArtifactDirectory();
@@ -306,6 +306,7 @@ void ArtifactReceiver::Receive(const ipc::Frame& frame)
             case ipc::Type::Pipeline:
             case ipc::Type::Hardware:
             case ipc::Type::PmSampling:
+            case ipc::Type::Application:
                 ReceiveChunk(frame);
                 break;
             case ipc::Type::DataEnd:
@@ -397,6 +398,28 @@ void ValidatePmuGroups(
     }
 }
 
+void ValidateApplicationManifest(
+    const std::vector<ipc::ManifestEntry>& resultManifest, const std::vector<ipc::ManifestEntry>& manifest,
+    CollectionValidation& validation)
+{
+    std::set<std::string> names;
+    for (const auto& entry : resultManifest) {
+        Require(HasManifestEntry(manifest, entry), "ARTIFACT: manifest length mismatch");
+        Require(
+            ipc::KindForName(entry.name) == ipc::DataKind::Application || entry.name == "HardwareInfo.jsonl" ||
+                (entry.name.rfind("device", 0) == 0 && entry.name.size() >= kSummaryFileName.size() &&
+                 entry.name.compare(
+                     entry.name.size() - kSummaryFileName.size(), kSummaryFileName.size(), kSummaryFileName.data()) ==
+                     0),
+            "ARTIFACT: unexpected application artifact");
+        Require(names.insert(entry.name).second, "ARTIFACT: duplicate application artifact");
+    }
+    validation.Check(names.count("application_raw.jsonl") != 0, "application_raw.jsonl: required artifact missing");
+    validation.Check(
+        names.count("application_manifest.json") != 0, "application_manifest.json: required artifact missing");
+    validation.Check(names.count("HardwareInfo.jsonl") != 0, "HardwareInfo.jsonl: required artifact missing");
+}
+
 } // namespace
 
 bool ArtifactReceiver::Validate(
@@ -410,6 +433,10 @@ bool ArtifactReceiver::Validate(
     Require(
         result.sections == config.sections && result.manifest.size() == manifest_.size(),
         "ARTIFACT: manifest mismatch");
+    if (config.replayMode == "application") {
+        ValidateApplicationManifest(result.manifest, manifest_, validation);
+        return validation.complete;
+    }
     bool pipelineExpected = false;
     bool samplingExpected = false;
     bool sourceExpected = false;

@@ -11,6 +11,7 @@
 
 #include "import/imported_profile_results.h"
 #include "launch/launcher.h"
+#include "launch/process_launcher.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -163,6 +164,117 @@ void CheckReportContents(const boost::filesystem::path& report)
     ASSERT_TRUE(results[3].name == "summary.db");
     ASSERT_TRUE(results[3].type == npucompute::cli::NpuRepFileType::Sqlite);
     ASSERT_TRUE(results[4].name == "summary.jsonl");
+}
+
+TEST(NpuComputeLauncher, ReplacesAllMatchingEnvironmentEntries)
+{
+    npucompute::cli::ProcessLaunchRequest request;
+    request.environment = {"KEEP=first", "MODE=old", "MODE_EXTRA=unchanged", "MODE=duplicate", "LAST=value"};
+
+    request.SetEnvironment("MODE", "new=value");
+
+    EXPECT_EQ(
+        request.environment,
+        (std::vector<std::string>{"KEEP=first", "MODE_EXTRA=unchanged", "LAST=value", "MODE=new=value"}));
+}
+
+TEST(NpuComputeLauncher, AppendsEnvironmentWithEmptyValue)
+{
+    npucompute::cli::ProcessLaunchRequest request;
+    request.SetEnvironment("MODE", "");
+    EXPECT_EQ(request.environment, (std::vector<std::string>{"MODE="}));
+
+    request.SetEnvironment("MODE", "replacement");
+    EXPECT_EQ(request.environment, (std::vector<std::string>{"MODE=replacement"}));
+}
+
+TEST(NpuComputeLauncher, PostReadyFailureAllowsTargetCleanup)
+{
+    TestDirectory workDirectory;
+    ASSERT_FALSE(workDirectory.Path().empty());
+    const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
+    ASSERT_TRUE(currentDirectory.IsActive());
+    const auto marker = workDirectory.Path() / "cleanup.marker";
+    auto config = FixtureConfig({}, "protocol-bad-offset");
+    config.program_arguments.insert(config.program_arguments.end(), {"--", marker.string()});
+    std::string report;
+    std::string error;
+
+    EXPECT_NE(LaunchTarget(config, &report, &error), 0);
+    EXPECT_NE(error.find("UDS collection failed"), std::string::npos);
+    EXPECT_TRUE(boost::filesystem::is_regular_file(marker));
+}
+
+TEST(NpuComputeLauncher, ApplicationRanksPublishIndependentPackedReports)
+{
+    TestDirectory workDirectory;
+    const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
+    ASSERT_TRUE(currentDirectory.IsActive());
+    auto config = FixtureConfig({}, "application-fork");
+    config.sections = {"Communication"};
+    config.replay_mode = npucompute::cli::ReplayMode::Application;
+
+    std::string report;
+    std::string error;
+    ASSERT_EQ(LaunchTarget(config, &report, &error), 0) << error;
+    std::vector<ImportedProfileEntry> results;
+    ASSERT_TRUE(ReadImportedProfileResults(report, &results, &error)) << error;
+    ASSERT_EQ(results.size(), 2U);
+    for (const auto& rank : results) {
+        EXPECT_EQ(rank.name.find("pid-"), 0U);
+        EXPECT_EQ(rank.children.size(), 3U);
+    }
+    EXPECT_NE(results[0].name, results[1].name);
+    EXPECT_FALSE(HasCollectionDirectoryIn(workDirectory.Path()));
+}
+
+TEST(NpuComputeLauncher, ApplicationPreservesCommittedArtifactsAndTargetFailure)
+{
+    TestDirectory workDirectory;
+    const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
+    ASSERT_TRUE(currentDirectory.IsActive());
+    auto config = FixtureConfig({}, "application-abort");
+    config.sections = {"Communication"};
+    config.replay_mode = npucompute::cli::ReplayMode::Application;
+    config.no_pack = true;
+
+    std::string report;
+    std::string error;
+    ASSERT_EQ(LaunchTarget(config, &report, &error), 23) << error;
+    EXPECT_NE(error.find("status 23"), std::string::npos);
+    ASSERT_FALSE(report.empty());
+    unsigned rankCount = 0;
+    unsigned completed = 0;
+    for (const auto& rank : boost::filesystem::directory_iterator(report)) {
+        EXPECT_EQ(rank.path().filename().string().find("pid-"), 0U);
+        EXPECT_TRUE(boost::filesystem::is_regular_file(rank.path() / "HardwareInfo.jsonl"));
+        completed += boost::filesystem::is_regular_file(rank.path() / "application_manifest.json");
+        ++rankCount;
+    }
+    EXPECT_EQ(rankCount, 2U);
+    EXPECT_EQ(completed, 1U);
+    for (const auto& file : boost::filesystem::recursive_directory_iterator(report)) {
+        EXPECT_NE(file.path().extension(), ".tmp");
+    }
+}
+
+TEST(NpuComputeLauncher, SingleApplicationRankKeepsFlatReport)
+{
+    TestDirectory workDirectory;
+    const ScopedCurrentDirectory currentDirectory(workDirectory.Path());
+    ASSERT_TRUE(currentDirectory.IsActive());
+    auto config = FixtureConfig({}, "application-single");
+    config.sections = {"Communication"};
+    config.replay_mode = npucompute::cli::ReplayMode::Application;
+    config.no_pack = true;
+
+    std::string report;
+    std::string error;
+    ASSERT_EQ(LaunchTarget(config, &report, &error), 0) << error;
+    ASSERT_TRUE(boost::filesystem::is_regular_file(boost::filesystem::path(report) / "application_manifest.json"));
+    for (const auto& entry : boost::filesystem::directory_iterator(report)) {
+        EXPECT_FALSE(boost::filesystem::is_directory(entry.path()));
+    }
 }
 
 TEST(NpuComputeLauncher, WithoutExportPublishesReportInCurrentDirectory)

@@ -13,6 +13,7 @@
 #include "launch/collection_session.h"
 #include "launch/launcher.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -282,7 +283,7 @@ int TestHelpReportsAllOptionErrors()
         errors == std::vector<std::string>(
                       {"unsupported section name 'Invalid'. Names are case-sensitive; use --list-sections to see "
                        "supported names.",
-                       "unsupported replay mode 'invalid'. Supported value: kernel."}));
+                       "unsupported replay mode 'invalid'. Supported values: kernel, application."}));
     CHECK(config.show_help);
     return 0;
 }
@@ -336,7 +337,8 @@ int TestMissingValueAndDuplicateState()
     }
     CHECK(!Parse({"npu-compute", "--replay-mode", "--help"}, &config, &errors));
     CHECK(config.replay_mode_specified);
-    CHECK(errors == std::vector<std::string>({"--replay-mode requires a mode. Supported value: kernel."}));
+    CHECK(
+        errors == std::vector<std::string>({"--replay-mode requires a mode. Supported values: kernel, application."}));
     CHECK(!Parse({"npu-compute", "--replay-mode", "--help", "--replay-mode", "kernel"}, &config, &errors));
     CHECK(config.replay_mode_specified);
     CHECK(errors.size() == 2);
@@ -493,7 +495,7 @@ int TestSeparatorMissingValues()
     };
     const MissingValueCase cases[] = {
         {"--section", "--section requires a section name. Use --list-sections to see supported names."},
-        {"--replay-mode", "--replay-mode requires a mode. Supported value: kernel."},
+        {"--replay-mode", "--replay-mode requires a mode. Supported values: kernel, application."},
         {"--import", "--import expects a report file, but no file was provided."},
         {"-i", "--import expects a report file, but no file was provided."},
         {"--export", "--export requires an output path: a report file or directory."},
@@ -570,7 +572,7 @@ int TestSeparatorLiteralValues()
         std::vector<std::string>{
             "unsupported section name '--'. Names are case-sensitive; use --list-sections to see supported names."});
     CHECK(!Parse({"npu-compute", "--replay-mode=--", "--", "./app"}, &config, &errors));
-    CHECK(errors == std::vector<std::string>{"unsupported replay mode '--'. Supported value: kernel."});
+    CHECK(errors == std::vector<std::string>{"unsupported replay mode '--'. Supported values: kernel, application."});
     return 0;
 }
 
@@ -841,4 +843,28 @@ TEST(NpuComputeCli, RooflineUsesTheExistingSectionOption)
     EXPECT_TRUE(Parse({"npu-compute", "--section", "Roofline", "--section", "Memory", "./app"}, &config, &errors));
     EXPECT_EQ(config.sections, (std::vector<std::string>{"Roofline", "Memory"}));
     EXPECT_FALSE(Parse({"npu-compute", "--section", "roofline", "./app"}, &config, &errors));
+}
+
+TEST(NpuComputeCli, ApplicationRequiresExplicitCommunicationAndRejectsKernelOptions)
+{
+    CliConfig config;
+    std::vector<std::string> errors;
+    ASSERT_TRUE(Parse(
+        {"npu-compute", "--replay-mode", "application", "--section", "Communication", "./app"}, &config, &errors));
+    EXPECT_EQ(npucompute::cli::ReplayModeName(config.replay_mode), "application");
+    EXPECT_EQ(config.sections, std::vector<std::string>{"Communication"});
+    for (const std::vector<std::string>& options :
+         {std::vector<std::string>{"--replay-mode", "application"},
+          {"--section", "Communication"},
+          {"--replay-mode", "application", "--section", "Memory"},
+          {"--replay-mode", "application", "--section", "Communication", "--set", "basic"},
+          {"--replay-mode", "application", "--section", "Communication", "--cache-control", "none"}}) {
+        std::vector<std::string> arguments{"npu-compute"};
+        arguments.insert(arguments.end(), options.begin(), options.end());
+        arguments.emplace_back("./app");
+        EXPECT_FALSE(Parse(arguments, &config, &errors));
+        EXPECT_FALSE(errors.empty());
+    }
+    ASSERT_TRUE(Parse({"npu-compute", "--set", "full", "./app"}, &config, &errors));
+    EXPECT_EQ(std::count(config.sections.begin(), config.sections.end(), "Communication"), 0);
 }

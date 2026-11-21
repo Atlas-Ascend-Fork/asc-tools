@@ -769,7 +769,31 @@ aclptiResult BinaryRegistry::PrepareBinaryUnload(aclrtBinHandle binary, UnloadCo
     if (found == binaries_.end()) {
         return ACLPTI_SUCCESS;
     }
-    for (Binary* state : {&found->second, found->second.pipeline.get()}) {
+    const auto status = ReleaseCompanions(found->second);
+    if (status != ACLPTI_SUCCESS) {
+        context.lock_.unlock();
+    }
+    // Keep the lock across a successful prepare and original unload. Runtime can
+    // reissue the same binary handle as soon as the original unload succeeds.
+    return status;
+}
+
+aclptiResult BinaryRegistry::ReleaseReplayedCompanions(aclrtFuncHandle original)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& entry : binaries_) {
+        auto& binary = entry.second;
+        if (binary.functions.count(original) != 0 ||
+            (binary.pipeline && binary.pipeline->functions.count(original) != 0)) {
+            return ReleaseCompanions(binary);
+        }
+    }
+    return ACLPTI_SUCCESS;
+}
+
+aclptiResult BinaryRegistry::ReleaseCompanions(Binary& binary)
+{
+    for (auto* state : {&binary, binary.pipeline.get()}) {
         if (state == nullptr || state->companion == nullptr) {
             continue;
         }
@@ -780,15 +804,14 @@ aclptiResult BinaryRegistry::PrepareBinaryUnload(aclrtBinHandle binary, UnloadCo
             ASCTOOL_ERROR(
                 "[aclpti] error operation=companion_unload status=%d code=%u", status,
                 static_cast<unsigned>(static_cast<uint32_t>(status)));
-            context.lock_.unlock();
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
         state->companion = nullptr;
         state->functions.clear();
         state->elfEntries.clear();
+        state->instrumentedImage.reset();
+        state->pmSamplingImage.reset();
     }
-    // Keep the lock across the handler's original unload and registry removal:
-    // another load may receive the same Runtime handle as soon as unload succeeds.
     return ACLPTI_SUCCESS;
 }
 

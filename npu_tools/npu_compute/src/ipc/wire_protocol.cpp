@@ -16,6 +16,7 @@
 #include <limits>
 #include <set>
 #include <stdexcept>
+#include <string_view>
 
 namespace npucompute::ipc {
 namespace {
@@ -30,9 +31,12 @@ constexpr char kL2CacheFileName[] = "L2Cache.csv";
 constexpr char kArithmeticUtilizationFileName[] = "ArithmeticUtilization.csv";
 constexpr char kResourceConflictRatioFileName[] = "ResourceConflictRatio.csv";
 constexpr char kSimtWarpCsvFileName[] = "SimtWarp.csv";
+constexpr std::string_view kDevicePrefix = "device";
+constexpr std::string_view kResultPrefix = "result-";
+constexpr std::string_view kJsonSuffix = ".json";
 constexpr size_t DEFAULT_STRING_BYTES = 128;
-constexpr size_t MAX_SECTION_COUNT = 12;
-constexpr size_t MAX_ARTIFACT_COUNT = 64;
+constexpr size_t MAX_SECTION_COUNT = 13;
+
 constexpr size_t MAX_ERROR_MESSAGE_BYTES = 4096;
 constexpr unsigned int BITS_PER_BYTE = std::numeric_limits<uint8_t>::digits;
 constexpr std::size_t MAX_PM_SAMPLING_PATH_COMPONENTS = 2;
@@ -41,11 +45,9 @@ constexpr size_t UINT16_BYTES = sizeof(uint16_t);
 constexpr size_t UINT32_BYTES = sizeof(uint32_t);
 constexpr size_t UINT64_BYTES = sizeof(uint64_t);
 constexpr uint32_t IPC_PROTOCOL_ERROR_CODE = 1;
-constexpr size_t MAX_ARTIFACT_PATH_COMPONENTS = 3;
+constexpr size_t MAX_ARTIFACT_PATH_COMPONENTS = 4;
 constexpr size_t COLLECTION_PATH_COMPONENTS = 2;
 constexpr size_t STAGING_PATH_COMPONENTS = 3;
-constexpr size_t RESULT_NAME_MIN_BYTES = 12;
-constexpr size_t JSON_SUFFIX_BYTES = 5;
 constexpr uint64_t NO_FEATURE_FLAGS = 0U;
 constexpr uint64_t BOOLEAN_FALSE = 0U;
 constexpr uint64_t BOOLEAN_TRUE = 1U;
@@ -149,8 +151,11 @@ void ValidateResult(const Result& result)
 {
     Config config;
     config.sections = result.sections;
+    if (result.sections == std::vector<std::string>{"Communication"}) {
+        config.replayMode = "application";
+    }
     ValidateConfig(config);
-    Check(result.manifest.size() <= MAX_ARTIFACT_COUNT, "invalid artifact count");
+    Check(result.manifest.size() <= kMaxManifestEntriesPerFrame, "invalid artifact count");
     std::set<std::string> names;
     std::set<uint64_t> ids;
     for (const auto& item : result.manifest) {
@@ -191,6 +196,17 @@ std::vector<std::string> ArtifactPathComponents(const std::string& name)
             "artifact name is not allowed");
     } else if (components.size() == STAGING_PATH_COMPONENTS) {
         Check(components[0] == ".biu-staging" && components[1] == "process-uds", "artifact name is not allowed");
+    } else if (components.size() == MAX_ARTIFACT_PATH_COMPONENTS) {
+        const auto decimal = [](std::string_view text) {
+            return !text.empty() &&
+                   std::all_of(text.begin(), text.end(), [](char ch) { return ch >= '0' && ch <= '9'; });
+        };
+        Check(
+            components[0].rfind(kDevicePrefix, 0) == 0 &&
+                decimal(std::string_view(components[0]).substr(kDevicePrefix.size())) &&
+                (components[1].rfind("op-", 0) == 0 || components[1].rfind("instance-", 0) == 0) &&
+                decimal(components[2]) && components[3] == "summary.jsonl",
+            "invalid application summary path");
     }
     return components;
 }
@@ -205,11 +221,17 @@ void ValidateConfig(const Config& config)
             section == "PipeUtilization" || section == "Memory" || section == "MemoryL0" || section == "MemoryUB" ||
                 section == "L2Cache" || section == "Pipeline" || section == "ArithmeticUtilization" ||
                 section == "ResourceConflictRatio" || section == "PmSampling" || section == "SourceCounter" ||
-                section == "Roofline" || section == "occupancy",
+                section == "Roofline" || section == "occupancy" || section == "Communication",
             "unknown section");
         Check(seen.insert(section).second, "duplicate section");
     }
-    Check(config.replayMode == "kernel", "unsupported replay mode");
+    Check(config.replayMode == "kernel" || config.replayMode == "application", "unsupported replay mode");
+    if (config.replayMode == "application") {
+        Check(config.sections == std::vector<std::string>{"Communication"}, "application requires Communication only");
+        Check(config.cacheControlMode == kCacheControlModeNone, "application does not support cache control");
+    } else {
+        Check(seen.count("Communication") == 0, "Communication requires application replay");
+    }
     Check(config.featureFlags == NO_FEATURE_FLAGS, "unsupported feature flags");
     Check(
         config.cacheControlMode == kCacheControlModeAll || config.cacheControlMode == kCacheControlModeNone,
@@ -219,13 +241,17 @@ DataKind KindForName(const std::string& name)
 {
     const auto components = ArtifactPathComponents(name);
     const std::string& base = components.back();
+    if (components.size() == 1 && (base == "application_raw.jsonl" || base == "application_manifest.json")) {
+        return DataKind::Application;
+    }
     if (base == kHardwareInfoFileName && components.size() == 1) {
         return DataKind::HardwareInfo;
     }
     const bool pipelinePath =
         components.size() == STAGING_PATH_COMPONENTS &&
-        (base == kManifestFileName || (base.rfind("result-", 0) == 0 && base.size() > RESULT_NAME_MIN_BYTES &&
-                                       base.compare(base.size() - JSON_SUFFIX_BYTES, JSON_SUFFIX_BYTES, ".json") == 0));
+        (base == kManifestFileName ||
+         (base.rfind(kResultPrefix, 0) == 0 && base.size() > kResultPrefix.size() + kJsonSuffix.size() &&
+          base.compare(base.size() - kJsonSuffix.size(), kJsonSuffix.size(), kJsonSuffix) == 0));
     if ((base == kPipeTraceFileName && components.size() == 1) || base == kSimtOccupancyFileName ||
         base == kLegacySimtOccupancyFileName || pipelinePath) {
         return DataKind::PipelineTrace;
@@ -249,6 +275,9 @@ ArtifactType ArtifactTypeForName(const std::string& name)
     const auto kind = KindForName(name);
     const auto components = ArtifactPathComponents(name);
     const std::string& base = components.back();
+    if (kind == DataKind::Application) {
+        return base == "application_raw.jsonl" ? ArtifactType::Jsonl : ArtifactType::Json;
+    }
     if (base == kSummaryDbFileName) {
         return ArtifactType::Db;
     }
@@ -270,8 +299,11 @@ Type TypeForKind(DataKind kind)
 {
     Check(
         kind == DataKind::PmuCsv || kind == DataKind::PipelineTrace || kind == DataKind::HardwareInfo ||
-            kind == DataKind::PmSampling,
+            kind == DataKind::PmSampling || kind == DataKind::Application,
         "unknown artifact kind");
+    if (kind == DataKind::Application) {
+        return Type::Application;
+    }
     if (kind == DataKind::PmSampling) {
         return Type::PmSampling;
     }
@@ -432,7 +464,7 @@ Result DecodeResult(const Bytes& value)
     result.errorCount = reader.Integer(UINT64_BYTES);
     result.sections = ReadSections(reader);
     const auto count = reader.Integer(UINT32_BYTES);
-    Check(count <= MAX_ARTIFACT_COUNT, "invalid manifest length");
+    Check(count <= kMaxManifestEntriesPerFrame, "invalid manifest length");
     for (uint64_t i = 0; i < count; ++i) {
         ManifestEntry item;
         item.id = reader.Integer(UINT64_BYTES);

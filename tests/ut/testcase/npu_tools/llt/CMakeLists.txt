@@ -23,6 +23,9 @@ set(NPU_TOOLS_LLT_COMPUTE_SRC_DIR "${NPU_TOOLS_LLT_COMPUTE_DIR}/src/compute")
 set(NPU_TOOLS_LLT_PROCESSOR_DIR "${CMAKE_SOURCE_DIR}/npu_tools/npu_check/src/processor")
 set(NPU_TOOLS_LLT_CLI_DIR "${CMAKE_SOURCE_DIR}/npu_tools/npu_check/src/cli")
 set(NPU_TOOLS_LLT_ACL_SAN_DIR "${CMAKE_SOURCE_DIR}/npu_tools/npu_check/src/acl_san")
+set_source_files_properties(
+  "${NPU_TOOLS_TEST_ROOT}/injection/tests/stubs/runtime/runtime_stub.cpp"
+  PROPERTIES COMPILE_DEFINITIONS ACL_RUNTIME_STUB_STATIC=1)
 
 
 set(NPU_TOOLS_LLT_ACL_SAN_INTERNAL_SOURCES

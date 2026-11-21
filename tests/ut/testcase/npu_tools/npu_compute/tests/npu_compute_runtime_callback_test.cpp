@@ -41,6 +41,11 @@
 #include <unistd.h>
 
 extern "C" void NpuComputeTestConfigure(const char*, const char*);
+extern "C" void NpuComputeTestMetadata(
+    void*, aclptiCallbackDomain, aclptiCallbackId, const aclptiCallbackData*) noexcept;
+namespace npucompute::test {
+NpuComputeRuntime& Runtime();
+}
 
 namespace {
 
@@ -66,8 +71,8 @@ std::condition_variable g_deviceCountCondition;
 bool g_blockDeviceCount = false;
 bool g_deviceCountStarted = false;
 bool g_releaseDeviceCount = false;
-aclptiProfilingDataCallback g_profilingDataCallback;
 bool g_summaryHardwareAvailable = false;
+int32_t g_currentDevice = 0;
 
 #define CHECK(expression)                 \
     do {                                  \
@@ -134,9 +139,8 @@ bool CheckSubscribeAndEnableContract()
     using npucompute::test::AclPtiEnableCall;
 
     CHECK(npucompute::test::AclPtiSubscribeCount() == 1);
-    CHECK(npucompute::test::CapturedAclPtiCallback() != nullptr);
-    CHECK(npucompute::test::CapturedAclPtiUserData() != nullptr);
-    CHECK(npucompute::test::CapturedAclPtiUserData() == static_cast<void*>(&npucompute::NpuComputeRuntime::Instance()));
+    CHECK(npucompute::test::CapturedAclPtiCallback() == &NpuComputeTestMetadata);
+    CHECK(npucompute::test::CapturedAclPtiUserData() == nullptr);
     const aclptiSubscribeHandle subscriber = npucompute::test::CapturedAclPtiSubscriber();
     CHECK(subscriber != nullptr);
 
@@ -234,7 +238,7 @@ bool RunWarpCsvChild(const boost::filesystem::path& output, const std::string& s
     NpuComputeTestConfigure(output.c_str(), "occupancy");
     npucompute::test::ResetAclPtiCallbackStub();
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
-    CHECK(g_profilingDataCallback != nullptr);
+    CHECK(npucompute::test::InvokeAclPtiRuntimeReady());
     auto result = std::make_shared<aclptiProfilingDataResult>();
     auto warp = std::make_shared<aclptiSimtWarpData>();
     aclptiSimtWarpRecord record;
@@ -303,9 +307,9 @@ bool RunWarpCsvChild(const boost::filesystem::path& output, const std::string& s
         }
     }
     result->simtWarpData = warp;
-    CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
-    npucompute::NpuComputeRuntime::Instance().Stop();
-    CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);
+    CHECK(npucompute::test::Runtime().Submit(result) == ACLPTI_SUCCESS);
+    npucompute::test::Runtime().Stop();
+    CHECK(npucompute::test::Runtime().ShutdownAfterPtiDrain() == 0);
     CHECK(boost::filesystem::is_regular_file(output / "SimtWarpOccupancy.json"));
     CHECK(boost::filesystem::is_regular_file(output / "summary.jsonl"));
     return true;
@@ -320,7 +324,7 @@ bool RunCsvSocNameChild(const boost::filesystem::path& output, bool missingWarp)
     CHECK(::setenv("NPU_COMPUTE_FREQUENCY_MHZ", "1000", 1) == 0);
     npucompute::test::ResetAclPtiCallbackStub();
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
-    CHECK(g_profilingDataCallback != nullptr);
+    CHECK(npucompute::test::InvokeAclPtiRuntimeReady());
 
     auto result = std::make_shared<aclptiProfilingDataResult>();
     npucompute::test::AddOccupancyReplay(*result, 3);
@@ -333,10 +337,10 @@ bool RunCsvSocNameChild(const boost::filesystem::path& output, bool missingWarp)
     row.values = {{0x422U, 100.0}, {0x57fU, 10.0}, {0x580U, 10.0}};
     result->pmuLogs.emplace(aclptiBlockKey{0, 0, ACLPTI_CORE_TYPE_AIV, 0}, std::move(row));
 
-    CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
-    npucompute::NpuComputeRuntime::Instance().Stop();
-    CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);
-    CHECK(npucompute::NpuComputeRuntime::Instance().RowCount() == result->pmuLogs.size());
+    CHECK(npucompute::test::Runtime().Submit(result) == ACLPTI_SUCCESS);
+    npucompute::test::Runtime().Stop();
+    CHECK(npucompute::test::Runtime().ShutdownAfterPtiDrain() == 0);
+    CHECK(npucompute::test::Runtime().RowCount() == result->pmuLogs.size());
     CHECK(CsvValue(output / "Memory.csv", "vector0", "GM_to_UB_bw_usage_rate(%)") == "5.358925");
     CHECK(boost::filesystem::is_regular_file(output / "summary.jsonl"));
     if (missingWarp) {
@@ -356,14 +360,14 @@ bool RunSummaryHardwareChild(const std::string& scenario, const boost::filesyste
     }
     npucompute::test::ResetAclPtiCallbackStub();
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
-    CHECK(g_profilingDataCallback != nullptr);
+    CHECK(npucompute::test::InvokeAclPtiRuntimeReady());
     auto result = std::make_shared<aclptiProfilingDataResult>();
     npucompute::test::AddOccupancyReplay(*result, 3);
     result->taskPmuData.aiv = aclptiTaskPmuCoreData{1000, false, {}};
-    CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
-    npucompute::NpuComputeRuntime::Instance().Stop();
-    CHECK(npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() == 0);
-    CHECK(npucompute::NpuComputeRuntime::Instance().RowCount() == 0);
+    CHECK(npucompute::test::Runtime().Submit(result) == ACLPTI_SUCCESS);
+    npucompute::test::Runtime().Stop();
+    CHECK(npucompute::test::Runtime().ShutdownAfterPtiDrain() == 0);
+    CHECK(npucompute::test::Runtime().RowCount() == 0);
     CHECK(!boost::filesystem::exists(output / "Memory.csv"));
     std::ifstream input((output / "summary.jsonl").string());
     std::string line;
@@ -390,10 +394,11 @@ bool RunPipelineClockChild(const boost::filesystem::path& output, bool failQuery
     NpuComputeTestConfigure(output.c_str(), "Pipeline");
     CHECK(::unsetenv("NPU_COMPUTE_SYSCNT_FREQUENCY_MHZ") == 0);
     CHECK(::setenv("NPU_COMPUTE_FREQUENCY_MHZ", "1000", 1) == 0);
+    g_currentDevice = failQuery ? 4 : 3;
     npucompute::test::ResetAclPtiCallbackStub();
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
+    CHECK(npucompute::test::InvokeAclPtiRuntimeReady());
     CHECK(npucompute::test::CapturedAclPtiCollectPipeline());
-    CHECK(g_profilingDataCallback != nullptr);
     auto result = std::make_shared<aclptiProfilingDataResult>();
     npucompute::test::AddOccupancyReplay(*result, 3);
     auto& replay = result->pipelineData[7];
@@ -401,20 +406,13 @@ bool RunPipelineClockChild(const boost::filesystem::path& output, bool failQuery
     replay.format = aclptiBiuFormat::Chip6;
     replay.channels[{0, aclptiBiuCoreKind::Aic}] = {0xe00003e8U, 0xe0000000U, 0xe0000000U, 0xe0000000U,
                                                     0xf0000000U, 0xf001000aU, 0xf0000014U, 0xf0010004U};
-    if (failQuery) {
-        result->pipelineData[6] = replay;
-        result->pipelineData[6].deviceId = 3;
-    }
-    CHECK(g_profilingDataCallback(result) == ACLPTI_SUCCESS);
-    npucompute::NpuComputeRuntime::Instance().Stop();
-    CHECK(
-        npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain() ==
-        (failQuery ? npucompute::kInitializeFailed : 0));
+    CHECK(npucompute::test::Runtime().Submit(result) == ACLPTI_SUCCESS);
+    npucompute::test::Runtime().Stop();
+    CHECK(npucompute::test::Runtime().ShutdownAfterPtiDrain() == (failQuery ? npucompute::kInitializeFailed : 0));
     CHECK(boost::filesystem::is_regular_file(output / "summary.jsonl"));
     const auto published = output / ".biu-staging/process-uds";
     CHECK(boost::filesystem::is_regular_file(published / "manifest.json"));
-    CHECK(boost::filesystem::is_regular_file(
-        published / (failQuery ? "result-0-device-3-replay-6.json" : "result-0-device-3-replay-7.json")));
+    CHECK(boost::filesystem::is_regular_file(published / "result-0-device-3-replay-7.json") == !failQuery);
     CHECK(!boost::filesystem::exists(published / "result-0-device-4-replay-7.json"));
     return true;
 }
@@ -493,12 +491,13 @@ bool RunNormalStopChild(const boost::filesystem::path& output)
     npucompute::test::ResetAclPtiCallbackStub();
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
     CHECK(CheckSubscribeAndEnableContract());
-    npucompute::NpuComputeRuntime::Instance().Stop();
+    CHECK(acltoolShutdown() == 0);
     CHECK(CheckDisableContract());
     for (aclptiCallbackId cbid : HARDWARE_INFO_TRIGGER_CBIDS) {
         CHECK(!npucompute::test::InvokeAclPtiCallback(
             ACLPTI_CB_DOMAIN_RUNTIME_API, cbid, ACLPTI_API_EXIT, ACL_SUCCESS, nullptr));
     }
+    CHECK(!boost::filesystem::exists(output / HARDWARE_INFO_FILE));
     return true;
 }
 
@@ -531,26 +530,14 @@ bool RunStopDuringCollectionChild(const boost::filesystem::path& output)
 
     std::atomic<bool> stopReturned{false};
     std::thread stopThread([&stopReturned] {
-        npucompute::NpuComputeRuntime::Instance().Stop();
+        npucompute::test::Runtime().Stop();
         stopReturned = true;
     });
-
-    bool callbacksDisabled = false;
-    if (deviceCountStarted) {
-        const auto deadline = std::chrono::steady_clock::now() + 10s;
-        while (std::chrono::steady_clock::now() < deadline) {
-            if (npucompute::test::CapturedAclPtiEnableCalls().size() == HARDWARE_INFO_TRIGGER_CBIDS.size() * 2) {
-                callbacksDisabled = true;
-                break;
-            }
-            std::this_thread::sleep_for(1ms);
-        }
-    }
 
     std::atomic<bool> drainReturned{false};
     std::atomic<int> drainStatus{npucompute::kInitializeFailed};
     std::thread drainThread([&drainReturned, &drainStatus] {
-        drainStatus = npucompute::NpuComputeRuntime::Instance().ShutdownAfterPtiDrain();
+        drainStatus = npucompute::test::Runtime().ShutdownAfterPtiDrain();
         drainReturned = true;
     });
     const auto drainDeadline = std::chrono::steady_clock::now() + 500ms;
@@ -571,13 +558,12 @@ bool RunStopDuringCollectionChild(const boost::filesystem::path& output)
     drainThread.join();
 
     CHECK(deviceCountStarted);
-    CHECK(callbacksDisabled);
+    CHECK(npucompute::test::CapturedAclPtiEnableCalls().size() == HARDWARE_INFO_TRIGGER_CBIDS.size());
     CHECK(callbackDispatched.load());
     CHECK(!callbackReturnedBeforeRelease);
     CHECK(!stopReturnedBeforeRelease);
     CHECK(drainReturnedBeforeRelease);
     CHECK(drainStatus.load() == 0);
-    CHECK(CheckDisableContract());
     CHECK(boost::filesystem::is_regular_file(output / HARDWARE_INFO_FILE));
     CHECK(CountLines(output / HARDWARE_INFO_FILE) == 5);
     return true;
@@ -996,16 +982,13 @@ extern "C" int halGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t i
     return 0;
 }
 
-extern "C" const char* aclrtGetSocName() { return "Ascend950PR_9599"; }
-
-aclptiResult aclptiRegisterProfilingDataCallback(aclptiProfilingDataCallback callback)
+extern "C" aclError aclrtGetDevice(int32_t* device)
 {
-    if (!callback || g_profilingDataCallback) {
-        return callback ? ACLPTI_ERROR_INVALID_STATE : ACLPTI_ERROR_INVALID_PARAMETER;
-    }
-    g_profilingDataCallback = std::move(callback);
-    return ACLPTI_SUCCESS;
+    *device = g_currentDevice;
+    return ACL_SUCCESS;
 }
+
+extern "C" const char* aclrtGetSocName() { return "Ascend950PR_9599"; }
 
 int main(int argc, char** argv)
 {

@@ -78,21 +78,8 @@ bool FailErrno(const std::string& message, int error_number, std::string* error)
     return Fail(message + ": " + std::string(std::strerror(error_number)), error);
 }
 
-void SetEnvironmentValue(const std::string& name, const std::string& value, std::vector<std::string>* environment)
-{
-    const std::string prefix = name + "=";
-    for (auto iterator = environment->begin(); iterator != environment->end();) {
-        if (iterator->compare(0, prefix.size(), prefix) == 0) {
-            iterator = environment->erase(iterator);
-        } else {
-            ++iterator;
-        }
-    }
-    environment->push_back(prefix + value);
-}
-
 bool BuildChildEnvironment(
-    const std::string& collection_data_directory, std::vector<std::string>* environment, std::string* error)
+    const std::string& collection_data_directory, ProcessLaunchRequest& request, std::string* error)
 {
     std::string injection_path;
     if (!ResolveInjectionLibraryPath(&injection_path, error)) {
@@ -100,18 +87,17 @@ bool BuildChildEnvironment(
     }
 
     for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
-        environment->emplace_back(*entry);
+        request.environment.emplace_back(*entry);
     }
     const std::string replayModePrefix = "NPU_COMPUTE_REPLAY_MODE=";
-    environment->erase(
+    request.environment.erase(
         std::remove_if(
-            environment->begin(), environment->end(),
+            request.environment.begin(), request.environment.end(),
             [&](const auto& entry) { return entry.compare(0, replayModePrefix.size(), replayModePrefix) == 0; }),
-        environment->end());
-    SetEnvironmentValue("ACL_API_INJECTION", injection_path, environment);
-    SetEnvironmentValue(
-        kNestedMarkerEnvironment, collection_data_directory + "/" + kNestedCollectionMarker, environment);
-    SetEnvironmentValue(kCollectionActiveEnvironment, "1", environment);
+        request.environment.end());
+    request.SetEnvironment("ACL_API_INJECTION", injection_path);
+    request.SetEnvironment(kNestedMarkerEnvironment, collection_data_directory + "/" + kNestedCollectionMarker);
+    request.SetEnvironment(kCollectionActiveEnvironment, "1");
     return true;
 }
 
@@ -162,6 +148,158 @@ void SetStageError(const std::string& stage, const std::string& detail, std::str
     }
 }
 
+class CollectionOutput {
+public:
+    explicit CollectionOutput(bool noPack) : noPack_(noPack) {}
+
+    int Create(const CliConfig& config, std::string* error)
+    {
+        boost::filesystem::path disk_parent;
+        if (noPack_ ? !ResolveDiskParentDirectory(config.export_path, &disk_parent, &stage_error_) :
+                      !ResolveReportTarget(config.export_path, &target_, &stage_error_)) {
+            Fail(stage_error_, error);
+            return kReportErrorExitCode;
+        }
+        boost::system::error_code current_directory_error;
+        const auto current_directory = boost::filesystem::current_path(current_directory_error);
+        if (current_directory_error) {
+            SetStageError("get current directory failed", current_directory_error.message(), error);
+            return kInternalErrorExitCode;
+        }
+        if (noPack_) {
+            return DiskOutputDirectory::Create(disk_parent, &disk_data_, error) ? 0 : kReportErrorExitCode;
+        }
+        return StagingDirectory::Create(current_directory, &collection_data_, error) ? 0 : kInternalErrorExitCode;
+    }
+
+    const std::string& Path() const { return noPack_ ? disk_data_.Path() : collection_data_.Path(); }
+
+    int Finish(int result, std::string* error, int targetFailure = 0)
+    {
+        std::string cleanup_error;
+        const bool removed = noPack_ ? disk_data_.Remove(&cleanup_error) : collection_data_.Remove(&cleanup_error);
+        if (!removed) {
+            if (noPack_ && error != nullptr && !error->empty()) {
+                *error += "; cleanup failed: " + cleanup_error;
+            } else {
+                SetStageError("finalize collection data directory failed", cleanup_error, error);
+            }
+            if (!noPack_ || result == 0) {
+                result = kInternalErrorExitCode;
+            }
+        }
+        return targetFailure != 0 ? targetFailure : result;
+    }
+
+    int Publish(
+        const CliConfig& config, const CollectionOutcome& outcome, int targetFailure, std::string* report_path,
+        std::string* error)
+    {
+        auto issues = outcome.issues;
+        if (config.replay_mode == ReplayMode::Kernel) {
+            FinalizeKernelResults(config.collect_pipeline, issues);
+        }
+        return noPack_ ? RetainRawResults(issues, targetFailure, report_path, error) :
+                         PublishReport(issues, targetFailure, report_path, error);
+    }
+
+private:
+    void FinalizeKernelResults(bool collectPipeline, std::vector<std::string>& issues)
+    {
+        boost::system::error_code hardware_error;
+        const auto hardware_status =
+            boost::filesystem::symlink_status(boost::filesystem::path(Path()) / "HardwareInfo.jsonl", hardware_error);
+        if (hardware_error || !boost::filesystem::is_regular_file(hardware_status)) {
+            issues.push_back("HardwareInfo.jsonl: hardware information missing or not a regular file");
+        }
+        if (!FinalizePipeTrace(Path(), collectPipeline, &stage_error_, &issues)) {
+            issues.push_back("finalize PipeTrace failed: " + stage_error_);
+        }
+        const auto databaseResults = FinalizeSummarySqlite(Path());
+        issues.insert(issues.end(), databaseResults.issues.begin(), databaseResults.issues.end());
+    }
+
+    int RetainRawResults(
+        std::vector<std::string>& issues, int targetFailure, std::string* report_path, std::string* error)
+    {
+        // Validate every sibling before removing rejected paths, so valid results can still be retained.
+        if (!ValidateAndCleanCollectionDirectory(Path(), &stage_error_, &issues)) {
+            SetStageError("validate collection results failed", stage_error_, error);
+            return Finish(kCollectionErrorExitCode, error, targetFailure);
+        }
+        for (const auto& issue : issues) {
+            std::fprintf(stderr, "[WARNING] npu-compute: %s\n", issue.c_str());
+        }
+        if (report_path != nullptr) {
+            *report_path = Path();
+        }
+        disk_data_.Retain();
+        if (!issues.empty() && targetFailure == 0) {
+            Fail("collection incomplete; valid raw results were retained", error);
+        }
+        return targetFailure != 0 ? targetFailure : (issues.empty() ? 0 : kCollectionErrorExitCode);
+    }
+
+    int PublishReport(std::vector<std::string>& issues, int targetFailure, std::string* report_path, std::string* error)
+    {
+        std::vector<uint8_t> encoded;
+        // Packing adds nested rep encoding and collection status to the shared per-file validation result.
+        if (!PackDirectoryToRep(Path(), &encoded, &stage_error_, &issues)) {
+            SetStageError("pack collection results failed", stage_error_, error);
+            return Finish(kReportErrorExitCode, error, targetFailure);
+        }
+        if (encoded.empty()) {
+            Fail(stage_error_, error);
+            return Finish(kCollectionErrorExitCode, error, targetFailure);
+        }
+        if (!PublishRepReport(encoded, target_, &stage_error_)) {
+            Fail(stage_error_, error);
+            return Finish(kReportErrorExitCode, error, targetFailure);
+        }
+        if (report_path != nullptr) {
+            *report_path = target_.path.string();
+        }
+        for (const auto& issue : issues) {
+            std::fprintf(stderr, "[WARNING] npu-compute: %s\n", issue.c_str());
+        }
+        if (!issues.empty() && targetFailure == 0) {
+            Fail("collection incomplete; valid results were packaged", error);
+        }
+        return Finish(issues.empty() ? 0 : kCollectionErrorExitCode, error, targetFailure);
+    }
+
+    bool noPack_ = false;
+    std::string stage_error_;
+    ReportTarget target_;
+    StagingDirectory collection_data_;
+    DiskOutputDirectory disk_data_;
+};
+
+bool RunTargetCollection(
+    const CliConfig& config, const ipc::Config& collectionConfig, const std::string& collection_path,
+    CollectionSession& session, int& appResult, std::string* error)
+{
+    ProcessLaunchRequest request;
+    request.program = config.program;
+    request.arguments = config.program_arguments;
+    if (!BuildChildEnvironment(collection_path, request, error)) {
+        appResult = kInternalErrorExitCode;
+        return false;
+    }
+    appResult = session.Run(std::move(request), collectionConfig, collection_path, error);
+    bool nested_collection_detected = false;
+    if (!ConsumeNestedCollectionMarker(collection_path, &nested_collection_detected, error)) {
+        appResult = kInternalErrorExitCode;
+        return false;
+    }
+    if (nested_collection_detected) {
+        Fail(kNestedCollectionError, error);
+        appResult = kCollectionErrorExitCode;
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int LaunchTarget(const CliConfig& config, std::string* report_path, std::string* error)
@@ -172,17 +310,13 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
     if (report_path != nullptr) {
         report_path->clear();
     }
-
     if (IsNestedCollection()) {
         if (!RecordNestedCollection(error)) {
             return kInternalErrorExitCode;
         }
-        if (error != nullptr) {
-            *error = kNestedCollectionError;
-        }
+        Fail(kNestedCollectionError, error);
         return kCollectionErrorExitCode;
     }
-
     ipc::Config collectionConfig;
     try {
         collectionConfig = LoadCollectionConfig(config);
@@ -190,132 +324,23 @@ int LaunchTarget(const CliConfig& config, std::string* report_path, std::string*
         Fail(exception.what(), error);
         return kUsageErrorExitCode;
     }
-
-    std::string stage_error;
-    ReportTarget target;
-    boost::filesystem::path disk_parent;
-    if (config.no_pack ? !ResolveDiskParentDirectory(config.export_path, &disk_parent, &stage_error) :
-                         !ResolveReportTarget(config.export_path, &target, &stage_error)) {
-        Fail(stage_error, error);
-        return kReportErrorExitCode;
-    }
-
-    boost::system::error_code current_directory_error;
-    const boost::filesystem::path current_directory = boost::filesystem::current_path(current_directory_error);
-    if (current_directory_error) {
-        SetStageError("get current directory failed", current_directory_error.message(), error);
-        return kInternalErrorExitCode;
-    }
-
-    StagingDirectory collection_data;
-    DiskOutputDirectory disk_data;
-    if (config.no_pack) {
-        if (!DiskOutputDirectory::Create(disk_parent, &disk_data, error)) {
-            return kReportErrorExitCode;
-        }
-    } else if (!StagingDirectory::Create(current_directory, &collection_data, error)) {
-        return kInternalErrorExitCode;
-    }
-    const std::string& collection_path = config.no_pack ? disk_data.Path() : collection_data.Path();
-    const auto finishCollection = [&config, &disk_data, &collection_data, error](int result) {
-        std::string cleanup_error;
-        const bool removed = config.no_pack ? disk_data.Remove(&cleanup_error) : collection_data.Remove(&cleanup_error);
-        if (!removed) {
-            if (config.no_pack && error != nullptr && !error->empty()) {
-                *error += "; cleanup failed: " + cleanup_error;
-            } else {
-                SetStageError("finalize collection data directory failed", cleanup_error, error);
-            }
-            if (!config.no_pack || result == 0) {
-                result = kInternalErrorExitCode;
-            }
-        }
-        return result;
-    };
-
-    ProcessLaunchRequest request;
-    request.program = config.program;
-    request.arguments = config.program_arguments;
-    if (!BuildChildEnvironment(collection_path, &request.environment, error)) {
-        return finishCollection(kInternalErrorExitCode);
+    CollectionOutput output(config.no_pack);
+    const int createResult = output.Create(config, error);
+    if (createResult != 0) {
+        return createResult;
     }
     CollectionSession session;
-    const int appResult = session.Run(std::move(request), collectionConfig, collection_path, error);
-    bool nested_collection_detected = false;
-    if (!ConsumeNestedCollectionMarker(collection_path, &nested_collection_detected, error)) {
-        return finishCollection(kInternalErrorExitCode);
+    int appResult = 0;
+    if (!RunTargetCollection(config, collectionConfig, output.Path(), session, appResult, error)) {
+        return output.Finish(appResult, error);
     }
-    if (nested_collection_detected) {
-        if (error != nullptr) {
-            *error = kNestedCollectionError;
-        }
-        return finishCollection(kCollectionErrorExitCode);
+    const auto& outcome = session.Outcome();
+    const bool retainApplicationArtifacts = config.replay_mode == ReplayMode::Application && outcome.artifacts > 0;
+    if (appResult != 0 && !retainApplicationArtifacts) {
+        return output.Finish(appResult, error);
     }
-    if (appResult != 0) {
-        return finishCollection(appResult);
-    }
-
-    auto issues = session.Outcome().issues;
-    boost::system::error_code hardware_error;
-    const auto hardware_status = boost::filesystem::symlink_status(
-        boost::filesystem::path(collection_path) / "HardwareInfo.jsonl", hardware_error);
-    const bool hardware_info_valid = !hardware_error && boost::filesystem::is_regular_file(hardware_status);
-    if (!hardware_info_valid) {
-        issues.push_back("HardwareInfo.jsonl: hardware information missing or not a regular file");
-    }
-    if (!FinalizePipeTrace(collection_path, config.collect_pipeline, &stage_error, &issues)) {
-        issues.push_back("finalize PipeTrace failed: " + stage_error);
-    }
-    const auto databaseResults = FinalizeSummarySqlite(collection_path);
-    issues.insert(issues.end(), databaseResults.issues.begin(), databaseResults.issues.end());
-
-    if (config.no_pack) {
-        // Retain mode uses the same directory traversal and file processing as
-        // packing. It cleans rejected paths only after the complete scan, so a
-        // valid sibling can still be delivered when another file is invalid.
-        if (!ValidateAndCleanCollectionDirectory(collection_path, &stage_error, &issues)) {
-            SetStageError("validate collection results failed", stage_error, error);
-            return finishCollection(kCollectionErrorExitCode);
-        }
-        for (const auto& issue : issues) {
-            std::fprintf(stderr, "[WARNING] npu-compute: %s\n", issue.c_str());
-        }
-        if (report_path != nullptr) {
-            *report_path = collection_path;
-        }
-        disk_data.Retain();
-        if (!issues.empty()) {
-            Fail("collection incomplete; valid raw results were retained", error);
-        }
-        return issues.empty() ? 0 : kCollectionErrorExitCode;
-    }
-
-    std::vector<uint8_t> encoded;
-    // Pack mode uses the shared per-file validation result, then adds the
-    // mode-specific nested rep encoding and collection status.
-    if (!PackDirectoryToRep(collection_path, &encoded, &stage_error, &issues)) {
-        SetStageError("pack collection results failed", stage_error, error);
-        return finishCollection(kReportErrorExitCode);
-    }
-    if (encoded.empty()) {
-        Fail(stage_error, error);
-        return finishCollection(kCollectionErrorExitCode);
-    }
-
-    if (!PublishRepReport(encoded, target, &stage_error)) {
-        Fail(stage_error, error);
-        return finishCollection(kReportErrorExitCode);
-    }
-    if (report_path != nullptr) {
-        *report_path = target.path.string();
-    }
-    for (const auto& issue : issues) {
-        std::fprintf(stderr, "[WARNING] npu-compute: %s\n", issue.c_str());
-    }
-    if (!issues.empty()) {
-        Fail("collection incomplete; valid results were packaged", error);
-    }
-    return finishCollection(issues.empty() ? 0 : kCollectionErrorExitCode);
+    const int targetFailure = outcome.outcome == "app_failed" ? appResult : 0;
+    return output.Publish(config, outcome, targetFailure, report_path, error);
 }
 
 } // namespace npucompute::cli

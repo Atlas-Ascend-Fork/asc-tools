@@ -21,6 +21,8 @@ ACL_TOOL_INJECTION_EXPORT aclError RuntimeStubSetOrigin(const char* name, aclrtA
 ACL_TOOL_INJECTION_EXPORT aclError RuntimeStubClearOrigin(const char* name);
 ACL_TOOL_INJECTION_EXPORT aclError RuntimeStubSetSocName(const char* socName);
 ACL_TOOL_INJECTION_EXPORT void RuntimeStubReset(void);
+ACL_TOOL_INJECTION_EXPORT void RuntimeStubEmitDeviceState(int32_t deviceId, aclrtDeviceState state);
+ACL_TOOL_INJECTION_EXPORT void RuntimeStubSetFinalizeRegistrationStatus(aclError status);
 
 #ifdef __cplusplus
 }

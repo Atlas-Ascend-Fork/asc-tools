@@ -12,35 +12,35 @@
 #include "ipc/ipc.h"
 #include <atomic>
 namespace npucompute::cli {
-class ArtifactReceiver;
 class UdsClient {
 public:
     void Run(
         const ipc::Bootstrap& bootstrap, pid_t childPid, const ipc::Config& config, const std::string& directory,
         const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled);
+    void RunConnected(
+        ipc::Channel channel, const ipc::Bootstrap& bootstrap, const ipc::Config& config, const std::string& directory,
+        const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled);
     size_t ArtifactCount() const { return artifact_count_; }
     bool Complete() const { return complete_; }
+    bool Ready() const { return ready_; }
     const std::vector<std::string>& Issues() const { return issues_; }
     bool InterruptAttempted() const { return interrupt_attempted_; }
 
 private:
-    ipc::Channel Connect(
-        const ipc::Bootstrap& bootstrap, pid_t childPid, const std::atomic<bool>& childExited,
-        const std::atomic<bool>& cancelled) const;
     void Handshake(
         ipc::Channel& channel, const ipc::Bootstrap& bootstrap, const ipc::Config& config, pid_t targetPid,
         const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled) const;
     void ReceiveFrames(
         ipc::Channel& channel, const ipc::Config& config, const std::string& directory,
         const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled);
-    bool FinishResult(
-        ipc::Channel& channel, ArtifactReceiver& receiver, const ipc::Frame& frame, const ipc::Config& config,
-        const std::atomic<bool>& cancelled);
+    ipc::Frame ReceiveNextFrame(
+        ipc::Channel& channel, const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled);
     void WaitForResultClose(ipc::Channel& channel, const std::atomic<bool>& cancelled) const;
 
     size_t artifact_count_ = 0;
     bool complete_ = false;
     std::vector<std::string> issues_;
+    std::atomic<bool> ready_{false};
     std::atomic<bool> interrupt_attempted_{false};
 };
 } // namespace npucompute::cli

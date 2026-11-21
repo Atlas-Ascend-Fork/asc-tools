@@ -13,7 +13,7 @@
 namespace npucompute {
 class UdsServer {
 public:
-    ipc::Hello Accept();
+    ipc::Hello Accept(bool connectToCli = false);
     void Ready();
     void Fail(const std::string& message) noexcept;
     void Fail(const ipc::Error& error) noexcept;

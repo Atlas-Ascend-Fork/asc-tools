@@ -11,7 +11,12 @@
 
 #include "aclpti/aclpti_runtime_api.h"
 
+#include <atomic>
+
 namespace aclpti::callback {
+namespace {
+std::atomic<Dispatcher*> activeDispatcher{nullptr};
+} // namespace
 
 aclptiSubscribeHandle Dispatcher::SubscriberHandle() { return &subscriber_; }
 
@@ -28,6 +33,15 @@ void Dispatcher::Configure(aclptiCallbackFunc callback, void* userData)
     subscriber_.callback = callback;
     subscriber_.userData = userData;
     subscriber_.enabledCallbacks.clear();
+}
+
+void Dispatcher::Clear() noexcept
+{
+    std::lock_guard<std::mutex> lock(subscriber_.callbackMutex);
+    subscriber_.callback = nullptr;
+    subscriber_.userData = nullptr;
+    subscriber_.activityEnabled = false;
+    decltype(subscriber_.enabledCallbacks){}.swap(subscriber_.enabledCallbacks);
 }
 
 aclptiResult Dispatcher::Enable(
@@ -56,7 +70,7 @@ aclptiResult Dispatcher::Enable(
     return ACLPTI_SUCCESS;
 }
 
-aclptiResult Dispatcher::SupportedDomains(std::size_t* domainCount, aclptiCallbackDomain* domains) const
+aclptiResult Dispatcher::SupportedDomains(std::size_t* domainCount, aclptiCallbackDomain* domains)
 {
     if (domainCount == nullptr) {
         return ACLPTI_ERROR_INVALID_PARAMETER;
@@ -106,8 +120,13 @@ void Dispatcher::SetActivityEnabled(aclptiSubscribeHandle subscriber, bool enabl
 
 Dispatcher& GetDispatcher()
 {
-    static Dispatcher dispatcher;
-    return dispatcher;
+    if (auto* dispatcher = activeDispatcher.load(std::memory_order_acquire)) {
+        return *dispatcher;
+    }
+    static Dispatcher standaloneDispatcher;
+    return standaloneDispatcher;
 }
+
+void BindDispatcher(Dispatcher* dispatcher) noexcept { activeDispatcher.store(dispatcher, std::memory_order_release); }
 
 } // namespace aclpti::callback

@@ -82,6 +82,8 @@ def test_default_component_installs_the_declared_layout(install_root):
         assert (private_library_root / library).is_file()
         assert not (architecture_root / "lib64" / library).exists()
 
+    assert not (private_library_root / "libacl_tool_lifecycle.so").exists()
+
     assert not (architecture_root / "include/aclpti").exists()
     assert not (architecture_root / "include/npu_compute/acl_pti.h").exists()
     assert not (architecture_root / "include/npu_compute/pti_data_module.h").exists()

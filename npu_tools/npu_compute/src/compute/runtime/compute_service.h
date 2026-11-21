@@ -9,29 +9,35 @@
  */
 #ifndef NPU_COMPUTE_SERVICE_H
 #define NPU_COMPUTE_SERVICE_H
-#include "ipc/artifact_publisher.h"
-#include "ipc/npu_compute_uds_server.h"
-#include "runtime/runtime_config.h"
+
+#include "acl_pti/profiling/application_profiler.h"
+#include <condition_variable>
 #include <memory>
 #include <mutex>
+
 namespace npucompute {
 class ComputeService {
 public:
     static ComputeService& Instance();
-    int Initialize() noexcept;
+    ~ComputeService();
+    static void InitializeFromAcl() noexcept;
+    static void FinalizeFromAcl() noexcept;
+    int Initialize(bool fromAcl = false) noexcept;
     int Shutdown() noexcept;
-    void Stop() const noexcept;
 
 private:
-    int FinalizeOnce(int status);
+    struct Session;
+    enum class State { Idle, Starting, Running, Closing, Stopped };
+    int ShutdownAndWait(aclpti::profiling::ApplicationEndReason reason) noexcept;
+    int CloseOwnedSession(aclpti::profiling::ApplicationEndReason reason) noexcept;
+    void FinalizeApplication() noexcept;
+
     std::mutex mutex_;
-    bool initialized_ = false;
-    bool attempted_ = false;
-    bool finalized_ = false;
+    std::condition_variable changed_;
+    State state_ = State::Idle;
     int result_ = -1;
-    ipc::Config config_;
-    RuntimeConfig runtime_config_;
-    std::unique_ptr<ArtifactPublisher> publisher_;
+    bool finalizeDeferred_ = false;
+    std::unique_ptr<Session> session_;
 };
 } // namespace npucompute
 #endif

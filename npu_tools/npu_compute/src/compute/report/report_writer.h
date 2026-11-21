@@ -12,6 +12,8 @@
 #include "aclpti/aclpti_data.h"
 #include "compute_types.h"
 
+#include <locale>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -26,6 +28,18 @@ aclptiResult WritePmuCsv(
 aclptiResult WriteSummaryJsonl(
     const aclptiProfilingDataResult& result, const std::vector<std::string>& sections, const ReportConfig& config,
     const KernelMetadata& metadata, ArtifactSink& sink, std::string_view artifactPrefix = {}, bool* degraded = nullptr);
+
+struct FormattedOpInfoSummary {
+    // The object remains open so application fields can precede its final delimiter.
+    std::string fields;
+    std::vector<std::string> unavailableFields;
+};
+
+// Shares field ordering, formulas and NA semantics with kernel summaries.
+FormattedOpInfoSummary FormatOpInfoSummary(
+    const aclptiProfilingDataResult& result, const ReportConfig& config, const KernelMetadata& metadata);
+
+std::string QuoteJsonString(std::string_view value, const std::locale& locale);
 
 aclptiResult WritePmuReport(
     const aclptiProfilingDataResult& result, const std::vector<std::string>& sections, const ReportConfig& config,

@@ -14,7 +14,7 @@ target_compile_definitions(acl_tool_injection_test PRIVATE ACL_TOOL_INJECTION_BU
 target_include_directories(acl_tool_injection_test PRIVATE "${INJECTION_SOURCE_DIR}/src")
 target_link_libraries(acl_tool_injection_test
   PUBLIC injection_test_headers
-  PRIVATE Threads::Threads acl_runtime_stub acl_prof_api_stub
+  PRIVATE Threads::Threads acl_runtime_stub acl_prof_api_stub ${CMAKE_DL_LIBS}
 )
 target_compile_options(acl_tool_injection_test PRIVATE -Wall -Wextra -Werror)
 target_link_options(acl_tool_injection_test PRIVATE -Wl,-z,defs -Wl,--disable-new-dtags)
@@ -34,6 +34,6 @@ target_compile_definitions(acl_tool_injection_test_unit PRIVATE ACL_TOOL_INJECTI
 target_include_directories(acl_tool_injection_test_unit PRIVATE "${INJECTION_SOURCE_DIR}/src")
 target_link_libraries(acl_tool_injection_test_unit
   PUBLIC injection_test_headers
-  PRIVATE Threads::Threads acl_runtime_stub_unit
+  PRIVATE Threads::Threads acl_runtime_stub_unit ${CMAKE_DL_LIBS}
 )
 target_compile_options(acl_tool_injection_test_unit PRIVATE -Wall -Wextra -Werror)

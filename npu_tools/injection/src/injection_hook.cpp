@@ -60,6 +60,8 @@ constexpr const char* kRuntimeApiNames[ACL_RT_API_MAX] = {
     "aclrtFunctionGetParamInfo",
     "aclrtMallocWithCfg",
     "aclrtBinaryLoadFromFile",
+    "aclrtResetDeviceForce",
+    "aclrtLaunchKernelWithConfig",
 };
 
 std::mutex g_initMutex;
@@ -83,43 +85,33 @@ bool IsValidApiId(aclrtApiId id)
     return value >= 0 && value < static_cast<int32_t>(ACL_RT_API_MAX);
 }
 
-extern aclApiTable g_aclApiTable;
+aclApiTable& GetAclApiTable();
 
-const char* FindRuntimeApiName(aclrtApiId id)
-{
-    if (!IsValidApiId(id)) {
-        return nullptr;
-    }
-    return kRuntimeApiNames[static_cast<size_t>(id)];
-}
+const char* FindRuntimeApiName(aclrtApiId id) { return kRuntimeApiNames[static_cast<size_t>(id)]; }
 
-bool SaveOriginalRuntimeEntry(aclrtApiId id, void* origin)
+void SaveOriginalRuntimeEntry(aclrtApiId id, void* origin)
 {
-    if (!IsValidApiId(id)) {
-        return false;
-    }
     const size_t index = static_cast<size_t>(id);
-    pthread_rwlock_wrlock(&g_aclApiTable.lock);
-    g_aclApiTable.origin[index] = origin;
-    pthread_rwlock_unlock(&g_aclApiTable.lock);
-    return true;
+    pthread_rwlock_wrlock(&GetAclApiTable().lock);
+    GetAclApiTable().origin[index] = origin;
+    pthread_rwlock_unlock(&GetAclApiTable().lock);
 }
 
 int32_t RegisterCallback(aclrtApiId id, void* callback)
 {
-    const char* name = FindRuntimeApiName(id);
     if (!IsValidApiId(id)) {
         ASCTOOL_ERROR(
             "[tool_injection] register callback failed: name=%s id=%d"
             " code=%u",
-            name == nullptr ? "unknown" : name, static_cast<int>(id), INJECTION_LOG_CODE_UNSPECIFIED);
+            "unknown", static_cast<int>(id), INJECTION_LOG_CODE_UNSPECIFIED);
         return ACL_ERROR_INVALID_PARAM;
     }
+    const char* name = FindRuntimeApiName(id);
     const size_t index = static_cast<size_t>(id);
-    pthread_rwlock_wrlock(&g_aclApiTable.lock);
-    const bool replaced = g_aclApiTable.callback[index] != nullptr;
-    g_aclApiTable.callback[index] = callback;
-    pthread_rwlock_unlock(&g_aclApiTable.lock);
+    pthread_rwlock_wrlock(&GetAclApiTable().lock);
+    const bool replaced = GetAclApiTable().callback[index] != nullptr;
+    GetAclApiTable().callback[index] = callback;
+    pthread_rwlock_unlock(&GetAclApiTable().lock);
     ASCTOOL_DEBUG(
         "[tool_injection] %s callback: name=%s id=%d callback=%p",
         callback == nullptr ? "clear" : (replaced ? "replace" : "register"), name == nullptr ? "unknown" : name,
@@ -133,17 +125,15 @@ Function GetDispatchTarget(aclrtApiId id)
     const char* name = FindRuntimeApiName(id);
     void* targetAddress = nullptr;
     const char* source = "origin";
-    if (IsValidApiId(id)) {
-        const size_t index = static_cast<size_t>(id);
-        pthread_rwlock_rdlock(&g_aclApiTable.lock);
-        targetAddress = g_aclApiTable.callback[index];
-        if (targetAddress == nullptr) {
-            targetAddress = g_aclApiTable.origin[index];
-        } else {
-            source = "callback";
-        }
-        pthread_rwlock_unlock(&g_aclApiTable.lock);
+    const size_t index = static_cast<size_t>(id);
+    pthread_rwlock_rdlock(&GetAclApiTable().lock);
+    targetAddress = GetAclApiTable().callback[index];
+    if (targetAddress == nullptr) {
+        targetAddress = GetAclApiTable().origin[index];
+    } else {
+        source = "callback";
     }
+    pthread_rwlock_unlock(&GetAclApiTable().lock);
     const Function target = AddressToFunction<Function>(targetAddress);
     ASCTOOL_DEBUG(
         "[tool_injection] dispatch runtime api: name=%s id=%d source=%s target=%p", name == nullptr ? "unknown" : name,
@@ -210,6 +200,12 @@ extern "C" aclError aclrtResetDeviceHook(int32_t deviceId)
     const aclError result = callback(deviceId);
     LogHookResult("aclrtResetDevice", id, result);
     return result;
+}
+
+extern "C" aclError aclrtResetDeviceForceHook(int32_t deviceId)
+{
+    const auto target = GetDispatchTarget<aclrtResetDeviceForceFunc>(ACL_RT_API_aclrtResetDeviceForce);
+    return target == nullptr ? ACL_ERROR_UNINITIALIZE : target(deviceId);
 }
 
 extern "C" aclError aclrtCreateStreamHook(aclrtStream* stream)
@@ -472,6 +468,21 @@ extern "C" aclError aclrtLaunchKernelHook(
     return result;
 }
 
+extern "C" aclError aclrtLaunchKernelWithConfigHook(
+    aclrtFuncHandle funcHandle, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* cfg,
+    aclrtArgsHandle argsHandle, void* reserve)
+{
+    constexpr aclrtApiId id = ACL_RT_API_aclrtLaunchKernelWithConfig;
+    const auto callback = GetDispatchTarget<aclrtLaunchKernelWithConfigFunc>(id);
+    if (callback == nullptr) {
+        LogMissingCallback("aclrtLaunchKernelWithConfig", id);
+        return ACL_ERROR_UNINITIALIZE;
+    }
+    const aclError result = callback(funcHandle, numBlocks, stream, cfg, argsHandle, reserve);
+    LogHookResult("aclrtLaunchKernelWithConfig", id, result);
+    return result;
+}
+
 extern "C" aclError aclrtGetFuncBySymbolHook(const void* symbol, aclrtFuncHandle* funcHandle)
 {
     constexpr aclrtApiId id = ACL_RT_API_aclrtGetFuncBySymbol;
@@ -580,42 +591,49 @@ extern "C" aclError aclrtGetDeviceInfoHook(uint32_t deviceId, aclrtDevAttr attr,
 
 namespace {
 
-aclApiTable g_aclApiTable = {
-    {
-        FunctionToAddress(&aclrtLaunchKernelWithHostArgsHook),
-        FunctionToAddress(&aclrtMemcpyHook),
-        FunctionToAddress(&aclrtBinaryLoadFromDataHook),
-        FunctionToAddress(&aclrtBinaryGetFunctionHook),
-        FunctionToAddress(&aclrtMallocHook),
-        FunctionToAddress(&aclrtMemsetHook),
-        FunctionToAddress(&aclrtFreeHook),
-        FunctionToAddress(&aclrtCreateStreamHook),
-        FunctionToAddress(&aclrtDestroyStreamHook),
-        FunctionToAddress(&aclrtSetDeviceHook),
-        FunctionToAddress(&aclrtResetDeviceHook),
-        FunctionToAddress(&aclrtSynchronizeStreamHook),
-        FunctionToAddress(&aclrtBinaryGetFunctionByEntryHook),
-        FunctionToAddress(&aclrtLaunchKernelHook),
-        FunctionToAddress(&aclrtGetFuncBySymbolHook),
-        FunctionToAddress(&aclrtBinaryUnLoadHook),
-        FunctionToAddress(&aclrtSynchronizeStreamWithTimeoutHook),
-        FunctionToAddress(&aclrtGetDeviceHook),
-        FunctionToAddress(&aclrtBinaryGetGlobalHook),
-        FunctionToAddress(&aclrtGetFunctionAttributeHook),
-        FunctionToAddress(&aclrtGetSocNameHook),
-        FunctionToAddress(&aclrtGetDeviceInfoHook),
-        FunctionToAddress(&aclrtLaunchSIMTKernelWithHostArgsHook),
-        FunctionToAddress(&aclrtLaunchKernelWithArgsArrayHook),
-        FunctionToAddress(&aclrtLaunchSIMTKernelWithArgsArrayHook),
-        FunctionToAddress(&aclrtMallocAlign32Hook),
-        FunctionToAddress(&aclrtFunctionGetParamCountHook),
-        FunctionToAddress(&aclrtFunctionGetParamInfoHook),
-        FunctionToAddress(&aclrtMallocWithCfgHook),
-        FunctionToAddress(&aclrtBinaryLoadFromFileHook),
-    },
-    {},
-    {},
-    PTHREAD_RWLOCK_INITIALIZER};
+aclApiTable& GetAclApiTable()
+{
+    // The Runtime constructor can initialize hooks before this DSO runs its constructors.
+    static aclApiTable table = {
+        {
+            FunctionToAddress(&aclrtLaunchKernelWithHostArgsHook),
+            FunctionToAddress(&aclrtMemcpyHook),
+            FunctionToAddress(&aclrtBinaryLoadFromDataHook),
+            FunctionToAddress(&aclrtBinaryGetFunctionHook),
+            FunctionToAddress(&aclrtMallocHook),
+            FunctionToAddress(&aclrtMemsetHook),
+            FunctionToAddress(&aclrtFreeHook),
+            FunctionToAddress(&aclrtCreateStreamHook),
+            FunctionToAddress(&aclrtDestroyStreamHook),
+            FunctionToAddress(&aclrtSetDeviceHook),
+            FunctionToAddress(&aclrtResetDeviceHook),
+            FunctionToAddress(&aclrtSynchronizeStreamHook),
+            FunctionToAddress(&aclrtBinaryGetFunctionByEntryHook),
+            FunctionToAddress(&aclrtLaunchKernelHook),
+            FunctionToAddress(&aclrtGetFuncBySymbolHook),
+            FunctionToAddress(&aclrtBinaryUnLoadHook),
+            FunctionToAddress(&aclrtSynchronizeStreamWithTimeoutHook),
+            FunctionToAddress(&aclrtGetDeviceHook),
+            FunctionToAddress(&aclrtBinaryGetGlobalHook),
+            FunctionToAddress(&aclrtGetFunctionAttributeHook),
+            FunctionToAddress(&aclrtGetSocNameHook),
+            FunctionToAddress(&aclrtGetDeviceInfoHook),
+            FunctionToAddress(&aclrtLaunchSIMTKernelWithHostArgsHook),
+            FunctionToAddress(&aclrtLaunchKernelWithArgsArrayHook),
+            FunctionToAddress(&aclrtLaunchSIMTKernelWithArgsArrayHook),
+            FunctionToAddress(&aclrtMallocAlign32Hook),
+            FunctionToAddress(&aclrtFunctionGetParamCountHook),
+            FunctionToAddress(&aclrtFunctionGetParamInfoHook),
+            FunctionToAddress(&aclrtMallocWithCfgHook),
+            FunctionToAddress(&aclrtBinaryLoadFromFileHook),
+            FunctionToAddress(&aclrtResetDeviceForceHook),
+            FunctionToAddress(&aclrtLaunchKernelWithConfigHook),
+        },
+        {},
+        {},
+        PTHREAD_RWLOCK_INITIALIZER};
+    return table;
+}
 
 } // namespace
 
@@ -653,16 +671,10 @@ void RollbackRuntimeHooks(const RuntimeHookEntries& previous)
     }
 }
 
-aclError PrepareRuntimeHook(
-    aclrtApiId id, const char* name, const RuntimeHookEntries& previous, aclrtApiFunc& current, bool& skipped)
+aclError PrepareRuntimeHook(aclrtApiId id, const char* name, const RuntimeHookEntries& previous, aclrtApiFunc& current)
 {
     aclrtApiFunc origin = nullptr;
     aclError ret = aclrtApiInjectionGetFunc(name, &origin, &current);
-    if ((id == ACL_RT_API_aclrtMallocWithCfg || id == ACL_RT_API_aclrtBinaryLoadFromFile) &&
-        (ret != ACL_SUCCESS || origin == nullptr || current == nullptr)) {
-        skipped = true;
-        return ACL_SUCCESS;
-    }
     ASCTOOL_DEBUG(
         "[tool_injection] get runtime entry: name=%s id=%d result=%d origin=%p current=%p", name, static_cast<int>(id),
         static_cast<int>(ret), FunctionToAddress(origin), FunctionToAddress(current));
@@ -682,14 +694,7 @@ aclError PrepareRuntimeHook(
             name, INJECTION_LOG_CODE_UNSPECIFIED);
         return ACL_ERROR_UNINITIALIZE;
     }
-    if (!SaveOriginalRuntimeEntry(id, FunctionToAddress(origin))) {
-        RollbackRuntimeHooks(previous);
-        ASCTOOL_ERROR(
-            "[tool_injection] hook initialization failed: save origin entry name=%s"
-            " code=%u",
-            name, INJECTION_LOG_CODE_UNSPECIFIED);
-        return ACL_ERROR_INTERNAL_ERROR;
-    }
+    SaveOriginalRuntimeEntry(id, FunctionToAddress(origin));
 
     return ACL_SUCCESS;
 }
@@ -699,7 +704,7 @@ aclError InstallRuntimeHook(int32_t value, RuntimeHookEntries& previous)
     const auto id = static_cast<aclrtApiId>(value);
     const size_t index = static_cast<size_t>(id);
     const char* name = FindRuntimeApiName(id);
-    const aclrtApiFunc hook = AddressToFunction<aclrtApiFunc>(g_aclApiTable.hook[index]);
+    const aclrtApiFunc hook = AddressToFunction<aclrtApiFunc>(GetAclApiTable().hook[index]);
     if (name == nullptr || hook == nullptr) {
         RollbackRuntimeHooks(previous);
         ASCTOOL_ERROR(
@@ -710,9 +715,8 @@ aclError InstallRuntimeHook(int32_t value, RuntimeHookEntries& previous)
         return ACL_ERROR_INTERNAL_ERROR;
     }
     aclrtApiFunc current = nullptr;
-    bool skipped = false;
-    aclError ret = PrepareRuntimeHook(id, name, previous, current, skipped);
-    if (ret != ACL_SUCCESS || skipped) {
+    aclError ret = PrepareRuntimeHook(id, name, previous, current);
+    if (ret != ACL_SUCCESS) {
         return ret;
     }
     ret = aclrtApiInjectionSetFunc(name, hook);
@@ -770,13 +774,6 @@ extern "C" ACL_TOOL_INJECTION_EXPORT void* acltoolGetOriginalRuntimeApi(aclrtApi
     }
 
     const char* name = FindRuntimeApiName(id);
-    if (name == nullptr) {
-        ASCTOOL_ERROR(
-            "[tool_injection] get original runtime api failed: unknown id=%d"
-            " code=%u",
-            static_cast<int>(id), INJECTION_LOG_CODE_UNSPECIFIED);
-        return nullptr;
-    }
 
     aclrtApiFunc origin = nullptr;
     const aclError result = aclrtApiInjectionGetFunc(name, &origin, nullptr);
@@ -899,6 +896,12 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t acltoolRegisterAclrtLaunchKernelCal
 }
 
 extern "C" ACL_TOOL_INJECTION_EXPORT int32_t
+acltoolRegisterAclrtLaunchKernelWithConfigCallbacks(aclrtLaunchKernelWithConfigFunc callback)
+{
+    return RegisterCallback(ACL_RT_API_aclrtLaunchKernelWithConfig, FunctionToAddress(callback));
+}
+
+extern "C" ACL_TOOL_INJECTION_EXPORT int32_t
 acltoolRegisterAclrtGetFuncBySymbolCallbacks(aclrtGetFuncBySymbolFunc callback)
 {
     return RegisterCallback(ACL_RT_API_aclrtGetFuncBySymbol, FunctionToAddress(callback));
@@ -952,4 +955,10 @@ extern "C" ACL_TOOL_INJECTION_EXPORT int32_t
 acltoolRegisterAclrtBinaryLoadFromFileCallbacks(aclrtBinaryLoadFromFileFunc callback)
 {
     return RegisterCallback(ACL_RT_API_aclrtBinaryLoadFromFile, FunctionToAddress(callback));
+}
+
+extern "C" ACL_TOOL_INJECTION_EXPORT int32_t
+acltoolRegisterAclrtResetDeviceForceCallbacks(aclrtResetDeviceForceFunc callback)
+{
+    return RegisterCallback(ACL_RT_API_aclrtResetDeviceForce, FunctionToAddress(callback));
 }

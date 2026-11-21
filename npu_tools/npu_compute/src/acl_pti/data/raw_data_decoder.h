@@ -23,6 +23,7 @@ uint32_t ReadLittleEndianWord(const uint8_t* bytes);
 DecodeResult DecodeRawRecord(const std::byte* data, std::size_t size, uint64_t recordIndex);
 
 // Accepts exactly one 32-byte task log or 128-byte PMU record; never retains data.
+// A correctly framed task log with an unknown function returns NOT_SUPPORTED.
 DecodeResult DecodeRawRecord(
     const std::byte* data, std::size_t size, uint64_t recordIndex, const PmuSlots& pmuEventIds);
 } // namespace aclpti::data

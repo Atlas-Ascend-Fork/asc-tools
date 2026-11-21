@@ -23,32 +23,33 @@ constexpr int kSchemaVersion = 1;
 constexpr int kAddressParameter = sqlite::kFirstBindParameter;
 constexpr int kFirstStateParameter = kAddressParameter + 1;
 struct Database {
+    sqlite::ScopedApi runtime;
+    const sqlite::Api& api = runtime.Get();
     sqlite3* handle = nullptr;
     bool transaction = false;
     ~Database()
     {
         if (handle) {
             if (transaction) {
-                sqlite::GetApi().exec(handle, "ROLLBACK");
+                api.exec(handle, "ROLLBACK");
             }
-            sqlite::GetApi().closeV2(handle);
+            api.closeV2(handle);
         }
     }
     void Check(int status) const
     {
         if (status != SQLITE_OK) {
-            throw std::runtime_error(sqlite::GetApi().errmsg(handle));
+            throw std::runtime_error(api.errmsg(handle));
         }
     }
-    void Exec(const char* sql) const { Check(sqlite::GetApi().exec(handle, sql)); }
+    void Exec(const char* sql) const { Check(api.exec(handle, sql)); }
 };
-using Statement = std::unique_ptr<sqlite3_stmt, decltype(sqlite::GetApi().finalize)>;
+using Statement = std::unique_ptr<sqlite3_stmt, const decltype(sqlite::Api::finalize)&>;
 Statement Prepare(Database& db, const std::string& sql)
 {
     sqlite3_stmt* statement = nullptr;
-    const auto status =
-        sqlite::GetApi().prepareV2(db.handle, sql.c_str(), sqlite::kNullTerminatedSql, &statement, nullptr);
-    Statement owned(statement, sqlite::GetApi().finalize);
+    const auto status = db.api.prepareV2(db.handle, sql.c_str(), sqlite::kNullTerminatedSql, &statement, nullptr);
+    Statement owned(statement, db.api.finalize);
     db.Check(status);
     return owned;
 }
@@ -58,13 +59,13 @@ void Require(bool condition, const char* message)
         throw std::runtime_error(message);
     }
 }
-std::string Text(sqlite3_stmt* statement, int column)
+std::string Text(const sqlite::Api& api, sqlite3_stmt* statement, int column)
 {
-    const auto* text = sqlite::GetApi().columnText(statement, column);
+    const auto* text = api.columnText(statement, column);
     if (text == nullptr) {
         return {};
     }
-    const int byteCount = sqlite::GetApi().columnBytes(statement, column);
+    const int byteCount = api.columnBytes(statement, column);
     return std::string(text, text + byteCount);
 }
 void ValidateSamples(const PmSamplingResult& result)
@@ -106,8 +107,8 @@ void ConfigureDatabase(Database& db)
 {
     auto journal = Prepare(db, "PRAGMA journal_mode=DELETE");
     Require(
-        sqlite::GetApi().step(journal.get()) == SQLITE_ROW && Text(journal.get(), 0) == "delete" &&
-            sqlite::GetApi().step(journal.get()) == SQLITE_DONE,
+        db.api.step(journal.get()) == SQLITE_ROW && Text(db.api, journal.get(), 0) == "delete" &&
+            db.api.step(journal.get()) == SQLITE_DONE,
         "cannot use SQLite DELETE journal");
     db.Exec("PRAGMA synchronous=FULL");
     db.Exec("BEGIN IMMEDIATE");
@@ -117,15 +118,15 @@ void WriteRows(Database& db, const std::string& insert, const PmSamplingResult& 
 {
     auto statement = Prepare(db, insert);
     for (const auto& row : result.rows) {
-        db.Check(sqlite::GetApi().bindInt64(statement.get(), kAddressParameter, static_cast<sqlite3_int64>(row.first)));
+        db.Check(db.api.bindInt64(statement.get(), kAddressParameter, static_cast<sqlite3_int64>(row.first)));
         for (std::size_t state = 0; state < row.second.size(); ++state) {
-            db.Check(sqlite::GetApi().bindInt64(
+            db.Check(db.api.bindInt64(
                 statement.get(), static_cast<int>(state) + kFirstStateParameter,
                 static_cast<sqlite3_int64>(row.second[state])));
         }
-        Require(sqlite::GetApi().step(statement.get()) == SQLITE_DONE, sqlite::GetApi().errmsg(db.handle));
-        db.Check(sqlite::GetApi().reset(statement.get()));
-        db.Check(sqlite::GetApi().clearBindings(statement.get()));
+        Require(db.api.step(statement.get()) == SQLITE_DONE, db.api.errmsg(db.handle));
+        db.Check(db.api.reset(statement.get()));
+        db.Check(db.api.clearBindings(statement.get()));
     }
 }
 } // namespace
@@ -139,14 +140,14 @@ bool WritePmSamplingSqlite(const std::string& path, const PmSamplingResult& resu
         // The caller owns the private staging directory and excludes failed
         // files from packaging. Leave file cleanup to that collection owner.
         Database db;
-        db.Check(sqlite::GetApi().openV2(
+        db.Check(db.api.openV2(
             path.c_str(), &db.handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr));
         ConfigureDatabase(db);
         const std::string insert = CreateSchema(db);
         WriteRows(db, insert, result);
         db.Exec("COMMIT");
         db.transaction = false;
-        db.Check(sqlite::GetApi().close(db.handle));
+        db.Check(db.api.close(db.handle));
         db.handle = nullptr;
         return true;
     } catch (const std::exception& failure) {

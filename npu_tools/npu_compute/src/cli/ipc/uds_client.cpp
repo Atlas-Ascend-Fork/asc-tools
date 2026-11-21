@@ -35,13 +35,23 @@ void UdsClient::Run(
 {
     ipc::Channel channel;
     try {
-        channel = Connect(bootstrap, childPid, childExited, cancelled);
+        const auto stopHandshake = [&childExited, &cancelled] { return childExited.load() || cancelled.load(); };
+        // Scripts may compile or prepare inputs before a descendant loads the collector.
+        channel = ipc::Channel::Connect(
+            bootstrap.name, bootstrap.session, childPid, getuid(), ipc::Deadline::max(), stopHandshake, true);
     } catch (...) {
         if (childExited && !cancelled) {
             throw std::runtime_error("UDS: target command exited before a collection process connected");
         }
         throw;
     }
+    RunConnected(std::move(channel), bootstrap, config, directory, childExited, cancelled);
+}
+
+void UdsClient::RunConnected(
+    ipc::Channel channel, const ipc::Bootstrap& bootstrap, const ipc::Config& config, const std::string& directory,
+    const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled)
+{
     const char* debug = std::getenv("NPU_COMPUTE_DEBUG");
     if (debug != nullptr && std::strcmp(debug, "1") == 0) {
         std::fprintf(stderr, "[npu-compute ipc pid=%ld] phase=connect\n", static_cast<long>(getpid()));
@@ -49,6 +59,7 @@ void UdsClient::Run(
     const pid_t targetPid = channel.PeerPid();
     try {
         Handshake(channel, bootstrap, config, targetPid, childExited, cancelled);
+        ready_ = true;
         ReceiveFrames(channel, config, directory, childExited, cancelled);
     } catch (const std::exception& error) {
         try {
@@ -63,16 +74,6 @@ void UdsClient::Run(
         }
         throw;
     }
-}
-
-ipc::Channel UdsClient::Connect(
-    const ipc::Bootstrap& bootstrap, pid_t childPid, const std::atomic<bool>& childExited,
-    const std::atomic<bool>& cancelled) const
-{
-    const auto stopHandshake = [&childExited, &cancelled] { return childExited.load() || cancelled.load(); };
-    // Scripts may compile or prepare inputs before a descendant loads the collector.
-    return ipc::Channel::Connect(
-        bootstrap.name, bootstrap.session, childPid, getuid(), ipc::Deadline::max(), stopHandshake, true);
 }
 
 void UdsClient::Handshake(
@@ -103,6 +104,43 @@ void UdsClient::ReceiveFrames(
     const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled)
 {
     ArtifactReceiver receiver(directory);
+    std::vector<ipc::ManifestEntry> manifest;
+    for (;;) {
+        const auto frame = ReceiveNextFrame(channel, childExited, cancelled);
+        if (frame.type == ipc::Type::DataBegin || frame.type == ipc::Type::DataEnd || frame.type == ipc::Type::Pmu ||
+            frame.type == ipc::Type::Pipeline || frame.type == ipc::Type::Hardware ||
+            frame.type == ipc::Type::PmSampling || frame.type == ipc::Type::Application) {
+            if (!manifest.empty()) {
+                throw std::runtime_error("PROTOCOL: artifact after result manifest");
+            }
+            receiver.Receive(frame);
+            artifact_count_ = receiver.Count();
+        } else if (frame.type == ipc::Type::ResultManifest || frame.type == ipc::Type::Result) {
+            auto result = ipc::DecodeResult(frame.payload);
+            if (result.sections != config.sections || manifest.size() + result.manifest.size() > receiver.Count() ||
+                (frame.type == ipc::Type::ResultManifest && result.manifest.empty())) {
+                throw std::runtime_error("ARTIFACT: invalid result manifest continuation");
+            }
+            manifest.insert(manifest.end(), result.manifest.begin(), result.manifest.end());
+            if (frame.type == ipc::Type::Result) {
+                result.manifest = std::move(manifest);
+                const bool complete = receiver.Validate(result, config, &issues_);
+                channel.Send(ipc::Type::ResultAck, {}, ipc::After(ipc::kIoTimeout));
+                WaitForResultClose(channel, cancelled);
+                complete_ = complete;
+                return;
+            }
+        } else if (frame.type == ipc::Type::Error) {
+            ReportRemoteFailure(frame.payload);
+        } else {
+            throw std::runtime_error("PROTOCOL: unexpected message after READY");
+        }
+    }
+}
+
+ipc::Frame UdsClient::ReceiveNextFrame(
+    ipc::Channel& channel, const std::atomic<bool>& childExited, const std::atomic<bool>& cancelled)
+{
     for (;;) {
         if (cancelled) {
             try {
@@ -122,37 +160,13 @@ void UdsClient::ReceiveFrames(
         if (count < 0) {
             throw std::runtime_error("UDS: poll failed");
         }
-        if (count == 0) {
-            if (childExited) {
-                throw std::runtime_error("UDS: target exited before RESULT");
-            }
-            continue;
+        if (count == 0 && childExited) {
+            throw std::runtime_error("UDS: target exited before RESULT");
         }
-        const auto frame = channel.Receive(ipc::After(ipc::kIoTimeout));
-        if (frame.type == ipc::Type::DataBegin || frame.type == ipc::Type::DataEnd || frame.type == ipc::Type::Pmu ||
-            frame.type == ipc::Type::Pipeline || frame.type == ipc::Type::Hardware ||
-            frame.type == ipc::Type::PmSampling) {
-            receiver.Receive(frame);
-            artifact_count_ = receiver.Count();
-        } else if (frame.type == ipc::Type::Result) {
-            complete_ = FinishResult(channel, receiver, frame, config, cancelled);
-            return;
-        } else if (frame.type == ipc::Type::Error) {
-            ReportRemoteFailure(frame.payload);
-        } else {
-            throw std::runtime_error("PROTOCOL: unexpected message after READY");
+        if (count > 0) {
+            return channel.Receive(ipc::After(ipc::kIoTimeout));
         }
     }
-}
-
-bool UdsClient::FinishResult(
-    ipc::Channel& channel, ArtifactReceiver& receiver, const ipc::Frame& frame, const ipc::Config& config,
-    const std::atomic<bool>& cancelled)
-{
-    const bool complete = receiver.Validate(ipc::DecodeResult(frame.payload), config, &issues_);
-    channel.Send(ipc::Type::ResultAck, {}, ipc::After(ipc::kIoTimeout));
-    WaitForResultClose(channel, cancelled);
-    return complete;
 }
 
 void UdsClient::WaitForResultClose(ipc::Channel& channel, const std::atomic<bool>& cancelled) const

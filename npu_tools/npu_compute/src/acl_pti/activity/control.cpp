@@ -10,6 +10,7 @@
 #include "control.h"
 
 #include "acl_pti/callback/dispatcher.h"
+#include "acl_pti/initialization.h"
 
 namespace aclpti::activity {
 namespace {
@@ -29,7 +30,8 @@ aclptiResult Validate(aclptiSubscribeHandle subscriber, aclptiActivityKind kind,
 aclptiResult SetEnabled(
     aclptiSubscribeHandle subscriber, aclptiActivityKind kind, const aclptiActivityConfig* config, bool enabled)
 {
-    const aclptiResult result = Validate(subscriber, kind, config);
+    const initialization::CallbackAccess access(initialization::CallbackAccess::Kind::Configure);
+    const aclptiResult result = access ? Validate(subscriber, kind, config) : ACLPTI_ERROR_INVALID_SUBSCRIBER;
     if (result == ACLPTI_SUCCESS) {
         callback::GetDispatcher().SetActivityEnabled(subscriber, enabled);
     }

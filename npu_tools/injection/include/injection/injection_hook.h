@@ -25,6 +25,7 @@ extern "C" {
 typedef aclError (*aclrtSetDeviceFunc)(int32_t deviceId);
 typedef aclError (*aclrtGetDeviceFunc)(int32_t* deviceId);
 typedef aclError (*aclrtResetDeviceFunc)(int32_t deviceId);
+typedef aclError (*aclrtResetDeviceForceFunc)(int32_t deviceId);
 typedef aclError (*aclrtCreateStreamFunc)(aclrtStream* stream);
 typedef aclError (*aclrtDestroyStreamFunc)(aclrtStream stream);
 typedef aclError (*aclrtMallocFunc)(void** devPtr, size_t size, aclrtMemMallocPolicy policy);
@@ -57,6 +58,9 @@ typedef aclError (*aclrtLaunchSIMTKernelWithArgsArrayFunc)(
     void** args);
 typedef aclError (*aclrtLaunchKernelFunc)(
     aclrtFuncHandle funcHandle, uint32_t numBlocks, const void* argsData, size_t argsSize, aclrtStream stream);
+typedef aclError (*aclrtLaunchKernelWithConfigFunc)(
+    aclrtFuncHandle funcHandle, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* cfg,
+    aclrtArgsHandle argsHandle, void* reserve);
 typedef aclError (*aclrtGetFuncBySymbolFunc)(const void* symbol, aclrtFuncHandle* funcHandle);
 typedef aclError (*aclrtBinaryUnLoadFunc)(aclrtBinHandle binHandle);
 typedef aclError (*aclrtBinaryGetGlobalFunc)(aclrtBinHandle binHandle, const char* name, void** address, size_t* bytes);
@@ -99,6 +103,8 @@ typedef enum {
     ACL_RT_API_aclrtFunctionGetParamInfo = 27,
     ACL_RT_API_aclrtMallocWithCfg = 28,
     ACL_RT_API_aclrtBinaryLoadFromFile = 29,
+    ACL_RT_API_aclrtResetDeviceForce = 30,
+    ACL_RT_API_aclrtLaunchKernelWithConfig = 31,
     ACL_RT_API_MAX
 } aclrtApiId;
 
@@ -113,6 +119,7 @@ ACL_TOOL_INJECTION_EXPORT void* acltoolGetOriginalRuntimeApi(aclrtApiId id);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtSetDevice, aclrtSetDevice);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtGetDevice, aclrtGetDevice);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtResetDevice, aclrtResetDevice);
+ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtResetDeviceForce, aclrtResetDeviceForce);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtCreateStream, aclrtCreateStream);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtDestroyStream, aclrtDestroyStream);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtMalloc, aclrtMalloc);
@@ -132,6 +139,7 @@ ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtLaunchSIMTKernelWithHostArgs, aclrt
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtLaunchKernelWithArgsArray, aclrtLaunchKernelWithArgsArray);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtLaunchSIMTKernelWithArgsArray, aclrtLaunchSIMTKernelWithArgsArray);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtLaunchKernel, aclrtLaunchKernel);
+ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtLaunchKernelWithConfig, aclrtLaunchKernelWithConfig);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtGetFuncBySymbol, aclrtGetFuncBySymbol);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtBinaryUnLoad, aclrtBinaryUnLoad);
 ACL_TOOL_INJECTION_DECLARE_REGISTRATION(AclrtBinaryGetGlobal, aclrtBinaryGetGlobal);

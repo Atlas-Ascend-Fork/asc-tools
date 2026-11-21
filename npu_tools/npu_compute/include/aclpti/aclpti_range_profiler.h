@@ -47,6 +47,8 @@ typedef struct aclptiRangeProfilerSetConfigParams {
     aclptiCacheControl cacheControl; // Configure before the first replay; zero means NONE.
 } aclptiRangeProfilerSetConfigParams;
 
+// Configures the mode selected during initialization. Application mode supports Communication only,
+// ALL blocks and NONE cache control, without pipeline/PC sampling; configuration freezes on the first start attempt.
 ACLPTI_EXPORT aclptiResult aclptiRangeProfilerSetConfig(aclptiRangeProfilerSetConfigParams* pParams);
 
 #ifdef __cplusplus

@@ -13,6 +13,26 @@
 
 同名字段的单位和基础公式一致，但统计范围、频率或时间分母可能不同。CSV与summary的对应关系见下文summary章节。
 
+## Application Replay 通信产物
+
+`--replay-mode application --section Communication`交付原始数据、生命周期信息、硬件信息及逐算子基础摘要。通信区间指标及Trace将在后续解析能力中提供。
+
+| 文件 | 内容 |
+|---|---|
+| `application_raw.jsonl` | 首行为schema、真实`processId`、`passId`及采集种类。其后每行为一次callback的拥有副本，保留`deviceId/deviceEpoch/rawType/chunkModule/offset/isLastChunk`及十六进制`payloadHex`，原始chunk保持完整；已知LOG/PMU格式另在消费线程解码，长度或格式错误计入处理错误。 |
+| `application_manifest.json` | 会话及逐设备状态、Start/Stop返回码、周期编号、收到/处理/丢失/无效记录计数。`endReason`记录实际结束原因；`stopAttempted=false`时`stopStatus=null`，不表示成功调用Stop。`localQueueDrained`表示本地队列已处理完；`localCollectionHealthy`表示本地控制和处理未发现错误；`tailConfirmed`表示Runtime会话尾部是否已确认，`complete`同时要求本地健康和尾部确认。 |
+| `HardwareInfo.jsonl` | 保留原有五类硬件记录。每个已观察设备的设备分类带`Device Id`，数值在设备资源存活时读取；未查询到的项仍为NA。 |
+| `device<id>/op-<编码名称>/<launch_index>/summary.jsonl` | 每个名称和设备可确定的成功launch一条`OpInfoSummary`；重复同名调用分别输出。长名称目录回退为`instance-<编号>`，原名保留在摘要与manifest。 |
+
+在配套Runtime保证`MsprofFinalize`通过callback交付所有设备尾数据的前提下，正式ACL finalize通知将`tailConfirmed`置为true；未收到通知时为false，不能据本地产物认定全量数据完整。缺少通知时`failureReason=acl_finalize_not_observed`；收到通知时该字段为null，其他采集错误仍由状态和错误计数表示。`isLastChunk`只表示Runtime的一个文件分块结束，不是会话结束。Host或设备来源/周期无法可靠确定的原始记录保留原始deviceId，并使用`deviceEpoch=0`。reset后重新Start不猜测迟到数据归属。
+
+
+固定配置为`PROF_OP_TIMESTAMP_MASK | PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK`（`0x100000804`）。AICORE_METRICS十个slot依次为808、1281、0x422、0x423和六个INVALID，启用ALL_BLOCK；该单轮仅采集摘要需要的浮点/向量活跃周期、GM读写、总周期和任务时间，不自动开启其他Section。
+
+`OpInfoSummary`复用下文的现有公式。950 raw中的两个16位任务字段拼为完整taskSn，以`deviceId/deviceEpoch/taskSn`与launch关联；`Stream Id`保留Runtime的真实exposed stream，不能与raw低16位比较。缺失任务身份、同周期taskSn复用、周期不确定或无对应数据时，相关数值为`NA`，`unavailable_reasons`给出原因；不得跨设备或周期借用。`collection_status`表示会话采集完整性，不承诺所有指标均可计算。`communication_time`、`compute_communication_overlap_time`和`compute_overhead_time`暂为`NA`，原因为`communication_intervals_not_parsed`。
+
+manifest增加`unidentifiedLaunches`及`result_units`，后者逐项记录名称、设备、周期、实例编号、launch_index及summary_path。UDS最终清单采用有界分批帧，无固定的总算子数量上限。
+
 ## ArithmeticUtilization（Cube及Vector指令占比和数量）
 
 Cube及Vector类型指令的活跃周期占比和Cube指令条数保存在ArithmeticUtilization.csv中，可用于查看各类计算指令的活跃程度和Cube指令的执行数量。详情介绍请参见下表中的字段说明。

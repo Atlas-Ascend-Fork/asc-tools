@@ -19,6 +19,7 @@ namespace npucompute::cli {
 
 enum class ReplayMode {
     Kernel,
+    Application,
 };
 
 enum class CacheControl {

@@ -23,7 +23,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <string>
 #include <type_traits>
 
@@ -93,7 +92,9 @@ public:
     ~Impl()
     {
         for (const auto& library : libraries_) {
-            resolver_->CloseLibrary(library.second);
+            if (library.second != nullptr) {
+                resolver_->CloseLibrary(library.second);
+            }
         }
     }
 
@@ -111,34 +112,25 @@ public:
 private:
     void* GetLibrary(const std::string& soname)
     {
-        const auto library = libraries_.find(soname);
-        if (library != libraries_.end()) {
-            return library->second;
+        const auto library = libraries_.try_emplace(soname, nullptr);
+        if (library.second) {
+            library.first->second = resolver_->OpenLibrary(soname);
         }
-        if (attemptedLibraries_.count(soname) != 0) {
-            return nullptr;
-        }
-
-        attemptedLibraries_.insert(soname);
-        void* handle = resolver_->OpenLibrary(soname);
-        if (handle != nullptr) {
-            libraries_.emplace(soname, handle);
-        }
-        return handle;
+        return library.first->second;
     }
 
     std::shared_ptr<DynamicSymbolResolver> resolver_;
     std::mutex mutex_;
     std::map<std::string, void*> libraries_;
-    std::set<std::string> attemptedLibraries_;
 };
 
-DynamicHardwareDeviceApi::DynamicHardwareDeviceApi()
-    : impl_(std::make_unique<Impl>(std::make_shared<PosixDynamicSymbolResolver>()))
+DynamicHardwareDeviceApi::DynamicHardwareDeviceApi(bool allowDeviceSelection)
+    : DynamicHardwareDeviceApi(std::make_shared<PosixDynamicSymbolResolver>(), allowDeviceSelection)
 {}
 
-DynamicHardwareDeviceApi::DynamicHardwareDeviceApi(std::shared_ptr<DynamicSymbolResolver> resolver)
-    : impl_(std::make_unique<Impl>(std::move(resolver)))
+DynamicHardwareDeviceApi::DynamicHardwareDeviceApi(
+    std::shared_ptr<DynamicSymbolResolver> resolver, bool allowDeviceSelection)
+    : impl_(std::make_unique<Impl>(std::move(resolver))), allowDeviceSelection_(allowDeviceSelection)
 {}
 
 DynamicHardwareDeviceApi::~DynamicHardwareDeviceApi() = default;
@@ -370,8 +362,20 @@ bool DynamicHardwareDeviceApi::GetHbmUsage(std::int32_t deviceId, uint64_t* free
     const SetDeviceFunction setDevice = ToFunction<SetDeviceFunction>(impl_->Resolve("aclrtSetDevice", ACL_LIBRARY));
     const GetMemInfoFunction getMemInfo =
         ToFunction<GetMemInfoFunction>(impl_->Resolve("aclrtGetMemInfo", ACL_LIBRARY));
-    if (setDevice == nullptr || getMemInfo == nullptr || setDevice(deviceId) != ACL_SUCCESS) {
+    if (getMemInfo == nullptr) {
         return false;
+    }
+    if (allowDeviceSelection_) {
+        if (setDevice == nullptr || setDevice(deviceId) != ACL_SUCCESS) {
+            return false;
+        }
+    } else {
+        using GetDeviceFunction = aclError (*)(int32_t*);
+        const auto getDevice = ToFunction<GetDeviceFunction>(impl_->Resolve("aclrtGetDevice", ACL_LIBRARY));
+        int32_t current = -1;
+        if (getDevice == nullptr || getDevice(&current) != ACL_SUCCESS || current != deviceId) {
+            return false;
+        }
     }
 
     std::size_t freeValue = 0;

@@ -11,11 +11,17 @@
 #include "isolated_gtest.h"
 
 #include "aclpti/aclpti.h"
+#include "acl_pti/initialization.h"
 #include "injection/injection_hook.h"
 #include "injection/runtime_stub_api.h"
 #include "profiling/prof_api.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <functional>
 #include <array>
 #include <cstdint>
@@ -74,6 +80,7 @@ std::size_t g_launch_calls = 0;
 std::size_t g_launch_with_host_args_calls = 0;
 bool g_extended_host_args = false;
 bool g_host_placeholders = false;
+aclrtPlaceHolderInfo* g_empty_host_placeholders = nullptr;
 std::size_t g_sync_calls = 0;
 std::size_t g_set_device_calls = 0;
 std::size_t g_reset_device_calls = 0;
@@ -227,6 +234,9 @@ int RealLaunchWithHostArgs(
     aclrtPlaceHolderInfo* placeholders, std::size_t placeholderCount)
 {
     ++g_launch_with_host_args_calls;
+    if (!g_host_placeholders && (placeholders != g_empty_host_placeholders || placeholderCount != 0)) {
+        return -1;
+    }
     if (args != nullptr) {
         if (g_extended_host_args) {
             const bool instrumented = function == &g_function_tokens[1] || function == &g_function_tokens[2] ||
@@ -277,6 +287,37 @@ int RealResetDevice(std::int32_t deviceId)
     return 0;
 }
 
+struct ManagedReplayProbe {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::atomic<unsigned> starts{0};
+    bool failSecond = false;
+    bool blocked = false;
+    bool released = false;
+    aclptiProfilingDataResult result;
+    aclptiResult completion = ACLPTI_ERROR_INTERNAL;
+    unsigned dataCalls = 0;
+    unsigned completionCalls = 0;
+};
+ManagedReplayProbe* g_managed_replay = nullptr;
+
+void PauseFirstDecode(int32_t, int32_t, const char* format, ...)
+{
+    char line[4096]{};
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    if (std::strstr(line, "decode replay=0 record=0") == nullptr) {
+        return;
+    }
+    auto& probe = *g_managed_replay;
+    std::unique_lock<std::mutex> lock(probe.mutex);
+    probe.blocked = true;
+    probe.changed.notify_all();
+    probe.changed.wait(lock, [&] { return probe.released; });
+}
+
 int ProfilerStart(uint32_t, const void* config, uint32_t length)
 {
     ++g_start_calls;
@@ -316,6 +357,9 @@ int ProfilerStart(uint32_t, const void* config, uint32_t length)
         return -1;
     }
     g_configs.push_back(observed);
+    if (g_managed_replay != nullptr) {
+        ++g_managed_replay->starts;
+    }
     g_started_config = config;
     return 0;
 }
@@ -327,6 +371,19 @@ int ProfilerStop(uint32_t, const void* config, uint32_t length)
         return -1;
     }
     g_started_config = nullptr;
+    if (g_managed_replay != nullptr) {
+        MsprofRawData raw{};
+        raw.type = PMU_DATA_TYPE;
+        raw.deviceId = g_current_device;
+        raw.chunkSize = 128;
+        raw.isLastChunk = true;
+        raw.chunk[0] = g_stop_calls == 2 && g_managed_replay->failSecond ? 0xff : 0x2a;
+        raw.chunk[2] = 0xd3;
+        raw.chunk[3] = 0x6b;
+        raw.chunk[8] = 100;
+        raw.chunk[32] = static_cast<uint8_t>(g_stop_calls);
+        return g_registered_callback(&raw);
+    }
     return 0;
 }
 
@@ -410,7 +467,8 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     const auto& mode = GetParam();
     const bool useShrinkBlock = mode == "shrink";
     const bool useDebugLog = mode == "debug";
-    const bool useHostArgs = mode == "host" || mode == "host_tail" || mode == "host_placeholders";
+    const bool useHostArgs =
+        mode == "host" || mode == "host_tail" || mode == "host_placeholders" || mode == "host_empty_placeholders";
     g_host_placeholders = mode == "host_placeholders";
     g_extended_host_args = mode == "host_tail" || g_host_placeholders;
     const bool useSymbol = mode == "symbol";
@@ -538,6 +596,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     placeholders[0].dataOffset = 8;
     placeholders[1].addrOffset = 80;
     placeholders[1].dataOffset = 96;
+    g_empty_host_placeholders = mode == "host_empty_placeholders" ? placeholders : nullptr;
     g_expected_args_data = g_extended_host_args ? static_cast<void*>(hostArgs.data()) : &args;
 
     ASSERT_TRUE(aclrtSetDevice(7) == 0);
@@ -547,18 +606,19 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(CapturePlog(
         [&] {
             auto function = useShrinkBlock ? entryFunction : namedFunction;
-            firstLaunchStatus = useHostArgs ?
-                                    aclrtLaunchKernelWithHostArgs(
-                                        function, 1, nullptr, nullptr,
-                                        g_extended_host_args ? static_cast<void*>(hostArgs.data()) : &args,
-                                        g_extended_host_args ? hostArgs.size() : sizeof(args),
-                                        g_host_placeholders ? placeholders : nullptr, g_host_placeholders ? 2 : 0) :
-                                    aclrtLaunchKernel(function, 1, &args, sizeof(args), nullptr);
+            firstLaunchStatus = useHostArgs ? aclrtLaunchKernelWithHostArgs(
+                                                  function, 1, nullptr, nullptr,
+                                                  g_extended_host_args ? static_cast<void*>(hostArgs.data()) : &args,
+                                                  g_extended_host_args ? hostArgs.size() : sizeof(args),
+                                                  g_host_placeholders ? placeholders : g_empty_host_placeholders,
+                                                  g_host_placeholders ? 2 : 0) :
+                                              aclrtLaunchKernel(function, 1, &args, sizeof(args), nullptr);
         },
         &profilingLog, useDebugLog ? DLOG_DEBUG : DLOG_WARN));
     g_expected_args_data = &args;
     g_extended_host_args = false;
     g_host_placeholders = false;
+    g_empty_host_placeholders = nullptr;
     ASSERT_TRUE(profilingLog.find("[INFO] cache-control") == std::string::npos);
     if (g_start_failure) {
         ASSERT_TRUE(firstLaunchStatus != ACL_SUCCESS);
@@ -700,6 +760,91 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
 INSTANTIATE_TEST_SUITE_P(
     Modes, NpuComputeReplay,
     testing::Values(
-        "Default", "symbol", "debug", "shrink", "host", "host_tail", "host_placeholders", "flush_failure",
-        "partial_flush_failure", "missing_flush", "none", "start_failure"),
+        "Default", "symbol", "debug", "shrink", "host", "host_tail", "host_placeholders", "host_empty_placeholders",
+        "flush_failure", "partial_flush_failure", "missing_flush", "none", "start_failure"),
     [](const testing::TestParamInfo<std::string>& info) { return info.param; });
+
+class NpuComputeManagedReplay : public testing::TestWithParam<bool> {};
+
+TEST_P(NpuComputeManagedReplay, DrainsEachRoundAndMergesOnlySuccessfulPmu)
+{
+    NPU_COMPUTE_ISOLATE_TEST();
+    using namespace aclpti::initialization;
+    using namespace std::chrono_literals;
+    ManagedReplayProbe probe;
+    probe.failSecond = GetParam();
+    g_managed_replay = &probe;
+    g_none = true;
+    ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtSynchronizeStream", &RealSynchronize), ACL_SUCCESS);
+    g_current_device = 0;
+    ASSERT_EQ(
+        PrepareKernelSession(
+            +[](const aclptiProfilingDataResult& result) {
+                g_managed_replay->result = result;
+                ++g_managed_replay->dataCalls;
+            },
+            +[](aclptiResult status) {
+                g_managed_replay->completion = status;
+                ++g_managed_replay->completionCalls;
+            }),
+        ACLPTI_SUCCESS);
+    const char* sections[] = {"PipeUtilization", "ResourceConflictRatio"};
+    aclptiRangeProfilerSetConfigParams config{sections, std::size(sections), ACLPTI_BLOCK_RESULT_ALL};
+    config.cacheControl = ACLPTI_CACHE_CONTROL_NONE;
+    ASSERT_EQ(aclptiRangeProfilerSetConfig(&config), ACLPTI_SUCCESS);
+    ActivateProcessorSession();
+    const auto previous = plog_test::SetApi({+[](int32_t, int32_t) -> int32_t { return 1; }, &PauseFirstDecode});
+    aclError launchStatus = ACL_ERROR_INTERNAL_ERROR;
+    std::thread launch([&] {
+        launchStatus = aclrtLaunchKernelWithHostArgs(
+            &g_function_tokens[0], 1, reinterpret_cast<aclrtStream>(0x1234), nullptr, nullptr, 0, nullptr, 0);
+    });
+    {
+        std::unique_lock<std::mutex> lock(probe.mutex);
+        EXPECT_TRUE(probe.changed.wait_for(lock, 2s, [&] { return probe.blocked; }));
+        EXPECT_EQ(probe.starts, 1U);
+        probe.released = true;
+    }
+    probe.changed.notify_all();
+    launch.join();
+    plog_test::SetApi(previous);
+    EXPECT_EQ(probe.starts, probe.failSecond ? 2U : 3U);
+    EXPECT_EQ(probe.dataCalls, 1U);
+    EXPECT_EQ(probe.completionCalls, 1U);
+    EXPECT_EQ(probe.completion, probe.failSecond ? ACLPTI_ERROR_PROFILING_FAILED : ACLPTI_SUCCESS);
+    EXPECT_EQ(launchStatus, probe.failSecond ? ACL_ERROR_PROFILING_FAILURE : ACL_SUCCESS);
+    ASSERT_TRUE(probe.result.taskPmuData.aic.has_value());
+    EXPECT_EQ(probe.result.taskPmuData.aic->values.at(0), 1.0);
+    EXPECT_EQ(probe.result.taskPmuData.aic->values.count(1281), 1U);
+    EXPECT_EQ(probe.result.taskPmuData.aic->values.count(1794), probe.failSecond ? 0U : 1U);
+    EXPECT_EQ(probe.result.taskPmuData.aic->values.count(1376), probe.failSecond ? 0U : 1U);
+    if (probe.failSecond) {
+        EXPECT_EQ(probe.result.errorStats.failedRecordCountByReplay.at(1), 1U);
+    }
+    EXPECT_EQ(ShutdownProcessorSession(aclpti::profiling::ApplicationEndReason::ProcessExit), ACLPTI_SUCCESS);
+    MsprofRawData late{};
+    EXPECT_EQ(g_registered_callback(&late), ACLPTI_ERROR_NOT_INITIALIZED);
+    EXPECT_EQ(probe.completionCalls, 1U);
+    g_managed_replay = nullptr;
+}
+
+TEST(NpuComputeManagedReplayExit, NoLaunchReleasesWorkerAndRejectsLateRawData)
+{
+    NPU_COMPUTE_ISOLATE_TEST();
+    using namespace aclpti::initialization;
+    EXPECT_EQ(
+        PrepareKernelSession(
+            +[](const aclptiProfilingDataResult&) { ADD_FAILURE() << "unexpected data"; },
+            +[](aclptiResult) { ADD_FAILURE() << "unexpected completion"; }),
+        ACLPTI_SUCCESS);
+    ASSERT_NE(g_registered_callback, nullptr);
+    ActivateProcessorSession();
+    EXPECT_EQ(ShutdownProcessorSession(aclpti::profiling::ApplicationEndReason::ProcessExit), ACLPTI_SUCCESS);
+    EXPECT_EQ(g_start_calls, 0U);
+    EXPECT_EQ(g_stop_calls, 0U);
+    EXPECT_EQ(g_get_device_calls, 0U);
+    MsprofRawData late{};
+    EXPECT_EQ(g_registered_callback(&late), ACLPTI_ERROR_NOT_INITIALIZED);
+}
+
+INSTANTIATE_TEST_SUITE_P(Decode, NpuComputeManagedReplay, testing::Bool());

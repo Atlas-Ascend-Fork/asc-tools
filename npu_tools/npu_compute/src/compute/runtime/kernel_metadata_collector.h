@@ -19,13 +19,23 @@ namespace npucompute {
 
 class KernelMetadataCollector final {
 public:
+    struct LaunchObservation {
+        KernelMetadata metadata;
+        std::optional<uint32_t> taskId;
+        std::optional<uint32_t> streamId;
+    };
+
     void OnCallback(aclptiCallbackId cbid, const aclptiCallbackData& data);
     KernelMetadata Snapshot();
+    // Application observation never freezes metadata and returns only successful launches.
+    std::optional<LaunchObservation> ObserveLaunch(aclptiCallbackId cbid, const aclptiCallbackData& data);
 
 private:
     bool HandleFunctionLookupCallback(aclptiCallbackId cbid, const aclptiCallbackData& data);
     void HandleCallbackExit(aclptiCallbackId cbid, const aclptiCallbackData& data);
     void HandleKernelLaunchCallback(aclptiCallbackId cbid, const aclptiCallbackData& data);
+
+    void CollectLaunchMetadata(aclrtFuncHandle handle, KernelMetadata& candidate, bool resolveName);
 
     std::mutex mutex_;
     std::map<aclrtFuncHandle, std::pair<aclrtBinHandle, std::string>> names_;

@@ -77,7 +77,7 @@ npu-compute --import <report-file> [--export <directory>]
 | `--list-sets`              | 查询       | 无                  | 否     | 列出`basic`、`full`及其包含的Section。                                                        |
 | `--section arg`            | 采集       | Section名称         | 是     | 按名称选择要采集的指标组，区分大小写。                                                            |
 | `--set arg`                | 采集       | `basic`、`full` | 是     | 选择预定义指标组集合，区分大小写。在采集选择上，等价于分别指定其包含的多个`--section`。         |
-| `--replay-mode arg`        | 采集       | `kernel`          | 否     | Kernel重放模式，当前仅支持`kernel`，默认值为`kernel`。                                        |
+| `--replay-mode arg`        | 采集       | `kernel`、`application` | 否     | 重放模式，默认值为`kernel`。`application`须显式选择`Communication`。                                        |
 | `--no-pack`                | 采集       | 无                  | 否     | 直接保留原始结果目录，不生成`.npu-rep`。                                                        |
 | `--cache-control arg`      | 采集       | `all`, `none`   | 否     | 控制每轮 Kernel 重放前的 L2 缓存处理。`all`：尝试清理 L2 缓存；`none`：不主动清理，为默认值。 |
 | `-i arg`、`--import arg` | 解包       | 报告文件路径        | 否     | 导入并解包`npu-compute`生成的`.npu-rep`报告。                                                 |
@@ -114,6 +114,24 @@ npu-compute --list-sets
 不指定`--set`和`--section`时，默认选择`basic`。
 
 多次选择中出现重复的指标组时，工具会自动合并，每个指标组只采集一次。
+
+### Application Replay 通信数据采集
+
+父进程可以先 fork，由各子进程分别调用 `aclInit` 和 `aclFinalize`，例如 AIN 的 `ProcessGroup`。各进程沿用同一条采集命令。多份报告按 `pid-<PID>/` 保存，采集完整性以实际连接的会话为准。
+
+```bash
+npu-compute --replay-mode application --section Communication --no-pack --export ./results ./app
+```
+
+`./results`须为已有目录。当前仅支持单个采集进程、单轮通信数据采集，不能与其他 Section、`--set` 或显式`--cache-control`组合；`basic`和`full`不包含`Communication`。Application模式不重放Kernel，不要求Kernel模式的单设备、单Host线程约束。
+
+每次成功的`aclrtSetDevice`后启动该设备采集；同一设备处于采集中时不重复启动。Reset可选：工具按设备跟踪经`aclrtSetDevice`、`aclrtResetDevice`和`aclrtResetDeviceForce`发生的引用变化；释放最后一个引用的普通Reset或有引用的Force Reset在调用原接口前停止对应设备。用户在相关业务同步和设备使用线程结束后必须显式调用`aclFinalize`。工具在 ACL 初始化回调中为当前进程建立采集会话。在 ACL finalize 通知确认尾部后，工具在通知返回前完成本地解码、报表生成和结果交付。缺少 finalize 通知时，工具保留可用数据并报告采集不完整。多设备共存依赖Runtime支持在已启动设备采集后继续启动其他设备；工具不修改Runtime，也不主动同步应用的Stream。
+
+输出`application_raw.jsonl`、`application_manifest.json`和`HardwareInfo.jsonl`，并为每个能确定名称和设备的成功launch生成`device<id>/op-<编码名称>/<launch_index>/summary.jsonl`，其中仅包含一条`OpInfoSummary`。同名多次调用分别保留，长名称使用`instance-<编号>`目录；manifest的`result_units`保存原名称和摘要路径。各设备硬件信息在设备资源存活时缓存，设备分类记录带`Device Id`。
+
+通信采集固定启用通信时间戳、Task时间和单轮基础PMU（808、1281、0x422、0x423，以及ALL_BLOCK），不重放业务Kernel。这些数据用于现有摘要的时长、计算量、并行统计和带宽公式。950原始任务字段拼成完整taskSn，并按device和采集周期与launch关联；缺失、复用或无法确认周期时，对应指标为`NA`并附`unavailable_reasons`。尚不解析AIV通信区间，通信时间、计算通信重叠和计算开销为`NA`，也不生成通信流水图。未知raw类型继续原样保留。结果清单分批传输，目录输出和报告打包均支持较多算子实例。
+
+配套Runtime须保证`MsprofFinalize`在正式finalize通知前通过callback交付全部设备尾数据；正常finalize且本地采集和交付无错误时可成功，无SetDevice的正常finalize可交付完整空会话。未收到通知时`tailConfirmed=false`，应用成功时工具退出码为3；已知Start/Stop错误、丢失或处理失败不会被最终通知清除。manifest中的`localCollectionHealthy`与`tailConfirmed`分别反映本地处理状态和尾数据确认状态；`stopAttempted`及设备结束原因区分实际Stop和Runtime finalize收尾，未调用Stop时`stopStatus=null`。Reset后再次采集的原始记录若无法区分迟到数据，`deviceEpoch`记为0。
 
 ### 采集示例
 
@@ -301,13 +319,13 @@ npu-compute --import ./reports/profile.npu-rep --export ./restored
 
 - 芯片类型：当前仅支持Ascend 950PR&950DT系列产品。
 - 编程语言：待采集的算子当前仅支持Ascend C。
-- 算子调用方式：当前支持通过`<<<>>>`或aclnn方式进行单算子单次调用。
+- Kernel模式的算子调用方式：当前支持通过`<<<>>>`或aclnn方式进行单算子单次调用。
 - `Pipeline`采集受硬件限制：同一Device上只能有一个进程采集`Pipeline`；多个进程同时采集时，只有一个进程能正常输出，其他进程采集失败。
 - `PmSampling`采集受硬件限制：同一Device上，`PmSampling`不能与其他进程的`PmSampling`或`Pipeline`采集同时执行；并发采集可能导致采样数据缺失或采集失败。
 - `PmSampling`用于分析算子运行时SIMT指令的阻塞情况。硬件按周期采样，当算子中的SIMT代码执行时间过短时，可能因未命中采样时刻而无法获得有效样本，导致`PcSampling`表为空。其他采集项的成功结果仍会保留。
 - `SourceCounter`的SIMT UB Bank冲突仅支持SIMT Kernel中线程直接通过`__ubuf__`指针对线程块共享UB数据进行读写的访问。SIMD VF Bank冲突仅支持当前采集模式能够识别的`asc_load`和`asc_store`向量UB读写形式，即从UB读取数据到向量寄存器或从向量寄存器写回UB。
 - 采集SIMT算子的`Pipeline`或`PmSampling`数据时，不支持使用`noinline`的`__aicore__`函数，比如`printf`和`asc_dump`。
-- 目标程序必须具有执行权限，可以是可执行文件或脚本，能够在未使用`npu-compute`时独立运行，并在运行过程中至少成功执行一次NPU核函数。
+- 目标程序必须具有执行权限，可以是可执行文件或脚本，能够在未使用`npu-compute`时独立运行。Kernel模式要求运行过程中至少成功执行一次NPU核函数；Application模式无设备采集时保留诊断产物并报告采集不完整。
 - 一条采集命令只运行一个目标程序；需要采集多个程序时，分别执行多条命令。目标程序及其启动的脚本不能再次运行`npu-compute`，检测到嵌套采集时本次采集失败且不会生成报告。
 
 ## 任务与 block 占用时间线

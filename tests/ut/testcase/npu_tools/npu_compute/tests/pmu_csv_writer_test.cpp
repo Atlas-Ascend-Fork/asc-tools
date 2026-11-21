@@ -11,6 +11,8 @@
 #include <gtest/gtest.h>
 
 #include "report_test_sink.h"
+#include "acl_pti/data/pmu_events.h"
+#include "pmu/pmu_metric_builder.h"
 
 #include <algorithm>
 #include <array>
@@ -432,8 +434,8 @@ static int RunSuiteMain()
          {0x427, 10.0},
          {0x428, 2.0},
          {0x429, 2.0},
-         {0x34, 40.0},
-         {0x35, 10.0},
+         {0x34, 10.0},
+         {0x35, 40.0},
          {0x422, 100.0},
          {0x57f, 10.0},
          {0x580, 10.0}}));
@@ -1098,3 +1100,33 @@ static int RunSuiteMain()
 }
 
 TEST(NpuComputePmuCsvWriter, Main) { ASSERT_EQ(RunSuiteMain(), 0) << "NpuComputePmuCsvWriter reported failure"; }
+
+TEST(NpuComputePmuCsvWriter, IcacheMissRateUsesAccessCountAsDenominator)
+{
+    struct TestCase {
+        double accesses;
+        double misses;
+        const char* expected;
+    };
+    const std::array<TestCase, 3> cases{{{100.0, 10.0, "0.100000"}, {100.0, 0.0, "0.000000"}, {0.0, 0.0, "NA"}}};
+    const auto header = npucompute::PmuMetricBuilder::Header("PipeUtilization", npucompute::PmuDataLevel::Task);
+    for (const auto& testCase : cases) {
+        SCOPED_TRACE(testCase.accesses);
+        SCOPED_TRACE(testCase.misses);
+        aclptiTaskPmuCoreData core;
+        core.values = {
+            {aclpti::data::pmu::ICACHE_ACCESS_EVENT, testCase.accesses},
+            {aclpti::data::pmu::ICACHE_MISS_EVENT, testCase.misses}};
+        aclptiTaskPmuData task;
+        task.aic = core;
+        task.aiv = core;
+        const auto row = npucompute::PmuMetricBuilder::BuildTask("PipeUtilization", task, {});
+        ASSERT_EQ(row.size(), header.size());
+        for (const char* column : {"aic_icache_miss_rate", "aiv_icache_miss_rate"}) {
+            const auto it = std::find(header.begin(), header.end(), column);
+            ASSERT_NE(it, header.end());
+            const auto index = static_cast<std::size_t>(std::distance(header.begin(), it));
+            EXPECT_EQ(row[index].text, testCase.expected) << column;
+        }
+    }
+}

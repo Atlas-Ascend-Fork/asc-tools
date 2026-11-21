@@ -14,6 +14,7 @@
 #include <cstring>
 #include <array>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <string>
 
@@ -51,6 +52,15 @@ aclError RejectDeviceQuery(int32_t* deviceId)
 {
     *deviceId = 99;
     return ACL_ERROR_INVALID_PARAM;
+}
+
+uint32_t g_applicationDeviceQueryCount = 0;
+
+aclError CountApplicationDeviceQuery(int32_t* deviceId)
+{
+    ++g_applicationDeviceQueryCount;
+    *deviceId = 1;
+    return ACL_SUCCESS;
 }
 
 class NpuComputeKernelDeviceMetadata : public ::testing::Test {
@@ -100,6 +110,92 @@ TEST_F(NpuComputeKernelDeviceMetadata, LeavesDeviceUnavailableWhenQueryFails)
 {
     ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtGetDevice", &RejectDeviceQuery), ACL_SUCCESS);
     ExpectDevice(std::nullopt);
+}
+
+TEST_F(NpuComputeKernelDeviceMetadata, ApplicationObservesEverySuccessfulLaunchWithoutFreezing)
+{
+    ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtGetDevice", &GetDeviceOne), ACL_SUCCESS);
+    npucompute::KernelMetadataCollector collector;
+    aclrtFuncHandle handle = reinterpret_cast<aclrtFuncHandle>(0x2000);
+    aclptiAclrtBinaryGetFunctionParams lookup{nullptr, "communication_kernel", &handle};
+    aclptiCallbackData data{};
+    data.functionParams = &lookup;
+    data.callbackSite = ACLPTI_API_ENTER;
+    EXPECT_FALSE(collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunction, data));
+    data.callbackSite = ACLPTI_API_EXIT;
+    EXPECT_FALSE(collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtBinaryGetFunction, data));
+    aclptiAclrtLaunchKernelParams launch{};
+    launch.funcHandle = handle;
+    for (uint32_t blocks : {2, 4}) {
+        launch.numBlocks = blocks;
+        data.functionParams = &launch;
+        data.callbackSite = ACLPTI_API_ENTER;
+        EXPECT_FALSE(collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, data));
+        data.callbackSite = ACLPTI_API_EXIT;
+        auto launch = collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, data);
+        ASSERT_TRUE(launch);
+        EXPECT_EQ(launch->metadata.name, "communication_kernel");
+        EXPECT_EQ(launch->metadata.deviceId, 1);
+        EXPECT_EQ(launch->metadata.blockDim, blocks);
+    }
+    data.retval = ACL_ERROR_INVALID_PARAM;
+    EXPECT_FALSE(collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, data));
+}
+
+TEST_F(NpuComputeKernelDeviceMetadata, ApplicationObservesAllLaunchVariantsWithOneDeviceQuery)
+{
+    g_applicationDeviceQueryCount = 0;
+    ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtGetDevice", &CountApplicationDeviceQuery), ACL_SUCCESS);
+    aclptiAclrtLaunchKernelParams launch{};
+    aclptiAclrtLaunchKernelWithConfigParams configLaunch{};
+    aclptiAclrtLaunchKernelWithHostArgsParams hostLaunch{};
+    aclptiAclrtLaunchKernelWithArgsArrayParams arrayLaunch{};
+    aclptiAclrtLaunchSIMTKernelWithHostArgsParams simtHostLaunch{};
+    aclptiAclrtLaunchSIMTKernelWithArgsArrayParams simtArrayLaunch{};
+    launch.numBlocks = configLaunch.numBlocks = hostLaunch.numBlocks = arrayLaunch.numBlocks = 24;
+    simtHostLaunch.gridDim = simtArrayLaunch.gridDim = {2, 3, 4};
+    const std::pair<aclptiCallbackId, void*> launches[] = {
+        {ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, &launch},
+        {ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithConfig, &configLaunch},
+        {ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithHostArgs, &hostLaunch},
+        {ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithArgsArray, &arrayLaunch},
+        {ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithHostArgs, &simtHostLaunch},
+        {ACLPTI_RUNTIME_CBID_aclrtLaunchSIMTKernelWithArgsArray, &simtArrayLaunch},
+    };
+    npucompute::KernelMetadataCollector collector;
+    for (const auto& [cbid, params] : launches) {
+        SCOPED_TRACE(cbid);
+        aclptiCallbackData data{};
+        data.callbackSite = ACLPTI_API_EXIT;
+        data.functionParams = params;
+        const auto observation = collector.ObserveLaunch(cbid, data);
+        ASSERT_TRUE(observation);
+        EXPECT_EQ(observation->metadata.deviceId, 1);
+        EXPECT_EQ(observation->metadata.blockDim, 24U);
+    }
+    EXPECT_EQ(g_applicationDeviceQueryCount, std::size(launches));
+}
+
+TEST_F(NpuComputeKernelDeviceMetadata, ApplicationSkipsQueriesForNonLaunchAndFailedCallbacks)
+{
+    g_applicationDeviceQueryCount = 0;
+    ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtGetDevice", &CountApplicationDeviceQuery), ACL_SUCCESS);
+    npucompute::KernelMetadataCollector collector;
+    aclptiAclrtLaunchKernelParams launch{};
+    aclptiCallbackData data{};
+    data.functionParams = &launch;
+    data.callbackSite = ACLPTI_API_ENTER;
+    EXPECT_FALSE(collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, data));
+    data.callbackSite = ACLPTI_API_EXIT;
+    data.retval = ACL_ERROR_INVALID_PARAM;
+    EXPECT_FALSE(collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, data));
+    data.retval = ACL_SUCCESS;
+    aclptiAclrtSetDeviceParams setDevice{};
+    data.functionParams = &setDevice;
+    EXPECT_FALSE(collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtSetDevice, data));
+    data.functionParams = nullptr;
+    EXPECT_FALSE(collector.ObserveLaunch(ACLPTI_RUNTIME_CBID_aclrtLaunchKernel, data));
+    EXPECT_EQ(g_applicationDeviceQueryCount, 0U);
 }
 
 #define CHECK(condition)                                      \

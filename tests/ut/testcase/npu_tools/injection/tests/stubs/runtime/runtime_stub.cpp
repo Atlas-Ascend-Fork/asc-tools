@@ -14,6 +14,7 @@
 #include "injection/prof_api_stub.h"
 #include "injection/runtime_stub_api.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdlib>
@@ -21,10 +22,11 @@
 #include <dlfcn.h>
 #include <mutex>
 #include <string_view>
+#include <vector>
 
 namespace {
 
-constexpr std::size_t kRuntimeApiCount = 32;
+constexpr std::size_t kRuntimeApiCount = 34;
 constexpr std::size_t kSocNameCapacity = 64;
 constexpr char kDefaultSocName[] = "Ascend950PR_9599";
 
@@ -34,6 +36,15 @@ struct KernelArgs {
 
 std::atomic<std::int32_t> g_currentDevice{-1};
 std::array<char, kSocNameCapacity> g_socName{"Ascend950PR_9599"};
+std::mutex g_deviceStateMutex;
+aclrtDeviceStateCallback g_deviceStateCallback = nullptr;
+void* g_deviceStateArgs = nullptr;
+std::mutex g_finalizeMutex;
+std::vector<std::pair<aclFinalizeCallbackFunc, void*>> g_finalizeCallbacks;
+aclError g_finalizeRegistrationStatus = ACL_SUCCESS;
+std::recursive_mutex g_aclInitMutex;
+std::vector<std::pair<aclInitCallbackFunc, void*>> g_initCallbacks;
+uint64_t g_aclReferences = 0;
 
 aclError RealAclrtLaunchKernelWithHostArgs(
     aclrtFuncHandle, uint32_t, aclrtStream, aclrtLaunchKernelCfg*, void*, std::size_t, aclrtPlaceHolderInfo*,
@@ -50,6 +61,12 @@ aclError RealAclrtLaunchSIMTKernelWithHostArgs(
 }
 
 aclError RealAclrtLaunchKernelWithArgsArray(void*, uint32_t, aclrtStream, aclrtLaunchKernelCfg*, void**)
+{
+    return ACL_SUCCESS;
+}
+
+aclError RealAclrtLaunchKernelWithConfig(
+    aclrtFuncHandle, uint32_t, aclrtStream, aclrtLaunchKernelCfg*, aclrtArgsHandle, void*)
 {
     return ACL_SUCCESS;
 }
@@ -171,8 +188,10 @@ aclError RealAclrtGetDeviceInfo(uint32_t, aclrtDevAttr attr, int64_t* value)
 
 aclError RealAclrtResetDevice(std::int32_t deviceId)
 {
+    RuntimeStubEmitDeviceState(deviceId, ACL_RT_DEVICE_STATE_RESET_PRE);
     std::int32_t expectedDevice = deviceId;
     g_currentDevice.compare_exchange_strong(expectedDevice, -1, std::memory_order_relaxed);
+    RuntimeStubEmitDeviceState(deviceId, ACL_RT_DEVICE_STATE_RESET_POST);
     return ACL_SUCCESS;
 }
 
@@ -309,6 +328,9 @@ std::array<RuntimeEntry, kRuntimeApiCount> g_runtimeEntries = {{
     {"aclrtMallocWithCfg", ToGenericFunction(&RealAclrtMallocWithCfg), ToGenericFunction(&RealAclrtMallocWithCfg)},
     {"aclrtBinaryLoadFromFile", ToGenericFunction(&RealAclrtBinaryLoadFromFile),
      ToGenericFunction(&RealAclrtBinaryLoadFromFile)},
+    {"aclrtResetDeviceForce", ToGenericFunction(&RealAclrtResetDevice), ToGenericFunction(&RealAclrtResetDevice)},
+    {"aclrtLaunchKernelWithConfig", ToGenericFunction(&RealAclrtLaunchKernelWithConfig),
+     ToGenericFunction(&RealAclrtLaunchKernelWithConfig)},
     {"aclrtDeviceL2CacheFlush", ToGenericFunction(&RealAclrtDeviceL2CacheFlush),
      ToGenericFunction(&RealAclrtDeviceL2CacheFlush)},
     {"aclrtGetFunctionName", ToGenericFunction(&RealAclrtGetFunctionName),
@@ -414,6 +436,31 @@ extern "C" ACL_TOOL_INJECTION_EXPORT void RuntimeStubReset()
     std::memcpy(g_socName.data(), kDefaultSocName, sizeof(kDefaultSocName));
 }
 
+extern "C" ACL_TOOL_INJECTION_EXPORT void RuntimeStubEmitDeviceState(int32_t deviceId, aclrtDeviceState state)
+{
+    aclrtDeviceStateCallback callback = nullptr;
+    void* args = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_deviceStateMutex);
+        callback = g_deviceStateCallback;
+        args = g_deviceStateArgs;
+    }
+    if (callback != nullptr) {
+        callback(deviceId, state, args);
+    }
+}
+
+extern "C" aclError aclrtRegDeviceStateCallback(const char*, aclrtDeviceStateCallback callback, void* args)
+{
+    std::lock_guard<std::mutex> lock(g_deviceStateMutex);
+    if (callback != nullptr && g_deviceStateCallback != nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    g_deviceStateCallback = callback;
+    g_deviceStateArgs = args;
+    return ACL_SUCCESS;
+}
+
 extern "C" aclError aclrtApiInjectionGetFunc(const char* name, aclrtApiFunc* originFunc, aclrtApiFunc* currentFunc)
 {
     if (originFunc == nullptr && currentFunc == nullptr) {
@@ -451,15 +498,113 @@ extern "C" int aclrtInit() { return ProfApiLoadApiInjectionFromEnv(); }
 
 extern "C" aclError aclInit(const char* configPath)
 {
-    (void)configPath;
-    return aclrtInit() == 0 ? ACL_SUCCESS : ACL_ERROR_FAILURE;
+    std::lock_guard<std::recursive_mutex> lock(g_aclInitMutex);
+    if (g_aclReferences > 0) {
+        ++g_aclReferences;
+        return ACL_ERROR_REPEAT_INITIALIZE;
+    }
+    if (aclrtInit() != 0) {
+        return ACL_ERROR_FAILURE;
+    }
+    const auto callbacks = g_initCallbacks;
+    const char* config = configPath != nullptr ? configPath : "";
+    for (const auto& item : callbacks) {
+        const auto result = item.first(config, std::strlen(config), item.second);
+        if (result != ACL_SUCCESS) {
+            return result;
+        }
+    }
+    g_aclReferences = 1;
+    return ACL_SUCCESS;
+}
+
+extern "C" aclError aclInitCallbackRegister(aclRegisterCallbackType type, aclInitCallbackFunc callback, void* args)
+{
+    std::lock_guard<std::recursive_mutex> lock(g_aclInitMutex);
+    if (type != ACL_REG_TYPE_OTHER || callback == nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    g_initCallbacks.emplace_back(callback, args);
+    if (g_aclReferences > 0) {
+        (void)callback("", 0, args);
+    }
+    return ACL_SUCCESS;
 }
 
 extern "C" aclError aclFinalize()
 {
+    std::lock_guard<std::recursive_mutex> lifecycle(g_aclInitMutex);
+    // Mirror ACL's public ordering: flush profiling first, then notify OTHER callbacks.
+    const auto finalize = reinterpret_cast<int32_t (*)()>(dlsym(RTLD_DEFAULT, "MsprofFinalize"));
+    if (finalize != nullptr) {
+        (void)finalize();
+    }
+    std::vector<std::pair<aclFinalizeCallbackFunc, void*>> callbacks;
+    {
+        std::lock_guard<std::mutex> lock(g_finalizeMutex);
+        callbacks = g_finalizeCallbacks;
+    }
+    for (const auto& item : callbacks) {
+        const auto result = item.first(item.second);
+        if (result != ACL_SUCCESS) {
+            return result;
+        }
+    }
     // Keep injection DSOs loaded: they may own process-exit callbacks.
     RuntimeStubReset();
+    g_aclReferences = 0;
     return ACL_SUCCESS;
+}
+
+extern "C" aclError aclFinalizeReference(uint64_t* refCount)
+{
+    std::lock_guard<std::recursive_mutex> lifecycle(g_aclInitMutex);
+    aclError result = ACL_SUCCESS;
+    if (g_aclReferences > 1) {
+        --g_aclReferences;
+    } else {
+        result = g_aclReferences == 0 ? ACL_ERROR_REPEAT_FINALIZE : aclFinalize();
+    }
+    if (refCount != nullptr) {
+        *refCount = g_aclReferences;
+    }
+    return result;
+}
+
+extern "C" aclError aclFinalizeCallbackRegister(
+    aclRegisterCallbackType type, aclFinalizeCallbackFunc callback, void* args)
+{
+    std::lock_guard<std::mutex> lock(g_finalizeMutex);
+    if (g_finalizeRegistrationStatus != ACL_SUCCESS) {
+        return g_finalizeRegistrationStatus;
+    }
+    if (type != ACL_REG_TYPE_OTHER || callback == nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    g_finalizeCallbacks.emplace_back(callback, args);
+    return ACL_SUCCESS;
+}
+
+extern "C" aclError aclFinalizeCallbackUnRegister(aclRegisterCallbackType type, aclFinalizeCallbackFunc callback)
+{
+    std::lock_guard<std::mutex> lock(g_finalizeMutex);
+    if (type != ACL_REG_TYPE_OTHER || callback == nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    const auto entry = std::find_if(
+        g_finalizeCallbacks.begin(), g_finalizeCallbacks.end(),
+        [callback](const auto& value) { return value.first == callback; });
+    if (entry == g_finalizeCallbacks.end()) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    g_finalizeCallbacks.erase(entry);
+    return ACL_SUCCESS;
+}
+
+extern "C" ACL_TOOL_INJECTION_EXPORT void RuntimeStubSetFinalizeRegistrationStatus(aclError status)
+{
+    std::lock_guard<std::mutex> lock(g_finalizeMutex);
+    g_finalizeRegistrationStatus = status;
 }
 
 extern "C" aclError aclrtSetDevice(std::int32_t deviceId)
@@ -699,6 +844,14 @@ extern "C" aclError aclrtLaunchKernel(
     return result;
 }
 
+extern "C" aclError aclrtLaunchKernelWithConfig(
+    aclrtFuncHandle function, uint32_t blocks, aclrtStream stream, aclrtLaunchKernelCfg* cfg, aclrtArgsHandle args,
+    void* reserve)
+{
+    return CallCurrent<decltype(&aclrtLaunchKernelWithConfig)>(
+        "aclrtLaunchKernelWithConfig", function, blocks, stream, cfg, args, reserve);
+}
+
 extern "C" aclError aclrtFunctionGetParamCount(const void* func, size_t* count)
 {
     return CallCurrent<aclError (*)(const void*, size_t*)>("aclrtFunctionGetParamCount", func, count);
@@ -708,4 +861,9 @@ extern "C" aclError aclrtFunctionGetParamInfo(const void* func, size_t index, si
 {
     return CallCurrent<aclError (*)(const void*, size_t, size_t*, size_t*)>(
         "aclrtFunctionGetParamInfo", func, index, offset, size);
+}
+
+extern "C" aclError aclrtResetDeviceForce(int32_t deviceId)
+{
+    return CallCurrent<aclError (*)(int32_t)>("aclrtResetDeviceForce", deviceId);
 }

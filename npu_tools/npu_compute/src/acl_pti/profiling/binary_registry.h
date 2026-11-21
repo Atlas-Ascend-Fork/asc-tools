@@ -73,6 +73,8 @@ public:
         aclrtFuncHandle function, bool pmSampling = false, bool pipeline = true, bool sourceCounter = false);
     aclptiResult PrepareBinaryUnload(aclrtBinHandle binary, UnloadContext& context);
     aclptiResult CompleteBinaryUnload(UnloadContext& context);
+    // Called after the replay stream was synchronized, while the Runtime is still usable.
+    aclptiResult ReleaseReplayedCompanions(aclrtFuncHandle original);
     // Capture while Runtime handles are valid. Shared immutable images outlive binary unload.
     bool GetSource(aclrtFuncHandle original, BinarySource& source, bool requireName = true);
     bool GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot);
@@ -123,6 +125,7 @@ private:
         const std::string& mixedAlias);
     static aclptiResult LoadCompanions(
         Binary& state, const aclrtBinaryLoadOptions* options, aclrtBinaryLoadFromDataFunc load);
+    aclptiResult ReleaseCompanions(Binary& binary);
     static void BuildSamplingBinaryState(Binary& state, const void* data, std::size_t size);
     static void BuildSamplingCompanion(
         Binary& state, const std::shared_ptr<PmSamplingBinaryImage>& image, const void* data, std::size_t size);

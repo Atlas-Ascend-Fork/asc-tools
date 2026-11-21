@@ -41,13 +41,14 @@ public:
 
     /// Replaces the subscriber callback and user data and clears enabled callbacks.
     void Configure(aclptiCallbackFunc callback, void* userData);
+    void Clear() noexcept;
 
     /// Enables or disables delivery for one callback domain and callback ID.
     aclptiResult Enable(
         bool enable, aclptiSubscribeHandle subscriber, aclptiCallbackDomain domain, aclptiCallbackId cbid);
 
     /// Writes the callback domains supported by this dispatcher.
-    aclptiResult SupportedDomains(std::size_t* domainCount, aclptiCallbackDomain* domains) const;
+    static aclptiResult SupportedDomains(std::size_t* domainCount, aclptiCallbackDomain* domains);
 
     /// Delivers one runtime API callback event when its callback ID is enabled.
     void Dispatch(
@@ -66,6 +67,7 @@ private:
 
 /// Returns the process-wide callback dispatcher.
 Dispatcher& GetDispatcher();
+void BindDispatcher(Dispatcher* dispatcher) noexcept;
 
 } // namespace aclpti::callback
 

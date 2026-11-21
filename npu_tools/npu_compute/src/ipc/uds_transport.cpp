@@ -40,23 +40,21 @@ constexpr uint32_t UDS_CANCELLED_ERROR_CODE = 3;
 constexpr uint32_t UDS_POLL_ERROR_CODE = 4;
 constexpr uint32_t UDS_SOCKET_BUFFER_ERROR_CODE = 5;
 constexpr uint32_t UDS_PROTOCOL_MAGIC = 0x5A5B;
-constexpr uint16_t UDS_PROTOCOL_VERSION = 3;
 constexpr uint16_t UDS_RESERVED_FLAGS = 0;
 constexpr size_t UDS_TYPE_OFFSET = 4;
 constexpr size_t UDS_TYPE_BYTES = 2;
 constexpr size_t UDS_FLAGS_OFFSET = 6;
 constexpr size_t UDS_LENGTH_OFFSET = 8;
 constexpr size_t UDS_LENGTH_BYTES = 4;
-constexpr size_t UDS_VERSION_OFFSET = 12;
-constexpr size_t UDS_VERSION_BYTES = 2;
-constexpr size_t UDS_SESSION_OFFSET = 18;
+constexpr size_t UDS_PREFIX_FLAGS_OFFSET = 12;
+constexpr size_t UDS_FLAGS_BYTES = 2;
+constexpr size_t UDS_SESSION_OFFSET = 14;
 constexpr size_t UDS_SESSION_BYTES = 8;
-constexpr size_t UDS_SEQUENCE_OFFSET = 26;
+constexpr size_t UDS_SEQUENCE_OFFSET = 22;
 constexpr size_t UDS_SEQUENCE_BYTES = 8;
 constexpr size_t UDS_BYTE_BITS = 8;
 constexpr size_t UDS_IOV_COUNT = 1;
 constexpr nfds_t UDS_NO_FILE_DESCRIPTORS = 0;
-constexpr size_t UDS_TRAILING_FLAG_FIELDS = 2;
 constexpr int UDS_CANCEL_POLL_INTERVAL_MS = 20;
 constexpr int UDS_INITIAL_RETRY_DELAY_MS = 20;
 constexpr int UDS_MAX_RETRY_DELAY_MS = 100;
@@ -254,6 +252,7 @@ void ValidateType(Type type)
         case Type::Interrupt:
         case Type::Flush:
         case Type::Result:
+        case Type::ResultManifest:
         case Type::ResultAck:
         case Type::Error:
         case Type::DataBegin:
@@ -262,6 +261,7 @@ void ValidateType(Type type)
         case Type::Pipeline:
         case Type::Hardware:
         case Type::PmSampling:
+        case Type::Application:
             valid = true;
             break;
         default:
@@ -430,11 +430,9 @@ void Channel::Send(Type type, const Bytes& payload, Deadline deadline, const std
     packet.reserve(kHeaderBytes + kPrefixBytes + payload.size());
     Append(packet, UDS_PROTOCOL_MAGIC, UDS_LENGTH_BYTES);
     Append(packet, static_cast<uint16_t>(type), UDS_TYPE_BYTES);
-    Append(packet, UDS_RESERVED_FLAGS, UDS_VERSION_BYTES);
+    Append(packet, UDS_RESERVED_FLAGS, UDS_FLAGS_BYTES);
     Append(packet, kPrefixBytes + payload.size(), UDS_LENGTH_BYTES);
-    Append(packet, UDS_PROTOCOL_VERSION, UDS_VERSION_BYTES);
-    Append(packet, UDS_RESERVED_FLAGS, UDS_VERSION_BYTES);
-    Append(packet, UDS_RESERVED_FLAGS, UDS_VERSION_BYTES);
+    Append(packet, UDS_RESERVED_FLAGS, UDS_FLAGS_BYTES);
     Append(packet, session_, UDS_SESSION_BYTES);
     Append(packet, sendSequence_, UDS_SEQUENCE_BYTES);
     packet.insert(packet.end(), payload.begin(), payload.end());
@@ -492,15 +490,10 @@ Frame Channel::Receive(Deadline deadline, const std::function<bool()>& cancelled
     Check(packet.size() >= kHeaderBytes + kPrefixBytes, "short UDS packet");
     Check(
         Read(packet, 0, UDS_LENGTH_BYTES) == UDS_PROTOCOL_MAGIC &&
-            Read(packet, UDS_FLAGS_OFFSET, UDS_VERSION_BYTES) == UDS_RESERVED_FLAGS,
+            Read(packet, UDS_FLAGS_OFFSET, UDS_FLAGS_BYTES) == UDS_RESERVED_FLAGS,
         "invalid UDS header");
     Check(Read(packet, UDS_LENGTH_OFFSET, UDS_LENGTH_BYTES) == packet.size() - kHeaderBytes, "UDS length mismatch");
-    Check(
-        Read(packet, UDS_VERSION_OFFSET, UDS_VERSION_BYTES) == UDS_PROTOCOL_VERSION &&
-            Read(packet, UDS_VERSION_OFFSET + UDS_VERSION_BYTES, UDS_VERSION_BYTES) == UDS_RESERVED_FLAGS &&
-            Read(packet, UDS_VERSION_OFFSET + UDS_TRAILING_FLAG_FIELDS * UDS_VERSION_BYTES, UDS_VERSION_BYTES) ==
-                UDS_RESERVED_FLAGS,
-        "unsupported UDS version or flags");
+    Check(Read(packet, UDS_PREFIX_FLAGS_OFFSET, UDS_FLAGS_BYTES) == UDS_RESERVED_FLAGS, "unsupported UDS flags");
     Check(Read(packet, UDS_SESSION_OFFSET, UDS_SESSION_BYTES) == session_, "UDS session mismatch");
     Check(
         Read(packet, UDS_SEQUENCE_OFFSET, UDS_SEQUENCE_BYTES) == receiveSequence_ &&
@@ -531,26 +524,35 @@ Listener::~Listener()
         close(fd_);
     }
 }
-Channel Listener::Accept(uint64_t session, pid_t peerPid, uid_t peerUid, Deadline deadline)
+Channel Listener::TryAccept(uint64_t session)
 {
     Check(session != 0, "zero UDS session");
+    int fd;
+    do {
+        fd = accept4(fd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    } while (fd < 0 && errno == EINTR);
+    if (fd < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        return {};
+    }
+    if (fd < 0) {
+        SystemError("UDS accept");
+    }
+    Channel result(fd, session);
+    ConfigureBuffers(fd);
+    return result;
+}
+
+Channel Listener::Accept(uint64_t session, pid_t peerPid, uid_t peerUid, Deadline deadline)
+{
     for (;;) {
         Remaining(deadline);
-        const int fd = accept4(fd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if (fd < 0 && errno == EINTR) {
-            continue;
-        }
-        if (fd < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        auto result = TryAccept(session);
+        if (result.Fd() < 0) {
             Wait(fd_, POLLIN, deadline);
             continue;
         }
-        if (fd < 0) {
-            SystemError("UDS accept");
-        }
-        Channel result(fd, session);
-        ConfigureBuffers(fd);
         try {
-            VerifyPeer(fd, peerPid, peerUid);
+            VerifyPeer(result.Fd(), peerPid, peerUid);
         } catch (const std::runtime_error&) {
             // An unrelated process must not consume the target's only accept opportunity.
             continue;
@@ -559,5 +561,18 @@ Channel Listener::Accept(uint64_t session, pid_t peerPid, uid_t peerUid, Deadlin
         fd_ = -1;
         return result;
     }
+}
+
+Channel Listener::TryAcceptDescendant(uint64_t session, pid_t ancestorPid, uid_t peerUid)
+{
+    auto result = TryAccept(session);
+    if (result.Fd() >= 0) {
+        try {
+            VerifyPeer(result.Fd(), ancestorPid, peerUid, true);
+        } catch (const std::runtime_error&) {
+            return {};
+        }
+    }
+    return result;
 }
 } // namespace npucompute::ipc

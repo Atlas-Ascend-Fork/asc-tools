@@ -24,6 +24,11 @@ namespace aclpti::data {
 class NPU_COMPUTE_LOCAL ProfilingDataManager final {
 public:
     static ProfilingDataManager& Instance();
+    ProfilingDataManager() = default;
+    ~ProfilingDataManager();
+    using BorrowedResultCallback = void (*)(const aclptiProfilingDataResult&);
+    aclptiResult Initialize(aclptiProfilingDataCallback callback = {}, BorrowedResultCallback borrowed = nullptr);
+    int32_t ReceiveRawData(MsprofRawData* raw) noexcept;
 
     // Registration persists across collection cycles; duplicate registration is rejected.
     aclptiResult RegisterProfilingDataCallback(aclptiProfilingDataCallback callback);
@@ -33,7 +38,6 @@ public:
     ProfilingDataManager& operator=(const ProfilingDataManager&) = delete;
 
     // Starts a fresh collection after shutdown; a running instance is initialized only once.
-    aclptiResult Initialize(aclptiProfilingDataCallback callback = {});
     MsprofRawDataCallback GetRawDataCallback();
     aclptiResult PrepareReplay(const ReplayPrepareInfo& info);
     // Closes reception, waits for accepted work, and merges collection/processing status.
@@ -50,8 +54,6 @@ public:
     aclptiResult ForceShutdown();
 
 private:
-    ProfilingDataManager() = default;
-    ~ProfilingDataManager();
     enum class ManagerState { Created, Running, Stopping, Stopped };
 
     aclptiResult ShutdownImpl(bool force);
@@ -62,6 +64,7 @@ private:
     aclptiDataModuleShutdownCallback shutdownCallback_ = nullptr;
     void* shutdownUserData_ = nullptr;
     aclptiProfilingDataCallback callback_;
+    BorrowedResultCallback borrowedCallback_ = nullptr;
     std::mutex mutex_;
     std::mutex shutdownMutex_;
     ManagerState state_ = ManagerState::Created;

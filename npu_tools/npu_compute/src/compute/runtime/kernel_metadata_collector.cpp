@@ -316,6 +316,12 @@ bool ReadLaunchMetadata(
             candidate->blockDim = params.numBlocks;
             return true;
         }
+        case ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithConfig: {
+            const auto& params = *static_cast<const aclptiAclrtLaunchKernelWithConfigParams*>(data.functionParams);
+            *handle = params.funcHandle;
+            candidate->blockDim = params.numBlocks;
+            return true;
+        }
         case ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithHostArgs: {
             const auto& params = *static_cast<const aclptiAclrtLaunchKernelWithHostArgsParams*>(data.functionParams);
             *handle = params.funcHandle;
@@ -466,13 +472,44 @@ void KernelMetadataCollector::HandleCallbackExit(aclptiCallbackId cbid, const ac
     }
 }
 
-void KernelMetadataCollector::HandleKernelLaunchCallback(aclptiCallbackId cbid, const aclptiCallbackData& data)
+std::optional<KernelMetadataCollector::LaunchObservation> KernelMetadataCollector::ObserveLaunch(
+    aclptiCallbackId cbid, const aclptiCallbackData& data)
 {
-    aclrtFuncHandle handle = nullptr;
-    KernelMetadata candidate;
-    if (!ReadLaunchMetadata(cbid, data, &handle, &candidate)) {
-        return;
+    if (data.functionParams == nullptr) {
+        return std::nullopt;
     }
+    aclrtFuncHandle handle = nullptr;
+    LaunchObservation observation;
+    bool launched = false;
+    if (data.callbackSite == ACLPTI_API_EXIT && data.retval == ACL_SUCCESS) {
+        launched = ReadLaunchMetadata(cbid, data, &handle, &observation.metadata);
+    }
+    // Query the thread's last task before any other Runtime query can replace its identity.
+    if (launched) {
+        using GetTask = decltype(&aclrtGetThreadLastTaskIdAndStreamId);
+        static const auto getTask =
+            reinterpret_cast<GetTask>(::dlsym(RTLD_DEFAULT, "aclrtGetThreadLastTaskIdAndStreamId"));
+        uint32_t task = 0;
+        uint32_t stream = 0;
+        if (getTask != nullptr && getTask(&task, &stream) == ACL_SUCCESS) {
+            observation.taskId = task;
+            observation.streamId = stream;
+        }
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (HandleFunctionLookupCallback(cbid, data) || data.callbackSite != ACLPTI_API_EXIT) {
+        return std::nullopt;
+    }
+    HandleCallbackExit(cbid, data);
+    if (!launched) {
+        return std::nullopt;
+    }
+    CollectLaunchMetadata(handle, observation.metadata, true);
+    return observation;
+}
+
+void KernelMetadataCollector::CollectLaunchMetadata(aclrtFuncHandle handle, KernelMetadata& candidate, bool resolveName)
+{
     int32_t deviceId = 0;
     if (aclrtGetDevice(&deviceId) == ACL_SUCCESS) {
         candidate.deviceId = deviceId;
@@ -480,8 +517,20 @@ void KernelMetadataCollector::HandleKernelLaunchCallback(aclptiCallbackId cbid, 
     const auto found = names_.find(handle);
     if (found != names_.end()) {
         candidate.name = found->second.second;
+    } else if (resolveName && handle != nullptr) {
+        candidate.name = ResolveRuntimeFunctionName(handle);
     }
     CollectExecutionMetadata(handle, candidate);
+}
+
+void KernelMetadataCollector::HandleKernelLaunchCallback(aclptiCallbackId cbid, const aclptiCallbackData& data)
+{
+    aclrtFuncHandle handle = nullptr;
+    KernelMetadata candidate;
+    if (!ReadLaunchMetadata(cbid, data, &handle, &candidate)) {
+        return;
+    }
+    CollectLaunchMetadata(handle, candidate, false);
     metadata_ = std::move(candidate);
     pendingLaunchCbid_ = cbid;
     launchPending_ = true;

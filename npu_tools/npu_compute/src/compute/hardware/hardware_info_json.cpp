@@ -189,18 +189,22 @@ bool SerializeHardwareInfoJsonl(const HardwareInfoSnapshot& snapshot, std::strin
            << ",\"cpu logical count\":" << snapshot.host.cpuLogicalCount
            << ",\"memory total size(MB)\":" << FormatCapacity(snapshot.host.memoryTotalSizeMb)
            << ",\"disk total size(GB)\":" << FormatCapacity(snapshot.host.diskTotalSizeGb) << "}\n";
-    output << "{\"category\":\"Device Info\",\"npu count\":" << snapshot.device.npuCount << ",\"chip info\":\""
-           << EscapeJson(snapshot.device.chipInfo) << "\",\"arch info\":\"" << EscapeJson(snapshot.device.archInfo)
-           << "\"}\n";
-    output << "{\"category\":\"CPU Information\",\"control cpu count\":" << snapshot.cpu.controlCpuCount
+    const auto deviceId = snapshot.deviceId ? ",\"Device Id\":" + std::to_string(*snapshot.deviceId) : "";
+    output << "{\"category\":\"Device Info\"" << deviceId << ",\"npu count\":" << snapshot.device.npuCount
+           << ",\"chip info\":\"" << EscapeJson(snapshot.device.chipInfo) << "\",\"arch info\":\""
+           << EscapeJson(snapshot.device.archInfo) << "\"}\n";
+    output << "{\"category\":\"CPU Information\"" << deviceId
+           << ",\"control cpu count\":" << snapshot.cpu.controlCpuCount
            << ",\"ai cpu count\":" << snapshot.cpu.aiCpuCount
            << ",\"ai cpu frequency(MHZ)\":" << snapshot.cpu.aiCpuFrequencyMhz << "}\n";
-    output << "{\"category\":\"AI Core Information\",\"ai core count\":" << snapshot.aiCore.aiCoreCount
+    output << "{\"category\":\"AI Core Information\"" << deviceId
+           << ",\"ai core count\":" << snapshot.aiCore.aiCoreCount
            << ",\"ai cube count\":" << snapshot.aiCore.aiCubeCount
            << ",\"ai vector count\":" << snapshot.aiCore.aiVectorCount
            << ",\"ai cube frequency(MHZ)\":" << snapshot.aiCore.aiCubeFrequencyMhz
            << ",\"ai vector frequency(MHZ)\":" << snapshot.aiCore.aiVectorFrequencyMhz << "}\n";
-    output << "{\"category\":\"Memory Information\",\"hbm total(MB)\":" << FormatCapacity(snapshot.memory.hbmTotalMb)
+    output << "{\"category\":\"Memory Information\"" << deviceId
+           << ",\"hbm total(MB)\":" << FormatCapacity(snapshot.memory.hbmTotalMb)
            << ",\"hbm used(MB)\":" << FormatCapacity(snapshot.memory.hbmUsedMb)
            << ",\"hbm frequency(MHZ)\":" << snapshot.memory.hbmFrequencyMhz << "}\n";
 

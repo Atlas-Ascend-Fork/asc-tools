@@ -15,7 +15,11 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <unistd.h>
+#ifdef __linux__
+#include <link.h>
+#endif
 
 namespace sqlite = npucompute::sqlite;
 
@@ -39,6 +43,22 @@ struct Directory {
         fs::remove_all(path, error);
     }
 };
+#ifdef __linux__
+int CountLoadedSqliteLibraries()
+{
+    int count = 0;
+    dl_iterate_phdr(
+        [](dl_phdr_info* info, std::size_t, void* data) {
+            if (std::string_view(info->dlpi_name).find("libsqlite3.so") != std::string_view::npos) {
+                ++*static_cast<int*>(data);
+            }
+            return 0;
+        },
+        &count);
+    return count;
+}
+#endif
+
 bool rollbackObserved = false;
 bool rollbackCompleted = false;
 int Authorize(void*, int action, const char* first, const char*, const char*, const char*)
@@ -158,8 +178,16 @@ int main()
     result.rows[0x108] = {};
     result.rows[std::numeric_limits<sqlite3_int64>::max()][7] = std::numeric_limits<sqlite3_int64>::max();
     std::string error = "old error";
+#ifdef __linux__
+    const int loadedBeforeWrite = CountLoadedSqliteLibraries();
+#endif
     CHECK(WritePmSamplingSqlite(path.string(), result, error));
     CHECK(error.empty());
+#ifdef __linux__
+    CHECK(CountLoadedSqliteLibraries() == loadedBeforeWrite);
+    CHECK(!WritePmSamplingSqlite(path.string(), result, error));
+    CHECK(CountLoadedSqliteLibraries() == loadedBeforeWrite);
+#endif
     CHECK(CheckDatabase(path) == 0);
     // Copy just the closed file to a different directory, with no journal/WAL/SHM.
     const auto copyDirectory = directory.path / "copied";

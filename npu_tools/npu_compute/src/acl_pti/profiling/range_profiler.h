@@ -38,7 +38,11 @@ using SourceCounterSynchronize = std::function<aclError(aclrtStream)>;
 class RangeProfiler {
 public:
     /// Initializes raw profiling data collection and uploader callbacks.
-    aclptiResult Initialize();
+    explicit RangeProfiler(data::ProfilingDataManager& manager) : dataManager_(manager) {}
+    RangeProfiler() : RangeProfiler(data::ProfilingDataManager::Instance()) {}
+    aclptiResult Initialize(
+        data::ProfilingDataManager::BorrowedResultCallback onData = nullptr,
+        MsprofRawDataCallback processorUploader = nullptr);
 
     /// Validates and stores the requested PMU and instruction collection configuration.
     aclptiResult SetConfig(const aclptiRangeProfilerSetConfigParams* params);
@@ -119,7 +123,8 @@ private:
     bool collectSimtWarp_ = false;
     bool collectPcSampling_ = false;
     bool collectRoofline_ = false;
-    data::ProfilingDataManager& dataManager_ = data::ProfilingDataManager::Instance();
+    data::ProfilingDataManager& dataManager_;
+    bool managedSession_ = false;
 };
 
 } // namespace aclpti::profiling

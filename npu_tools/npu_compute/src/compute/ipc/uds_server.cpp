@@ -40,7 +40,7 @@ uint64_t Number(const std::string& name)
     return static_cast<uint64_t>(parsed);
 }
 } // namespace
-ipc::Hello UdsServer::Accept()
+ipc::Hello UdsServer::Accept(bool connectToCli)
 {
     const auto name = Environment("NPU_COMPUTE_UDS_NAME");
     const auto session = Number("NPU_COMPUTE_SESSION_ID");
@@ -50,8 +50,12 @@ ipc::Hello UdsServer::Accept()
         throw ipc::Exception({1, "invalid PID or handshake timeout", "BOOTSTRAP", "initialize"});
     }
     deadline_ = ipc::After(std::chrono::milliseconds(timeout));
-    ipc::Listener listener(name);
-    channel_ = listener.Accept(session, static_cast<pid_t>(pid), getuid(), deadline_);
+    if (connectToCli) {
+        channel_ = ipc::Channel::Connect(name, session, static_cast<pid_t>(pid), getuid(), deadline_, {});
+    } else {
+        ipc::Listener listener(name);
+        channel_ = listener.Accept(session, static_cast<pid_t>(pid), getuid(), deadline_);
+    }
     const auto frame = channel_.Receive(deadline_);
     if (frame.type != ipc::Type::Connect) {
         throw ipc::Exception({1, "CONNECT required", "PROTOCOL", "handshake"});

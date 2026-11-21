@@ -30,8 +30,9 @@ public:
 
 class DynamicHardwareDeviceApi final : public HardwareDeviceApi {
 public:
-    DynamicHardwareDeviceApi();
-    explicit DynamicHardwareDeviceApi(std::shared_ptr<DynamicSymbolResolver> resolver);
+    explicit DynamicHardwareDeviceApi(bool allowDeviceSelection = true);
+    explicit DynamicHardwareDeviceApi(
+        std::shared_ptr<DynamicSymbolResolver> resolver, bool allowDeviceSelection = true);
     ~DynamicHardwareDeviceApi() override;
 
     DynamicHardwareDeviceApi(const DynamicHardwareDeviceApi&) = delete;
@@ -62,6 +63,7 @@ private:
         bool allowRatedFallback = true);
     class Impl;
     std::unique_ptr<Impl> impl_;
+    bool allowDeviceSelection_ = true;
 };
 
 } // namespace npucompute

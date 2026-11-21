@@ -25,6 +25,28 @@
 #include <sstream>
 #include <unistd.h>
 namespace npucompute {
+
+std::string QuoteJsonString(std::string_view value, const std::locale& locale)
+{
+    constexpr unsigned char kAsciiControlCharacterEnd = 0x20;
+    constexpr int kUnicodeEscapeHexDigits = 4;
+    std::ostringstream output;
+    output.imbue(locale);
+    output << '"';
+    for (unsigned char character : value) {
+        if (character == '"' || character == '\\') {
+            output << '\\' << character;
+        } else if (character < kAsciiControlCharacterEnd) {
+            output << "\\u" << std::hex << std::setw(kUnicodeEscapeHexDigits) << std::setfill('0')
+                   << static_cast<unsigned>(character);
+        } else {
+            output << character;
+        }
+    }
+    output << '"';
+    return output.str();
+}
+
 namespace {
 
 using Metric = std::optional<double>;
@@ -47,26 +69,7 @@ std::string DemangleName(const std::string& name)
     return status == 0 && demangled ? std::string(demangled.get()) : name;
 }
 
-std::string Quote(std::string_view value)
-{
-    constexpr unsigned char kAsciiControlCharacterEnd = 0x20;
-    constexpr int kUnicodeEscapeHexDigits = 4;
-    std::ostringstream output;
-    output.imbue(std::locale::classic());
-    output << '"';
-    for (unsigned char character : value) {
-        if (character == '"' || character == '\\') {
-            output << '\\' << character;
-        } else if (character < kAsciiControlCharacterEnd) {
-            output << "\\u" << std::hex << std::setw(kUnicodeEscapeHexDigits) << std::setfill('0')
-                   << static_cast<unsigned>(character);
-        } else {
-            output << character;
-        }
-    }
-    output << '"';
-    return output.str();
-}
+std::string Quote(std::string_view value) { return QuoteJsonString(value, std::locale::classic()); }
 
 std::string Number(Metric value, bool integer = false, int precision = kSummaryDecimalPlaces)
 {
@@ -78,6 +81,26 @@ std::string Number(Metric value, bool integer = false, int precision = kSummaryD
     output << std::fixed << std::setprecision(integer ? 0 : precision) << *value;
     return output.str();
 }
+
+struct OpInfoOutput {
+    std::ostream& stream;
+    std::vector<std::string>* unavailableFields = nullptr;
+
+    void Unavailable(std::string_view name)
+    {
+        if (unavailableFields != nullptr) {
+            unavailableFields->emplace_back(name);
+        }
+    }
+
+    void Field(std::string_view name, Metric value, bool integer = false, int precision = kSummaryDecimalPlaces)
+    {
+        if (unavailableFields != nullptr && (!value || !std::isfinite(*value))) {
+            unavailableFields->emplace_back(name);
+        }
+        stream << ',' << Quote(name) << ':' << Number(value, integer, precision);
+    }
+};
 
 using Fields = SummaryFields;
 
@@ -133,7 +156,7 @@ void WriteSamplingContexts(std::ostream& output, const aclptiProfilingDataResult
 }
 
 void WriteOpPerformance(
-    std::ostream& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
+    OpInfoOutput& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
     const ReportConfig& config, const KernelMetadata& metadata, Fields memory)
 {
     const auto selected = [&sections](std::string_view section) {
@@ -146,37 +169,27 @@ void WriteOpPerformance(
     constexpr double kPercentScale = 100.0;
     const Metric usage =
         read && write ? Metric((*read + *write) / kTheoreticalGmBandwidthGbps * kPercentScale) : std::nullopt;
-    const auto field =
-        [&output](std::string_view name, Metric value, bool integer = false, int precision = kSummaryDecimalPlaces) {
-            output << ',' << Quote(name) << ':' << Number(value, integer, precision);
-        };
     constexpr int kTheoreticalFlopsDecimalPlaces = 2;
-    field("aic_flops_theoretical", metrics.aicFlopsTheoretical, false, kTheoreticalFlopsDecimalPlaces);
-    field("aiv_flops_theoretical", metrics.aivFlopsTheoretical, false, kTheoreticalFlopsDecimalPlaces);
-    field("aic_flops", metrics.aicFlops);
-    field("aiv_flops", metrics.aivFlops);
-    field("aicore_parallel_utilization", metrics.parallelUtilization);
-    field("aicore_parallel_balance", metrics.parallelBalance);
-    field(
+    output.Field("aic_flops_theoretical", metrics.aicFlopsTheoretical, false, kTheoreticalFlopsDecimalPlaces);
+    output.Field("aiv_flops_theoretical", metrics.aivFlopsTheoretical, false, kTheoreticalFlopsDecimalPlaces);
+    output.Field("aic_flops", metrics.aicFlops);
+    output.Field("aiv_flops", metrics.aivFlops);
+    output.Field("aicore_parallel_utilization", metrics.parallelUtilization);
+    output.Field("aicore_parallel_balance", metrics.parallelBalance);
+    output.Field(
         "aicore_gm_bw_theoretical(GB/s)", selected("Memory") ? Metric(kTheoreticalGmBandwidthGbps) : std::nullopt,
         true);
-    field("aicore_gm_read_bw(GB/s)", read);
-    field("aicore_gm_write_bw(GB/s)", write);
-    field("aicore_gm_bw_usage_rate(%)", usage);
+    output.Field("aicore_gm_read_bw(GB/s)", read);
+    output.Field("aicore_gm_write_bw(GB/s)", write);
+    output.Field("aicore_gm_bw_usage_rate(%)", usage);
 }
 
 double RooflineClock(const KernelMetadata& metadata, const ReportConfig& config, bool aic)
 {
     constexpr double kFallbackFrequencyMhz = 1650.0;
-    const auto current = metadata.hardware.collected ? (aic ? metadata.hardware.currentAicFrequencyMhz :
-                                                              metadata.hardware.currentAivFrequencyMhz) :
-                                                       Metric(aic ? config.aicFrequencyMhz : config.aivFrequencyMhz);
-    if (current && std::isfinite(*current) && *current > 0) {
-        return *current;
-    }
-    const auto rated = SummaryRatedFrequency(metadata, aic);
-    if (rated) {
-        return *rated;
+    const auto frequency = SummaryEffectiveFrequency(metadata, config, aic);
+    if (frequency) {
+        return *frequency;
     }
     ASCTOOL_DEBUG(
         "[npu-compute] Roofline %s frequency source=fallback valueMHz=%f", aic ? "AIC" : "AIV", kFallbackFrequencyMhz);
@@ -302,8 +315,8 @@ bool Roofline(
 }
 
 void OpInfo(
-    std::ostream& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
-    const ReportConfig& config, const KernelMetadata& metadata, Fields memory)
+    OpInfoOutput& output, const aclptiProfilingDataResult& result, const std::vector<std::string>& sections,
+    const ReportConfig& config, const KernelMetadata& metadata, Fields memory, bool requireTaskPmuForFrequency)
 {
     bool hasAic = result.taskPmuData.aic.has_value();
     bool hasAiv = result.taskPmuData.aiv.has_value();
@@ -315,26 +328,27 @@ void OpInfo(
     const Metric ratedAiv = SummaryRatedFrequency(metadata, false);
     const Metric currentAic = SummaryEffectiveFrequency(metadata, config, true);
     const Metric currentAiv = SummaryEffectiveFrequency(metadata, config, false);
-    output << "{\"category\":\"OpInfoSummary\",\"Op Name\":"
-           << (metadata.name ? Quote(DemangleName(*metadata.name)) : "\"NA\"") << ",\"Op Type\":"
-           << (hasAic ? (hasAiv ? "\"mix\"" : "\"cube\"") :
-               hasAiv ? "\"vector\"" :
-                        "\"NA\"");
-    const auto field =
-        [&output](std::string_view name, Metric value, bool integer = false, int precision = kSummaryDecimalPlaces) {
-            output << ',' << Quote(name) << ':' << Number(value, integer, precision);
-        };
-    field("Task Duration(us)", PmuMetricBuilder::TaskDuration(result));
-    field("Block Dim", metadata.blockDim ? Metric(*metadata.blockDim) : std::nullopt, true);
-    field(
+    output.stream << "{\"category\":\"OpInfoSummary\",\"Op Name\":"
+                  << (metadata.name ? Quote(DemangleName(*metadata.name)) : "\"NA\"") << ",\"Op Type\":"
+                  << (hasAic ? (hasAiv ? "\"mix\"" : "\"cube\"") :
+                      hasAiv ? "\"vector\"" :
+                               "\"NA\"");
+    if (!hasAic && !hasAiv) {
+        output.Unavailable("Op Type");
+    }
+    output.Field("Task Duration(us)", PmuMetricBuilder::TaskDuration(result));
+    output.Field("Block Dim", metadata.blockDim ? Metric(*metadata.blockDim) : std::nullopt, true);
+    output.Field(
         "Mix Block Dim", hasAic && hasAiv && metadata.mixBlockDim ? Metric(*metadata.mixBlockDim) : std::nullopt, true);
-    field("Device Id", metadata.deviceId ? Metric(*metadata.deviceId) : std::nullopt, true);
-    field("Pid", ::getpid(), true);
-    field("Current Freq", Frequency(hasAic, hasAiv, currentAic, currentAiv));
-    field("Rated Freq", Frequency(hasAic, hasAiv, ratedAic, ratedAiv));
+    output.Field("Device Id", metadata.deviceId ? Metric(*metadata.deviceId) : std::nullopt, true);
+    output.Field("Pid", ::getpid(), true);
+    const bool hasRequiredTaskPmu =
+        (!hasAic || result.taskPmuData.aic.has_value()) && (!hasAiv || result.taskPmuData.aiv.has_value());
+    const bool reportFrequency = !requireTaskPmuForFrequency || hasRequiredTaskPmu;
+    output.Field("Current Freq", reportFrequency ? Frequency(hasAic, hasAiv, currentAic, currentAiv) : std::nullopt);
+    output.Field("Rated Freq", reportFrequency ? Frequency(hasAic, hasAiv, ratedAic, ratedAiv) : std::nullopt);
     WriteOpPerformance(output, result, sections, config, metadata, std::move(memory));
-    WriteSamplingContexts(output, result);
-    output << "}\n";
+    WriteSamplingContexts(output.stream, result);
 }
 
 aclptiResult WriteSelectedSummary(
@@ -376,6 +390,21 @@ aclptiResult WriteSelectedSummary(
 
 } // namespace
 
+FormattedOpInfoSummary FormatOpInfoSummary(
+    const aclptiProfilingDataResult& result, const ReportConfig& config, const KernelMetadata& metadata)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    const auto summaryConfig = SummaryReportConfig(metadata, config);
+    FormattedOpInfoSummary summary;
+    OpInfoOutput fields{output, &summary.unavailableFields};
+    OpInfo(
+        fields, result, {"Memory", "ArithmeticUtilization"}, summaryConfig, metadata,
+        BuildTaskSummarySection("Memory", result, summaryConfig), /*requireTaskPmuForFrequency=*/true);
+    summary.fields = output.str();
+    return summary;
+}
+
 aclptiResult WriteSummaryJsonl(
     const aclptiProfilingDataResult& result, const std::vector<std::string>& sections, const ReportConfig& config,
     const KernelMetadata& metadata, ArtifactSink& sink, std::string_view artifactPrefix, bool* degraded)
@@ -393,7 +422,11 @@ aclptiResult WriteSummaryJsonl(
         if (summaryStatus != ACLPTI_SUCCESS) {
             return summaryStatus;
         }
-        OpInfo(output, result, selectedSections, config, metadata, summarySections["Memory"]);
+        OpInfoOutput fields{output};
+        OpInfo(
+            fields, result, selectedSections, config, metadata, summarySections["Memory"],
+            /*requireTaskPmuForFrequency=*/false);
+        output << "}\n";
         const std::string content = output.str();
         const auto recordCount = static_cast<uint64_t>(std::count(content.begin(), content.end(), '\n'));
         sink.Begin(std::string(artifactPrefix) + "summary.jsonl");

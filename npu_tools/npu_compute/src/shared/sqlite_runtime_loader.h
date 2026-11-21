@@ -12,6 +12,7 @@
 
 #include "shared/minimal_sqlite.h"
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace npucompute::sqlite {
@@ -41,9 +42,21 @@ struct Api {
     std::function<int(sqlite3_stmt*, int, const char*, int)> bindText;
 };
 
-// First access loads and resolves the complete API once, safely across threads.
-// Failure is cached and reported as an exception caught at the result boundary.
-// A successfully loaded library remains loaded for the lifetime of the process.
+// Owns a runtime reference for a write. Statements and connections must close
+// before this object is destroyed.
+class ScopedApi final {
+public:
+    ScopedApi();
+    ~ScopedApi();
+
+    const Api& Get() const noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+// CLI access resolves and caches the API or the load error on first use.
 const Api& GetApi();
 const std::string& LibraryPath();
 

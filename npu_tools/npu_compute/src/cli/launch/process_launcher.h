@@ -22,9 +22,9 @@ struct ProcessLaunchRequest {
     std::string program;
     std::vector<std::string> arguments;
     std::vector<std::string> environment;
-};
 
-int LaunchProcessAndWait(const ProcessLaunchRequest& request, std::string* error);
+    void SetEnvironment(const std::string& name, const std::string& value);
+};
 
 class ProcessHandle {
 public:

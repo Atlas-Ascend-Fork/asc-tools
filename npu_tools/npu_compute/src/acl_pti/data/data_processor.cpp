@@ -215,6 +215,7 @@ void DataProcessor::Close()
     queue_.Close();
     if (thread_.joinable()) {
         thread_.join();
+        ASCTOOL_INFO("[aclpti] kernel decoder worker joined");
     }
 }
 

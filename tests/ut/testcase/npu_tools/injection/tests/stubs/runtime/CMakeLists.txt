@@ -35,6 +35,7 @@ set_target_properties(acl_runtime_stub PROPERTIES
 add_library(acl_runtime_stub_unit STATIC
   runtime_stub.cpp
 )
+target_compile_definitions(acl_runtime_stub_unit PRIVATE ACL_RUNTIME_STUB_STATIC=1)
 target_include_directories(acl_runtime_stub_unit
   PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
   PRIVATE "${INJECTION_SOURCE_DIR}/src"

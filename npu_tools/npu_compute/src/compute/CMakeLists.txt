@@ -29,7 +29,10 @@ add_library(npu_compute SHARED
   performance_hints/performance_hint_utils.cpp
   report/summary_jsonl_writer.cpp
   report/summary_metrics.cpp
+  report/application_report.cpp
+  report/application_summary_writer.cpp
   report/report_writer.cpp
+  runtime/application_op_collector.cpp
   runtime/kernel_metadata_collector.cpp
   runtime/compute_service.cpp
   runtime/npu_compute_runtime.cpp
@@ -61,6 +64,7 @@ if(TARGET acl_pti)
   target_link_libraries(npu_compute PRIVATE acl_pti)
 endif()
 target_link_options(npu_compute PRIVATE
+  "LINKER:-z,nodelete"
   "LINKER:--version-script=${NPU_COMPUTE_VERSION_SCRIPT}"
 )
 set_target_properties(npu_compute PROPERTIES

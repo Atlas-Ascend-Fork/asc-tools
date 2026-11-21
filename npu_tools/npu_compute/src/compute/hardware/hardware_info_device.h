@@ -46,18 +46,24 @@ public:
     virtual bool GetHbmFrequency(std::int32_t deviceId, uint32_t* value) = 0;
 };
 
+bool CollectDeviceInfo(
+    HardwareDeviceApi& api, DeviceInfo* device, CpuInfo* cpu, AiCoreInfo* aiCore, MemoryInfo* memory,
+    DiagnosticSink* diagnostics, int32_t deviceId);
+
 bool CollectDevice0Info(
     HardwareDeviceApi& api, DeviceInfo* device, CpuInfo* cpu, AiCoreInfo* aiCore, MemoryInfo* memory,
     DiagnosticSink* diagnostics);
 
 bool CollectAiCoreCounts(
-    HardwareDeviceApi& api, std::uint32_t* aiCubeCount, std::uint32_t* aiVectorCount, DiagnosticSink* diagnostics);
+    HardwareDeviceApi& api, std::uint32_t* aiCubeCount, std::uint32_t* aiVectorCount, DiagnosticSink* diagnostics,
+    int32_t deviceId = 0);
 
 bool CollectAiCoreFrequencies(
     HardwareDeviceApi& api, std::uint32_t* aiCubeFrequencyMhz, std::uint32_t* aiVectorFrequencyMhz,
-    DiagnosticSink* diagnostics);
+    DiagnosticSink* diagnostics, int32_t deviceId = 0);
 
-SummaryHardwareInfo CollectSummaryHardwareInfo(HardwareDeviceApi& api, DiagnosticSink* diagnostics = nullptr);
+SummaryHardwareInfo CollectSummaryHardwareInfo(
+    HardwareDeviceApi& api, DiagnosticSink* diagnostics = nullptr, int32_t deviceId = 0);
 
 } // namespace npucompute
 

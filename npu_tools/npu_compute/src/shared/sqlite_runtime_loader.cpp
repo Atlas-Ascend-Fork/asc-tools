@@ -17,6 +17,7 @@
 
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -205,7 +206,10 @@ void ResolveCallbacks(Library library, Api& api, bool systemAbi)
     };
 }
 
+using LibraryHandle = std::unique_ptr<std::remove_pointer_t<Library>, decltype(&CloseLibrary)>;
+
 struct Runtime {
+    LibraryHandle library{nullptr, &CloseLibrary};
     Api api;
     std::string path;
     std::string error;
@@ -216,14 +220,13 @@ Runtime LoadRuntime()
     Runtime result;
     result.error = "SQLite runtime loading failed; database output is unavailable. Attempts:";
     for (const auto& candidate : Candidates()) {
-        // Failed candidates are closed; successful handles stay loaded so all
-        // connections, statements and their cleanup can outlive static objects.
-        const auto library = OpenLibrary(candidate);
-        if (!library) {
+        LibraryHandle handle(OpenLibrary(candidate), &CloseLibrary);
+        if (!handle) {
             result.error += " [" + candidate.path.string() + ": open library: " + SystemError() + "]";
             continue;
         }
         try {
+            const auto library = handle.get();
             Api api;
             Resolve(library, "sqlite3_open_v2", api.openV2, candidate.systemAbi);
             Resolve(library, "sqlite3_close", api.close, candidate.systemAbi);
@@ -244,36 +247,45 @@ Runtime LoadRuntime()
             Resolve(library, "sqlite3_column_bytes", api.columnBytes, candidate.systemAbi);
             Resolve(library, "sqlite3_column_count", api.columnCount, candidate.systemAbi);
             ResolveCallbacks(library, api, candidate.systemAbi);
-            result.api = std::move(api);
             result.path = candidate.path.string();
+            result.api = std::move(api);
+            result.library = std::move(handle);
             result.error.clear();
             return result;
         } catch (const std::exception& failure) {
             result.error += " [" + candidate.path.string() + ": " + failure.what() + "]";
-            CloseLibrary(library);
         }
     }
     result.error += " CSV, disassembly and symbolizer results can still be published.";
     return result;
 }
 
-const Runtime& GetRuntime()
+const Api& CheckRuntime(const Runtime& runtime)
 {
-    // C++ static initialization is thread safe. Retaining this small object also
-    // keeps its callables valid during process shutdown. Failed loads are cached.
-    static const auto* runtime = new Runtime(LoadRuntime());
-    return *runtime;
-}
-} // namespace
-
-const Api& GetApi()
-{
-    const auto& runtime = GetRuntime();
     if (!runtime.error.empty()) {
         throw std::runtime_error(runtime.error);
     }
     return runtime.api;
 }
+
+const Runtime& GetRuntime()
+{
+    static const auto runtime = LoadRuntime();
+    return runtime;
+}
+} // namespace
+
+struct ScopedApi::Impl {
+    Runtime runtime = LoadRuntime();
+};
+
+ScopedApi::ScopedApi() : impl_(std::make_unique<Impl>()) { CheckRuntime(impl_->runtime); }
+
+ScopedApi::~ScopedApi() = default;
+
+const Api& ScopedApi::Get() const noexcept { return impl_->runtime.api; }
+
+const Api& GetApi() { return CheckRuntime(GetRuntime()); }
 
 const std::string& LibraryPath()
 {

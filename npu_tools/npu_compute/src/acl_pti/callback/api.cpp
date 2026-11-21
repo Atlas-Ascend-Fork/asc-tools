@@ -22,11 +22,16 @@ extern "C" ACLPTI_EXPORT aclptiResult aclptiSubscribe(
     }
 
     *subscriber = nullptr;
-    const aclptiResult result = aclpti::initialization::InitializeDependencies();
+    aclptiResult result = aclpti::initialization::InitializeDependencies();
     if (result == ACLPTI_SUCCESS) {
-        auto& dispatcher = aclpti::callback::GetDispatcher();
-        dispatcher.Configure(callback, userData);
-        *subscriber = dispatcher.SubscriberHandle();
+        const aclpti::initialization::CallbackAccess access(aclpti::initialization::CallbackAccess::Kind::Configure);
+        if (access) {
+            auto& dispatcher = aclpti::callback::GetDispatcher();
+            dispatcher.Configure(callback, userData);
+            *subscriber = dispatcher.SubscriberHandle();
+        } else {
+            result = ACLPTI_ERROR_INVALID_STATE;
+        }
     }
     ASCTOOL_DEBUG("[aclpti] subscribe result=%d handle=%p", static_cast<int>(result), static_cast<void*>(*subscriber));
     if (result != ACLPTI_SUCCESS) {
@@ -41,8 +46,9 @@ extern "C" ACLPTI_EXPORT aclptiResult aclptiSubscribe(
 extern "C" ACLPTI_EXPORT aclptiResult
 aclptiEnableCallback(bool enable, aclptiSubscribeHandle subscriber, aclptiCallbackDomain domain, aclptiCallbackId cbid)
 {
-    auto& dispatcher = aclpti::callback::GetDispatcher();
-    const aclptiResult result = dispatcher.Enable(enable, subscriber, domain, cbid);
+    const aclpti::initialization::CallbackAccess access(aclpti::initialization::CallbackAccess::Kind::Configure);
+    const aclptiResult result = access ? aclpti::callback::GetDispatcher().Enable(enable, subscriber, domain, cbid) :
+                                         ACLPTI_ERROR_INVALID_SUBSCRIBER;
     ASCTOOL_DEBUG(
         "[aclpti] callback enable=%d domain=%d cbid=%u result=%d", static_cast<int>(enable), static_cast<int>(domain),
         static_cast<unsigned int>(cbid), static_cast<int>(result));
@@ -57,7 +63,7 @@ aclptiEnableCallback(bool enable, aclptiSubscribeHandle subscriber, aclptiCallba
 
 extern "C" ACLPTI_EXPORT aclptiResult aclptiSupportedDomains(std::size_t* domainCount, aclptiCallbackDomain* domains)
 {
-    const aclptiResult supportedResult = aclpti::callback::GetDispatcher().SupportedDomains(domainCount, domains);
+    const aclptiResult supportedResult = aclpti::callback::Dispatcher::SupportedDomains(domainCount, domains);
     ASCTOOL_DEBUG(
         "[aclpti] supported domains result=%d count=%zu", static_cast<int>(supportedResult),
         domainCount == nullptr ? 0U : *domainCount);

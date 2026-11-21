@@ -44,7 +44,8 @@ typedef enum aclptiRuntimeCallbackId {
     ACLPTI_RUNTIME_CBID_aclrtMallocAlign32 = 19,
     ACLPTI_RUNTIME_CBID_aclrtMallocWithCfg = 20,
     ACLPTI_RUNTIME_CBID_aclrtBinaryLoadFromFile = 21,
-    ACLPTI_RUNTIME_CBID_SIZE = 22,
+    ACLPTI_RUNTIME_CBID_aclrtLaunchKernelWithConfig = 22,
+    ACLPTI_RUNTIME_CBID_SIZE = 23,
 } aclptiRuntimeCallbackId;
 
 typedef struct aclptiAclrtLaunchKernelWithHostArgsParams {
@@ -179,6 +180,15 @@ typedef struct aclptiAclrtLaunchKernelParams {
     size_t argsSize;
     aclrtStream stream;
 } aclptiAclrtLaunchKernelParams;
+
+typedef struct aclptiAclrtLaunchKernelWithConfigParams {
+    aclrtFuncHandle funcHandle;
+    uint32_t numBlocks;
+    aclrtStream stream;
+    aclrtLaunchKernelCfg* cfg;
+    aclrtArgsHandle argsHandle;
+    void* reserve;
+} aclptiAclrtLaunchKernelWithConfigParams;
 
 typedef struct aclptiAclrtGetFuncBySymbolParams {
     const void* symbol;

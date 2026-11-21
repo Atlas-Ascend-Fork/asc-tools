@@ -41,7 +41,7 @@ namespace sqlite = npucompute::sqlite;
 
 namespace fs = std::filesystem;
 namespace {
-aclptiProfilingDataCallback callback;
+npucompute::NpuComputeRuntime* activeRuntime = nullptr;
 constexpr std::uint64_t kRuntimeEntryPc = 0x100000;
 constexpr std::uint64_t kBusinessInstructionOffset = 0x100;
 constexpr std::uint64_t kOriginalBusinessInstructionPc = 0x20;
@@ -140,7 +140,7 @@ void CheckSummary(const fs::path& path, bool samplingOnly, bool hasContext = tru
     if (samplingOnly)
         CHECK(records[0].get_child("hints").empty());
     CHECK(records.back().get<std::string>("category") == "OpInfoSummary");
-    // No kernel metadata callback was delivered: the result must still be published.
+    // Launches without function metadata still publish a summary with an unavailable name.
     CHECK(records.back().get<std::string>("Op Name") == "NA");
     const auto contexts = records.back().get_child_optional("PmSamplingContexts");
     CHECK(static_cast<bool>(contexts) == hasContext);
@@ -385,17 +385,20 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     sink.failure = mode;
     sink.emptySampling = IsEmptySamplingScenario(mode);
     const auto initialStaging = StagingDirectories("/tmp");
-    auto& runtime = npucompute::NpuComputeRuntime::Instance();
-    int finalizedStatus = 99;
-    CHECK(runtime.Initialize(config, sink, [&](int status) {
-        finalizedStatus = status;
-        return status;
-    }) == 0);
-    CHECK(callback);
+    npucompute::NpuComputeRuntime runtime;
+    activeRuntime = &runtime;
+    const aclptiCallbackFunc metadata = [](void*, aclptiCallbackDomain domain, aclptiCallbackId cbid,
+                                           const aclptiCallbackData* data) {
+        activeRuntime->ObserveRuntime(domain, cbid, data);
+    };
+    CHECK(runtime.Initialize(config, sink, metadata) == 0);
+    CHECK(npucompute::test::CapturedAclPtiCallback() == metadata);
+    CHECK(npucompute::test::CapturedAclPtiUserData() == nullptr);
     if (mode == "sqlite-failure") {
         CHECK(npucompute::test::SqliteAutoExtension(reinterpret_cast<void (*)()>(ConfigureSqliteFailure)) == SQLITE_OK);
     }
     if (mode != "no-callback") {
+        CHECK(npucompute::test::InvokeAclPtiRuntimeReady());
         auto result = Result(mode);
         if (source) {
             result->sourceCounterData.emplace();
@@ -411,9 +414,9 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
                     std::make_shared<const std::vector<char>>(*result->sourceCounterData->originalElf);
             }
         }
-        CHECK(callback(std::move(result)) == ACLPTI_SUCCESS);
+        CHECK(runtime.Submit(std::move(result)) == ACLPTI_SUCCESS);
         if (mode == "repeat" || mode == "mixed-results") {
-            CHECK(callback(Result(mode == "mixed-results" ? "truncated" : mode)) == ACLPTI_SUCCESS);
+            CHECK(runtime.Submit(Result(mode == "mixed-results" ? "truncated" : mode)) == ACLPTI_SUCCESS);
         }
     }
     runtime.Stop();
@@ -428,10 +431,9 @@ void Child(const std::string& mode, const fs::path& root, const char* executable
     CHECK((status == 0) == success);
     CHECK((runtime.ErrorCount() == 0) == success);
     CHECK(runtime.PmSamplingComplete() == (success || mode == "source-failure" || mode == "record-failure"));
-    CHECK(finalizedStatus == status);
     CHECK(StagingDirectories("/tmp") == initialStaging);
     CHECK(StagingDirectories(root).empty());
-    CHECK(callback(Result("success")) == ACLPTI_ERROR_INVALID_STATE);
+    CHECK(runtime.Submit(Result("success")) == ACLPTI_ERROR_INVALID_STATE);
     if (mode == "no-callback") {
         CHECK(!fs::exists(sink.output / "summary.jsonl"));
         CHECK(!fs::exists(sink.output / "Occupancy.json"));
@@ -560,16 +562,16 @@ extern "C" aclError aclrtGetDeviceCount(std::uint32_t* count)
     *count = 0;
     return ACL_SUCCESS;
 }
+extern "C" aclError aclrtGetDevice(int32_t* device)
+{
+    *device = 0;
+    return ACL_SUCCESS;
+}
 extern "C" const char* aclrtGetSocName() { return "Ascend950PR_9599"; }
 extern "C" int halGetDeviceInfo(std::uint32_t, std::int32_t, std::int32_t, std::int64_t* value)
 {
     *value = 1000000;
     return 0;
-}
-aclptiResult aclptiRegisterProfilingDataCallback(aclptiProfilingDataCallback value)
-{
-    callback = std::move(value);
-    return ACLPTI_SUCCESS;
 }
 int main(int argc, char** argv)
 {

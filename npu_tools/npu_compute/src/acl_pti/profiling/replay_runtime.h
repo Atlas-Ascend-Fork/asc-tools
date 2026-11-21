@@ -28,7 +28,12 @@ namespace aclpti::profiling {
 class ReplayRuntime {
 public:
     /// Initializes the range profiler once while preserving its failure result.
-    aclptiResult Initialize();
+    ReplayRuntime() = default;
+    explicit ReplayRuntime(data::ProfilingDataManager& manager) : rangeProfiler_(manager) {}
+    aclptiResult Initialize(
+        data::ProfilingDataManager::BorrowedResultCallback onData = nullptr,
+        MsprofRawDataCallback processorUploader = nullptr);
+    aclptiResult ShutdownLocal();
 
     /// Applies the requested profiling collection configuration.
     aclptiResult SetConfig(const aclptiRangeProfilerSetConfigParams* params);
@@ -58,7 +63,7 @@ public:
     aclptiResult CompleteBinaryUnload(BinaryRegistry::UnloadContext& context);
 
     /// Stops profiling once; callers preserve the error that triggered shutdown.
-    aclptiResult StopProfiling();
+    aclptiResult StopProfiling(aclptiResult reason = ACLPTI_SUCCESS);
 
     /// Allocates replay shadow memory for a successful device allocation.
     aclptiResult MirrorMalloc(
@@ -101,6 +106,7 @@ private:
     aclptiResult ReadPmSamplingOffset(aclrtFuncHandle function, std::uint64_t& offset);
 
     bool initialized_ = false;
+    bool managedSession_ = false;
     std::atomic<bool> profilingAvailable_{true};
     ReplayMemory replayMemory_;
     BinaryRegistry binaryRegistry_;
@@ -116,6 +122,7 @@ private:
 
 /// Returns the process-wide replay runtime.
 ReplayRuntime& GetReplayRuntime();
+void BindReplayRuntime(ReplayRuntime* runtime) noexcept;
 
 } // namespace aclpti::profiling
 

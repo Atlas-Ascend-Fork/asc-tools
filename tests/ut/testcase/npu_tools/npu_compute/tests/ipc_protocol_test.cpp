@@ -97,7 +97,7 @@ TEST(NpuComputeIpcProtocol, Codecs)
         config.cacheControlMode = mode;
         Reject([&] { EncodeConfig(config); });
         auto invalid = EncodeConfig(Config{config.sections, "kernel", 0, npucompute::ipc::kCacheControlModeAll});
-        invalid[invalid.size() - 4] = static_cast<uint8_t>(mode);
+        invalid[invalid.size() - 30] = static_cast<uint8_t>(mode);
         Reject([&] { DecodeConfig(invalid); });
     }
     Reject([&] { EncodeArtifactBegin({1, DataKind::PmuCsv, "../Memory.csv"}); });
@@ -182,31 +182,27 @@ TEST(NpuComputeIpcProtocol, MalformedPackets)
     Check(listener.Fd() == -1);
     Reject([&] { sender.Send(Type::Status, {}, bootstrap.handshakeDeadline); });
     sender.Send(Type::Flush, {}, bootstrap.handshakeDeadline);
-    Bytes original(34);
-    Check(recv(receiver.Fd(), original.data(), original.size(), 0) == 34);
+    Bytes original(30);
+    Check(recv(receiver.Fd(), original.data(), original.size(), 0) == 30);
     Check(original[0] == 0x5b && original[1] == 0x5a && original[2] == 0 && original[3] == 0);
-    Check(original[4] == 4 && original[5] == 0 && original[8] == 22 && original[12] == 3);
+    Check(original[4] == 4 && original[5] == 0 && original[8] == 18 && original[12] == 0);
     for (size_t i = 0; i < 8; ++i) {
-        Check(original[18 + i] == static_cast<uint8_t>(bootstrap.session >> (8 * i)));
-        Check(original[26 + i] == 0);
+        Check(original[14 + i] == static_cast<uint8_t>(bootstrap.session >> (8 * i)));
+        Check(original[22 + i] == 0);
     }
-    // Magic, type, reserved bits, length, major, minor, flags, session, sequence.
-    for (const size_t offset : {0, 4, 6, 8, 12, 14, 16, 18, 26}) {
+    // Magic, type, reserved bits, length, flags, session, sequence.
+    for (const size_t offset : {0, 4, 6, 8, 12, 14, 22}) {
         auto malformed = original;
         malformed[offset] ^= 0x80;
-        Check(send(sender.Fd(), malformed.data(), malformed.size(), MSG_NOSIGNAL) == 34);
+        Check(send(sender.Fd(), malformed.data(), malformed.size(), MSG_NOSIGNAL) == 30);
         Reject([&] { receiver.Receive(bootstrap.handshakeDeadline); });
     }
     for (uint8_t reservedType : {8, 9}) {
         auto malformed = original;
         malformed[4] = reservedType;
-        Check(send(sender.Fd(), malformed.data(), malformed.size(), MSG_NOSIGNAL) == 34);
+        Check(send(sender.Fd(), malformed.data(), malformed.size(), MSG_NOSIGNAL) == 30);
         Reject([&] { receiver.Receive(bootstrap.handshakeDeadline); });
     }
-    auto oldMajor = original;
-    oldMajor[12] = 2;
-    Check(send(sender.Fd(), oldMajor.data(), oldMajor.size(), MSG_NOSIGNAL) == 34);
-    Reject([&] { receiver.Receive(bootstrap.handshakeDeadline); });
     // Unexpected ancillary descriptors must be rejected via MSG_CTRUNC.
     alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int))]{};
     iovec vector{original.data(), original.size()};
@@ -221,11 +217,11 @@ TEST(NpuComputeIpcProtocol, MalformedPackets)
     ancillary->cmsg_len = CMSG_LEN(sizeof(int));
     const int sentFd = sender.Fd();
     std::memcpy(CMSG_DATA(ancillary), &sentFd, sizeof(sentFd));
-    Check(sendmsg(sender.Fd(), &message, MSG_NOSIGNAL) == 34);
+    Check(sendmsg(sender.Fd(), &message, MSG_NOSIGNAL) == 30);
     Reject([&] { receiver.Receive(bootstrap.handshakeDeadline); });
-    Check(send(sender.Fd(), original.data(), original.size(), MSG_NOSIGNAL) == 34);
+    Check(send(sender.Fd(), original.data(), original.size(), MSG_NOSIGNAL) == 30);
     Check(receiver.Receive(bootstrap.handshakeDeadline).type == Type::Flush);
-    Check(send(sender.Fd(), original.data(), original.size(), MSG_NOSIGNAL) == 34);
+    Check(send(sender.Fd(), original.data(), original.size(), MSG_NOSIGNAL) == 30);
     Reject([&] { receiver.Receive(bootstrap.handshakeDeadline); });
     original.resize(kMaxValueBytes + 13);
     Check(send(sender.Fd(), original.data(), original.size(), MSG_NOSIGNAL) == static_cast<ssize_t>(original.size()));
@@ -337,3 +333,38 @@ TEST(NpuComputeIpcProtocol, InvalidPeerDoesNotConsumeListener)
     Check(listener.Fd() == -1);
 }
 } // namespace
+
+TEST(NpuComputeIpcProtocol, ApplicationConfigAndResultRoundTrip)
+{
+    Config config;
+    config.sections = {"Communication"};
+    config.replayMode = "application";
+    const auto decoded = DecodeConfig(EncodeConfig(config));
+    EXPECT_EQ(decoded.sections, config.sections);
+    EXPECT_EQ(decoded.replayMode, "application");
+    EXPECT_EQ(decoded.featureFlags, 0U);
+    EXPECT_EQ(decoded.cacheControlMode, kCacheControlModeNone);
+    Result result;
+    result.sections = config.sections;
+    EXPECT_NO_THROW(DecodeResult(EncodeResult(result)));
+    config.sections.push_back("Memory");
+    Reject([&] { EncodeConfig(config); });
+    config.sections = {"Communication"};
+    config.cacheControlMode = kCacheControlModeAll;
+    Reject([&] { EncodeConfig(config); });
+}
+
+TEST(NpuComputeIpcProtocol, ApplicationSummaryPathsAndMoreThan64ArtifactsRoundTrip)
+{
+    Result result;
+    result.sections = {"Communication"};
+    for (uint64_t index = 0; index < 70; ++index) {
+        const auto path = "device1/op-comm_2fkernel/" + std::to_string(index) + "/summary.jsonl";
+        EXPECT_EQ(KindForName(path), DataKind::PmuCsv);
+        result.manifest.push_back({index + 1, path, 128});
+    }
+    EXPECT_EQ(DecodeResult(EncodeResult(result)).manifest.size(), 70U);
+    Reject([] { KindForName("device1/op-comm/../summary.jsonl"); });
+    Reject([] { KindForName("device1/op-comm/0/Memory.csv"); });
+    Reject([] { KindForName("device1/op-comm/unknown/summary.jsonl"); });
+}

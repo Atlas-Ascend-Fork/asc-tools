@@ -13,6 +13,26 @@ This document describes the fields and calculations in Section CSV files, `summa
 
 Matching metric names use the same units and base formulas, but their scope, frequency, or time denominator may differ. See the summary section for the relationship between CSV files and the summary.
 
+## Application Replay Communication Artifacts
+
+`--replay-mode application --section Communication` delivers raw callback data, lifecycle information, hardware information, and per-launch basic summaries. Communication interval metrics and traces require the later parsing implementation.
+
+| File | Contents |
+|---|---|
+| `application_raw.jsonl` | The first line records the schema, real `processId`, `passId`, and collection kind. Each later line owns a callback payload copy and retains `deviceId/deviceEpoch/rawType/chunkModule/offset/isLastChunk` and hexadecimal `payloadHex`. Raw chunks remain intact. The consumer separately decodes known LOG/PMU formats; invalid lengths or formats count as processing errors. |
+| `application_manifest.json` | Session and per-device states, Start/Stop return codes, epochs, and received/processed/dropped/invalid record counts. `endReason` identifies the actual closure path. When `stopAttempted=false`, `stopStatus=null` does not imply a successful Stop call. `localQueueDrained` confirms local processing finished. `localCollectionHealthy` describes local control and processing. `tailConfirmed` confirms the Runtime session tail; `complete` requires both local health and tail confirmation. |
+| `HardwareInfo.jsonl` | Preserves the existing five hardware categories. Device categories carry `Device Id` for each observed device, queried while its resources are alive. Unavailable fields remain NA. |
+| `device<id>/op-<encoded-name>/<launch_index>/summary.jsonl` | One `OpInfoSummary` per successful launch with an identified name and device, including repeated calls. Long names use an `instance-<index>` directory; the summary and manifest retain the original name. |
+
+With a Runtime that delivers all devices’ tail callbacks during `MsprofFinalize`, the official ACL finalize notification sets `tailConfirmed=true`. Without this notification it remains false, so delivered artifacts cannot prove full data completeness. `failureReason=acl_finalize_not_observed` identifies a missing notification; the field is null after a notification, while states and counters still report other collection errors. `isLastChunk` ends one Runtime file chunk, rather than the profiling session. Host records and records whose device or epoch cannot be established retain their raw device ID and use `deviceEpoch=0`. Late data after a device restart is not assigned to an epoch by guessing.
+
+
+The fixed configuration is `PROF_OP_TIMESTAMP_MASK | PROF_TASK_TIME_MASK | PROF_AICORE_METRICS_MASK` (`0x100000804`). The ten AICORE_METRICS slots contain 808, 1281, 0x422, 0x423, and six INVALID entries, with ALL_BLOCK enabled. This single pass collects the floating-point/vector activity, GM traffic, total cycles, and Task timing needed by the summary, without enabling other Sections.
+
+`OpInfoSummary` reuses the formulas below. On 950, the two raw 16-bit task fields form a full taskSn, matched to launches by `deviceId/deviceEpoch/taskSn`. `Stream Id` retains the actual Runtime exposed stream ID; it must not be compared with the raw low 16 bits. Missing identities, reused taskSn values, uncertain epochs, or absent data produce `NA` with `unavailable_reasons`, without borrowing data across devices or epochs. `collection_status` describes session collection completeness, rather than guaranteeing every metric is available. `communication_time`, `compute_communication_overlap_time`, and `compute_overhead_time` remain `NA` with reason `communication_intervals_not_parsed`.
+
+The manifest adds `unidentifiedLaunches` and `result_units`. Each unit includes its original name, device, epoch, instance identifiers, launch_index, and summary_path. Bounded UDS continuation frames carry the final artifact manifest without a fixed total launch-count limit.
+
 ## ArithmeticUtilization (Cube and Vector instruction utilization and counts)
 
 ArithmeticUtilization.csv contains active-cycle ratios for Cube and Vector instructions and instruction counts for Cube. Use it to examine activity by instruction type and the number of Cube instructions executed. See the field descriptions in the table below for details.

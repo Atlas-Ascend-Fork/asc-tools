@@ -20,22 +20,67 @@ namespace npucompute {
 namespace {
 ipc::Deadline IoDeadline() { return ipc::After(ipc::kIoTimeout); }
 } // namespace
-ArtifactPublisher::ArtifactPublisher(ipc::Channel channel) : channel_(std::move(channel))
+ArtifactPublisher::ArtifactPublisher()
 {
     worker_ = std::thread([this] { Worker(); });
 }
-ArtifactPublisher::ArtifactPublisher(ipc::Channel channel, ipc::Deadline readyDeadline)
-    : channel_(std::move(channel)), ready_deadline_(readyDeadline), send_ready_(true)
+
+ArtifactPublisher::ArtifactPublisher(ipc::Channel channel) : ArtifactPublisher()
 {
-    worker_ = std::thread([this] { Worker(); });
+    Attach(std::move(channel));
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    startup_action_ = StartupAction::Publish;
+    available_.notify_all();
+}
+
+ArtifactPublisher::ArtifactPublisher(ipc::Channel channel, ipc::Deadline readyDeadline) : ArtifactPublisher()
+{
+    Attach(std::move(channel));
+    SendReady(readyDeadline);
+}
+
+ArtifactPublisher::~ArtifactPublisher() { Stop(); }
+
+void ArtifactPublisher::Attach(ipc::Channel channel)
+{
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    if (channel_attached_ || channel.Fd() < 0 || stopping_) {
+        throw std::runtime_error("publisher cannot attach channel");
+    }
+    channel_ = std::move(channel);
+    channel_attached_ = true;
+}
+
+void ArtifactPublisher::SendReady(ipc::Deadline deadline)
+{
     std::unique_lock<std::mutex> lock(queue_mutex_);
-    if (!available_.wait_until(lock, readyDeadline, [this] { return started_ || failed_; }) || failed_) {
-        lock.unlock();
-        Stop();
+    if (!channel_attached_ || startup_action_ != StartupAction::Wait || stopping_) {
+        throw std::runtime_error("publisher cannot send READY in current state");
+    }
+    startup_action_ = StartupAction::Ready;
+    ready_deadline_ = deadline;
+    available_.notify_all();
+    // Channel::Send enforces the deadline. Wait for its result so a successful
+    // READY cannot race a second deadline on this thread.
+    available_.wait(lock, [this] { return started_ || failed_ || stopping_; });
+    if (!started_) {
         throw std::runtime_error("publisher READY failed");
     }
 }
-ArtifactPublisher::~ArtifactPublisher() { Stop(); }
+
+void ArtifactPublisher::FailStartup(ipc::Error error) noexcept
+{
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (channel_attached_ && startup_action_ == StartupAction::Wait && !stopping_) {
+            startup_error_.emplace(std::move(error));
+        }
+        stopping_ = true;
+    }
+    available_.notify_all();
+    JoinWorker();
+}
+
 void ArtifactPublisher::Enqueue(ipc::Frame frame)
 {
     constexpr std::size_t kMaxQueuedFrames = 16;
@@ -123,9 +168,8 @@ void ArtifactPublisher::PublishOptional(const std::string& name, std::string_vie
 void ArtifactPublisher::Abort() noexcept
 {
     if (!interrupted_) {
-        failed_ = true;
+        MarkFailed();
     }
-    available_.notify_all();
     if (artifact_lock_.owns_lock()) {
         artifact_lock_.unlock();
     }
@@ -152,7 +196,10 @@ void ArtifactPublisher::HandleControl(const ipc::Frame& frame)
         throw ipc::Exception({1, "control payload must be empty", "PROTOCOL", "collect"});
     }
     if (frame.type == ipc::Type::Interrupt) {
-        interrupted_ = true;
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            interrupted_ = true;
+        }
         available_.notify_all();
         ASCTOOL_DEBUG("[npu-compute ipc] phase=interrupt");
         return;
@@ -168,12 +215,9 @@ void ArtifactPublisher::HandleControl(const ipc::Frame& frame)
 }
 void ArtifactPublisher::WaitForResultAck()
 {
-    if (interrupted_) {
-        throw std::runtime_error("interrupted result");
-    }
     drain_deadline_ms_ = 0;
-    const auto deadline = IoDeadline();
-    for (;;) {
+    const auto deadline = ipc::After(ipc::kResultAckTimeout);
+    while (!interrupted_) {
         auto reply = channel_.Receive(deadline, [this] { return stopping_.load(); });
         if (reply.type == ipc::Type::ResultAck && reply.payload.empty()) {
             acknowledged_ = true;
@@ -182,6 +226,7 @@ void ArtifactPublisher::WaitForResultAck()
         }
         HandleControl(reply);
     }
+    throw ipc::Exception({3, "collection interrupted", "PROFILING", "collect"});
 }
 
 bool ArtifactPublisher::TakeNextFrame(ipc::Frame& frame)
@@ -212,24 +257,65 @@ void ArtifactPublisher::PollControl()
         throw std::runtime_error("publisher poll failed");
     }
     if (ready > 0) {
-        HandleControl(channel_.Receive(IoDeadline()));
+        HandleControl(channel_.Receive(IoDeadline(), [this] { return SendCancelled(); }));
     }
+}
+
+bool ArtifactPublisher::StartPublishing()
+{
+    std::unique_lock<std::mutex> lock(queue_mutex_);
+    available_.wait(lock, [this] { return startup_action_ != StartupAction::Wait || stopping_; });
+    if (stopping_) {
+        auto error = std::move(startup_error_);
+        lock.unlock();
+        if (error) {
+            SendFailure(*error);
+        }
+        return false;
+    }
+    const auto action = startup_action_;
+    const auto deadline = ready_deadline_;
+    lock.unlock();
+
+    if (action == StartupAction::Ready) {
+        channel_.Send(
+            ipc::Type::ConnectAck,
+            ipc::EncodeReady({static_cast<uint32_t>(getpid()), static_cast<uint32_t>(getuid()), 0}), deadline,
+            [this] { return stopping_.load(); });
+    }
+    lock.lock();
+    started_ = true;
+    available_.notify_all();
+    return true;
+}
+
+void ArtifactPublisher::SendFailure(const ipc::Error& error) noexcept
+{
+    try {
+        ASCTOOL_ERROR(
+            "[UDS] %s/%s code=%u: %s", error.domain.c_str(), error.phase.c_str(), error.code, error.message.c_str());
+        constexpr std::chrono::milliseconds kErrorNotificationTimeout{100};
+        channel_.Send(ipc::Type::Error, ipc::EncodeError(error), ipc::After(kErrorNotificationTimeout));
+    } catch (...) {
+    }
+}
+
+void ArtifactPublisher::MarkFailed()
+{
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        failed_ = true;
+    }
+    available_.notify_all();
 }
 
 void ArtifactPublisher::Worker() noexcept
 {
     try {
-        if (send_ready_) {
-            channel_.Send(
-                ipc::Type::ConnectAck,
-                ipc::EncodeReady({static_cast<uint32_t>(getpid()), static_cast<uint32_t>(getuid()), 0}),
-                ready_deadline_);
+        if (!StartPublishing()) {
+            channel_.Close();
+            return;
         }
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex_);
-            started_ = true;
-        }
-        available_.notify_all();
         for (;;) {
             PollControl();
             ipc::Frame frame;
@@ -246,55 +332,80 @@ void ArtifactPublisher::Worker() noexcept
             }
         }
     } catch (const std::exception& error) {
-        failed_ = true;
+        MarkFailed();
         try {
             const auto* failure = dynamic_cast<const ipc::Exception*>(&error);
-            const ipc::Error detail = failure ? failure->Detail() : ipc::Error{1, error.what(), "ARTIFACT", "publish"};
-            ASCTOOL_ERROR(
-                "[UDS] %s/%s code=%u: %s", detail.domain.c_str(), detail.phase.c_str(), detail.code,
-                detail.message.c_str());
-            constexpr std::chrono::milliseconds kErrorNotificationTimeout{100};
-            channel_.Send(ipc::Type::Error, ipc::EncodeError(detail), ipc::After(kErrorNotificationTimeout));
+            if (failure != nullptr) {
+                SendFailure(failure->Detail());
+            } else {
+                SendFailure({1, error.what(), "ARTIFACT", "publish"});
+            }
         } catch (...) {
         }
     } catch (...) {
-        failed_ = true;
+        MarkFailed();
     }
     channel_.Close();
-    available_.notify_all();
 }
-bool ArtifactPublisher::Finish(ipc::Result result)
+
+void ArtifactPublisher::RequestFinish(ipc::Result result)
 {
     try {
         std::lock_guard<std::mutex> lock(artifact_mutex_);
         if (finishing_) {
-            throw std::runtime_error("duplicate publisher finish");
+            return;
         }
         finishing_ = true;
         const auto deadline = ipc::After(ipc::kDrainTimeout);
         drain_deadline_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(deadline.time_since_epoch()).count();
-        result.manifest = manifest_;
+        auto next = manifest_.begin();
+        while (static_cast<size_t>(manifest_.end() - next) > ipc::kMaxManifestEntriesPerFrame) {
+            const auto end = next + ipc::kMaxManifestEntriesPerFrame;
+            result.manifest.assign(next, end);
+            Enqueue({ipc::Type::ResultManifest, ipc::EncodeResult(result)});
+            next = end;
+        }
+        result.manifest.assign(next, manifest_.end());
         Enqueue({ipc::Type::Result, ipc::EncodeResult(result)});
     } catch (...) {
         if (!interrupted_) {
-            failed_ = true;
+            MarkFailed();
         }
-        available_.notify_all();
+        throw;
     }
-    std::lock_guard<std::mutex> joinLock(join_mutex_);
-    if (worker_.joinable()) {
-        worker_.join();
-    }
+}
+
+bool ArtifactPublisher::WaitForFinish() noexcept
+{
+    JoinWorker();
     return acknowledged_ && !failed_;
 }
+
+bool ArtifactPublisher::Finish(ipc::Result result)
+{
+    try {
+        RequestFinish(std::move(result));
+    } catch (...) {
+    }
+    return WaitForFinish();
+}
+
 void ArtifactPublisher::Stop() noexcept
 {
-    stopping_ = true;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        stopping_ = true;
+    }
     available_.notify_all();
-    // The publisher owns the fd; its bounded IO deadline also bounds teardown.
+    JoinWorker();
+}
+
+void ArtifactPublisher::JoinWorker() noexcept
+{
     std::lock_guard<std::mutex> joinLock(join_mutex_);
     if (worker_.joinable()) {
         worker_.join();
+        ASCTOOL_DEBUG("[npu-compute ipc] phase=publisher-joined");
     }
 }
 } // namespace npucompute
