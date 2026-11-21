@@ -42,6 +42,9 @@ add_executable(npu_check_unit_tests
   "checker/synccheck_test.cpp"
   "ipc/uds_server_test.cpp"
   "${NPU_CHECK_TEST_ROOT}/shared/wire_protocol_test.cpp"
+  "checker/simt_ub_memcheck_test.cpp"
+  "${NPU_CHECK_DBI_ROOT}/aclsan_simt_ub_trace.cpp"
+  "${NPU_CHECK_DBI_ROOT}/aclsan_ub_layout_builder.cpp"
   ${NPU_CHECK_TEST_REPORT_RENDERER_SOURCES}
 )
 target_compile_features(npu_check_unit_tests PRIVATE cxx_std_17)
@@ -178,3 +181,34 @@ target_link_libraries(npu_check_racecheck_render_tests PRIVATE npu_sanitizer_plo
 add_test(NAME npu_check_racecheck_render_tests COMMAND npu_check_racecheck_render_tests)
 
 add_subdirectory(checker/racecheck)
+
+add_executable(npu_check_simt_ub_metadata_tests
+  "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp"
+  "${NPU_CHECK_TEST_ROOT}/acl_san/simt_ub_metadata_test.cpp"
+  "${NPU_CHECK_TEST_ROOT}/acl_san/hibit/mock.cpp"
+  "${NPU_CHECK_DBI_ROOT}/device_runtime/device_binary_registry.cpp"
+  "${NPU_CHECK_DBI_ROOT}/aclsan_vf.cpp"
+  "${NPU_CHECK_DBI_ROOT}/device_runtime/device_symbolizer.cpp"
+  "${NPU_CHECK_DBI_ROOT}/../../../utils/security/file_io.cpp"
+  "${NPU_CHECK_DBI_ROOT}/dbi/kernel_param_metadata.cpp")
+target_compile_features(npu_check_simt_ub_metadata_tests PRIVATE cxx_std_17)
+target_compile_options(npu_check_simt_ub_metadata_tests PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_compile_definitions(npu_check_simt_ub_metadata_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
+target_include_directories(npu_check_simt_ub_metadata_tests PRIVATE
+  "${NPU_CHECK_DBI_ROOT}" "${NPU_CHECK_DBI_ROOT}/../../include"
+  "${NPU_CHECK_DBI_ROOT}/../../../utils/security")
+target_link_libraries(npu_check_simt_ub_metadata_tests PRIVATE
+  GTest::gtest Threads::Threads Boost::filesystem c_sec_static npu_bit npu_sanitizer_plog plog_test_library)
+add_test(NAME npu_check_simt_ub_metadata_tests COMMAND npu_check_simt_ub_metadata_tests)
+
+add_executable(npu_check_simt_ub_host_tests
+  "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp" "checker/simt_ub_host_test.cpp"
+  "${NPU_CHECK_DBI_ROOT}/aclsan_simt_ub_trace.cpp"
+  "${NPU_CHECK_DBI_ROOT}/aclsan_ub_layout_builder.cpp")
+target_compile_features(npu_check_simt_ub_host_tests PRIVATE cxx_std_17)
+target_compile_options(npu_check_simt_ub_host_tests PRIVATE -Wall -Wextra -Werror)
+target_compile_definitions(npu_check_simt_ub_host_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
+target_include_directories(npu_check_simt_ub_host_tests PRIVATE
+  "${NPU_CHECK_DBI_ROOT}" "${NPU_CHECK_DBI_ROOT}/../../include")
+target_link_libraries(npu_check_simt_ub_host_tests PRIVATE GTest::gtest)
+add_test(NAME npu_check_simt_ub_host_tests COMMAND npu_check_simt_ub_host_tests)

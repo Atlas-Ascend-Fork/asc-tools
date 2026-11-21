@@ -9,7 +9,9 @@
  */
 
 #include "aclsan_trace_runtime.h"
+#include "aclsan_ub_layout_builder.h"
 #include "aclsan_simt_trace.h"
+#include "aclsan_simt_ub_trace.h"
 #include "aclsan_active_probe_plan.h"
 #include "securec.h"
 #include "aclsan_vf.h"
@@ -102,11 +104,19 @@ struct PendingTrace {
     std::vector<aclrtPlaceHolderInfo> placeholders;
     std::vector<PreparedTraceLaunch::HostInput> hostInputs;
     std::unique_ptr<dav3510::Dav3510RegisterStateManager> registerState;
-    uint32_t parameterPrefixBytes = 0;
-    bool simtCollected = false;
-    size_t simtSegmentBytes = 0;
     uint64_t parameterBytes = 0;
+    uint32_t parameterPrefixBytes = 0;
     std::vector<InternalMemoryRange> readOnlyBinaryRanges;
+    AclsanUbLaunchMetadata ubMetadata{};
+    AclsanUbLayout ubLayout{};
+    std::vector<uint8_t> simtBuffer;
+    size_t dispatchedSimtRecordCount = 0;
+    uint64_t reportedSimtParseDroppedRecords = 0;
+    uint64_t translatedSimtDroppedRecords = 0;
+    uint64_t reportedSimtDroppedRecords = 0;
+    uint64_t translatedUbDroppedRecords = 0;
+    uint64_t reportedUbDroppedRecords = 0;
+    bool simtComplete = true;
     std::shared_ptr<NpubitUbHandle> hibitHandle;
     VfPbState pbState;
     std::array<uint32_t, TRACE_SLOTS> copied{};
@@ -1266,6 +1276,175 @@ void TrackTraceKernelMarkers(
 
 void DispatchTraceRecordsBeforeSync(PendingTrace& pending);
 
+void DispatchSimtDroppedMarker(const PendingTrace& pending, bool ub)
+{
+    AclsanSimtUbMemoryAccessData marker{};
+    marker.header.version = ACLSAN_API_VERSION;
+    marker.header.size = ub ? sizeof(marker) : sizeof(AclsanDeviceMemoryAccessData);
+    marker.header.launchId = pending.launchId;
+    marker.header.deviceId = pending.deviceId;
+    marker.header.flags = ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR;
+    if (ub) {
+        marker.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB | ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
+    }
+    AclsanCallbackDispatcher::DispatchSimtMemoryAccess(marker);
+}
+
+void RetainSimtTraceBuffer(PendingTrace& pending, std::vector<uint8_t>& buffer) noexcept
+{
+    AclsanTraceBufferHeader header{};
+    if (buffer.size() < sizeof(header)) {
+        pending.simtComplete = false;
+        FailTrace(pending, "missing prepared trace buffer header");
+        return;
+    }
+    if (memcpy_s(&header, sizeof(header), buffer.data(), sizeof(header)) != EOK) {
+        pending.simtComplete = false;
+        FailTrace(pending, "cannot read prepared trace buffer header");
+        return;
+    }
+    if (header.simtSegmentOffset != 0U) {
+        pending.simtBuffer = std::move(buffer);
+        pending.simtComplete = false;
+    }
+}
+
+SimtTraceParseResult ReadSimtTraceSnapshot(PendingTrace& pending, bool executionComplete)
+{
+    std::lock_guard<std::mutex> lock(pending.mutex);
+    AclsanTraceBufferHeader header{};
+    if (pending.simtBuffer.size() < sizeof(header)) {
+        FailTrace(pending, "missing SIMT trace buffer header");
+        return {};
+    }
+    if (memcpy_s(&header, sizeof(header), pending.simtBuffer.data(), sizeof(header)) != EOK) {
+        FailTrace(pending, "cannot read SIMT trace buffer header");
+        return {};
+    }
+    if (header.segmentBytes != pending.simtBuffer.size() ||
+        !ValidateTraceSegmentHeader(header, pending.blockCount, pending.launchId) || pending.quarantined) {
+        FailTrace(pending, "invalid or quarantined SIMT trace buffer");
+        return {};
+    }
+    if (!BindTraceContext(pending)) {
+        return {};
+    }
+    const bool copied = CopyTraceBytes(
+        pending, pending.simtBuffer.data() + header.simtSegmentOffset, header.simtSegmentBytes,
+        DeviceBytes(pending, header.simtSegmentOffset), header.simtSegmentBytes, ACL_MEMCPY_DEVICE_TO_HOST);
+    if (!copied) {
+        FailTrace(pending, "cannot collect SIMT sidecar");
+        return {};
+    }
+    auto simt = ParseSimtTraceBuffer(
+        pending.simtBuffer.data(), pending.simtBuffer.size(), pending.physicalCoreSlotCount, pending.blockCount,
+        pending.launchId, pending.deviceId, executionComplete);
+    if (!simt.ok || simt.records.size() < pending.dispatchedSimtRecordCount ||
+        simt.droppedRecords < pending.reportedSimtParseDroppedRecords) {
+        FailTrace(pending, "invalid or regressed SIMT sidecar");
+        simt.ok = false;
+    }
+    return simt;
+}
+
+bool IsInternalSimtAccess(const PendingTrace& pending, const AclsanDeviceMemoryAccessData& access)
+{
+    if (access.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+        return false;
+    }
+    const auto contains = [&access](const auto& range) {
+        const auto begin = reinterpret_cast<uintptr_t>(range.address);
+        return access.address >= begin && access.address - begin <= range.bytes &&
+               access.layout.range.bytes <= range.bytes - (access.address - begin);
+    };
+    if (std::any_of(pending.hostInputs.begin(), pending.hostInputs.end(), contains)) {
+        return true;
+    }
+    return access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
+           std::any_of(pending.readOnlyBinaryRanges.begin(), pending.readOnlyBinaryRanges.end(), contains);
+}
+
+void DispatchPendingSimtRecords(PendingTrace& pending, const SimtTraceParseResult& simt)
+{
+    for (size_t index = pending.dispatchedSimtRecordCount; index < simt.records.size(); ++index) {
+        const auto& record = simt.records[index];
+        if (IsSimtUbTraceRecord(record)) {
+            const auto ub = TranslateSimtUbTraceRecord(record, pending.ubLayout);
+            if (ub) {
+                AclsanCallbackDispatcher::DispatchSimtMemoryAccess(*ub);
+            } else {
+                ++pending.translatedUbDroppedRecords;
+            }
+            continue;
+        }
+        const auto converted = TranslateSimtTraceRecord(record);
+        if (!converted) {
+            ++pending.translatedSimtDroppedRecords;
+            continue;
+        }
+        if (!IsInternalSimtAccess(pending, *converted)) {
+            AclsanCallbackDispatcher::DispatchSimtMemoryAccess(*converted);
+        }
+    }
+}
+
+void AccountSimtTraceSnapshot(PendingTrace& pending, const SimtTraceParseResult& simt, bool executionComplete)
+{
+    const bool simtVf = pending.ubMetadata.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMT_VF_ONLY ||
+                        pending.ubMetadata.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF;
+    const bool unknownVf = (pending.ubMetadata.flags & ACLSAN_UB_METADATA_UNAVAILABLE) != 0U && !simt.records.empty();
+    const bool missingUbLayout = executionComplete && pending.ubLayout.valid == ACLSAN_UB_LAYOUT_INVALID &&
+                                 (simtVf || unknownVf) && (SnapshotActiveProbePlan() & PROBE_GROUP_SIMT) != 0U;
+    const uint64_t ubDropped = pending.translatedUbDroppedRecords + (missingUbLayout ? 1U : 0U);
+    if (ubDropped > pending.reportedUbDroppedRecords) {
+        DispatchSimtDroppedMarker(pending, true);
+    }
+    const uint64_t dropped = simt.droppedRecords + pending.translatedSimtDroppedRecords;
+    if (dropped > pending.reportedSimtDroppedRecords) {
+        DispatchSimtDroppedMarker(pending, false);
+    }
+    const uint64_t newDropped =
+        dropped - pending.reportedSimtDroppedRecords + ubDropped - pending.reportedUbDroppedRecords;
+    std::lock_guard<std::mutex> lock(pending.mutex);
+    pending.delivered += simt.records.size() - pending.dispatchedSimtRecordCount;
+    pending.dropped += newDropped;
+    if (newDropped != 0U) {
+        TraceIntegrityMark(pending.launchId, newDropped, false);
+    }
+    pending.dispatchedSimtRecordCount = simt.records.size();
+    pending.reportedSimtParseDroppedRecords = simt.droppedRecords;
+    pending.reportedSimtDroppedRecords = dropped;
+    pending.reportedUbDroppedRecords = ubDropped;
+    pending.simtComplete = executionComplete;
+}
+
+// Dispatch the lane-private sidecar before completion closes the checker launch.
+bool CollectSimtTrace(PendingTrace& pending, bool executionComplete)
+{
+    std::lock_guard<std::mutex> dispatchLock(pending.dispatchMutex);
+    TraceDispatchScope callbackScope;
+    {
+        std::lock_guard<std::mutex> lock(pending.mutex);
+        if (pending.simtComplete || pending.operatorExecutionReported) {
+            return true;
+        }
+    }
+    const auto simt = ReadSimtTraceSnapshot(pending, executionComplete);
+    if (!simt.ok) {
+        {
+            std::lock_guard<std::mutex> lock(pending.mutex);
+            ++pending.dropped;
+            TraceIntegrityMark(pending.launchId, 1U, false);
+        }
+        DispatchSimtDroppedMarker(pending, true);
+        DispatchSimtDroppedMarker(pending, false);
+        return false;
+    }
+    DispatchPendingSimtRecords(pending, simt);
+    AccountSimtTraceSnapshot(pending, simt, executionComplete);
+    return true;
+}
+
 bool HasQueuedTraceRecords(const PendingTrace& pending) noexcept
 {
     for (const auto& batches : pending.batches) {
@@ -1310,7 +1489,7 @@ bool TraceFullyCopied(const PendingTrace& pending) noexcept
 bool CanPublishBeforeFinalization(const PendingTrace& pending, bool fullyCopied, bool dispatchedAll) noexcept
 {
     return pending.completionEvent.Complete() && pending.completionSnapshotRead &&
-           pending.kernelEndTracker.Complete() && fullyCopied && dispatchedAll;
+           pending.kernelEndTracker.Complete() && pending.simtComplete && fullyCopied && dispatchedAll;
 }
 
 aclError OperatorExecutionResult(bool failed, bool partial) noexcept
@@ -1321,103 +1500,12 @@ aclError OperatorExecutionResult(bool failed, bool partial) noexcept
     return failed ? ACL_ERROR_FAILURE : ACL_SUCCESS;
 }
 
-bool IsInternalSimtAccess(const PendingTrace& pending, const AclsanDeviceMemoryAccessData& data) noexcept
-{
-    const uint64_t begin = data.address;
-    const uint64_t bytes = data.layout.range.bytes;
-    const auto contains = [begin, bytes](uint64_t start, uint64_t size) {
-        return begin >= start && begin - start <= size && bytes <= size - (begin - start);
-    };
-    for (const auto& range : pending.hostInputs) {
-        if (contains(reinterpret_cast<uintptr_t>(range.address), range.bytes)) {
-            return true;
-        }
-    }
-    if (data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
-        for (const auto& range : pending.readOnlyBinaryRanges) {
-            if (contains(reinterpret_cast<uintptr_t>(range.address), range.bytes)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-// Called under collectionMutex after actual completion and before the operator completion callback.
-bool CollectSimtTrace(PendingTrace& pending)
-{
-    std::vector<uint8_t> buffer(pending.simtSegmentBytes);
-    {
-        std::lock_guard<std::mutex> lock(pending.mutex);
-        size_t simdBytes = 0;
-        if (!BindTraceContext(pending) || !TraceBufferBytes(pending.physicalCoreSlotCount, &simdBytes)) {
-            return false;
-        }
-        const auto copy = GetOriginalRuntimeFunction<aclrtMemcpyFunc>(ACL_RT_API_aclrtMemcpy, "aclrtMemcpy");
-        if (copy == nullptr || copy(
-                                   buffer.data(), buffer.size(), DeviceBytes(pending, SimtTraceOffset(simdBytes)),
-                                   buffer.size(), ACL_MEMCPY_DEVICE_TO_HOST) != ACL_SUCCESS) {
-            return false;
-        }
-    }
-    auto parsed = ParseSimtTraceSegment(
-        buffer.data(), buffer.size(), pending.physicalCoreSlotCount, pending.blockCount, pending.launchId,
-        pending.deviceId, true);
-    if (!parsed.ok) {
-        ASCTOOL_ERROR("acl_san SIMT trace: %s", parsed.error.c_str());
-        return false;
-    }
-    for (const auto& record : parsed.records) {
-        const auto access = TranslateSimtTraceRecord(record);
-        if (!access) {
-            ++parsed.droppedRecords;
-        } else if (!IsInternalSimtAccess(pending, *access)) {
-            AclsanCallbackDispatcher::DispatchSimtMemoryAccess(*access);
-        }
-    }
-    {
-        std::lock_guard<std::mutex> lock(pending.mutex);
-        pending.delivered += parsed.records.size();
-        pending.dropped += parsed.droppedRecords;
-        pending.simtCollected = true;
-    }
-    if (parsed.droppedRecords != 0U) {
-        TraceIntegrityMark(pending.launchId, parsed.droppedRecords, false);
-    }
-    return true;
-}
-
 // Publish only after a recorded runtime event completes and a later control
 // snapshot has been fully copied and dispatched. Stream synchronization remains
 // the fallback if the event API is unavailable or cannot confirm completion.
 void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool partial = false) noexcept
 {
     TraceDispatchScope callbackScope;
-    bool collectSimt = false;
-    {
-        std::lock_guard<std::mutex> lock(pending.mutex);
-        if (pending.abandoned || pending.operatorExecutionReported) {
-            return;
-        }
-        const bool earlyCompletion =
-            CanPublishBeforeFinalization(pending, TraceFullyCopied(pending), AllTraceRecordsDispatched(pending));
-        collectSimt = pending.simtSegmentBytes != 0U && !pending.simtCollected && !pending.resetRetired && !partial &&
-                      (finalizing || earlyCompletion);
-    }
-    if (collectSimt) {
-        bool copied = false;
-        try {
-            copied = CollectSimtTrace(pending);
-        } catch (...) {
-            ASCTOOL_ERROR(
-                "acl_san SIMT trace: collection failed for launch=%llu",
-                static_cast<unsigned long long>(pending.launchId));
-        }
-        if (!copied) {
-            std::lock_guard<std::mutex> lock(pending.mutex);
-            FailTrace(pending, "cannot collect SIMT trace segment");
-        }
-    }
     AclsanOperatorExecutionData data{};
     uint32_t aicEnds = 0U;
     uint32_t aivEnds = 0U;
@@ -1439,7 +1527,7 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
             FailTrace(pending, "cannot destroy completion event");
         }
         // Pure SIMT entry points can establish completion at stream sync without a scalar boundary marker.
-        const bool pureSimt = pending.parameterPrefixBytes != 0U && pending.simtCollected;
+        const bool pureSimt = pending.parameterPrefixBytes != 0U && pending.simtComplete;
         const bool completeBoundary = (pending.kernelEndTracker.Complete() || pureSimt) && pending.dropped == 0U &&
                                       !pending.failed && fullyCopied && dispatchedAll;
         pending.operatorExecutionReported = true;
@@ -1454,8 +1542,7 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         data.deviceId = pending.deviceId;
         data.numBlocks = pending.blockCount;
         data.flags = 0U;
-        if (partial || pending.failed || (pending.simtSegmentBytes != 0U && !pending.simtCollected) ||
-            (!emptyTrace && !completeBoundary)) {
+        if (partial || pending.failed || !pending.simtComplete || (!emptyTrace && !completeBoundary)) {
             data.flags |= static_cast<uint32_t>(ACLSAN_OPERATOR_EXECUTION_FLAG_INCOMPLETE);
         }
         if (pending.dropped != 0U) {
@@ -1563,8 +1650,7 @@ bool PollTrace(PendingTrace& pending)
             ACL_MEMCPY_DEVICE_TO_HOST)) {
         return false;
     }
-    if (!ValidateTraceSegmentHeader(pending.segment, pending.blockCount, pending.launchId) ||
-        pending.segment.simtSegmentBytes != pending.simtSegmentBytes) {
+    if (!ValidateTraceSegmentHeader(pending.segment, pending.blockCount, pending.launchId)) {
         FailTrace(pending, "invalid segment header");
         return false;
     }
@@ -1745,6 +1831,15 @@ bool PublishStableExceptionTrace(PendingTrace& pending) noexcept
         // Analysis can end before the device releases ownership of its buffers.
         pending.draining = true;
     }
+    try {
+        if (!CollectSimtTrace(pending, false)) {
+            return false;
+        }
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(pending.mutex);
+        FailTrace(pending, "cannot dispatch SIMT exception snapshot");
+        return false;
+    }
     PublishOperatorExecution(pending, false, true);
     {
         std::lock_guard<std::mutex> lock(pending.mutex);
@@ -1777,6 +1872,17 @@ void DispatchPendingTrace(const std::shared_ptr<PendingTrace>& item, bool hasPre
     }
     if (hasQueuedRecords) {
         DispatchTraceRecordsBeforeSync(pending);
+    }
+    bool collectSimt = false;
+    {
+        std::lock_guard<std::mutex> lock(pending.mutex);
+        collectSimt = !pending.simtComplete && pending.completionEvent.Complete() && pending.completionSnapshotRead;
+    }
+    if (collectSimt) {
+        const bool collected = CollectSimtTrace(pending, true);
+        if (!collected) {
+            return;
+        }
     }
     if (hasPredecessor)
         return;
@@ -1930,8 +2036,10 @@ aclError ResolveLaunchContext(PreparedTraceLaunch& prepared) noexcept
         ASCTOOL_ERROR("acl_san trace: cannot query current context");
         return ACL_ERROR_RT_INTERNAL_ERROR;
     }
-    // dav-3510 keeps the physical ID space and its trace slots even when some cores are disabled.
-    prepared.physicalCoreSlotCount = aclsan::ASCSAN_PHYSICAL_CORE_SLOT_COUNT;
+    // Disabled cores leave holes in the physical ID space; both trace segments
+    // retain all 108 slots independently of the available core count.
+    prepared.physicalCoreSlotCount = ASCSAN_PHYSICAL_CORE_SLOT_COUNT;
+    (void)BuildSimtUbLayout(*socVersion, prepared.ubMetadata, prepared.ubLayout);
     return ACL_SUCCESS;
 }
 
@@ -2221,15 +2329,16 @@ void RecordTraceBinaryUnload(aclrtBinHandle binary) noexcept
 }
 
 void RecordTraceBinaryFunctionLookup(
-    aclrtBinHandle binary, aclrtFuncHandle function, const char* functionName, const uint64_t* entry) noexcept
+    aclrtBinHandle binary, aclrtFuncHandle function, const char* functionName,
+    std::optional<uint64_t> functionEntry) noexcept
 {
     if (binary == nullptr || function == nullptr) {
         return;
     }
     try {
         DeviceBinaries().RecordBinaryFunctionLookup(
-            reinterpret_cast<uintptr_t>(binary), reinterpret_cast<uintptr_t>(function), functionName,
-            CurrentTraceDeviceId(), entry);
+            reinterpret_cast<uintptr_t>(binary), reinterpret_cast<uintptr_t>(function), functionName, functionEntry,
+            CurrentTraceDeviceId());
     } catch (...) {
         ASCTOOL_ERROR("acl_san trace: failed to record function %p for binary %p", function, binary);
     }
@@ -2287,7 +2396,7 @@ static aclError RecheckTraceLaunchContext(PreparedTraceLaunch& prepared)
 aclError PrepareTraceLaunch(
     aclrtFuncHandle function, uint32_t blockCount, const void* hostArgs, size_t argsSize,
     const aclrtPlaceHolderInfo* placeholders, size_t placeholderCount, TraceArgumentMode argumentMode,
-    PreparedTraceLaunch& prepared) noexcept
+    PreparedTraceLaunch& prepared, const aclrtLaunchKernelCfg* config) noexcept
 {
     try {
         prepared = {};
@@ -2300,6 +2409,20 @@ aclError PrepareTraceLaunch(
         }
         if (lookup == device_runtime::DeviceBinaryRegistry::TraceLookup::NotInstrumented) {
             return ACL_SUCCESS;
+        }
+        if (!DeviceBinaries().GetFunctionUbMetadata(
+                reinterpret_cast<uintptr_t>(function), prepared.ubMetadata, CurrentTraceDeviceId())) {
+            prepared.ubMetadata.flags = ACLSAN_UB_METADATA_UNAVAILABLE;
+        }
+        if (config != nullptr) {
+            if (config->numAttrs != 0 && config->attrs == nullptr) {
+                return ACL_ERROR_INVALID_PARAM;
+            }
+            for (size_t index = 0; index < config->numAttrs; ++index) {
+                if (config->attrs[index].id == ACL_RT_LAUNCH_KERNEL_ATTR_DYN_UBUF_SIZE) {
+                    prepared.ubMetadata.dynamicBytes = config->attrs[index].value.dynUBufSize;
+                }
+            }
         }
         prepared.instrumented = true;
         prepared.blockCount = blockCount;
@@ -2368,8 +2491,6 @@ aclError PrepareTraceLaunch(
         pending->context = prepared.context;
         pending->deviceBuffer = prepared.deviceBuffer;
         pending->blockCount = prepared.blockCount;
-        pending->segment = segment;
-        pending->simtSegmentBytes = pending->segment.simtSegmentBytes;
         pending->physicalCoreSlotCount = prepared.physicalCoreSlotCount;
         pending->deviceId = prepared.deviceId;
         pending->decoder = prepared.decoder;
@@ -2555,12 +2676,15 @@ void CompleteTraceLaunch(
         pending->parameterBytes = prepared.arguments.empty() ?
                                       static_cast<uint64_t>(prepared.traceArgumentOffset) + sizeof(void*) :
                                       prepared.arguments.size();
-        pending->parameterPrefixBytes = prepared.parameterPrefixBytes;
         pending->binaryLease = std::move(prepared.binaryLease);
         pending->arguments = std::move(prepared.arguments);
         pending->placeholders = std::move(prepared.placeholders);
         pending->hostInputs = std::move(prepared.hostInputs);
         pending->readOnlyBinaryRanges = std::move(prepared.readOnlyBinaryRanges);
+        pending->ubMetadata = prepared.ubMetadata;
+        pending->ubLayout = prepared.ubLayout;
+        pending->parameterPrefixBytes = prepared.parameterPrefixBytes;
+        RetainSimtTraceBuffer(*pending, prepared.hostBuffer);
         pending->hibitHandle = std::move(prepared.hibitHandle);
         pending->slotRecordLimit = TraceSlotRecordLimit(prepared.kernelEndExpectation);
         pending->kernelEndTracker.Reset(prepared.kernelEndExpectation);
@@ -2895,12 +3019,15 @@ static bool CollectPendingTrace(
     if (executionComplete) {
         if (!pending.partialExecutionReported) {
             FinalDrainTrace(pending);
+            (void)CollectSimtTrace(pending, true);
         }
         // Checkers need the image ranges until they finish analyzing this launch.
         PublishOperatorExecution(pending, true);
         if (!ReleaseTraceLaunchResources(pending)) {
             return false;
         }
+    } else {
+        (void)CollectSimtTrace(pending, false);
     }
     return FinalizeCollectedTrace(pending, collection, executionComplete);
 }

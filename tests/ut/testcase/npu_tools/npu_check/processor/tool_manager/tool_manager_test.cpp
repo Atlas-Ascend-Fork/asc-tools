@@ -10,6 +10,7 @@
 #include "acl_san/aclsan_cbdata_operator.h"
 #include "tool_manager/tool_manager.h"
 #include "checker/memory_analysis.h"
+#include "aclsan_simt_ub_access.h"
 #include "options.h"
 #include "uds_client.h"
 #include "acl/acl_rt.h"
@@ -261,8 +262,9 @@ TEST(ToolManagerTest, CombinedToolsReportBothAndSubscribeSharedCallbackOnce)
         {"npu-check", "--tool", "synccheck", "--tool", "memcheck", "--tool", "memcheck", "/bin/true"}, true, true);
     ASSERT_EQ(result.initialized, 0);
     ASSERT_TRUE(result.error.empty()) << result.error;
-    EXPECT_EQ(enableCalls, 10U);
-    EXPECT_EQ(enabled.size(), 10U);
+    EXPECT_EQ(enableCalls, 11U);
+    EXPECT_EQ(enabled.size(), 11U);
+    EXPECT_EQ(enabled.count({ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS}), 1U);
     EXPECT_NE(result.text.find("tool=memcheck"), std::string::npos);
     EXPECT_NE(result.text.find("tool=synccheck"), std::string::npos);
     EXPECT_NE(result.text.find("status=complete"), std::string::npos);
@@ -448,4 +450,52 @@ TEST(ToolManagerTest, StreamSyncTimeoutStillAllowsFinalResult)
             _exit(session.initialized == 0 && session.error.empty() && !session.text.empty() ? 0 : 1);
         },
         testing::ExitedWithCode(0), "");
+}
+
+TEST(ToolManagerTest, SimtUbEventsOnlyReachMemcheckAndRequireRegisteredLaunches)
+{
+    const std::vector<std::string> args{"npu-check", "--tool", "memcheck", "--tool", "racecheck", "/bin/true"};
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        const bool invalid = (scenario & 1) != 0;
+        const bool orphan = (scenario & 2) != 0;
+        const auto session = RunSession(args, false, false, false, false, false, false, [&] {
+            AclsanLaunchData launch{};
+            launch.common.version = ACLSAN_API_VERSION;
+            launch.common.size = sizeof(launch);
+            launch.launchId = 2;
+            if (!orphan) {
+                Emit(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch);
+            }
+            AclsanSimtUbMemoryAccessData access{};
+            access.header.version = ACLSAN_API_VERSION;
+            access.header.size = sizeof(access);
+            access.header.launchId = launch.launchId;
+            access.header.instrExecId = 2;
+            access.header.pc = 0x321;
+            access.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB;
+            access.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UB;
+            access.accessMode = ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
+            access.address = invalid ? 0x15080 : 0x3000;
+            access.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
+            access.layout.range.bytes = 4;
+            access.simt.blockDimX = access.simt.blockDimY = access.simt.blockDimZ = 1;
+            access.simt.validFlags =
+                ACLSAN_SIMT_CONTEXT_THREAD | ACLSAN_SIMT_CONTEXT_BLOCK_DIM | ACLSAN_SIMT_CONTEXT_ADDRESS;
+            access.ubLayout = {0x40000, {{0, 0x3000}, {0x3000, 0x13080}, {0x13080, 0x15080}, {0x20000, 0x40000}}, 1, 0};
+            Emit(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &access);
+            AclsanOperatorExecutionData completion{};
+            completion.common.version = ACLSAN_API_VERSION;
+            completion.common.size = sizeof(completion);
+            completion.launchId = launch.launchId;
+            if (!orphan) {
+                Emit(ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion);
+            }
+        });
+        ASSERT_EQ(session.initialized, 0);
+        ASSERT_TRUE(session.error.empty()) << session.error;
+        EXPECT_NE(session.text.find(orphan ? "analysis_complete=false" : "analysis_complete=true"), std::string::npos)
+            << session.text;
+        EXPECT_EQ(session.text.find("owner_mapping_unknown"), std::string::npos);
+        EXPECT_EQ(session.text.find("SIMT thread: 0") != std::string::npos, invalid);
+    }
 }

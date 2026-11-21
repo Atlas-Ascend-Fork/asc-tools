@@ -9,6 +9,7 @@
  */
 
 #include "dbi/kernel_param_metadata.h"
+#include "dbi/trace_buffer_abi.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -17,6 +18,7 @@
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -447,7 +449,7 @@ std::optional<uint64_t> KernelFunctionEntry(const std::string& elf, const Sectio
     return entry;
 }
 
-KernelUbMetadata ReadUbMetadata(const std::string& elf, const Section& section)
+KernelUbMetadata ReadUbMetadata(const std::string& elf, const Section& section, bool requireVfType = true)
 {
     constexpr uint16_t kernelTypeTag = 12;
     constexpr uint16_t compilerUbAllocationTag = 7;
@@ -460,7 +462,8 @@ KernelUbMetadata ReadUbMetadata(const std::string& elf, const Section& section)
         const uint32_t value = static_cast<uint32_t>(Read(tlv.value, 0, sizeof(uint32_t)));
         if (tlv.tag == kernelTypeTag) {
             Require(
-                value >= ACLSAN_KERNEL_VF_TYPE_NO_VF && value <= ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF,
+                (!requireVfType && value == ACLSAN_KERNEL_VF_TYPE_UNKNOWN) ||
+                    (value >= ACLSAN_KERNEL_VF_TYPE_NO_VF && value <= ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF),
                 "unknown AIV kernel type");
             Require(
                 result.kernelVfType == ACLSAN_KERNEL_VF_TYPE_UNKNOWN || result.kernelVfType == value,
@@ -474,7 +477,7 @@ KernelUbMetadata ReadUbMetadata(const std::string& elf, const Section& section)
             result.compilerAllocUbValid = true;
         }
     }
-    Require(result.kernelVfType != ACLSAN_KERNEL_VF_TYPE_UNKNOWN, "missing AIV kernel type");
+    Require(!requireVfType || result.kernelVfType != ACLSAN_KERNEL_VF_TYPE_UNKNOWN, "missing AIV kernel type");
     return result;
 }
 } // namespace
@@ -509,6 +512,46 @@ bool GetKernelUbMetadata(
         Require(selected != nullptr, "selected kernel UB metadata is missing");
         metadata = ReadUbMetadata(elf, *selected);
         diagnostic.clear();
+        return true;
+    } catch (const std::exception& error) {
+        diagnostic = error.what();
+        return false;
+    }
+}
+bool GetKernelUbMetadata(const std::string& elf, KernelUbMetadataMap& kernels, std::string& diagnostic)
+{
+    kernels.clear();
+    diagnostic.clear();
+    try {
+        const auto sections = ReadSections(elf);
+        const bool linked = Read(elf, offsetof(Elf64_Ehdr, e_type), sizeof(Elf64_Ehdr::e_type)) == ET_EXEC;
+        constexpr std::string_view metadataPrefix = ".ascend.meta.";
+        KernelUbMetadataMap parsed;
+        for (const auto& section : sections) {
+            const auto name = section.first.substr(metadataPrefix.size());
+            // UB belongs to the AIV half, as in the single-function selector.
+            if (EndsWith(name, "_mix_aic")) {
+                continue;
+            }
+            const auto metadata = ReadUbMetadata(elf, section.second, false);
+            KernelUbMetadataEntry entry{};
+            entry.functionEntry = KernelFunctionEntry(elf, section.second, name);
+            auto& info = entry.launch;
+            info.compilerAllocatedBytes = metadata.compilerAllocUbBytes;
+            info.kernelVfType = metadata.kernelVfType;
+            // Runtime defaults an absent VF tag to a non-SIMT kernel.
+            if (metadata.compilerAllocUbValid && metadata.kernelVfType != ACLSAN_KERNEL_VF_TYPE_UNKNOWN) {
+                info.flags |= ACLSAN_UB_METADATA_COMPILER;
+                const bool simt = info.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMT_VF_ONLY ||
+                                  info.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF;
+                if (linked && simt && info.compilerAllocatedBytes >= DAV3510_UB_DEFAULT_RESERVED_BYTES) {
+                    info.userStaticBytes = info.compilerAllocatedBytes - DAV3510_UB_DEFAULT_RESERVED_BYTES;
+                    info.flags |= ACLSAN_UB_METADATA_STATIC;
+                }
+            }
+            parsed.emplace(name, std::move(entry));
+        }
+        kernels = std::move(parsed);
         return true;
     } catch (const std::exception& error) {
         diagnostic = error.what();

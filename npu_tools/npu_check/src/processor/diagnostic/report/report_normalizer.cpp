@@ -100,6 +100,24 @@ ReportRecord ToReportRecord(const NpuCheckMemcheckReport& report)
                                     std::to_string(report.allocation.bytes) + " bytes, valid offsets [0, " +
                                     std::to_string(report.allocation.bytes) + "))";
     }
+    if (report.simtUb) {
+        static constexpr const char* names[ACLSAN_UB_REGION_COUNT] = {
+            "static memory", "dynamic memory", "reserved space", "Data Cache"};
+        const auto& diagnostic = *report.simtUb;
+        const auto& layout = diagnostic.layout;
+        fields["space"] = report.access.address < layout.physicalBytes ? "UB unallocated space" : "UB";
+        std::string details = "=========     SIMT thread: " + std::to_string(diagnostic.threadId) +
+                              "\n=========     UB allocated regions:\n";
+        for (size_t index = 0; index < ACLSAN_UB_REGION_COUNT; ++index) {
+            const auto& region = layout.regions[index];
+            if (report.access.address >= region.begin && report.access.address < region.end) {
+                fields["space"] = std::string("UB ") + names[index];
+            }
+            details += std::string("=========       ") + names[index] + " [0x" + Hex(region.begin) + ", 0x" +
+                       Hex(region.end) + ")\n";
+        }
+        fields["simtUbDetails"] = std::move(details);
+    }
     fields["threadContext"] = "";
     if ((report.common.exec.simtContextFlags & static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_THREAD)) != 0U) {
         fields["threadContext"] = " thread (" + fields["thread"] + ")";

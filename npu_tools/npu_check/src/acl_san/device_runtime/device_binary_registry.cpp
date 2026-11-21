@@ -141,6 +141,55 @@ bool ParseLoadSegments(const void* image, size_t imageBytes, std::vector<BinaryS
     return true;
 }
 
+bool EndsWith(std::string_view value, std::string_view suffix)
+{
+    return value.size() >= suffix.size() && value.substr(value.size() - suffix.size()) == suffix;
+}
+
+std::string_view LogicalKernelName(std::string_view name)
+{
+    for (const std::string_view suffix : {"_mix_aiv", "_mix_aic"}) {
+        if (EndsWith(name, suffix)) {
+            name.remove_suffix(suffix.size());
+            break;
+        }
+    }
+    return name;
+}
+
+const AclsanUbLaunchMetadata* FindUbMetadata(
+    const KernelUbMetadataMap& kernels, std::string_view name, std::optional<uint64_t> entry)
+{
+    if (name.empty() && !entry.has_value()) {
+        return kernels.size() == 1U ? &kernels.begin()->second.launch : nullptr;
+    }
+    enum class Priority { DEFAULT, VECTOR };
+    const auto logicalName = LogicalKernelName(name);
+    std::string_view selectedName;
+    const AclsanUbLaunchMetadata* selected = nullptr;
+    auto priority = Priority::DEFAULT;
+    for (const auto& kernel : kernels) {
+        const auto base = LogicalKernelName(kernel.first);
+        if ((!logicalName.empty() && base != logicalName) ||
+            (entry.has_value() && kernel.second.functionEntry != entry)) {
+            continue;
+        }
+        const auto candidatePriority = EndsWith(kernel.first, "_mix_aiv") ? Priority::VECTOR : Priority::DEFAULT;
+        if (selected != nullptr && (selectedName != base || candidatePriority == priority)) {
+            return nullptr;
+        }
+        if (selected == nullptr || candidatePriority > priority) {
+            selectedName = base;
+            selected = &kernel.second.launch;
+            priority = candidatePriority;
+        }
+    }
+    if (selected == nullptr && !logicalName.empty() && entry.has_value()) {
+        return FindUbMetadata(kernels, {}, entry);
+    }
+    return selected;
+}
+
 void RemoveDirectory(const std::string& directory) noexcept
 {
     if (directory.empty()) {
@@ -163,6 +212,7 @@ struct DeviceBinaryRegistry::Impl {
         std::string metadataImage;
         std::unique_ptr<DeviceSymbolizer> symbolizer;
         std::string symbolizerError = "invalid_state";
+        KernelUbMetadataMap ubMetadata;
         std::vector<BinarySegment> actualSegments;
     };
 
@@ -217,9 +267,23 @@ struct DeviceBinaryRegistry::Impl {
     std::map<Key, BinaryEntry> binaries;
     std::map<Key, Key> functionBinaries;
     std::map<Key, std::string> functionNames;
+    std::map<Key, uint64_t> functionEntries;
     std::map<Key, KernelUbMetadata> functionUbMetadata;
     std::map<Key, ImageEntry> readOnlySections;
     std::map<Key, LoadedImage> actualSegments;
+    std::map<Key, KernelUbMetadataMap> pendingUbMetadata;
+
+    static void ApplyLoadedUbMetadata(KernelUbMetadataMap& original, const KernelUbMetadataMap& loaded)
+    {
+        for (auto& kernel : original) {
+            const auto final = loaded.find(kernel.first);
+            if (final != loaded.end()) {
+                kernel.second = final->second;
+            } else {
+                kernel.second.launch.flags |= ACLSAN_UB_METADATA_UNAVAILABLE;
+            }
+        }
+    }
 
     template <typename Map>
     static auto Find(Map& entries, int32_t deviceId, uintptr_t handle)
@@ -280,6 +344,11 @@ struct DeviceBinaryRegistry::Impl {
             if (!nameNode.empty()) {
                 nameNode.key() = newFunction;
                 functionNames.insert(std::move(nameNode));
+            }
+            auto entryNode = functionEntries.extract(oldFunction);
+            if (!entryNode.empty()) {
+                entryNode.key() = newFunction;
+                functionEntries.insert(std::move(entryNode));
             }
         }
     }
@@ -376,6 +445,7 @@ struct DeviceBinaryRegistry::Impl {
         for (auto it = functionBinaries.begin(); it != functionBinaries.end();) {
             if (it->second == binary) {
                 functionNames.erase(it->first);
+                functionEntries.erase(it->first);
                 functionUbMetadata.erase(it->first);
                 it = functionBinaries.erase(it);
             } else {
@@ -406,6 +476,7 @@ struct DeviceBinaryRegistry::Impl {
     {
         functionBinaries.erase(function);
         functionNames.erase(function);
+        functionEntries.erase(function);
         functionUbMetadata.erase(function);
     }
 };
@@ -431,6 +502,19 @@ bool DeviceBinaryRegistry::RecordBinaryLoadFromData(
         entry.instrumented = instrumented;
         entry.traceArgumentOffset = traceArgumentOffset;
         entry.deviceId = deviceId;
+        if (image != nullptr && imageBytes != 0U) {
+            std::string diagnostic;
+            (void)GetKernelUbMetadata(
+                std::string(static_cast<const char*>(image), imageBytes), entry.ubMetadata, diagnostic);
+        }
+        const Impl::Key metadataKey{deviceId, binary};
+        const auto loadedUb = impl_->pendingUbMetadata.find(metadataKey);
+        if (loadedUb != impl_->pendingUbMetadata.end()) {
+            if (instrumented) {
+                Impl::ApplyLoadedUbMetadata(entry.ubMetadata, loadedUb->second);
+            }
+            impl_->pendingUbMetadata.erase(loadedUb);
+        }
         const auto actual = Impl::Find(impl_->actualSegments, deviceId, binary);
         if (instrumented && actual != impl_->actualSegments.end()) {
             entry.actualSegments = std::move(actual->second.segments);
@@ -526,6 +610,7 @@ void DeviceBinaryRegistry::RecordBinaryUnload(uintptr_t binary, int32_t deviceId
         }
         const Impl::Key key = found->first;
         impl_->readOnlySections.erase(key);
+        impl_->pendingUbMetadata.erase(key);
         RemoveDirectory(found->second.sessionDirectory);
         impl_->RemoveLatestBinary(key);
         impl_->binaries.erase(found);
@@ -535,7 +620,8 @@ void DeviceBinaryRegistry::RecordBinaryUnload(uintptr_t binary, int32_t deviceId
 }
 
 void DeviceBinaryRegistry::RecordBinaryFunctionLookup(
-    uintptr_t binary, uintptr_t function, const char* functionName, int32_t deviceId, const uint64_t* entry) noexcept
+    uintptr_t binary, uintptr_t function, const char* functionName, std::optional<uint64_t> functionEntry,
+    int32_t deviceId) noexcept
 {
     if (binary == 0 || function == 0) {
         return;
@@ -553,6 +639,10 @@ void DeviceBinaryRegistry::RecordBinaryFunctionLookup(
             if (functionName != nullptr) {
                 impl_->functionNames[key] = functionName;
             }
+            if (functionEntry.has_value()) {
+                impl_->functionEntries[key] = *functionEntry;
+            }
+            const uint64_t* entry = functionEntry.has_value() ? &*functionEntry : nullptr;
             impl_->RecordUbMetadata(key, binary, loaded->second, functionName, entry);
         } else {
             for (const auto& [key, entry] : impl_->binaries) {
@@ -624,6 +714,14 @@ bool DeviceBinaryRegistry::RecordLoadedImage(
         }
         std::vector<BinarySectionRange> sections;
         std::string diagnostic;
+        KernelUbMetadataMap loadedMetadata;
+        (void)GetKernelUbMetadata(std::string(static_cast<const char*>(image), bytes), loadedMetadata, diagnostic);
+        const auto entry = impl_->binaries.find(key);
+        if (entry != impl_->binaries.end()) {
+            Impl::ApplyLoadedUbMetadata(entry->second.ubMetadata, loadedMetadata);
+        } else {
+            impl_->pendingUbMetadata[key] = std::move(loadedMetadata);
+        }
         const bool sectionsValid =
             GetReadOnlyBinarySections(std::string(static_cast<const char*>(image), bytes), sections, diagnostic);
         if (sectionsValid) {
@@ -697,6 +795,38 @@ bool DeviceBinaryRegistry::GetFunctionName(
             return false;
         }
         functionName = found->second;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DeviceBinaryRegistry::GetFunctionUbMetadata(
+    uintptr_t function, AclsanUbLaunchMetadata& metadata, int32_t deviceId) const noexcept
+{
+    metadata = {};
+    if (function == 0U) {
+        return false;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        const auto owner = Impl::Find(impl_->functionBinaries, deviceId, function);
+        if (owner == impl_->functionBinaries.end()) {
+            return false;
+        }
+        const auto entry = impl_->binaries.find(owner->second);
+        if (entry == impl_->binaries.end()) {
+            return false;
+        }
+        const auto name = impl_->functionNames.find(owner->first);
+        const auto offset = impl_->functionEntries.find(owner->first);
+        const auto* selected = FindUbMetadata(
+            entry->second.ubMetadata, name == impl_->functionNames.end() ? std::string_view{} : name->second,
+            offset == impl_->functionEntries.end() ? std::nullopt : std::optional<uint64_t>{offset->second});
+        if (selected == nullptr) {
+            return false;
+        }
+        metadata = *selected;
         return true;
     } catch (...) {
         return false;
@@ -820,8 +950,10 @@ void DeviceBinaryRegistry::Reset() noexcept
         impl_->binaries.clear();
         impl_->readOnlySections.clear();
         impl_->actualSegments.clear();
+        impl_->pendingUbMetadata.clear();
         impl_->functionBinaries.clear();
         impl_->functionNames.clear();
+        impl_->functionEntries.clear();
         impl_->functionUbMetadata.clear();
         impl_->latestBinaries.clear();
     } catch (...) {

@@ -291,6 +291,12 @@ ReportRenderStatus RenderReportRecord(
         fields["raceKind"] = raceKind;
     }
     const ReportRenderStatus status = RenderReportText(*tpl, fields, out);
+    if (status == ReportRenderStatus::SUCCESS) {
+        const auto simt = fields.find("simtUbDetails");
+        if (simt != fields.end()) {
+            out->append(simt->second);
+        }
+    }
     if (status != ReportRenderStatus::SUCCESS) {
         return status;
     }

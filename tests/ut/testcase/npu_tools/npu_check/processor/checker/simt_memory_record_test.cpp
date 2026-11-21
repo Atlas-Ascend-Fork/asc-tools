@@ -166,6 +166,59 @@ TEST(SimtTraceTest, ParsesLaneAccessAndDetectsIncompleteTrace)
     EXPECT_GT(parsed.droppedRecords, 0U);
 }
 
+TEST(SimtTraceTest, RetainsPriorRecordsButRequiresCurrentInvocationCoverage)
+{
+    std::vector<uint8_t> buffer;
+    std::string error;
+    ASSERT_TRUE(InitializeTraceBuffer(buffer, ASCSAN_PHYSICAL_CORE_SLOT_COUNT, 1, 9, error, true));
+    AclsanTraceBufferHeader header{};
+    ASSERT_TRUE(ReadTraceValue(buffer, 0, header));
+    const uint32_t coreId = ASCSAN_AIC_CORES_PER_DIE;
+    const size_t coreOffset =
+        header.simtSegmentOffset + sizeof(AclsanSimtTraceHeader) + coreId * ASCSAN_SIMT_CORE_BYTES;
+    AclsanSimtCoreHeader core{};
+    core.invocationId = 2;
+    ASSERT_TRUE(WriteTraceValue(buffer, coreOffset, core));
+
+    const size_t laneOffset = coreOffset + sizeof(AclsanSimtCoreHeader);
+    AclsanSimtThreadHeader lane{};
+    lane.recordCount = 1;
+    lane.lastInvocation = 1;
+    lane.completedInvocation = 1;
+    lane.completedInvocations = 1;
+    ASSERT_TRUE(WriteTraceValue(buffer, laneOffset, lane));
+
+    AclsanSimtRawTraceRecord record{};
+    record.base = 0x1000;
+    record.invocationId = 1;
+    record.instructionId = static_cast<uint32_t>(InstrType::SIMT_STG_B32);
+    record.blockId = 0;
+    record.threadX = 0;
+    record.blockDimX = record.blockDimY = record.blockDimZ = 1;
+    ASSERT_TRUE(WriteTraceValue(buffer, laneOffset + sizeof(lane), record));
+
+    const auto parsed =
+        ParseSimtTraceBuffer(buffer.data(), buffer.size(), ASCSAN_PHYSICAL_CORE_SLOT_COUNT, 1, 9, 2, true);
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    ASSERT_EQ(parsed.records.size(), 1U);
+    EXPECT_GT(parsed.droppedRecords, 0U);
+
+    // A completion from invocation 1 cannot cover a missing lane in invocation 2.
+    lane.lastInvocation = lane.completedInvocation = 2;
+    lane.completedInvocations = 3;
+    record.invocationId = 2;
+    record.threadX = 1;
+    record.blockDimX = 2;
+    const size_t nextLaneOffset = laneOffset + ASCSAN_SIMT_THREAD_BYTES;
+    ASSERT_TRUE(WriteTraceValue(buffer, nextLaneOffset, lane));
+    ASSERT_TRUE(WriteTraceValue(buffer, nextLaneOffset + sizeof(lane), record));
+    const auto missingLane =
+        ParseSimtTraceBuffer(buffer.data(), buffer.size(), ASCSAN_PHYSICAL_CORE_SLOT_COUNT, 1, 9, 2, true);
+    ASSERT_TRUE(missingLane.ok) << missingLane.error;
+    ASSERT_EQ(missingLane.records.size(), 2U);
+    EXPECT_GT(missingLane.droppedRecords, 0U);
+}
+
 TEST(SimtTraceTest, TranslatesGmAccessWidthsAndRejectsUnknownInstructions)
 {
     const struct {

@@ -15,6 +15,7 @@
 #include "acl_san/aclsan_cbdata.h"
 #include "checker/memory_analysis.h"
 #include "checker/checker.h"
+#include "aclsan_simt_ub_access.h"
 #include "diagnostic/device_protocol.h"
 #include "diagnostic/report_renderer.h"
 
@@ -58,6 +59,7 @@ public:
 
     void OnAllocation(const AclsanResourceData& data);
     void OnFree(const AclsanResourceData& data);
+    void QueueSimtUbMemoryAccess(const AclsanSimtUbMemoryAccessData& data);
     std::vector<npucheck::NpuCheckMemcheckReport> QueueDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& data);
     void QueueSimtMemoryAccess(const SimtMemoryAccessRecord& record);
     std::vector<npucheck::NpuCheckMemcheckReport> OnSynchronization();
@@ -75,6 +77,8 @@ private:
     std::vector<npucheck::NpuCheckMemcheckReport> CheckObservedAccess(const AclsanDeviceMemoryAccessData& access);
     void CollectLaunch(uint64_t launchId, std::vector<npucheck::NpuCheckMemcheckReport>& reports);
     std::vector<npucheck::NpuCheckMemcheckReport> CollectCompletedLaunch(uint64_t launchId);
+    std::vector<npucheck::NpuCheckMemcheckReport> CheckSimtUbMemoryAccess(const AclsanSimtUbMemoryAccessData& data);
+    std::vector<npucheck::NpuCheckMemcheckReport> FlushSimtUbMemoryAccesses();
 
     using InstructionIdentity = std::tuple<uint32_t, uint32_t, uint32_t, uint64_t>;
     std::map<uint64_t, std::map<InstructionIdentity, uint64_t>> instructionGroups_;
@@ -89,9 +93,11 @@ private:
     };
     std::map<uint64_t, LaunchAllocationSnapshot> launchAllocations_;
     std::vector<AclsanDeviceMemoryAccessData> pendingDeviceAccesses_;
+    std::vector<AclsanSimtUbMemoryAccessData> pendingSimtUbAccesses_;
     MemcheckStats stats_{};
     uint64_t nextReportId_ = 1;
     uint64_t nextGroupId_ = 1;
+    static constexpr size_t MAX_PENDING_DEVICE_OPERATIONS = 1U << 20U;
 };
 
 } // namespace npucheck

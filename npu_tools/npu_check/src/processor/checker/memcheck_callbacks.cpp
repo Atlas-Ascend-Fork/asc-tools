@@ -60,6 +60,16 @@ bool Memcheck::OnDeviceMemoryCallback(AclsanCallbackId cbid, const void* data, C
 bool Memcheck::OnCallback(
     AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports)
 {
+    if (IsSimtUbMemcheckCallback(domain, cbid, data)) {
+        const auto* access = static_cast<const AclsanDeviceMemoryAccessData*>(data);
+        if (access == nullptr || access->header.version != ACLSAN_API_VERSION ||
+            access->header.size < sizeof(AclsanSimtUbMemoryAccessData)) {
+            ++stats_.droppedDeviceOperations;
+            return false;
+        }
+        QueueSimtUbMemoryAccess(*static_cast<const AclsanSimtUbMemoryAccessData*>(access));
+        return true;
+    }
     if (domain == ACLSAN_CB_DOMAIN_MEMORY) {
         const auto& common = *static_cast<const AclsanCallbackCommonData*>(data);
         if (!analysis_->IsLegacyMemcpy(cbid, common))
@@ -117,8 +127,9 @@ bool Memcheck::OnCallback(
     } else if (domain == ACLSAN_CB_DOMAIN_SYNCHRONIZE) {
         const auto* event = static_cast<const AclsanSynchronizeData*>(data);
         ++stats_.synchronizationEvents;
-        if (event->common.result != 0)
+        if (event->common.result != 0) {
             ++stats_.failedSynchronizations;
+        }
     }
     return true;
 }

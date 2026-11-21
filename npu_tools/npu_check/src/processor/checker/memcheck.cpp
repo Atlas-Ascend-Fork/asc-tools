@@ -9,6 +9,8 @@
  */
 
 #include "checker/memcheck.h"
+#include "aclsan_ub_layout_builder.h"
+#include "dbi/trace_buffer_abi.h"
 #include "checker/memory_access_mode.h"
 #include "checker/memory_access_layout.h"
 #include "diagnostic/pipeline_name.h"
@@ -57,6 +59,70 @@ NpuCheckReportMemorySpace CubeReportSpace(uint32_t space)
         default:
             return NpuCheckReportMemorySpace::UNKNOWN;
     }
+}
+
+bool IsSimtUbWrite(const AclsanDeviceMemoryAccessData& data)
+{
+    const bool write = data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE ||
+                       data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD ||
+                       data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN ||
+                       data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX;
+    return (data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB) != 0 &&
+           data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB && write;
+}
+
+bool ValidUbLayout(const AclsanUbLayout& layout)
+{
+    if (layout.valid != ACLSAN_UB_LAYOUT_VALID || layout.physicalBytes != aclsan::DAV3510_UB_CAPACITY_BYTES ||
+        layout.regions[ACLSAN_UB_REGION_STATIC].begin != 0U) {
+        return false;
+    }
+    uint64_t previousEnd = 0U;
+    for (const auto& region : layout.regions) {
+        if (region.begin < previousEnd || region.end < region.begin || region.end > layout.physicalBytes) {
+            return false;
+        }
+        previousEnd = region.end;
+    }
+    const auto& staticRegion = layout.regions[ACLSAN_UB_REGION_STATIC];
+    const auto& dynamicRegion = layout.regions[ACLSAN_UB_REGION_DYNAMIC];
+    const auto& reservedRegion = layout.regions[ACLSAN_UB_REGION_RESERVED];
+    const auto& cacheRegion = layout.regions[ACLSAN_UB_REGION_DATA_CACHE];
+    return staticRegion.end == dynamicRegion.begin && dynamicRegion.end == reservedRegion.begin &&
+           reservedRegion.end - reservedRegion.begin == aclsan::DAV3510_UB_DEFAULT_RESERVED_BYTES &&
+           cacheRegion.end - cacheRegion.begin >= aclsan::SIMT_UB_MIN_CACHE_BYTES &&
+           cacheRegion.end - cacheRegion.begin <= aclsan::SIMT_UB_MAX_CACHE_BYTES;
+}
+
+bool HasUsableSimtUbWrite(const AclsanSimtUbMemoryAccessData& data)
+{
+    constexpr uint32_t CONTEXT =
+        ACLSAN_SIMT_CONTEXT_THREAD | ACLSAN_SIMT_CONTEXT_BLOCK_DIM | ACLSAN_SIMT_CONTEXT_ADDRESS;
+    if (data.header.size < sizeof(data) || !ValidUbLayout(data.ubLayout) ||
+        (data.simt.validFlags & CONTEXT) != CONTEXT || data.simt.threadX >= data.simt.blockDimX ||
+        data.simt.threadY >= data.simt.blockDimY || data.simt.threadZ >= data.simt.blockDimZ ||
+        (data.header.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED)) != 0U) {
+        return false;
+    }
+    if ((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) != 0U && data.predicateMask0 == 0U &&
+        data.predicateMask1 == 0U) {
+        return false;
+    }
+    return (data.layoutKind == ACLSAN_MEM_LAYOUT_RANGE && data.layout.range.bytes != 0U) ||
+           (data.layoutKind == ACLSAN_MEM_LAYOUT_SCALAR && data.layout.scalar.bytes != 0U);
+}
+
+bool IsValidUbWrite(const AclsanUbLayout& layout, uint64_t address, uint64_t bytes)
+{
+    if (address >= layout.physicalBytes || bytes > layout.physicalBytes - address) {
+        return false;
+    }
+    for (const auto& region : layout.regions) {
+        if (region.begin <= address && address < region.end) {
+            return bytes <= region.end - address;
+        }
+    }
+    return false;
 }
 
 uint64_t TimestampNs()
@@ -264,6 +330,81 @@ void Memcheck::OnFree(const AclsanResourceData& data)
     }
 }
 
+void Memcheck::QueueSimtUbMemoryAccess(const AclsanSimtUbMemoryAccessData& data)
+{
+    if (data.header.version != ACLSAN_API_VERSION || data.header.size < sizeof(data)) {
+        ++stats_.droppedDeviceOperations;
+        return;
+    }
+    if ((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR) != 0U) {
+        ++stats_.droppedDeviceOperations;
+    }
+    if ((data.header.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED)) != 0U) {
+        ++stats_.droppedDeviceOperations;
+        return;
+    }
+    // Reads and inactive or zero-width writes need no write bounds check. Keep any loss flags above.
+    const bool simtUb = (data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB) != 0U &&
+                        data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
+    if (simtUb && data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
+        // The SIMT UB producer currently emits writes only. Reads are outside this
+        // write bounds check and its operation counters; add read checking and
+        // accounting together if the producer gains UB read support.
+        return;
+    }
+    if (IsSimtUbWrite(data) && (((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) != 0U &&
+                                 data.predicateMask0 == 0U && data.predicateMask1 == 0U) ||
+                                (data.layoutKind == ACLSAN_MEM_LAYOUT_RANGE && data.layout.range.bytes == 0U) ||
+                                (data.layoutKind == ACLSAN_MEM_LAYOUT_SCALAR && data.layout.scalar.bytes == 0U))) {
+        return;
+    }
+    if (!IsSimtUbWrite(data) || data.header.launchId == 0U || data.header.instrExecId == 0U ||
+        !HasUsableSimtUbWrite(data) || pendingSimtUbAccesses_.size() >= MAX_PENDING_DEVICE_OPERATIONS) {
+        ++stats_.droppedDeviceOperations;
+        return;
+    }
+    // Private UB callbacks bypass MemoryAnalysis ingress. Unknown or already completed launches
+    // cannot establish completeness, but reliable records can still prove an out-of-bounds write.
+    if (analysis_->Managed() && observedLaunches_.count(data.header.launchId) == 0U) {
+        unfinishedLaunches_ = true;
+    }
+    pendingSimtUbAccesses_.push_back(data);
+    ++stats_.deviceOperations;
+    ++stats_.pendingDeviceOperations;
+}
+
+std::vector<NpuCheckMemcheckReport> Memcheck::CheckSimtUbMemoryAccess(const AclsanSimtUbMemoryAccessData& data)
+{
+    const uint64_t bytes =
+        data.layoutKind == ACLSAN_MEM_LAYOUT_RANGE ? data.layout.range.bytes : data.layout.scalar.bytes;
+    if (IsValidUbWrite(data.ubLayout, data.address, bytes)) {
+        return {};
+    }
+    NpuCheckMemcheckReport report{};
+    report.common.reportId = nextReportId_++;
+    report.common.groupId = nextGroupId_++;
+    report.common.timestampNs = TimestampNs();
+    report.common.tool = ReportTool::MEMCHECK;
+    report.common.severity = ReportSeverity::ERROR;
+    report.common.flags = kNpuCheckReportCommonHasExecContext;
+    report.common.exec = ToExecContext(data);
+    report.common.pattern = NpuCheckReportPattern::MEMCHECK_INVALID_ACCESS;
+    const auto& lane = data.simt;
+    const uint64_t threadId = lane.threadX + static_cast<uint64_t>(lane.blockDimX) *
+                                                 (lane.threadY + static_cast<uint64_t>(lane.blockDimY) * lane.threadZ);
+    report.simtUb = NpuCheckSimtUbDiagnostic{threadId, data.ubLayout};
+    report.access.memorySpace = NpuCheckReportMemorySpace::UB;
+    report.access.accessMode = NpuCheckReportAccessMode::WRITE;
+    report.access.accessBytes = static_cast<uint32_t>(std::min<uint64_t>(bytes, UINT32_MAX));
+    report.access.requiredAlign = data.alignSize;
+    report.access.address = report.access.rangeBegin = data.address;
+    report.access.rangeEnd = RangeEnd(data.address, bytes).value_or(UINT64_MAX);
+    report.allocation = ToReportAllocation(Allocation{0, 0, data.ubLayout.physicalBytes, data.header.deviceId, 0, 0});
+    report.allocation.memorySpace = NpuCheckReportMemorySpace::UB;
+    report.nearestAllocation = report.allocation;
+    return {std::move(report)};
+}
+
 std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
     const AclsanDeviceMemoryAccessData& data, NpuCheckReportAccessMode accessMode, uint64_t address, uint64_t bytes,
     uint64_t groupId)
@@ -360,7 +501,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::QueueDeviceMemoryAccess(const Acls
     ++stats_.deviceOperations;
     if (!analysis_->Managed()) {
         pendingDeviceAccesses_.push_back(data);
-        stats_.pendingDeviceOperations = pendingDeviceAccesses_.size();
+        ++stats_.pendingDeviceOperations;
         return {};
     }
     observedLaunches_.insert(data.header.launchId);
@@ -594,6 +735,19 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CollectCompletedLaunch(uint64_t la
             launchAllocations_.erase(snapshot);
         }
     }
+    const auto ubEnd = std::remove_if(
+        pendingSimtUbAccesses_.begin(), pendingSimtUbAccesses_.end(), [this, launchId, &reports](const auto& access) {
+            if (access.header.launchId != launchId) {
+                return false;
+            }
+            auto found = CheckSimtUbMemoryAccess(access);
+            reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+            if (stats_.pendingDeviceOperations != 0U) {
+                --stats_.pendingDeviceOperations;
+            }
+            return true;
+        });
+    pendingSimtUbAccesses_.erase(ubEnd, pendingSimtUbAccesses_.end());
     instructionGroups_.erase(launchId);
     Count(reports);
     return reports;
@@ -618,15 +772,43 @@ std::vector<NpuCheckMemcheckReport> Memcheck::OnSynchronization()
         pendingDeviceAccesses_.clear();
         launchAllocations_.clear();
         instructionGroups_.clear();
-        stats_.pendingDeviceOperations = 0;
+        stats_.pendingDeviceOperations = pendingSimtUbAccesses_.size();
+    }
+    std::vector<AclsanSimtUbMemoryAccessData> ubAccesses;
+    ubAccesses.swap(pendingSimtUbAccesses_);
+    for (auto& access : ubAccesses) {
+        if (analysis_->Managed() && analysis_->Closing().count(access.header.launchId) == 0) {
+            pendingSimtUbAccesses_.push_back(std::move(access));
+            continue;
+        }
+        auto found = CheckSimtUbMemoryAccess(access);
+        reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+        if (stats_.pendingDeviceOperations != 0U) {
+            --stats_.pendingDeviceOperations;
+        }
     }
     Count(reports);
     return reports;
 }
 
+std::vector<NpuCheckMemcheckReport> Memcheck::FlushSimtUbMemoryAccesses()
+{
+    std::vector<NpuCheckMemcheckReport> reports;
+    for (const auto& access : pendingSimtUbAccesses_) {
+        auto found = CheckSimtUbMemoryAccess(access);
+        reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+        if (stats_.pendingDeviceOperations != 0U) {
+            --stats_.pendingDeviceOperations;
+        }
+    }
+    pendingSimtUbAccesses_.clear();
+    return reports;
+}
+
 void Memcheck::Finalize(CheckerReportList& reports)
 {
-    unfinishedLaunches_ = unfinishedLaunches_ || !observedLaunches_.empty() || !pendingDeviceAccesses_.empty();
+    unfinishedLaunches_ = unfinishedLaunches_ || !observedLaunches_.empty() || !pendingDeviceAccesses_.empty() ||
+                          !pendingSimtUbAccesses_.empty();
     std::vector<NpuCheckMemcheckReport> completed;
     for (const auto id : observedLaunches_) {
         CollectLaunch(id, completed);
@@ -638,9 +820,12 @@ void Memcheck::Finalize(CheckerReportList& reports)
     observedLaunches_.clear();
     pendingDeviceAccesses_.clear();
     instructionGroups_.clear();
-    stats_.pendingDeviceOperations = 0;
+    stats_.pendingDeviceOperations = pendingSimtUbAccesses_.size();
     Count(completed);
     AppendCheckerReports(std::move(completed), reports);
+    auto ubReports = FlushSimtUbMemoryAccesses();
+    Count(ubReports);
+    AppendCheckerReports(std::move(ubReports), reports);
 }
 
 MemcheckStats Memcheck::Stats() const { return stats_; }

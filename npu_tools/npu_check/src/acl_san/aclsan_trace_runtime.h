@@ -13,6 +13,7 @@
 
 #include "acl/acl_rt.h"
 #include "aclsan_memory_cbdata.h"
+#include "acl_san/aclsan_ub_layout.h"
 #include "aclsan_trace_kernel_end.h"
 #include "aclsan_vf.h"
 
@@ -20,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -77,6 +79,8 @@ struct PreparedTraceLaunch {
     std::shared_ptr<void> binaryLease;
     std::shared_ptr<NpubitUbHandle> hibitHandle;
     bool instrumented = false;
+    AclsanUbLaunchMetadata ubMetadata{};
+    AclsanUbLayout ubLayout{};
     uint64_t launchId = 0;
     uint32_t blockCount = 0;
     // 397/398 boundary marker 的期望数量；unknown 时不做提前完成判定。
@@ -108,6 +112,11 @@ struct TraceCollectionResult {
     size_t completeLaunchCount = 0;
     size_t recordCount = 0;
     uint64_t droppedRecordCount = 0;
+
+    bool Complete() const noexcept
+    {
+        return launchCount != 0 && completeLaunchCount == launchCount && recordCount != 0 && droppedRecordCount == 0;
+    }
 };
 
 void DispatchTraceRecords(
@@ -133,12 +142,12 @@ void RecordTraceBinaryLoadFromData(
 void RecordTraceBinaryUnload(aclrtBinHandle binary) noexcept;
 void RecordTraceBinaryFunctionLookup(
     aclrtBinHandle binary, aclrtFuncHandle function, const char* functionName,
-    const uint64_t* entry = nullptr) noexcept;
+    std::optional<uint64_t> functionEntry = std::nullopt) noexcept;
 void RecordTraceFunctionLookup(aclrtFuncHandle function) noexcept;
 aclError PrepareTraceLaunch(
     aclrtFuncHandle function, uint32_t blockCount, const void* hostArgs, size_t argsSize,
     const aclrtPlaceHolderInfo* placeholders, size_t placeholderCount, TraceArgumentMode argumentMode,
-    PreparedTraceLaunch& prepared) noexcept;
+    PreparedTraceLaunch& prepared, const aclrtLaunchKernelCfg* config = nullptr) noexcept;
 void CompleteTraceLaunch(
     PreparedTraceLaunch&& prepared, aclrtFuncHandle function, aclrtStream stream, aclError launchResult) noexcept;
 uint64_t TraceStreamFrontier(const void* stream) noexcept;

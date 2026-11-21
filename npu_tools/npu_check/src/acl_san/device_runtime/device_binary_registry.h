@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -56,8 +57,8 @@ public:
         uintptr_t function, uintptr_t& binary, std::vector<BinarySegment>& segments,
         int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
     void RecordBinaryFunctionLookup(
-        uintptr_t binary, uintptr_t function, const char* functionName = nullptr, int32_t deviceId = UNKNOWN_DEVICE,
-        const uint64_t* entry = nullptr) noexcept;
+        uintptr_t binary, uintptr_t function, const char* functionName = nullptr,
+        std::optional<uint64_t> functionEntry = std::nullopt, int32_t deviceId = UNKNOWN_DEVICE) noexcept;
     bool GetFunctionUbMetadata(
         uintptr_t function, KernelUbMetadata& metadata, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
     void RecordLatestBinaryFunctionLookup(uintptr_t function, int32_t deviceId = UNKNOWN_DEVICE) noexcept;
@@ -68,6 +69,8 @@ public:
         uintptr_t function, uint32_t& traceArgumentOffset, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
     bool GetFunctionName(
         uintptr_t function, std::string& functionName, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
+    bool GetFunctionUbMetadata(
+        uintptr_t function, AclsanUbLaunchMetadata& metadata, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
     std::shared_ptr<NpubitUbHandle> GetFunctionHibitHandle(
         uintptr_t function, int32_t deviceId = UNKNOWN_DEVICE) const noexcept;
     // Returns retained unknown-device binary and image entries, or SIZE_MAX on error.

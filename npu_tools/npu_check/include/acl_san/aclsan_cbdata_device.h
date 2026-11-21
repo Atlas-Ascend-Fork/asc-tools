@@ -89,7 +89,9 @@ typedef enum AclsanDeviceEventFlags {
     ACLSAN_DEVICE_EVENT_FLAG_PREDICATED = 1u << 3u,
     ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR = 1u << 4u,
     // 地址和布局已知，原子配置缺失；WRITE 仅供 Memcheck 按普通写检查边界。
-    ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN = 1u << 5u
+    ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN = 1u << 5u,
+    // SIMT UB memcheck callbacks carry the private AclsanSimtUbMemoryAccessData payload.
+    ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB = 1u << 6u
 } AclsanDeviceEventFlags;
 
 typedef struct AclsanCoreInfo {

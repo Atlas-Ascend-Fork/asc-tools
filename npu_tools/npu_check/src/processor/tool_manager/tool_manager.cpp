@@ -11,6 +11,7 @@
 #include "tool_manager/tool_manager.h"
 #include "checker/memory_analysis.h"
 #include "acl_san/aclsan_cbdata_common.h"
+#include "aclsan_simt_ub_access.h"
 
 #include "diagnostic/report/report_assembler.h"
 
@@ -437,6 +438,10 @@ void ToolManager::DrainOperatorExecutions(CheckerReportList& reports)
 void ToolManager::ProcessCallbackLocked(
     AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata, CheckerReportList& reports)
 {
+    if (IsSimtUbMemcheckCallback(domain, cbid, cbdata)) {
+        NotifyCheckersLocked(domain, cbid, cbdata, reports);
+        return;
+    }
     struct EventGuard {
         MemoryAnalysis& analysis;
         ~EventGuard() { analysis.EndCallback(); }

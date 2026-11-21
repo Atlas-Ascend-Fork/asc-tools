@@ -1005,7 +1005,7 @@ aclError PrepareDeferredLaunch(
                     launch.source->image.size());
                 aclsan::RecordTraceBinaryFunctionLookup(
                     variant.binary, variant.function, selected.byEntry ? nullptr : selected.name.c_str(),
-                    selected.byEntry ? &selected.entry : nullptr);
+                    selected.byEntry ? std::optional<uint64_t>{selected.entry} : std::nullopt);
                 variant.registered = true;
             }
             function = variant.function;
@@ -1121,7 +1121,7 @@ aclError aclrtBinaryGetFunctionByEntryHook(
         } catch (...) {
             return ACL_ERROR_BAD_ALLOC;
         }
-        aclsan::RecordTraceBinaryFunctionLookup(binHandle, *funcHandle, nullptr, &functionEntry);
+        aclsan::RecordTraceBinaryFunctionLookup(binHandle, *funcHandle, nullptr, functionEntry);
     }
     return result;
 }
@@ -1179,7 +1179,7 @@ aclError LaunchKernelWithHostArgs(
     aclsan::PreparedTraceLaunch prepared;
     const auto traceStatus = aclsan::PrepareTraceLaunch(
         funcHandle, numBlocks, hostArgs, argsSize, placeHolderArray, placeHolderNum,
-        aclsan::TraceArgumentMode::HOST_ARGS, prepared);
+        aclsan::TraceArgumentMode::HOST_ARGS, prepared, config);
     if (traceStatus != ACL_SUCCESS) {
         return fail(traceStatus);
     }
@@ -1252,7 +1252,7 @@ aclError LaunchKernelWithArgsArray(
     aclsan::PreparedTraceLaunch prepared;
     // 原始参数由 ArgsArray 直接传递，这里只准备隐藏参数及其所属的 trace buffer。
     const auto traceStatus = aclsan::PrepareTraceLaunch(
-        func, numBlocks, nullptr, 0, nullptr, 0, aclsan::TraceArgumentMode::ARGS_ARRAY, prepared);
+        func, numBlocks, nullptr, 0, nullptr, 0, aclsan::TraceArgumentMode::ARGS_ARRAY, prepared, config);
     if (traceStatus != ACL_SUCCESS) {
         return fail(traceStatus);
     }

@@ -1010,6 +1010,33 @@ TEST(VfRacecheck, ManagedAnalysisSharesVfGraphAndRetainsUbAccesses)
     EXPECT_EQ(h.analysis->GraphBuilds(), 1U);
 }
 
+TEST(VfRacecheck, ManagedAnalysisKeepsSimtAndVfRecordsSeparate)
+{
+    Harness h({}, true);
+    h.Add(Access(10, 0, 0, VST));
+    h.Add(Access(10, 1, 1, VLD));
+    h.Complete(10, 2, 2);
+
+    auto simt = Access(20, 0, 2, VLD);
+    simt.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
+    simt.vfInstrValid = 0;
+    simt.simt.validFlags = ACLSAN_SIMT_CONTEXT_THREAD;
+    simt.simt.threadX = 7;
+    ASSERT_TRUE(
+        h.analysis->BeginCallback(ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &simt));
+    h.analysis->EndCallback();
+
+    const auto& launch = h.analysis->Get(1);
+    ASSERT_EQ(launch.memory.size(), 2U);
+    ASSERT_EQ(launch.vfs.size(), 1U);
+    ASSERT_EQ(launch.simtMemory.size(), 1U);
+    EXPECT_EQ(launch.simtMemory.front().simt.threadX, 7U);
+    h.End();
+    EXPECT_TRUE(h.checker.AnalysisComplete()) << h.checker.Summary();
+    EXPECT_FALSE(h.checker.HasErrors());
+    EXPECT_EQ(h.analysis->GraphBuilds(), 1U);
+}
+
 TEST(VfRacecheck, ManagedRacecheckRetainsDmaAccessesAroundVf)
 {
     for (bool writerFirst : {false, true}) {

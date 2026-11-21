@@ -180,7 +180,7 @@ void TrackSimtLaneCoverage(
     const bool current = coverage.invocationId != 0U && lane.lastInvocation == coverage.invocationId;
     coverage.observedCurrentInvocation = coverage.observedCurrentInvocation || current;
     if (executionComplete && current && lane.completedInvocation == coverage.invocationId &&
-        coverage.invocationId <= ASCSAN_SIMT_COMPLETION_BITS &&
+        coverage.completionMask != 0U &&
         (lane.completedInvocations & coverage.completionMask) == coverage.completionMask) {
         coverage.completedLanes.set(laneId);
     }

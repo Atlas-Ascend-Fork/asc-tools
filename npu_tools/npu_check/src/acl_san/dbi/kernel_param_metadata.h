@@ -11,9 +11,11 @@
 #ifndef NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DBI_KERNEL_PARAM_METADATA_H
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_DBI_KERNEL_PARAM_METADATA_H
 
+#include "acl_san/aclsan_ub_layout.h"
 #include "acl_san/aclsan_cbdata_launch.h"
-
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,6 +37,17 @@ struct BinarySectionRange {
     uint64_t offset = 0;
     uint64_t bytes = 0;
 };
+
+// Parses per-entry ELF tags. Under the supported default reservation,
+// a linked SIMT kernel's static span is its tag 7 minus 8192 bytes.
+struct KernelUbMetadataEntry {
+    AclsanUbLaunchMetadata launch{};
+    // Uses Runtime's explicit tag 14, disabled-entry flag and legacy fallback.
+    std::optional<uint64_t> functionEntry;
+};
+using KernelUbMetadataMap = std::map<std::string, KernelUbMetadataEntry>;
+
+bool GetKernelUbMetadata(const std::string& elf, KernelUbMetadataMap& kernels, std::string& diagnostic);
 
 bool GetReadOnlyBinarySections(
     const std::string& elf, std::vector<BinarySectionRange>& ranges, std::string& diagnostic);

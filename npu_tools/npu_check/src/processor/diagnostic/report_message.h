@@ -12,6 +12,7 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_DIAGNOSTIC_REPORT_MESSAGE_H
 
 #include "acl_san/aclsan_cbdata_device.h"
+#include "acl_san/aclsan_ub_layout.h"
 #include "acl_san/aclsan_cbdata_launch.h"
 
 #include <array>
@@ -359,6 +360,11 @@ struct NpuCheckSocStateRef {
     std::uint64_t observedValue = 0;
 };
 
+struct NpuCheckSimtUbDiagnostic {
+    uint64_t threadId = 0;
+    AclsanUbLayout layout{};
+};
+
 struct NpuCheckReportUbRegion {
     std::string name;
     std::uint64_t begin = 0;
@@ -379,8 +385,8 @@ struct NpuCheckReportUbContext {
     std::uint64_t boundaryAddress = 0;
     NpuCheckReportUbViolation violation = NpuCheckReportUbViolation::OUTSIDE_PHYSICAL_UB;
 };
-
 struct NpuCheckMemcheckReport {
+    std::optional<NpuCheckSimtUbDiagnostic> simtUb;
     NpuCheckReportCommon common;
     NpuCheckReportMemoryAccess access;
     NpuCheckReportAllocation allocation;

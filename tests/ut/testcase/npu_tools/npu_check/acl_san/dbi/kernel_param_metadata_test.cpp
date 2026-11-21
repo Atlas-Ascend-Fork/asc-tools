@@ -457,9 +457,8 @@ TEST(KernelUbMetadata, RegistryScopesMetadataToFunctionAndBinaryLifetime)
     aclsan::device_runtime::DeviceBinaryRegistry registry;
     ASSERT_TRUE(registry.RecordBinaryLoadFromData(1, false, 0, image.data(), image.size()));
     registry.RecordBinaryFunctionLookup(1, 10, "plain_0");
-    uint64_t entry = 1;
-    registry.RecordBinaryFunctionLookup(
-        1, 11, nullptr, aclsan::device_runtime::DeviceBinaryRegistry::UNKNOWN_DEVICE, &entry);
+    const uint64_t entry = 1;
+    registry.RecordBinaryFunctionLookup(1, 11, nullptr, entry);
     aclsan::KernelUbMetadata metadata;
     ASSERT_TRUE(registry.GetFunctionUbMetadata(10, metadata));
     EXPECT_EQ(metadata.kernelVfType, ACLSAN_KERNEL_VF_TYPE_NO_VF);
@@ -482,8 +481,8 @@ TEST(KernelUbMetadata, RegistryKeepsDeviceMetadataIndependentAcrossReset)
     aclsan::device_runtime::DeviceBinaryRegistry registry;
     ASSERT_TRUE(registry.RecordBinaryLoadFromData(1, false, 0, image.data(), image.size(), 0));
     ASSERT_TRUE(registry.RecordBinaryLoadFromData(1, false, 0, image.data(), image.size(), 1));
-    registry.RecordBinaryFunctionLookup(1, 10, "plain_0", 0);
-    registry.RecordBinaryFunctionLookup(1, 10, "mixed_1", 1);
+    registry.RecordBinaryFunctionLookup(1, 10, "plain_0", std::nullopt, 0);
+    registry.RecordBinaryFunctionLookup(1, 10, "mixed_1", std::nullopt, 1);
     aclsan::KernelUbMetadata metadata;
     ASSERT_TRUE(registry.GetFunctionUbMetadata(10, metadata, 0));
     EXPECT_EQ(metadata.kernelVfType, ACLSAN_KERNEL_VF_TYPE_NO_VF);

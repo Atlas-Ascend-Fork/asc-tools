@@ -42,6 +42,8 @@ if(ENABLE_TEST)
     ${SANITIZER_API_SOURCE_DIR}/aclsan_register_dependency.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_simt_trace.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_trace_buffer.cpp
+    ${SANITIZER_API_SOURCE_DIR}/aclsan_simt_ub_trace.cpp
+    ${SANITIZER_API_SOURCE_DIR}/aclsan_ub_layout_builder.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_trace_runtime.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_vf.cpp
     ${SANITIZER_API_SOURCE_DIR}/aclsan_api.cpp
@@ -209,6 +211,25 @@ endif()
 
 if(ENABLE_TEST)
   add_subdirectory(vector_collection)
+endif()
+
+if(ENABLE_TEST AND TARGET acl_runtime_stub)
+  get_target_property(SIMT_UB_RUNTIME_SOURCES acl_san_test SOURCES)
+  get_target_property(SIMT_UB_RUNTIME_INCLUDES acl_san_test INCLUDE_DIRECTORIES)
+  get_target_property(SIMT_UB_RUNTIME_LIBRARIES acl_san_test LINK_LIBRARIES)
+  add_executable(aclsan_simt_ub_runtime_tests
+    aclsan_simt_ub_runtime_test.cpp
+    "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp"
+    ${SIMT_UB_RUNTIME_SOURCES})
+  target_compile_features(aclsan_simt_ub_runtime_tests PRIVATE cxx_std_17)
+  target_compile_definitions(aclsan_simt_ub_runtime_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=0)
+  target_include_directories(aclsan_simt_ub_runtime_tests PRIVATE ${SIMT_UB_RUNTIME_INCLUDES})
+  target_link_libraries(aclsan_simt_ub_runtime_tests PRIVATE
+    ${SIMT_UB_RUNTIME_LIBRARIES} acl_runtime_stub GTest::gtest)
+  file(WRITE "${NPU_TOOLS_TEST_CANN_ROOT}/version.cfg" "# Host runtime fixture\n")
+  add_test(NAME aclsan_simt_ub_runtime_tests COMMAND aclsan_simt_ub_runtime_tests)
+  set_tests_properties(aclsan_simt_ub_runtime_tests PROPERTIES
+    ENVIRONMENT "ASCEND_HOME_PATH=${NPU_TOOLS_TEST_CANN_ROOT};LD_LIBRARY_PATH=$<TARGET_FILE_DIR:acl_runtime_stub>:$<TARGET_FILE_DIR:acl_prof_api_stub>:$ENV{LD_LIBRARY_PATH}")
 endif()
 
 option(NPU_CHECK_ENABLE_NPUBIT_MOCK_TESTS "Build independent Npubit mock integration tests" OFF)
