@@ -9,6 +9,7 @@
  */
 #include "checker/memory_analysis.h"
 #include "checker/racecheck/analysis_phase_timer.h"
+#include "checker/memory_access_mode.h"
 #include "npu_tool_log.h"
 #include <algorithm>
 #include <limits>
@@ -237,7 +238,7 @@ void MemoryAnalysis::BuildStorageIndex(uint64_t launchId, Launch& launch, const 
     for (uint32_t i = 0; i < dependency.accesses.size(); ++i) {
         const auto& access = dependency.accesses[i];
         launch.accessesByNode[access.node].push_back(i);
-        if (!race::WritesMemory(access.data.accessMode))
+        if (!MemoryAccessWrites(access.data.accessMode))
             continue;
         auto& writes = launch.writesByStorage[race::StorageOf(access.data)];
         for (const auto& range : access.ranges)
@@ -316,7 +317,8 @@ void MemoryAnalysis::CommitWritePage(uint64_t launchId, Launch& launch, const ra
     // their exact union is equivalent to repeatedly setting every valid byte.
     std::optional<race::Interval> pending;
     for (const auto& range : found->second.ranges) {
-        if (launch.accessValid[range.access] != USABLE_INITIALIZATION_SOURCE)
+        if (launch.accessValid[range.access] != USABLE_INITIALIZATION_SOURCE ||
+            !MemoryAccessWrites(launch.dependency->accesses[range.access].data.accessMode))
             continue;
         if (pending && range.begin <= pending->end) {
             pending->end = std::max(pending->end, range.end);
@@ -338,7 +340,7 @@ void MemoryAnalysis::PrepareInitializationQuery(
     if (node != launch.accessesByNode.end()) {
         for (auto index : node->second) {
             const auto& access = query.dependency.accesses[index];
-            if (race::StorageOf(access.data) == query.storage && race::ReadsMemory(access.data.accessMode))
+            if (race::StorageOf(access.data) == query.storage && MemoryAccessReads(access.data.accessMode))
                 query.reads.insert(query.reads.end(), access.ranges.begin(), access.ranges.end());
         }
     }
@@ -398,7 +400,7 @@ bool MemoryAnalysis::VisitInitializationSource(
             reasons.insert("invalid_initialization_source");
         return true;
     }
-    if (relation == race::HappensBeforeGraph::Relation::Before) {
+    if (relation == race::HappensBeforeGraph::Relation::Before && MemoryAccessWrites(access.data.accessMode)) {
         query.preceding.insert(query.preceding.end(), access.ranges.begin(), access.ranges.end());
         race::MergeIntervals(query.preceding);
     } else if (relation == race::HappensBeforeGraph::Relation::Unordered) {
@@ -508,12 +510,12 @@ void MemoryAnalysis::CommitLaunch(uint64_t launchId)
         auto& dependency = Graph(launchId, limits_, reasons);
         if (!reasons.empty()) {
             for (const auto& access : Get(launchId).memory)
-                if (race::WritesMemory(access.accessMode) || access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN)
+                if (MemoryAccessWrites(access.accessMode) || access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN)
                     uncertainInitializationDevices_.insert(access.header.deviceId);
             return;
         }
         for (const auto& access : dependency.accesses) {
-            if (access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM || !race::WritesMemory(access.data.accessMode))
+            if (access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM || !MemoryAccessWrites(access.data.accessMode))
                 continue;
             const bool valid = std::all_of(access.ranges.begin(), access.ranges.end(), [this, &access](auto range) {
                 return ClassifyAccessRange(access.data, range.begin, range.end - range.begin).status ==

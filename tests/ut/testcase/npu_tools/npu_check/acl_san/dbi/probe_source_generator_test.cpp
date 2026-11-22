@@ -14,6 +14,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <unistd.h>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -83,7 +87,7 @@ bool RendersNewPipelineDefinitions()
     CHECK(scalar.source.find("__npu_check_probe_ldp_b64") != std::string::npos);
     CHECK(
         scalar.source.find("addr, static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), "
-                           "aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1") != std::string::npos);
+                           "0UL") != std::string::npos);
     const std::string_view stp = FindProbeDefinition(scalar.source, "__npu_check_probe_stp_b64");
     CHECK(stp.find("uint64_t addr, int64_t offset)") != std::string_view::npos);
     CHECK(stp.find("uint64_t post") == std::string_view::npos);
@@ -338,9 +342,100 @@ TEST(ProbeSourceGeneratorScalarAtomic, IncludesAllWidthsAndPostArgument)
         EXPECT_NE(definition.find("uint64_t addr, int64_t offset, uint64_t post)"), std::string::npos);
         EXPECT_NE(
             definition.find("addr, static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), "
-                            "aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1"),
+                            "0UL, static_cast<uint32_t>(get_st_atomic_cfg())"),
             std::string::npos);
         EXPECT_NE(definition.find("PIPE_S"), std::string::npos);
+    }
+}
+
+TEST(ProbeSourceGeneratorScalarAtomic, SerializesIdsAndAddressOperands)
+{
+    struct TempFile {
+        char path[64] = "/tmp/aclsan-scalar-atomic-XXXXXX";
+        ~TempFile() { std::remove(path); }
+    } file;
+    const int fd = mkstemp(file.path);
+    ASSERT_GE(fd, 0);
+    close(fd);
+    std::string diagnostic;
+    ASSERT_TRUE(aclsan::GenerateCtrlBin(file.path, {aclsan::ProbeGroup::Scalar}, diagnostic)) << diagnostic;
+    std::ifstream input(file.path, std::ios::binary);
+    const std::vector<unsigned char> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    ASSERT_GE(bytes.size(), 12U);
+    const auto read16 = [&](size_t offset) -> uint16_t {
+        return static_cast<uint16_t>(bytes.at(offset) | (static_cast<uint16_t>(bytes.at(offset + 1)) << 8U));
+    };
+    // ctrl.bin has a 12-byte header, followed by variable-length instruction bindings.
+    const size_t bindingsEnd = 12U + read16(6);
+    ASSERT_LE(bindingsEnd + 4, bytes.size());
+    const std::string names(bytes.begin() + bindingsEnd + 4, bytes.end());
+    std::vector<std::string> symbols;
+    for (size_t begin = 0, end = 0; end < names.size(); ++end) {
+        if (names[end] == '\f' || names[end] == '\0') {
+            symbols.push_back(names.substr(begin, end - begin));
+            begin = end + 1;
+        }
+    }
+    const char* atomRedTypes[] = {"atom_u32", "atom_s32", "atom_u64", "atom_s64", "red_u32",
+                                  "red_s32",  "red_f16",  "red_bf16", "red_f32"};
+    unsigned found = 0;
+    unsigned foundAtomRed = 0;
+    for (size_t offset = 12; offset < bindingsEnd;) {
+        ASSERT_LE(offset + 6, bindingsEnd);
+        const uint16_t id = read16(offset);
+        const uint16_t functionId = read16(offset + 2);
+        const uint16_t count = read16(offset + 4);
+        ASSERT_LE(offset + 6U + 2U * count, bindingsEnd);
+        if (id >= 56 && id <= 61) {
+            ++found;
+            ASSERT_LT(functionId, symbols.size());
+            const std::string width = std::to_string(32U >> ((id - 56) % 3));
+            EXPECT_EQ(
+                symbols[functionId], "__npu_check_probe_" + std::string(id <= 58 ? "st" : "sti") + "_atomic_b" + width);
+            ASSERT_EQ(count, 3U);
+            EXPECT_EQ(read16(offset + 6), 1U);  // Address (operand 0 is the stored value).
+            EXPECT_EQ(read16(offset + 8), 2U);  // Signed offset.
+            EXPECT_EQ(read16(offset + 10), 3U); // Post-update selector.
+        }
+        if (id >= 427 && id <= 435) {
+            ++foundAtomRed;
+            ASSERT_LT(functionId, symbols.size());
+            EXPECT_EQ(symbols[functionId], "__npu_check_probe_scalar_" + std::string(atomRedTypes[id - 427]));
+            ASSERT_EQ(count, id <= 430 ? 5U : 3U);
+            for (uint16_t i = 0; i < count - 1; ++i) {
+                EXPECT_EQ(read16(offset + 6U + 2U * i), i);
+            }
+            EXPECT_EQ(read16(offset + 6U + 2U * (count - 1)), UINT16_MAX);
+        }
+        offset += 6U + 2U * count;
+    }
+    EXPECT_EQ(found, 6U);
+    EXPECT_EQ(foundAtomRed, 9U);
+}
+
+TEST(ProbeSourceGeneratorScalarAtomic, IncludesScalarAtomAndRed)
+{
+    const auto generated = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Scalar);
+    ASSERT_TRUE(generated.success);
+    const auto bindings = aclsan::BindingSymbols({aclsan::ProbeGroup::Scalar});
+    const char* types[] = {"atom_u32", "atom_s32", "atom_u64", "atom_s64", "red_u32",
+                           "red_s32",  "red_f16",  "red_bf16", "red_f32"};
+    for (uint32_t i = 0; i < 9; ++i) {
+        const auto symbol = "__npu_check_probe_scalar_" + std::string(types[i]);
+        SCOPED_TRACE(symbol);
+        EXPECT_NE(std::find(bindings.begin(), bindings.end(), symbol), bindings.end());
+        EXPECT_NE(
+            generated.sourceMap.find("apiId=" + std::to_string(427 + i) + " symbol=" + symbol), std::string::npos);
+        const auto start = generated.source.find(symbol + "(");
+        ASSERT_NE(start, std::string::npos);
+        const auto definition = generated.source.substr(start, generated.source.find("\n}", start) - start);
+        EXPECT_NE(definition.find("PIPE_S), " + std::to_string(427 + i) + ","), std::string::npos);
+        const std::string operands =
+            i < 4 ? "uint64_t xd, uint64_t xn, uint64_t xm, uint64_t xt" : "uint64_t xn, uint64_t xm";
+        EXPECT_NE(definition.find(operands), std::string::npos);
+        EXPECT_NE(definition.find("uint64_t atomicType)"), std::string::npos);
+        EXPECT_NE(
+            definition.find(i < 4 ? "xd, xn, xm, xt, atomicType" : "xn, xm, atomicType, 0UL, 0UL"), std::string::npos);
     }
 }
 

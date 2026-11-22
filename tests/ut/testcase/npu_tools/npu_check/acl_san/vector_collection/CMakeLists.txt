@@ -25,7 +25,7 @@ else()
 endif()
 add_executable(vector_collection_test integration_test.cpp
   "${CMAKE_CURRENT_LIST_DIR}/../hibit/mock.cpp" "${SAN}/aclsan_vf.cpp"
-  "${SAN}/aclsan_trace_runtime.cpp"
+  "${SAN}/aclsan_trace_runtime.cpp" "${SAN}/aclsan_trace_buffer.cpp"
   "${SAN}/device_instr/arch/dav_3510/decoder.cpp"
   "${SAN}/device_instr/arch/dav_3510/register_state_manager.cpp"
   "${SAN}/aclsan_memory_cbdata.cpp" "${SAN}/aclsan_register_dependency.cpp"
@@ -52,5 +52,7 @@ else()
   endif()
   target_include_directories(vector_collection_test PRIVATE
     "${DLOG_INCLUDE_DIR}" "${CANN_INCLUDE_DIR}" "${CANN_INCLUDE_DIR}/../pkg_inc")
+  find_library(CANN_SECUREC_LIBRARY NAMES c_sec HINTS "${CANN_INCLUDE_DIR}/../lib64" "$ENV{ASCEND_HOME_PATH}/lib64")
+  target_link_libraries(vector_collection_test PRIVATE "${CANN_SECUREC_LIBRARY}")
 endif()
 add_test(NAME aclsan.vector_collection COMMAND vector_collection_test)

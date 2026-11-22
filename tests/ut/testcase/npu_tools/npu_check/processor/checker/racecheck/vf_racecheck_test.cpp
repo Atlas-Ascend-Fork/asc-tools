@@ -737,7 +737,6 @@ TEST(VfRacecheck, ExternalScalarUbDoesNotInheritInternalScalarOrder)
         raw.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
         raw.record.args[0] = UINT64_C(0x100080000);
         raw.record.args[3] = UINT64_C(0x100000000);
-        raw.record.args[4] = aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
         const auto decoded = aclsan::dav3510::GetDeviceInstructionDecoder().decode(raw.record);
         ASSERT_TRUE(decoded);
         const auto data = aclsan::TranslateDecodedTraceToCallbackData(raw, *decoded);

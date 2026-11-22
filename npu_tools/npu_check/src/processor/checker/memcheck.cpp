@@ -11,8 +11,8 @@
 #include "checker/memcheck.h"
 #include "aclsan_ub_layout_builder.h"
 #include "dbi/trace_buffer_abi.h"
-#include "checker/memory_access_mode.h"
 #include "checker/memory_access_layout.h"
+#include "checker/memory_access_mode.h"
 #include "diagnostic/pipeline_name.h"
 #include "simt_memory_record.h"
 
@@ -63,10 +63,7 @@ NpuCheckReportMemorySpace CubeReportSpace(uint32_t space)
 
 bool IsSimtUbWrite(const AclsanDeviceMemoryAccessData& data)
 {
-    const bool write = data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE ||
-                       data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD ||
-                       data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN ||
-                       data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX;
+    const bool write = data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE || IsAtomicWrite(data.accessMode);
     return (data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB) != 0 &&
            data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB && write;
 }
@@ -582,25 +579,9 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
         return std::vector<NpuCheckMemcheckReport>{};
     };
 
-    NpuCheckReportAccessMode accessMode;
-    switch (NormalizeMemoryAccessMode(data.accessMode)) {
-        case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
-            accessMode = NpuCheckReportAccessMode::READ;
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
-            accessMode = NpuCheckReportAccessMode::WRITE;
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD:
-            accessMode = NpuCheckReportAccessMode::ATOMIC_WRITE_ADD;
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN:
-            accessMode = NpuCheckReportAccessMode::ATOMIC_WRITE_MIN;
-            break;
-        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX:
-            accessMode = NpuCheckReportAccessMode::ATOMIC_WRITE_MAX;
-            break;
-        default:
-            return markIncomplete();
+    const auto accessMode = ReportMemoryAccessMode(data.accessMode);
+    if (!accessMode) {
+        return markIncomplete();
     }
 
     if ((data.header.flags & kDeviceEventFlagPredicated) != 0U && data.predicateMask0 == 0 &&
@@ -609,7 +590,7 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckDeviceMemoryAccess(
     }
 
     std::vector<NpuCheckMemcheckReport> reports;
-    auto appendAccess = [this, &data, accessMode, &reports, groupId](uint64_t address, uint64_t bytes) {
+    auto appendAccess = [this, &data, accessMode = *accessMode, &reports, groupId](uint64_t address, uint64_t bytes) {
         auto found = CheckAccess(data, accessMode, address, bytes, groupId);
         reports.insert(reports.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
     };

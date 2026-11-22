@@ -32,8 +32,7 @@ enum class MemoryCbdataStatus : uint8_t {
     INVALID_FIELD, // 指令 ID、位宽、控制字段或字段组合非法，或当前转换器不支持该模式。
     MISSING_REGISTER_STATE, // 缺少还原访问所需的 SET 配置寄存器状态，如 DMA loop、MTE2 或 FIXPIPE 配置。
     ARITHMETIC_OVERFLOW, // 地址、长度或步长计算溢出，或访问布局不满足内部描述的可表示性约束。
-    RESOURCE_EXHAUSTED, // 展开的访问记录数超过内部上限，或容器分配失败、容量超限。
-    MISSING_ADDRESS_CONTEXT, // 地址映射协议标记缺失或不匹配，无法确认采集的 SYS_VA_BASE 上下文有效。
+    RESOURCE_EXHAUSTED,        // 展开的访问记录数超过内部上限，或容器分配失败、容量超限。
     UNSUPPORTED_ADDRESS_SPACE, // 标量地址已识别为 PRIVATE（栈），当前不生成对应的访存 cbdata。
     INVALID_ADDRESS_SPACE,     // 地址编码未匹配到已知的存储空间，无法完成地址映射。
     PARTIAL_COVERAGE,          // 已知指令的部分模式尚未确认实际访问集合。
@@ -45,7 +44,8 @@ using MemoryInstructionField = std::variant<
     LoadGmToCbuf2DV2ParamField, NdDmaOutToUbufParamField, SetL12DParamField, MmadParamField, LoadL1MxParamField,
     LocalMemoryTransferParamField, LoadCbufToL0ParamField, LoadCbufToCbTransposeParamField, Img2ColParamField,
     ScalarGmParamField, ScalarDevParamField, ScalarPreloadParamField, ScalarAtomicParamField, CopyUbufToUbufParamField,
-    VtransposeParamField, Vbs32ParamField, VmrgsortParamField, VnchwconvParamField, LdvaParamField>;
+    VtransposeParamField, Vbs32ParamField, VmrgsortParamField, VnchwconvParamField, LdvaParamField,
+    ScalarAtomParamField, ScalarRedParamField>;
 
 struct MemoryRegisterState {
     std::array<VaRegisterState, VA_REGISTER_COUNT> va{};

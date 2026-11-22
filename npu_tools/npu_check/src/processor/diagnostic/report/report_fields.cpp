@@ -59,6 +59,10 @@ const char* AccessModeName(NpuCheckReportAccessMode mode)
             return AccessModeName(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN);
         case NpuCheckReportAccessMode::ATOMIC_WRITE_MAX:
             return AccessModeName(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX);
+        case NpuCheckReportAccessMode::ATOMIC_WRITE_EXCH:
+            return AccessModeName(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH);
+        case NpuCheckReportAccessMode::ATOMIC_WRITE_CAS:
+            return AccessModeName(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS);
         case NpuCheckReportAccessMode::FREE:
             return "free";
     }
@@ -78,6 +82,10 @@ const char* AccessModeName(AclsanDeviceMemoryAccessMode mode)
             return "atomic write(min)";
         case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX:
             return "atomic write(max)";
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH:
+            return "atomic write(exch)";
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS:
+            return "atomic write(cas)";
         case ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ:
             return "vf vector read";
         case ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE:

@@ -13,6 +13,7 @@
 #include "device_instr/arch/dav_3510/dma_layout.h"
 #include "device_instr/common/bit_range.h"
 #include "device_instr/common/instruction_id.h"
+#include "dbi/trace_buffer_abi.h"
 
 #include <array>
 
@@ -462,18 +463,38 @@ DecodedInstruction DecodeScalarPreload(const aclsan::AclsanRawTraceRecord& recor
 DecodedInstruction DecodeScalarAtomic(const aclsan::AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
 {
     const ScalarAtomicParamField params{
-        record.instrId, dataBits,       record.args[0], static_cast<int64_t>(record.args[1]),
-        record.args[2], record.args[3], record.args[4]};
+        record.instrId, dataBits,       record.args[0],       static_cast<int64_t>(record.args[1]),
+        record.args[2], record.args[3], record.atomicMetadata};
     return DecodedInstruction{DeviceInstructionKind::ScalarAtomic, params};
+}
+
+uint64_t DecodeScalarAtomRedSysVaBase(uint32_t metadata) noexcept
+{
+    return static_cast<uint64_t>(metadata & ASCSAN_SCALAR_SYS_VA_WINDOW_MASK) << ASCSAN_SCALAR_SYS_VA_WINDOW_SHIFT;
+}
+
+DecodedInstruction DecodeScalarAtom(const aclsan::AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
+{
+    const uint64_t sysVaBase = DecodeScalarAtomRedSysVaBase(record.atomicMetadata);
+    const ScalarAtomParamField params{record.instrId, dataBits,       record.args[0], record.args[1],
+                                      record.args[2], record.args[3], sysVaBase,      record.args[4]};
+    return DecodedInstruction{DeviceInstructionKind::ScalarAtom, params};
+}
+
+DecodedInstruction DecodeScalarRed(const aclsan::AclsanRawTraceRecord& record, uint32_t dataBits) noexcept
+{
+    const uint64_t sysVaBase = DecodeScalarAtomRedSysVaBase(record.atomicMetadata);
+    const ScalarRedParamField params{record.instrId, dataBits,  record.args[0],
+                                     record.args[1], sysVaBase, record.args[2]};
+    return DecodedInstruction{DeviceInstructionKind::ScalarRed, params};
 }
 
 DecodedInstruction DecodeScalarGm(const aclsan::AclsanRawTraceRecord& record) noexcept
 {
     constexpr uint32_t WIDTHS_PER_FAMILY = 4;
     const uint32_t dataBits = DATA_BITS_B64 >> ((record.instrId - RawId(InstructionId::StB64Imm)) % WIDTHS_PER_FAMILY);
-    const ScalarGmParamField params{
-        record.instrId, dataBits,       record.args[0], static_cast<int64_t>(record.args[1]),
-        record.args[2], record.args[3], record.args[4]};
+    const ScalarGmParamField params{record.instrId, dataBits,      record.args[0], static_cast<int64_t>(record.args[1]),
+                                    record.args[2], record.args[3]};
     return DecodedInstruction{DeviceInstructionKind::ScalarGm, params};
 }
 
@@ -583,6 +604,30 @@ constexpr DecodeTable MakeDecodeTable() noexcept
             return DecodeScalarAtomic(record, DATA_BITS_B8);
         },
         InstructionId::StiAtomicB8);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarAtom(record, DATA_BITS_B32);
+        },
+        InstructionId::ScalarAtomU32, InstructionId::ScalarAtomS32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarAtom(record, DATA_BITS_B64);
+        },
+        InstructionId::ScalarAtomU64, InstructionId::ScalarAtomS64);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarRed(record, DATA_BITS_B32);
+        },
+        InstructionId::ScalarRedU32, InstructionId::ScalarRedS32, InstructionId::ScalarRedF32);
+    RegisterDecoders(
+        table,
+        [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
+            return DecodeScalarRed(record, DATA_BITS_B16);
+        },
+        InstructionId::ScalarRedF16, InstructionId::ScalarRedBf16);
     RegisterDecoders(
         table,
         [](const aclsan::AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {

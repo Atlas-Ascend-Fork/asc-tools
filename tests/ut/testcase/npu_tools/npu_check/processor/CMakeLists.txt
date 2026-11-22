@@ -31,6 +31,7 @@ add_executable(npu_check_unit_tests
   "checker/unified_memory_test.cpp"
   "checker/allocation_registry_test.cpp"
   "checker/memcheck_test.cpp"
+  "checker/scalar_atomic_checker_test.cpp"
   "checker/gm_initcheck_test.cpp"
   "checker/init_state_table_test.cpp"
   "checker/initcheck_test.cpp"

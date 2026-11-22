@@ -599,11 +599,11 @@ TEST(UnifiedMemoryTest, UnorderedFreeCannotBeMisreportedAsDefiniteUseAfterFree)
     EXPECT_FALSE(s.bounds.AnalysisComplete());
 }
 
-TEST(UnifiedMemoryTest, EveryAtomicModeReadsOldBytesAndInitializesItsResult)
+TEST(UnifiedMemoryTest, EveryUnconditionalAtomicModeReadsOldBytesAndInitializesItsResult)
 {
     for (uint32_t mode :
          {ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
-          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX}) {
+          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH}) {
         Session s;
         s.Launch(1);
         s.Memory(1, 1, ACLSAN_DEVICE_PIPE_MATRIX, ACLSAN_DEVICE_MEMORY_SPACE_L0C, mode, 0, 128);
@@ -613,6 +613,39 @@ TEST(UnifiedMemoryTest, EveryAtomicModeReadsOldBytesAndInitializesItsResult)
         ASSERT_EQ(s.reports.size(), 1U);
         EXPECT_EQ(std::get<NpuCheckInitcheckReport>(s.reports.front()).common.exec.instrExecId, 1U);
         EXPECT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
+    }
+}
+
+TEST(UnifiedMemoryTest, CasInitializesFollowingReadsAndLaunches)
+{
+    for (uint32_t space :
+         {ACLSAN_DEVICE_MEMORY_SPACE_GM, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_SPACE_L0A,
+          ACLSAN_DEVICE_MEMORY_SPACE_L0B, ACLSAN_DEVICE_MEMORY_SPACE_L0C}) {
+        for (bool reverse : {false, true}) {
+            SCOPED_TRACE(testing::Message() << space << "/" << reverse);
+            Session s;
+            s.reverse = reverse;
+            s.Allocate();
+            const uint64_t address = space == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0x10000 : 0;
+            s.Launch(1);
+            s.Memory(1, 1, ACLSAN_DEVICE_PIPE_SCALAR, space, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS, address, 4);
+            s.Memory(1, 2, ACLSAN_DEVICE_PIPE_SCALAR, space, ACLSAN_DEVICE_MEMORY_ACCESS_READ, address, 4);
+            s.Sync();
+            EXPECT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
+            EXPECT_TRUE(s.race.AnalysisComplete()) << s.race.Summary();
+            ASSERT_EQ(s.reports.size(), 1U);
+            const auto& cas = std::get<NpuCheckInitcheckReport>(s.reports.front());
+            EXPECT_EQ(cas.access.accessMode, NpuCheckReportAccessMode::ATOMIC_WRITE_CAS);
+            EXPECT_EQ(cas.uninitBytes, 4U);
+            if (space == ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+                s.reports.clear();
+                s.Launch(2);
+                s.Memory(2, 1, ACLSAN_DEVICE_PIPE_SCALAR, space, ACLSAN_DEVICE_MEMORY_ACCESS_READ, address, 4);
+                s.Sync();
+                EXPECT_TRUE(s.initialization.AnalysisComplete()) << s.initialization.Summary();
+                EXPECT_TRUE(s.reports.empty());
+            }
+        }
     }
 }
 

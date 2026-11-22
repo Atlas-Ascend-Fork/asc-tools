@@ -26,7 +26,8 @@ extern "C" bool CtrlbinWriterStart(const char* output, uint16_t length);
 namespace {
 
 // Probe parameter masks contain the zero-based ABI argument positions passed to each sanitizer stub.
-enum class ProbeArgument : uint16_t {
+enum class ProbeArgument : int16_t {
+    ATOMIC_TYPE = -1,
     FIRST = 0,
     SECOND = 1,
     THIRD = 2,
@@ -34,16 +35,17 @@ enum class ProbeArgument : uint16_t {
     FIFTH = 4,
 };
 
-constexpr uint16_t PROBE_ARGUMENT_0 = static_cast<uint16_t>(ProbeArgument::FIRST);
-constexpr uint16_t PROBE_ARGUMENT_1 = static_cast<uint16_t>(ProbeArgument::SECOND);
-constexpr uint16_t PROBE_ARGUMENT_2 = static_cast<uint16_t>(ProbeArgument::THIRD);
-constexpr uint16_t PROBE_ARGUMENT_3 = static_cast<uint16_t>(ProbeArgument::FOURTH);
-constexpr uint16_t PROBE_ARGUMENT_4 = static_cast<uint16_t>(ProbeArgument::FIFTH);
+constexpr int16_t PROBE_ATOMIC_TYPE = static_cast<int16_t>(ProbeArgument::ATOMIC_TYPE);
+constexpr int16_t PROBE_ARGUMENT_0 = static_cast<int16_t>(ProbeArgument::FIRST);
+constexpr int16_t PROBE_ARGUMENT_1 = static_cast<int16_t>(ProbeArgument::SECOND);
+constexpr int16_t PROBE_ARGUMENT_2 = static_cast<int16_t>(ProbeArgument::THIRD);
+constexpr int16_t PROBE_ARGUMENT_3 = static_cast<int16_t>(ProbeArgument::FOURTH);
+constexpr int16_t PROBE_ARGUMENT_4 = static_cast<int16_t>(ProbeArgument::FIFTH);
 
 struct BindingSpec {
     InstrType instrType;
     const char* stubName;
-    std::vector<uint16_t> paraMask;
+    std::vector<int16_t> paraMask;
 };
 
 static const BindingSpec ALL_BINDINGS[] = {
@@ -183,6 +185,35 @@ static const BindingSpec ALL_BINDINGS[] = {
     {InstrType::COPY_UBUF_TO_CBUF,
      "__npu_check_probe_copy_ubuf_to_cbuf",
      {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2}},
+
+    // Scalar ATOM/RED.
+    {InstrType::SCALAR_ATOM_U32,
+     "__npu_check_probe_scalar_atom_u32",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3, PROBE_ATOMIC_TYPE}},
+    {InstrType::SCALAR_ATOM_S32,
+     "__npu_check_probe_scalar_atom_s32",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3, PROBE_ATOMIC_TYPE}},
+    {InstrType::SCALAR_ATOM_U64,
+     "__npu_check_probe_scalar_atom_u64",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3, PROBE_ATOMIC_TYPE}},
+    {InstrType::SCALAR_ATOM_S64,
+     "__npu_check_probe_scalar_atom_s64",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ARGUMENT_2, PROBE_ARGUMENT_3, PROBE_ATOMIC_TYPE}},
+    {InstrType::SCALAR_RED_U32,
+     "__npu_check_probe_scalar_red_u32",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ATOMIC_TYPE}},
+    {InstrType::SCALAR_RED_S32,
+     "__npu_check_probe_scalar_red_s32",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ATOMIC_TYPE}},
+    {InstrType::SCALAR_RED_F16,
+     "__npu_check_probe_scalar_red_f16",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ATOMIC_TYPE}},
+    {InstrType::SCALAR_RED_BF16,
+     "__npu_check_probe_scalar_red_bf16",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ATOMIC_TYPE}},
+    {InstrType::SCALAR_RED_F32,
+     "__npu_check_probe_scalar_red_f32",
+     {PROBE_ARGUMENT_0, PROBE_ARGUMENT_1, PROBE_ATOMIC_TYPE}},
 
     // Scalar: SET_PADDING.
     {InstrType::SET_PADDING, "__npu_check_probe_set_padding", {PROBE_ARGUMENT_0}},
@@ -641,6 +672,15 @@ static constexpr BindingGroupSpec BINDING_GROUPS[] = {
          InstrType::LDP_B32,
          InstrType::LDP_B16,
          InstrType::LDP_B8,
+         InstrType::SCALAR_ATOM_U32,
+         InstrType::SCALAR_ATOM_S32,
+         InstrType::SCALAR_ATOM_U64,
+         InstrType::SCALAR_ATOM_S64,
+         InstrType::SCALAR_RED_U32,
+         InstrType::SCALAR_RED_S32,
+         InstrType::SCALAR_RED_F16,
+         InstrType::SCALAR_RED_BF16,
+         InstrType::SCALAR_RED_F32,
          InstrType::ST_ATOMIC_B8,
          InstrType::ST_ATOMIC_B32,
          InstrType::ST_ATOMIC_B16,
@@ -848,7 +888,7 @@ std::string CtrlBinGeneratorIdentity()
         append(std::to_string(static_cast<uint16_t>(binding.instrType)));
         append(binding.stubName);
         append(std::to_string(static_cast<unsigned int>(BindingGroup(binding))));
-        for (const uint16_t mask : binding.paraMask) {
+        for (const int16_t mask : binding.paraMask) {
             append(std::to_string(mask));
         }
     }

@@ -265,7 +265,7 @@ TEST(CceInstructionPipeline, ScalarDevExplicitGmAndMinimumOffset)
     }
 }
 
-TEST(CceInstructionPipeline, ScalarAtomicWithoutConfigurationPublishesOrdinaryWriteFallback)
+TEST(CceInstructionPipeline, ScalarAtomicZeroConfigurationPublishesAtomicAdd)
 {
     const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
     ASSERT_NE(decoder, nullptr);
@@ -286,7 +286,6 @@ TEST(CceInstructionPipeline, ScalarAtomicWithoutConfigurationPublishesOrdinaryWr
             parsed.record.args[1] = static_cast<uint64_t>(int64_t{3});
             parsed.record.args[2] = post;
             parsed.record.args[3] = UINT64_C(0x100000000);
-            parsed.record.args[4] = aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
             const auto decoded = decoder->decode(parsed.record);
             ASSERT_TRUE(decoded.has_value());
             const auto* field = std::get_if<aclsan::ScalarAtomicParamField>(&decoded->params);
@@ -299,17 +298,153 @@ TEST(CceInstructionPipeline, ScalarAtomicWithoutConfigurationPublishesOrdinaryWr
             const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
             ASSERT_NE(accesses, nullptr);
             ASSERT_EQ(accesses->size(), 1U);
-            const auto& access = accesses->front();
-            EXPECT_EQ(access.address, 0x1000U + (post == 1 ? 0U : 3U * (test.id <= 58 ? test.bits / 8U : 1U)));
+            for (size_t i = 0; i < accesses->size(); ++i) {
+                const auto& access = accesses->at(i);
+                EXPECT_EQ(access.address, 0x1000U + (post == 1 ? 0U : 3U * (test.id <= 58 ? test.bits / 8U : 1U)));
+                EXPECT_EQ(access.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+                EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+                EXPECT_EQ(access.accessIndex, i);
+                EXPECT_EQ(access.accessCount, 1U);
+                EXPECT_EQ(access.header.version, ACLSAN_API_VERSION);
+                EXPECT_EQ(access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+                EXPECT_EQ(access.instructionId, test.id);
+                EXPECT_EQ(access.layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
+                EXPECT_EQ(access.layout.range.bytes, test.bits / 8U);
+                EXPECT_EQ(access.header.pipeline, ACLSAN_DEVICE_PIPE_SCALAR);
+            }
+        }
+    }
+}
+
+TEST(CceInstructionPipeline, ScalarAtomAndRedPreserveRegisterOrderAndOperationType)
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    ASSERT_NE(decoder, nullptr);
+    for (const uint32_t id : {427U, 431U}) {
+        aclsan::ParsedTraceRecord parsed{};
+        parsed.record.instrId = id;
+        parsed.record.args[0] = id == 427 ? 0x11 : 0x2001000;
+        parsed.record.args[1] = id == 427 ? 0x2001000 : 0x22;
+        parsed.record.args[2] = id == 427 ? 0x22 : 1;
+        parsed.record.args[3] = id == 427 ? 0x33 : 0;
+        parsed.record.args[4] = id == 427 ? 1 : 4;
+        parsed.record.atomicMetadata = 0x80;
+        const auto decoded = decoder->decode(parsed.record);
+        ASSERT_TRUE(decoded);
+        if (id == 427) {
+            const auto* field = std::get_if<aclsan::ScalarAtomParamField>(&decoded->params);
+            ASSERT_NE(field, nullptr);
+            EXPECT_EQ(field->dstValue, 0x11U);
+            EXPECT_EQ(field->srcAddr, 0x2001000U);
+            EXPECT_EQ(field->srcOperand, 0x22U);
+            EXPECT_EQ(field->srcOperandCas, 0x33U);
+            EXPECT_EQ(field->atomicType, 1U);
+            EXPECT_EQ(field->sysVaBase, UINT64_C(0x100000000));
+        } else {
+            const auto* field = std::get_if<aclsan::ScalarRedParamField>(&decoded->params);
+            ASSERT_NE(field, nullptr);
+            EXPECT_EQ(field->srcAddr, 0x2001000U);
+            EXPECT_EQ(field->srcOperand, 0x22U);
+            EXPECT_EQ(field->atomicType, 1U);
+            EXPECT_EQ(field->sysVaBase, UINT64_C(0x100000000));
+        }
+    }
+}
+
+TEST(CceInstructionPipeline, ScalarAtomAndRedUseCapturedAddressWindow)
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    ASSERT_NE(decoder, nullptr);
+    const aclsan::MemoryFieldToCbdataConverter converter{{}};
+    struct Case {
+        uint32_t metadata;
+        aclsan::MemoryCbdataStatus status;
+    };
+    for (uint32_t id : {427U, 431U}) {
+        for (const Case test :
+             {Case{0x80, aclsan::MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE},
+              {0x100, aclsan::MemoryCbdataStatus::SUCCESS},
+              {0, aclsan::MemoryCbdataStatus::SUCCESS}}) {
+            SCOPED_TRACE(::testing::Message() << "id=" << id << " metadata=" << test.metadata);
+            aclsan::AclsanRawTraceRecord record{};
+            record.instrId = id;
+            record.args[id == 427 ? 1 : 0] = UINT64_C(0x100080040);
+            record.args[4] = 0;
+            record.atomicMetadata = test.metadata;
+            const auto decoded = decoder->decode(record);
+            ASSERT_TRUE(decoded);
+            const auto result = id == 427 ? converter.Convert(std::get<aclsan::ScalarAtomParamField>(decoded->params)) :
+                                            converter.Convert(std::get<aclsan::ScalarRedParamField>(decoded->params));
+            EXPECT_EQ(result.status, test.status);
+            if (test.status == aclsan::MemoryCbdataStatus::SUCCESS) {
+                ASSERT_EQ(result.data.size(), 1U);
+                EXPECT_EQ(result.data[0].address, UINT64_C(0x100080040));
+                EXPECT_EQ(result.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
+            }
+        }
+    }
+}
+
+TEST(CceInstructionPipeline, ScalarAtomAndRedProduceReadAndWriteForAllTypes)
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    ASSERT_NE(decoder, nullptr);
+    const uint32_t widths[] = {32, 32, 64, 64, 32, 32, 16, 16, 32};
+    for (uint32_t id = 427; id <= 435; ++id) {
+        SCOPED_TRACE(id);
+        aclsan::ParsedTraceRecord parsed{};
+        parsed.launchId = 45;
+        parsed.instrExecId = id;
+        parsed.record.instrId = id;
+        parsed.record.pc = 0x400 + id * 4;
+        parsed.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+        parsed.record.args[0] = id <= 430 ? 0x42 : 0x2001000;
+        parsed.record.args[1] = id <= 430 ? 0x2001000 : 0x1234;
+        parsed.record.args[2] = id <= 430 ? 0x1234 : UINT64_MAX;
+        parsed.record.args[3] = id <= 430 ? 0x5678 : 0;
+        parsed.record.args[4] = id <= 430 ? UINT64_MAX : 0;
+        parsed.record.atomicMetadata = 0x80;
+        const auto decoded = decoder->decode(parsed.record);
+        ASSERT_TRUE(decoded.has_value());
+        EXPECT_TRUE(aclsan::IsDefinedInstructionId(id));
+        if (id <= 430) {
+            EXPECT_EQ(decoded->kind, aclsan::DeviceInstructionKind::ScalarAtom);
+            const auto* field = std::get_if<aclsan::ScalarAtomParamField>(&decoded->params);
+            ASSERT_NE(field, nullptr);
+            EXPECT_EQ(field->dstValue, parsed.record.args[0]);
+            EXPECT_EQ(field->srcAddr, parsed.record.args[1]);
+            EXPECT_EQ(field->srcOperand, parsed.record.args[2]);
+            EXPECT_EQ(field->srcOperandCas, parsed.record.args[3]);
+            EXPECT_EQ(field->sysVaBase, UINT64_C(0x100000000));
+        } else {
+            EXPECT_EQ(decoded->kind, aclsan::DeviceInstructionKind::ScalarRed);
+            const auto* field = std::get_if<aclsan::ScalarRedParamField>(&decoded->params);
+            ASSERT_NE(field, nullptr);
+            EXPECT_EQ(field->srcAddr, parsed.record.args[0]);
+            EXPECT_EQ(field->srcOperand, parsed.record.args[1]);
+            EXPECT_EQ(field->sysVaBase, UINT64_C(0x100000000));
+        }
+        const auto callback = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+        ASSERT_TRUE(callback.has_value());
+        const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*callback);
+        ASSERT_NE(accesses, nullptr);
+        ASSERT_EQ(accesses->size(), 2U);
+        for (size_t i = 0; i < accesses->size(); ++i) {
+            const auto& access = accesses->at(i);
+            EXPECT_EQ(access.instructionId, id);
+            EXPECT_EQ(access.address, 0x2001000U);
+            EXPECT_EQ(access.dataBits, widths[id - 427]);
+            EXPECT_EQ(access.layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
+            EXPECT_EQ(access.layout.range.bytes, widths[id - 427] / 8);
             EXPECT_EQ(access.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_GM);
-            EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
-            EXPECT_EQ(access.header.version, ACLSAN_API_VERSION);
+            EXPECT_EQ(access.accessIndex, i);
+            EXPECT_EQ(access.accessCount, 2U);
+            EXPECT_EQ(access.accessMode, i == 0 ? ACLSAN_DEVICE_MEMORY_ACCESS_READ : ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
             EXPECT_EQ(
                 access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
-            EXPECT_EQ(access.instructionId, test.id);
-            EXPECT_EQ(access.layoutKind, ACLSAN_MEM_LAYOUT_RANGE);
-            EXPECT_EQ(access.layout.range.bytes, test.bits / 8U);
-            EXPECT_EQ(access.header.pipeline, ACLSAN_DEVICE_PIPE_SCALAR);
+            EXPECT_EQ(access.header.launchId, parsed.launchId);
+            EXPECT_EQ(access.header.instrExecId, parsed.instrExecId);
+            EXPECT_EQ(access.header.pc, parsed.record.pc);
         }
     }
 }
@@ -339,7 +474,6 @@ TEST(CceInstructionPipeline, ScalarAtomicInvalidPostAndOverflowPublishOnlyIncomp
             parsed.record.args[1] = static_cast<uint64_t>(test.offset);
             parsed.record.args[2] = test.post;
             parsed.record.args[3] = UINT64_C(0x100000000);
-            parsed.record.args[4] = aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
             const auto decoded = decoder->decode(parsed.record);
             ASSERT_TRUE(decoded.has_value());
             ExpectOnlyIncompleteScalarAccess(parsed, *decoded);
@@ -385,6 +519,110 @@ TEST(CceInstructionPipeline, UnsupportedAtomicDestinationPreservesSourceAndSigna
         for (size_t i = 0; i < accesses->size(); ++i) {
             EXPECT_EQ((*accesses)[i].accessIndex, i);
             EXPECT_EQ((*accesses)[i].accessCount, accesses->size());
+        }
+    }
+}
+
+TEST(CceInstructionPipeline, ScalarAtomRedUsesBishengTypeAsOneAtomicAccess)
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    ASSERT_NE(decoder, nullptr);
+    struct Operation {
+        uint32_t type;
+        uint32_t mode;
+    };
+    for (uint32_t id = 427; id <= 435; ++id) {
+        for (const Operation op :
+             {Operation{0, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS},
+              {1, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH},
+              {2, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD},
+              {3, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN},
+              {4, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX}}) {
+            SCOPED_TRACE(::testing::Message() << "id=" << id << " mode=" << op.mode);
+            aclsan::ParsedTraceRecord parsed{};
+            parsed.record.instrId = id;
+            parsed.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+            parsed.record.args[0] = id <= 430 ? 0x42 : 0x1000;
+            parsed.record.args[1] = id <= 430 ? 0x1000 : 17;
+            parsed.record.args[2] = id <= 430 ? 17 : op.type;
+            parsed.record.args[3] = id <= 430 && op.mode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS ? 19 : 0;
+            parsed.record.args[4] = id <= 430 ? op.type : 0;
+            parsed.record.atomicMetadata = 0x80;
+            const auto decoded = decoder->decode(parsed.record);
+            ASSERT_TRUE(decoded);
+            const auto translated = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+            ASSERT_TRUE(translated);
+            const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*translated);
+            ASSERT_NE(accesses, nullptr);
+            ASSERT_EQ(accesses->size(), 1U);
+            const auto& access = accesses->front();
+            EXPECT_EQ(access.accessMode, op.mode);
+            EXPECT_EQ(access.address, 0x1000U);
+            EXPECT_EQ(access.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+            EXPECT_EQ(access.accessIndex, 0U);
+            EXPECT_EQ(access.accessCount, 1U);
+        }
+    }
+}
+
+TEST(CceInstructionPipeline, ScalarAtomRedUnsupportedOperationKeepsCoverageUnknown)
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    ASSERT_NE(decoder, nullptr);
+    for (uint32_t id = 427; id <= 435; ++id) {
+        for (uint64_t type : {UINT64_C(5), UINT64_MAX}) {
+            SCOPED_TRACE(::testing::Message() << "id=" << id << " type=" << type);
+            aclsan::ParsedTraceRecord parsed{};
+            parsed.record.instrId = id;
+            parsed.record.args[0] = id <= 430 ? 0x42 : 0x1000;
+            parsed.record.args[1] = id <= 430 ? 0x1000 : 0;
+            parsed.record.args[id <= 430 ? 4 : 2] = type;
+            parsed.record.atomicMetadata = 0x80;
+            const auto decoded = decoder->decode(parsed.record);
+            ASSERT_TRUE(decoded);
+            const auto translated = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+            ASSERT_TRUE(translated);
+            const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*translated);
+            ASSERT_NE(accesses, nullptr);
+            ASSERT_EQ(accesses->size(), 2U);
+            for (const auto& access : *accesses)
+                EXPECT_NE(access.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN, 0U);
+        }
+    }
+}
+
+TEST(CceInstructionPipeline, ScalarAtomicPreservesCapturedConfigurationAndAddress)
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    ASSERT_NE(decoder, nullptr);
+    for (uint32_t id = 56; id <= 61; ++id) {
+        for (uint32_t cfg : {0U, 1U, 2U, 4U, 0x24U, 0x70U}) {
+            aclsan::ParsedTraceRecord parsed{};
+            parsed.record.instrId = id;
+            parsed.record.args[0] = 0x1000;
+            parsed.record.args[1] = static_cast<uint64_t>(int64_t{-3});
+            parsed.record.args[3] = UINT64_C(0x100000000);
+            parsed.record.atomicMetadata = cfg;
+            const auto decoded = decoder->decode(parsed.record);
+            ASSERT_TRUE(decoded);
+            const auto* field = std::get_if<aclsan::ScalarAtomicParamField>(&decoded->params);
+            ASSERT_NE(field, nullptr);
+            EXPECT_EQ(field->atomicConfig, cfg);
+            const auto translated = aclsan::TranslateDecodedTraceToCallbackData(parsed, *decoded);
+            ASSERT_TRUE(translated);
+            const auto* accesses = std::get_if<aclsan::DeviceMemoryAccessDataList>(&*translated);
+            ASSERT_NE(accesses, nullptr);
+            ASSERT_FALSE(accesses->empty());
+            if ((cfg & 0xfU) == 0 || cfg == 1 || cfg == 4 || cfg == 0x24) {
+                ASSERT_EQ(accesses->size(), 1U);
+                EXPECT_EQ(accesses->front().accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+                EXPECT_EQ(accesses->front().header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+            }
+            const uint32_t bytes = 4U >> ((id - 56) % 3);
+            for (const auto& access : *accesses) {
+                EXPECT_EQ(access.address, 0x1000U - 3U * (id <= 58 ? bytes : 1U));
+                EXPECT_EQ(access.layout.range.bytes, bytes);
+            }
         }
     }
 }

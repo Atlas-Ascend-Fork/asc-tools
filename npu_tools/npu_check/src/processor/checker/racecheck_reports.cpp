@@ -60,7 +60,7 @@ PhysicalSpaceKey ValidateAccesses(
     const auto currentMode = prepared != nullptr ? prepared->mode : racecheck::AccessMode(current);
     const bool priorRead = priorMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ;
     const bool currentRead = currentMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ;
-    const bool bothAtomic = racecheck::IsAtomicWrite(priorMode) && racecheck::IsAtomicWrite(currentMode);
+    const bool bothAtomic = IsAtomicWrite(priorMode) && IsAtomicWrite(currentMode);
     const auto kind = priorRead   ? ConflictKind::WAR :
                       currentRead ? ConflictKind::RAW :
                       bothAtomic  ? ConflictKind::ATOMIC_SEMANTIC :

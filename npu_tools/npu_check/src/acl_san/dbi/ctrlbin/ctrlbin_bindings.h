@@ -501,7 +501,7 @@ enum class InstrType {
 
 #if !defined(__CCE_IS_AICORE__)
 void RegisterCtrlbinBinding(
-    InstrType instrType, const std::string& injectedFuncName, const std::vector<uint16_t>& paraMask);
+    InstrType instrType, const std::string& injectedFuncName, const std::vector<int16_t>& paraMask);
 #endif
 extern "C" {
 __attribute__((weak)) void RegisterCtrlbinBindings();

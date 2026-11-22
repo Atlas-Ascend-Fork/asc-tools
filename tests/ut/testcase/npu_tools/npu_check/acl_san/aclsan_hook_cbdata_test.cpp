@@ -39,6 +39,7 @@
 #include "aclsan_trace_buffer.h"
 #include "aclsan_trace_runtime.h"
 #include "device_binary_registry.h"
+#include "dbi/kernel_argument_elf_fixture.h"
 #include "aclsan_dispatch.cpp"
 #include "aclsan_hook_aclrt.cpp"
 
@@ -1506,6 +1507,44 @@ TEST(AclsanHookCbdata, Main)
     TestArgsArrayUsesCallerPointerStorage();
     TestTraceArgumentModes();
     TestDisabledCallbackIsNotInvoked();
+}
+
+TEST(AclsanHookCbdata, ScalarAtomAndRedDebugLogsShowRegistersAndOperation)
+{
+    const auto* decoder = aclsan::FindDeviceInstructionDecoder(aclsan::SocVersion::DAV_3510);
+    ASSERT_NE(decoder, nullptr);
+    aclsan::ParsedTraceRecord atom{};
+    atom.record.instrId = 427;
+    atom.record.args[0] = 0x11;
+    atom.record.args[1] = 0x2001000;
+    atom.record.args[2] = 0x22;
+    atom.record.args[3] = 0x33;
+    atom.record.args[4] = 1;
+    atom.record.atomicMetadata = 0x80;
+    aclsan::ParsedTraceRecord red{};
+    red.record.instrId = 431;
+    red.record.args[0] = 0x2001000;
+    red.record.args[1] = 0x44;
+    red.record.args[2] = 2;
+    red.record.atomicMetadata = 0x80;
+    const std::string logs = CaptureDebugLogs([&] {
+        const auto atomDecoded = decoder->decode(atom.record);
+        const auto redDecoded = decoder->decode(red.record);
+        ASSERT_TRUE(atomDecoded);
+        ASSERT_TRUE(redDecoded);
+        (void)aclsan::TranslateDecodedTraceToCallbackData(atom, *atomDecoded);
+        (void)aclsan::TranslateDecodedTraceToCallbackData(red, *redDecoded);
+    });
+    EXPECT_NE(
+        logs.find("type=ScalarAtomParamField instrId=427 dataBits=32 arg0=0x11 arg1=0x2001000 "
+                  "arg2=0x22 arg3=0x33 atomicType=1"),
+        std::string::npos);
+    EXPECT_NE(
+        logs.find("type=ScalarRedParamField instrId=431 dataBits=32 arg0=0x2001000 arg1=0x44 atomicType=2"),
+        std::string::npos);
+    for (const char* label : {" xd=", " xn=", " xm=", " xt="}) {
+        EXPECT_EQ(logs.find(label), std::string::npos);
+    }
 }
 
 TEST(AclsanHookCbdata, L1ToBtAndFbDispatchSourceReads)

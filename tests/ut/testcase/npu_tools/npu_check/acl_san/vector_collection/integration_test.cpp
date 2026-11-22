@@ -11,6 +11,7 @@
 #include "aclsan_device_data.h"
 #include "aclsan_device_data_log.h"
 #include "aclsan_register_dependency.h"
+#include "aclsan_trace_buffer.h"
 #include "aclsan_trace_runtime.h"
 #include "aclsan_vf.h"
 #include "device_instr/arch/dav_3510/decoder.h"
@@ -24,6 +25,7 @@
 #include <cassert>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <type_traits>
@@ -243,19 +245,16 @@ void TestScalarUbCollection()
                 record.record.args[1] = static_cast<uint64_t>(offset);
                 record.record.args[2] = post;
                 record.record.args[3] = 0x100000000;
-                record.record.args[4] = ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
                 const auto decoded = decoder.decode(record.record);
                 assert(decoded);
                 if (id < 56) {
                     const auto& params = std::get<ScalarGmParamField>(decoded->params);
                     assert(params.addr == record.record.args[0] && params.offset == offset && params.post == post);
                     assert(params.sysVaBase == record.record.args[3]);
-                    assert(params.addressContext == ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
                 } else {
                     const auto& params = std::get<ScalarAtomicParamField>(decoded->params);
                     assert(params.addr == record.record.args[0] && params.offset == offset && params.post == post);
                     assert(params.sysVaBase == record.record.args[3]);
-                    assert(params.addressContext == ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
                 }
                 logs.clear();
                 memoryAccesses.clear();
@@ -276,8 +275,9 @@ void TestScalarUbCollection()
                 assert(access.address == static_cast<uint64_t>(0x40 + byteOffset));
                 assert(access.dataBits == bits && access.instructionId == id);
                 assert(
-                    access.accessMode ==
-                    (store ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE : ACLSAN_DEVICE_MEMORY_ACCESS_READ));
+                    access.accessMode == (id >= 56 ? ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD :
+                                          store    ? ACLSAN_DEVICE_MEMORY_ACCESS_WRITE :
+                                                     ACLSAN_DEVICE_MEMORY_ACCESS_READ));
                 assert(access.layoutKind == ACLSAN_MEM_LAYOUT_RANGE);
                 assert(access.layout.range.bytes == (bits / 8) * (pair ? 2 : 1));
                 assert(access.accessIndex == 0 && access.accessCount == 1);
@@ -290,8 +290,7 @@ void TestScalarUbCollection()
                     access.header.executor.blockType == record.blockType);
                 assert(access.header.pipeline == ACLSAN_DEVICE_PIPE_SCALAR);
                 assert(access.header.sourceKind == (store ? ACLSAN_DEVICE_SOURCE_ST : ACLSAN_DEVICE_SOURCE_LD));
-                const uint32_t flags =
-                    ACLSAN_DEVICE_EVENT_FLAG_EXACT | (id >= 56 ? ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN : 0);
+                const uint32_t flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT;
                 assert(access.header.flags == flags);
                 assert(errorCount == 0 && registerStates.empty());
             }
@@ -638,14 +637,105 @@ void TestVectorSyncCbdata()
         }
     }
 }
+
+// Exercise the device trace ABI, host parser, decoder and actual callback dispatch together.
+void TestScalarAtomicCollection()
+{
+    memoryAccesses.clear();
+    instructionCallbacks = 0;
+    std::vector<AclsanRawTraceRecord> raw;
+    for (uint32_t id = 56; id <= 61; ++id) {
+        for (uint64_t post : {0UL, 1UL}) {
+            for (int64_t offset : {-3, 3}) {
+                AclsanRawTraceRecord record{};
+                record.instrId = id;
+                record.category = DeviceInstructionCategory::MemoryAccess;
+                record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+                record.pc = 0x100 + raw.size() * 4;
+                record.siteId = static_cast<uint32_t>(raw.size() + 1);
+                record.args[0] = 0x2001000;
+                record.args[1] = static_cast<uint64_t>(offset);
+                record.args[2] = post;
+                record.args[3] = UINT64_C(0x100000000);
+                record.atomicMetadata = 0xfU;
+                raw.push_back(record);
+            }
+        }
+    }
+    for (uint32_t id = 427; id <= 435; ++id) {
+        AclsanRawTraceRecord record{};
+        record.instrId = id;
+        record.category = DeviceInstructionCategory::MemoryAccess;
+        record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+        record.pc = 0x100 + raw.size() * 4;
+        record.siteId = static_cast<uint32_t>(raw.size() + 1);
+        record.args[0] = id <= 430 ? 0x42 : 0x2001000;
+        record.args[1] = id <= 430 ? 0x2001000 : 0x1234;
+        record.args[2] = id <= 430 ? 0x1234 : UINT64_MAX;
+        record.args[3] = id <= 430 ? 0x5678 : 0;
+        record.args[4] = id <= 430 ? UINT64_MAX : 0;
+        record.atomicMetadata = 0x80;
+        raw.push_back(record);
+    }
+    std::vector<uint8_t> buffer;
+    std::string error;
+    assert(InitializeTraceBuffer(buffer, ASCSAN_PHYSICAL_CORE_SLOT_COUNT, 1, 43, error));
+    const size_t offset = TraceRecordOffset(1, 0);
+    std::memcpy(buffer.data() + offset, raw.data(), raw.size() * sizeof(raw[0]));
+    const auto parsed = DecodeTraceFifoRange(buffer.data() + offset, raw.size(), 1, 0, 1, 43, 2);
+    assert(parsed.ok && parsed.records.size() == raw.size());
+    DispatchTraceRecords(parsed.records, dav3510::GetDeviceInstructionDecoder());
+    assert(memoryAccesses.size() == 2 * raw.size());
+    for (size_t i = 0; i < raw.size(); ++i) {
+        const auto& record = raw[i];
+        const bool atomRed = record.instrId >= 427;
+        const uint32_t atomRedBytes[] = {4, 4, 8, 8, 4, 4, 2, 2, 4};
+        const uint32_t bytes = atomRed ? atomRedBytes[record.instrId - 427] : 4U >> ((record.instrId - 56) % 3);
+        const int64_t offset = static_cast<int64_t>(record.args[1]);
+        const int64_t scale = record.instrId <= 58 ? bytes : 1;
+        const uint64_t address = atomRed             ? (record.instrId <= 430 ? record.args[1] : record.args[0]) :
+                                 record.args[2] == 1 ? record.args[0] :
+                                                       record.args[0] + offset * scale;
+        if (atomRed) {
+            assert(
+                logs.find(
+                    std::string("[param] type=") +
+                    (record.instrId <= 430 ? "ScalarAtomParamField" : "ScalarRedParamField") +
+                    " instrId=" + std::to_string(record.instrId)) != std::string::npos);
+            assert(
+                logs.find(std::string(
+                    record.instrId <= 430 ? "arg0=0x42 arg1=0x2001000 arg2=0x1234 arg3=0x5678" :
+                                            "arg0=0x2001000 arg1=0x1234 atomicType=")) != std::string::npos);
+        }
+        for (size_t j = 0; j < 2; ++j) {
+            const auto& access = memoryAccesses[2 * i + j];
+            assert(access.instructionId == record.instrId);
+            assert(
+                access.accessMode == (j == 0 ? ACLSAN_DEVICE_MEMORY_ACCESS_READ : ACLSAN_DEVICE_MEMORY_ACCESS_WRITE));
+            assert(access.accessIndex == j && access.accessCount == 2);
+            assert(access.address == address && access.dataBits == bytes * 8);
+            assert(access.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM);
+            assert(access.layoutKind == ACLSAN_MEM_LAYOUT_RANGE && access.layout.range.bytes == bytes);
+            assert(
+                access.header.flags ==
+                (ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN));
+            assert(access.header.pc == record.pc && access.header.siteId == record.siteId);
+            assert(access.header.launchId == 43 && access.header.deviceId == 2);
+            assert(access.header.executor.phyCoreId == 1 && access.header.executor.blockId == 0);
+            assert(access.header.pipeline == ACLSAN_DEVICE_PIPE_SCALAR);
+            assert(access.header.instrExecId == parsed.records[i].instrExecId);
+        }
+    }
+    assert(errorCount == 0 && instructionCallbacks == memoryAccesses.size());
+}
 } // namespace
 
 // Capture the real dispatcher's output at the callback boundary.
 namespace aclsan {
 void AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(const AclsanDeviceMemoryAccessData& access) noexcept
 {
-    memoryAccesses.push_back(access);
     ++instructionCallbacks;
+    memoryAccesses.push_back(access);
 }
 void AclsanCallbackDispatcher::DispatchDeviceState(const AclsanDeviceRegisterStateData& state) noexcept
 {
@@ -659,6 +749,77 @@ void AclsanCallbackDispatcher::DispatchDeviceSync(const AclsanDeviceSyncData&) n
 void AclsanCallbackDispatcher::DispatchDeviceBarrier(const AclsanDeviceBarrierData&) noexcept
 {
     ++instructionCallbacks;
+}
+void TestKnownScalarAtomRedCollection()
+{
+    constexpr uint32_t modes[] = {
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX};
+    std::vector<AclsanRawTraceRecord> raw;
+    struct StoreType {
+        uint32_t encoding;
+        uint32_t bits;
+    };
+    for (const StoreType type :
+         {StoreType{0, 32}, {0, 16}, {0, 8}, {1, 32}, {4, 16}, {5, 32}, {7, 16}, {9, 16}, {0xa, 8}}) {
+        for (uint32_t base : {56U, 59U}) {
+            AclsanRawTraceRecord record{};
+            record.instrId = base + (type.bits == 32 ? 0 : type.bits == 16 ? 1 : 2);
+            record.category = DeviceInstructionCategory::MemoryAccess;
+            record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+            record.pc = 0x100 + raw.size() * 4;
+            record.args[0] = 0x2001000;
+            record.args[1] = static_cast<uint64_t>(int64_t{-3});
+            record.args[3] = UINT64_C(0x100000000);
+            record.atomicMetadata = type.encoding | 0x70U;
+            raw.push_back(record);
+        }
+    }
+    for (uint32_t id = 427; id <= 435; ++id) {
+        for (uint32_t op = 0; op <= 4; ++op) {
+            AclsanRawTraceRecord record{};
+            record.instrId = id;
+            record.category = DeviceInstructionCategory::MemoryAccess;
+            record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+            record.pc = 0x100 + raw.size() * 4;
+            record.args[0] = id <= 430 ? 0x42 : 0x2001000;
+            record.args[1] = id <= 430 ? 0x2001000 : 0x1234;
+            record.args[2] = id <= 430 ? 0x1234 : op;
+            record.args[3] = id <= 430 && op == 4 ? 0x5678 : 0;
+            record.args[4] = id <= 430 ? op : 0;
+            record.atomicMetadata = 0x80;
+            raw.push_back(record);
+        }
+    }
+    std::vector<uint8_t> buffer;
+    std::string error;
+    assert(InitializeTraceBuffer(buffer, ASCSAN_PHYSICAL_CORE_SLOT_COUNT, 1, 44, error));
+    const size_t offset = TraceRecordOffset(1, 0);
+    std::memcpy(buffer.data() + offset, raw.data(), raw.size() * sizeof(raw[0]));
+    const auto parsed = DecodeTraceFifoRange(buffer.data() + offset, raw.size(), 1, 0, 1, 44, 2);
+    assert(parsed.ok && parsed.records.size() == raw.size());
+    memoryAccesses.clear();
+    DispatchTraceRecords(parsed.records, dav3510::GetDeviceInstructionDecoder());
+    assert(memoryAccesses.size() == raw.size());
+    for (size_t i = 0; i < raw.size(); ++i) {
+        const auto& access = memoryAccesses[i];
+        assert(parsed.records[i].record.atomicMetadata == raw[i].atomicMetadata);
+        assert(access.instructionId == raw[i].instrId);
+        if (raw[i].instrId <= 61) {
+            assert(access.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+            const uint32_t bytes = 4U >> ((raw[i].instrId - 56) % 3);
+            const uint64_t expectedAddress = raw[i].args[0] - 3U * (raw[i].instrId <= 58 ? bytes : 1U);
+            assert(access.address == expectedAddress && access.layout.range.bytes == bytes);
+        } else {
+            assert(access.accessMode == modes[raw[i].args[raw[i].instrId <= 430 ? 4 : 2]]);
+        }
+        assert(access.accessIndex == 0 && access.accessCount == 1);
+        assert(access.header.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+        assert(access.header.launchId == 44 && access.header.pc == raw[i].pc);
+        assert(access.header.instrExecId == parsed.records[i].instrExecId);
+    }
+    assert(errorCount == 0);
 }
 } // namespace aclsan
 
@@ -703,6 +864,8 @@ int main()
     TestVaStateAndScatter();
     TestLdvaInvalidatesVaStateAndKeepsRead();
     TestVectorSyncCbdata();
+    TestScalarAtomicCollection();
+    TestKnownScalarAtomRedCollection();
     plog_test::ResetApi();
-    std::cout << "Vector and scalar UB instruction cbdata collection checks passed\n";
+    std::cout << "Vector and scalar memory collection checks passed\n";
 }

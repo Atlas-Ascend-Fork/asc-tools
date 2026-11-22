@@ -111,7 +111,7 @@ This command sets the operator execution timeout to 5 seconds to help investigat
 - `synccheck` checks intra-core and inter-core synchronization pairing issues and repeated synchronization setting issues.
 - `initcheck` checks initialization of persistent registers required by data-transfer and compute instructions, as well as initialization of GM, UB, L1, L0A, L0B, and L0C memory.
 - `racecheck` checks conflicting accesses to GM, UB, L1, L0A, L0B, and L0C.
-- `racecheck` supports ADD/MIN/MAX atomic write checking. Writes using the same atomic mode are not considered race conflicts; writes using different atomic modes report an atomic write semantic conflict when their address ranges overlap and required synchronization is missing. Atomic writes are also checked for conflicts with ordinary reads and writes.
+- `racecheck` supports ADD/MIN/MAX/EXCH/CAS atomic write checking. Writes using the same atomic mode are not considered race conflicts; writes using different atomic modes report an atomic write semantic conflict when their address ranges overlap and required synchronization is missing. Atomic writes are also checked for conflicts with ordinary reads and writes.
 - Writes with atomic mode disabled are checked as ordinary writes. Unsupported or unrecognized atomic configurations make race analysis incomplete.
 - `racecheck` can report multiple races within a single launch and continues checking other memory ranges after finding the first race. Only the first confirmed race for a given memory range is reported; subsequent races in that range are not reported again.
 - The target program must be able to run independently without `npu-check`.

@@ -10,9 +10,9 @@
 
 #include "checker/initcheck_padding.h"
 #include "checker/initcheck.h"
-#include "checker/memory_access_mode.h"
 #include "checker/initcheck_report.h"
 #include "checker/memory_access_layout.h"
+#include "checker/memory_access_mode.h"
 #include "device_instr/common/instruction_id.h"
 #include "npu_tool_log.h"
 
@@ -160,7 +160,7 @@ NpuCheckInitcheckReport BuildInitcheckMemoryReportBase(
     exec.pipeName = PipelineName(h.pipeline);
     exec.siteId = h.siteId;
     report.access.memorySpace = ReportMemorySpace(data.memorySpace);
-    report.access.accessMode = NpuCheckReportAccessMode::READ;
+    report.access.accessMode = *ReportMemoryAccessMode(data.accessMode);
     report.access.address = data.address;
     report.access.requiredAlign = data.alignSize;
     report.allocation.bytes = allocationBytes;
@@ -207,7 +207,8 @@ InitCheckStatus MemoryInitcheck::MarkInitialized(InitStateKey scope, uint64_t ad
 namespace {
 constexpr uint32_t INCOMPLETE_FLAGS = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
                                       static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED) |
-                                      static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR);
+                                      static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR) |
+                                      static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
 
 bool IsCompleteInstructionAccess(const AclsanDeviceMemoryAccessData& access, size_t accessCount)
 {
@@ -235,8 +236,7 @@ InitCheckStatus CollectInstructionOperands(
         if (h.version != ACLSAN_API_VERSION || h.size < sizeof(access) || h.deviceId != scope.deviceId ||
             race::Key(access) != race::Key(accesses.front()) || h.pipeline > MAX_WRITER_PIPELINE ||
             access.accessIndex >= accesses.size() || seen[access.accessIndex] ||
-            NormalizeMemoryAccessMode(access.accessMode) < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
-            NormalizeMemoryAccessMode(access.accessMode) > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX) {
+            !IsSupportedMemoryAccessMode(access.accessMode)) {
             return InitCheckStatus::INVALID_RECORD;
         }
         if (!IsCompleteInstructionAccess(access, accesses.size())) {
@@ -331,7 +331,7 @@ void ReportInstructionReads(
 {
     // Report all reads before writing any state for this instruction.
     for (const auto& operand : operands) {
-        if (!race::ReadsMemory(operand.access->accessMode))
+        if (!MemoryAccessReads(operand.access->accessMode))
             continue;
         std::map<uint64_t, NpuCheckInitcheckReport> reports;
         for (const auto& range : operand.ranges) {
@@ -436,7 +436,7 @@ InitCheckResult MemoryInitcheck::CheckInstruction(
         const uint64_t group = nextGroupId_++;
         ReportInstructionReads(operands, classify, queryInitialized, group, nextReportId_, result.reports);
         for (const auto& operand : operands) {
-            if (!commitWrites || !race::WritesMemory(operand.access->accessMode))
+            if (!commitWrites || !MemoryAccessWrites(operand.access->accessMode))
                 continue;
             for (const auto& range : operand.ranges) {
                 table.Write(range.address, range.bytes, static_cast<uint8_t>(operand.access->header.pipeline));
@@ -840,7 +840,7 @@ void Initcheck::CommitReplayGmWrites(
     // next synchronized launch sees these writes, never an arbitrary replay prefix.
     if (reasons.empty() && !analysis_->Managed()) {
         for (const auto& access : accesses) {
-            if (access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM || !race::WritesMemory(access.data.accessMode))
+            if (access.data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM || !MemoryAccessWrites(access.data.accessMode))
                 continue;
             // A stream completion does not establish an edge into kernels
             // already submitted on another stream. Invalidate their baseline.
@@ -882,7 +882,7 @@ void Initcheck::FinishReplayLaunch(
                 reason.c_str());
         }
         for (const auto& a : memory)
-            if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && race::WritesMemory(a.accessMode))
+            if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && MemoryAccessWrites(a.accessMode))
                 uncertainDevices_.insert(a.header.deviceId);
         return;
     }
@@ -954,7 +954,7 @@ ReplayAccessIndex IndexReplayAccesses(
                  h.pipeline, h.pc, h.siteId}) != 0) {
             // An invalid GM write has unknown effects; it must never establish
             // initialized bytes for this launch or a subsequent one.
-            if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && race::WritesMemory(a.accessMode))
+            if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && MemoryAccessWrites(a.accessMode))
                 reasons.insert("invalid_gm_write");
             continue;
         }
@@ -967,13 +967,13 @@ ReplayAccessIndex IndexReplayAccesses(
                 valid = valid && status == RangeStatus::VALID;
             }
             if (!valid) {
-                if (race::WritesMemory(a.accessMode))
+                if (MemoryAccessWrites(a.accessMode))
                     reasons.insert("invalid_gm_write");
                 continue;
             }
         }
         instructions[accesses[i].node].push_back(i);
-        if (race::WritesMemory(accesses[i].data.accessMode))
+        if (MemoryAccessWrites(accesses[i].data.accessMode))
             writers[race::StorageOf(accesses[i].data)].push_back(i);
     }
     return {std::move(instructions), std::move(writers)};
@@ -1024,7 +1024,7 @@ void Initcheck::CommitReplayLocalWrites(
         for (auto i : indices) {
             const auto& access = accesses[i];
             const auto space = access.data.memorySpace;
-            if (InitStateTableIndex::LocalCapacity(space) == 0 || !race::WritesMemory(access.data.accessMode))
+            if (InitStateTableIndex::LocalCapacity(space) == 0 || !MemoryAccessWrites(access.data.accessMode))
                 continue;
             const auto& h = access.data.header;
             const auto owner = access.data.memoryOwner;
@@ -1061,7 +1061,7 @@ struct ReplayCandidateSearch {
 bool HasReplayRead(const ReplayAccesses& accesses, const std::vector<size_t>& indices)
 {
     return std::any_of(indices.begin(), indices.end(), [&accesses](size_t i) {
-        return race::ReadsMemory(accesses[i].data.accessMode);
+        return MemoryAccessReads(accesses[i].data.accessMode);
     });
 }
 
@@ -1175,7 +1175,7 @@ void ScanReplayWriters(
             InferReplayPadding(search, w, sourceWrites, paddingByRead);
         } else if (relation == HappensBeforeGraph::Relation::Unordered) {
             for (auto r : readIndices)
-                if (race::ReadsMemory(search.accesses[r].data.accessMode) &&
+                if (MemoryAccessReads(search.accesses[r].data.accessMode) &&
                     Overlap(search.accesses[w].ranges, search.accesses[r].ranges))
                     search.reasons.insert("unordered_initialization");
         }

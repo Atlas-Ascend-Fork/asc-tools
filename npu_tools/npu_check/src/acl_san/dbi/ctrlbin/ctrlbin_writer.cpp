@@ -46,7 +46,7 @@ struct FuncInfo {
     uint16_t instrId;      // 插入指令的ID编码，现在先是gm_to_ubuf
     uint16_t injectFuncId; // 从FuncNameList中获得function，依据编号，可以找到function name
     uint16_t paraNum;      // 参数的个数，如：5
-    uint16_t paraMask[0];  // 具体参数的掩码，如：1|0   2    0    1   1|1 这样的
+    int16_t paraMask[0];   // 具体参数的掩码，负值由 bisheng-tune 解释为特殊参数。
 };
 #pragma pack()
 
@@ -55,7 +55,7 @@ struct FuncInfo {
 struct CtrlbinBinding {
     uint16_t instrId{};
     uint16_t injectFuncId{};
-    std::vector<uint16_t> paraMask;
+    std::vector<int16_t> paraMask;
 
     void Serialize(std::stringstream& ss) const
     {
@@ -79,7 +79,7 @@ public:
     }
 
     void RegisterCtrlbinBinding(
-        InstrType instrType, const std::string& injectedFuncName, const std::vector<uint16_t>& paraMask)
+        InstrType instrType, const std::string& injectedFuncName, const std::vector<int16_t>& paraMask)
     {
         if (injectFuncIdMap_.count(injectedFuncName) == 0) {
             injectFuncIdMap_[injectedFuncName] = static_cast<uint16_t>(funcNames_.size());
@@ -147,7 +147,7 @@ bool WriteCtrlbin(const std::string& outputPath)
 } // namespace
 
 void RegisterCtrlbinBinding(
-    InstrType instrType, const std::string& injectedFuncName, const std::vector<uint16_t>& paraMask)
+    InstrType instrType, const std::string& injectedFuncName, const std::vector<int16_t>& paraMask)
 {
     CtrlbinBindingRegistry::Instance().RegisterCtrlbinBinding(instrType, injectedFuncName, paraMask);
 }

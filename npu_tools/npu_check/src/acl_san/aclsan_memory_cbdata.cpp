@@ -81,7 +81,6 @@ constexpr uint32_t REGISTER_BANK_A = 0U;
 constexpr uint32_t REGISTER_BANK_B = 1U;
 constexpr uint32_t DMA_DESCRIPTOR_DIMENSION_COUNT = 3U;
 constexpr uint32_t UNSPECIFIED_DATA_BITS = 0U;
-constexpr uint32_t SCALAR_SYSTEM_WINDOW_MASK_BITS = 24U;
 constexpr uint32_t SCALAR_ADDRESS_SPACE_FLAG_SHIFT = 24U;
 constexpr uint32_t SCALAR_UB_OFFSET_BITS = 19U;
 constexpr uint32_t TRANSPOSE_B4_M_STEP_ALIGNMENT = 4U;
@@ -693,9 +692,6 @@ ScalarAddressResult ResolveScalarAddress(const ParamField& field, int64_t offset
     if (field.post > 1U) {
         return {MemoryCbdataStatus::INVALID_FIELD, 0};
     }
-    if (field.addressContext != ASCSAN_SCALAR_ADDRESS_CONTEXT_V1) {
-        return {MemoryCbdataStatus::MISSING_ADDRESS_CONTEXT, 0};
-    }
     const __int128 offset =
         field.post == 1U ? 0 : static_cast<__int128>(field.offset) * static_cast<__int128>(offsetScale);
     const __int128 address = static_cast<__int128>(field.addr) + offset;
@@ -706,8 +702,9 @@ ScalarAddressResult ResolveScalarAddress(const ParamField& field, int64_t offset
     // Match dav-3510 RemapAddress after effective-address calculation.
     // UB events use byte offsets, like the UB endpoints of DMA instructions.
     const uint64_t effective = static_cast<uint64_t>(address);
-    constexpr uint64_t windowMask = (UINT64_C(1) << SCALAR_SYSTEM_WINDOW_MASK_BITS) - 1;
-    const bool systemWindow = ((effective >> 25U) & windowMask) == ((field.sysVaBase >> 25U) & windowMask);
+    const bool systemWindow =
+        ((effective >> ASCSAN_SCALAR_SYS_VA_WINDOW_SHIFT) & ASCSAN_SCALAR_SYS_VA_WINDOW_MASK) ==
+        ((field.sysVaBase >> ASCSAN_SCALAR_SYS_VA_WINDOW_SHIFT) & ASCSAN_SCALAR_SYS_VA_WINDOW_MASK);
     if (systemWindow && ((effective >> SCALAR_ADDRESS_SPACE_FLAG_SHIFT) & 1U) == NO_ACCESS_COUNT) {
         const bool ub = ((effective >> 20U) & 0x1fU) == 0 && ((effective >> 19U) & 1U) != 0;
         if (ub) {
@@ -741,6 +738,26 @@ constexpr bool IsScalarGmRegisterOffset(uint32_t instructionId) noexcept
 
 class MemoryFieldVisitor final {
 public:
+    MemoryCbdataResult ScalarAtomicAccess(
+        uint32_t dataBits, uint64_t address, uint32_t mode, uint32_t memorySpace) const noexcept
+    {
+        const MemoryInstructionProfile profile{dataBits, ACLSAN_DEVICE_SOURCE_ST, context_.executor.blockType};
+        MemoryCbdataBuilder builder{context_, profile, memorySpace};
+        if (mode != 0) {
+            (void)builder.Add({address, mode, dataBits, RangeDescriptor{dataBits / 8U}});
+            return std::move(builder).Build();
+        }
+        // Retain bounds coverage for missing or unsupported operation encodings.
+        // These fragments must not participate in atomic race/initialization inference.
+        (void)builder.Add({address, ACLSAN_DEVICE_MEMORY_ACCESS_READ, dataBits, RangeDescriptor{dataBits / 8U}});
+        (void)builder.Add({address, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, dataBits, RangeDescriptor{dataBits / 8U}});
+        auto result = std::move(builder).Build();
+        for (auto& access : result.data) {
+            access.header.flags |= static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
+        }
+        return result;
+    }
+
     template <typename Field>
     MemoryCbdataResult operator()(const Field&) const noexcept
     {
@@ -869,17 +886,33 @@ public:
         if (resolved.status != MemoryCbdataStatus::SUCCESS) {
             return {resolved.status, {}};
         }
-        // ST_ATOMIC_CFG 独立于 CTRL，且 ctrlbin 不会提供它。
-        // 保留已知地址和位宽，供 Memcheck 按普通写检查；Racecheck 通过标记识别语义缺失。
-        const MemoryInstructionProfile profile{dataBits, ACLSAN_DEVICE_SOURCE_ST, context_.executor.blockType};
-        MemoryCbdataBuilder builder{context_, profile, resolved.memorySpace};
-        (void)builder.Add(
-            {resolved.address, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, dataBits, RangeDescriptor{dataBits / 8U}});
-        auto result = std::move(builder).Build();
-        for (auto& access : result.data) {
-            access.header.flags |= static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
+        // ST_ATOMIC_CFG[3:0] selects the numeric type; ST/STI_ATOMIC only add.
+        // Ignore bits [6:4]; the DMA atomic operation in CTRL does not apply here.
+        uint32_t mode = 0;
+        switch (field.atomicConfig & 0xfU) {
+            case 0x0: // Atomic accumulation is still enabled.
+            case 0x1: // s32
+            case 0x4: // fp16
+            case 0x5: // fp32
+            case 0x7: // bf16
+            case 0x9: // s16
+            case 0xa: // s8
+                mode = ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
+                break;
+            default:
+                break;
         }
-        return result;
+        return ScalarAtomicAccess(dataBits, resolved.address, mode, resolved.memorySpace);
+    }
+
+    MemoryCbdataResult operator()(const ScalarAtomParamField& field) const noexcept
+    {
+        return ConvertScalarAtomRed(field);
+    }
+
+    MemoryCbdataResult operator()(const ScalarRedParamField& field) const noexcept
+    {
+        return ConvertScalarAtomRed(field);
     }
 
     MemoryCbdataResult operator()(const ScalarPreloadParamField& field) const noexcept
@@ -1083,6 +1116,30 @@ public:
     }
 
 private:
+    template <typename Field>
+    MemoryCbdataResult ConvertScalarAtomRed(const Field& field) const noexcept
+    {
+        const ScalarGmParamField address{field.instrId, field.dataBits, field.srcAddr, 0, 0, field.sysVaBase};
+        const auto resolved = ResolveScalarAddress(address, 1, field.dataBits / 8U);
+        if (resolved.status != MemoryCbdataStatus::SUCCESS) {
+            return {resolved.status, {}};
+        }
+        if (resolved.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM) {
+            return {MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE, {}};
+        }
+        return ScalarAtomicAccess(
+            field.dataBits, resolved.address, ScalarAtomRedAccessMode(field.atomicType), resolved.memorySpace);
+    }
+
+    static uint32_t ScalarAtomRedAccessMode(uint64_t type) noexcept
+    {
+        constexpr uint32_t modes[] = {
+            ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH,
+            ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
+            ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX};
+        return type < std::size(modes) ? modes[type] : 0;
+    }
+
     static bool IsFixpipeOutputModeValid(const FixL0cToOutParamField& field, uint32_t dataBits) noexcept
     {
         if ((field.nz2ndEnable && field.nz2dnEnable) ||

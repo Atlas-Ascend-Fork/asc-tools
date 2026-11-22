@@ -43,8 +43,6 @@ const char* MemoryCbdataStatusName(MemoryCbdataStatus status) noexcept
             return "ARITHMETIC_OVERFLOW";
         case MemoryCbdataStatus::RESOURCE_EXHAUSTED:
             return "RESOURCE_EXHAUSTED";
-        case MemoryCbdataStatus::MISSING_ADDRESS_CONTEXT:
-            return "MISSING_ADDRESS_CONTEXT";
         case MemoryCbdataStatus::UNSUPPORTED_ADDRESS_SPACE:
             return "UNSUPPORTED_ADDRESS_SPACE";
         case MemoryCbdataStatus::INVALID_ADDRESS_SPACE:
@@ -73,8 +71,10 @@ constexpr bool IsMemoryAccessParamField() noexcept
         std::is_same<ParamField, aclsan::FixL0cToOutParamField>, std::is_same<ParamField, aclsan::ScalarGmParamField>,
         std::is_same<ParamField, aclsan::ScalarDevParamField>,
         std::is_same<ParamField, aclsan::ScalarPreloadParamField>,
-        std::is_same<ParamField, aclsan::ScalarAtomicParamField>, std::is_same<ParamField, aclsan::SetL12DParamField>,
-        std::is_same<ParamField, aclsan::MmadParamField>, std::is_same<ParamField, aclsan::LoadL1MxParamField>,
+        std::is_same<ParamField, aclsan::ScalarAtomicParamField>,
+        std::is_same<ParamField, aclsan::ScalarAtomParamField>, std::is_same<ParamField, aclsan::ScalarRedParamField>,
+        std::is_same<ParamField, aclsan::SetL12DParamField>, std::is_same<ParamField, aclsan::MmadParamField>,
+        std::is_same<ParamField, aclsan::LoadL1MxParamField>,
         std::is_same<ParamField, aclsan::LocalMemoryTransferParamField>,
         std::is_same<ParamField, aclsan::LoadCbufToL0ParamField>,
         std::is_same<ParamField, aclsan::LoadCbufToCbTransposeParamField>,

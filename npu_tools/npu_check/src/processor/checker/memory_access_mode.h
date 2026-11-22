@@ -12,6 +12,10 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_PROCESSOR_CHECKER_MEMORY_ACCESS_MODE_H
 
 #include "acl_san/aclsan_cbdata_device.h"
+#include "diagnostic/report_message.h"
+
+#include <cstdint>
+#include <optional>
 
 namespace npucheck {
 
@@ -28,6 +32,51 @@ constexpr uint32_t NormalizeMemoryAccessMode(uint32_t mode) noexcept
             return ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
         default:
             return mode;
+    }
+}
+
+inline bool IsAtomicWrite(uint32_t mode) noexcept
+{
+    return mode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD && mode <= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS;
+}
+
+inline bool IsSupportedMemoryAccessMode(uint32_t mode) noexcept
+{
+    mode = NormalizeMemoryAccessMode(mode);
+    return mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ || mode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE || IsAtomicWrite(mode);
+}
+
+inline bool MemoryAccessReads(uint32_t mode) noexcept
+{
+    mode = NormalizeMemoryAccessMode(mode);
+    return mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ || IsAtomicWrite(mode);
+}
+
+inline bool MemoryAccessWrites(uint32_t mode) noexcept
+{
+    mode = NormalizeMemoryAccessMode(mode);
+    return mode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE || IsAtomicWrite(mode);
+}
+
+inline std::optional<NpuCheckReportAccessMode> ReportMemoryAccessMode(uint32_t mode) noexcept
+{
+    switch (NormalizeMemoryAccessMode(mode)) {
+        case ACLSAN_DEVICE_MEMORY_ACCESS_READ:
+            return NpuCheckReportAccessMode::READ;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_WRITE:
+            return NpuCheckReportAccessMode::WRITE;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD:
+            return NpuCheckReportAccessMode::ATOMIC_WRITE_ADD;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN:
+            return NpuCheckReportAccessMode::ATOMIC_WRITE_MIN;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX:
+            return NpuCheckReportAccessMode::ATOMIC_WRITE_MAX;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH:
+            return NpuCheckReportAccessMode::ATOMIC_WRITE_EXCH;
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS:
+            return NpuCheckReportAccessMode::ATOMIC_WRITE_CAS;
+        default:
+            return std::nullopt;
     }
 }
 

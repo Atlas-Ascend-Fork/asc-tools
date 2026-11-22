@@ -21,6 +21,12 @@ namespace aclsan {
 constexpr uint32_t ASCSAN_TRACE_WAIT_ROUNDS = 15U;
 constexpr uint64_t ASCSAN_TRACE_WAIT_CYCLES = 300000000ULL;
 
+__aicore__ inline uint32_t CaptureScalarAtomRedSysVaWindow()
+{
+    const uint64_t sysVaBase = static_cast<uint64_t>(__cce_scalar::get_sys_va_base());
+    return static_cast<uint32_t>((sysVaBase >> ASCSAN_SCALAR_SYS_VA_WINDOW_SHIFT) & ASCSAN_SCALAR_SYS_VA_WINDOW_MASK);
+}
+
 __aicore__ inline void PublishTraceWriteControl(__gm__ AclsanTraceWriteLine* info)
 {
     dcci(info, cache_line_t::ENTIRE_DATA_CACHE, dcci_dst_t::CACHELINE_OUT);
@@ -81,7 +87,8 @@ __aicore__ inline void PublishTraceRecord(
 
 __aicore__ inline void WriteTracePayload(
     __gm__ AclsanRawTraceRecord* record, int64_t pc, uint16_t apiId, DeviceInstructionCategory category,
-    uint16_t pipeline, uint32_t blockId, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4)
+    uint16_t pipeline, uint32_t blockId, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4,
+    uint32_t atomicMetadata = 0U)
 {
     record->pc = static_cast<uint64_t>(pc);
     record->args[0] = arg0;
@@ -94,7 +101,7 @@ __aicore__ inline void WriteTracePayload(
     record->category = category;
     record->pipeline = pipeline;
     record->blockId = blockId;
-    record->reserved = 0U;
+    record->atomicMetadata = atomicMetadata;
     record->padding = 0U;
     record->parameterBase = static_cast<uint64_t>(get_para_base());
 }
@@ -102,7 +109,8 @@ __aicore__ inline void WriteTracePayload(
 // memInfo is the launch-owned segment passed through the hidden probe argument.
 __aicore__ inline void WriteTraceRecord(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, DeviceInstructionCategory category, uint16_t pipeline,
-    uint16_t apiId, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4)
+    uint16_t apiId, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4,
+    uint32_t atomicMetadata = 0U)
 {
     if (memInfo == nullptr) {
         return;
@@ -137,7 +145,7 @@ __aicore__ inline void WriteTraceRecord(
         static_cast<uint64_t>(phyCoreId) * ASCSAN_TRACE_RECORDS_PER_CORE * sizeof(AclsanRawTraceRecord);
     __gm__ AclsanRawTraceRecord* record =
         reinterpret_cast<__gm__ AclsanRawTraceRecord*>(ringAddress) + sequence % ASCSAN_TRACE_RECORDS_PER_CORE;
-    WriteTracePayload(record, pc, apiId, category, pipeline, blockId, arg0, arg1, arg2, arg3, arg4);
+    WriteTracePayload(record, pc, apiId, category, pipeline, blockId, arg0, arg1, arg2, arg3, arg4, atomicMetadata);
     PublishTraceRecord(record, writeControl, sequence);
 }
 

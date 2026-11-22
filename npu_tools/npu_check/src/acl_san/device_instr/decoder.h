@@ -85,6 +85,8 @@ enum class DeviceInstructionKind : uint32_t {
     CrossCoreWait,
     IntraBlockSet,
     IntraBlockWait,
+    ScalarAtom, // InstructionId::ScalarAtom* -> ScalarAtomParamField
+    ScalarRed,  // InstructionId::ScalarRed* -> ScalarRedParamField
 };
 
 using DeviceInstructionParamField = std::variant<
@@ -99,7 +101,7 @@ using DeviceInstructionParamField = std::variant<
     Img2ColParamField, FmatrixParamField, L3dRptParamField, ScalarGmParamField, PipeBarrierParamField,
     CrossCoreParamField, CtrlRegisterParamField, CopyUbufToUbufParamField, VectorMaskWriteParamField, PushPbParamField,
     VfParamField, ChannelParaParamField, FpcParamField, VtransposeParamField, Vbs32ParamField, VmrgsortParamField,
-    VnchwconvParamField, MoveVaParamField, LdvaParamField>;
+    VnchwconvParamField, MoveVaParamField, LdvaParamField, ScalarAtomParamField, ScalarRedParamField>;
 
 struct DecodedInstruction {
     DeviceInstructionKind kind = DeviceInstructionKind::InvalidInstruction;

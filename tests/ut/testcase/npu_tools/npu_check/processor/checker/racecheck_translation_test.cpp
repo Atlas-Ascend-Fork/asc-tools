@@ -754,4 +754,165 @@ TEST(RacecheckTranslation, UbL1TransfersUseIssuerOrderAndKeepStorageOwnersIsolat
     }
 }
 
+TEST(RacecheckTranslation, ScalarAtomAndRedKeepUnknownOperationExplicit)
+{
+    for (uint32_t id = 427; id <= 435; ++id) {
+        SCOPED_TRACE(id);
+        npucheck::Racechecker checker;
+        npucheck::CheckerReportList reports;
+        AclsanLaunchData launch{};
+        launch.launchId = 994;
+        launch.common.version = ACLSAN_API_VERSION;
+        launch.common.size = sizeof(launch);
+        ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+        for (uint32_t core : {0U, 1U}) {
+            ParsedTraceRecord raw{};
+            raw.launchId = launch.launchId;
+            raw.instrExecId = core + 1;
+            raw.phyCoreId = core;
+            raw.blockId = core;
+            raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+            raw.record.instrId = id;
+            raw.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+            raw.record.args[0] = id <= 430 ? 0 : 0x2001000;
+            raw.record.args[1] = id <= 430 ? 0x2001000 : 1;
+            raw.record.args[2] = id <= 430 ? 1 : UINT64_MAX;
+            raw.record.args[4] = id <= 430 ? UINT64_MAX : 0;
+            raw.record.atomicMetadata = 0x80;
+            const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+            ASSERT_TRUE(decoded.has_value());
+            const auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded);
+            ASSERT_TRUE(translated.has_value());
+            const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*translated);
+            ASSERT_NE(accesses, nullptr);
+            ASSERT_EQ(accesses->size(), 2U);
+            for (const auto& access : *accesses) {
+                ASSERT_TRUE(checker.OnCallback(
+                    ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, reports));
+            }
+        }
+        AclsanOperatorExecutionData completion{};
+        completion.common = {ACLSAN_API_VERSION, sizeof(completion)};
+        completion.launchId = launch.launchId;
+        ASSERT_TRUE(checker.OnCallback(
+            ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
+        checker.Finalize(reports);
+        EXPECT_FALSE(checker.AnalysisComplete());
+        EXPECT_TRUE(reports.empty());
+        EXPECT_NE(checker.Summary().find("atomic_configuration_unknown"), std::string::npos);
+    }
+}
+
+TEST(RacecheckTranslation, ScalarAtomRedKnownOperationsAreCompleteAtomicEvents)
+{
+    for (uint32_t id = 427; id <= 435; ++id) {
+        for (uint32_t op : {0U, 1U, 2U, 3U, 4U}) {
+            SCOPED_TRACE(::testing::Message() << "id=" << id << " operation=" << op);
+            npucheck::Racechecker checker;
+            npucheck::CheckerReportList reports;
+            AclsanLaunchData launch{};
+            launch.launchId = 995;
+            launch.common.version = ACLSAN_API_VERSION;
+            launch.common.size = sizeof(launch);
+            ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+            for (uint32_t core : {0U, 1U}) {
+                ParsedTraceRecord raw{};
+                raw.launchId = launch.launchId;
+                raw.instrExecId = core + 1;
+                raw.phyCoreId = core;
+                raw.blockId = core;
+                raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                raw.record.instrId = id;
+                raw.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+                raw.record.args[0] = id <= 430 ? 0 : 0x2001000;
+                raw.record.args[1] = id <= 430 ? 0x2001000 : 1;
+                raw.record.args[2] = id <= 430 ? 1 : op;
+                raw.record.args[4] = id <= 430 ? op : 0;
+                raw.record.atomicMetadata = 0x80;
+                const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+                ASSERT_TRUE(decoded);
+                const auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded);
+                ASSERT_TRUE(translated);
+                const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*translated);
+                ASSERT_NE(accesses, nullptr);
+                ASSERT_EQ(accesses->size(), 1U);
+                ASSERT_TRUE(checker.OnCallback(
+                    ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &accesses->front(),
+                    reports));
+            }
+            AclsanOperatorExecutionData completion{};
+            completion.common = {ACLSAN_API_VERSION, sizeof(completion)};
+            completion.launchId = launch.launchId;
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
+            AclsanSynchronizeData end{};
+            end.common.version = ACLSAN_API_VERSION;
+            end.common.size = sizeof(end);
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+            checker.Finalize(reports);
+            EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+            EXPECT_TRUE(reports.empty()) << checker.Summary();
+        }
+    }
+}
+
+TEST(RacecheckTranslation, ScalarStoreKnownConfigurationsAreCompleteAtomicAdd)
+{
+    struct Type {
+        uint32_t encoding;
+        uint32_t bits;
+    };
+    for (const Type type : {Type{0, 32}, {0, 16}, {0, 8}, {1, 32}, {4, 16}, {5, 32}, {7, 16}, {9, 16}, {0xa, 8}}) {
+        for (uint32_t base : {56U, 59U}) {
+            const uint32_t id = base + (type.bits == 32 ? 0 : type.bits == 16 ? 1 : 2);
+            SCOPED_TRACE(::testing::Message() << "id=" << id << " type=" << type.encoding);
+            npucheck::Racechecker checker;
+            npucheck::CheckerReportList reports;
+            AclsanLaunchData launch{};
+            launch.launchId = 996;
+            launch.common.version = ACLSAN_API_VERSION;
+            launch.common.size = sizeof(launch);
+            ASSERT_TRUE(checker.OnCallback(ACLSAN_CB_DOMAIN_LAUNCH, ACLSAN_CBID_LAUNCH_KERNEL, &launch, reports));
+            for (uint32_t core : {0U, 1U}) {
+                ParsedTraceRecord raw{};
+                raw.launchId = launch.launchId;
+                raw.instrExecId = core + 1;
+                raw.phyCoreId = core;
+                raw.blockId = core;
+                raw.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE;
+                raw.record.instrId = id;
+                raw.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+                raw.record.args[0] = 0x2001000;
+                raw.record.args[3] = UINT64_C(0x100000000);
+                raw.record.atomicMetadata = type.encoding | 0x70U;
+                const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(raw.record);
+                ASSERT_TRUE(decoded);
+                const auto translated = TranslateDecodedTraceToCallbackData(raw, *decoded);
+                ASSERT_TRUE(translated);
+                const auto* accesses = std::get_if<DeviceMemoryAccessDataList>(&*translated);
+                ASSERT_NE(accesses, nullptr);
+                ASSERT_EQ(accesses->size(), 1U);
+                ASSERT_EQ(accesses->front().accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+                ASSERT_TRUE(checker.OnCallback(
+                    ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &accesses->front(),
+                    reports));
+            }
+            AclsanOperatorExecutionData completion{};
+            completion.common = {ACLSAN_API_VERSION, sizeof(completion)};
+            completion.launchId = launch.launchId;
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_OPERATOR_EXECUTION, ACLSAN_CBID_OPERATOR_EXECUTION_COMPLETE, &completion, reports));
+            AclsanSynchronizeData end{};
+            end.common.version = ACLSAN_API_VERSION;
+            end.common.size = sizeof(end);
+            ASSERT_TRUE(checker.OnCallback(
+                ACLSAN_CB_DOMAIN_SYNCHRONIZE, ACLSAN_CBID_SYNCHRONIZE_STREAM_SYNC_END, &end, reports));
+            checker.Finalize(reports);
+            EXPECT_TRUE(checker.AnalysisComplete()) << checker.Summary();
+            EXPECT_TRUE(reports.empty()) << checker.Summary();
+        }
+    }
+}
+
 } // namespace

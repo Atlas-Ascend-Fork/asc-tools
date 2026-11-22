@@ -20,6 +20,9 @@ namespace aclsan {
 constexpr uint64_t ASCSAN_SCALAR_ADDRESS_CONTEXT_V1 = 0x5343414C41520001ULL;
 constexpr uint32_t DAV3510_UB_CAPACITY_BYTES = 256U * 1024U;
 constexpr uint32_t DAV3510_UB_DEFAULT_RESERVED_BYTES = 8U * 1024U;
+// ATOM/RED records carry the SYS_VA_BASE window in atomicMetadata.
+constexpr uint32_t ASCSAN_SCALAR_SYS_VA_WINDOW_SHIFT = 25U;
+constexpr uint32_t ASCSAN_SCALAR_SYS_VA_WINDOW_MASK = 0xFFFFFFU;
 
 constexpr uint64_t ASCSAN_TRACE_BUFFER_MAGIC = 0x41534353414E303AULL;
 constexpr uint32_t ASCSAN_TRACE_RECORDS_PER_CORE = 13107U;
@@ -129,7 +132,7 @@ struct AclsanRawTraceRecord {
     DeviceInstructionCategory category;
     uint16_t pipeline;
     uint32_t blockId;
-    uint32_t reserved;
+    uint32_t atomicMetadata;
     uint32_t padding;
     uint64_t parameterBase;
 };
@@ -184,7 +187,7 @@ static_assert(
 static_assert(sizeof(AclsanTraceWriteLine) == 64U && sizeof(AclsanTraceReadLine) == 64U);
 static_assert(sizeof(AclsanTraceControl) == 128U && offsetof(AclsanTraceControl, read) == 64U);
 static_assert(
-    sizeof(AclsanRawTraceRecord) == 80U && offsetof(AclsanRawTraceRecord, reserved) == 64U &&
+    sizeof(AclsanRawTraceRecord) == 80U && offsetof(AclsanRawTraceRecord, atomicMetadata) == 64U &&
     offsetof(AclsanRawTraceRecord, padding) == 68U && offsetof(AclsanRawTraceRecord, parameterBase) == 72U);
 static_assert(TraceRecordOffset(0U, 0U) == 13888U);
 

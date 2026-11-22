@@ -229,13 +229,14 @@ TEST(SimtUbMemcheckTest, AtomicAndReductionWriteModesUseIdenticalBounds)
 {
     for (uint32_t mode :
          {ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD,
-          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX}) {
+          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX,
+          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS}) {
         Memcheck checker;
         auto access = SimtWrite(0x2ffe, 4);
         access.accessMode = mode;
         checker.QueueSimtUbMemoryAccess(access);
-        EXPECT_EQ(checker.OnSynchronization().size(), 1U);
-        EXPECT_TRUE(checker.AnalysisComplete());
+        EXPECT_EQ(checker.OnSynchronization().size(), 1U) << mode;
+        EXPECT_TRUE(checker.AnalysisComplete()) << mode;
     }
 }
 

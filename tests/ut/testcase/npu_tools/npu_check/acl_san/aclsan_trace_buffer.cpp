@@ -61,7 +61,7 @@ static_assert(sizeof(DeviceInstructionCategory) == sizeof(uint16_t));
 static_assert(offsetof(AclsanRawTraceRecord, category) == 56);
 static_assert(offsetof(AclsanRawTraceRecord, pipeline) == 58);
 static_assert(offsetof(AclsanRawTraceRecord, blockId) == 60);
-static_assert(offsetof(AclsanRawTraceRecord, reserved) == 64);
+static_assert(offsetof(AclsanRawTraceRecord, atomicMetadata) == 64);
 static_assert(offsetof(AclsanRawTraceRecord, parameterBase) == 72);
 
 aclsan::TraceBufferParseResult DecodeSnapshot(
@@ -104,7 +104,7 @@ bool PutRecord(
     record->category = DeviceInstructionCategory::MemoryAccess;
     record->pipeline = static_cast<uint16_t>(pipeline);
     record->blockId = blockId;
-    record->reserved = 0;
+    record->atomicMetadata = 0;
     record->parameterBase = 0x10000 + pc;
     std::memcpy(buffer.data() + aclsan::TraceRecordOffset(sliceIndex, index), &raw, sizeof(raw));
     const uint32_t writeSequence = index + 1;

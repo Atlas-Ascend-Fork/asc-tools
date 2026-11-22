@@ -1178,9 +1178,10 @@ TEST(CubeMemoryRegression, CopyV2DestinationStrideIsGapAfterBurst)
     EXPECT_EQ(reports[0].access.rangeEnd, 0x80020u);
 }
 
-TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmWrites)
+TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmAccesses)
 {
-    for (uint32_t id : {56u, 57u, 58u, 59u, 60u, 61u, 83u, 91u}) {
+    for (uint32_t id : {56u, 57u, 58u, 59u, 60u, 61u, 83u, 91u, 427u, 428u, 429u, 430u, 431u, 432u, 433u, 434u, 435u}) {
+        const bool scalar = id != 83 && id != 91;
         for (uint64_t address : {0x1000u, 0x2000u}) {
             SCOPED_TRACE(::testing::Message() << "id=" << id << " address=" << address);
             ParsedTraceRecord parsed{};
@@ -1200,8 +1201,17 @@ TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmWrites)
                 parsed.record.args[3] = 16;
             } else {
                 parsed.record.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
-                parsed.record.args[3] = UINT64_C(0x100000000);
-                parsed.record.args[4] = ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
+                if (id >= 427) {
+                    if (id <= 430) {
+                        parsed.record.args[0] = 0;
+                        parsed.record.args[1] = address;
+                    }
+                    parsed.record.args[id <= 430 ? 4 : 2] = UINT64_MAX;
+                    parsed.record.atomicMetadata = 0x80;
+                } else {
+                    parsed.record.args[3] = UINT64_C(0x100000000);
+                    parsed.record.atomicMetadata = UINT32_MAX;
+                }
             }
             const auto decoded = dav3510::GetDeviceInstructionDecoder().decode(parsed.record);
             ASSERT_TRUE(decoded);
@@ -1231,7 +1241,9 @@ TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmWrites)
                             ACLSAN_DEVICE_EVENT_FLAG_EXACT :
                             ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
                     EXPECT_EQ(access.header.flags, expectedFlags);
-                    EXPECT_EQ(access.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+                    EXPECT_EQ(
+                        access.accessMode, scalar && access.accessIndex == 0 ? ACLSAN_DEVICE_MEMORY_ACCESS_READ :
+                                                                               ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
                     if (id == 83 || id == 91) {
                         EXPECT_NE(access.regDependencyMask0 & (UINT64_C(1) << ACLSAN_DEVICE_REGISTER_CTRL), 0U);
                     }
@@ -1239,10 +1251,13 @@ TEST(CubeMemoryRegression, MissingAtomicConfigurationStillChecksGmWrites)
                 checker.QueueDeviceMemoryAccess(access);
             }
             const auto reports = checker.OnSynchronization();
-            ASSERT_EQ(reports.size(), address == 0x2000 ? 1u : 0u);
+            ASSERT_EQ(reports.size(), address == 0x2000 ? (scalar ? 2u : 1u) : 0u);
             if (!reports.empty()) {
                 EXPECT_EQ(reports[0].access.memorySpace, npucheck::NpuCheckReportMemorySpace::GM);
-                EXPECT_EQ(reports[0].access.accessMode, npucheck::NpuCheckReportAccessMode::WRITE);
+                EXPECT_EQ(
+                    reports[0].access.accessMode,
+                    scalar ? npucheck::NpuCheckReportAccessMode::READ : npucheck::NpuCheckReportAccessMode::WRITE);
+                EXPECT_EQ(reports.back().access.accessMode, npucheck::NpuCheckReportAccessMode::WRITE);
                 EXPECT_EQ(reports[0].access.address, address);
             }
             EXPECT_TRUE(checker.AnalysisComplete());

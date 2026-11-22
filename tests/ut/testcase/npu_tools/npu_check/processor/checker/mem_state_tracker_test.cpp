@@ -22,6 +22,16 @@
 namespace npucheck {
 namespace {
 
+constexpr std::array<AclsanDeviceMemoryAccessMode, 5> kAtomicModes = {
+    ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
+    ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH,
+    ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS};
+
+size_t AtomicIndex(uint32_t mode)
+{
+    return static_cast<size_t>(std::find(kAtomicModes.begin(), kAtomicModes.end(), mode) - kAtomicModes.begin());
+}
+
 class MemStateTrackerTest : public ::testing::Test {
 protected:
     std::vector<AclsanDeviceMemoryAccessData> records;
@@ -81,14 +91,14 @@ protected:
         EXPECT_EQ(segment.end, end);
         EXPECT_EQ(segment.state, state);
         std::optional<CbIndex> ordinary;
-        std::array<std::vector<CbIndex>, 3> atomic;
+        std::array<std::vector<CbIndex>, 5> atomic;
         for (auto index : writers) {
             const auto mode = records[index].accessMode;
             if (mode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE) {
                 ASSERT_FALSE(ordinary.has_value());
                 ordinary = index;
             } else {
-                atomic.at(mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD).push_back(index);
+                atomic.at(AtomicIndex(mode)).push_back(index);
             }
         }
         EXPECT_EQ(segment.writer, ordinary);
@@ -99,8 +109,10 @@ protected:
 
 TEST_F(MemStateTrackerTest, VfModesUseOrdinaryReadWriteConflictSemantics)
 {
-    for (uint32_t previous = 6; previous <= 9; ++previous) {
-        for (uint32_t current = 6; current <= 9; ++current) {
+    for (uint32_t previous = ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ;
+         previous <= ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE; ++previous) {
+        for (uint32_t current = ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ;
+             current <= ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_WRITE; ++current) {
             SCOPED_TRACE(::testing::Message() << previous << "/" << current);
             const uint64_t begin = (previous * 16 + current) * 1024;
             const auto a =
@@ -110,7 +122,11 @@ TEST_F(MemStateTrackerTest, VfModesUseOrdinaryReadWriteConflictSemantics)
             const auto b =
                 Add(static_cast<AclsanDeviceMemoryAccessMode>(current), begin, begin + 4, 10,
                     ACLSAN_DEVICE_MEMORY_SPACE_UB);
-            const bool bothRead = (previous == 6 || previous == 8) && (current == 6 || current == 8);
+            const bool previousRead = previous == ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ ||
+                                      previous == ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_READ;
+            const bool currentRead = current == ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ ||
+                                     current == ACLSAN_DEVICE_MEMORY_ACCESS_VF_SCALAR_READ;
+            const bool bothRead = previousRead && currentRead;
             std::vector<AccessPair> candidates;
             ASSERT_NO_THROW(candidates = tracker.CheckPotentialRace(b));
             ASSERT_EQ(candidates.size(), bothRead ? 0U : 1U);
@@ -123,13 +139,16 @@ TEST_F(MemStateTrackerTest, VfModesUseOrdinaryReadWriteConflictSemantics)
                 ReportRecord normalized;
                 ASSERT_EQ(NormalizeRacecheckReport(diagnostics.front(), &normalized), ReportRenderStatus::SUCCESS);
                 const char* names[] = {"vf vector read", "vf vector write", "vf scalar read", "vf scalar write"};
-                EXPECT_EQ(normalized.fields.at("previousAccess"), names[previous - 6]);
-                EXPECT_EQ(normalized.fields.at("currentAccess"), names[current - 6]);
+                EXPECT_EQ(
+                    normalized.fields.at("previousAccess"),
+                    names[previous - ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ]);
+                EXPECT_EQ(
+                    normalized.fields.at("currentAccess"), names[current - ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_READ]);
             }
             ASSERT_NO_THROW(Update(b, {}));
             const PhysicalSpaceKey key{0, ACLSAN_DEVICE_MEMORY_SPACE_UB, 10, 0, ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR};
             const auto& segment = tracker.Tables().at(key).at(begin);
-            EXPECT_EQ(segment.state, current == 6 || current == 8 ? MemOpState::Read : MemOpState::Write);
+            EXPECT_EQ(segment.state, currentRead ? MemOpState::Read : MemOpState::Write);
         }
     }
 }
@@ -707,7 +726,7 @@ TEST_F(MemStateTrackerTest, DefaultTrackerAcceptsAtomicWritesAndChecksOrdinaryAc
 TEST_F(MemStateTrackerTest, UnknownModesAndInexactInputsAreRejected)
 {
     auto a = Add(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
-    for (uint32_t mode : {0U, 10U, 11U, std::numeric_limits<uint32_t>::max()}) {
+    for (uint32_t mode : {0U, 12U, 13U, std::numeric_limits<uint32_t>::max()}) {
         records[a].accessMode = mode;
         EXPECT_THROW(tracker.CheckPotentialRace(a), RacecheckError);
         EXPECT_THROW(tracker.UpdateMemState(a, {}), RacecheckError);
@@ -1385,13 +1404,21 @@ TEST_F(MemStateTrackerTest, RandomizedMixedSparseAccessesAndReplayPreserveEveryB
         AclsanDeviceMemoryAccessMode last = ACLSAN_DEVICE_MEMORY_ACCESS_READ;
         std::optional<CbIndex> writer;
         std::vector<CbIndex> readers;
-        std::array<std::vector<CbIndex>, 3> atomic;
+        std::array<std::vector<CbIndex>, 5> atomic;
     };
     struct AccessCase {
         CbIndex index;
         AclsanDeviceMemoryAccessMode mode;
         std::array<bool, byteCount> mask{};
     };
+    constexpr std::array<AclsanDeviceMemoryAccessMode, 7> modes = {
+        ACLSAN_DEVICE_MEMORY_ACCESS_READ,
+        ACLSAN_DEVICE_MEMORY_ACCESS_WRITE,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS};
     for (uint32_t seed = 0; seed < 8; ++seed) {
         std::mt19937 random(20261019 + seed);
         MemStateTracker observed{records};
@@ -1403,7 +1430,7 @@ TEST_F(MemStateTrackerTest, RandomizedMixedSparseAccessesAndReplayPreserveEveryB
             if (step != 0 && step % 17 == 0) {
                 current = accesses[random() % accesses.size()];
             } else {
-                current.mode = static_cast<AclsanDeviceMemoryAccessMode>(1 + random() % 5);
+                current.mode = modes[random() % modes.size()];
                 if (random() % 2) {
                     const uint64_t begin = random() % byteCount;
                     const uint64_t end = begin + 1 + random() % (byteCount - begin);
@@ -1446,7 +1473,8 @@ TEST_F(MemStateTrackerTest, RandomizedMixedSparseAccessesAndReplayPreserveEveryB
                     }
                 };
                 const bool write = current.mode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
-                const bool atomic = current.mode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD;
+                const bool atomic = current.mode != ACLSAN_DEVICE_MEMORY_ACCESS_READ &&
+                                    current.mode != ACLSAN_DEVICE_MEMORY_ACCESS_WRITE;
                 if (write && old.last == ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
                     for (auto index : old.readers) {
                         add(index);
@@ -1461,8 +1489,7 @@ TEST_F(MemStateTrackerTest, RandomizedMixedSparseAccessesAndReplayPreserveEveryB
                     add(*old.writer);
                 }
                 for (size_t group = 0; group < old.atomic.size(); ++group) {
-                    if (atomic &&
-                        group == static_cast<size_t>(current.mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD)) {
+                    if (atomic && group == AtomicIndex(current.mode)) {
                         continue;
                     }
                     for (auto index : old.atomic[group]) {
@@ -1512,7 +1539,7 @@ TEST_F(MemStateTrackerTest, RandomizedMixedSparseAccessesAndReplayPreserveEveryB
                 } else {
                     auto& history = current.mode == ACLSAN_DEVICE_MEMORY_ACCESS_READ ?
                                         state.readers :
-                                        state.atomic[current.mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD];
+                                        state.atomic[AtomicIndex(current.mode)];
                     if (std::find(history.begin(), history.end(), current.index) == history.end()) {
                         history.push_back(current.index);
                     }

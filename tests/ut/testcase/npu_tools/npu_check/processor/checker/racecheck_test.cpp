@@ -1141,10 +1141,12 @@ TEST(RacecheckIntegrationTest, ConcreteAtomicModesUseMemstateCompatibility)
 {
     for (uint32_t first :
          {ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
-          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX}) {
+          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH,
+          ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS}) {
         for (uint32_t second :
              {ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
-              ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX}) {
+              ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH,
+              ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS}) {
             Harness h;
             auto a = Memory(1, first);
             a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
@@ -1884,15 +1886,17 @@ TEST(RacecheckTest, RandomExactFootprintsAgreeWithExhaustiveByteOracle)
     }
 }
 
-TEST(RacecheckTest, AtomicAndUnknownOwnersRemainUnsupported)
+TEST(RacecheckTest, UnknownAtomicConfigurationAndOwnersRemainUnsupported)
 {
     for (bool atomic : {false, true}) {
         Harness h;
         auto a = Memory(1);
-        if (atomic)
+        if (atomic) {
             a.instructionId = 56;
-        else
+            a.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN;
+        } else {
             a.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_UNKNOWN;
+        }
         a.memoryOwner = a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? AclsanCoreInfo{} : a.header.executor;
         h.Add(a);
         h.Add(Memory(2, 1, 1));

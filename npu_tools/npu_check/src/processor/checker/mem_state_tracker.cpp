@@ -89,6 +89,8 @@ AclsanDeviceMemoryAccessMode AccessMode(const AclsanDeviceMemoryAccessData& data
         case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD:
         case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN:
         case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX:
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH:
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS:
             return static_cast<AclsanDeviceMemoryAccessMode>(data.accessMode);
         default:
             Unsupported("unknown memory access mode");
@@ -369,6 +371,11 @@ MemState& MemState::operator=(const MemState& other)
 namespace {
 [[noreturn]] void Invalid(const char* message) { throw RacecheckError(RacecheckErrorKind::InvalidEvent, message); }
 
+size_t AtomicMemoryAccessGroup(AclsanDeviceMemoryAccessMode mode) noexcept
+{
+    return static_cast<size_t>(mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+}
+
 // 源读先于同一动态指令的普通目标覆盖写入（例如 Add(A, B, A)。
 // 这不是对相同指令 ID、原子目标或写先于读组合的通用豁免。
 // 这条说明已合并到上一行。
@@ -382,18 +389,13 @@ bool IsInstructionReadBeforeWrite(
 
 // 状态相关的选择遵循 V2 第 2.5 节，而不是直接套用读写矩阵：
 // 之前接受的访问可能覆盖普通历史记录。
-size_t AtomicWriterGroup(AclsanDeviceMemoryAccessMode mode)
-{
-    return static_cast<size_t>(mode) - static_cast<size_t>(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
-}
-
 template <class Visitor>
 void VisitCandidates(const MemState& segment, AclsanDeviceMemoryAccessMode current, Visitor&& visitor)
 {
     if (segment.state == MemOpState::Race) {
         return;
     }
-    const bool atomic = racecheck::IsAtomicWrite(current);
+    const bool atomic = IsAtomicWrite(current);
     const bool readersCoverHistory =
         (current == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE && segment.state == MemOpState::Read) ||
         (atomic && !segment.readers.empty());
@@ -415,7 +417,7 @@ void VisitCandidates(const MemState& segment, AclsanDeviceMemoryAccessMode curre
         }
     }
     for (size_t group = 0; group < segment.atomicWriters.size(); ++group) {
-        if (atomic && group == AtomicWriterGroup(current)) {
+        if (atomic && group == AtomicMemoryAccessGroup(current)) {
             continue;
         }
         for (CbIndex index : segment.atomicWriters[group]) {
@@ -456,7 +458,7 @@ void VisitReadWriteHistory(
         }
         return;
     }
-    if (!racecheck::IsAtomicWrite(normalized)) {
+    if (!IsAtomicWrite(normalized)) {
         return;
     }
     for (const auto index : readers) {
@@ -466,7 +468,7 @@ void VisitReadWriteHistory(
         visitor(index);
     }
     for (size_t group = 0; group < atomicWriters.size(); ++group) {
-        if (group == AtomicWriterGroup(normalized)) {
+        if (group == AtomicMemoryAccessGroup(normalized)) {
             continue;
         }
         for (const auto index : atomicWriters[group]) {
@@ -488,7 +490,7 @@ void VisitVfCandidates(
     const auto mode = racecheck::AccessMode(current);
     const auto normalized = static_cast<AclsanDeviceMemoryAccessMode>(NormalizeMemoryAccessMode(mode));
     if (normalized != ACLSAN_DEVICE_MEMORY_ACCESS_READ && normalized != ACLSAN_DEVICE_MEMORY_ACCESS_WRITE &&
-        !racecheck::IsAtomicWrite(normalized)) {
+        !IsAtomicWrite(normalized)) {
         return;
     }
     if (currentKey) {
@@ -659,7 +661,7 @@ void ApplyVf(MemState& segment, const AclsanDeviceMemoryAccessData& data, bool n
                 segment.state = MemOpState::Write;
                 break;
             default:
-                if (racecheck::IsAtomicWrite(mode) && !history.writes) {
+                if (IsAtomicWrite(mode) && !history.writes) {
                     auto& writers = history.atomicWriters;
                     const auto end = std::upper_bound(
                         writers.begin(), writers.end(), mode,
@@ -684,8 +686,8 @@ void ApplyVf(MemState& segment, const AclsanDeviceMemoryAccessData& data, bool n
             segment.state = MemOpState::Write;
             break;
         default:
-            if (racecheck::IsAtomicWrite(mode)) {
-                const auto group = AtomicWriterGroup(mode);
+            if (IsAtomicWrite(mode)) {
+                const auto group = AtomicMemoryAccessGroup(mode);
                 AppendUnique(external.atomicWriters[group], index, newIndex);
                 segment.state = MemOpState::AtomicWrite;
             }
@@ -707,9 +709,11 @@ void Apply(MemState& segment, AclsanDeviceMemoryAccessMode mode, CbIndex index, 
             break;
         case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD:
         case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN:
-        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX: {
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX:
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH:
+        case ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS: {
             segment.state = MemOpState::AtomicWrite;
-            const auto group = AtomicWriterGroup(mode);
+            const auto group = AtomicMemoryAccessGroup(mode);
             AppendUnique(segment.atomicWriters[group], index, newIndex);
             break;
         }
@@ -782,20 +786,23 @@ void MemStateTracker::TraceState(
                        state.state == MemOpState::AtomicWrite ? "AtomicWrite" :
                                                                 "Race";
     const size_t ordinaryCount = state.writer.has_value() ? 1 : 0;
-    const size_t writerCount =
-        ordinaryCount + state.atomicWriters[0].size() + state.atomicWriters[1].size() + state.atomicWriters[2].size();
+    size_t writerCount = ordinaryCount;
+    for (const auto& group : state.atomicWriters) {
+        writerCount += group.size();
+    }
     const auto& data = records_[index];
     ASCTOOL_DEBUG(
         "racecheck event=%s level=DEBUG launch=%" PRIu64 " tracker_launch=%" PRIu64
         " cb=%zu device=%u space=%u table_core=%u core=%u block=%u block_type=%u pipe=%u pc=0x%" PRIx64
         " instr=%" PRIu64 " mode=%u layout=%u address=0x%" PRIx64 " range=[%" PRIu64 ",%" PRIu64
-        ") state=%s writers=%zu readers=%zu ordinary=%zu add=%zu min=%zu max=%zu",
+        ") state=%s writers=%zu readers=%zu ordinary=%zu add=%zu min=%zu max=%zu exch=%zu cas=%zu",
         event, data.header.launchId, launchId_.value_or(0), index, data.header.deviceId, data.memorySpace,
         data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM ? 0u : racecheck::OwnerCore(data),
         data.header.executor.phyCoreId, data.header.executor.blockId, data.header.executor.blockType,
         data.header.pipeline, data.header.pc, data.header.instrExecId, data.accessMode, data.layoutKind, data.address,
         state.begin, state.end, name, writerCount, state.readers.size(), ordinaryCount, state.atomicWriters[0].size(),
-        state.atomicWriters[1].size(), state.atomicWriters[2].size());
+        state.atomicWriters[1].size(), state.atomicWriters[2].size(), state.atomicWriters[3].size(),
+        state.atomicWriters[4].size());
     if (state.writer) {
         Trace(index, writerEvent, state.begin, state.end, *state.writer);
     }

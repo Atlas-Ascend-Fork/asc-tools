@@ -20,11 +20,10 @@ namespace aclsan {
 struct ScalarGmParamField {
     uint32_t instrId = 0;
     uint32_t dataBits = 0;
-    uint64_t addr = 0;           // args[0]: base address
-    int64_t offset = 0;          // args[1]: signed element or byte offset, per instruction family
-    uint64_t post = 0;           // args[2]: post-index flag
-    uint64_t sysVaBase = 0;      // args[3]: captured on the executing core
-    uint64_t addressContext = 0; // args[4]: protocol marker; zero means missing
+    uint64_t addr = 0;      // args[0]: base address
+    int64_t offset = 0;     // args[1]: signed element or byte offset, per instruction family
+    uint64_t post = 0;      // args[2]: post-index flag
+    uint64_t sysVaBase = 0; // args[3]: captured on the executing core
 };
 
 // ST_DEV/LD_DEV.b64/b32/b16/b8 always access GM and have no post-index flag.
@@ -47,11 +46,34 @@ struct ScalarPreloadParamField {
 struct ScalarAtomicParamField {
     uint32_t instrId = 0;
     uint32_t dataBits = 0;
-    uint64_t addr = 0;           // args[0]: base address
-    int64_t offset = 0;          // args[1]: signed element or byte offset, per instruction family
-    uint64_t post = 0;           // args[2]: post-index flag
-    uint64_t sysVaBase = 0;      // args[3]: captured on the executing core
-    uint64_t addressContext = 0; // args[4]: protocol marker; zero means missing
+    uint64_t addr = 0;         // args[0]: base address
+    int64_t offset = 0;        // args[1]: signed element or byte offset, per instruction family
+    uint64_t post = 0;         // args[2]: post-index flag
+    uint64_t sysVaBase = 0;    // args[3]: captured on the executing core
+    uint32_t atomicConfig = 0; // Captured ST_ATOMIC_CFG; zero is a valid configuration.
+};
+
+// Scalar ATOM (427-430). No offset or post addressing.
+// Bisheng supplies the operation type through the -1 ctrl.bin selector.
+struct ScalarAtomParamField {
+    uint32_t instrId = 0;
+    uint32_t dataBits = 0;
+    uint64_t dstValue = 0;            // args[0] holds the captured destination register value.
+    uint64_t srcAddr = 0;             // args[1] holds the address of the atomic read-modify-write.
+    uint64_t srcOperand = 0;          // args[2] holds the first source operand.
+    uint64_t srcOperandCas = 0;       // args[3] holds the second source operand, used only by CAS.
+    uint64_t sysVaBase = 0;           // 用于地址空间判断的 SYS_VA_BASE 窗口位。
+    uint64_t atomicType = UINT64_MAX; // args[4] encodes 0=CAS, 1=EXCH, 2=ADD, 3=MIN, 4=MAX.
+};
+
+// Scalar RED (431-435) has one source operand and no destination register.
+struct ScalarRedParamField {
+    uint32_t instrId = 0;
+    uint32_t dataBits = 0;
+    uint64_t srcAddr = 0;             // args[0] holds the address of the atomic read-modify-write.
+    uint64_t srcOperand = 0;          // args[1] holds the source operand.
+    uint64_t sysVaBase = 0;           // 用于地址空间判断的 SYS_VA_BASE 窗口位。
+    uint64_t atomicType = UINT64_MAX; // args[2] holds the operation type, using the same encoding as ATOM.
 };
 
 } // namespace aclsan

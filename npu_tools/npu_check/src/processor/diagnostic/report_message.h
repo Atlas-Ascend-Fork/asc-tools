@@ -142,6 +142,8 @@ enum class NpuCheckReportAccessMode {
     FREE = 4,
     ATOMIC_WRITE_MIN = 5,
     ATOMIC_WRITE_MAX = 6,
+    ATOMIC_WRITE_EXCH = 7,
+    ATOMIC_WRITE_CAS = 8,
 };
 
 enum class NpuCheckReportDistanceKind {

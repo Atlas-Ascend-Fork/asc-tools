@@ -174,7 +174,7 @@ aclError OriginalLaunch(
         record->category = aclsan::DeviceInstructionCategory::Synchronization;
         record->pipeline = static_cast<uint16_t>(kRecords[recordIndex].pipeline);
         record->blockId = blockIds[recordIndex];
-        record->reserved = 0;
+        record->atomicMetadata = 0;
         constexpr uint32_t RECORD_COUNT = 1;
         std::memcpy(bytes + aclsan::TraceWriteControlOffset(slot), &RECORD_COUNT, sizeof(RECORD_COUNT));
     }

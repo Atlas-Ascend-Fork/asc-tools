@@ -13,6 +13,7 @@
 
 #include "diagnostic/report_message.h"
 #include "checker/racecheck/types.h"
+#include "checker/memory_access_mode.h"
 #include <array>
 #include <cstddef>
 #include <exception>
@@ -57,7 +58,7 @@ struct AccessPair {
     uint64_t end;
 };
 struct VfHistory {
-    static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = 3;
+    static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = 5;
 
     // A dynamic VF keeps at most one ordinary witness per segment.
     std::optional<CbIndex> witness;
@@ -85,7 +86,7 @@ struct MemState {
     MemOpState state;
     std::optional<CbIndex> writer; // 最近一次普通 WRITE；原子写不替换它。
     std::vector<CbIndex> readers;
-    // 分别保存 ADD、MIN、MAX，兼容原子操作可直接跳过对应分组。
+    // 分别保存 ADD、MIN、MAX、EXCH、CAS，兼容原子操作可直接跳过对应分组。
     std::array<std::vector<CbIndex>, ATOMIC_WRITER_GROUP_COUNT> atomicWriters{};
     // Only the VF-external tracker allocates these histories. Copies remain independent.
     std::unique_ptr<VfExternalState> vfExternal;
@@ -114,10 +115,6 @@ struct FailedRange {
 
 PhysicalSpaceKey MakeKey(const AclsanDeviceMemoryAccessData& data);
 AclsanDeviceMemoryAccessMode AccessMode(const AclsanDeviceMemoryAccessData& data);
-inline bool IsAtomicWrite(AclsanDeviceMemoryAccessMode mode) noexcept
-{
-    return mode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD && mode <= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX;
-}
 inline bool CompatibleAtomicWrites(AclsanDeviceMemoryAccessMode previous, AclsanDeviceMemoryAccessMode current) noexcept
 {
     return previous == current && IsAtomicWrite(current);

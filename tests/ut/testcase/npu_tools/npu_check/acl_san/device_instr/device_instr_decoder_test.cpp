@@ -659,7 +659,6 @@ void TestDecodesDav3510ScalarGmInstructions()
         record.args[1] = static_cast<uint64_t>(-8);
         record.args[2] = 1;
         record.args[3] = UINT64_C(0x100000000);
-        record.args[4] = aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1;
 
         const std::optional<aclsan::DecodedInstruction> decoded = decoder->decode(record);
 
@@ -673,7 +672,6 @@ void TestDecodesDav3510ScalarGmInstructions()
         assert(params->offset == -8);
         assert(params->post == 1);
         assert(params->sysVaBase == record.args[3]);
-        assert(params->addressContext == record.args[4]);
     }
 }
 

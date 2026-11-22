@@ -485,8 +485,7 @@ private:
         if (a.instructionId == static_cast<uint32_t>(aclsan::InstructionId::Vf) && a.vfInstrValid == 0) {
             reasons.insert("missing_vf_instruction_index");
         }
-        if (a.instructionId >= static_cast<uint32_t>(aclsan::InstructionId::StAtomicB32) &&
-            a.instructionId <= static_cast<uint32_t>(aclsan::InstructionId::StiAtomicB8)) {
+        if ((a.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN) != 0U) {
             reasons.insert("atomic_semantics_unknown");
         }
         if ((a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
@@ -495,13 +494,10 @@ private:
              a.memoryOwner.blockType != ACLSAN_DEVICE_BLOCK_TYPE_AICORE_CUBE)) {
             reasons.insert("owner_mapping_unknown");
         }
-        const uint32_t accessMode = NormalizeMemoryAccessMode(a.accessMode);
-        if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&
-            accessMode >= ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD) {
+        if (a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB && IsAtomicWrite(a.accessMode)) {
             reasons.insert("atomic_semantics_unknown");
         }
-        if (accessMode < ACLSAN_DEVICE_MEMORY_ACCESS_READ ||
-            accessMode > ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX ||
+        if (!IsSupportedMemoryAccessMode(NormalizeMemoryAccessMode(a.accessMode)) ||
             a.memorySpace > ACLSAN_DEVICE_MEMORY_SPACE_FB ||
             !IsSupportedMemorySpace(static_cast<AclsanDeviceMemorySpace>(a.memorySpace))) {
             reasons.insert("access_coverage_unknown");

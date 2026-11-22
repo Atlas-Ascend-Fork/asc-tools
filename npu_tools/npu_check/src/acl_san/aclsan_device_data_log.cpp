@@ -354,10 +354,10 @@ void LogParamField(const aclsan::ScalarGmParamField& value) noexcept
 {
     ASCTOOL_DEBUG(
         "[param] type=ScalarGmParamField instrId=%u dataBits=%u addr=0x%llx offset=%lld post=%llu "
-        "sysVaBase=0x%llx addressContext=0x%llx",
+        "sysVaBase=0x%llx",
         value.instrId, value.dataBits, static_cast<unsigned long long>(value.addr),
         static_cast<long long>(value.offset), static_cast<unsigned long long>(value.post),
-        static_cast<unsigned long long>(value.sysVaBase), static_cast<unsigned long long>(value.addressContext));
+        static_cast<unsigned long long>(value.sysVaBase));
 }
 
 void LogParamField(const aclsan::ScalarPreloadParamField& value) noexcept
@@ -371,10 +371,31 @@ void LogParamField(const aclsan::ScalarAtomicParamField& value) noexcept
 {
     ASCTOOL_DEBUG(
         "[param] type=ScalarAtomicParamField instrId=%u dataBits=%u addr=0x%llx offset=%lld post=%llu "
-        "sysVaBase=0x%llx addressContext=0x%llx",
+        "sysVaBase=0x%llx atomicConfig=0x%x",
         value.instrId, value.dataBits, static_cast<unsigned long long>(value.addr),
         static_cast<long long>(value.offset), static_cast<unsigned long long>(value.post),
-        static_cast<unsigned long long>(value.sysVaBase), static_cast<unsigned long long>(value.addressContext));
+        static_cast<unsigned long long>(value.sysVaBase), value.atomicConfig);
+}
+
+void LogParamField(const aclsan::ScalarAtomParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=ScalarAtomParamField instrId=%u dataBits=%u arg0=0x%llx arg1=0x%llx arg2=0x%llx arg3=0x%llx "
+        "atomicType=%llu sysVaWindowBase=0x%llx",
+        value.instrId, value.dataBits, static_cast<unsigned long long>(value.dstValue),
+        static_cast<unsigned long long>(value.srcAddr), static_cast<unsigned long long>(value.srcOperand),
+        static_cast<unsigned long long>(value.srcOperandCas), static_cast<unsigned long long>(value.atomicType),
+        static_cast<unsigned long long>(value.sysVaBase));
+}
+
+void LogParamField(const aclsan::ScalarRedParamField& value) noexcept
+{
+    ASCTOOL_DEBUG(
+        "[param] type=ScalarRedParamField instrId=%u dataBits=%u arg0=0x%llx arg1=0x%llx "
+        "atomicType=%llu sysVaWindowBase=0x%llx",
+        value.instrId, value.dataBits, static_cast<unsigned long long>(value.srcAddr),
+        static_cast<unsigned long long>(value.srcOperand), static_cast<unsigned long long>(value.atomicType),
+        static_cast<unsigned long long>(value.sysVaBase));
 }
 
 void LogParamField(const aclsan::FlagParamField& value) noexcept

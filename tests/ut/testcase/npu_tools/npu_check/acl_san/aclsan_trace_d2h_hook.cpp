@@ -65,8 +65,10 @@ struct CapturedMemoryAccess {
     uint32_t rank;
     uint64_t firstCount;
     uint64_t secondCount;
+    uint32_t flags;
 };
 
+constexpr uint32_t SCALAR_ATOMIC_TYPES[] = {0, 1, 2, 3, 4, 0, 1, 2, 4};
 std::vector<CapturedRecord> g_records;
 std::vector<CapturedMemoryAccess> g_memoryAccesses;
 size_t g_mallocCalls = 0;
@@ -78,6 +80,7 @@ aclError g_syncResult = ACL_SUCCESS;
 bool g_writeRecord = true;
 bool g_writeMemoryRecord = false;
 bool g_writeMultiMemoryRecords = false;
+bool g_writeScalarAtomicRecords = false;
 uint32_t g_expectedHiddenOffset = 16;
 size_t g_expectedLaunchArgumentBytes = 24;
 uint32_t g_expectedPlaceholderDataOffset = 0;
@@ -248,6 +251,35 @@ aclError OriginalLaunch(
     auto* writeSequence = bytes + aclsan::TraceWriteControlOffset(phyCoreId);
     auto* record = reinterpret_cast<aclsan::AclsanRawTraceRecord*>(bytes + aclsan::TraceRecordOffset(phyCoreId, 0));
     constexpr uint32_t RECORD_COUNT = 2;
+    if (g_writeScalarAtomicRecords) {
+        for (size_t i = 0; i < std::size(SCALAR_ATOMIC_TYPES); ++i) {
+            auto& atomic = record[i];
+            atomic.pc = 0x2000 + 4 * i;
+            atomic.instrId = 427 + i;
+            atomic.category = aclsan::DeviceInstructionCategory::MemoryAccess;
+            atomic.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+            atomic.blockId = 1;
+            atomic.args[i < 4 ? 1 : 0] = 0x2001000;
+            atomic.args[i < 4 ? 4 : 2] = SCALAR_ATOMIC_TYPES[i];
+            atomic.atomicMetadata = 0x80;
+        }
+        auto& repeated = record[std::size(SCALAR_ATOMIC_TYPES)];
+        repeated = record[1];
+        repeated.pc = 0x4000;
+        repeated.args[4] = 4;
+        auto& store = record[std::size(SCALAR_ATOMIC_TYPES) + 1];
+        store.pc = 0x2000;
+        store.instrId = 56;
+        store.category = aclsan::DeviceInstructionCategory::MemoryAccess;
+        store.pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
+        store.blockId = 1;
+        store.args[0] = 0x2001000;
+        store.args[3] = UINT64_C(0x100000000);
+        store.atomicMetadata = 0x1122334f;
+        const uint32_t count = std::size(SCALAR_ATOMIC_TYPES) + 2;
+        std::memcpy(writeSequence, &count, sizeof(count));
+        return ACL_SUCCESS;
+    }
     record->pc = 0x1234;
     if (g_writeMultiMemoryRecords) {
         record->args[0] = 2;
@@ -300,7 +332,7 @@ aclError OriginalLaunch(
         record->pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
     }
     record->blockId = 1;
-    record->reserved = 0;
+    record->atomicMetadata = 0;
     if (!g_writeMemoryRecord) {
         auto* second = record + 1;
         second->pc = 0x2234;
@@ -314,7 +346,7 @@ aclError OriginalLaunch(
         second->category = aclsan::DeviceInstructionCategory::Synchronization;
         second->pipeline = ACLSAN_DEVICE_PIPE_SCALAR;
         second->blockId = 1;
-        second->reserved = 0;
+        second->atomicMetadata = 0;
     }
     std::memcpy(writeSequence, &RECORD_COUNT, sizeof(RECORD_COUNT));
     return ACL_SUCCESS;
@@ -371,7 +403,7 @@ void Callback(void*, AclsanCallbackDomain domain, AclsanCallbackId id, const voi
         }
         g_memoryAccesses.push_back(
             {access->address, bytes, access->memorySpace, access->accessMode, access->layoutKind, rank, firstCount,
-             secondCount});
+             secondCount, access->header.flags});
         return;
     }
     if (id == ACLSAN_CBID_DEVICE_SYNC) {
@@ -484,7 +516,7 @@ int main(int argc, char** argv)
     CHECK(
         aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
         ACL_SUCCESS);
-    // Physical trace slots remain fixed even when the runtime reports disabled cores.
+    // FIFO slots use the fixed physical topology, even when cores are disabled.
     CHECK(g_deviceInfoCalls == 0);
 
     CHECK(
@@ -553,6 +585,31 @@ int main(int argc, char** argv)
     CHECK(g_memoryAccesses[1].layoutKind == ACLSAN_MEM_LAYOUT_ND_AFFINE);
     CHECK(g_memoryAccesses[1].rank == 3);
     g_writeMultiMemoryRecords = false;
+
+    g_memoryAccesses.clear();
+    g_writeScalarAtomicRecords = true;
+    CHECK(
+        aclrtLaunchKernelWithHostArgs(function, 2, stream1, nullptr, arguments, sizeof(arguments), nullptr, 0) ==
+        ACL_SUCCESS);
+    CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
+    g_writeScalarAtomicRecords = false;
+    constexpr uint32_t atomicModes[] = {
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_CAS, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_EXCH,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MIN,
+        ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX};
+    CHECK(g_memoryAccesses.size() == std::size(SCALAR_ATOMIC_TYPES) + 3);
+    for (size_t i = 0; i < std::size(SCALAR_ATOMIC_TYPES); ++i) {
+        CHECK(g_memoryAccesses[i].address == 0x2001000);
+        CHECK(g_memoryAccesses[i].accessMode == atomicModes[SCALAR_ATOMIC_TYPES[i]]);
+        CHECK(g_memoryAccesses[i].flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+    }
+    CHECK(g_memoryAccesses[9].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_MAX);
+    CHECK(g_memoryAccesses[10].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    CHECK(g_memoryAccesses[11].accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    CHECK((g_memoryAccesses[10].flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN) != 0);
+    CHECK((g_memoryAccesses[11].flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN) != 0);
+    CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
+    CHECK(g_memoryAccesses.size() == std::size(SCALAR_ATOMIC_TYPES) + 3);
 
     const size_t recordsBeforeTimedOutSync = g_records.size();
     const size_t d2hBeforeTimedOutSync = g_d2hCalls;

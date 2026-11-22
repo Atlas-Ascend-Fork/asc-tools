@@ -87,7 +87,8 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 58, addr,
-        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
+        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), 0UL,
+        static_cast<uint32_t>(get_st_atomic_cfg()));
 }
 
 // ST_ATOMIC.b32, API ID 56. Offset is an element count; post=1 uses the captured base without adding offset.
@@ -96,7 +97,8 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 56, addr,
-        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
+        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), 0UL,
+        static_cast<uint32_t>(get_st_atomic_cfg()));
 }
 
 // ST_ATOMIC.b16, API ID 57. Offset is an element count.
@@ -105,7 +107,8 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 57, addr,
-        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
+        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), 0UL,
+        static_cast<uint32_t>(get_st_atomic_cfg()));
 }
 
 // STI_ATOMIC.b32, API ID 59. Offset is a byte count.
@@ -114,7 +117,8 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 59, addr,
-        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
+        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), 0UL,
+        static_cast<uint32_t>(get_st_atomic_cfg()));
 }
 
 // STI_ATOMIC.b16, API ID 60. Offset is a byte count.
@@ -123,7 +127,8 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 60, addr,
-        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
+        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), 0UL,
+        static_cast<uint32_t>(get_st_atomic_cfg()));
 }
 
 // STI_ATOMIC.b8, API ID 61. Offset is a byte count.
@@ -132,7 +137,93 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
 {
     aclsan::WriteTraceRecord(
         memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 61, addr,
-        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), aclsan::ASCSAN_SCALAR_ADDRESS_CONTEXT_V1);
+        static_cast<uint64_t>(offset), post, __cce_scalar::get_sys_va_base(), 0UL,
+        static_cast<uint32_t>(get_st_atomic_cfg()));
+}
+
+// SCALAR_ATOM_U32, API ID 427.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_atom_u32(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xd, uint64_t xn, uint64_t xm, uint64_t xt,
+    uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 427, xd, xn,
+        xm, xt, atomicType, aclsan::CaptureScalarAtomRedSysVaWindow());
+}
+
+// SCALAR_ATOM_S32, API ID 428.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_atom_s32(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xd, uint64_t xn, uint64_t xm, uint64_t xt,
+    uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 428, xd, xn,
+        xm, xt, atomicType, aclsan::CaptureScalarAtomRedSysVaWindow());
+}
+
+// SCALAR_ATOM_U64, API ID 429.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_atom_u64(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xd, uint64_t xn, uint64_t xm, uint64_t xt,
+    uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 429, xd, xn,
+        xm, xt, atomicType, aclsan::CaptureScalarAtomRedSysVaWindow());
+}
+
+// SCALAR_ATOM_S64, API ID 430.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_atom_s64(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xd, uint64_t xn, uint64_t xm, uint64_t xt,
+    uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 430, xd, xn,
+        xm, xt, atomicType, aclsan::CaptureScalarAtomRedSysVaWindow());
+}
+
+// SCALAR_RED_U32, API ID 431.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_red_u32(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xn, uint64_t xm, uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 431, xn, xm,
+        atomicType, 0UL, 0UL, aclsan::CaptureScalarAtomRedSysVaWindow());
+}
+
+// SCALAR_RED_S32, API ID 432.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_red_s32(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xn, uint64_t xm, uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 432, xn, xm,
+        atomicType, 0UL, 0UL, aclsan::CaptureScalarAtomRedSysVaWindow());
+}
+
+// SCALAR_RED_F16, API ID 433.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_red_f16(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xn, uint64_t xm, uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 433, xn, xm,
+        atomicType, 0UL, 0UL, aclsan::CaptureScalarAtomRedSysVaWindow());
+}
+
+// SCALAR_RED_BF16, API ID 434.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_red_bf16(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xn, uint64_t xm, uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 434, xn, xm,
+        atomicType, 0UL, 0UL, aclsan::CaptureScalarAtomRedSysVaWindow());
+}
+
+// SCALAR_RED_F32, API ID 435.
+extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_scalar_red_f32(
+    __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t xn, uint64_t xm, uint64_t atomicType)
+{
+    aclsan::WriteTraceRecord(
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_S), 435, xn, xm,
+        atomicType, 0UL, 0UL, aclsan::CaptureScalarAtomRedSysVaWindow());
 }
 
 // ST_DEV.b64, API ID 64. Offset is in bytes.
