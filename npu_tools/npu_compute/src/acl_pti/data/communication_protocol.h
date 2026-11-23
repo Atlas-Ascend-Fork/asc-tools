@@ -23,9 +23,19 @@ inline constexpr size_t kMagicOffset = 0, kLevelOffset = 2, kTypeOffset = 4;
 inline constexpr size_t kThreadIdOffset = 8, kPayloadLengthOffset = 12, kTimestampOffset = 16;
 inline constexpr size_t kAdditionalTypeEnd = kTypeOffset + sizeof(uint32_t);
 inline constexpr uint16_t kMagic = 0x5a5a, kAicpuLevel = 6000, kHcclLevel = 5500;
+inline constexpr uint16_t kAicoreLevel = 3000;
+inline constexpr uint32_t kAicoreTimestampType = 0;
 inline bool IsCcuAdditional(uint32_t level, uint32_t type)
 {
     return level == kHcclLevel && (type == kCcuTaskInfo || type == kCcuWaitSignalInfo || type == kCcuGroupInfo);
+}
+inline bool IsAicoreTimestamp(uint32_t level, uint32_t type)
+{
+    return level == kAicoreLevel && type == kAicoreTimestampType;
+}
+inline bool IsCommunicationAdditional(uint32_t level, uint32_t type)
+{
+    return IsCcuAdditional(level, type) || IsAicoreTimestamp(level, type);
 }
 inline constexpr size_t kAdditionalBytes = 256, kHeaderBytes = 24, kPayloadBytes = 232;
 inline constexpr size_t kCompactBytes = 64, kRuntimeTrackBytes = 40;

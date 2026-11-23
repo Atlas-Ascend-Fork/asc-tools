@@ -104,6 +104,16 @@ inline Tree RecordTree(const aclpti::communication::Record& record)
         tree.put("channelId", record.channelId);
         tree.put("channelAverage", record.channelAverage);
     }
+    if (record.kind == aclpti::communication::RecordKind::BlockStart ||
+        record.kind == aclpti::communication::RecordKind::BlockEnd ||
+        record.kind == aclpti::communication::RecordKind::AicoreTimestamp) {
+        tree.put("blockId", record.blockId);
+        tree.put("subBlockId", record.subBlockId);
+        tree.put("coreType", record.coreType);
+        tree.put("coreId", record.coreId);
+        tree.put("descId", record.descId);
+        tree.put("curPc", record.curPc);
+    }
     tree.put("taskType", record.taskType);
     tree.put("functionType", record.functionType);
     tree.put("fusionType", record.fusionType);
@@ -118,7 +128,7 @@ inline aclpti::communication::Record ReadRecord(const Tree& tree)
 {
     aclpti::communication::Record record;
     const auto kind = tree.get<unsigned>("kind");
-    if (kind > static_cast<unsigned>(aclpti::communication::RecordKind::CcuChannel))
+    if (kind > static_cast<unsigned>(aclpti::communication::RecordKind::AicoreTimestamp))
         throw std::runtime_error("invalid Communication record kind");
     record.kind = static_cast<aclpti::communication::RecordKind>(kind);
 #define COMM_GET(name) record.name = tree.get<decltype(record.name)>(#name)
@@ -132,6 +142,16 @@ inline aclpti::communication::Record ReadRecord(const Tree& tree)
     if (record.kind == aclpti::communication::RecordKind::CcuChannel) {
         record.channelId = tree.get<uint16_t>("channelId");
         record.channelAverage = tree.get<uint32_t>("channelAverage");
+    }
+    if (record.kind == aclpti::communication::RecordKind::BlockStart ||
+        record.kind == aclpti::communication::RecordKind::BlockEnd ||
+        record.kind == aclpti::communication::RecordKind::AicoreTimestamp) {
+        record.blockId = tree.get<uint16_t>("blockId");
+        record.subBlockId = tree.get<uint16_t>("subBlockId");
+        record.coreType = tree.get<uint32_t>("coreType");
+        record.coreId = tree.get<uint16_t>("coreId");
+        record.descId = tree.get<uint32_t>("descId");
+        record.curPc = tree.get<uint64_t>("curPc");
     }
     record.taskType = tree.get<uint32_t>("taskType", UINT32_MAX);
     record.functionType = tree.get<uint32_t>("functionType", UINT32_MAX);

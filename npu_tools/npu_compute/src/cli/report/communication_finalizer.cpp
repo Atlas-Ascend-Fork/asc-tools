@@ -85,7 +85,8 @@ struct Source {
 };
 struct Metrics {
     comm::Intervals compute, communication;
-    bool aicpu = false, ccu = false;
+    bool aicpu = false, ccu = false, aiv = false;
+    unsigned ModeCount() const { return static_cast<unsigned>(aicpu) + ccu + aiv; }
 };
 struct State {
     std::vector<std::string> issues;
@@ -310,6 +311,11 @@ bool IsHostCcuMetadata(const Record& record)
            (record.kind == RecordKind::CcuTask || record.kind == RecordKind::CcuGroup ||
             record.kind == RecordKind::CcuWait);
 }
+bool IsHostMetadata(const Record& record)
+{
+    return IsHostCcuMetadata(record) ||
+           (record.deviceId == wire::kHostDeviceId && record.kind == RecordKind::AicoreTimestamp);
+}
 auto HcclFields(const Record& task)
 {
     return std::tie(
@@ -359,7 +365,7 @@ size_t ReadRecords(const fs::path& path, Source& source, State& state)
                 continue;
             if (record.deviceId < 0)
                 throw std::runtime_error("negative device id");
-            if (!IsHostCcuMetadata(record))
+            if (!IsHostMetadata(record))
                 state.devices[record.deviceId];
             source.records.push_back(std::move(record));
             IndexRecord(source, source.records.back());
@@ -480,12 +486,18 @@ void ReadSources(const fs::path& directory, State& state)
     if (state.sources.empty())
         state.Issue("no Communication sources");
 }
-enum class Group { AiCpuCompute, AiCpuCommunication, CcuCompute, CcuCommunication, Fusion, Count };
+enum class Group { AiCpuCompute, AiCpuCommunication, CcuCompute, CcuCommunication, Fusion, Aiv, Count };
 enum class FusionTrackOrder : uint64_t { Compute, Communication, Overlap };
+constexpr auto kAivComputeTrack = "Compute";
+constexpr uint64_t kAivComputeOrder = 0;
 std::string GroupName(Group group, int32_t device)
 {
-    static const std::array<const char*, static_cast<size_t>(Group::Count)> names = {
-        "AiCpu-Compute", "AiCpu-Communication", "Ccu-Compute", "Ccu-Communication", "Computation-Communication-Fusion"};
+    static const std::array<const char*, static_cast<size_t>(Group::Count)> names = {"AiCpu-Compute",
+                                                                                     "AiCpu-Communication",
+                                                                                     "Ccu-Compute",
+                                                                                     "Ccu-Communication",
+                                                                                     "Computation-Communication-Fusion",
+                                                                                     "AIV"};
     return std::string(names[static_cast<size_t>(group)]) + "-Npu" + std::to_string(device);
 }
 class Trace {
@@ -495,12 +507,19 @@ public:
     {
         constexpr int64_t firstProcessId = 1;
         constexpr size_t processMetadataTid = 0;
-        const int64_t pid = static_cast<int64_t>(device) * static_cast<int64_t>(Group::Count) +
-                            static_cast<int64_t>(group) + firstProcessId;
+        constexpr auto existingGroups = static_cast<int64_t>(Group::Aiv);
+        constexpr auto aivProcessBase = wire::kHostDeviceId * existingGroups + firstProcessId;
+        const auto pid = group == Group::Aiv ? aivProcessBase + device :
+                                               device * existingGroups + static_cast<int64_t>(group) + firstProcessId;
         if (!processes_.insert(pid).second)
             return pid;
+        constexpr std::array displayOrder = {Group::AiCpuCompute, Group::AiCpuCommunication,
+                                             Group::CcuCompute,   Group::CcuCommunication,
+                                             Group::Aiv,          Group::Fusion};
+        const auto groupOrder = std::find(displayOrder.begin(), displayOrder.end(), group) - displayOrder.begin();
+        const auto sortIndex = device * static_cast<int64_t>(displayOrder.size()) + groupOrder + firstProcessId;
         Metadata(pid, processMetadataTid, "process_name", "name", TraceQuote(GroupName(group, device)));
-        Metadata(pid, processMetadataTid, "process_sort_index", "sort_index", std::to_string(pid));
+        Metadata(pid, processMetadataTid, "process_sort_index", "sort_index", std::to_string(sortIndex));
         return pid;
     }
     void Track(int32_t device, Group group, const std::string& name, uint64_t order)
@@ -755,7 +774,7 @@ void DetermineModes(State& state, Trace& trace)
 {
     for (const auto& source : state.sources) {
         for (const auto& record : source.records) {
-            if (IsHostCcuMetadata(record)) {
+            if (IsHostMetadata(record)) {
                 continue;
             }
             auto& metrics = state.devices[record.deviceId];
@@ -774,7 +793,7 @@ void DetermineModes(State& state, Trace& trace)
                 continue;
             }
             auto& metrics = state.devices.at(record.deviceId);
-            if (!metrics.ccu) {
+            if (!metrics.ccu && !metrics.aiv) {
                 metrics.aicpu = true;
             }
         }
@@ -789,7 +808,10 @@ void DetermineModes(State& state, Trace& trace)
             trace.Process(entry.first, Group::CcuCompute);
             trace.Track(entry.first, Group::CcuCommunication, "Communication", ccuCommunicationTrackOrder);
         }
-        if (!entry.second.aicpu && !entry.second.ccu) {
+        if (entry.second.aiv) {
+            trace.Track(entry.first, Group::Aiv, kAivComputeTrack, kAivComputeOrder);
+        }
+        if (entry.second.ModeCount() == 0) {
             continue;
         }
         trace.Process(entry.first, Group::Fusion);
@@ -1091,6 +1113,11 @@ void EmitComputeTask(
     if (modes.ccu) {
         emit(Group::CcuCompute, "Ccu-Comp-Launch");
     }
+    if (modes.aiv) {
+        trace.Duration(
+            deviceId, Group::Aiv, kAivComputeTrack, name.empty() ? "AIV-Comp-Launch" : name, interval, args,
+            kAivComputeOrder);
+    }
 }
 void TaskPair(
     const Source& source, const Record& start, const Record& end, State& state, Trace& trace, const TaskTracks* tracks)
@@ -1149,8 +1176,8 @@ void UnmatchedTask(const Source& source, const Record& record, State& state)
 {
     state.Issue(source.name + ": unmatched or duplicate TaskLog for " + Task(record));
 }
-void PairTaskRecords(
-    const Source& source, std::vector<const Record*> records, State& state, Trace& trace, const TaskTracks* tracks)
+template <typename Emit, typename Report>
+void PairBoundaries(std::vector<const Record*>& records, RecordKind startKind, Emit emit, Report report)
 {
     std::sort(records.begin(), records.end(), [](const auto* a, const auto* b) {
         return std::tie(a->times[Record::kTaskSystemCounter], a->kind) <
@@ -1159,23 +1186,23 @@ void PairTaskRecords(
     const Record* start = nullptr;
     bool ambiguous = false;
     for (const auto* record : records) {
-        if (record->kind == RecordKind::TaskStart) {
+        if (record->kind == startKind) {
             if (start) {
                 ambiguous = true;
-                UnmatchedTask(source, *record, state);
+                report(*record);
             } else
                 start = record;
             continue;
         }
         if (!start || ambiguous)
-            UnmatchedTask(source, *record, state);
+            report(*record);
         else
-            TaskPair(source, *start, *record, state, trace, tracks);
+            emit(*start, *record);
         start = nullptr;
         ambiguous = false;
     }
     if (start)
-        UnmatchedTask(source, *start, state);
+        report(*start);
 }
 void TaskLogs(const Source& source, State& state, Trace& trace, const TaskTracks* tracks)
 {
@@ -1193,8 +1220,12 @@ void TaskLogs(const Source& source, State& state, Trace& trace, const TaskTracks
         tasks[{record.deviceId, record.taskId, record.taskType, record.fusionType, family, record.missionId}].push_back(
             &record);
     }
-    for (const auto& item : tasks)
-        PairTaskRecords(source, item.second, state, trace, tracks);
+    for (auto& item : tasks) {
+        PairBoundaries(
+            item.second, RecordKind::TaskStart,
+            [&](const Record& start, const Record& end) { TaskPair(source, start, end, state, trace, tracks); },
+            [&](const Record& record) { UnmatchedTask(source, record, state); });
+    }
 }
 void ValidateTaskLogs(const Source& source, State& state)
 {
@@ -1206,32 +1237,316 @@ void ValidateTaskLogs(const Source& source, State& state)
                 std::to_string(task));
     }
 }
+
+constexpr uint32_t kLastReservedDescId = 0xffff;
+constexpr uint32_t kMaxVectorSubBlock = 1;
+constexpr uint64_t kTracksPerBlock = 3;
+constexpr size_t kSystemCounter = Record::kTaskSystemCounter;
+constexpr uint32_t kDescIdPairMask = 1;
+constexpr uint32_t kSubBlockCountOffset = 1;
+constexpr uint64_t kFirstBlockTrackOffset = 1;
+constexpr uint32_t kMinimumMixedModes = 2;
+constexpr uint32_t kSingleModeCount = 1;
+struct AivOperation {
+    uint32_t startId;
+    const char* name;
+};
+constexpr AivOperation aivOperations[] = {
+    {0x1000, "INIT"},
+    {0x1010, "COMMIT"},
+    {0x1020, "WAIT"},
+    {0x1030, "QUERY"},
+    {0x1040, "FINALIZE"},
+    {0x1050, "GROUP_SYNC"},
+    {0x1060, "GET_WINDOW_IN"},
+    {0x1062, "GET_WINDOW_OUT"},
+    {0x1064, "GET_RANK_ID"},
+    {0x1066, "GET_RANK_DIM"},
+    {0x1068, "SET_CCTILING"},
+    {0x1070, "ITERATE"},
+    {0x1072, "BARRIER"},
+    {0x1100, "ALL_REDUCE_PREPARE"},
+    {0x1110, "ALL_GATHER_PREPARE"},
+    {0x1120, "REDUCE_SCATTER_PREPARE"},
+    {0x1130, "ALL_TO_ALL_PREPARE"},
+    {0x1140, "ALL_TO_ALL_V_PREPARE"},
+    {0x1150, "BATCH_WRITE_PREPARE"},
+};
+
+const AivOperation* FindAivOperation(uint32_t descId)
+{
+    const auto startId = descId & ~kDescIdPairMask;
+    const auto it = std::lower_bound(
+        std::begin(aivOperations), std::end(aivOperations), startId,
+        [](const AivOperation& operation, uint32_t id) { return operation.startId < id; });
+    return it != std::end(aivOperations) && it->startId == startId ? &*it : nullptr;
+}
+
+struct AivBlock {
+    const Record* start;
+    uint64_t end;
+};
+using AivBlockIndex = std::map<uint32_t, std::vector<size_t>>;
+using AivMarkKey = std::tuple<size_t, uint32_t, uint32_t>;
+using AivMarks = std::map<AivMarkKey, std::vector<const Record*>>;
+struct AivTimeline {
+    std::vector<AivBlock> blocks;
+    AivMarks marks;
+};
+
+using AivTaskKey = std::pair<int32_t, uint32_t>;
+bool IsVectorBlock(const Record& record) { return record.coreType == ACLPTI_CORE_TYPE_AIV; }
+
+bool IsSupportedBlock(const Record& record)
+{
+    if (record.kind != RecordKind::BlockStart && record.kind != RecordKind::BlockEnd)
+        return false;
+    return IsVectorBlock(record) ? record.subBlockId <= kMaxVectorSubBlock :
+                                   record.coreType == ACLPTI_CORE_TYPE_AIC && record.subBlockId == 0;
+}
+
+std::vector<AivBlock> CollectAivBlocks(const Source& source, State& state)
+{
+    using Key = std::tuple<int32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>;
+    std::map<Key, std::vector<const Record*>> groups;
+    for (const auto& record : source.records) {
+        if (IsSupportedBlock(record)) {
+            groups[{record.deviceId, record.taskId, record.blockId, record.subBlockId, record.coreType, record.coreId}]
+                .push_back(&record);
+        }
+    }
+    std::vector<AivBlock> blocks;
+    for (auto& group : groups) {
+        PairBoundaries(
+            group.second, RecordKind::BlockStart,
+            [&](const Record& start, const Record& end) { blocks.push_back({&start, end.times[kSystemCounter]}); },
+            [&](const Record& row) { state.Issue(source.name + ": unmatched BlockLog for " + Task(row)); });
+    }
+    return blocks;
+}
+
+AivBlockIndex IndexAivBlocks(const std::vector<AivBlock>& blocks)
+{
+    std::map<AivTaskKey, uint32_t> vectorCounts;
+    for (const auto& block : blocks) {
+        const auto& row = *block.start;
+        if (IsVectorBlock(row)) {
+            auto& count = vectorCounts[{row.deviceId, row.taskId}];
+            count = std::max(count, row.subBlockId + kSubBlockCountOffset);
+        }
+    }
+    AivBlockIndex index;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        const auto& row = *blocks[i].start;
+        if (IsVectorBlock(row)) {
+            const auto count = vectorCounts.at({row.deviceId, row.taskId});
+            const auto logicalId = row.blockId * count + row.subBlockId;
+            index[logicalId].push_back(i);
+        }
+    }
+    return index;
+}
+
+std::optional<size_t> MatchAivBlock(const Record& mark, const std::vector<AivBlock>& blocks, const AivBlockIndex& index)
+{
+    // Dump and BlockLog core IDs use different numbering on A5. A host record
+    // can be assigned only when its logical ID and device counter match one block.
+    const auto found = index.find(mark.blockId);
+    if (found == index.end())
+        return std::nullopt;
+    std::optional<size_t> matched;
+    const auto timestamp = mark.times[kSystemCounter];
+    for (const auto i : found->second) {
+        const auto& block = blocks[i];
+        const auto& start = *block.start;
+        if (mark.deviceId != wire::kHostDeviceId && start.deviceId != mark.deviceId)
+            continue;
+        if (timestamp < start.times[kSystemCounter] || timestamp > block.end)
+            continue;
+        if (matched)
+            return std::nullopt;
+        matched = i;
+    }
+    return matched;
+}
+
+AivTimeline CollectAivTimeline(const Source& source, State& state)
+{
+    AivTimeline timeline;
+    if (std::none_of(source.records.begin(), source.records.end(), [](const Record& row) {
+            return row.kind == RecordKind::AicoreTimestamp;
+        }))
+        return timeline;
+    timeline.blocks = CollectAivBlocks(source, state);
+    const auto index = IndexAivBlocks(timeline.blocks);
+    for (const auto& row : source.records) {
+        if (row.kind != RecordKind::AicoreTimestamp)
+            continue;
+        const auto* operation = FindAivOperation(row.descId);
+        if (!operation && row.descId <= kLastReservedDescId)
+            continue;
+        if (row.deviceId < wire::kHostDeviceId) {
+            state.devices.at(row.deviceId).aiv = true;
+        }
+        const auto block = MatchAivBlock(row, timeline.blocks, index);
+        if (!block) {
+            state.Issue(source.name + ": missing or ambiguous Vector Block for descId " + Hex(row.descId));
+            continue;
+        }
+        const auto& start = *timeline.blocks[*block].start;
+        state.devices.at(start.deviceId).aiv = true;
+        timeline.marks[{*block, operation ? operation->startId : row.descId, row.coreId}].push_back(&row);
+    }
+    return timeline;
+}
+
+std::string AivBlockTrack(const Record& block)
+{
+    return "block" + std::to_string(block.blockId) + (IsVectorBlock(block) ? "-vector" : "-cube") +
+           std::to_string(block.subBlockId);
+}
+
+uint64_t AivBlockOrder(const Record& block)
+{
+    return kAivComputeOrder + kFirstBlockTrackOffset + block.blockId * kTracksPerBlock +
+           (IsVectorBlock(block) ? kSubBlockCountOffset + block.subBlockId : 0);
+}
+
+comm::Tree AivBlockArgs(const Record& block, const TaskTracks* tracks, const comm::Interval& interval)
+{
+    auto args = BlockArgs(tracks ? tracks->Stream(block) : kUnknownStreamId, block.taskId, interval);
+    args.put("BlockId", block.blockId);
+    args.put("SubBlockId", block.subBlockId);
+    args.put("CoreType", IsVectorBlock(block) ? "AIV" : "AIC");
+    args.put("BlockLog Core Id", block.coreId);
+    return args;
+}
+
+void EmitAivMark(
+    const Source& source, const Record& block, const Record& start, const Record& end, const AivOperation* operation,
+    const TaskTracks* tracks, State& state, Trace& trace)
+{
+    comm::Interval interval;
+    if (end.times[kSystemCounter] <= start.times[kSystemCounter] ||
+        !Interval(
+            Clock(source, block.deviceId, &DeviceClocks::task), start.times[kSystemCounter], end.times[kSystemCounter],
+            interval)) {
+        state.Issue(source.name + ": invalid AIV interval for descId " + Hex(start.descId));
+        return;
+    }
+    auto args = AivBlockArgs(block, tracks, interval);
+    args.put("Start DescId", Hex(start.descId));
+    args.put("End DescId", Hex(end.descId));
+    args.put("Start PC", Hex(start.curPc));
+    args.put("End PC", Hex(end.curPc));
+    args.put("Physical Core Id", start.coreId);
+    if (operation)
+        state.devices.at(block.deviceId).communication.push_back(interval);
+    trace.Duration(
+        block.deviceId, Group::Aiv, AivBlockTrack(block), operation ? operation->name : std::to_string(start.descId),
+        interval, comm::Json(args), AivBlockOrder(block));
+}
+
+void EmitAivMarks(const Source& source, AivTimeline& timeline, const TaskTracks* tracks, State& state, Trace& trace)
+{
+    for (auto& [key, marks] : timeline.marks) {
+        const auto [blockIndex, descId, coreId] = key;
+        const auto& block = *timeline.blocks[blockIndex].start;
+        const auto* operation = FindAivOperation(descId);
+        std::stable_sort(marks.begin(), marks.end(), [](const Record* a, const Record* b) {
+            return std::tie(a->times[kSystemCounter], a->descId) < std::tie(b->times[kSystemCounter], b->descId);
+        });
+        const Record* start = nullptr;
+        bool ambiguous = false;
+        const auto unmatched = [&]() {
+            state.Issue(
+                source.name + ": unmatched AIV descId " + Hex(descId) + " for " + Task(block) + " on physical core " +
+                std::to_string(coreId));
+        };
+        for (const auto* mark : marks) {
+            if (operation ? mark->descId == descId : start == nullptr) {
+                if (start) {
+                    ambiguous = true;
+                    unmatched();
+                } else {
+                    start = mark;
+                }
+                continue;
+            }
+            if (start && !ambiguous)
+                EmitAivMark(source, block, *start, *mark, operation, tracks, state, trace);
+            else
+                unmatched();
+            start = nullptr;
+            ambiguous = false;
+        }
+        if (start)
+            unmatched();
+    }
+}
+
+void EmitAivBlocks(
+    const Source& source, const std::vector<AivBlock>& blocks, const TaskTracks* tracks, State& state, Trace& trace)
+{
+    for (const auto& block : blocks) {
+        const auto& start = *block.start;
+        if (!state.devices.at(start.deviceId).aiv)
+            continue;
+        comm::Interval interval;
+        if (!Interval(
+                Clock(source, start.deviceId, &DeviceClocks::task), start.times[kSystemCounter], block.end, interval)) {
+            state.Issue(source.name + ": invalid BlockLog interval for " + Task(start));
+            continue;
+        }
+        trace.Duration(
+            start.deviceId, Group::Aiv, AivBlockTrack(start), IsVectorBlock(start) ? "vector time" : "cube time",
+            interval, comm::Json(AivBlockArgs(start, tracks, interval)), AivBlockOrder(start));
+    }
+}
+
 void ProcessSources(const fs::path& directory, State& state, Trace& trace)
 {
+    std::vector<AivTimeline> timelines;
+    for (const auto& source : state.sources)
+        timelines.push_back(CollectAivTimeline(source, state));
     DetermineModes(state, trace);
-    const TaskTracks tracks(directory / "application_raw.jsonl");
+    // Keep the legacy input available when regenerating a trace from an older report.
+    const auto taskTracksPath = directory / comm::kProcessDirectory / comm::kTaskTracksFileName;
+    const TaskTracks tracks(fs::exists(taskTracksPath) ? taskTracksPath : directory / "application_raw.jsonl");
     const auto process = fs::path(comm::kProcessDirectory).filename().string();
-    for (const auto& source : state.sources) {
+    for (size_t i = 0; i < state.sources.size(); ++i) {
+        const auto& source = state.sources[i];
+        auto& timeline = timelines[i];
         const auto* sourceTracks = source.name == process ? &tracks : nullptr;
         CcuMissions(source, state, trace);
         TaskLogs(source, state, trace, sourceTracks);
+        if (timeline.blocks.empty() &&
+            std::any_of(source.records.begin(), source.records.end(), [&](const Record& row) {
+                return IsSupportedBlock(row) && state.devices.at(row.deviceId).aiv;
+            })) {
+            timeline.blocks = CollectAivBlocks(source, state);
+        }
+        EmitAivBlocks(source, timeline.blocks, sourceTracks, state, trace);
+        EmitAivMarks(source, timeline, sourceTracks, state, trace);
         ValidateTaskLogs(source, state);
     }
     for (const auto& item : state.devices) {
-        if (!item.second.aicpu || !item.second.ccu)
+        if (item.second.ModeCount() < kMinimumMixedModes)
             continue;
         const auto warning = "Device Id " + std::to_string(item.first) +
-                             ": mixed AiCpu and CCU communication; domain envelopes combine both modes";
+                             ": mixed communication modes; domain envelopes combine all detected modes";
         state.Issue(warning);
     }
 }
 void Fusion(Trace& trace, int32_t device, const Metrics& metrics, size_t computeCount, size_t communicationCount)
 {
-    if (!metrics.aicpu && !metrics.ccu)
+    if (metrics.ModeCount() == 0)
         return;
     comm::Tree args;
     args.put("deviceId", device);
-    args.put("communicationMode", metrics.aicpu ? (metrics.ccu ? "mixed" : "AICPU") : "CCU");
+    args.put(
+        "communicationMode",
+        metrics.ModeCount() > kSingleModeCount ? "mixed" : (metrics.aiv ? "AIV" : (metrics.aicpu ? "AICPU" : "CCU")));
     args.put("aggregation", "envelope");
     if (!metrics.compute.empty()) {
         auto computeArgs = args;

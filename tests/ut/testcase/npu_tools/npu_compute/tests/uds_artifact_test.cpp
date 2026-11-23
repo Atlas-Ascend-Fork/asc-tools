@@ -281,10 +281,9 @@ TEST(NpuComputeUdsArtifact, ApplicationManifestMatchesReceivedArtifacts)
     Result result;
     result.sections = config.sections;
     result.manifest = {
-        {1, "application_raw.jsonl", 3},
-        {2, "application_manifest.json", 3},
-        {3, "HardwareInfo.jsonl", 3},
-        {4, ".communication-staging/process-uds/manifest.json", 3},
+        {1, "HardwareInfo.jsonl", 3},
+        {2, ".communication-staging/process-uds/manifest.json", 3},
+        {3, ".communication-staging/process-uds/task-tracks.jsonl", 3},
     };
     for (const auto& entry : result.manifest) {
         Begin(receiver, entry.id, entry.name);
@@ -294,9 +293,9 @@ TEST(NpuComputeUdsArtifact, ApplicationManifestMatchesReceivedArtifacts)
     EXPECT_TRUE(receiver.Validate(result, config));
 
     const std::vector<ManifestEntry> mismatches = {
-        {99, "application_raw.jsonl", 3},
+        {99, "HardwareInfo.jsonl", 3},
         {1, "device0/op-x/0/summary.jsonl", 3},
-        {1, "application_raw.jsonl", 4},
+        {1, "HardwareInfo.jsonl", 4},
     };
     for (const auto& entry : mismatches) {
         auto broken = result;

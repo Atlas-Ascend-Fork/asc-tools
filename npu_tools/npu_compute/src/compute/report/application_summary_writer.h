@@ -19,8 +19,7 @@ struct ApplicationTaskAssociation {
     const char* unavailableReason = "";
 };
 
-// Returns the manifest's result-unit object after committing the summary artifact.
-std::string WriteApplicationOpSummary(
+void WriteApplicationOpSummary(
     const ApplicationOpInfo& op, const ApplicationTaskAssociation& association,
     const aclpti::profiling::ApplicationSummary& summary, ArtifactSink& sink);
 } // namespace npucompute

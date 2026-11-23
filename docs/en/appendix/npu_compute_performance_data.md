@@ -15,23 +15,22 @@ Matching metric names use the same units and base formulas, but their scope, fre
 
 ## Application Replay Communication Artifacts
 
-`--replay-mode application --section Communication` delivers raw callback data, lifecycle information, hardware information, and per-launch basic summaries. It also exports a communication timeline and application-level interval metrics.
+`--replay-mode application --section Communication` exports hardware information, per-launch summaries, the communication timeline, and application-level interval metrics.
 
 | File | Contents |
 |---|---|
-| `application_raw.jsonl` | The first line records the schema, real `processId`, `passId`, and collection kind. Each later line owns a callback payload copy and retains `deviceId/deviceEpoch/rawType/chunkModule/offset/isLastChunk` and hexadecimal `payloadHex`. Raw chunks remain intact. The consumer separately decodes known LOG/PMU formats; invalid lengths or formats count as processing errors. |
-| `application_manifest.json` | Session and per-device states, Start/Stop return codes, epochs, and received/processed/dropped/invalid record counts. `endReason` identifies the actual closure path. When `stopAttempted=false`, `stopStatus=null` does not imply a successful Stop call. `localQueueDrained` confirms local processing finished. `localCollectionHealthy` describes local control and processing. `tailConfirmed` confirms the Runtime session tail; `complete` requires both local health and tail confirmation. |
 | `HardwareInfo.jsonl` | Preserves the existing five hardware categories. Device categories carry `Device Id` for each observed device, queried while its resources are alive. Unavailable fields remain NA. |
-| `device<id>/op-<encoded-name>/<launch_index>/summary.jsonl` | One `OpInfoSummary` per successful launch with an identified name and device, including repeated calls. Long names use an `instance-<index>` directory; the summary and manifest retain the original name. |
+| `device<id>/op-<encoded-name>/<launch_index>/summary.jsonl` | One `OpInfoSummary` per successful launch with an identified name and device, including repeated calls. Long names use an `instance-<index>` directory; the summary retains the original name. |
 
-With a Runtime that delivers all devices’ tail callbacks during `MsprofFinalize`, the official ACL finalize notification sets `tailConfirmed=true`. Without this notification it remains false, so delivered artifacts cannot prove full data completeness. `failureReason=acl_finalize_not_observed` identifies a missing notification; the field is null after a notification, while states and counters still report other collection errors. `isLastChunk` ends one Runtime file chunk, rather than the profiling session. Host records and records whose device or epoch cannot be established retain their raw device ID and use `deviceEpoch=0`. Late data after a device restart is not assigned to an epoch by guessing.
+`.communication-staging` holds decoded fragments, clock mappings, and host task naming metadata while the timeline is generated. Report finalization removes this directory with `--no-pack`. Packed reports exclude this directory.
 
+The application must call `aclFinalize`, and Runtime must deliver tail callbacks for every device before the finalize notification. If the notification is missing and the application succeeds, collection exits with code 3.
 
 The fixed configuration is `PROF_OP_TIMESTAMP_MASK | PROF_TASK_TIME_MASK | PROF_TASK_TIME_L1_MASK | PROF_AICPU_TRACE_MASK | PROF_AICORE_METRICS_MASK` (`0x10000080e`). The ten AICORE_METRICS slots contain 808, 1281, 0x422, 0x423, and six INVALID entries, with ALL_BLOCK enabled. This single pass collects the floating-point/vector activity, GM traffic, total cycles, and Task timing needed by the summary, without enabling other Sections.
 
 `OpInfoSummary` reuses the formulas below. On 950, the two raw 16-bit task fields form a full taskSn, matched to launches by `deviceId/deviceEpoch/taskSn`. `Stream Id` retains the actual Runtime exposed stream ID; it must not be compared with the raw low 16 bits. Missing identities, reused taskSn values, uncertain epochs, or absent data produce `NA` with `unavailable_reasons`, without borrowing data across devices or epochs. `collection_status` describes session collection completeness, rather than guaranteeing every metric is available. `communication_time`, `compute_communication_overlap_time`, and `compute_overhead_time` remain `NA` with reason `communication_intervals_not_parsed`.
 
-The manifest adds `unidentifiedLaunches` and `result_units`. Each unit includes its original name, device, epoch, instance identifiers, launch_index, and summary_path. Bounded UDS continuation frames carry the final artifact manifest without a fixed total launch-count limit.
+Bounded UDS continuation frames carry the final artifact manifest for large numbers of per-launch summaries.
 
 The per-launch summaries still use the existing formulas. `CommunicationTrace.json` contains the AiCpu and CCU communication and compute events and overlap intervals. `app_summary.jsonl` summarizes available intervals by device and mode. Multi-process reports keep these files under the corresponding `pid-<pid>` directory.
 

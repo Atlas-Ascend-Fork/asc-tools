@@ -16,6 +16,7 @@ namespace npucompute::communication {
 inline constexpr const char* kStagingDirectory = ".communication-staging";
 inline constexpr const char* kProcessDirectory = ".communication-staging/process-uds";
 inline constexpr const char* kArtifactPrefix = ".communication-staging/process-uds/";
+inline constexpr const char* kTaskTracksFileName = "task-tracks.jsonl";
 inline constexpr unsigned kManifestSchemaVersion = 1;
 inline constexpr size_t kMaxFragmentBytes = 1024U * 1024U;
 inline constexpr size_t kMaxFragments = 500;

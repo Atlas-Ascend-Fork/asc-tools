@@ -17,6 +17,47 @@
 namespace aclpti::communication {
 namespace {
 using namespace protocol;
+constexpr size_t kAicoreTimestampBytes = 24;
+
+void DecodeAicoreTimestamps(const uint8_t* payload, size_t length, Record record, std::vector<Record>& records)
+{
+    constexpr size_t kCounterOffset = 0, kBlockOffset = 8, kDescOffset = 12, kPcOffset = 16;
+    constexpr unsigned kLogicalBlockBits = 16;
+    record.kind = RecordKind::AicoreTimestamp;
+    record.streamId = kUnknownStreamId;
+    for (size_t offset = 0; offset < length; offset += kAicoreTimestampBytes) {
+        const auto* bytes = payload + offset;
+        const auto block = Read<uint32_t>(bytes, kBlockOffset);
+        record.blockId = static_cast<uint16_t>(block);
+        record.coreId = block >> kLogicalBlockBits;
+        record.descId = Read<uint32_t>(bytes, kDescOffset);
+        record.curPc = Read<uint64_t>(bytes, kPcOffset);
+        record.times[Record::kTaskSystemCounter] = Read<uint64_t>(bytes, kCounterOffset);
+        records.push_back(record);
+    }
+}
+
+void DecodeTaskBoundary(const data::TaskLog32& task, Record& record)
+{
+    record.functionType = task.funcType;
+    record.taskType = task.sqeType;
+    // Chip6 carries a complete task identity here, not an independent stream field.
+    record.streamId = kUnknownStreamId;
+    record.taskId = task.fullTaskId;
+    record.times[Record::kTaskSystemCounter] = task.systemCounter;
+    record.fusionType = task.fusionType;
+    record.missionId = task.missionId;
+    if (task.IsBlock()) {
+        record.kind = task.funcType == data::kBlockStartFunction ? RecordKind::BlockStart : RecordKind::BlockEnd;
+        record.blockId = task.blockId;
+        record.subBlockId = task.subBlockId;
+        record.coreType = task.coreType;
+        record.coreId = task.coreTypeId;
+    } else {
+        record.kind = task.IsTaskStart() ? RecordKind::TaskStart : RecordKind::TaskEnd;
+    }
+}
+
 bool DecodeHccl(const uint8_t* p, Record& r)
 {
     constexpr size_t itemIdOffset = 0, cclTagOffset = 8;
@@ -252,6 +293,9 @@ size_t PayloadSize(int32_t rawType, uint32_t level, uint32_t type)
                 return 0;
         }
     }
+    if (rawType == kAdditional && IsAicoreTimestamp(level, type)) {
+        return kAicoreTimestampBytes;
+    }
     if (rawType == kAdditional && level == kHcclLevel) {
         if (type == kCcuTaskInfo) {
             return ccuTaskInfoBytes;
@@ -288,18 +332,10 @@ bool Decoder::Decode(
         if (data::DecodeTaskLog(reinterpret_cast<const std::byte*>(bytes), size, task) != ACLPTI_SUCCESS) {
             return Fail("Invalid task log magic");
         }
-        if (!task.IsTaskStart() && !task.IsTaskEnd()) {
+        if (!task.IsTaskStart() && !task.IsTaskEnd() && !task.IsBlock()) {
             return true;
         }
-        r.kind = task.IsTaskStart() ? RecordKind::TaskStart : RecordKind::TaskEnd;
-        r.functionType = task.funcType;
-        r.taskType = task.sqeType;
-        // Chip6 carries a complete task identity here, not an independent stream field.
-        r.streamId = kUnknownStreamId;
-        r.taskId = task.fullTaskId;
-        r.times[Record::kTaskSystemCounter] = task.systemCounter;
-        r.fusionType = task.fusionType;
-        r.missionId = task.missionId;
+        DecodeTaskBoundary(task, r);
     } else if (rawType == kCompact) {
         return DecodeCompactRecord(bytes, size, r, records);
     } else {
@@ -357,11 +393,16 @@ bool Decoder::DecodeAdditionalRecord(const uint8_t* bytes, size_t size, Record r
     if (length > protocol::kPayloadBytes) {
         return Fail("AdditionalInfo payload exceeds record");
     }
-    const bool batch = r.level == protocol::kAicpuLevel && r.type == kAicpuHcclTask;
+    const bool timestamp = IsAicoreTimestamp(r.level, r.type);
+    const bool batch = timestamp || (r.level == protocol::kAicpuLevel && r.type == kAicpuHcclTask);
     if (length == 0 || (batch ? length % required != 0 : length != required)) {
         return Fail("Invalid communication payload length");
     }
     const uint8_t* payload = bytes + protocol::kHeaderBytes;
+    if (timestamp) {
+        DecodeAicoreTimestamps(payload, length, r, records);
+        return true;
+    }
     if (r.level == kHcclLevel) {
         DecodeCcuInfo(payload, r);
     } else if (r.type == kAicpuNode) {
@@ -393,7 +434,8 @@ bool Decoder::DecodeAdditionalPackage(const Stream& stream, const MsprofRawData&
         if (remaining < kAdditionalTypeEnd) {
             return true;
         }
-        const bool wanted = IsCcuAdditional(Read<uint16_t>(bytes, kLevelOffset), Read<uint32_t>(bytes, kTypeOffset));
+        const bool wanted =
+            IsCommunicationAdditional(Read<uint16_t>(bytes, kLevelOffset), Read<uint32_t>(bytes, kTypeOffset));
         if (!wanted) {
             // Dictionary packages are text, not an array of 256-byte records.
             if (Read<uint16_t>(bytes, kMagicOffset) != kMagic) {
@@ -402,7 +444,7 @@ bool Decoder::DecodeAdditionalPackage(const Stream& stream, const MsprofRawData&
             continue;
         }
         if (remaining < kAdditionalBytes) {
-            return Fail("Incomplete CCU AdditionalInfo record");
+            return Fail("Incomplete communication AdditionalInfo record");
         }
         if (!Decode(bytes, kAdditionalBytes, kAdditional, raw, records)) {
             return false;
@@ -507,7 +549,7 @@ bool Decoder::FeedAdditional(Stream& stream, const MsprofRawData& raw, std::vect
     // use the same raw type, and text lines can cross callback slices.
     if (!stream.ignoredAdditionalPackage && stream.bytes.size() >= kAdditionalTypeEnd &&
         Read<uint16_t>(stream.bytes.data(), kMagicOffset) != kMagic &&
-        !IsCcuAdditional(
+        !IsCommunicationAdditional(
             Read<uint16_t>(stream.bytes.data(), kLevelOffset), Read<uint32_t>(stream.bytes.data(), kTypeOffset))) {
         stream.ignoredAdditionalPackage = true;
     }

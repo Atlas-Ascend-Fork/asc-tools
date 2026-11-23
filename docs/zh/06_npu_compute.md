@@ -127,11 +127,11 @@ npu-compute --replay-mode application --section Communication --no-pack --export
 
 每次成功的`aclrtSetDevice`后启动该设备采集；同一设备处于采集中时不重复启动。Reset可选：工具按设备跟踪经`aclrtSetDevice`、`aclrtResetDevice`和`aclrtResetDeviceForce`发生的引用变化；释放最后一个引用的普通Reset或有引用的Force Reset在调用原接口前停止对应设备。用户在相关业务同步和设备使用线程结束后必须显式调用`aclFinalize`。工具在 ACL 初始化回调中为当前进程建立采集会话。在 ACL finalize 通知确认尾部后，工具在通知返回前完成本地解码、报表生成和结果交付。缺少 finalize 通知时，工具保留可用数据并报告采集不完整。多设备共存依赖Runtime支持在已启动设备采集后继续启动其他设备；工具不修改Runtime，也不主动同步应用的Stream。
 
-输出`application_raw.jsonl`、`application_manifest.json`和`HardwareInfo.jsonl`，并为每个能确定名称和设备的成功launch生成`device<id>/op-<编码名称>/<launch_index>/summary.jsonl`，其中仅包含一条`OpInfoSummary`。同名多次调用分别保留，长名称使用`instance-<编号>`目录；manifest的`result_units`保存原名称和摘要路径。各设备硬件信息在设备资源存活时缓存，设备分类记录带`Device Id`。
+输出`HardwareInfo.jsonl`，并为每个能确定名称和设备的成功launch生成`device<id>/op-<编码名称>/<launch_index>/summary.jsonl`，其中仅包含一条`OpInfoSummary`。同名多次调用分别保留，长名称使用`instance-<编号>`目录。各设备硬件信息在设备资源存活时缓存，设备分类记录带`Device Id`。
 
-通信采集固定启用通信时间戳、Task时间、Task L1时间、AICPU Trace和单轮基础PMU（808、1281、0x422、0x423，以及ALL_BLOCK），不重放业务Kernel。这些数据用于现有摘要的时长、计算量、并行统计和带宽公式。950原始任务字段拼成完整taskSn，并按device和采集周期与launch关联；缺失、复用或无法确认周期时，对应指标为`NA`并附`unavailable_reasons`。已收到的数据经解析后生成`CommunicationTrace.json`，展示通信与计算时间块。应用级`app_summary.jsonl`根据已关联的区间汇总通信与重叠指标。未知raw类型继续原样保留。结果清单分批传输，目录输出和报告打包均支持较多算子实例。
+通信采集固定启用通信时间戳、Task时间、Task L1时间、AICPU Trace和单轮基础PMU（808、1281、0x422、0x423，以及ALL_BLOCK），不重放业务Kernel。这些数据用于现有摘要的时长、计算量、并行统计和带宽公式。950原始任务字段拼成完整taskSn，并按device和采集周期与launch关联；缺失、复用或无法确认周期时，对应指标为`NA`并附`unavailable_reasons`。已收到的数据经解析后生成`CommunicationTrace.json`，展示通信与计算时间块。应用级`app_summary.jsonl`根据已关联的区间汇总通信与重叠指标。结果清单分批传输，目录输出和报告打包均支持较多算子实例。
 
-配套Runtime须保证`MsprofFinalize`在正式finalize通知前通过callback交付全部设备尾数据；正常finalize且本地采集和交付无错误时可成功，无SetDevice的正常finalize可交付完整空会话。未收到通知时`tailConfirmed=false`，应用成功时工具退出码为3；已知Start/Stop错误、丢失或处理失败不会被最终通知清除。manifest中的`localCollectionHealthy`与`tailConfirmed`分别反映本地处理状态和尾数据确认状态；`stopAttempted`及设备结束原因区分实际Stop和Runtime finalize收尾，未调用Stop时`stopStatus=null`。Reset后再次采集的原始记录若无法区分迟到数据，`deviceEpoch`记为0。
+配套Runtime须保证`MsprofFinalize`在正式finalize通知前通过callback交付全部设备尾数据；正常finalize且本地采集和交付无错误时可成功，无SetDevice的正常finalize可交付完整空会话。未收到通知时`tailConfirmed=false`，应用成功时工具退出码为3；已知Start/Stop错误、丢失或处理失败不会被最终通知清除。逐算子摘要中的`collection_status`记录会话采集完整性。
 
 ### 采集示例
 

@@ -15,7 +15,7 @@
 #include "acl_pti/profiling/application_profiler.h"
 
 namespace npucompute {
-// All methods run on the ACLPTI consumer worker, including the final Commit.
+// All methods run on the application report worker.
 class ApplicationReport final {
 public:
     explicit ApplicationReport(ArtifactSink& sink) : sink_(sink) {}
@@ -23,17 +23,12 @@ public:
     void Finish(const aclpti::profiling::ApplicationSummary& summary, const ApplicationOpSnapshot& snapshot = {});
 
 private:
-    void Begin();
-    std::string WriteOpSummaries(
-        const aclpti::profiling::ApplicationSummary& summary, const ApplicationOpSnapshot& snapshot);
-    static std::string FormatManifest(
-        const aclpti::profiling::ApplicationSummary& summary, const ApplicationOpSnapshot& snapshot,
-        const std::string& units);
+    void WriteTaskTrackChunk(const aclpti::profiling::ApplicationRawRecord& record);
+    void WriteOpSummaries(const aclpti::profiling::ApplicationSummary& summary, const ApplicationOpSnapshot& snapshot);
     using TaskKey = std::tuple<int32_t, uint64_t, uint32_t>;
     std::map<TaskKey, std::vector<aclpti::data::DecodedRecord>> tasks_;
     ArtifactSink& sink_;
-    uint64_t records_ = 0;
-    bool begun_ = false;
+    uint64_t taskTrackChunks_ = 0;
 };
 } // namespace npucompute
 #endif

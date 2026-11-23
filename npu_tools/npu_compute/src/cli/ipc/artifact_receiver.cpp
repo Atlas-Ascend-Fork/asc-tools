@@ -440,9 +440,6 @@ void ValidateApplicationManifest(
             "ARTIFACT: unexpected application artifact");
         Require(names.insert(entry.name).second, "ARTIFACT: duplicate application artifact");
     }
-    validation.Check(names.count("application_raw.jsonl") != 0, "application_raw.jsonl: required artifact missing");
-    validation.Check(
-        names.count("application_manifest.json") != 0, "application_manifest.json: required artifact missing");
     validation.Check(names.count("HardwareInfo.jsonl") != 0, "HardwareInfo.jsonl: required artifact missing");
     validation.Check(
         names.count(std::string(communication::kArtifactPrefix) + ipc::kManifestFileName) != 0,

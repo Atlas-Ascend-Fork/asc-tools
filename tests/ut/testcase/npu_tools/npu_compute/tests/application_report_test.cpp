@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "acl_pti/data/communication_protocol.h"
+#include "communication/artifact_schema.h"
 #include "report/application_report.h"
 #include <boost/property_tree/json_parser.hpp>
 #include <gtest/gtest.h>
@@ -49,32 +51,38 @@ public:
     std::map<std::string, uint64_t> counts;
 };
 
-TEST(ApplicationReport, PreservesRawBytesDeviceIdentityAndEpochWithoutDecoding)
+TEST(ApplicationReport, StagesOnlyHostTaskTrackChunks)
 {
+    namespace comm = npucompute::communication;
+    namespace wire = aclpti::communication::protocol;
     MemorySink sink;
     npucompute::ApplicationReport report(sink);
     aclpti::profiling::ApplicationRawRecord record;
     record.deviceId = 1;
     record.deviceEpoch = 2;
-    record.type = 8;
+    record.type = wire::kCompact;
     record.chunkModule = 4;
     record.offset = 256;
     record.isLastChunk = true;
     record.bytes = {0, 0x80, 0xff};
     report.Consume(record);
-    aclpti::profiling::ApplicationSummary summary;
-    summary.receivedRecords = summary.processedRecords = 1;
-    report.Finish(summary);
-    const auto& raw = sink.files.at("application_raw.jsonl");
-    std::istringstream input(raw.substr(raw.find('\n') + 1));
+    record.deviceId = wire::kHostDeviceId;
+    record.type = wire::kTaskLog;
+    report.Consume(record);
+    record.type = wire::kCompact;
+    report.Consume(record);
+    report.Finish({});
+    const std::string path = std::string(comm::kArtifactPrefix) + comm::kTaskTracksFileName;
+    std::istringstream input(sink.files.at(path));
     boost::property_tree::ptree row;
     boost::property_tree::read_json(input, row);
-    EXPECT_EQ(row.get<uint64_t>("passId"), 0U);
-    EXPECT_EQ(row.get<int>("deviceId"), 1);
+    EXPECT_EQ(row.get<int>("deviceId"), wire::kHostDeviceId);
+    EXPECT_EQ(row.get<int>("rawType"), wire::kCompact);
     EXPECT_EQ(row.get<uint64_t>("deviceEpoch"), 2U);
     EXPECT_EQ(row.get<uint64_t>("offset"), 256U);
     EXPECT_EQ(row.get<std::string>("payloadHex"), "0080ff");
-    EXPECT_EQ(sink.counts.at("application_raw.jsonl"), 2U);
+    EXPECT_EQ(sink.counts.at(path), 1U);
+    EXPECT_EQ(sink.files.size(), 1U);
 }
 
 npucompute::ApplicationOpInfo Op(int device, uint64_t instance)
@@ -197,32 +205,6 @@ TEST(ApplicationReport, FullTaskSnOnDifferentDevicesKeepsIndependentPmuValues)
     EXPECT_DOUBLE_EQ(bandwidths[1], bandwidths[0] * 2);
 }
 
-TEST(ApplicationReport, FinalizedDeviceDoesNotInventSuccessfulStop)
-{
-    using namespace aclpti::profiling;
-    MemorySink sink;
-    npucompute::ApplicationReport report(sink);
-    ApplicationSummary summary;
-    summary.complete = true;
-    summary.tailConfirmed = true;
-    summary.endReason = ApplicationEndReason::AclFinalize;
-    auto& device = summary.devices[0];
-    device.startAttempted = true;
-    device.deviceEpoch = 1;
-    device.endReason = ApplicationDeviceEndReason::RuntimeFinalize;
-    report.Finish(summary);
-    std::istringstream input(sink.files.at("application_manifest.json"));
-    boost::property_tree::ptree manifest;
-    boost::property_tree::read_json(input, manifest);
-    EXPECT_TRUE(manifest.get<bool>("complete"));
-    EXPECT_EQ(manifest.get<std::string>("endReason"), "acl_finalize");
-    EXPECT_EQ(manifest.get<std::string>("failureReason"), "null");
-    const auto& row = manifest.get_child("devices").front().second;
-    EXPECT_FALSE(row.get<bool>("stopAttempted"));
-    EXPECT_EQ(row.get<std::string>("stopStatus"), "null");
-    EXPECT_EQ(row.get<std::string>("endReason"), "runtime_finalize");
-}
-
 TEST(ApplicationReport, AssociationReasonsKeepTheirPriority)
 {
     MemorySink sink;
@@ -314,12 +296,9 @@ TEST(ApplicationReport, RequiredArtifactsCommitInOrderAndFailedSummaryAborts)
             EXPECT_EQ(sink.aborts, 0U);
         }
         std::vector<std::string> expected = {
-            "begin:application_raw.jsonl", "commit:application_raw.jsonl", "begin:HardwareInfo.jsonl",
-            "commit:HardwareInfo.jsonl", "begin:device0/op-comm/0/summary.jsonl"};
+            "begin:HardwareInfo.jsonl", "commit:HardwareInfo.jsonl", "begin:device0/op-comm/0/summary.jsonl"};
         if (!fail) {
-            expected.insert(
-                expected.end(), {"commit:device0/op-comm/0/summary.jsonl", "begin:application_manifest.json",
-                                 "commit:application_manifest.json"});
+            expected.push_back("commit:device0/op-comm/0/summary.jsonl");
         }
         EXPECT_EQ(sink.events, expected);
     }
@@ -354,8 +333,5 @@ TEST(ApplicationReport, KeepsFieldOrderEscapesAndQuotingLocales)
     EXPECT_LT(row.find("\"collection_status\""), row.find("\"unavailable_reasons\""));
     EXPECT_EQ(row.find('\n'), row.size() - 1);
     EXPECT_NE(row.find("\"Block Dim\":12345"), std::string::npos);
-    EXPECT_NE(
-        sink.files.at("application_manifest.json").find("\"op_name\":\"comm\\\"\\\\\\u000a\\u0001\\u01_1\""),
-        std::string::npos);
 }
 } // namespace

@@ -147,7 +147,7 @@ std::string UnavailableReasons(const std::vector<std::string>& unavailableFields
 }
 } // namespace
 
-std::string WriteApplicationOpSummary(
+void WriteApplicationOpSummary(
     const ApplicationOpInfo& op, const ApplicationTaskAssociation& association,
     const aclpti::profiling::ApplicationSummary& summary, ArtifactSink& sink)
 {
@@ -192,11 +192,5 @@ std::string WriteApplicationOpSummary(
         sink.Abort();
         throw;
     }
-    std::ostringstream unit;
-    unit << "{\"result_unit_id\":" << Quote(id) << ",\"kernel_instance_id\":" << Quote(instance)
-         << ",\"device_id\":" << *op.metadata.deviceId << ",\"device_epoch\":" << op.deviceEpoch
-         << ",\"op_name\":" << Quote(*op.metadata.name) << ",\"launch_index\":" << op.launchIndex
-         << ",\"summary_path\":" << Quote(directory + "summary.jsonl") << '}';
-    return unit.str();
 }
 } // namespace npucompute

@@ -117,9 +117,12 @@ std::optional<bool> ProcessInternalItem(
         }
         return true;
     }
-    // Communication staging is internal; retain it for diagnosing partial sessions in --no-pack mode.
-    if (name == communication::kStagingDirectory)
+    if (name == communication::kStagingDirectory) {
+        if (context.mode == CollectionDirectoryMode::Retain) {
+            context.discarded.push_back(path);
+        }
         return true;
+    }
     if (name == kStagingDirectoryName) {
         if (context.mode == CollectionDirectoryMode::Retain) {
             context.discarded.push_back(path);

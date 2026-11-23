@@ -42,7 +42,10 @@ enum class RecordKind {
     TaskEnd,
     LegacyTaskInfo, // Reserved for TaskInfo in older staging artifacts.
     RuntimeTaskTrack,
-    CcuChannel
+    CcuChannel,
+    BlockStart,
+    BlockEnd,
+    AicoreTimestamp
 };
 // Owned decoded values. Times retain source units; no host/device clock conversion is implied.
 struct Record {
@@ -80,6 +83,9 @@ struct Record {
     // Node records retain their source kernelType value.
     uint32_t kernelType = UINT32_MAX, dispatchTime = 0, totalTime = 0, fftsThreadId = 0;
     uint32_t taskType = UINT32_MAX, functionType = UINT32_MAX, fusionType = 0;
+    // Timestamp records carry a core-local logical index in blockId and no task identity.
+    uint32_t blockId = 0, subBlockId = 0, coreType = UINT32_MAX, coreId = 0, descId = 0;
+    uint64_t curPc = 0;
     std::optional<uint32_t> reserve;
     std::optional<std::array<uint8_t, kHcclReservedBytes>> reserves;
     uint16_t channelId = UINT16_MAX;

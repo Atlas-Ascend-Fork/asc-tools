@@ -99,7 +99,7 @@ int PublishApplicationRank(bool abortAfterArtifact)
         channel.Send(
             ipc::Type::DataBegin,
             ipc::EncodeArtifactBegin(
-                {2, ipc::DataKind::Application, "application_manifest.json", ipc::ArtifactType::Json}),
+                {2, ipc::DataKind::PmuCsv, "device0/op-fixture/0/summary.jsonl", ipc::ArtifactType::Jsonl}),
             deadline);
         return 23;
     }
@@ -110,8 +110,6 @@ int PublishApplicationRank(bool abortAfterArtifact)
         publisher.Commit(1);
     };
     publish("HardwareInfo.jsonl", kHardwareInfo);
-    publish("application_raw.jsonl", "{\"recordType\":\"metadata\"}\n");
-    publish("application_manifest.json", "{\"complete\":true}\n");
     publish(
         ".communication-staging/process-uds/manifest.json",
         R"({"schema":1,"complete":true,"dropped":0,"errors":0,"records":0,"files":[],"clocks":[]})");

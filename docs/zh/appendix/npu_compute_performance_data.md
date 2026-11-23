@@ -15,23 +15,22 @@
 
 ## Application Replay 通信产物
 
-`--replay-mode application --section Communication`交付原始数据、生命周期信息、硬件信息及逐算子基础摘要。同时输出通信流水与应用级区间指标。
+`--replay-mode application --section Communication`输出硬件信息、逐算子基础摘要、通信流水和应用级区间指标。
 
 | 文件 | 内容 |
 |---|---|
-| `application_raw.jsonl` | 首行为schema、真实`processId`、`passId`及采集种类。其后每行为一次callback的拥有副本，保留`deviceId/deviceEpoch/rawType/chunkModule/offset/isLastChunk`及十六进制`payloadHex`，原始chunk保持完整；已知LOG/PMU格式另在消费线程解码，长度或格式错误计入处理错误。 |
-| `application_manifest.json` | 会话及逐设备状态、Start/Stop返回码、周期编号、收到/处理/丢失/无效记录计数。`endReason`记录实际结束原因；`stopAttempted=false`时`stopStatus=null`，不表示成功调用Stop。`localQueueDrained`表示本地队列已处理完；`localCollectionHealthy`表示本地控制和处理未发现错误；`tailConfirmed`表示Runtime会话尾部是否已确认，`complete`同时要求本地健康和尾部确认。 |
 | `HardwareInfo.jsonl` | 保留原有五类硬件记录。每个已观察设备的设备分类带`Device Id`，数值在设备资源存活时读取；未查询到的项仍为NA。 |
-| `device<id>/op-<编码名称>/<launch_index>/summary.jsonl` | 每个名称和设备可确定的成功launch一条`OpInfoSummary`；重复同名调用分别输出。长名称目录回退为`instance-<编号>`，原名保留在摘要与manifest。 |
+| `device<id>/op-<编码名称>/<launch_index>/summary.jsonl` | 每个名称和设备可确定的成功launch一条`OpInfoSummary`；重复同名调用分别输出。长名称目录回退为`instance-<编号>`，原名保留在摘要中。 |
 
-在配套Runtime保证`MsprofFinalize`通过callback交付所有设备尾数据的前提下，正式ACL finalize通知将`tailConfirmed`置为true；未收到通知时为false，不能据本地产物认定全量数据完整。缺少通知时`failureReason=acl_finalize_not_observed`；收到通知时该字段为null，其他采集错误仍由状态和错误计数表示。`isLastChunk`只表示Runtime的一个文件分块结束，不是会话结束。Host或设备来源/周期无法可靠确定的原始记录保留原始deviceId，并使用`deviceEpoch=0`。reset后重新Start不猜测迟到数据归属。
+`.communication-staging`在报告生成期间暂存解码分片、时钟映射和 Host 任务命名元数据。使用`--no-pack`时，报告收尾会清理该目录。打包报告会排除该目录。
 
+应用需显式调用`aclFinalize`，Runtime 须在 finalize 通知前交付所有设备的尾批数据。缺少该通知时，采集命令在应用成功退出的情况下返回 3。
 
 固定配置为`PROF_OP_TIMESTAMP_MASK | PROF_TASK_TIME_MASK | PROF_TASK_TIME_L1_MASK | PROF_AICPU_TRACE_MASK | PROF_AICORE_METRICS_MASK`（`0x10000080e`）。AICORE_METRICS十个slot依次为808、1281、0x422、0x423和六个INVALID，启用ALL_BLOCK；该单轮仅采集摘要需要的浮点/向量活跃周期、GM读写、总周期和任务时间，不自动开启其他Section。
 
 `OpInfoSummary`复用下文的现有公式。950 raw中的两个16位任务字段拼为完整taskSn，以`deviceId/deviceEpoch/taskSn`与launch关联；`Stream Id`保留Runtime的真实exposed stream，不能与raw低16位比较。缺失任务身份、同周期taskSn复用、周期不确定或无对应数据时，相关数值为`NA`，`unavailable_reasons`给出原因；不得跨设备或周期借用。`collection_status`表示会话采集完整性，不承诺所有指标均可计算。`communication_time`、`compute_communication_overlap_time`和`compute_overhead_time`暂为`NA`，原因为`communication_intervals_not_parsed`。
 
-manifest增加`unidentifiedLaunches`及`result_units`，后者逐项记录名称、设备、周期、实例编号、launch_index及summary_path。UDS最终清单采用有界分批帧，无固定的总算子数量上限。
+UDS 最终清单采用有界分批帧，支持交付大量逐算子摘要。
 
 逐算子摘要沿用现有公式。`CommunicationTrace.json`展示AiCpu和CCU的通信、计算与重叠时间块。`app_summary.jsonl`按设备与模式汇总已关联的区间。多进程采集时，这两个文件放在各自的`pid-<pid>`目录。
 

@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include "cli/report/communication_finalizer.h"
 #include "communication/record_json.h"
+#include "aclpti/aclpti_data.h"
 namespace {
 namespace fs = boost::filesystem;
 namespace comm = npucompute::communication;
@@ -109,7 +110,8 @@ protected:
         row.put("offset", 0);
         row.put("isLastChunk", true);
         row.put("payloadHex", payload);
-        std::ofstream output((directory / "application_raw.jsonl").string(), std::ios::app);
+        std::ofstream output(
+            (directory / ".communication-staging/process-uds/task-tracks.jsonl").string(), std::ios::app);
         output << comm::Json(row);
     }
     std::vector<comm::Tree> Summary()
@@ -734,6 +736,101 @@ TEST_F(CommunicationReportTest, AicpuTaskLogJoinsFullTaskNumber)
     ASSERT_EQ(ambiguous.size(), 1);
     EXPECT_EQ(TrackFor(ambiguous.front()), "Stream unresolved");
     EXPECT_DOUBLE_EQ(Summary()[0].get<double>("Overlap Duration(us)"), 0.5);
+}
+
+TEST_F(CommunicationReportTest, AivBlockMarksShareLogicalTracksAndOnlyPredefinedMarksExpandCommunication)
+{
+    constexpr uint32_t task = 0x80000011U;
+    std::vector<Record> rows;
+    AddTask(rows, 0, task, 53, RecordKind::LegacyTaskInfo, 1000, 11000);
+    auto block = Make(RecordKind::BlockStart, 0, 1200);
+    block.taskId = task;
+    block.blockId = 3;
+    const auto addBlock = [&](uint32_t coreType, uint32_t subBlockId, uint32_t coreId) {
+        block.kind = RecordKind::BlockStart;
+        block.times[Record::kTaskSystemCounter] = 1200;
+        block.coreType = coreType;
+        block.subBlockId = subBlockId;
+        block.coreId = coreId;
+        rows.push_back(block);
+        block.kind = RecordKind::BlockEnd;
+        block.times[Record::kTaskSystemCounter] = 10000;
+        rows.push_back(block);
+    };
+    addBlock(ACLPTI_CORE_TYPE_AIC, 0, 3);
+    addBlock(ACLPTI_CORE_TYPE_AIV, 0, 36);
+    addBlock(ACLPTI_CORE_TYPE_AIV, 1, 37);
+    auto mark = Make(RecordKind::AicoreTimestamp, 64, 1500);
+    mark.blockId = 7;
+    mark.coreId = 37;
+    const auto addMark = [&](uint32_t descId, uint64_t counter) {
+        mark.descId = descId;
+        mark.times[Record::kTaskSystemCounter] = counter;
+        rows.push_back(mark);
+    };
+    addMark(0x1011, 6000);
+    addMark(0x1010, 3000);
+    addMark(65577, 2000);
+    addMark(65577, 9000);
+    fs::remove(directory / ".communication-staging/source");
+    Stage(rows, true, true, "process-uds");
+    WriteHostTrack(0, 53, task, 1);
+    WriteHostRaw(17, "1:ExampleAivKernel\n");
+
+    ASSERT_TRUE(npucompute::cli::FinalizeCommunication(directory, nullptr));
+    const auto compute = Events("ExampleAivKernel", task);
+    ASSERT_EQ(compute.size(), 1);
+    EXPECT_EQ(TrackFor(compute.front()), "Compute");
+    EXPECT_EQ(compute.front().get<uint32_t>("args.StreamId"), 53);
+    const auto cube = Events("cube time", task);
+    ASSERT_EQ(cube.size(), 1);
+    EXPECT_EQ(TrackFor(cube.front()), "block3-cube0");
+    for (const auto* name : {"COMMIT", "65577"}) {
+        const auto events = Events(name, task);
+        ASSERT_EQ(events.size(), 1);
+        EXPECT_EQ(TrackFor(events.front()), "block3-vector1");
+        EXPECT_EQ(events.front().get<unsigned>("args.Physical Core Id"), 37);
+    }
+    const auto summary = Summary();
+    ASSERT_EQ(summary.size(), 1);
+    EXPECT_DOUBLE_EQ(summary.front().get<double>("Compute Duration(us)"), 10);
+    EXPECT_DOUBLE_EQ(summary.front().get<double>("Communication Duration(us)"), 3);
+    EXPECT_DOUBLE_EQ(summary.front().get<double>("Overlap Duration(us)"), 3);
+}
+
+TEST_F(CommunicationReportTest, AivAndFusionProcessesSortTogetherByDevice)
+{
+    std::vector<Record> rows;
+    for (const auto device : {5, 4}) {
+        AddTask(rows, device, 17, 4, RecordKind::LegacyTaskInfo, 1000, 6000);
+        auto start = Make(RecordKind::BlockStart, device, 1200);
+        start.coreType = ACLPTI_CORE_TYPE_AIV;
+        auto end = start;
+        end.kind = RecordKind::BlockEnd;
+        end.times[Record::kTaskSystemCounter] = 5800;
+        auto commitStart = Make(RecordKind::AicoreTimestamp, device, 2000);
+        commitStart.descId = 0x1010;
+        auto commitEnd = commitStart;
+        commitEnd.descId = 0x1011;
+        commitEnd.times[Record::kTaskSystemCounter] = 4000;
+        rows.insert(rows.end(), {start, end, commitStart, commitEnd});
+    }
+    Stage(rows);
+    ASSERT_TRUE(npucompute::cli::FinalizeCommunication(directory, nullptr));
+
+    const auto processes = Processes();
+    std::map<int64_t, std::string> sorted;
+    for (const auto& event : Events("process_sort_index")) {
+        const auto index = event.get<int64_t>("args.sort_index");
+        ASSERT_TRUE(sorted.emplace(index, processes.at(event.get<int64_t>("pid"))).second);
+    }
+    std::vector<std::string> names;
+    for (const auto& entry : sorted) {
+        names.push_back(entry.second);
+    }
+    const std::vector<std::string> expected = {
+        "AIV-Npu4", "Computation-Communication-Fusion-Npu4", "AIV-Npu5", "Computation-Communication-Fusion-Npu5"};
+    EXPECT_EQ(names, expected);
 }
 
 TEST_F(CommunicationReportTest, TraceKeepsNumericIdentitiesRawArrayMetadataAndNanosecondFractions)

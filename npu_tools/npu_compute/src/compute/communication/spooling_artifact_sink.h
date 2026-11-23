@@ -18,7 +18,7 @@
 #include <unistd.h>
 namespace npucompute {
 // Single-owner sink. One private unlinked file bounds memory independently of collection size.
-// Publish after producer workers join and the streaming raw artifact commits.
+// Publish after the application report commits its artifacts.
 class SpoolingArtifactSink final : public ArtifactSink {
 public:
     SpoolingArtifactSink() : file_(std::tmpfile())

@@ -273,7 +273,9 @@ DataKind KindForName(const std::string& name)
     }
     if (components.size() == STAGING_PATH_COMPONENTS && components.front() == communication::kStagingDirectory) {
         Check(
-            base == kManifestFileName || communication::IsRecordFileName(base), "invalid Communication artifact name");
+            base == kManifestFileName || base == communication::kTaskTracksFileName ||
+                communication::IsRecordFileName(base),
+            "invalid Communication artifact name");
         return DataKind::Communication;
     }
     constexpr size_t rootPathComponents = 1;
