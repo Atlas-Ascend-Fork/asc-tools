@@ -106,7 +106,8 @@ bool UdsClient::ConnectWithRetry(
         }
         const auto napMs = static_cast<int>(std::min<int64_t>(remain, backoffMs));
         std::this_thread::sleep_for(std::chrono::milliseconds(napMs));
-        backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
+        constexpr int BACKOFF_MULTIPLIER = 2;
+        backoffMs = std::min(backoffMs * BACKOFF_MULTIPLIER, MAX_BACKOFF_MS);
         ++attempt;
     }
 }

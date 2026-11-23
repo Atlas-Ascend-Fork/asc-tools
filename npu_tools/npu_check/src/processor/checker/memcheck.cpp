@@ -64,7 +64,7 @@ NpuCheckReportMemorySpace CubeReportSpace(uint32_t space)
 bool IsSimtUbWrite(const AclsanDeviceMemoryAccessData& data)
 {
     const bool write = data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_WRITE || IsAtomicWrite(data.accessMode);
-    return (data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB) != 0 &&
+    return (data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB)) != 0U &&
            data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB && write;
 }
 
@@ -93,16 +93,18 @@ bool ValidUbLayout(const AclsanUbLayout& layout)
 
 bool HasUsableSimtUbWrite(const AclsanSimtUbMemoryAccessData& data)
 {
-    constexpr uint32_t CONTEXT =
-        ACLSAN_SIMT_CONTEXT_THREAD | ACLSAN_SIMT_CONTEXT_BLOCK_DIM | ACLSAN_SIMT_CONTEXT_ADDRESS;
+    constexpr uint32_t CONTEXT = static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_THREAD) |
+                                 static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_BLOCK_DIM) |
+                                 static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_ADDRESS);
     if (data.header.size < sizeof(data) || !ValidUbLayout(data.ubLayout) ||
         (data.simt.validFlags & CONTEXT) != CONTEXT || data.simt.threadX >= data.simt.blockDimX ||
         data.simt.threadY >= data.simt.blockDimY || data.simt.threadZ >= data.simt.blockDimZ ||
-        (data.header.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED)) != 0U) {
+        (data.header.flags & (static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
+                              static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED))) != 0U) {
         return false;
     }
-    if ((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) != 0U && data.predicateMask0 == 0U &&
-        data.predicateMask1 == 0U) {
+    if ((data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_PREDICATED)) != 0U &&
+        data.predicateMask0 == 0U && data.predicateMask1 == 0U) {
         return false;
     }
     return (data.layoutKind == ACLSAN_MEM_LAYOUT_RANGE && data.layout.range.bytes != 0U) ||
@@ -333,15 +335,16 @@ void Memcheck::QueueSimtUbMemoryAccess(const AclsanSimtUbMemoryAccessData& data)
         ++stats_.droppedDeviceOperations;
         return;
     }
-    if ((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR) != 0U) {
+    if ((data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR)) != 0U) {
         ++stats_.droppedDeviceOperations;
     }
-    if ((data.header.flags & (ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED | ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED)) != 0U) {
+    if ((data.header.flags & (static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
+                              static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED))) != 0U) {
         ++stats_.droppedDeviceOperations;
         return;
     }
     // Reads and inactive or zero-width writes need no write bounds check. Keep any loss flags above.
-    const bool simtUb = (data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB) != 0U &&
+    const bool simtUb = (data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB)) != 0U &&
                         data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB;
     if (simtUb && data.accessMode == ACLSAN_DEVICE_MEMORY_ACCESS_READ) {
         // The SIMT UB producer currently emits writes only. Reads are outside this
@@ -349,10 +352,11 @@ void Memcheck::QueueSimtUbMemoryAccess(const AclsanSimtUbMemoryAccessData& data)
         // accounting together if the producer gains UB read support.
         return;
     }
-    if (IsSimtUbWrite(data) && (((data.header.flags & ACLSAN_DEVICE_EVENT_FLAG_PREDICATED) != 0U &&
-                                 data.predicateMask0 == 0U && data.predicateMask1 == 0U) ||
-                                (data.layoutKind == ACLSAN_MEM_LAYOUT_RANGE && data.layout.range.bytes == 0U) ||
-                                (data.layoutKind == ACLSAN_MEM_LAYOUT_SCALAR && data.layout.scalar.bytes == 0U))) {
+    if (IsSimtUbWrite(data) &&
+        (((data.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_PREDICATED)) != 0U &&
+          data.predicateMask0 == 0U && data.predicateMask1 == 0U) ||
+         (data.layoutKind == ACLSAN_MEM_LAYOUT_RANGE && data.layout.range.bytes == 0U) ||
+         (data.layoutKind == ACLSAN_MEM_LAYOUT_SCALAR && data.layout.scalar.bytes == 0U))) {
         return;
     }
     if (!IsSimtUbWrite(data) || data.header.launchId == 0U || data.header.instrExecId == 0U ||
@@ -552,8 +556,9 @@ void Memcheck::QueueSimtMemoryAccess(const SimtMemoryAccessRecord& record)
     data.simt.base = record.base;
     data.simt.offset = record.offset;
     data.simt.elementBytes = record.elementBytes;
-    data.simt.validFlags = ACLSAN_SIMT_CONTEXT_INVOCATION | ACLSAN_SIMT_CONTEXT_THREAD | ACLSAN_SIMT_CONTEXT_BLOCK_DIM |
-                           ACLSAN_SIMT_CONTEXT_ADDRESS;
+    data.simt.validFlags =
+        static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_INVOCATION) | static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_THREAD) |
+        static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_BLOCK_DIM) | static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_ADDRESS);
     if (analysis_->Managed()) {
         if (!analysis_->BeginCallback(
                 ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS, &data)) {

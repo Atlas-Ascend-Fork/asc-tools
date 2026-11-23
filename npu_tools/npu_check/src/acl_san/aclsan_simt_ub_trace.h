@@ -16,7 +16,7 @@
 
 namespace aclsan {
 // Classifies opcodes whose address space is unambiguously shared UB.
-bool IsSimtUbTraceRecord(const ParsedSimtTraceRecord& record) noexcept;
+bool IsSimtUbTraceRecord(const ParsedSimtTraceRecord& parsed) noexcept;
 // The collector must establish UB address space before calling this adapter.
 // Generic ST is accepted here when its address space was independently resolved.
 std::optional<AclsanSimtUbMemoryAccessData> TranslateSimtUbTraceRecord(

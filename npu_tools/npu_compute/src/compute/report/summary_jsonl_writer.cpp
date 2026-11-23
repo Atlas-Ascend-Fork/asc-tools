@@ -86,7 +86,7 @@ struct OpInfoOutput {
     std::ostream& stream;
     std::vector<std::string>* unavailableFields = nullptr;
 
-    void Unavailable(std::string_view name)
+    void Unavailable(std::string_view name) const
     {
         if (unavailableFields != nullptr) {
             unavailableFields->emplace_back(name);

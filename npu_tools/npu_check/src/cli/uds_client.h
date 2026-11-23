@@ -29,7 +29,6 @@ public:
 
     // deadline 由调用方在 fork 之前算出并传入，覆盖 connect 重试、Hello 往返、
     // Configure 发送、Ready 接收的全过程，而不是每步各给一份完整超时。
-    //
     // 起点必须在 fork 之前：exec 与 CANN 动态库加载是整段里最不可控的部分，把它排除
     // 在预算之外，用户设定的超时就形同虚设。因此这里收的是绝对时刻，不是时长。
     bool ConnectAndConfigure(

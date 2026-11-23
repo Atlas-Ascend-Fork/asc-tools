@@ -208,7 +208,7 @@ public:
     }
 
 private:
-    void FinalizeApplicationResults(std::vector<std::string>& issues)
+    void FinalizeApplicationResults(std::vector<std::string>& issues) const
     {
         using namespace boost::filesystem;
         const path root(Path());

@@ -114,7 +114,7 @@ private:
         const void* data, std::size_t size, const aclrtBinaryLoadOptions* options, aclrtBinHandle binary,
         bool pmSampling, bool pipeline, bool sourceCounter, aclrtBinaryLoadFromDataFunc load);
     bool ExistingBinaryReady(const Binary& state, bool pmSampling, bool pipeline, bool sourceCounter) const;
-    bool BuildInstrumentedBinaryState(
+    static bool BuildInstrumentedBinaryState(
         Binary& state, const void* data, std::size_t size, bool pmSampling, bool pipeline);
     template <typename Key>
     static aclptiResult ResolveCompanionKey(

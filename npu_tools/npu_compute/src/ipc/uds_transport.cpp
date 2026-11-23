@@ -525,7 +525,7 @@ Listener::~Listener()
         close(fd_);
     }
 }
-Channel Listener::TryAccept(uint64_t session)
+Channel Listener::TryAccept(uint64_t session) const
 {
     Check(session != 0, "zero UDS session");
     int fd;

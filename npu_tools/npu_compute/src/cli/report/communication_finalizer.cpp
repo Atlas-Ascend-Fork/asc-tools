@@ -62,11 +62,16 @@ bool ParseUnsigned(std::string_view text, int base, T& result)
     for (const char character : text) {
         unsigned digit;
         if (character >= kDigitFirst && character <= kDigitLast)
-            digit = static_cast<unsigned>(character - kDigitFirst);
+            digit =
+                static_cast<unsigned>(static_cast<unsigned char>(character) - static_cast<unsigned char>(kDigitFirst));
         else if (base == kHexBase && character >= kLowerHexDigitFirst && character <= kLowerHexDigitLast)
-            digit = static_cast<unsigned>(character - kLowerHexDigitFirst) + kHexDigitOffset;
+            digit = static_cast<unsigned>(
+                        static_cast<unsigned char>(character) - static_cast<unsigned char>(kLowerHexDigitFirst)) +
+                    kHexDigitOffset;
         else if (base == kHexBase && character >= kUpperHexDigitFirst && character <= kUpperHexDigitLast)
-            digit = static_cast<unsigned>(character - kUpperHexDigitFirst) + kHexDigitOffset;
+            digit = static_cast<unsigned>(
+                        static_cast<unsigned char>(character) - static_cast<unsigned char>(kUpperHexDigitFirst)) +
+                    kHexDigitOffset;
         else
             return false;
         if (digit >= static_cast<unsigned>(base) || value > (std::numeric_limits<T>::max() - digit) / base)

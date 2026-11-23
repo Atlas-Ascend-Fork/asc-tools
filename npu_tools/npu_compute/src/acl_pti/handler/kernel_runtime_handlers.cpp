@@ -51,7 +51,6 @@ struct ReplayLaunchArguments {
         aclrtPlaceHolderInfo* originalPlaceholders = nullptr, std::size_t originalPlaceholderCount = 0);
     aclError PrepareArgsArray(aclrtFuncHandle function, bool instrumented, void** originalArgs);
 
-    void* hostArgs = nullptr;
     std::size_t argsSize = 0;
     aclrtPlaceHolderInfo* placeHolderArray = nullptr;
     std::size_t placeHolderNum = 0;
@@ -403,7 +402,6 @@ aclError ReplayLaunchArguments::PrepareHostArgs(
     aclrtFuncHandle function, bool instrumented, const void* originalArgs, std::size_t originalSize,
     aclrtPlaceHolderInfo* originalPlaceholders, std::size_t originalPlaceholderCount)
 {
-    hostArgs = const_cast<void*>(originalArgs);
     argsSize = originalSize;
     placeHolderArray = originalPlaceholders;
     placeHolderNum = originalPlaceholderCount;
@@ -415,7 +413,6 @@ aclError ReplayLaunchArguments::PrepareHostArgs(
     if (status != ACL_SUCCESS) {
         return status;
     }
-    hostArgs = hostArguments.data();
     argsSize = hostArguments.size();
     placeHolderArray = placeholders.empty() ? originalPlaceholders : placeholders.data();
     placeHolderNum = placeholders.size();
@@ -503,8 +500,9 @@ aclError AclrtLaunchKernelWithHostArgsHandler(
             if (status != ACL_SUCCESS) {
                 return status;
             }
+            void* hostArgs = instrumented ? prepared.hostArguments.data() : params.hostArgs;
             return launch(
-                function, params.numBlocks, params.stream, params.cfg, prepared.hostArgs, prepared.argsSize,
+                function, params.numBlocks, params.stream, params.cfg, hostArgs, prepared.argsSize,
                 prepared.placeHolderArray, prepared.placeHolderNum);
         });
 }
@@ -526,9 +524,10 @@ aclError AclrtLaunchSIMTKernelWithHostArgsHandler(
             if (status != ACL_SUCCESS) {
                 return status;
             }
+            void* hostArgs = instrumented ? prepared.hostArguments.data() : params.hostArgs;
             return launch(
-                function, params.gridDim, params.blockDim, params.dynUbufSize, params.stream, params.cfg,
-                prepared.hostArgs, prepared.argsSize, prepared.placeHolderArray, prepared.placeHolderNum);
+                function, params.gridDim, params.blockDim, params.dynUbufSize, params.stream, params.cfg, hostArgs,
+                prepared.argsSize, prepared.placeHolderArray, prepared.placeHolderNum);
         });
 }
 
@@ -721,7 +720,8 @@ aclError AclrtLaunchKernelHandler(
             if (status != ACL_SUCCESS) {
                 return status;
             }
-            return launch(function, params.numBlocks, prepared.hostArgs, prepared.argsSize, params.stream);
+            const void* argsData = instrumented ? prepared.hostArguments.data() : params.argsData;
+            return launch(function, params.numBlocks, argsData, prepared.argsSize, params.stream);
         });
 }
 

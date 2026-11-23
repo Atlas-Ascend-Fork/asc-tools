@@ -20,9 +20,10 @@ bool BuildSimtUbLayout(SocVersion version, const AclsanUbLaunchMetadata& metadat
     layout = {};
     constexpr uint64_t SHARED_ALIGN = 128U;
     constexpr uint64_t MAX_SHARED_BYTES = DAV3510_UB_CAPACITY_BYTES - SIMT_UB_MIN_CACHE_BYTES;
-    constexpr uint32_t REQUIRED = ACLSAN_UB_METADATA_COMPILER | ACLSAN_UB_METADATA_STATIC;
+    constexpr uint32_t REQUIRED =
+        static_cast<uint32_t>(ACLSAN_UB_METADATA_COMPILER) | static_cast<uint32_t>(ACLSAN_UB_METADATA_STATIC);
     if (version != SocVersion::DAV_3510 || (metadata.flags & REQUIRED) != REQUIRED ||
-        (metadata.flags & ACLSAN_UB_METADATA_UNAVAILABLE) != 0 ||
+        (metadata.flags & static_cast<uint32_t>(ACLSAN_UB_METADATA_UNAVAILABLE)) != 0U ||
         (metadata.kernelVfType != ACLSAN_KERNEL_VF_TYPE_SIMT_VF_ONLY &&
          metadata.kernelVfType != ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF) ||
         metadata.userStaticBytes > MAX_SHARED_BYTES - DAV3510_UB_DEFAULT_RESERVED_BYTES ||

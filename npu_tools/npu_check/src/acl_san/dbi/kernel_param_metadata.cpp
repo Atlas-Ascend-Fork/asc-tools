@@ -91,7 +91,7 @@ void SelectSection(
     bool readOnly, size_t fileSize)
 {
     if (readOnly) {
-        if (type == SHT_PROGBITS && (section.flags & SHF_ALLOC) != 0 &&
+        if (type == static_cast<uint32_t>(SHT_PROGBITS) && (section.flags & static_cast<uint64_t>(SHF_ALLOC)) != 0U &&
             (section.flags & (static_cast<uint64_t>(SHF_WRITE) | static_cast<uint64_t>(SHF_TLS))) == 0 &&
             section.size != 0) {
             Require(sections.emplace(name, section).second, "duplicate read-only section");
@@ -103,7 +103,8 @@ void SelectSection(
         return;
     }
     Require(
-        type == SHT_NOTE && (section.flags & SHF_ALLOC) == 0, "kernel metadata must be a non-allocated NOTE section");
+        type == static_cast<uint32_t>(SHT_NOTE) && (section.flags & static_cast<uint64_t>(SHF_ALLOC)) == 0U,
+        "kernel metadata must be a non-allocated NOTE section");
     Require(
         section.alignment == 0 || ((section.alignment & (section.alignment - 1)) == 0 && section.alignment <= fileSize),
         "invalid metadata alignment");
@@ -140,12 +141,13 @@ std::map<std::string, Section> ReadSections(const std::string& data, bool readOn
             Read(data, header + offsetof(Elf64_Shdr, sh_addralign), sizeof(Elf64_Shdr::sh_addralign)),
             Read(data, header + offsetof(Elf64_Shdr, sh_flags), sizeof(Elf64_Shdr::sh_flags))};
         Require(
-            type == SHT_NOBITS || InRange(data.size(), section.offset, section.size),
+            type == static_cast<uint32_t>(SHT_NOBITS) || InRange(data.size(), section.offset, section.size),
             "ELF section exceeds file bounds");
         Require(nameOffset < namesSize, "invalid ELF section name offset");
         const size_t end = data.find('\0', namesOffset + nameOffset);
         Require(end != std::string::npos && end < namesOffset + namesSize, "unterminated ELF section name");
-        if ((section.flags & SHF_ALLOC) != 0 && type != SHT_NOBITS && section.size != 0) {
+        if ((section.flags & static_cast<uint64_t>(SHF_ALLOC)) != 0U && type != static_cast<uint32_t>(SHT_NOBITS) &&
+            section.size != 0) {
             Require(
                 section.offset >= table + count * sizeof(Elf64_Shdr) || section.offset + section.size <= table,
                 "allocated ELF section overlaps section table");
@@ -541,12 +543,12 @@ bool GetKernelUbMetadata(const std::string& elf, KernelUbMetadataMap& kernels, s
             info.kernelVfType = metadata.kernelVfType;
             // Runtime defaults an absent VF tag to a non-SIMT kernel.
             if (metadata.compilerAllocUbValid && metadata.kernelVfType != ACLSAN_KERNEL_VF_TYPE_UNKNOWN) {
-                info.flags |= ACLSAN_UB_METADATA_COMPILER;
+                info.flags |= static_cast<uint32_t>(ACLSAN_UB_METADATA_COMPILER);
                 const bool simt = info.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMT_VF_ONLY ||
                                   info.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF;
                 if (linked && simt && info.compilerAllocatedBytes >= DAV3510_UB_DEFAULT_RESERVED_BYTES) {
                     info.userStaticBytes = info.compilerAllocatedBytes - DAV3510_UB_DEFAULT_RESERVED_BYTES;
-                    info.flags |= ACLSAN_UB_METADATA_STATIC;
+                    info.flags |= static_cast<uint32_t>(ACLSAN_UB_METADATA_STATIC);
                 }
             }
             parsed.emplace(name, std::move(entry));

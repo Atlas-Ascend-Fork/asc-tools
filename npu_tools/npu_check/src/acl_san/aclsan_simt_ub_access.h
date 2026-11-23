@@ -26,6 +26,6 @@ inline bool IsSimtUbMemcheckCallback(AclsanCallbackDomain domain, AclsanCallback
         return false;
     }
     const auto& header = *static_cast<const AclsanDeviceEventHeader*>(raw);
-    return (header.flags & ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB) != 0;
+    return (header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB)) != 0U;
 }
 #endif

@@ -49,16 +49,9 @@ void WriteLe64(uint64_t value, uint8_t* output)
 
 bool IsKnownFileType(NpuRepFileType type)
 {
-    switch (type) {
-        case NpuRepFileType::NpuRep:
-        case NpuRepFileType::Json:
-        case NpuRepFileType::Jsonl:
-        case NpuRepFileType::Csv:
-        case NpuRepFileType::Sqlite:
-        case NpuRepFileType::Txt:
-            return true;
-    }
-    return false;
+    // Keep this allowlist explicit because enum values are part of the external REP format.
+    return type == NpuRepFileType::NpuRep || type == NpuRepFileType::Json || type == NpuRepFileType::Jsonl ||
+           type == NpuRepFileType::Csv || type == NpuRepFileType::Sqlite || type == NpuRepFileType::Txt;
 }
 
 bool ValidateFileName(const std::string& name, std::string* error)

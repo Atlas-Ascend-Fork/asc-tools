@@ -280,7 +280,7 @@ struct DeviceBinaryRegistry::Impl {
             if (final != loaded.end()) {
                 kernel.second = final->second;
             } else {
-                kernel.second.launch.flags |= ACLSAN_UB_METADATA_UNAVAILABLE;
+                kernel.second.launch.flags |= static_cast<uint32_t>(ACLSAN_UB_METADATA_UNAVAILABLE);
             }
         }
     }

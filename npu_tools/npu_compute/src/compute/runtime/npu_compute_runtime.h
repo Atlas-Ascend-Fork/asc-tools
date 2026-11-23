@@ -74,7 +74,7 @@ private:
     aclptiResult PublishPipelineArtifacts();
     // Called with mutex_ held after the PMU consumer has drained.
     aclptiResult FinalizePipeline(aclptiResult status);
-    void ProcessOccupancy(const aclptiProfilingDataResult& result, const std::string& prefix);
+    void ProcessOccupancy(const aclptiProfilingDataResult& result, const std::string& prefix) const;
     aclptiResult ProcessInstructionReports(
         const aclptiProfilingDataResult& result, const std::string& prefix, bool collectSource);
 

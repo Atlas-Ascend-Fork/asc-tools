@@ -206,9 +206,11 @@ ElfSectionTable ReadElfSectionTable(const std::string& data)
 {
     Require(data.size() >= sizeof(Elf64_Ehdr), "Device ELF header is missing");
     Require(
-        data.compare(0, SELFMAG, ELFMAG) == 0 && ReadValue(data, EI_CLASS, 1) == ELFCLASS64 &&
-            ReadValue(data, EI_DATA, 1) == ELFDATA2LSB && ReadValue(data, EI_VERSION, 1) == EV_CURRENT &&
-            ReadValue(data, offsetof(Elf64_Ehdr, e_version), sizeof(Elf64_Ehdr::e_version)) == EV_CURRENT &&
+        data.compare(0, SELFMAG, ELFMAG) == 0 && ReadValue(data, EI_CLASS, 1) == static_cast<uint64_t>(ELFCLASS64) &&
+            ReadValue(data, EI_DATA, 1) == static_cast<uint64_t>(ELFDATA2LSB) &&
+            ReadValue(data, EI_VERSION, 1) == static_cast<uint64_t>(EV_CURRENT) &&
+            ReadValue(data, offsetof(Elf64_Ehdr, e_version), sizeof(Elf64_Ehdr::e_version)) ==
+                static_cast<uint64_t>(EV_CURRENT) &&
             ReadValue(data, offsetof(Elf64_Ehdr, e_ehsize), sizeof(Elf64_Ehdr::e_ehsize)) == sizeof(Elf64_Ehdr),
         "expected ELF64 little-endian version 1");
 
@@ -251,7 +253,8 @@ ElfSection ReadElfSection(const std::string& data, const ElfSectionTable& table,
         {},
     };
     Require(
-        type == SHT_NOBITS || InRange(data.size(), section.offset, section.size), "ELF section exceeds file bounds");
+        type == static_cast<uint32_t>(SHT_NOBITS) || InRange(data.size(), section.offset, section.size),
+        "ELF section exceeds file bounds");
     Require(nameOffset < table.namesSize, "invalid ELF section name offset");
     const std::uint64_t nameStart = table.namesOffset + nameOffset;
     const std::size_t nameEnd = data.find('\0', static_cast<std::size_t>(nameStart));
@@ -267,7 +270,7 @@ void AddMetadataSection(ParsedElf& elf, const ElfSection& section, const std::st
     const auto flags = ReadValue(data, section.header + offsetof(Elf64_Shdr, sh_flags), sizeof(Elf64_Shdr::sh_flags));
     if (section.name.compare(0, sizeof(KERNEL_METADATA_PREFIX) - 1, KERNEL_METADATA_PREFIX) == 0) {
         Require(
-            section.type == SHT_NOTE && (flags & static_cast<uint64_t>(SHF_ALLOC)) == 0U,
+            section.type == static_cast<uint32_t>(SHT_NOTE) && (flags & static_cast<uint64_t>(SHF_ALLOC)) == 0U,
             "kernel metadata must be a non-allocated NOTE section");
         Require(
             section.alignment == 0 ||
@@ -489,7 +492,8 @@ bool ResolveTraceArgumentOffset(
                 continue;
             }
             Require(
-                section.size != 0 && section.size % sizeof(std::uint32_t) == 0 && section.type != SHT_NOBITS &&
+                section.size != 0 && section.size % sizeof(std::uint32_t) == 0 &&
+                    section.type != static_cast<uint32_t>(SHT_NOBITS) &&
                     InRange(kernelElf.size(), section.offset, section.size),
                 "__CCE_KernelArgSize is malformed");
             for (std::uint64_t offset = 0; offset < section.size; offset += sizeof(std::uint32_t)) {

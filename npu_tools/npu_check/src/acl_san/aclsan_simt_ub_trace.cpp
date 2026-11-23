@@ -84,7 +84,8 @@ void SetSimtUbExecutionContext(const ParsedSimtTraceRecord& parsed, uint32_t byt
     data.header.executor.blockId = raw.blockId;
     data.header.executor.blockType = ACLSAN_DEVICE_BLOCK_TYPE_AICORE_VECTOR;
     data.header.pipeline = ACLSAN_DEVICE_PIPE_VECTOR;
-    data.header.flags = ACLSAN_DEVICE_EVENT_FLAG_EXACT | ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB;
+    data.header.flags =
+        static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_EXACT) | static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB);
     data.simt.invocationId = (static_cast<uint64_t>(parsed.phyCoreId) << invocationIdBits) | raw.invocationId;
     data.simt.scalarPc = raw.scalarPc;
     data.simt.threadX = raw.threadX;
@@ -96,8 +97,9 @@ void SetSimtUbExecutionContext(const ParsedSimtTraceRecord& parsed, uint32_t byt
     data.simt.base = raw.base;
     data.simt.offset = raw.offset;
     data.simt.elementBytes = bytes;
-    data.simt.validFlags = ACLSAN_SIMT_CONTEXT_INVOCATION | ACLSAN_SIMT_CONTEXT_THREAD | ACLSAN_SIMT_CONTEXT_BLOCK_DIM |
-                           ACLSAN_SIMT_CONTEXT_ADDRESS;
+    data.simt.validFlags =
+        static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_INVOCATION) | static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_THREAD) |
+        static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_BLOCK_DIM) | static_cast<uint32_t>(ACLSAN_SIMT_CONTEXT_ADDRESS);
 }
 } // namespace
 

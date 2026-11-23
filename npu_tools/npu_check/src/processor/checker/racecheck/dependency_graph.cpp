@@ -485,7 +485,7 @@ private:
         if (a.instructionId == static_cast<uint32_t>(aclsan::InstructionId::Vf) && a.vfInstrValid == 0) {
             reasons.insert("missing_vf_instruction_index");
         }
-        if ((a.header.flags & ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN) != 0U) {
+        if ((a.header.flags & static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN)) != 0U) {
             reasons.insert("atomic_semantics_unknown");
         }
         if ((a.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_UB &&

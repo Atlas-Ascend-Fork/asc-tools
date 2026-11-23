@@ -212,7 +212,7 @@ public:
     int Fd() const { return fd_; }
 
 private:
-    Channel TryAccept(uint64_t session);
+    Channel TryAccept(uint64_t session) const;
     int fd_ = -1;
 };
 

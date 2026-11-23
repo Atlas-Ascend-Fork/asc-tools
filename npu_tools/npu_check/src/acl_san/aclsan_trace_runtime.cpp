@@ -1285,9 +1285,10 @@ void DispatchSimtDroppedMarker(const PendingTrace& pending, bool ub)
     marker.header.size = ub ? sizeof(marker) : sizeof(AclsanDeviceMemoryAccessData);
     marker.header.launchId = pending.launchId;
     marker.header.deviceId = pending.deviceId;
-    marker.header.flags = ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR;
+    marker.header.flags = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR);
     if (ub) {
-        marker.header.flags |= ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB | ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED;
+        marker.header.flags |= static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_SIMT_UB) |
+                               static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED);
     }
     AclsanCallbackDispatcher::DispatchSimtMemoryAccess(marker);
 }
@@ -1394,7 +1395,8 @@ void AccountSimtTraceSnapshot(PendingTrace& pending, const SimtTraceParseResult&
 {
     const bool simtVf = pending.ubMetadata.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMT_VF_ONLY ||
                         pending.ubMetadata.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF;
-    const bool unknownVf = (pending.ubMetadata.flags & ACLSAN_UB_METADATA_UNAVAILABLE) != 0U && !simt.records.empty();
+    const bool unknownVf = (pending.ubMetadata.flags & static_cast<uint32_t>(ACLSAN_UB_METADATA_UNAVAILABLE)) != 0U &&
+                           !simt.records.empty();
     const bool missingUbLayout = executionComplete && pending.ubLayout.valid == ACLSAN_UB_LAYOUT_INVALID &&
                                  (simtVf || unknownVf) && (SnapshotActiveProbePlan() & PROBE_GROUP_SIMT) != 0U;
     const uint64_t ubDropped = pending.translatedUbDroppedRecords + (missingUbLayout ? 1U : 0U);
@@ -2108,7 +2110,7 @@ void RetainTracePb(const ParsedTraceRecord& parsed, const PushPbParamField& push
         AclsanDeviceMemoryAccessData lost{};
         lost.header = MakeVfCompletion(parsed, ACLSAN_DEVICE_VF_INPUT_MISSING).header;
         lost.header.size = sizeof(lost);
-        lost.header.flags = ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR;
+        lost.header.flags = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR);
         AclsanCallbackDispatcher::DispatchDeviceMemoryAccess(lost);
     }
 }

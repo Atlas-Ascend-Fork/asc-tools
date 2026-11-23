@@ -1264,7 +1264,7 @@ aclptiResult NpuComputeRuntime::ProcessAdditionalReports(
     return firstStatus;
 }
 
-void NpuComputeRuntime::ProcessOccupancy(const aclptiProfilingDataResult& result, const std::string& prefix)
+void NpuComputeRuntime::ProcessOccupancy(const aclptiProfilingDataResult& result, const std::string& prefix) const
 {
     DynamicHardwareDeviceApi deviceApi;
     std::map<int32_t, double> frequencies;
