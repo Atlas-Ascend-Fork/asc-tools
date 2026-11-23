@@ -23,9 +23,9 @@
 | <a name="section-pmsampling"></a> `PmSampling`                       | 指令地址及各采样状态累计计数、反汇编和函数/内联信息 | `full`          |
 | <a name="section-resourceconflictratio"></a> `ResourceConflictRatio` | 流水等待率与Vector资源冲突率                        | `full`          |
 | <a name="section-roofline"></a> `Roofline`                           | 理论算力和带宽，以及Kernel计算量、访存量和耗时       | `full`          |
-| <a name="section-occupancy"></a> `occupancy` | SIMT Warp活动时间线，输出为`SimtWarpOccupancy.json` | 单独选择 |
+| <a name="section-occupancy"></a> `Occupancy`                         | SIMT Warp活动时间线，输出为`SimtWarpOccupancy.json`                            | `full`、单独选择 |
 
-当前提供`basic`和`full`两个预定义Set：`basic`包含除`PmSampling`、`ResourceConflictRatio`、`SourceCounter`和`Roofline`外的7个Section，`full`包含全部11个Section。每次采集均尝试生成`Occupancy.json`任务与block时间线，无需额外Section。使用`--section occupancy`显式启用Warp时间线。
+`basic` 包含表中标记为 `basic` 的 7 个 Section。`full` 包含表中的 12 个 Section，包括 `Occupancy`。每次采集均尝试生成`Occupancy.json`任务与block时间线，无需额外Section。使用`--section Occupancy`显式启用Warp时间线。
 
 各Section的字段含义和计算方法请参见[性能数据说明](appendix/npu_compute_performance_data.md)。
 
@@ -184,18 +184,19 @@ npu-compute --cache-control all --section L2Cache ./application
 
 ### 采集SIMT Warp时间线
 
-用`--section occupancy`观察各Warp的启动时间和活跃时长，分析Warp间的负载差异和尾块处理。以下示例使用NPUBIT `V100`平台，默认每个Device有2个Die，每个Die有18个AI Core。其他拓扑请按设备实际配置`NPU_COMPUTE_NPUBIT_DIE_COUNT`和`NPU_COMPUTE_NPUBIT_AICORE_PRE_DIE`。
+用`--section Occupancy`观察各Warp的启动时间和活跃时长，分析Warp间的负载差异和尾块处理。对支持的昇腾 A5 设备，npu-compute 会自动查询设备架构、Die 数和 AI Core 数。
 
 ```bash
-export NPU_COMPUTE_NPUBIT_PLATFORM=V100
-npu-compute --section occupancy --section Memory -o ./simt-warp.npu-rep -- ./application
+npu-compute --section Occupancy --section Memory -o ./simt-warp.npu-rep -- ./application
 mkdir -p ./restored
 npu-compute --import ./simt-warp.npu-rep --export ./restored
 ```
 
 解包后，在Chrome地址栏打开`chrome://tracing`，选择 **Load**，加载`SimtWarpOccupancy.json`。报告按核分组。`block`轨道表示该核上一次SIMT向量函数（VF）调用的起止区间，`warp <ID>`轨道表示对应Warp的活动区间。每轮最早启动的Warp对齐到本轮VF的系统计数器起点。无法可靠配对的Warp显示在带`(local clock)`的分组中，这些时间不能跨核直接比较。
 
-当算子无SIMT记录或Warp采集遇到可恢复错误时，混合采集仍会交付其他成功的结果，Warp报告缺失会提示告警。只选择`occupancy`而没有生成Warp报告时，工具以采集失败退出。
+对于确认不含 SIMT 指令的算子（例如纯 SIMD 算子），工具静默跳过 Warp 采集。选择 `--set full` 时，其余 Section 继续采集。单独选择 `--section Occupancy` 时，正常跳过也可以成功退出。
+
+如果算子可能包含 SIMT 指令，但没有有效的 Warp 记录或 Warp 采集遇到可恢复错误，混合采集仍会交付其他成功的结果，并提示 Warp 报告缺失。此时只选择 `Occupancy` 会以采集失败退出。
 
 ### 报告输出
 
@@ -259,11 +260,11 @@ npu-compute: directory= <parent-directory>/report_<timestamp-ms>_<8-lowercase-he
 | `summary.jsonl` | 执行Kernel时生成 | 性能汇总、[性能提示](appendix/npu_compute_performance_data.md#performancehints)及算子概览。 |
 | `Occupancy.json` | 采集时默认尝试生成 | 任务与block区间，Chrome Trace格式，保留replay身份与原始系统计数器。 |
 | `PipeTrace.json` | 选择`Pipeline`时生成 | 流水时间线数据，Chrome Trace格式，可使用Chrome Trace兼容工具查看。 |
-| `SimtWarpOccupancy.json` | 选择`occupancy`且采集到有效Warp记录时 | SIMT Warp活动时间线，采用Chrome Trace格式。 |
+| `SimtWarpOccupancy.json` | 选择`Occupancy`且采集到有效Warp记录时                                                          | SIMT Warp活动时间线，采用Chrome Trace格式。                                                 |
 | `summary.db` | 有效CSV成功入库，或完成`PmSampling`采集，或完成`SourceCounter`采集时 | SQLite数据库，所含数据表见[SQLite数据库](#sqlite数据库)。 |
 | `objdump.txt` | 选择`SourceCounter`或`PmSampling`时生成；同时选择时生成一份 | 原始算子程序的反汇编。算子使用`-lineinfo`编译时，可显示源码行号。 |
 | `symbolizer.json` | 选择`PmSampling`时生成 | 采样地址对应的函数和内联调用信息。 |
-| `<Section-name>.csv` | 采集到指标数据时生成（`Pipeline`、`PmSampling`、`SourceCounter`、`Roofline`和`occupancy`除外） | 该Section的指标数据。 |
+| `<Section-name>.csv`     | 采集到指标数据时生成（`Pipeline`、`PmSampling`、`SourceCounter`、`Roofline`和`Occupancy`除外） | 该Section的指标数据。                                                                       |
 
 **AI Core Occupancy**：展示任务的整体时间窗口，以及各 block 在对应 AI Core（AIC/AIV）上的活跃时间区间。各类采集任务默认尝试生成 `Occupancy.json` 报告，无需额外配置 Section。如果只有这个文件生成失败，工具会记录告警，其余报告照常交付，命令正常退出。
 

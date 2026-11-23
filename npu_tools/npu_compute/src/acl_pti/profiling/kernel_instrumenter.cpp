@@ -1161,6 +1161,8 @@ bool ReadOriginalDisassembly(
     if (detail == DisassemblyDetail::WithSource) {
         arguments.emplace_back("-l");
         arguments.emplace_back("-S");
+    } else if (detail == DisassemblyDetail::CompleteInstructions) {
+        arguments.emplace_back("--disassemble-zeroes");
     }
     arguments.push_back(input.string());
     if (!Run(std::move(arguments), disassembly)) {

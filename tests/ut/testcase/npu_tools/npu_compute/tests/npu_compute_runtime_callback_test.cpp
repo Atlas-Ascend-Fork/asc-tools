@@ -235,7 +235,7 @@ std::string CsvValue(const boost::filesystem::path& path, const std::string& row
 bool RunWarpCsvChild(const boost::filesystem::path& output, const std::string& scenario)
 {
     CHECK(SetScenarioEnvironment(output));
-    NpuComputeTestConfigure(output.c_str(), "occupancy");
+    NpuComputeTestConfigure(output.c_str(), "Occupancy");
     npucompute::test::ResetAclPtiCallbackStub();
     CHECK(acltoolInitialize() == ACLPTI_SUCCESS);
     CHECK(npucompute::test::InvokeAclPtiRuntimeReady());
@@ -319,7 +319,7 @@ bool RunCsvSocNameChild(const boost::filesystem::path& output, bool missingWarp)
 {
     CHECK(SetScenarioEnvironment(output));
     if (missingWarp) {
-        NpuComputeTestConfigure(output.c_str(), "Memory,occupancy");
+        NpuComputeTestConfigure(output.c_str(), "Memory,Occupancy");
     }
     CHECK(::setenv("NPU_COMPUTE_FREQUENCY_MHZ", "1000", 1) == 0);
     npucompute::test::ResetAclPtiCallbackStub();

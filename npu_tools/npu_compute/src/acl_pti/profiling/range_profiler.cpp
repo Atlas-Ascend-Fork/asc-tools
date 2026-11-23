@@ -11,8 +11,11 @@
 #include "acl_pti/initialization.h"
 #include "range_profiler.h"
 #include "npubit_collector.h"
+#include "npubit_device.h"
 #include <memory>
 #include "binary_registry.h"
+#include "common/section_names.h"
+#include "kernel_instrumenter.h"
 #include "source_counter_collector.h"
 #include "acl_pti/data/pmu_events.h"
 #include "npubit_simt_warp_collector.h"
@@ -135,7 +138,7 @@ aclptiResult ParseSectionConfig(const aclptiRangeProfilerSetConfigParams& params
             return ACLPTI_ERROR_INVALID_PARAMETER;
         }
         const std::string_view sectionName(name, length);
-        if (sectionName == "occupancy") {
+        if (sectionName == "Occupancy") {
             parsed.simtWarp = true;
             continue;
         }
@@ -712,14 +715,26 @@ aclptiResult RangeProfiler::ReplaySimtWarp(const ReplayInvocation& invocation)
         std::fprintf(stderr, "[SimtWarp] original ELF/name unavailable\n");
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
-    SimtWarpCollectOptions options;
-    if (!GetWarpEnvironment(options.platform, options.hardware)) {
-        std::fprintf(
-            stderr, "[SimtWarp] set NPU_COMPUTE_NPUBIT_PLATFORM (V100/V121/V220), "
-                    "and use positive DIE_COUNT and AICORE_PRE_DIE values (or matching AICORE_PER_DIE). "
-                    "V100 defaults to 2 dies and 18 AI cores per die; other platforms require both values.\n");
-        return ACLPTI_ERROR_INVALID_PARAMETER;
+    std::string disassembly;
+    std::string diagnostic;
+    if (ReadOriginalDisassembly(
+            source.image->data(), source.image->size(), disassembly, diagnostic,
+            DisassemblyDetail::CompleteInstructions) &&
+        IsKernelWithoutSimt(*source.image, disassembly)) {
+        SimtWarpData skipped;
+        skipped.status = ACLPTI_ERROR_NOT_SUPPORTED;
+        return dataManager_.SetSimtWarpData(std::move(skipped));
     }
+
+    NpubitDevice device;
+    std::string deviceError;
+    if (!ReadNpubitDevice(invocation.deviceId, device, deviceError)) {
+        std::fprintf(stderr, "[SimtWarp] device %d: %s\n", invocation.deviceId, deviceError.c_str());
+        return ACLPTI_ERROR_PROFILING_FAILED;
+    }
+    SimtWarpCollectOptions options;
+    options.platform = device.platform;
+    options.hardware = {device.topology.dieCount, device.topology.coresPerDie};
     if (!GetWarpTraceBufferBytes(options.traceFallbackBytes)) {
         std::fprintf(
             stderr, "[SimtWarp] NPU_COMPUTE_NPUBIT_TRACE_BUFFER_BYTES must be a positive "

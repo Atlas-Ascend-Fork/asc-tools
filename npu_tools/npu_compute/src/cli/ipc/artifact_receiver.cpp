@@ -355,7 +355,7 @@ std::set<std::string> ExpectedPmuFiles(
             sourceExpected = true;
         } else if (section == "Roofline") {
             rooflineExpected = true;
-        } else if (section == "occupancy") {
+        } else if (section == "Occupancy") {
             expectedPmu.insert(ipc::kSimtOccupancyFileName);
         } else if (section != "Communication") {
             expectedPmu.insert(section + ".csv");
@@ -382,22 +382,15 @@ void WarnMissingSamplingFiles(const boost::filesystem::path& directory, const Ma
 }
 
 void ValidatePmuGroups(
-    const ManifestGroups& groups, const std::set<std::string>& expectedPmu, bool warpOptional,
-    CollectionValidation& validation)
+    const ManifestGroups& groups, const std::set<std::string>& expectedPmu, CollectionValidation& validation)
 {
     if (!expectedPmu.empty()) {
         validation.Check(!groups.pmuGroups.empty(), "ARTIFACT: required PMU artifact missing");
         for (const auto& [parent, files] : groups.pmuGroups) {
             for (const auto& name : expectedPmu) {
-                if (files.count(name) != 0) {
-                    continue;
-                }
-                if (warpOptional && name == ipc::kSimtOccupancyFileName) {
-                    const auto path = parent.empty() ? name : parent + "/" + name;
-                    std::fprintf(
-                        stderr, "[WARNING] npu-compute: occupancy result file was not produced: %s\n", path.c_str());
-                } else {
-                    validation.Check(false, parent + "/" + name + ": required PMU artifact missing");
+                // The producer reports whether a Warp result was required or legitimately skipped.
+                if (name != ipc::kSimtOccupancyFileName) {
+                    validation.Check(files.count(name) != 0, parent + "/" + name + ": required PMU artifact missing");
                 }
             }
         }
@@ -487,8 +480,7 @@ bool ArtifactReceiver::Validate(
     for (const auto& [parent, files] : groups.samplingGroups) {
         ValidateSamplingGroup(directory_path_, parent, files, groups.pmuGroups, validation);
     }
-    const bool warpOptional = config.sections.size() > 1;
-    ValidatePmuGroups(groups, expectedPmu, warpOptional, validation);
+    ValidatePmuGroups(groups, expectedPmu, validation);
     return validation.complete;
 }
 } // namespace npucompute::cli

@@ -45,11 +45,10 @@ std::vector<std::string> SetSections(const std::string& name)
         }
     }
     for (const char* section : kSupportedSections) {
-        if (std::string(section) != "Pipeline" && std::string(section) != "occupancy" &&
-            std::string(section) != "Communication" &&
-            (name == "full" ||
-             (std::string(section) != "ResourceConflictRatio" && std::string(section) != "PmSampling" &&
-              std::string(section) != "SourceCounter" && std::string(section) != "Roofline"))) {
+        const std::string_view id(section);
+        if (id != "Pipeline" && id != "Communication" &&
+            (name == "full" || (id != "ResourceConflictRatio" && id != "PmSampling" && id != "SourceCounter" &&
+                                id != "Roofline" && id != "Occupancy"))) {
             sections.emplace_back(section);
         }
     }

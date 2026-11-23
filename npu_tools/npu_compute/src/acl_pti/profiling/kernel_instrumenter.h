@@ -35,7 +35,7 @@ bool InstrumentSimtSampling(
 // replacement kernel is generated; the map still classifies SIMT business PCs.
 bool BuildOriginalPmSamplingInstructionMap(const void* data, std::size_t size, PmSamplingInstructionMap& output);
 
-enum class DisassemblyDetail { Instructions, WithSource };
+enum class DisassemblyDetail { Instructions, WithSource, CompleteInstructions };
 bool ReadOriginalDisassembly(
     const void* data, std::size_t size, std::string& text, std::string& diagnostic,
     DisassemblyDetail detail = DisassemblyDetail::Instructions);

@@ -485,7 +485,7 @@ TEST(NpuComputeLauncher, MissingWarpPreservesSuccessfulReports)
     ASSERT_TRUE(currentDirectory.IsActive());
     const auto output = workDirectory.Path() / "result.npu-rep";
     CliConfig config = FixtureConfig(output, "missing-warp");
-    config.sections.push_back("occupancy");
+    config.sections.push_back("Occupancy");
     config.sections.push_back("Pipeline");
     config.collect_pipeline = true;
     std::string report;

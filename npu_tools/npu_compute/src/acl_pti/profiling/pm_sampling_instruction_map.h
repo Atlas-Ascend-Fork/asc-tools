@@ -37,6 +37,9 @@ bool BuildPmSamplingOriginalInstructionMap(
     const std::vector<char>& original, const std::string& disassembly, PmSamplingInstructionMap& output,
     std::string& diagnostic);
 
+// Only a fully decoded original ELF can prove that Warp replay is unnecessary.
+bool IsKernelWithoutSimt(const std::vector<char>& original, const std::string& disassembly);
+
 struct SourceCounterInstructions {
     std::set<std::uint64_t> simtGm;
     std::set<std::uint64_t> simtBank;

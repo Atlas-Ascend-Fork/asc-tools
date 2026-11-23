@@ -18,51 +18,51 @@
 namespace npucompute::communication {
 using Tree = boost::property_tree::ptree;
 // Staging schema stores integer counters/IDs as decimal strings, avoiding JSON double truncation.
-#define COMM_RECORD_FIELDS(F) \
-    do {                      \
-        F(deviceId);          \
-        F(streamId);          \
-        F(taskId);            \
-        F(dieId);             \
-        F(planeId);           \
-        F(version);           \
-        F(turn);              \
-        F(totalTurns);        \
-        F(instrId);           \
-        F(dataLen);           \
-        F(itemId);            \
-        F(groupName);         \
-        F(rankId);            \
-        F(remoteRank);        \
-        F(rankSize);          \
-        F(missionId);         \
-        F(workFlowMode);      \
-        F(setckeInstrId);     \
-        F(ckeId);             \
-        F(mask);              \
-        F(opType);            \
-        F(dataType);          \
-        F(outputDataType);    \
-        F(linkType);          \
-        F(transportType);     \
-        F(rdmaType);          \
-        F(role);              \
-        F(stage);             \
-        F(ctxId);             \
-        F(timestamp);         \
-        F(cclTag);            \
-        F(notifyId);          \
-        F(srcAddr);           \
-        F(dstAddr);           \
-        F(threadId);          \
-        F(payloadDeviceId);   \
-        F(rawType);           \
-        F(level);             \
-        F(type);              \
-        F(kernelType);        \
-        F(dispatchTime);      \
-        F(totalTime);         \
-        F(fftsThreadId);      \
+#define COMM_RECORD_FIELDS(F, tree, record) \
+    do {                                    \
+        F(deviceId, tree, record);          \
+        F(streamId, tree, record);          \
+        F(taskId, tree, record);            \
+        F(dieId, tree, record);             \
+        F(planeId, tree, record);           \
+        F(version, tree, record);           \
+        F(turn, tree, record);              \
+        F(totalTurns, tree, record);        \
+        F(instrId, tree, record);           \
+        F(dataLen, tree, record);           \
+        F(itemId, tree, record);            \
+        F(groupName, tree, record);         \
+        F(rankId, tree, record);            \
+        F(remoteRank, tree, record);        \
+        F(rankSize, tree, record);          \
+        F(missionId, tree, record);         \
+        F(workFlowMode, tree, record);      \
+        F(setckeInstrId, tree, record);     \
+        F(ckeId, tree, record);             \
+        F(mask, tree, record);              \
+        F(opType, tree, record);            \
+        F(dataType, tree, record);          \
+        F(outputDataType, tree, record);    \
+        F(linkType, tree, record);          \
+        F(transportType, tree, record);     \
+        F(rdmaType, tree, record);          \
+        F(role, tree, record);              \
+        F(stage, tree, record);             \
+        F(ctxId, tree, record);             \
+        F(timestamp, tree, record);         \
+        F(cclTag, tree, record);            \
+        F(notifyId, tree, record);          \
+        F(srcAddr, tree, record);           \
+        F(dstAddr, tree, record);           \
+        F(threadId, tree, record);          \
+        F(payloadDeviceId, tree, record);   \
+        F(rawType, tree, record);           \
+        F(level, tree, record);             \
+        F(type, tree, record);              \
+        F(kernelType, tree, record);        \
+        F(dispatchTime, tree, record);      \
+        F(totalTime, tree, record);         \
+        F(fftsThreadId, tree, record);      \
     } while (0)
 template <class T, size_t N>
 Tree Array(const std::array<T, N>& values)
@@ -92,8 +92,8 @@ inline Tree RecordTree(const aclpti::communication::Record& record)
 {
     Tree tree;
     tree.put("kind", static_cast<unsigned>(record.kind));
-#define COMM_PUT(name) tree.put(#name, record.name)
-    COMM_RECORD_FIELDS(COMM_PUT);
+#define COMM_PUT(name, tree, record) (tree).put(#name, (record).name)
+    COMM_RECORD_FIELDS(COMM_PUT, tree, record);
 #undef COMM_PUT
     tree.put("durationEstimated", record.durationEstimated);
     if (record.reserve)
@@ -131,8 +131,8 @@ inline aclpti::communication::Record ReadRecord(const Tree& tree)
     if (kind > static_cast<unsigned>(aclpti::communication::RecordKind::AicoreTimestamp))
         throw std::runtime_error("invalid Communication record kind");
     record.kind = static_cast<aclpti::communication::RecordKind>(kind);
-#define COMM_GET(name) record.name = tree.get<decltype(record.name)>(#name)
-    COMM_RECORD_FIELDS(COMM_GET);
+#define COMM_GET(name, tree, record) (record).name = (tree).get<decltype((record).name)>(#name)
+    COMM_RECORD_FIELDS(COMM_GET, tree, record);
 #undef COMM_GET
     record.durationEstimated = tree.get<double>("durationEstimated");
     if (const auto reserve = tree.get_optional<uint32_t>("reserve"))

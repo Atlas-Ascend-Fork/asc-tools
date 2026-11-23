@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "artifact_sink.h"
+#include "common/section_names.h"
 #include "occupancy/occupancy_trace.h"
 #include "hardware/hardware_device_api.h"
 #include "report/report_writer.h"
@@ -1211,7 +1212,7 @@ aclptiResult NpuComputeRuntime::ProcessPmuData(std::shared_ptr<const aclptiProfi
     UpdateCollectionStats(*result);
     const auto prefix = ReportPrefix(report_sequence_);
     auto pmuSections = section_config_.Sections();
-    const auto warp = std::find(pmuSections.begin(), pmuSections.end(), "occupancy");
+    const auto warp = std::find(pmuSections.begin(), pmuSections.end(), "Occupancy");
     const bool warpRequested = warp != pmuSections.end();
     if (warpRequested) {
         pmuSections.erase(warp);
@@ -1292,13 +1293,21 @@ void NpuComputeRuntime::ProcessOccupancy(const aclptiProfilingDataResult& result
 aclptiResult NpuComputeRuntime::ProcessWarpReport(
     const aclptiProfilingDataResult& result, const std::string& prefix, bool required)
 {
+    if (result.simtWarpData && result.simtWarpData->status == ACLPTI_ERROR_NOT_SUPPORTED) {
+        return ACLPTI_SUCCESS;
+    }
     const auto status = result.simtWarpData ? PublishWarpTrace(*result.simtWarpData, *artifact_sink_, prefix) :
                                               ACLPTI_ERROR_PROFILING_FAILED;
     if (status == ACLPTI_SUCCESS) {
         row_count_ += result.simtWarpData->records.size();
-    } else if (status == ACLPTI_ERROR_PROFILING_FAILED && !required) {
-        degraded_ = true;
-        return ACLPTI_SUCCESS;
+    } else if (status == ACLPTI_ERROR_PROFILING_FAILED) {
+        std::fprintf(
+            stderr, "[WARNING] npu-compute: Occupancy result file was not produced: %s%s\n", prefix.c_str(),
+            ipc::kSimtOccupancyFileName);
+        if (!required) {
+            degraded_ = true;
+            return ACLPTI_SUCCESS;
+        }
     }
     return status;
 }

@@ -15,6 +15,7 @@
 #include <string_view>
 #include <vector>
 namespace npucompute {
+
 // CLI enumeration, compute configuration and IPC validation share this registry.
 inline constexpr std::array kSupportedSections = {
     "PipeUtilization",
@@ -28,7 +29,7 @@ inline constexpr std::array kSupportedSections = {
     "PmSampling",
     "SourceCounter",
     "Roofline",
-    "occupancy",
+    "Occupancy",
     "Communication",
 };
 inline bool IsSupportedSection(std::string_view section)

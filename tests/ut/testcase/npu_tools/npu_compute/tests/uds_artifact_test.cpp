@@ -260,7 +260,7 @@ TEST(NpuComputeUdsArtifact, WarpArtifactManifest)
     TypedChunk(receiver, 3, DataKind::PmuCsv, "{}\n");
     End(receiver, 3, 3);
     Config config;
-    config.sections = {"occupancy"};
+    config.sections = {"Occupancy"};
     Result result;
     result.sections = config.sections;
     result.manifest = {

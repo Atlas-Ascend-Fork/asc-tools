@@ -8,10 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #pragma once
-#include <npubit.h>
-#include <cstdint>
+#include <cstddef>
 #include <cstdlib>
-#include <cstring>
 #include <limits>
 #include <string_view>
 namespace aclpti::profiling {
@@ -36,41 +34,6 @@ inline bool ParsePositiveWarpDecimal(std::string_view text, Uint& result)
     result = parsed;
     return true;
 }
-inline bool GetWarpEnvironment(NpubitPlatformType& platform, NpubitHwContext& hardware)
-{
-    const char* value = std::getenv("NPU_COMPUTE_NPUBIT_PLATFORM");
-    if (value == nullptr)
-        return false;
-    if (std::strcmp(value, "V100") == 0)
-        platform = V100;
-    else if (std::strcmp(value, "V121") == 0)
-        platform = V121;
-    else if (std::strcmp(value, "V220") == 0)
-        platform = V220;
-    else
-        return false;
-    constexpr std::uint32_t kV100DieCount = 2;
-    constexpr std::uint32_t kV100CoresPerDie = 18;
-    const char* dies = std::getenv("NPU_COMPUTE_NPUBIT_DIE_COUNT");
-    const char* preferred = std::getenv("NPU_COMPUTE_NPUBIT_AICORE_PRE_DIE");
-    const char* legacy = std::getenv("NPU_COMPUTE_NPUBIT_AICORE_PER_DIE");
-    const char* cores = preferred != nullptr ? preferred : legacy;
-    std::uint32_t selectedDies = kV100DieCount;
-    std::uint32_t selectedCores = kV100CoresPerDie;
-    std::uint32_t legacyCores = 0;
-    if ((platform != V100 && (dies == nullptr || cores == nullptr)) ||
-        (dies != nullptr && !ParsePositiveWarpDecimal(dies, selectedDies)) ||
-        (cores != nullptr && !ParsePositiveWarpDecimal(cores, selectedCores))) {
-        return false;
-    }
-    if (preferred != nullptr && legacy != nullptr &&
-        (!ParsePositiveWarpDecimal(legacy, legacyCores) || selectedCores != legacyCores))
-        return false;
-    hardware.die_count = selectedDies;
-    hardware.aicore_per_die = selectedCores;
-    return true;
-}
-
 // Total allocation in bytes, not the capacity of one subcore slice.
 // Slice layout and raw trace decoding remain owned by the npubit SDK.
 inline bool GetWarpTraceBufferBytes(std::size_t& bytes)

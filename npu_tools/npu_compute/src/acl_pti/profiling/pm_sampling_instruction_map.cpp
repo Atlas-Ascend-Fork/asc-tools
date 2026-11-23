@@ -20,6 +20,7 @@
 #include <vector>
 #include <elf.h>
 #include <limits>
+#include <new>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -452,7 +453,7 @@ void ValidateDisassembly(const std::vector<Instruction>& instructions, const Elf
             Require(elf.Read(section->offset + offset + i, 1) == printed, "objdump encoding differs from ELF");
         }
         Require(
-            instruction.operation.find("unknown") == std::string::npos,
+            !instruction.operation.empty() && instruction.operation.find("unknown") == std::string::npos,
             "objdump could not decode an executable instruction");
     }
 }
@@ -668,6 +669,22 @@ void ReadSourceVectorCalls(
     ReadSourceSimtFunctions(elf, instructions, simtTargets, output);
 }
 } // namespace
+
+bool IsKernelWithoutSimt(const std::vector<char>& original, const std::string& disassembly)
+{
+    try {
+        const Elf elf(original);
+        const auto instructions = ReadInstructions(disassembly);
+        ValidateDisassembly(instructions, elf);
+        return std::none_of(instructions.begin(), instructions.end(), [](const Instruction& instruction) {
+            return Opcode(instruction.operation) == "VF_SIMT";
+        });
+    } catch (const std::bad_alloc&) {
+        throw;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
 
 bool BuildSourceCounterInstructions(
     const std::vector<char>& image, const std::string& disassembly, const std::string& name,

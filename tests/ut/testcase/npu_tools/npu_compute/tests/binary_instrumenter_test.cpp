@@ -468,6 +468,23 @@ TEST(NpuComputeBinaryInstrumenter, ClassifiesOriginalSimtInstructionsWithoutComp
     }
 }
 
+TEST(NpuComputeBinaryInstrumenter, ConfirmsOnlyDecodedKernelsWithoutSimt)
+{
+    const auto simd = ScalarInstructions(0, {"MOV X0, X1", "VF X2, #9", "END"});
+    EXPECT_TRUE(aclpti::profiling::IsKernelWithoutSimt(simd.image, simd.disassembly));
+
+    const auto withDirective = ScalarInstructions(0, {"MOV X0, X1", "VF X2, #9", "END", ".word 0"});
+    EXPECT_TRUE(aclpti::profiling::IsKernelWithoutSimt(withDirective.image, withDirective.disassembly));
+
+    const auto simt = ScalarInstructions(0, {"VF_SIMT X2, X3, #9, #0, #1"});
+    EXPECT_FALSE(aclpti::profiling::IsKernelWithoutSimt(simt.image, simt.disassembly));
+
+    const std::string incomplete = "Disassembly of section .text:\n0: 00000000 MOV X0, X1\n";
+    EXPECT_FALSE(aclpti::profiling::IsKernelWithoutSimt(simd.image, incomplete));
+    const auto undecoded = ScalarInstructions(0, {"MOV X0, X1", "<unknown>", "END"});
+    EXPECT_FALSE(aclpti::profiling::IsKernelWithoutSimt(undecoded.image, undecoded.disassembly));
+}
+
 TEST(NpuComputeBinaryInstrumenter, RejectsIncompleteOrMismatchedOriginalDisassembly)
 {
     const auto input = ScalarInstructions(0, {"MOV X0, X1", "END"});

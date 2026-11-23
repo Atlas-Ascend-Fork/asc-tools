@@ -322,7 +322,7 @@ int main(int argc, char** argv)
                 if (section == "Roofline") {
                     continue; // Roofline is carried in the summary below.
                 }
-                if (section == "occupancy") {
+                if (section == "Occupancy") {
                     if (mode != "missing-warp") {
                         publish(npucompute::ipc::kSimtOccupancyFileName, R"({"traceEvents":[]})");
                     }

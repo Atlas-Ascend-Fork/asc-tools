@@ -216,7 +216,14 @@ def test_list_sections_outputs_only_ids_in_alphabetical_order():
 
     assert result.returncode == 0
     assert result.stdout.splitlines() == sorted(
-        [*SECTIONS, "Pipeline", "PmSampling", "SourceCounter", "occupancy"],
+        [
+            *SECTIONS,
+            "Communication",
+            "Pipeline",
+            "PmSampling",
+            "SourceCounter",
+            "Occupancy",
+        ],
         key=str.casefold,
     )
     assert result.stderr == ""
@@ -239,7 +246,7 @@ def test_help_takes_precedence_over_list_sections(arguments, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("section", [*SECTIONS, "occupancy"])
+@pytest.mark.parametrize("section", [*SECTIONS, "Occupancy"])
 def test_each_supported_section_is_accepted(section, tmp_path):
     result = run_cli("--section", section, *fixture_command(), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
@@ -610,14 +617,18 @@ def test_help_has_one_definition_per_option():
     [
         (("--set", "basic"), BASIC_SECTIONS),
         (
-            ("--set", "full", "--section", "occupancy"),
+            ("--section", "Occupancy", "--section", "Occupancy"),
+            ["Occupancy"],
+        ),
+        (
+            ("--set", "full", "--section", "Occupancy"),
             [
                 *BASIC_SECTIONS,
                 "ResourceConflictRatio",
                 "PmSampling",
                 "SourceCounter",
                 "Roofline",
-                "occupancy",
+                "Occupancy",
             ],
         ),
         (
@@ -628,6 +639,7 @@ def test_help_has_one_definition_per_option():
                 "PmSampling",
                 "SourceCounter",
                 "Roofline",
+                "Occupancy",
             ],
         ),
         (
@@ -649,6 +661,13 @@ def test_set_expansion_and_first_occurrence_order(options, sections, tmp_path):
     result = run_cli(*options, *fixture_command(), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert received_config(result)["sections"] == ",".join(sections)
+
+
+def test_section_rejects_lowercase_occupancy(tmp_path):
+    result = run_cli("--section", "occupancy", *fixture_command(), cwd=tmp_path)
+    assert result.returncode == 2
+    assert "unsupported section name 'occupancy'" in result.stderr
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize(
