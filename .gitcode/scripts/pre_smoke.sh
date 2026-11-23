@@ -34,7 +34,6 @@ fi
 chmod +x "${arm_package}"
 source /usr/local/Ascend/cann/set_env.sh
 yes "y" | bash "${arm_package}" --full --install-path=/usr/local/Ascend --quiet
-python3 -m pip install tensorflow -i https://pypi.tuna.tsinghua.edu.cn/simple
 source /usr/local/Ascend/cann/set_env.sh
 bash ./scripts/run_presmoke.sh 2>&1 | tee -a ./run_test.log
 
