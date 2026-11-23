@@ -13,6 +13,7 @@
 #include "dbi/trace_buffer_abi.h"
 #include "checker/memory_access_layout.h"
 #include "checker/memory_access_mode.h"
+#include "dbi/simt_instruction_widths.h"
 #include "diagnostic/pipeline_name.h"
 #include "simt_memory_record.h"
 
@@ -476,6 +477,13 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
         report.nearestAllocation.memorySpace = report.access.memorySpace;
     }
     SetDistance(address, bytes, nearest, report);
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_GM && data.simt.validFlags != 0U &&
+        aclsan::IsSimtGmAtomicInstruction(data.instructionId)) {
+        auto readReport = report;
+        readReport.access.accessMode = NpuCheckReportAccessMode::READ;
+        report.common.reportId = nextReportId_++;
+        return {std::move(readReport), std::move(report)};
+    }
     return {std::move(report)};
 }
 

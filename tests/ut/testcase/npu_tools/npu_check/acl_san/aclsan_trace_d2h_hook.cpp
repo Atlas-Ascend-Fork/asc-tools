@@ -625,10 +625,8 @@ int main(int argc, char** argv)
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
     CHECK(g_records.size() == recordsBeforeTimedOutSync + 2);
     CHECK(g_d2hCalls == d2hBeforeTimedOutSync + 1);
-    // A timed-out stream may still be using the injected buffer. Retain it until
-    // a successful synchronization, without dispatching the same records twice.
-    CHECK(g_freeCalls == freesBeforeTimedOutSync);
-    g_syncResult = ACL_SUCCESS;
+    CHECK(g_freeCalls == freesBeforeTimedOutSync + 1);
+    // A later synchronization must not release the same buffer or dispatch its records again.
     CHECK(aclrtSynchronizeStream(stream1) == ACL_SUCCESS);
     CHECK(g_freeCalls == freesBeforeTimedOutSync + 1);
     CHECK(g_records.size() == recordsBeforeTimedOutSync + 2);

@@ -83,6 +83,13 @@ constexpr auto SIMT_INSTRUCTION_WIDTHS = [] {
 
 } // namespace detail
 
+constexpr bool IsSimtGmAtomicInstruction(uint32_t instructionId) noexcept
+{
+    const auto instruction = static_cast<InstrType>(instructionId);
+    return (instruction >= InstrType::RED_G_BF16 && instruction <= InstrType::RED_G_FP16) ||
+           (instruction >= InstrType::ATOM_EXCH_G_U64 && instruction <= InstrType::ATOM_MAX_G_S32);
+}
+
 constexpr uint32_t SimtInstructionElementBytes(uint32_t instructionId) noexcept
 {
     return instructionId < detail::SIMT_INSTRUCTION_WIDTHS.size() ? detail::SIMT_INSTRUCTION_WIDTHS[instructionId] : 0U;

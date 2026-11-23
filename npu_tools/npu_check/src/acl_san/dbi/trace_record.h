@@ -13,6 +13,9 @@
 
 #include "kernel_operator.h"
 #include "trace_buffer_abi.h"
+#if defined(NPU_CHECK_SIMT_PROBE) && defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510 && defined(__DAV_VEC__)
+#include "__clang_cce_simt_atomic.h"
+#endif
 
 #define BUILD_DYNAMIC_PROBE 1
 
@@ -163,16 +166,17 @@ __aicore__ inline void WriteSimtCallContext(__gm__ uint8_t* memInfo, int64_t pc)
         return;
     }
     auto* sidecar = reinterpret_cast<__gm__ const AclsanSimtTraceHeader*>(memInfo + ASCSAN_SIMT_SEGMENT_OFFSET);
-    if (sidecar->magic != ASCSAN_SIMT_TRACE_MAGIC || sidecar->version != ASCSAN_SIMT_TRACE_VERSION ||
+    const bool fifo = sidecar->version == ASCSAN_SIMT_FIFO_VERSION;
+    if (sidecar->magic != ASCSAN_SIMT_TRACE_MAGIC || (!fifo && sidecar->version != ASCSAN_SIMT_TRACE_VERSION) ||
         sidecar->bytes != ASCSAN_SIMT_SEGMENT_BYTES || sidecar->physicalCoreCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT ||
         sidecar->threadsPerCore != ASCSAN_SIMT_THREADS_PER_CORE ||
-        sidecar->recordsPerThread != ASCSAN_SIMT_RECORDS_PER_THREAD) {
+        sidecar->recordsPerThread != (fifo ? ASCSAN_SIMT_FIFO_CAPACITY : ASCSAN_SIMT_RECORDS_PER_THREAD)) {
         return;
     }
     auto* core = reinterpret_cast<__gm__ AclsanSimtCoreHeader*>(
         memInfo + ASCSAN_SIMT_SEGMENT_OFFSET + sizeof(AclsanSimtTraceHeader) +
         static_cast<uint64_t>(coreId) * ASCSAN_SIMT_CORE_BYTES);
-    if (core->invocationId >= ASCSAN_SIMT_COMPLETION_BITS) {
+    if (core->invocationId == UINT64_MAX || (!fifo && core->invocationId >= ASCSAN_SIMT_COMPLETION_BITS)) {
         core->flags = ASCSAN_SIMT_COVERAGE_INCOMPLETE;
     } else {
         core->invocationId = core->invocationId + 1U;
@@ -182,6 +186,105 @@ __aicore__ inline void WriteSimtCallContext(__gm__ uint8_t* memInfo, int64_t pc)
 }
 
 #if defined(NPU_CHECK_SIMT_PROBE) && defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510 && defined(__DAV_VEC__)
+constexpr uint32_t SIMT_FIFO_LANE_ACTIVE = 1U;
+constexpr uint32_t SIMT_FIFO_LANE_COLLIDED = 2U;
+
+__simt_callee__ __aicore__ inline uint32_t LoadSimtControl(const __gm__ uint32_t* value)
+{
+    return static_cast<uint32_t>(__builtin_cce_ldg_uncache_s32(
+        reinterpret_cast<__gm__ int32_t*>(const_cast<__gm__ uint32_t*>(value)),
+        static_cast<uint32_t>(LD_L2CacheType::L2_CACHE_HINT_NOTALLOC_KEEP)));
+}
+
+__simt_callee__ __aicore__ inline void StoreSimtControl(__gm__ uint32_t* value, uint32_t data)
+{
+    __builtin_cce_stg_uncache_b32(
+        reinterpret_cast<__gm__ int32_t*>(value), static_cast<int32_t>(data),
+        static_cast<uint32_t>(ST_L2CacheType::L2_CACHE_HINT_WTS_FV));
+}
+
+__simt_callee__ __aicore__ inline void StoreSimtFifoPayload(
+    __gm__ AclsanSimtRawTraceRecord* record, const AclsanSimtRawTraceRecord& data)
+{
+    // Non-cacheable, write-through stores allow the DMA consumer to read the payload after publication.
+    auto* words = reinterpret_cast<__gm__ int64_t*>(record);
+    constexpr auto shared = static_cast<uint32_t>(ST_L2CacheType::L2_CACHE_HINT_WTS_FV);
+    __builtin_cce_stg_uncache_b64(words, static_cast<int64_t>(data.pc), shared);
+    __builtin_cce_stg_uncache_b64(words + 1, static_cast<int64_t>(data.base), shared);
+    __builtin_cce_stg_uncache_b64(words + 2, data.offset, shared);
+    __builtin_cce_stg_uncache_b64(words + 3, static_cast<int64_t>(data.invocationId), shared);
+    __builtin_cce_stg_uncache_b64(words + 4, static_cast<int64_t>(data.scalarPc), shared);
+    const uint64_t instructionAndBlock = data.instructionId | (static_cast<uint64_t>(data.blockId) << 32U);
+    const uint64_t lane = data.threadX | (static_cast<uint64_t>(data.threadY) << 16U) |
+                          (static_cast<uint64_t>(data.threadZ) << 32U) | (static_cast<uint64_t>(data.blockDimX) << 48U);
+    const uint64_t dimensionsAndKind =
+        data.blockDimY | (static_cast<uint64_t>(data.blockDimZ) << 16U) | (static_cast<uint64_t>(data.reserved) << 32U);
+    __builtin_cce_stg_uncache_b64(words + 5, static_cast<int64_t>(instructionAndBlock), shared);
+    __builtin_cce_stg_uncache_b64(words + 6, static_cast<int64_t>(lane), shared);
+    __builtin_cce_stg_uncache_b64(words + 7, static_cast<int64_t>(dimensionsAndKind), shared);
+}
+
+__simt_callee__ __aicore__ inline void WriteSimtFifoRecord(
+    __gm__ uint8_t* coreAddress, AclsanSimtRawTraceRecord payload, uint32_t elementBytes)
+{
+    const uint32_t lanes = static_cast<uint32_t>(payload.blockDimX) * payload.blockDimY * payload.blockDimZ;
+    const uint32_t linear =
+        payload.threadX + static_cast<uint32_t>(payload.blockDimX) *
+                              (payload.threadY + static_cast<uint32_t>(payload.blockDimY) * payload.threadZ);
+    const uint32_t slot = (static_cast<uint64_t>(payload.blockId) * lanes + linear) % ASCSAN_SIMT_THREADS_PER_CORE;
+    auto* write = reinterpret_cast<__gm__ AclsanSimtFifoWriteControl*>(coreAddress + SimtFifoWriteOffset) + slot;
+    auto* read = reinterpret_cast<__gm__ const uint32_t*>(coreAddress + SimtFifoReadOffset) + slot;
+    auto* lane = reinterpret_cast<__gm__ AclsanSimtFifoLane*>(coreAddress + SimtFifoLaneOffset) + slot;
+    const bool begin = payload.instructionId == ASCSAN_SIMT_START_INSTRUCTION_ID;
+    const bool end = payload.instructionId == ASCSAN_SIMT_END_INSTRUCTION_ID;
+    constexpr auto shared = ST_L2CacheType::L2_CACHE_HINT_WTS_FV;
+    if (begin) {
+        if (atomicCAS<shared>(&lane->owner, 0U, SIMT_FIFO_LANE_ACTIVE) != 0U) {
+            // Without an unambiguous owner, discard later records from this slot.
+            atomicExch<shared>(&lane->owner, SIMT_FIFO_LANE_COLLIDED);
+            StoreSimtControl(&write->droppedCount, 1U);
+            return;
+        }
+        auto* core = reinterpret_cast<__gm__ const volatile AclsanSimtCoreHeader*>(coreAddress);
+        const uint64_t invocation = core->invocationId;
+        lane->scalarPc = core->scalarPc;
+        lane->invocationId = invocation == 0U ? 1U : invocation;
+        lane->blockId = payload.blockId;
+        if (core->flags != 0U || core->invocationId != invocation) {
+            atomicExch<shared>(&lane->owner, SIMT_FIFO_LANE_COLLIDED);
+            StoreSimtControl(&write->droppedCount, 1U);
+            return;
+        }
+    } else if (
+        LoadSimtControl(&lane->owner) != SIMT_FIFO_LANE_ACTIVE || lane->blockId != payload.blockId ||
+        (!end && elementBytes == 0U)) {
+        StoreSimtControl(&write->droppedCount, 1U);
+        return;
+    }
+
+    const uint32_t sequence = LoadSimtControl(&write->writeSequence);
+    const uint32_t ack = LoadSimtControl(read);
+    if (sequence == UINT32_MAX || ack > sequence || sequence - ack >= ASCSAN_SIMT_FIFO_CAPACITY) {
+        StoreSimtControl(&write->droppedCount, 1U);
+    } else {
+        payload.invocationId = lane->invocationId;
+        payload.scalarPc = lane->scalarPc;
+        payload.reserved = static_cast<uint32_t>(
+            begin ? AclsanSimtRecordKind::Begin :
+            end   ? AclsanSimtRecordKind::End :
+                    AclsanSimtRecordKind::Memory);
+        auto* record = reinterpret_cast<__gm__ AclsanSimtRawTraceRecord*>(coreAddress + SimtFifoRecordsOffset) +
+                       slot * ASCSAN_SIMT_FIFO_CAPACITY + sequence % ASCSAN_SIMT_FIFO_CAPACITY;
+        StoreSimtFifoPayload(record, payload);
+        __threadfence();
+        StoreSimtControl(&write->writeSequence, sequence + 1U);
+    }
+    if (end) {
+        __threadfence();
+        atomicCAS<shared>(&lane->owner, SIMT_FIFO_LANE_ACTIVE, 0U);
+    }
+}
+
 // SIMT helpers must use the same execution mode as the injected callee. All
 // stores are lane-private; the scalar writer and its cache intrinsics are not
 // called from this path.
@@ -205,10 +308,11 @@ __simt_callee__ __aicore__ inline void WriteSimtTraceRecord(
         return;
     }
     auto* sidecar = reinterpret_cast<__gm__ const AclsanSimtTraceHeader*>(memInfo + ASCSAN_SIMT_SEGMENT_OFFSET);
-    if (sidecar->magic != ASCSAN_SIMT_TRACE_MAGIC || sidecar->version != ASCSAN_SIMT_TRACE_VERSION ||
+    const bool fifo = sidecar->version == ASCSAN_SIMT_FIFO_VERSION;
+    if (sidecar->magic != ASCSAN_SIMT_TRACE_MAGIC || (!fifo && sidecar->version != ASCSAN_SIMT_TRACE_VERSION) ||
         sidecar->bytes != ASCSAN_SIMT_SEGMENT_BYTES || sidecar->physicalCoreCount != ASCSAN_PHYSICAL_CORE_SLOT_COUNT ||
         sidecar->threadsPerCore != ASCSAN_SIMT_THREADS_PER_CORE ||
-        sidecar->recordsPerThread != ASCSAN_SIMT_RECORDS_PER_THREAD) {
+        sidecar->recordsPerThread != (fifo ? ASCSAN_SIMT_FIFO_CAPACITY : ASCSAN_SIMT_RECORDS_PER_THREAD)) {
         return;
     }
     const uint32_t x = __cce_simt_get_TID_X();
@@ -220,6 +324,34 @@ __simt_callee__ __aicore__ inline void WriteSimtTraceRecord(
     const uint64_t linear = x + static_cast<uint64_t>(dimX) * (y + static_cast<uint64_t>(dimY) * z);
     auto* coreAddress = memInfo + ASCSAN_SIMT_SEGMENT_OFFSET + sizeof(AclsanSimtTraceHeader) +
                         static_cast<uint64_t>(coreId) * ASCSAN_SIMT_CORE_BYTES;
+    if (fifo) {
+        if (dimX == 0U || dimY == 0U || dimZ == 0U || x >= dimX || y >= dimY || z >= dimZ ||
+            static_cast<uint64_t>(dimX) * dimY * dimZ > ASCSAN_SIMT_THREADS_PER_CORE) {
+            auto* control = reinterpret_cast<__gm__ AclsanSimtFifoWriteControl*>(coreAddress + SimtFifoWriteOffset);
+            StoreSimtControl(&control->droppedCount, 1U);
+            return;
+        }
+        AclsanSimtRawTraceRecord payload{
+            static_cast<uint64_t>(pc),
+            base,
+            offset,
+            0U,
+            0U,
+            instructionId,
+            static_cast<uint32_t>(__cce_simt_get_BLOCKID()),
+            static_cast<uint16_t>(x),
+            static_cast<uint16_t>(y),
+            static_cast<uint16_t>(z),
+            static_cast<uint16_t>(dimX),
+            static_cast<uint16_t>(dimY),
+            static_cast<uint16_t>(dimZ),
+            0U};
+        WriteSimtFifoRecord(coreAddress, payload, elementBytes);
+        return;
+    }
+    if (instructionId == ASCSAN_SIMT_START_INSTRUCTION_ID) {
+        return;
+    }
     auto* core = reinterpret_cast<__gm__ AclsanSimtCoreHeader*>(coreAddress);
     // Out-of-budget lanes only set an idempotent sticky flag in partition 0.
     // They never modify its cursor or overwrite another lane's access records.

@@ -37,7 +37,9 @@ bool MemoryAnalysis::HandleOperatorCompletion(
     if (!launch->second.registered || launch->second.stream != event.stream) {
         return false;
     }
-    if (common.result != 0 || event.flags != ACLSAN_OPERATOR_EXECUTION_FLAG_NONE) {
+    // The sync ledger tracks lost device trace. A successful execution still
+    // has a usable allocation lifetime for the memory records that arrived.
+    if (common.result != 0 || (!managed_ && event.flags != ACLSAN_OPERATOR_EXECUTION_FLAG_NONE)) {
         complete_ = false;
     }
     closing_.insert(event.launchId);
@@ -192,8 +194,12 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
                             id == ACLSAN_CBID_DEVICE_STATE              ? sizeof(AclsanDeviceRegisterStateData) :
                             id == ACLSAN_CBID_DEVICE_SYNC               ? sizeof(AclsanDeviceSyncData) :
                                                                           sizeof(AclsanDeviceBarrierData);
-    if (h.version != ACLSAN_API_VERSION || h.size < required || h.launchId == 0 || h.instrExecId == 0)
+    if (h.version != ACLSAN_API_VERSION || h.size < required || h.launchId == 0)
         return false;
+    if (h.instrExecId == 0) {
+        // A loss marker describes the launch rather than an instruction.
+        return id == ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS && (h.flags & ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR) != 0U;
+    }
     auto& launch = Get(h.launchId);
     // VF-expanded UB accesses and ordinary UB transfers must reach the same graph.
     if (race::ExceedsBudget(
@@ -319,6 +325,8 @@ race::DependencyGraph& MemoryAnalysis::Graph(uint64_t id, const race::Limits& li
     reasons.insert(incompleteReasons_.begin(), incompleteReasons_.end());
     if (!complete_)
         reasons.insert("host_graph_incomplete");
+    if (!synchronization_->ObservationComplete())
+        reasons.insert("device_observation_incomplete");
     return *launch.dependency;
 }
 bool MemoryAnalysis::HasUnfinishedPredecessor(uint64_t launchId) const
@@ -342,7 +350,7 @@ race::HappensBeforeGraph::Relation MemoryAnalysis::CompareLaunches(uint64_t prev
 {
     using Relation = race::HappensBeforeGraph::Relation;
     const auto a = boundaries_.find(previous), b = boundaries_.find(current);
-    if (!complete_ || a == boundaries_.end() || b == boundaries_.end() || previous == current)
+    if (!Complete() || a == boundaries_.end() || b == boundaries_.end() || previous == current)
         return Relation::Unknown;
     const auto forward = order_.Precedes(a->second.second, b->second.first);
     const auto backward = order_.Precedes(b->second.second, a->second.first);

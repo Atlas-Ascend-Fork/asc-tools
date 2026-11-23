@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <bitset>
+#include <set>
 
 namespace aclsan {
 bool ValidateTraceSegmentHeader(const AclsanTraceBufferHeader& header, uint32_t blockCount, uint64_t launchId) noexcept
@@ -34,7 +35,7 @@ bool ValidateTraceFifoRecord(
 
 bool InitializeTraceBuffer(
     std::vector<uint8_t>& buffer, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,
-    std::string& error, bool enableSimt)
+    std::string& error, bool enableSimt, bool onlineSimt)
 {
     size_t bytes = 0;
     if (blockCount == 0U || launchId == 0U || !TraceBufferBytes(physicalCoreSlotCount, &bytes)) {
@@ -65,10 +66,10 @@ bool InitializeTraceBuffer(
         const AclsanSimtTraceHeader simt{
             ASCSAN_SIMT_TRACE_MAGIC,
             header.simtSegmentBytes,
-            ASCSAN_SIMT_TRACE_VERSION,
+            onlineSimt ? ASCSAN_SIMT_FIFO_VERSION : ASCSAN_SIMT_TRACE_VERSION,
             physicalCoreSlotCount,
             ASCSAN_SIMT_THREADS_PER_CORE,
-            ASCSAN_SIMT_RECORDS_PER_THREAD,
+            onlineSimt ? ASCSAN_SIMT_FIFO_CAPACITY : ASCSAN_SIMT_RECORDS_PER_THREAD,
             {}};
         if (memcpy_s(buffer.data() + header.simtSegmentOffset, header.simtSegmentBytes, &simt, sizeof(simt)) != EOK) {
             buffer.clear();
@@ -78,6 +79,81 @@ bool InitializeTraceBuffer(
     }
     error.clear();
     return true;
+}
+
+bool SimtFifoBoundaries::Observe(const AclsanSimtRawTraceRecord& record, uint32_t core, uint32_t slot, uint32_t blocks)
+{
+    const uint64_t lanes = static_cast<uint64_t>(record.blockDimX) * record.blockDimY * record.blockDimZ;
+    const uint32_t lane =
+        record.threadX + static_cast<uint32_t>(record.blockDimX) *
+                             (record.threadY + static_cast<uint32_t>(record.blockDimY) * record.threadZ);
+    if (core >= ASCSAN_PHYSICAL_CORE_SLOT_COUNT || IsAicPhysicalCore(core) ||
+        !IsTraceBlockIdValid(record.blockId, false, blocks) || record.invocationId == 0U ||
+        lanes > ASCSAN_SIMT_THREADS_PER_CORE || record.threadX >= record.blockDimX ||
+        record.threadY >= record.blockDimY || record.threadZ >= record.blockDimZ ||
+        slot != SimtFifoLaneSlot(record.blockId, static_cast<uint32_t>(lanes), lane)) {
+        return false;
+    }
+    const auto kind = static_cast<AclsanSimtRecordKind>(record.reserved);
+    const auto key = std::make_tuple(core, record.blockId, record.invocationId);
+    auto invocation = invocations_.find(key);
+    if (kind == AclsanSimtRecordKind::Begin) {
+        if (record.instructionId != ASCSAN_SIMT_START_INSTRUCTION_ID) {
+            return false;
+        }
+        if (invocation == invocations_.end()) {
+            constexpr size_t maxTrackedInvocations = 8192U;
+            if (invocations_.size() >= maxTrackedInvocations) {
+                return false;
+            }
+            invocation =
+                invocations_
+                    .emplace(
+                        key,
+                        Invocation{
+                            {}, {}, static_cast<uint32_t>(lanes), record.blockDimX, record.blockDimY, record.scalarPc})
+                    .first;
+        }
+    }
+    if (invocation == invocations_.end()) {
+        return false;
+    }
+    auto& state = invocation->second;
+    if (state.lanes != lanes || state.dimX != record.blockDimX || state.dimY != record.blockDimY ||
+        state.scalarPc != record.scalarPc || state.ended.test(lane)) {
+        return false;
+    }
+    if (kind == AclsanSimtRecordKind::Begin) {
+        if (state.begun.test(lane)) {
+            return false;
+        }
+        state.begun.set(lane);
+        return true;
+    }
+    if (!state.begun.test(lane)) {
+        return false;
+    }
+    if (kind == AclsanSimtRecordKind::End && record.instructionId == ASCSAN_SIMT_END_INSTRUCTION_ID) {
+        state.ended.set(lane);
+        return true;
+    }
+    return kind == AclsanSimtRecordKind::Memory && record.instructionId != ASCSAN_SIMT_START_INSTRUCTION_ID &&
+           record.instructionId != ASCSAN_SIMT_END_INSTRUCTION_ID;
+}
+
+bool SimtFifoBoundaries::Complete(uint32_t expectedBlocks) const
+{
+    std::set<uint32_t> blocks;
+    for (const auto& [key, state] : invocations_) {
+        if (state.begun.count() != state.lanes || state.ended != state.begun) {
+            return false;
+        }
+        const uint32_t block = std::get<1>(key);
+        if (expectedBlocks != 0U && (block >= expectedBlocks || !blocks.insert(block).second)) {
+            return false;
+        }
+    }
+    return blocks.size() == expectedBlocks;
 }
 
 TraceBufferParseResult DecodeTraceFifoRange(

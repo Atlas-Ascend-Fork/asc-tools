@@ -79,6 +79,7 @@ struct PreparedTraceLaunch {
     std::shared_ptr<void> binaryLease;
     std::shared_ptr<NpubitUbHandle> hibitHandle;
     bool instrumented = false;
+    bool pureSimt = false;
     AclsanUbLaunchMetadata ubMetadata{};
     AclsanUbLayout ubLayout{};
     uint64_t launchId = 0;
@@ -147,7 +148,7 @@ void RecordTraceFunctionLookup(aclrtFuncHandle function) noexcept;
 aclError PrepareTraceLaunch(
     aclrtFuncHandle function, uint32_t blockCount, const void* hostArgs, size_t argsSize,
     const aclrtPlaceHolderInfo* placeholders, size_t placeholderCount, TraceArgumentMode argumentMode,
-    PreparedTraceLaunch& prepared, const aclrtLaunchKernelCfg* config = nullptr) noexcept;
+    PreparedTraceLaunch& prepared, const aclrtLaunchKernelCfg* config = nullptr, bool pureSimt = false) noexcept;
 void CompleteTraceLaunch(
     PreparedTraceLaunch&& prepared, aclrtFuncHandle function, aclrtStream stream, aclError launchResult) noexcept;
 uint64_t TraceStreamFrontier(const void* stream) noexcept;

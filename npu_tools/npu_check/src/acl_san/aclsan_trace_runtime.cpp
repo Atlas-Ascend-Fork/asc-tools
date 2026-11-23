@@ -65,6 +65,9 @@ namespace aclsan {
 namespace {
 
 constexpr size_t TRACE_GLOBAL_BUDGET = 512U * 1024U * 1024U;
+constexpr size_t SIMT_TRACE_GLOBAL_BUDGET = 32U * 1024U * 1024U;
+constexpr size_t SIMT_TRACE_LAUNCH_BUDGET = 4U * 1024U * 1024U;
+constexpr size_t SIMT_TRACE_BATCH_LIMIT = 256U;
 constexpr uint32_t TRACE_SLOT_DEFAULT_RINGS = 4U;
 constexpr uint32_t TRACE_SLOT_MAX_RINGS = 16U;
 constexpr uint32_t TRACE_SLOT_DEFAULT_RECORD_LIMIT = TRACE_SLOT_DEFAULT_RINGS * ASCSAN_TRACE_RECORDS_PER_CORE;
@@ -82,6 +85,41 @@ struct TraceBatch {
     uint32_t first = 0;
     std::vector<AclsanRawTraceRecord> records;
     bool ready = false;
+};
+
+struct SimtFifoBatch {
+    uint32_t core;
+    uint32_t slot;
+    uint32_t first;
+    std::vector<AclsanSimtRawTraceRecord> records;
+    bool ready = false;
+};
+
+struct SimtFifoCore {
+    std::array<AclsanSimtFifoWriteControl, ASCSAN_SIMT_THREADS_PER_CORE> controls{};
+    std::array<uint32_t, ASCSAN_SIMT_THREADS_PER_CORE> lastWrite{};
+    std::array<uint32_t, ASCSAN_SIMT_THREADS_PER_CORE> lastDropped{};
+    std::array<uint32_t, ASCSAN_SIMT_THREADS_PER_CORE> copied{};
+    std::array<uint32_t, ASCSAN_SIMT_THREADS_PER_CORE> acked{};
+    std::array<uint32_t, ASCSAN_SIMT_THREADS_PER_CORE> dispatched{};
+};
+
+struct SimtFifo {
+    AclsanSimtTraceHeader header{};
+    std::vector<SimtFifoCore> cores;
+    std::deque<SimtFifoBatch> batches;
+    SimtFifoBoundaries boundaries;
+    size_t queuedBytes = 0;
+    size_t queueHighWaterBytes = 0;
+    uint64_t budgetBackpressure = 0;
+    uint64_t writes = 0;
+    uint64_t copied = 0;
+    uint64_t dropped = 0;
+    bool sawGmLoss = false;
+    bool sawUbLoss = false;
+    bool sawMemory = false;
+    uint32_t nextSlot = 0;
+    bool headerValidated = false;
 };
 
 struct PendingTrace {
@@ -106,10 +144,12 @@ struct PendingTrace {
     std::unique_ptr<dav3510::Dav3510RegisterStateManager> registerState;
     uint64_t parameterBytes = 0;
     uint32_t parameterPrefixBytes = 0;
+    bool pureSimt = false;
     std::vector<InternalMemoryRange> readOnlyBinaryRanges;
     AclsanUbLaunchMetadata ubMetadata{};
     AclsanUbLayout ubLayout{};
     std::vector<uint8_t> simtBuffer;
+    std::unique_ptr<SimtFifo> simtFifo;
     size_t dispatchedSimtRecordCount = 0;
     uint64_t reportedSimtParseDroppedRecords = 0;
     uint64_t translatedSimtDroppedRecords = 0;
@@ -199,6 +239,8 @@ struct TraceRuntimeState {
     std::unordered_map<uint32_t, std::shared_ptr<std::shared_mutex>> deviceGates;
     std::atomic<size_t> queuedBytes{0};
     std::atomic<size_t> queueHighWaterBytes{0};
+    std::atomic<size_t> simtQueuedBytes{0};
+    std::atomic<size_t> simtQueueHighWaterBytes{0};
     std::thread worker;
     std::thread dispatcher;
     bool dispatchReady = false;
@@ -1206,6 +1248,186 @@ bool ReserveTraceBytes(size_t bytes) noexcept
     return true;
 }
 
+size_t SimtFifoCoreOffset(uint32_t core) noexcept
+{
+    return ASCSAN_SIMT_SEGMENT_OFFSET + sizeof(AclsanSimtTraceHeader) + core * ASCSAN_SIMT_CORE_BYTES;
+}
+
+bool ReserveSimtTraceBytes(SimtFifo& fifo, size_t bytes) noexcept
+{
+    if (bytes > SIMT_TRACE_LAUNCH_BUDGET - fifo.queuedBytes) {
+        ++fifo.budgetBackpressure;
+        return false;
+    }
+    auto& state = State();
+    auto used = state.simtQueuedBytes.load(std::memory_order_relaxed);
+    do {
+        if (bytes > SIMT_TRACE_GLOBAL_BUDGET - used) {
+            ++fifo.budgetBackpressure;
+            return false;
+        }
+    } while (!state.simtQueuedBytes.compare_exchange_weak(used, used + bytes, std::memory_order_relaxed));
+    fifo.queuedBytes += bytes;
+    fifo.queueHighWaterBytes = std::max(fifo.queueHighWaterBytes, fifo.queuedBytes);
+    auto peak = state.simtQueueHighWaterBytes.load(std::memory_order_relaxed);
+    while (peak < used + bytes &&
+           !state.simtQueueHighWaterBytes.compare_exchange_weak(peak, used + bytes, std::memory_order_relaxed)) {
+    }
+    return true;
+}
+
+void ReleaseSimtTraceBytes(SimtFifo& fifo, size_t bytes) noexcept
+{
+    fifo.queuedBytes -= bytes;
+    State().simtQueuedBytes.fetch_sub(bytes, std::memory_order_relaxed);
+}
+
+bool ReadSimtFifoControls(PendingTrace& pending)
+{
+    auto& fifo = *pending.simtFifo;
+    if (!fifo.headerValidated) {
+        auto& header = fifo.header;
+        if (!CopyTraceBytes(
+                pending, &header, sizeof(header), DeviceBytes(pending, ASCSAN_SIMT_SEGMENT_OFFSET), sizeof(header),
+                ACL_MEMCPY_DEVICE_TO_HOST)) {
+            return false;
+        }
+        if (header.magic != ASCSAN_SIMT_TRACE_MAGIC || header.version != ASCSAN_SIMT_FIFO_VERSION ||
+            header.bytes != ASCSAN_SIMT_SEGMENT_BYTES || header.physicalCoreCount != TRACE_SLOTS ||
+            header.threadsPerCore != ASCSAN_SIMT_THREADS_PER_CORE ||
+            header.recordsPerThread != ASCSAN_SIMT_FIFO_CAPACITY) {
+            FailTrace(pending, "invalid SIMT FIFO header");
+            return false;
+        }
+        fifo.headerValidated = true;
+    }
+    for (uint32_t core = 0; core < static_cast<uint32_t>(fifo.cores.size()); ++core) {
+        if (IsAicPhysicalCore(core)) {
+            continue;
+        }
+        auto& cursors = fifo.cores[core];
+        if (!CopyTraceBytes(
+                pending, cursors.controls.data(), sizeof(cursors.controls),
+                DeviceBytes(pending, SimtFifoCoreOffset(core) + SimtFifoWriteOffset), sizeof(cursors.controls),
+                ACL_MEMCPY_DEVICE_TO_HOST)) {
+            return false;
+        }
+        for (uint32_t slot = 0; slot < ASCSAN_SIMT_THREADS_PER_CORE; ++slot) {
+            const auto& control = cursors.controls[slot];
+            if (control.writeSequence < cursors.lastWrite[slot] ||
+                control.writeSequence - cursors.acked[slot] > ASCSAN_SIMT_FIFO_CAPACITY ||
+                control.droppedCount < cursors.lastDropped[slot]) {
+                FailTrace(pending, "invalid SIMT FIFO write control");
+                return false;
+            }
+            const auto dropped = control.droppedCount - cursors.lastDropped[slot];
+            pending.dropped += dropped;
+            if (dropped != 0U) {
+                fifo.dropped += dropped;
+                fifo.sawGmLoss = true;
+                fifo.sawUbLoss = true;
+                TraceIntegrityMark(pending.launchId, dropped, false);
+            }
+            fifo.writes += control.writeSequence - cursors.lastWrite[slot];
+            cursors.lastWrite[slot] = control.writeSequence;
+            cursors.lastDropped[slot] = control.droppedCount;
+        }
+    }
+    return true;
+}
+
+bool CopySimtFifoBatch(PendingTrace& pending, uint32_t core, uint32_t slot, uint32_t count)
+{
+    auto& fifo = *pending.simtFifo;
+    auto& cursors = fifo.cores[core];
+    const size_t bytes = count * sizeof(AclsanSimtRawTraceRecord);
+    if (!ReserveSimtTraceBytes(fifo, bytes)) {
+        return true;
+    }
+    const uint32_t first = cursors.copied[slot];
+    try {
+        fifo.batches.push_back({core, slot, first, std::vector<AclsanSimtRawTraceRecord>(count)});
+    } catch (...) {
+        ReleaseSimtTraceBytes(fifo, bytes);
+        throw;
+    }
+    auto& batch = fifo.batches.back();
+    const size_t coreOffset = SimtFifoCoreOffset(core);
+    const uint32_t firstCount = std::min(count, ASCSAN_SIMT_FIFO_CAPACITY - first % ASCSAN_SIMT_FIFO_CAPACITY);
+    const size_t firstBytes = firstCount * sizeof(AclsanSimtRawTraceRecord);
+    if (!CopyTraceBytes(
+            pending, batch.records.data(), firstBytes,
+            DeviceBytes(pending, coreOffset + SimtFifoRecordOffset(slot, first)), firstBytes,
+            ACL_MEMCPY_DEVICE_TO_HOST) ||
+        (count != firstCount && !CopyTraceBytes(
+                                    pending, batch.records.data() + firstCount, bytes - firstBytes,
+                                    DeviceBytes(pending, coreOffset + SimtFifoRecordOffset(slot, first + firstCount)),
+                                    bytes - firstBytes, ACL_MEMCPY_DEVICE_TO_HOST))) {
+        if (!pending.quarantined) {
+            fifo.batches.pop_back();
+            ReleaseSimtTraceBytes(fifo, bytes);
+        }
+        return false;
+    }
+    batch.ready = true;
+    cursors.copied[slot] += count;
+    fifo.copied += count;
+    return true;
+}
+
+bool AckSimtFifo(PendingTrace& pending)
+{
+    auto& fifo = *pending.simtFifo;
+    for (uint32_t core = 0; core < static_cast<uint32_t>(fifo.cores.size()); ++core) {
+        auto& cursors = fifo.cores[core];
+        if (cursors.acked == cursors.copied) {
+            continue;
+        }
+        const size_t bytes = sizeof(cursors.copied);
+        void* dest = static_cast<uint8_t*>(pending.deviceBuffer) + SimtFifoCoreOffset(core) + SimtFifoReadOffset;
+        if (!CopyTraceBytes(pending, dest, bytes, cursors.copied.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE)) {
+            return false;
+        }
+        cursors.acked = cursors.copied;
+    }
+    return true;
+}
+
+bool PollSimtFifo(PendingTrace& pending)
+{
+    if (!pending.simtFifo || pending.simtComplete) {
+        return true;
+    }
+    auto& fifo = *pending.simtFifo;
+    if (!AckSimtFifo(pending) || !ReadSimtFifoControls(pending)) {
+        return false;
+    }
+    const uint32_t slots = static_cast<uint32_t>(fifo.cores.size()) * ASCSAN_SIMT_THREADS_PER_CORE;
+    size_t copiedBatches = 0;
+    uint32_t visited = 0;
+    for (; visited < slots && copiedBatches < SIMT_TRACE_BATCH_LIMIT; ++visited) {
+        const uint32_t index = (fifo.nextSlot + visited) % slots;
+        const uint32_t core = index / ASCSAN_SIMT_THREADS_PER_CORE;
+        const uint32_t slot = index % ASCSAN_SIMT_THREADS_PER_CORE;
+        const auto& cursors = fifo.cores[core];
+        const uint32_t count = cursors.lastWrite[slot] - cursors.copied[slot];
+        if (count == 0U) {
+            continue;
+        }
+        const auto before = fifo.copied;
+        if (!CopySimtFifoBatch(pending, core, slot, count)) {
+            return false;
+        }
+        if (fifo.copied == before) {
+            ++visited;
+            break;
+        }
+        ++copiedBatches;
+    }
+    fifo.nextSlot = (fifo.nextSlot + visited) % slots;
+    return AckSimtFifo(pending);
+}
+
 bool ReadTraceControls(PendingTrace& pending) noexcept
 {
     const size_t bytes = sizeof(pending.controls);
@@ -1307,8 +1529,24 @@ void RetainSimtTraceBuffer(PendingTrace& pending, std::vector<uint8_t>& buffer) 
         return;
     }
     if (header.simtSegmentOffset != 0U) {
-        pending.simtBuffer = std::move(buffer);
         pending.simtComplete = false;
+        AclsanSimtTraceHeader sidecar{};
+        if (header.simtSegmentOffset > buffer.size() || buffer.size() - header.simtSegmentOffset < sizeof(sidecar) ||
+            memcpy_s(&sidecar, sizeof(sidecar), buffer.data() + header.simtSegmentOffset, sizeof(sidecar)) != EOK) {
+            FailTrace(pending, "missing SIMT trace header");
+            return;
+        }
+        if (sidecar.version == ASCSAN_SIMT_FIFO_VERSION) {
+            try {
+                auto fifo = std::make_unique<SimtFifo>();
+                fifo->cores.resize(TRACE_SLOTS);
+                pending.simtFifo = std::move(fifo);
+            } catch (...) {
+                FailTrace(pending, "cannot allocate SIMT FIFO cursors");
+            }
+        } else {
+            pending.simtBuffer = std::move(buffer);
+        }
     }
 }
 
@@ -1367,27 +1605,68 @@ bool IsInternalSimtAccess(const PendingTrace& pending, const AclsanDeviceMemoryA
            std::any_of(pending.readOnlyBinaryRanges.begin(), pending.readOnlyBinaryRanges.end(), contains);
 }
 
+void DispatchSimtRecord(PendingTrace& pending, const ParsedSimtTraceRecord& record)
+{
+    if (IsSimtUbTraceRecord(record)) {
+        const auto ub = TranslateSimtUbTraceRecord(record, pending.ubLayout);
+        if (ub) {
+            AclsanCallbackDispatcher::DispatchSimtMemoryAccess(*ub);
+        } else {
+            ++pending.translatedUbDroppedRecords;
+        }
+        return;
+    }
+    const auto converted = TranslateSimtTraceRecord(record);
+    if (!converted) {
+        ++pending.translatedSimtDroppedRecords;
+    } else if (!IsInternalSimtAccess(pending, *converted)) {
+        AclsanCallbackDispatcher::DispatchSimtMemoryAccess(*converted);
+    }
+}
+
 void DispatchPendingSimtRecords(PendingTrace& pending, const SimtTraceParseResult& simt)
 {
     for (size_t index = pending.dispatchedSimtRecordCount; index < simt.records.size(); ++index) {
-        const auto& record = simt.records[index];
-        if (IsSimtUbTraceRecord(record)) {
-            const auto ub = TranslateSimtUbTraceRecord(record, pending.ubLayout);
-            if (ub) {
-                AclsanCallbackDispatcher::DispatchSimtMemoryAccess(*ub);
-            } else {
-                ++pending.translatedUbDroppedRecords;
-            }
+        DispatchSimtRecord(pending, simt.records[index]);
+    }
+}
+
+void DispatchSimtFifoBatch(PendingTrace& pending, const SimtFifoBatch& batch)
+{
+    auto& fifo = *pending.simtFifo;
+    uint64_t malformed = 0;
+    size_t delivered = 0;
+    const uint64_t previousGmDrops = pending.translatedSimtDroppedRecords;
+    const uint64_t previousUbDrops = pending.translatedUbDroppedRecords;
+    for (size_t index = 0; index < batch.records.size(); ++index) {
+        const auto& record = batch.records[index];
+        if (!fifo.boundaries.Observe(record, batch.core, batch.slot, pending.blockCount)) {
+            ++malformed;
             continue;
         }
-        const auto converted = TranslateSimtTraceRecord(record);
-        if (!converted) {
-            ++pending.translatedSimtDroppedRecords;
+        if (record.reserved != static_cast<uint32_t>(AclsanSimtRecordKind::Memory)) {
             continue;
         }
-        if (!IsInternalSimtAccess(pending, *converted)) {
-            AclsanCallbackDispatcher::DispatchSimtMemoryAccess(*converted);
-        }
+        constexpr uint32_t sequenceBits = 32U;
+        const uint64_t producer = TRACE_SLOTS + batch.core * ASCSAN_SIMT_THREADS_PER_CORE + batch.slot;
+        DispatchSimtRecord(
+            pending, {record, (producer << sequenceBits) + batch.first + index + 1U, pending.launchId, batch.core,
+                      pending.deviceId});
+        ++delivered;
+    }
+    const uint64_t gmDrops = pending.translatedSimtDroppedRecords - previousGmDrops;
+    const uint64_t ubDrops = pending.translatedUbDroppedRecords - previousUbDrops;
+    const uint64_t dropped = malformed + gmDrops + ubDrops;
+    std::lock_guard<std::mutex> lock(pending.mutex);
+    fifo.cores[batch.core].dispatched[batch.slot] += static_cast<uint32_t>(batch.records.size());
+    fifo.sawMemory = fifo.sawMemory || delivered != 0U;
+    fifo.sawGmLoss = fifo.sawGmLoss || gmDrops != 0U || malformed != 0U;
+    fifo.sawUbLoss = fifo.sawUbLoss || ubDrops != 0U || malformed != 0U;
+    pending.delivered += delivered;
+    pending.dropped += dropped;
+    if (dropped != 0U) {
+        fifo.dropped += dropped;
+        TraceIntegrityMark(pending.launchId, dropped, false);
     }
 }
 
@@ -1425,6 +1704,9 @@ void AccountSimtTraceSnapshot(PendingTrace& pending, const SimtTraceParseResult&
 // Dispatch the lane-private sidecar before completion closes the checker launch.
 bool CollectSimtTrace(PendingTrace& pending, bool executionComplete)
 {
+    if (pending.simtFifo || pending.failed) {
+        return !pending.failed;
+    }
     std::lock_guard<std::mutex> dispatchLock(pending.dispatchMutex);
     TraceDispatchScope callbackScope;
     {
@@ -1451,6 +1733,9 @@ bool CollectSimtTrace(PendingTrace& pending, bool executionComplete)
 
 bool HasQueuedTraceRecords(const PendingTrace& pending) noexcept
 {
+    if (pending.simtFifo && !pending.simtFifo->batches.empty() && pending.simtFifo->batches.front().ready) {
+        return true;
+    }
     for (const auto& batches : pending.batches) {
         if (!batches.empty() && batches.front().ready) {
             return true;
@@ -1461,6 +1746,13 @@ bool HasQueuedTraceRecords(const PendingTrace& pending) noexcept
 
 bool AllTraceRecordsDispatched(const PendingTrace& pending) noexcept
 {
+    if (pending.simtFifo &&
+        (!pending.simtFifo->batches.empty() ||
+         std::any_of(pending.simtFifo->cores.begin(), pending.simtFifo->cores.end(), [](const SimtFifoCore& core) {
+             return core.dispatched != core.copied;
+         }))) {
+        return false;
+    }
     for (uint32_t slot = 0; slot < TRACE_SLOTS; ++slot) {
         if (pending.dispatched[slot] != pending.copied[slot] || !pending.batches[slot].empty()) {
             return false;
@@ -1472,7 +1764,7 @@ bool AllTraceRecordsDispatched(const PendingTrace& pending) noexcept
 // 返回各 slot 设备侧已写记录总数之和（writeSequence 单调递增），用于尾部稳定判定。
 uint64_t TotalWriteSequences(const PendingTrace& pending) noexcept
 {
-    uint64_t total = 0;
+    uint64_t total = pending.simtFifo ? pending.simtFifo->writes : 0U;
     for (uint32_t slot = 0; slot < TRACE_SLOTS; ++slot) {
         total += pending.controls[slot].write.writeSequence;
     }
@@ -1481,6 +1773,13 @@ uint64_t TotalWriteSequences(const PendingTrace& pending) noexcept
 
 bool TraceFullyCopied(const PendingTrace& pending) noexcept
 {
+    if (pending.simtFifo &&
+        (!pending.simtFifo->headerValidated ||
+         std::any_of(pending.simtFifo->cores.begin(), pending.simtFifo->cores.end(), [](const SimtFifoCore& core) {
+             return core.lastWrite != core.copied || core.copied != core.acked;
+         }))) {
+        return false;
+    }
     for (uint32_t slot = 0; slot < TRACE_SLOTS; ++slot) {
         if (pending.copied[slot] != pending.controls[slot].write.writeSequence ||
             pending.acked[slot] != pending.copied[slot]) {
@@ -1490,10 +1789,50 @@ bool TraceFullyCopied(const PendingTrace& pending) noexcept
     return true;
 }
 
+void FinishSimtFifo(PendingTrace& pending)
+{
+    if (!pending.simtFifo || pending.simtComplete || !TraceFullyCopied(pending) ||
+        !AllTraceRecordsDispatched(pending)) {
+        return;
+    }
+    auto& fifo = *pending.simtFifo;
+    if (!fifo.boundaries.Complete(pending.pureSimt ? pending.blockCount : 0U) && fifo.dropped == 0U) {
+        ++pending.dropped;
+        ++fifo.dropped;
+        fifo.sawGmLoss = true;
+        fifo.sawUbLoss = true;
+        TraceIntegrityMark(pending.launchId, 1U, false);
+    }
+    const bool simtVf = pending.ubMetadata.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMT_VF_ONLY ||
+                        pending.ubMetadata.kernelVfType == ACLSAN_KERNEL_VF_TYPE_SIMD_SIMT_MIX_VF;
+    const bool unknownVf = (pending.ubMetadata.flags & ACLSAN_UB_METADATA_UNAVAILABLE) != 0U && fifo.sawMemory;
+    if (pending.ubLayout.valid == ACLSAN_UB_LAYOUT_INVALID && (simtVf || unknownVf)) {
+        ++pending.dropped;
+        ++fifo.dropped;
+        fifo.sawUbLoss = true;
+        TraceIntegrityMark(pending.launchId, 1U, false);
+    }
+    pending.simtComplete = true;
+}
+
 bool CanPublishBeforeFinalization(const PendingTrace& pending, bool fullyCopied, bool dispatchedAll) noexcept
 {
     return pending.completionEvent.Complete() && pending.completionSnapshotRead &&
-           pending.kernelEndTracker.Complete() && pending.simtComplete && fullyCopied && dispatchedAll;
+           (pending.kernelEndTracker.Complete() || (pending.simtFifo && pending.pureSimt)) && pending.simtComplete &&
+           fullyCopied && dispatchedAll;
+}
+
+bool CompleteTraceBoundaries(const PendingTrace& pending) noexcept
+{
+    if (!pending.simtComplete) {
+        return false;
+    }
+    if (pending.kernelEndTracker.Complete() || pending.pureSimt) {
+        return true;
+    }
+    // Preserve the empty-trace case when runtime metadata does not promise markers.
+    return pending.delivered == 0U && (!pending.simtFifo || !pending.kernelEndTracker.Expectation().known) &&
+           (!pending.simtFifo || pending.simtFifo->writes == 0U);
 }
 
 aclError OperatorExecutionResult(bool failed, bool partial) noexcept
@@ -1515,12 +1854,13 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
     uint32_t aivEnds = 0U;
     uint32_t aicExpected = 0U;
     uint32_t aivExpected = 0U;
+    bool simtGmLoss = false;
+    bool simtUbLoss = false;
     {
         std::lock_guard<std::mutex> lock(pending.mutex);
         if (pending.abandoned || pending.operatorExecutionReported) {
             return;
         }
-        const bool emptyTrace = pending.delivered == 0U && pending.dropped == 0U && !pending.failed;
         const bool dispatchedAll = AllTraceRecordsDispatched(pending);
         const bool fullyCopied = TraceFullyCopied(pending);
         const bool requiresCompletionEvent = !finalizing && !partial;
@@ -1530,10 +1870,8 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         if (requiresCompletionEvent && !pending.completionEvent.Release(CompletionEventApi(), false)) {
             FailTrace(pending, "cannot destroy completion event");
         }
-        // Pure SIMT entry points can establish completion at stream sync without a scalar boundary marker.
-        const bool pureSimt = pending.parameterPrefixBytes != 0U && pending.simtComplete;
-        const bool completeBoundary = (pending.kernelEndTracker.Complete() || pureSimt) && pending.dropped == 0U &&
-                                      !pending.failed && fullyCopied && dispatchedAll;
+        const bool complete = CompleteTraceBoundaries(pending) && pending.dropped == 0U && !pending.failed &&
+                              fullyCopied && dispatchedAll;
         pending.operatorExecutionReported = true;
         data.common.version = ACLSAN_API_VERSION;
         data.common.size = static_cast<uint32_t>(sizeof(AclsanOperatorExecutionData));
@@ -1546,7 +1884,7 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         data.deviceId = pending.deviceId;
         data.numBlocks = pending.blockCount;
         data.flags = 0U;
-        if (partial || pending.failed || !pending.simtComplete || (!emptyTrace && !completeBoundary)) {
+        if (partial || !complete) {
             data.flags |= static_cast<uint32_t>(ACLSAN_OPERATOR_EXECUTION_FLAG_INCOMPLETE);
         }
         if (pending.dropped != 0U) {
@@ -1556,6 +1894,14 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         aivEnds = pending.kernelEndTracker.AivEnds();
         aicExpected = pending.kernelEndTracker.Expectation().aicCores;
         aivExpected = pending.kernelEndTracker.Expectation().aivCores;
+        simtGmLoss = pending.simtFifo && pending.simtFifo->sawGmLoss;
+        simtUbLoss = pending.simtFifo && pending.simtFifo->sawUbLoss;
+    }
+    if (simtGmLoss) {
+        DispatchSimtDroppedMarker(pending, false);
+    }
+    if (simtUbLoss) {
+        DispatchSimtDroppedMarker(pending, true);
     }
     AclsanCallbackDispatcher::DispatchOperatorExecution(data);
     ASCTOOL_INFO(
@@ -1687,6 +2033,9 @@ bool PollTrace(PendingTrace& pending)
     if (!AckTrace(pending)) {
         return false;
     }
+    if (!PollSimtFifo(pending)) {
+        return false;
+    }
     pending.enqueueFailures = 0;
     return true;
 }
@@ -1761,10 +2110,11 @@ bool PollPendingTrace(
             return false;
         }
         const auto previous = pending->copied;
+        const auto previousSimt = pending->simtFifo ? pending->simtFifo->copied : 0U;
         const bool completedBeforePoll = pending->completionEvent.Complete();
         const bool polled = PollTrace(*pending);
         ObserveExceptionTrace(*pending, polled);
-        progress = previous != pending->copied;
+        progress = previous != pending->copied || (pending->simtFifo && previousSimt != pending->simtFifo->copied);
         contextFailed = pending->failed;
         context = pending->context;
         if (polled && !pending->failed && !pending->quarantined) {
@@ -1881,7 +2231,10 @@ void DispatchPendingTrace(const std::shared_ptr<PendingTrace>& item, bool hasPre
     bool collectSimt = false;
     {
         std::lock_guard<std::mutex> lock(pending.mutex);
-        collectSimt = !pending.simtComplete && pending.completionEvent.Complete() && pending.completionSnapshotRead;
+        if (pending.completionEvent.Complete() && pending.completionSnapshotRead) {
+            FinishSimtFifo(pending);
+            collectSimt = !pending.simtFifo && !pending.simtComplete;
+        }
     }
     if (collectSimt) {
         const bool collected = CollectSimtTrace(pending, true);
@@ -2402,10 +2755,11 @@ static aclError RecheckTraceLaunchContext(PreparedTraceLaunch& prepared)
 aclError PrepareTraceLaunch(
     aclrtFuncHandle function, uint32_t blockCount, const void* hostArgs, size_t argsSize,
     const aclrtPlaceHolderInfo* placeholders, size_t placeholderCount, TraceArgumentMode argumentMode,
-    PreparedTraceLaunch& prepared, const aclrtLaunchKernelCfg* config) noexcept
+    PreparedTraceLaunch& prepared, const aclrtLaunchKernelCfg* config, bool pureSimt) noexcept
 {
     try {
         prepared = {};
+        prepared.pureSimt = pureSimt;
         prepared.launchId = AllocateLaunchId();
         const auto lookup = DeviceBinaries().LookupFunctionTraceArgumentOffset(
             reinterpret_cast<uintptr_t>(function), prepared.traceArgumentOffset, CurrentTraceDeviceId());
@@ -2457,9 +2811,11 @@ aclError PrepareTraceLaunch(
 
         std::string error;
         // StrictModeEnabled is currently always true. Fail closed before enabling a non-strict path.
+        // Mixed VFs may overlap on the same logical block and lane. Until TRI
+        // provides a distinct invocation token, use the post-completion sidecar.
         if (!InitializeTraceBuffer(
                 prepared.hostBuffer, prepared.physicalCoreSlotCount, blockCount, prepared.launchId, error,
-                (SnapshotActiveProbePlan() & static_cast<uint32_t>(PROBE_GROUP_SIMT)) != 0U)) {
+                (SnapshotActiveProbePlan() & static_cast<uint32_t>(PROBE_GROUP_SIMT)) != 0U, pureSimt)) {
             ASCTOOL_ERROR("acl_san trace: cannot initialize launch buffer: %s", error.c_str());
             StoreHiddenPointer(prepared, argumentMode);
             return StrictModeEnabled() ? ACL_ERROR_FAILURE : ACL_SUCCESS;
@@ -2690,6 +3046,7 @@ void CompleteTraceLaunch(
         pending->ubMetadata = prepared.ubMetadata;
         pending->ubLayout = prepared.ubLayout;
         pending->parameterPrefixBytes = prepared.parameterPrefixBytes;
+        pending->pureSimt = prepared.pureSimt;
         RetainSimtTraceBuffer(*pending, prepared.hostBuffer);
         pending->hibitHandle = std::move(prepared.hibitHandle);
         pending->slotRecordLimit = TraceSlotRecordLimit(prepared.kernelEndExpectation);
@@ -2800,12 +3157,57 @@ bool DispatchTraceBatch(PendingTrace& pending, const TraceBatch& batch)
     pending.maxDispatchBatchUs = std::max(pending.maxDispatchBatchUs, static_cast<uint64_t>(elapsed));
     return true;
 }
+
+struct SimtFifoBatchOwner {
+    PendingTrace& pending;
+    SimtFifoBatch batch{};
+    ~SimtFifoBatchOwner()
+    {
+        const size_t bytes = batch.records.size() * sizeof(AclsanSimtRawTraceRecord);
+        if (bytes != 0U) {
+            std::vector<AclsanSimtRawTraceRecord>().swap(batch.records);
+            std::lock_guard<std::mutex> lock(pending.mutex);
+            ReleaseSimtTraceBytes(*pending.simtFifo, bytes);
+        }
+    }
+};
+
+void DrainSimtFifo(PendingTrace& pending)
+{
+    if (!pending.simtFifo) {
+        return;
+    }
+    auto& fifo = *pending.simtFifo;
+    size_t remaining = 0;
+    {
+        std::lock_guard<std::mutex> lock(pending.mutex);
+        remaining = fifo.batches.size();
+    }
+    while (remaining-- != 0U) {
+        SimtFifoBatchOwner current{pending};
+        {
+            std::lock_guard<std::mutex> lock(pending.mutex);
+            if (fifo.batches.empty() || !fifo.batches.front().ready) {
+                break;
+            }
+            auto& batch = fifo.batches.front();
+            if (fifo.cores[batch.core].dispatched[batch.slot] != batch.first) {
+                FailTrace(pending, "queued SIMT FIFO sequence is not contiguous");
+                break;
+            }
+            current.batch = std::move(batch);
+            fifo.batches.pop_front();
+        }
+        DispatchSimtFifoBatch(pending, current.batch);
+    }
+}
 } // namespace
 
 void DrainTraceQueue(PendingTrace& pending)
 {
     std::lock_guard<std::mutex> dispatchLock(pending.dispatchMutex);
     TraceDispatchScope callbackScope;
+    DrainSimtFifo(pending);
     for (uint32_t slot = 0; slot < TRACE_SLOTS; ++slot) {
         size_t remaining = 0;
         {
@@ -2857,6 +3259,12 @@ bool RetryTraceQuarantine(PendingTrace& pending) noexcept
         return false;
     }
     pending.quarantined = false;
+    if (pending.simtFifo && !pending.simtFifo->batches.empty() && !pending.simtFifo->batches.back().ready) {
+        auto& fifo = *pending.simtFifo;
+        const size_t bytes = fifo.batches.back().records.size() * sizeof(AclsanSimtRawTraceRecord);
+        fifo.batches.pop_back();
+        ReleaseSimtTraceBytes(fifo, bytes);
+    }
     for (uint32_t slot = 0; slot < TRACE_SLOTS; ++slot) {
         if (!pending.batches[slot].empty() && !pending.batches[slot].back().ready) {
             State().queuedBytes.fetch_sub(
@@ -2869,6 +3277,12 @@ bool RetryTraceQuarantine(PendingTrace& pending) noexcept
 
 void ClearTraceBatches(PendingTrace& pending) noexcept
 {
+    if (pending.simtFifo) {
+        auto& fifo = *pending.simtFifo;
+        const size_t bytes = fifo.queuedBytes;
+        fifo.batches.clear();
+        ReleaseSimtTraceBytes(fifo, bytes);
+    }
     for (auto& batches : pending.batches) {
         for (const auto& batch : batches) {
             State().queuedBytes.fetch_sub(
@@ -2902,6 +3316,7 @@ void FinalDrainTrace(PendingTrace& pending)
                 break;
             }
             const auto previous = pending.copied;
+            const auto previousSimt = pending.simtFifo ? pending.simtFifo->copied : 0U;
             if (!PollTrace(pending)) {
                 if (!pending.failed && pending.enqueueFailures != 0U) {
                     continue;
@@ -2909,7 +3324,8 @@ void FinalDrainTrace(PendingTrace& pending)
                 break;
             }
             done = TraceFullyCopied(pending);
-            stalled = !done && pending.copied == previous && !HasQueuedTraceRecords(pending);
+            const bool simtProgress = pending.simtFifo && pending.simtFifo->copied != previousSimt;
+            stalled = !done && pending.copied == previous && !simtProgress && !HasQueuedTraceRecords(pending);
             if (!stalled) {
                 progressAt = std::chrono::steady_clock::now();
             } else if (std::chrono::steady_clock::now() - progressAt >= TRACE_DRAIN_STALL_TIMEOUT) {
@@ -2930,8 +3346,10 @@ void FinalDrainTrace(PendingTrace& pending)
             auto& state = State();
             std::unique_lock<std::mutex> lock(state.mutex);
             const size_t previousBytes = state.queuedBytes.load(std::memory_order_relaxed);
-            state.wake.wait_for(lock, TRACE_POLL_INTERVAL, [&state, previousBytes] {
-                return state.stopping || state.queuedBytes.load(std::memory_order_relaxed) < previousBytes;
+            const size_t previousSimtBytes = state.simtQueuedBytes.load(std::memory_order_relaxed);
+            state.wake.wait_for(lock, TRACE_POLL_INTERVAL, [&state, previousBytes, previousSimtBytes] {
+                return state.stopping || state.queuedBytes.load(std::memory_order_relaxed) < previousBytes ||
+                       state.simtQueuedBytes.load(std::memory_order_relaxed) < previousSimtBytes;
             });
             if (state.stopping) {
                 lock.unlock();
@@ -2983,14 +3401,16 @@ bool FinalizeCollectedTrace(PendingTrace& pending, TraceCollectionResult& collec
         ClearTraceBatches(pending);
         return true;
     }
-    if (!pending.failed && pending.dropped == 0U && pending.delivered == 0U) {
+    if (!pending.failed && pending.dropped == 0U && pending.delivered == 0U &&
+        (!pending.simtFifo || CompleteTraceBoundaries(pending))) {
         // 部分 kernel 不含任何可插桩指令，空 trace 属正常情况；与上游语义一致，不计采集失败。
         TraceStatusCompleteLaunch();
         ASCTOOL_WARNING(
             "acl_san trace: launch=%llu produced no trace records (kernel has no instrumentation points)",
             static_cast<unsigned long long>(pending.launchId));
     } else if (
-        !pending.failed && pending.dropped == 0U && TraceFullyCopied(pending) && pending.dispatched == pending.copied) {
+        !pending.failed && pending.dropped == 0U && TraceFullyCopied(pending) && AllTraceRecordsDispatched(pending) &&
+        (!pending.simtFifo || CompleteTraceBoundaries(pending))) {
         ++collection.completeLaunchCount;
         TraceStatusCompleteLaunch();
         ASCTOOL_INFO(
@@ -3003,6 +3423,16 @@ bool FinalizeCollectedTrace(PendingTrace& pending, TraceCollectionResult& collec
         FailTrace(pending, "trace collection was not fully dispatched");
     }
     LogTraceQueueStats(pending);
+    if (pending.simtFifo) {
+        const auto& fifo = *pending.simtFifo;
+        ASCTOOL_INFO(
+            "acl_san SIMT FIFO: launch=%llu written=%llu copied=%llu queue_high_water_bytes=%zu "
+            "global_queue_high_water_bytes=%zu budget_backpressure=%llu dropped=%llu",
+            static_cast<unsigned long long>(pending.launchId), static_cast<unsigned long long>(fifo.writes),
+            static_cast<unsigned long long>(fifo.copied), fifo.queueHighWaterBytes,
+            State().simtQueueHighWaterBytes.load(std::memory_order_relaxed),
+            static_cast<unsigned long long>(fifo.budgetBackpressure), static_cast<unsigned long long>(fifo.dropped));
+    }
     ClearTraceBatches(pending);
     return true;
 }
@@ -3025,6 +3455,10 @@ static bool CollectPendingTrace(
     if (executionComplete) {
         if (!pending.partialExecutionReported) {
             FinalDrainTrace(pending);
+            {
+                std::lock_guard<std::mutex> lock(pending.mutex);
+                FinishSimtFifo(pending);
+            }
             (void)CollectSimtTrace(pending, true);
         }
         // Checkers need the image ranges until they finish analyzing this launch.
@@ -3336,7 +3770,8 @@ void FinishTraceDeviceReset(int32_t deviceId, bool success) noexcept
                         const bool observedTraceDrained =
                             pending->completionEvent.Complete() && pending->completionSnapshotRead &&
                             TraceFullyCopied(*pending) && AllTraceRecordsDispatched(*pending);
-                        if (!pending->failed && pending->dropped == 0U && observedTraceDrained) {
+                        if (!pending->failed && pending->dropped == 0U && observedTraceDrained &&
+                            CompleteTraceBoundaries(*pending)) {
                             TraceStatusCompleteLaunch();
                         } else {
                             FailTrace(*pending, "device reset before final collection");

@@ -14,9 +14,12 @@
 #include "acl_san/aclsan_cbdata_device.h"
 #include "dbi/trace_buffer_abi.h"
 
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace aclsan {
@@ -54,9 +57,26 @@ struct SimtTraceParseResult {
     std::string error;
 };
 
+class SimtFifoBoundaries {
+public:
+    bool Observe(const AclsanSimtRawTraceRecord& record, uint32_t core, uint32_t slot, uint32_t blocks);
+    bool Complete(uint32_t expectedBlocks = 0U) const;
+
+private:
+    struct Invocation {
+        std::bitset<ASCSAN_SIMT_THREADS_PER_CORE> begun;
+        std::bitset<ASCSAN_SIMT_THREADS_PER_CORE> ended;
+        uint32_t lanes;
+        uint16_t dimX;
+        uint16_t dimY;
+        uint64_t scalarPc;
+    };
+    std::map<std::tuple<uint32_t, uint32_t, uint64_t>, Invocation> invocations_;
+};
+
 bool InitializeTraceBuffer(
     std::vector<uint8_t>& buffer, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,
-    std::string& error, bool enableSimt = false);
+    std::string& error, bool enableSimt = false, bool onlineSimt = false);
 
 SimtTraceParseResult ParseSimtTraceBuffer(
     const uint8_t* buffer, size_t bytes, uint32_t physicalCoreSlotCount, uint32_t blockCount, uint64_t launchId,

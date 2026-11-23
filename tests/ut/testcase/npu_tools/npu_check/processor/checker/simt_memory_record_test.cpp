@@ -285,4 +285,51 @@ TEST(SimtTraceTest, RejectsMissingOrTruncatedSidecar)
     buffer.pop_back();
     EXPECT_FALSE(ParseSimtTraceBuffer(buffer.data(), buffer.size(), ASCSAN_PHYSICAL_CORE_SLOT_COUNT, 1, 9, 0, true).ok);
 }
+
+TEST(SimtTraceTest, FifoPairsInterleavedLaneBoundariesAndRequiresExpectedBlocks)
+{
+    SimtFifoBoundaries tracker;
+    constexpr auto core = ASCSAN_AIC_CORES_PER_DIE;
+    const auto observe = [&](uint32_t block, uint32_t lane, AclsanSimtRecordKind kind) {
+        AclsanSimtRawTraceRecord record{};
+        record.invocationId = 1;
+        record.blockId = block;
+        record.threadX = lane;
+        record.blockDimX = 2;
+        record.blockDimY = record.blockDimZ = 1;
+        record.reserved = static_cast<uint32_t>(kind);
+        record.instructionId = kind == AclsanSimtRecordKind::Begin ? ASCSAN_SIMT_START_INSTRUCTION_ID :
+                               kind == AclsanSimtRecordKind::End   ? ASCSAN_SIMT_END_INSTRUCTION_ID :
+                                                                     static_cast<uint32_t>(InstrType::SIMT_LDG_B32);
+        return tracker.Observe(record, core, SimtFifoLaneSlot(block, 2, lane), 2);
+    };
+    EXPECT_TRUE(tracker.Complete());
+    EXPECT_FALSE(tracker.Complete(2));
+    ASSERT_TRUE(observe(0, 0, AclsanSimtRecordKind::Begin));
+    ASSERT_TRUE(observe(1, 1, AclsanSimtRecordKind::Begin));
+    EXPECT_FALSE(observe(1, 1, AclsanSimtRecordKind::Begin));
+    EXPECT_FALSE(observe(1, 0, AclsanSimtRecordKind::Memory));
+    ASSERT_TRUE(observe(0, 0, AclsanSimtRecordKind::Memory));
+    ASSERT_TRUE(observe(0, 0, AclsanSimtRecordKind::End));
+    ASSERT_TRUE(observe(1, 1, AclsanSimtRecordKind::End));
+    EXPECT_FALSE(tracker.Complete(2));
+    for (const auto block : {0U, 1U}) {
+        ASSERT_TRUE(observe(block, 1U - block, AclsanSimtRecordKind::Begin));
+        ASSERT_TRUE(observe(block, 1U - block, AclsanSimtRecordKind::End));
+    }
+    EXPECT_TRUE(tracker.Complete(2));
+    EXPECT_FALSE(observe(1, 1, AclsanSimtRecordKind::End));
+}
+
+TEST(SimtTraceTest, FifoWrapsSlotOffsetsWithoutOverlappingHostControls)
+{
+    EXPECT_EQ(SimtFifoRecordOffset(0, ASCSAN_SIMT_FIFO_CAPACITY), SimtFifoRecordsOffset);
+    EXPECT_EQ(
+        SimtFifoRecordOffset(1, 0) - SimtFifoRecordOffset(0, ASCSAN_SIMT_FIFO_CAPACITY - 1),
+        sizeof(AclsanSimtRawTraceRecord));
+    EXPECT_LE(
+        SimtFifoRecordOffset(ASCSAN_SIMT_THREADS_PER_CORE - 1, ASCSAN_SIMT_FIFO_CAPACITY - 1) +
+            sizeof(AclsanSimtRawTraceRecord),
+        ASCSAN_SIMT_CORE_BYTES);
+}
 } // namespace aclsan

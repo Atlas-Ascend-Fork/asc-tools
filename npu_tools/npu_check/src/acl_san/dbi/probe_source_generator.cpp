@@ -57,7 +57,16 @@ constexpr ProbeDefinition MakeSimtMemoryProbe(InstrType instruction, std::string
         SimtInstructionElementBytes(static_cast<uint32_t>(instruction))};
 }
 
-constexpr std::array<ProbeDefinition, 253>
+constexpr ProbeDefinition MakeSimtAtomicProbe(InstrType instruction, std::string_view symbol)
+{
+    auto definition = MakeSimtMemoryProbe(instruction, symbol);
+    definition.parameters = "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, uint64_t base";
+    // The instruction supplies an effective address. Its other operands are data.
+    definition.recordArguments = "base, 0";
+    return definition;
+}
+
+constexpr std::array<ProbeDefinition, 254>
     DEFINITIONS{
         {
             {static_cast<uint16_t>(InstrType::VF), ProbeGroup::Vector, "__npu_check_probe_vf",
@@ -930,6 +939,8 @@ constexpr std::array<ProbeDefinition, 253>
             MakeSimtMemoryProbe(InstrType::SIMT_STG_B128, "__npu_check_probe_simt_stg_b128"),
             {static_cast<uint16_t>(InstrType::SIMT_CALL), ProbeGroup::Simt, "__npu_check_probe_simt_call",
              "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid", "RegisterState", "PIPE_S", "0UL, 0UL, 0UL, 0UL, 0UL"},
+            {static_cast<uint16_t>(InstrType::SIMT_START), ProbeGroup::Simt, "__npu_check_probe_simt_start",
+             "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid", "Synchronization", "PIPE_V", "0UL, 0LL, 0U", true},
             {static_cast<uint16_t>(InstrType::SIMT_END), ProbeGroup::Simt, "__npu_check_probe_simt_end",
              "__gm__ uint8_t* memInfo, int64_t pc, uint32_t bid", "MemoryAccess", "PIPE_V", "0UL, 0LL, 0U", true},
             // Generic GM memory definitions use the same SIMT address contract as LDG/STG.
@@ -941,29 +952,29 @@ constexpr std::array<ProbeDefinition, 253>
             MakeSimtMemoryProbe(InstrType::SIMT_ST_B8, "__npu_check_probe_simt_st_b8"),
             MakeSimtMemoryProbe(InstrType::SIMT_ST_B16, "__npu_check_probe_simt_st_b16"),
             MakeSimtMemoryProbe(InstrType::SIMT_ST_B32, "__npu_check_probe_simt_st_b32"),
-            MakeSimtMemoryProbe(InstrType::RED_G_BF16, "__npu_check_probe_red_g_bf16"),
-            MakeSimtMemoryProbe(InstrType::RED_G_U32, "__npu_check_probe_red_g_u32"),
-            MakeSimtMemoryProbe(InstrType::RED_G_F16X2, "__npu_check_probe_red_g_f16x2"),
-            MakeSimtMemoryProbe(InstrType::RED_G_S32, "__npu_check_probe_red_g_s32"),
-            MakeSimtMemoryProbe(InstrType::RED_G_FP32, "__npu_check_probe_red_g_fp32"),
-            MakeSimtMemoryProbe(InstrType::RED_G_BF16X2, "__npu_check_probe_red_g_bf16x2"),
-            MakeSimtMemoryProbe(InstrType::RED_G_FP16, "__npu_check_probe_red_g_fp16"),
-            MakeSimtMemoryProbe(InstrType::ATOM_EXCH_G_U64, "__npu_check_probe_atom_exch_g_u64"),
-            MakeSimtMemoryProbe(InstrType::ATOM_MIN_G_U64, "__npu_check_probe_atom_min_g_u64"),
-            MakeSimtMemoryProbe(InstrType::ATOM_ADD_G_U64, "__npu_check_probe_atom_add_g_u64"),
-            MakeSimtMemoryProbe(InstrType::ATOM_CAS_G_U64, "__npu_check_probe_atom_cas_g_u64"),
-            MakeSimtMemoryProbe(InstrType::ATOM_MAX_G_U64, "__npu_check_probe_atom_max_g_u64"),
-            MakeSimtMemoryProbe(InstrType::ATOM_ADD_G_S64, "__npu_check_probe_atom_add_g_s64"),
-            MakeSimtMemoryProbe(InstrType::ATOM_MIN_G_S64, "__npu_check_probe_atom_min_g_s64"),
-            MakeSimtMemoryProbe(InstrType::ATOM_MAX_G_S64, "__npu_check_probe_atom_max_g_s64"),
-            MakeSimtMemoryProbe(InstrType::ATOM_EXCH_G_U32, "__npu_check_probe_atom_exch_g_u32"),
-            MakeSimtMemoryProbe(InstrType::ATOM_MIN_G_U32, "__npu_check_probe_atom_min_g_u32"),
-            MakeSimtMemoryProbe(InstrType::ATOM_CAS_G_U32, "__npu_check_probe_atom_cas_g_u32"),
-            MakeSimtMemoryProbe(InstrType::ATOM_MAX_G_U32, "__npu_check_probe_atom_max_g_u32"),
-            MakeSimtMemoryProbe(InstrType::ATOM_ADD_G_U32, "__npu_check_probe_atom_add_g_u32"),
-            MakeSimtMemoryProbe(InstrType::ATOM_ADD_G_S32, "__npu_check_probe_atom_add_g_s32"),
-            MakeSimtMemoryProbe(InstrType::ATOM_MIN_G_S32, "__npu_check_probe_atom_min_g_s32"),
-            MakeSimtMemoryProbe(InstrType::ATOM_MAX_G_S32, "__npu_check_probe_atom_max_g_s32"),
+            MakeSimtAtomicProbe(InstrType::RED_G_BF16, "__npu_check_probe_red_g_bf16"),
+            MakeSimtAtomicProbe(InstrType::RED_G_U32, "__npu_check_probe_red_g_u32"),
+            MakeSimtAtomicProbe(InstrType::RED_G_F16X2, "__npu_check_probe_red_g_f16x2"),
+            MakeSimtAtomicProbe(InstrType::RED_G_S32, "__npu_check_probe_red_g_s32"),
+            MakeSimtAtomicProbe(InstrType::RED_G_FP32, "__npu_check_probe_red_g_fp32"),
+            MakeSimtAtomicProbe(InstrType::RED_G_BF16X2, "__npu_check_probe_red_g_bf16x2"),
+            MakeSimtAtomicProbe(InstrType::RED_G_FP16, "__npu_check_probe_red_g_fp16"),
+            MakeSimtAtomicProbe(InstrType::ATOM_EXCH_G_U64, "__npu_check_probe_atom_exch_g_u64"),
+            MakeSimtAtomicProbe(InstrType::ATOM_MIN_G_U64, "__npu_check_probe_atom_min_g_u64"),
+            MakeSimtAtomicProbe(InstrType::ATOM_ADD_G_U64, "__npu_check_probe_atom_add_g_u64"),
+            MakeSimtAtomicProbe(InstrType::ATOM_CAS_G_U64, "__npu_check_probe_atom_cas_g_u64"),
+            MakeSimtAtomicProbe(InstrType::ATOM_MAX_G_U64, "__npu_check_probe_atom_max_g_u64"),
+            MakeSimtAtomicProbe(InstrType::ATOM_ADD_G_S64, "__npu_check_probe_atom_add_g_s64"),
+            MakeSimtAtomicProbe(InstrType::ATOM_MIN_G_S64, "__npu_check_probe_atom_min_g_s64"),
+            MakeSimtAtomicProbe(InstrType::ATOM_MAX_G_S64, "__npu_check_probe_atom_max_g_s64"),
+            MakeSimtAtomicProbe(InstrType::ATOM_EXCH_G_U32, "__npu_check_probe_atom_exch_g_u32"),
+            MakeSimtAtomicProbe(InstrType::ATOM_MIN_G_U32, "__npu_check_probe_atom_min_g_u32"),
+            MakeSimtAtomicProbe(InstrType::ATOM_CAS_G_U32, "__npu_check_probe_atom_cas_g_u32"),
+            MakeSimtAtomicProbe(InstrType::ATOM_MAX_G_U32, "__npu_check_probe_atom_max_g_u32"),
+            MakeSimtAtomicProbe(InstrType::ATOM_ADD_G_U32, "__npu_check_probe_atom_add_g_u32"),
+            MakeSimtAtomicProbe(InstrType::ATOM_ADD_G_S32, "__npu_check_probe_atom_add_g_s32"),
+            MakeSimtAtomicProbe(InstrType::ATOM_MIN_G_S32, "__npu_check_probe_atom_min_g_s32"),
+            MakeSimtAtomicProbe(InstrType::ATOM_MAX_G_S32, "__npu_check_probe_atom_max_g_s32"),
         }};
 
 uint64_t HashText(uint64_t hash, std::string_view text)

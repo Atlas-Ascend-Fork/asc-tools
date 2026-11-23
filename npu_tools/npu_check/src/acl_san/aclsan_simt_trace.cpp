@@ -61,12 +61,6 @@ uint32_t AccessMode(uint32_t instructionId)
     }
 }
 
-bool HasUnknownAtomicConfiguration(uint32_t instructionId)
-{
-    const auto instruction = static_cast<InstrType>(instructionId);
-    return instruction >= InstrType::RED_G_BF16 && instruction <= InstrType::ATOM_MAX_G_S32;
-}
-
 } // namespace
 
 std::optional<AclsanDeviceMemoryAccessData> TranslateSimtTraceRecord(const ParsedSimtTraceRecord& parsed) noexcept
@@ -101,7 +95,7 @@ std::optional<AclsanDeviceMemoryAccessData> TranslateSimtTraceRecord(const Parse
     data.address = range.has_value() ? range->first : 0;
     data.memorySpace = ACLSAN_DEVICE_MEMORY_SPACE_GM;
     data.accessMode = AccessMode(raw.instructionId);
-    if (HasUnknownAtomicConfiguration(raw.instructionId)) {
+    if (IsSimtGmAtomicInstruction(raw.instructionId)) {
         data.header.flags |= static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ATOMIC_CONFIG_UNKNOWN);
     }
     data.accessCount = 1U;

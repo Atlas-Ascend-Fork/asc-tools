@@ -1141,11 +1141,14 @@ aclError aclrtGetFuncBySymbolHook(const void* symbol, aclrtFuncHandle* funcHandl
     return result;
 }
 
+// Pure SIMT launch APIs place a runtime header immediately before get_para_base().
+constexpr uint32_t PURE_SIMT_PARAMETER_PREFIX_BYTES = 6U * sizeof(uint32_t);
+
 template <typename Launch>
 aclError LaunchKernelWithHostArgs(
     aclrtFuncHandle funcHandle, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void* hostArgs,
     size_t argsSize, aclrtPlaceHolderInfo* placeHolderArray, size_t placeHolderNum, const char* apiName,
-    Launch&& launch, uint32_t parameterPrefixBytes = 0) noexcept
+    Launch&& launch, bool pureSimt = false) noexcept
 {
     DeferredLaunch deferred;
     const auto fail = [&deferred, &funcHandle, &stream, &numBlocks, apiName](aclError status) {
@@ -1179,12 +1182,12 @@ aclError LaunchKernelWithHostArgs(
     aclsan::PreparedTraceLaunch prepared;
     const auto traceStatus = aclsan::PrepareTraceLaunch(
         funcHandle, numBlocks, hostArgs, argsSize, placeHolderArray, placeHolderNum,
-        aclsan::TraceArgumentMode::HOST_ARGS, prepared, config);
+        aclsan::TraceArgumentMode::HOST_ARGS, prepared, config, pureSimt);
     if (traceStatus != ACL_SUCCESS) {
         return fail(traceStatus);
     }
     prepared.binaryLease = deferred.variant;
-    prepared.parameterPrefixBytes = parameterPrefixBytes;
+    prepared.parameterPrefixBytes = pureSimt ? PURE_SIMT_PARAMETER_PREFIX_BYTES : 0U;
 
     const auto materializeStatus = aclsan::MaterializeTraceHostInputs(prepared);
     if (materializeStatus != ACL_SUCCESS) {
@@ -1232,7 +1235,7 @@ aclError LaunchKernelWithHostArgs(
 template <typename Launch>
 aclError LaunchKernelWithArgsArray(
     void* func, uint32_t numBlocks, aclrtStream stream, aclrtLaunchKernelCfg* config, void** args, const char* apiName,
-    Launch&& launch, uint32_t parameterPrefixBytes = 0) noexcept
+    Launch&& launch, bool pureSimt = false) noexcept
 {
     DeferredLaunch deferred;
     const auto fail = [&deferred, &func, &stream, &numBlocks, apiName](aclError status) {
@@ -1252,12 +1255,12 @@ aclError LaunchKernelWithArgsArray(
     aclsan::PreparedTraceLaunch prepared;
     // 原始参数由 ArgsArray 直接传递，这里只准备隐藏参数及其所属的 trace buffer。
     const auto traceStatus = aclsan::PrepareTraceLaunch(
-        func, numBlocks, nullptr, 0, nullptr, 0, aclsan::TraceArgumentMode::ARGS_ARRAY, prepared, config);
+        func, numBlocks, nullptr, 0, nullptr, 0, aclsan::TraceArgumentMode::ARGS_ARRAY, prepared, config, pureSimt);
     if (traceStatus != ACL_SUCCESS) {
         return fail(traceStatus);
     }
     prepared.binaryLease = deferred.variant;
-    prepared.parameterPrefixBytes = parameterPrefixBytes;
+    prepared.parameterPrefixBytes = pureSimt ? PURE_SIMT_PARAMETER_PREFIX_BYTES : 0U;
 
     aclError result = ACL_SUCCESS;
     try {
@@ -1312,11 +1315,6 @@ aclError aclrtLaunchKernelWithArgsArrayHook(
     return LaunchKernelWithArgsArray(func, numBlocks, stream, config, args, "aclrtLaunchKernelWithArgsArray", original);
 }
 
-// On dav-3510, pure SIMT entry code reads a 24-byte Runtime launch header
-// immediately before get_para_base(). This prefix is
-// internal only for the pure SIMT launch APIs; ordinary launches keep no prefix.
-constexpr uint32_t PURE_SIMT_PARAMETER_PREFIX_BYTES = 6U * sizeof(uint32_t);
-
 // Trace records carry a linear logical block id. Keep the original three-dimensional
 // launch geometry for Runtime and use its checked product for trace bounds/lifecycle.
 aclError GetSimtBlockCount(dim3 grid, void* function, aclrtStream stream, const char* apiName, uint32_t& count) noexcept
@@ -1352,8 +1350,7 @@ aclError aclrtLaunchSIMTKernelWithHostArgsHook(
             placeholderCount);
     };
     return LaunchKernelWithHostArgs(
-        func, numBlocks, stream, config, hostArgs, argsSize, placeHolderArray, placeHolderNum, apiName, launch,
-        PURE_SIMT_PARAMETER_PREFIX_BYTES);
+        func, numBlocks, stream, config, hostArgs, argsSize, placeHolderArray, placeHolderNum, apiName, launch, true);
 }
 
 aclError aclrtLaunchSIMTKernelWithArgsArrayHook(
@@ -1370,8 +1367,7 @@ aclError aclrtLaunchSIMTKernelWithArgsArrayHook(
                             void** arguments) {
         return original(function, gridDim, blockDim, dynUbufSize, launchStream, cfg, arguments);
     };
-    return LaunchKernelWithArgsArray(
-        func, numBlocks, stream, config, args, apiName, launch, PURE_SIMT_PARAMETER_PREFIX_BYTES);
+    return LaunchKernelWithArgsArray(func, numBlocks, stream, config, args, apiName, launch, true);
 }
 
 // DONE

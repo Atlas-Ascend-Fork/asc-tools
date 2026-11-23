@@ -362,6 +362,30 @@ TEST(KernelUbMetadata, SelectsNamedKernelAndEntry)
     EXPECT_FALSE(aclsan::GetKernelUbMetadata(elf, "absent", result, diagnostic));
 }
 
+TEST(KernelUbMetadata, AcceptsOnlyZeroPaddingThatAlignsTheNote)
+{
+    const auto metadata = UbMetadata(3, 8192) + std::string("\x14\x00\x02\x00\x00\x04", 6);
+    const auto makeElf = [&](const std::string& tail) {
+        auto elf = Elf({metadata + tail});
+        constexpr size_t sectionOffset = sizeof(Elf64_Ehdr) + 3 * sizeof(Elf64_Shdr);
+        auto section = Get<Elf64_Shdr>(elf, sectionOffset);
+        section.sh_addralign = 4;
+        Put(elf, sectionOffset, section);
+        return elf;
+    };
+
+    aclsan::KernelUbMetadata result;
+    std::string diagnostic;
+    ASSERT_TRUE(aclsan::GetKernelUbMetadata(makeElf(std::string(2, '\0')), "kernel0", result, diagnostic))
+        << diagnostic;
+    EXPECT_EQ(result.kernelVfType, 3U);
+    EXPECT_TRUE(result.compilerAllocUbValid);
+    EXPECT_EQ(result.compilerAllocUbBytes, 8192U);
+
+    EXPECT_FALSE(aclsan::GetKernelUbMetadata(makeElf(std::string("\0\x01", 2)), "kernel0", result, diagnostic));
+    EXPECT_FALSE(aclsan::GetKernelUbMetadata(makeElf(std::string(1, '\0')), "kernel0", result, diagnostic));
+}
+
 TEST(KernelUbMetadata, RejectsMissingMalformedAndConflictingValues)
 {
     aclsan::KernelUbMetadata result;

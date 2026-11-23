@@ -177,6 +177,14 @@ Metadata ReadMetadata(const std::string& data, const Section& section)
     size_t infoCount = 0;
     uint32_t count = 0;
     for (size_t offset = 0; offset < bytes.size();) {
+        if (bytes.size() - offset < TLV_HEADER_BYTES) {
+            // bisheng-tune can zero-pad the last TLV to the NOTE section alignment.
+            Require(
+                section.alignment > 1 && bytes.size() % section.alignment == 0 &&
+                    bytes.find_first_not_of('\0', offset) == std::string::npos,
+                "truncated parameter TLV header");
+            break;
+        }
         const auto tag = static_cast<uint16_t>(Read(bytes, offset, sizeof(uint16_t)));
         const size_t length = Read(bytes, offset + TLV_LENGTH_OFFSET, sizeof(uint16_t));
         offset += TLV_HEADER_BYTES;

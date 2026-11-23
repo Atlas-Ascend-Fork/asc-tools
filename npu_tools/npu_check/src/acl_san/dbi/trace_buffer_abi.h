@@ -197,7 +197,9 @@ static_assert(TraceRecordOffset(0U, 0U) == 13888U);
 // core and linear thread owns a fixed partition; no lane shares a write cursor.
 constexpr uint64_t ASCSAN_SIMT_TRACE_MAGIC = 0x53494D5454524331ULL;
 constexpr uint32_t ASCSAN_SIMT_TRACE_VERSION = 3U;
-constexpr uint32_t ASCSAN_SIMT_END_INSTRUCTION_ID = 477U; // TRI SIMT_END.
+constexpr uint32_t ASCSAN_SIMT_FIFO_VERSION = 4U;
+constexpr uint32_t ASCSAN_SIMT_START_INSTRUCTION_ID = 476U; // TRI SIMT_START.
+constexpr uint32_t ASCSAN_SIMT_END_INSTRUCTION_ID = 477U;   // TRI SIMT_END.
 constexpr uint32_t ASCSAN_SIMT_THREADS_PER_CORE = 2048U;
 constexpr size_t ASCSAN_SIMT_CORE_BYTES = 10U * 1024U * 1024U;
 constexpr size_t ASCSAN_SIMT_THREAD_BYTES = ASCSAN_SIMT_CORE_BYTES / ASCSAN_SIMT_THREADS_PER_CORE;
@@ -259,6 +261,9 @@ struct AclsanSimtRawTraceRecord {
     uint32_t reserved;
 };
 static_assert(sizeof(AclsanSimtRawTraceRecord) == 64U, "SIMT trace wire size must remain stable");
+static_assert(
+    offsetof(AclsanSimtRawTraceRecord, instructionId) == 40U && offsetof(AclsanSimtRawTraceRecord, threadX) == 48U &&
+    offsetof(AclsanSimtRawTraceRecord, blockDimY) == 56U && offsetof(AclsanSimtRawTraceRecord, reserved) == 60U);
 
 // In every slot the lane cursor starts one cache line in. In slot zero
 // that first line holds the scalar core context, inside the 10 MiB budget.
@@ -271,6 +276,43 @@ static_assert(
 constexpr uint32_t ASCSAN_SIMT_RECORDS_PER_THREAD = static_cast<uint32_t>(
     (ASCSAN_SIMT_THREAD_BYTES - sizeof(AclsanSimtThreadHeader) - sizeof(AclsanSimtCoreHeader)) /
     sizeof(AclsanSimtRawTraceRecord));
+
+enum class AclsanSimtRecordKind : uint32_t { Memory = 0, Begin, End };
+
+struct AclsanSimtFifoWriteControl {
+    uint32_t writeSequence;
+    uint32_t droppedCount;
+};
+
+struct AclsanSimtFifoLane {
+    uint64_t invocationId;
+    uint64_t scalarPc;
+    uint32_t blockId;
+    uint32_t owner;
+};
+
+// A core keeps compact D2H write controls and H2D ACKs separate from device-owned lane state.
+constexpr size_t SimtFifoWriteOffset = sizeof(AclsanSimtCoreHeader);
+constexpr size_t SimtFifoReadOffset =
+    SimtFifoWriteOffset + ASCSAN_SIMT_THREADS_PER_CORE * sizeof(AclsanSimtFifoWriteControl);
+constexpr size_t SimtFifoLaneOffset = SimtFifoReadOffset + ASCSAN_SIMT_THREADS_PER_CORE * sizeof(uint32_t);
+constexpr size_t SimtFifoRecordsOffset = SimtFifoLaneOffset + ASCSAN_SIMT_THREADS_PER_CORE * sizeof(AclsanSimtFifoLane);
+constexpr uint32_t ASCSAN_SIMT_FIFO_CAPACITY = static_cast<uint32_t>(
+    (ASCSAN_SIMT_CORE_BYTES - SimtFifoRecordsOffset) /
+    (ASCSAN_SIMT_THREADS_PER_CORE * sizeof(AclsanSimtRawTraceRecord)));
+static_assert(ASCSAN_SIMT_FIFO_CAPACITY > 0U && SimtFifoRecordsOffset % ASCSAN_TRACE_CACHE_LINE_BYTES == 0U);
+
+constexpr uint32_t SimtFifoLaneSlot(uint32_t blockId, uint32_t lanes, uint32_t lane) noexcept
+{
+    return (static_cast<uint64_t>(blockId) * lanes + lane) % ASCSAN_SIMT_THREADS_PER_CORE;
+}
+
+constexpr size_t SimtFifoRecordOffset(uint32_t slot, uint32_t sequence) noexcept
+{
+    return SimtFifoRecordsOffset +
+           (static_cast<size_t>(slot) * ASCSAN_SIMT_FIFO_CAPACITY + sequence % ASCSAN_SIMT_FIFO_CAPACITY) *
+               sizeof(AclsanSimtRawTraceRecord);
+}
 
 constexpr size_t SimtTraceBytes(uint32_t physicalCoreCount)
 {

@@ -116,8 +116,26 @@ bool RendersNewPipelineDefinitions()
     CHECK(genericLoad.find("uint64_t base, int64_t offset") != std::string_view::npos);
     CHECK(genericLoad.find("WriteSimtTraceRecord(memInfo, pc, bid, 95, base, offset, 1U)") != std::string_view::npos);
     const std::string_view atomicAdd = FindProbeDefinition(simt.source, "__npu_check_probe_atom_add_g_u64");
-    CHECK(atomicAdd.find("WriteSimtTraceRecord(memInfo, pc, bid, 372, base, offset, 8U)") != std::string_view::npos);
+    CHECK(atomicAdd.find("uint64_t base)") != std::string_view::npos);
+    CHECK(atomicAdd.find("WriteSimtTraceRecord(memInfo, pc, bid, 372, base, 0, 8U)") != std::string_view::npos);
+    const std::string_view reduce = FindProbeDefinition(simt.source, "__npu_check_probe_red_g_u32");
+    CHECK(reduce.find("uint64_t base)") != std::string_view::npos);
+    CHECK(reduce.find("WriteSimtTraceRecord(memInfo, pc, bid, 356, base, 0, 4U)") != std::string_view::npos);
     return true;
+}
+
+TEST(ProbeSourceGeneratorSimt, EmitsLaneEntryAndExitMarkers)
+{
+    const auto generated = GenerateProbeSource("dav-3510", ProbeGroup::Simt);
+    ASSERT_TRUE(generated.success) << generated.diagnostic;
+    const auto bindings = BindingSymbols({ProbeGroup::Simt});
+    for (const auto* symbol : {"__npu_check_probe_simt_start", "__npu_check_probe_simt_end"}) {
+        EXPECT_NE(std::find(bindings.begin(), bindings.end(), symbol), bindings.end());
+        const auto definition = FindProbeDefinition(generated.source, symbol);
+        EXPECT_NE(definition.find("__simt_callee__"), std::string_view::npos);
+    }
+    EXPECT_NE(generated.sourceMap.find("apiId=476 symbol=__npu_check_probe_simt_start"), std::string::npos);
+    EXPECT_NE(generated.sourceMap.find("apiId=477 symbol=__npu_check_probe_simt_end"), std::string::npos);
 }
 
 bool RendersControlledMte2Definition()

@@ -117,7 +117,7 @@ void MemoryAnalysis::ObserveSynchronization(AclsanCallbackDomain domain, AclsanC
         !(domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION && id == ACLSAN_CBID_DEVICE_SYNC))
         return;
     CheckerReportList reports;
-    if (!synchronization_->OnCallback(domain, id, data, reports) || !synchronization_->ObservationComplete())
+    if (!synchronization_->OnCallback(domain, id, data, reports))
         complete_ = false;
     for (auto& report : reports) {
         if (auto* sync = std::get_if<NpuCheckSynccheckReport>(&report)) {
