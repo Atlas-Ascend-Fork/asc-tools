@@ -607,7 +607,7 @@ int TestHelpText()
     CHECK(std::fflush(stream) == 0);
     const std::string usage = ReadStream(stream);
     CHECK(std::fclose(stream) == 0);
-    CHECK(usage.find("[options] [--] [program] [program-arguments]") != std::string::npos);
+    CHECK(usage.find("[options] [--] <program> [program-arguments]") != std::string::npos);
     CHECK(usage.find("Optional '--' separates") == std::string::npos);
     CHECK(usage.find("Optional separator between npu-compute options and the program.") != std::string::npos);
     CHECK(usage.find("Required if the program name starts with '-'.") != std::string::npos);

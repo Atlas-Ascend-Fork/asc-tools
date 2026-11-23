@@ -367,7 +367,7 @@ void PrintUsage(FILE* stream, const char* program)
     }
     std::fprintf(
         stream,
-        "Usage: %s [options] [--] [program] [program-arguments]\n"
+        "Usage: %s [options] [--] <program> [program-arguments]\n"
         "\n",
         program == nullptr ? "npu-compute" : program);
     const auto registry = RegisterOptions();

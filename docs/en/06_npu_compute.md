@@ -59,10 +59,10 @@ npu-compute --import <report-file> [--export <directory>]
 
 | Placeholder           | Description                                                                                                                                                                    |
 | :-------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `options`             | Tool options. Must precede the target program. See [Options](#options).                                                                                                        |
+| `[options]`             | Tool options. Must precede the target program. See [Options](#options).                                                                                                        |
+| `[--]`                | Optional separator placed before the target program to separate tool options from the target program and its arguments. Required when the target program name starts with `-`. |
 | `<program>`           | Target program. Can be specified using an absolute path, a relative path, or a command name; when a command name is used, the program must be discoverable through `PATH`.     |
 | `[program-arguments]` | Arguments passed unchanged to the target program.                                                                                                                              |
-| `[--]`                | Optional separator placed before the target program to separate tool options from the target program and its arguments. Required when the target program name starts with `-`. |
 | `<report-file>`       | Path to an existing `.npu-rep` report.                                                                                                                                         |
 | `<directory>`         | Existing directory that receives the unpacked results.                                                                                                                         |
 
