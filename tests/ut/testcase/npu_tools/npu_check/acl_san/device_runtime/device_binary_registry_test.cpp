@@ -325,6 +325,36 @@ bool ActualSegmentsRejected(const std::vector<uint8_t>& image)
 
 } // namespace
 
+TEST(DeviceBinaryRegistry, ActualSegmentsRejectInvalidProgramHeaderTable)
+{
+    const auto image = PtLoadImage();
+    Elf64_Ehdr original{};
+    std::memcpy(&original, image.data(), sizeof(original));
+    const auto rejected = [&image](const Elf64_Ehdr& header) {
+        auto malformed = image;
+        std::memcpy(malformed.data(), &header, sizeof(header));
+        return ActualSegmentsRejected(malformed);
+    };
+
+    auto header = original;
+    header.e_phnum = 0;
+    EXPECT_TRUE(rejected(header));
+    header.e_phnum = 4097;
+    EXPECT_TRUE(rejected(header));
+
+    header = original;
+    header.e_phoff = UINT64_MAX;
+    EXPECT_TRUE(rejected(header));
+    header.e_phoff = image.size() - sizeof(Elf64_Phdr) + 1;
+    EXPECT_TRUE(rejected(header));
+    header.e_phoff = image.size() - sizeof(Elf64_Phdr);
+    EXPECT_TRUE(rejected(header)); // One complete header cannot satisfy e_phnum == 2.
+
+    header = original;
+    header.e_phentsize = sizeof(Elf64_Phdr) - 1;
+    EXPECT_TRUE(rejected(header));
+}
+
 TEST(DeviceBinaryRegistry, ActualSegmentsRejectInvalidGeometry)
 {
     const auto wrongMachine = PtLoadImage(EM_X86_64);

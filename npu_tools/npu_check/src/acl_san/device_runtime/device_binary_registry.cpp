@@ -68,7 +68,6 @@ bool WriteImage(const fs::path& destination, const void* image, size_t imageByte
 
 bool ReadLoadSegmentHeader(const uint8_t* bytes, size_t imageBytes, Elf64_Ehdr& header)
 {
-    constexpr size_t MAX_ELF_PROGRAM_HEADERS = 4096;
     // Observed Ascend device ELF machine ID; current binutils does not name it.
     constexpr uint16_t ASCEND_DEVICE_ELF_MACHINE = 0x1029;
     if (bytes == nullptr || imageBytes < sizeof(Elf64_Ehdr)) {
@@ -79,11 +78,11 @@ bool ReadLoadSegmentHeader(const uint8_t* bytes, size_t imageBytes, Elf64_Ehdr& 
     }
     if (std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0 || header.e_ident[EI_CLASS] != ELFCLASS64 ||
         header.e_ident[EI_DATA] != ELFDATA2LSB || header.e_ident[EI_VERSION] != EV_CURRENT ||
-        (header.e_machine != EM_AARCH64 && header.e_machine != ASCEND_DEVICE_ELF_MACHINE) || header.e_phnum == 0U ||
-        header.e_phnum > MAX_ELF_PROGRAM_HEADERS || header.e_phentsize != sizeof(Elf64_Phdr)) {
+        (header.e_machine != EM_AARCH64 && header.e_machine != ASCEND_DEVICE_ELF_MACHINE) ||
+        header.e_phentsize != sizeof(Elf64_Phdr)) {
         return false;
     }
-    return header.e_phoff <= imageBytes && header.e_phnum <= (imageBytes - header.e_phoff) / sizeof(Elf64_Phdr);
+    return true;
 }
 
 bool ParseLoadSegments(const void* image, size_t imageBytes, std::vector<BinarySegment>& segments)
@@ -95,12 +94,20 @@ bool ParseLoadSegments(const void* image, size_t imageBytes, std::vector<BinaryS
     if (!ReadLoadSegmentHeader(bytes, imageBytes, header)) {
         return false;
     }
-    for (uint16_t index = 0; index < header.e_phnum; ++index) {
+    constexpr size_t MAX_ELF_PROGRAM_HEADERS = 4096;
+    const size_t programCount = header.e_phnum;
+    uint64_t programOffset = header.e_phoff;
+    // Validate external counts and offsets in the same scope as their use.
+    if (programCount == 0 || programCount > MAX_ELF_PROGRAM_HEADERS || programOffset > imageBytes ||
+        programCount > (imageBytes - programOffset) / sizeof(Elf64_Phdr)) {
+        return false;
+    }
+    for (size_t index = 0; index < programCount; ++index) {
         Elf64_Phdr program{};
-        if (memcpy_s(&program, sizeof(program), bytes + header.e_phoff + index * sizeof(program), sizeof(program)) !=
-            EOK) {
+        if (memcpy_s(&program, sizeof(program), bytes + programOffset, sizeof(program)) != EOK) {
             return false;
         }
+        programOffset += sizeof(program);
         if (program.p_type != PT_LOAD) {
             continue;
         }
