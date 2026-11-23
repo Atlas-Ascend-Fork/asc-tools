@@ -118,8 +118,8 @@ npu-check --deadlock-timeout 5 ./my_app
 - 目标程序必须是可执行文件。
 - 不支持多进程和多线程运行。
 - `racecheck`支持检测`simd vf`中的UB读写与其他流水访存之间的竞争问题。
-- 不支持在包含`simt`逻辑的场景下进行`initcheck`和`racecheck`检测。
-- SIMT VF UB检查仅覆盖dav-3510默认8 KiB预留配置下已采集的写入，不支持UB读取检查。禁用VF栈预留或Ascend C预留的编译配置不在支持范围内。
+- 不支持在包含`simt`的场景下进行`initcheck`和`racecheck`检测。
+- SIMT VF UB memcheck仅支持默认的8 KiB预留空间。
 - SIMT VF的一次UB写入须完整落在同一个静态区、动态区（含对齐填充）、预留区或Data Cache中；跨区、未分配空间和物理越界写入均报告非法访问。布局不可用或采集记录丢失时，分析不完整。
 - 当前内置采集器尚不支持采集SIMT VF的STS、UB原子和归约写入，仅运行现有CLI无法完成这些指令的检查。通用ST需由采集方先确认目标地址空间为UB。
 - 算子使用非`inline`子函数时不支持检测。

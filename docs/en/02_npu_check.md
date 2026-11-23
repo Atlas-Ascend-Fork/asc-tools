@@ -118,8 +118,8 @@ This command sets the operator execution timeout to 5 seconds to help investigat
 - The target program must be an executable file.
 - Multi-process and multi-threaded execution are not supported.
 - `racecheck` detects races between UB reads and writes in `simd vf` and memory accesses from other pipelines.
-- `initcheck` and `racecheck` are not supported in scenarios containing `simt` logic.
-- SIMT VF UB checking covers captured writes on dav-3510 with the default 8 KiB reservation. UB reads and compilation configurations with either VF-stack or Ascend C UB reservation disabled are not supported.
+- `initcheck` and `racecheck` are not supported in scenarios containing `simt`.
+- SIMT VF UB memcheck only supports the default 8 KiB reserved space.
 - Each SIMT VF UB write must stay within one static, dynamic (including alignment padding), reserved, or Data Cache region. Writes crossing regions, falling in unallocated space, or exceeding physical UB are reported as invalid. Unavailable layouts or lost trace records make analysis incomplete.
 - The built-in collector does not yet capture SIMT VF STS, UB atomic, or reduction writes, so the current CLI alone cannot check these instructions. The collector must independently establish the UB address space for generic ST records.
 - Operators that use non-`inline` child functions are not supported.
