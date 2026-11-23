@@ -23,6 +23,9 @@ constexpr uint32_t UB_BLOCK_BYTES = 32;
 constexpr uint32_t SORT_ELEMENT_BYTES = 8;
 constexpr uint32_t SORT_INPUT_ELEMENTS = 32;
 constexpr uint32_t TRANSPOSE_BYTES = 512;
+constexpr uint32_t TRANSPOSE_DATA_BITS = 16;
+constexpr uint32_t INDEX_DATA_BITS = 32;
+constexpr uint32_t VA_REGISTERS_PER_PAIR = 2;
 constexpr uint32_t VA_ADDRESS_SHIFT = 5;
 constexpr uint32_t LIST_ADDRESS_SHIFT = 3;
 constexpr uint32_t CONFIG_REPEAT_SHIFT = 56;
@@ -111,8 +114,8 @@ private:
 MemoryCbdataResult BuildVtransposeAccesses(const VtransposeParamField& f, const MemoryCbdataContext& context)
 {
     VectorAccessBuilder out(context);
-    out.Add(f.srcAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 16, TRANSPOSE_BYTES);
-    out.Add(f.dstAddr, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 16, TRANSPOSE_BYTES);
+    out.Add(f.srcAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ, TRANSPOSE_DATA_BITS, TRANSPOSE_BYTES);
+    out.Add(f.dstAddr, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, TRANSPOSE_DATA_BITS, TRANSPOSE_BYTES);
     return out.Finish();
 }
 
@@ -128,7 +131,7 @@ MemoryCbdataResult BuildVbs32Accesses(const Vbs32ParamField& f, const MemoryCbda
     const uint64_t result = SORT_INPUT_ELEMENTS * SORT_ELEMENT_BYTES;
     VectorAccessBuilder out(context);
     out.Add(f.scoreAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.dataBits, scores, repeat, scores);
-    out.Add(f.indexAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 32, indices, repeat, indices);
+    out.Add(f.indexAddr, ACLSAN_DEVICE_MEMORY_ACCESS_READ, INDEX_DATA_BITS, indices, repeat, indices);
     out.Add(f.dstAddr, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, f.dataBits, result, repeat, result);
     // F16 records also write the two padding bytes between the score and index.
     return out.Finish();
@@ -140,7 +143,7 @@ bool AddVaPairAccesses(
 {
     bool complete = true;
     const uint32_t bytes = bits == 8 ? UB_BLOCK_BYTES / 2 : UB_BLOCK_BYTES;
-    for (uint32_t lane = 0; lane < 2 * VA_ENTRY_COUNT; ++lane) {
+    for (uint32_t lane = 0; lane < VA_REGISTERS_PER_PAIR * VA_ENTRY_COUNT; ++lane) {
         const auto& va = state.va[index + lane / VA_ENTRY_COUNT];
         const uint32_t entry = lane % VA_ENTRY_COUNT;
         if ((va.validEntries & (1U << entry)) == 0) {

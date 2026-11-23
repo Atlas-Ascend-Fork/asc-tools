@@ -95,8 +95,10 @@ constexpr bool IsTraceBlockIdValid(uint64_t blockId, bool isAic, uint32_t blockC
     return blockId < blockLimit;
 }
 
+constexpr size_t ASCSAN_TRACE_CACHE_LINE_BYTES = 64U;
+
 // SIMD starts with interleaved device- and host-owned cache lines.
-struct alignas(64) AclsanTraceBufferHeader {
+struct alignas(ASCSAN_TRACE_CACHE_LINE_BYTES) AclsanTraceBufferHeader {
     uint64_t magic;
     uint64_t launchId;
     uint64_t segmentBytes;
@@ -108,18 +110,18 @@ struct alignas(64) AclsanTraceBufferHeader {
     uint64_t simtSegmentBytes;
 };
 
-struct alignas(64) AclsanTraceWriteLine {
+struct alignas(ASCSAN_TRACE_CACHE_LINE_BYTES) AclsanTraceWriteLine {
     uint32_t writeSequence;
     uint32_t droppedCount;
     uint8_t reserved[56];
 };
 
-struct alignas(64) AclsanTraceReadLine {
+struct alignas(ASCSAN_TRACE_CACHE_LINE_BYTES) AclsanTraceReadLine {
     uint32_t readSequence;
     uint8_t reserved[60];
 };
 
-struct alignas(64) AclsanTraceControl {
+struct alignas(ASCSAN_TRACE_CACHE_LINE_BYTES) AclsanTraceControl {
     AclsanTraceWriteLine write;
     AclsanTraceReadLine read;
 };
@@ -201,8 +203,6 @@ constexpr size_t ASCSAN_SIMT_CORE_BYTES = 10U * 1024U * 1024U;
 constexpr size_t ASCSAN_SIMT_THREAD_BYTES = ASCSAN_SIMT_CORE_BYTES / ASCSAN_SIMT_THREADS_PER_CORE;
 constexpr uint32_t ASCSAN_SIMT_COMPLETION_BITS = 64U;
 constexpr uint32_t ASCSAN_SIMT_COVERAGE_INCOMPLETE = 1U << 0U;
-constexpr size_t ASCSAN_TRACE_CACHE_LINE_BYTES = 64U;
-
 constexpr size_t SimtTraceOffset(size_t scalarBytes)
 {
     return (scalarBytes + ASCSAN_TRACE_CACHE_LINE_BYTES - 1U) / ASCSAN_TRACE_CACHE_LINE_BYTES *
