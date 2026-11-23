@@ -373,7 +373,9 @@ namespace {
 
 size_t AtomicMemoryAccessGroup(AclsanDeviceMemoryAccessMode mode) noexcept
 {
-    return static_cast<size_t>(mode - ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD);
+    using PromotedMode = decltype(+mode);
+    return static_cast<size_t>(
+        static_cast<PromotedMode>(mode) - static_cast<PromotedMode>(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD));
 }
 
 // 源读先于同一动态指令的普通目标覆盖写入（例如 Add(A, B, A)。

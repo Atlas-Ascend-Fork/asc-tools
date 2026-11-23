@@ -14,6 +14,7 @@
 #include "securec.h"
 
 #include <cstddef>
+#include <limits>
 
 namespace npucheck {
 HostOrder::NodeId MemoryAnalysis::HostNode()
@@ -225,7 +226,7 @@ bool MemoryAnalysis::DeviceEvent(AclsanCallbackId id, const void* data)
         launch.vfs.push_back(*static_cast<const AclsanDeviceVfData*>(data));
     } else if (id == ACLSAN_CBID_DEVICE_STATE) {
         const auto& state = *static_cast<const AclsanDeviceRegisterStateData*>(data);
-        if (state.regId >= ACLSAN_DEVICE_REGISTER_COUNT || state.regId >= 64)
+        if (state.regId >= ACLSAN_DEVICE_REGISTER_COUNT || state.regId >= std::numeric_limits<uint64_t>::digits)
             return false;
         launch.registerMasks[race::DomainOf(h)] |= UINT64_C(1) << state.regId;
         if (state.regId == ACLSAN_DEVICE_REGISTER_FPC)

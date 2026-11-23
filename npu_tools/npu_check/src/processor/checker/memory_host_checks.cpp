@@ -37,7 +37,9 @@ NpuCheckReportAllocation HostAllocation(const std::optional<Allocation>& source)
     allocation.freeSerialNo = source->freeSequence;
     allocation.deviceId = source->deviceId;
     allocation.memorySpace = NpuCheckReportMemorySpace::GM;
-    allocation.state = source->freeSequence == 0 ? 1 : 2;
+    constexpr uint32_t kAllocationLive = 1;
+    constexpr uint32_t kAllocationFreed = 2;
+    allocation.state = source->freeSequence == 0 ? kAllocationLive : kAllocationFreed;
     return allocation;
 }
 NpuCheckReportMemoryAccess HostAccess(const HostAccessEvidence& source)

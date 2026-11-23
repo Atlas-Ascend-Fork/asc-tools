@@ -751,15 +751,16 @@ void Initcheck::ClearLaunchReplayState(uint64_t launchId)
             ++it;
         }
     }
+    constexpr size_t kLaunchIdIndex = 3;
     for (auto it = reportedUsages_.begin(); it != reportedUsages_.end();) {
-        if (std::get<3>(std::get<0>(*it)) == launchId) {
+        if (std::get<kLaunchIdIndex>(std::get<0>(*it)) == launchId) {
             it = reportedUsages_.erase(it);
         } else {
             ++it;
         }
     }
     for (auto it = reportGroups_.begin(); it != reportGroups_.end();) {
-        if (std::get<3>(it->first) == launchId) {
+        if (std::get<kLaunchIdIndex>(it->first) == launchId) {
             it = reportGroups_.erase(it);
         } else {
             ++it;

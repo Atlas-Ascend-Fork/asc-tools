@@ -125,7 +125,8 @@ std::shared_ptr<const HostOrder::Clock> HostOrder::Merge(
     uint32_t secondIndex)
 {
     auto merged = std::make_shared<Clock>();
-    merged->reserve(first.size() + second.size() + 2);
+    constexpr size_t kJoinedActorCount = 2;
+    merged->reserve(first.size() + second.size() + kJoinedActorCount);
     size_t left = 0;
     size_t right = 0;
     while (left < first.size() || right < second.size()) {
