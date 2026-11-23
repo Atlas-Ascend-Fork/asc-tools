@@ -45,9 +45,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <climits>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 #include <dlfcn.h>
 #include <glob.h>
 #include <sys/stat.h>
@@ -861,8 +861,8 @@ using GetContextFunction = aclError (*)(aclrtContext*);
 
 bool ComposeTracePath(const char* root, const char* suffix, char (&path)[PATH_MAX]) noexcept
 {
-    const int length = std::snprintf(path, sizeof(path), "%s/%s", root, suffix);
-    return length >= 0 && static_cast<size_t>(length) < sizeof(path);
+    const int length = snprintf_s(path, sizeof(path), sizeof(path) - 1U, "%s/%s", root, suffix);
+    return length >= 0;
 }
 
 bool HasCannInstallMarker(const char* root) noexcept
@@ -940,12 +940,14 @@ bool ValidateTraceProviderPath(const char* path, char* canonicalPath, size_t can
     if (length >= canonicalPathSize) {
         return false;
     }
-    std::memcpy(canonicalPath, resolved, length + 1U);
-    char* name = std::strrchr(resolved, '/');
-    if (name == nullptr || !IsOfficialTraceProviderName(name + 1)) {
+    if (memcpy_s(canonicalPath, canonicalPathSize, resolved, length + 1U) != EOK) {
         return false;
     }
-    *name = '\0';
+    const size_t separator = std::string_view(resolved, length).rfind('/');
+    if (separator == std::string_view::npos || !IsOfficialTraceProviderName(resolved + separator + 1U)) {
+        return false;
+    }
+    resolved[separator] = '\0';
     const char* root = std::getenv("ASCEND_HOME_PATH");
     return root != nullptr && root[0] != '\0' ? IsTraceProviderInRoot(resolved, root) :
                                                 IsTraceProviderInDefaultRoot(resolved);
@@ -1797,17 +1799,18 @@ void TraceWorker() noexcept
     for (;;) {
         std::vector<std::shared_ptr<PendingTrace>> work;
         try {
-            std::unique_lock<std::mutex> lock(state.mutex);
-            if (!progress) {
-                state.wake.wait_for(
-                    lock, TRACE_POLL_INTERVAL, [&state] { return state.stopping || state.pollRequested; });
+            {
+                std::unique_lock<std::mutex> lock(state.mutex);
+                if (!progress) {
+                    state.wake.wait_for(
+                        lock, TRACE_POLL_INTERVAL, [&state] { return state.stopping || state.pollRequested; });
+                }
+                if (state.stopping) {
+                    return;
+                }
+                state.pollRequested = false;
+                work = state.pending;
             }
-            if (state.stopping) {
-                return;
-            }
-            state.pollRequested = false;
-            work = state.pending;
-            lock.unlock();
             progress = false;
             for (const auto& pending : work) {
                 progress = PollPendingTrace(pending, work) || progress;
@@ -1916,14 +1919,15 @@ void TraceDispatchWorker() noexcept
     for (;;) {
         std::vector<std::shared_ptr<PendingTrace>> work;
         try {
-            std::unique_lock<std::mutex> lock(state.mutex);
-            state.dispatchWake.wait(lock, [&state] { return state.stopping || state.dispatchReady; });
-            if (state.stopping) {
-                return;
+            {
+                std::unique_lock<std::mutex> lock(state.mutex);
+                state.dispatchWake.wait(lock, [&state] { return state.stopping || state.dispatchReady; });
+                if (state.stopping) {
+                    return;
+                }
+                state.dispatchReady = false;
+                work = state.pending;
             }
-            state.dispatchReady = false;
-            work = state.pending;
-            lock.unlock();
             std::set<std::pair<uintptr_t, uintptr_t>> pendingStreams;
             for (const auto& pending : work) {
                 const auto stream = std::make_pair(

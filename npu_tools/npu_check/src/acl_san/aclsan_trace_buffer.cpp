@@ -13,7 +13,6 @@
 
 #include <algorithm>
 #include <bitset>
-#include <cstring>
 
 namespace aclsan {
 bool ValidateTraceSegmentHeader(const AclsanTraceBufferHeader& header, uint32_t blockCount, uint64_t launchId) noexcept
@@ -95,7 +94,11 @@ TraceBufferParseResult DecodeTraceFifoRange(
     result.records.reserve(count);
     for (size_t index = 0; index < count; ++index) {
         AclsanRawTraceRecord raw{};
-        std::memcpy(&raw, records + index * sizeof(raw), sizeof(raw));
+        if (memcpy_s(&raw, sizeof(raw), records + index * sizeof(raw), sizeof(raw)) != EOK) {
+            result.records.clear();
+            result.error = "cannot copy trace FIFO record";
+            return result;
+        }
         const uint32_t sequence = firstSequence + static_cast<uint32_t>(index);
         if (!ValidateTraceFifoRecord(raw, slot, sequence, blockCount)) {
             result.records.clear();
