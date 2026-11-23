@@ -209,7 +209,7 @@ CallbackAccess::CallbackAccess(Kind kind) noexcept
 
 CallbackAccess::~CallbackAccess()
 {
-    if (!admitted_) {
+    if (admitted_ == 0U) {
         return;
     }
     --callbackDepth;

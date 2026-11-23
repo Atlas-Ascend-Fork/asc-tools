@@ -297,11 +297,12 @@ aclptiResult BinaryRegistry::RegisterBinaryFromFile(
     if (path == nullptr || path[0] == '\0' || binary == nullptr) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
-    if (!asctools::security::ValidatePath(path, asctools::security::PathKind::ExistingFile)) {
+    std::string normalizedPath;
+    if (!asctools::security::NormalizePath(path, asctools::security::PathKind::ExistingFile, normalizedPath)) {
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     try {
-        std::ifstream input(path, std::ios::binary | std::ios::ate);
+        std::ifstream input(normalizedPath, std::ios::binary | std::ios::ate);
         if (!input || input.tellg() <= 0) {
             return ACLPTI_ERROR_PROFILING_FAILED;
         }
@@ -595,7 +596,7 @@ aclptiResult BinaryRegistry::RegisterSymbolFunction(
     }
 }
 
-bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source, bool requireName)
+bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source, bool requireName) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& registered : binaries_) {
@@ -622,12 +623,12 @@ bool BinaryRegistry::GetSource(aclrtFuncHandle original, BinarySource& source, b
     return false;
 }
 
-bool BinaryRegistry::GetSimtWarpSource(aclrtFuncHandle function, SimtWarpBinarySource& source)
+bool BinaryRegistry::GetSimtWarpSource(aclrtFuncHandle function, SimtWarpBinarySource& source) const
 {
     return simtWarpSources_.GetSource(function, source);
 }
 
-aclrtFuncHandle BinaryRegistry::FindInstrumentedFunction(aclrtFuncHandle original)
+aclrtFuncHandle BinaryRegistry::FindInstrumentedFunction(aclrtFuncHandle original) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& binary : binaries_) {
@@ -651,7 +652,7 @@ aclrtFuncHandle BinaryRegistry::FindInstrumentedFunction(aclrtFuncHandle origina
     return nullptr;
 }
 
-aclrtFuncHandle BinaryRegistry::FindPmSamplingFunction(aclrtFuncHandle original)
+aclrtFuncHandle BinaryRegistry::FindPmSamplingFunction(aclrtFuncHandle original) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& binary : binaries_) {
@@ -667,7 +668,7 @@ aclrtFuncHandle BinaryRegistry::FindPmSamplingFunction(aclrtFuncHandle original)
     return nullptr;
 }
 
-bool BinaryRegistry::NeedsPmSamplingProbeBuffer(aclrtFuncHandle function)
+bool BinaryRegistry::NeedsPmSamplingProbeBuffer(aclrtFuncHandle function) const
 {
     if (function == nullptr) {
         return false;
@@ -687,7 +688,7 @@ bool BinaryRegistry::NeedsPmSamplingProbeBuffer(aclrtFuncHandle function)
     return false;
 }
 
-bool BinaryRegistry::GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot)
+bool BinaryRegistry::GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot) const
 {
     snapshot = {};
     using GetFunctionAddress = aclError (*)(const void*, void**, void**);

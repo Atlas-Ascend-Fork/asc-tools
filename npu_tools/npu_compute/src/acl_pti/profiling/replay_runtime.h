@@ -86,7 +86,7 @@ public:
     aclptiResult ReplayKernel(
         aclrtFuncHandle originalFunction, const ReplayLaunchFunction& launchFunction, aclrtStream stream);
 
-    bool IsSourceCounterStreamAbandoned(aclrtStream stream) const;
+    bool IsSourceCounterStreamAbandoned(const void* stream) const;
     aclError SynchronizeSourceCounterStreamWithTimeout(aclrtStream stream);
 
 private:

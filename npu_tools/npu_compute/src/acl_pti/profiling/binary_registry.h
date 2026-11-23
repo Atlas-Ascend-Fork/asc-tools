@@ -76,14 +76,14 @@ public:
     // Called after the replay stream was synchronized, while the Runtime is still usable.
     aclptiResult ReleaseReplayedCompanions(aclrtFuncHandle original);
     // Capture while Runtime handles are valid. Shared immutable images outlive binary unload.
-    bool GetSource(aclrtFuncHandle original, BinarySource& source, bool requireName = true);
-    bool GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot);
-    bool GetSimtWarpSource(aclrtFuncHandle function, SimtWarpBinarySource& source);
+    bool GetSource(aclrtFuncHandle original, BinarySource& source, bool requireName = true) const;
+    bool GetPmSamplingSnapshot(aclrtFuncHandle original, PmSamplingBinarySnapshot& snapshot) const;
+    bool GetSimtWarpSource(aclrtFuncHandle function, SimtWarpBinarySource& source) const;
     // Null means the function was not loaded with instrumentation enabled.
-    aclrtFuncHandle FindInstrumentedFunction(aclrtFuncHandle original);
+    aclrtFuncHandle FindInstrumentedFunction(aclrtFuncHandle original) const;
     // Returns the independent sampling companion, or the original for a non-SIMT kernel.
-    aclrtFuncHandle FindPmSamplingFunction(aclrtFuncHandle original);
-    bool NeedsPmSamplingProbeBuffer(aclrtFuncHandle function);
+    aclrtFuncHandle FindPmSamplingFunction(aclrtFuncHandle original) const;
+    bool NeedsPmSamplingProbeBuffer(aclrtFuncHandle function) const;
     // Lookup by companion function; valid only while its instrumented binary is registered.
     bool GetInstrumentedTraceArgumentOffset(aclrtFuncHandle function, std::uint32_t& offset);
 
@@ -125,13 +125,13 @@ private:
         const std::string& mixedAlias);
     static aclptiResult LoadCompanions(
         Binary& state, const aclrtBinaryLoadOptions* options, aclrtBinaryLoadFromDataFunc load);
-    aclptiResult ReleaseCompanions(Binary& binary);
+    static aclptiResult ReleaseCompanions(Binary& binary);
     static void BuildSamplingBinaryState(Binary& state, const void* data, std::size_t size);
     static void BuildSamplingCompanion(
         Binary& state, const std::shared_ptr<PmSamplingBinaryImage>& image, const void* data, std::size_t size);
     static bool BuildPipelineBinaryState(Binary& state, const void* data, std::size_t size, bool pmSampling);
     SimtWarpSourceRegistry simtWarpSources_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::unordered_map<aclrtBinHandle, Binary> binaries_;
 };
 

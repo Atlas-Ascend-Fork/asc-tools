@@ -249,6 +249,8 @@ source /usr/local/Ascend/cann/set_env.sh
 
    - cmake >= 3.16.0
 
+   - patch
+
    - ccache >= 4.6.1
 
      建议版本[release-v4.6.1](https://github.com/ccache/ccache/releases/tag/v4.6.1)，x86_64环境[下载链接](https://github.com/ccache/ccache/releases/download/v4.6.1/ccache-4.6.1-linux-x86_64.tar.xz)，aarch64环境[下载链接](https://github.com/ccache/ccache/releases/download/v4.6.1/ccache-4.6.1.tar.gz)。

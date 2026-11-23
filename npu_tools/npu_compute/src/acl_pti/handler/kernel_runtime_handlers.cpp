@@ -181,11 +181,11 @@ aclError ResolveHostArgumentLayout(
 aclError CopyHostArgumentPayload(
     const void* originalArgs, std::size_t argsSize, const HostArgumentLayout& layout, ReplayLaunchArguments& prepared);
 aclError RelocateHostArgumentPlaceholders(
-    aclrtFuncHandle function, const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount,
+    const void* function, const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount,
     const HostArgumentLayout& layout, ReplayLaunchArguments& prepared);
 
 aclError ValidateHostArguments(
-    aclrtFuncHandle function, const void* originalArgs, std::size_t argsSize,
+    const void* function, const void* originalArgs, std::size_t argsSize,
     const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount)
 {
     if ((argsSize != 0 && originalArgs == nullptr) || (placeholderCount != 0 && originalPlaceholders == nullptr)) {
@@ -258,7 +258,7 @@ aclError BuildInstrumentedReplayHostArgs(
     return ACL_SUCCESS;
 }
 aclError ResolveHostArgumentInsertion(
-    aclrtFuncHandle function, std::size_t argsSize, const aclrtPlaceHolderInfo* originalPlaceholders,
+    const void* function, std::size_t argsSize, const aclrtPlaceHolderInfo* originalPlaceholders,
     std::size_t placeholderCount, std::size_t& insertionOffset)
 {
     if (placeholderCount != 0) {
@@ -369,7 +369,7 @@ aclError CopyHostArgumentPayload(
 }
 
 aclError RelocateHostArgumentPlaceholders(
-    aclrtFuncHandle function, const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount,
+    const void* function, const aclrtPlaceHolderInfo* originalPlaceholders, std::size_t placeholderCount,
     const HostArgumentLayout& layout, ReplayLaunchArguments& prepared)
 {
     constexpr std::size_t hiddenSize = sizeof(void*);

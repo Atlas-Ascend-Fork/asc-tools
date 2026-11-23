@@ -14,7 +14,7 @@
 #include "profiling/prof_api.h"
 
 #include <mutex>
-#include <pthread.h>
+#include <shared_mutex>
 #include <array>
 
 namespace {
@@ -23,7 +23,7 @@ struct aclApiTable {
     void* hook[ACL_RT_API_MAX];
     void* origin[ACL_RT_API_MAX];
     void* callback[ACL_RT_API_MAX];
-    pthread_rwlock_t lock;
+    std::shared_mutex lock;
 };
 
 constexpr uint32_t kMsprofDataCallbackType = 0U;
@@ -92,9 +92,9 @@ const char* FindRuntimeApiName(aclrtApiId id) { return kRuntimeApiNames[static_c
 void SaveOriginalRuntimeEntry(aclrtApiId id, void* origin)
 {
     const size_t index = static_cast<size_t>(id);
-    pthread_rwlock_wrlock(&GetAclApiTable().lock);
-    GetAclApiTable().origin[index] = origin;
-    pthread_rwlock_unlock(&GetAclApiTable().lock);
+    auto& table = GetAclApiTable();
+    const std::unique_lock<std::shared_mutex> lock(table.lock);
+    table.origin[index] = origin;
 }
 
 int32_t RegisterCallback(aclrtApiId id, void* callback)
@@ -108,10 +108,13 @@ int32_t RegisterCallback(aclrtApiId id, void* callback)
     }
     const char* name = FindRuntimeApiName(id);
     const size_t index = static_cast<size_t>(id);
-    pthread_rwlock_wrlock(&GetAclApiTable().lock);
-    const bool replaced = GetAclApiTable().callback[index] != nullptr;
-    GetAclApiTable().callback[index] = callback;
-    pthread_rwlock_unlock(&GetAclApiTable().lock);
+    bool replaced = false;
+    {
+        auto& table = GetAclApiTable();
+        const std::unique_lock<std::shared_mutex> lock(table.lock);
+        replaced = table.callback[index] != nullptr;
+        table.callback[index] = callback;
+    }
     ASCTOOL_DEBUG(
         "[tool_injection] %s callback: name=%s id=%d callback=%p",
         callback == nullptr ? "clear" : (replaced ? "replace" : "register"), name == nullptr ? "unknown" : name,
@@ -126,14 +129,16 @@ Function GetDispatchTarget(aclrtApiId id)
     void* targetAddress = nullptr;
     const char* source = "origin";
     const size_t index = static_cast<size_t>(id);
-    pthread_rwlock_rdlock(&GetAclApiTable().lock);
-    targetAddress = GetAclApiTable().callback[index];
-    if (targetAddress == nullptr) {
-        targetAddress = GetAclApiTable().origin[index];
-    } else {
-        source = "callback";
+    {
+        auto& table = GetAclApiTable();
+        const std::shared_lock<std::shared_mutex> lock(table.lock);
+        targetAddress = table.callback[index];
+        if (targetAddress == nullptr) {
+            targetAddress = table.origin[index];
+        } else {
+            source = "callback";
+        }
     }
-    pthread_rwlock_unlock(&GetAclApiTable().lock);
     const Function target = AddressToFunction<Function>(targetAddress);
     ASCTOOL_DEBUG(
         "[tool_injection] dispatch runtime api: name=%s id=%d source=%s target=%p", name == nullptr ? "unknown" : name,
@@ -631,7 +636,7 @@ aclApiTable& GetAclApiTable()
         },
         {},
         {},
-        PTHREAD_RWLOCK_INITIALIZER};
+        {}};
     return table;
 }
 

@@ -567,7 +567,7 @@ aclptiResult RangeProfiler::FinishProfilingRound(
 
 struct RangeProfiler::ReplayInvocation {
     const ReplayMemory& replayMemory;
-    BinaryRegistry& binaryRegistry;
+    const BinaryRegistry& binaryRegistry;
     aclrtFuncHandle originalFunction;
     const ReplayLaunchFunction& launchFunction;
     aclrtStream stream;
@@ -578,7 +578,7 @@ struct RangeProfiler::ReplayInvocation {
 };
 
 aclptiResult RangeProfiler::ReplayKernel(
-    const ReplayMemory& replayMemory, BinaryRegistry& binaryRegistry, aclrtFuncHandle originalFunction,
+    const ReplayMemory& replayMemory, const BinaryRegistry& binaryRegistry, aclrtFuncHandle originalFunction,
     const ReplayLaunchFunction& launchFunction, aclrtStream stream, const SamplingOffsetReader& readSamplingOffset,
     const SourceCounterSynchronize& synchronizeSourceCounter)
 {

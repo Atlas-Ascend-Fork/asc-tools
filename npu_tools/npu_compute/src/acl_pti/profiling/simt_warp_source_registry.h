@@ -27,18 +27,17 @@ struct SimtWarpBinarySource {
 // 示例只支持按函数名定位；entry-only 应显式报错，不能猜测插桩后地址。
 class SimtWarpSourceRegistry {
 public:
-    bool RegisterBinary(
-        aclrtBinHandle binary, const void* data, std::size_t size, const aclrtBinaryLoadOptions* options);
-    bool RegisterFunction(aclrtBinHandle binary, aclrtFuncHandle function, const char* name);
-    bool GetSource(aclrtFuncHandle function, SimtWarpBinarySource& source);
-    void UnregisterBinary(aclrtBinHandle binary);
+    bool RegisterBinary(const void* binary, const void* data, std::size_t size, const aclrtBinaryLoadOptions* options);
+    bool RegisterFunction(const void* binary, const void* function, const char* name);
+    bool GetSource(const void* function, SimtWarpBinarySource& source) const;
+    void UnregisterBinary(const void* binary);
 
 private:
     struct Entry {
         SimtWarpBinarySource source;
-        std::unordered_map<aclrtFuncHandle, std::string> names;
+        std::unordered_map<const void*, std::string> names;
     };
-    std::mutex mutex_;
-    std::unordered_map<aclrtBinHandle, Entry> binaries_;
+    mutable std::mutex mutex_;
+    std::unordered_map<const void*, Entry> binaries_;
 };
 } // namespace aclpti::profiling

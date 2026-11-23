@@ -13,7 +13,7 @@
 
 namespace aclpti::profiling {
 bool SimtWarpSourceRegistry::RegisterBinary(
-    aclrtBinHandle binary, const void* data, std::size_t size, const aclrtBinaryLoadOptions* options)
+    const void* binary, const void* data, std::size_t size, const aclrtBinaryLoadOptions* options)
 {
     if (binary == nullptr || data == nullptr || size == 0 ||
         (options != nullptr && options->numOpt != 0 && options->options == nullptr)) {
@@ -33,7 +33,7 @@ bool SimtWarpSourceRegistry::RegisterBinary(
     }
 }
 
-bool SimtWarpSourceRegistry::RegisterFunction(aclrtBinHandle binary, aclrtFuncHandle function, const char* name)
+bool SimtWarpSourceRegistry::RegisterFunction(const void* binary, const void* function, const char* name)
 {
     if (binary == nullptr || function == nullptr || name == nullptr || name[0] == '\0')
         return false;
@@ -49,7 +49,7 @@ bool SimtWarpSourceRegistry::RegisterFunction(aclrtBinHandle binary, aclrtFuncHa
     }
 }
 
-bool SimtWarpSourceRegistry::GetSource(aclrtFuncHandle function, SimtWarpBinarySource& source)
+bool SimtWarpSourceRegistry::GetSource(const void* function, SimtWarpBinarySource& source) const
 {
     if (function == nullptr)
         return false;
@@ -70,7 +70,7 @@ bool SimtWarpSourceRegistry::GetSource(aclrtFuncHandle function, SimtWarpBinaryS
     }
 }
 
-void SimtWarpSourceRegistry::UnregisterBinary(aclrtBinHandle binary)
+void SimtWarpSourceRegistry::UnregisterBinary(const void* binary)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     binaries_.erase(binary);

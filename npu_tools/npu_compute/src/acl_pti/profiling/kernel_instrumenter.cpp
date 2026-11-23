@@ -569,7 +569,12 @@ bool WriteKernelEndControl(const fs::path& directory)
 
 bool WriteSimtStartControl(const fs::path& directory)
 {
-    std::ofstream file((directory / CONTROL_RECORD_NAME).string(), std::ios::binary);
+    std::string normalizedPath;
+    if (!asctools::security::NormalizePath(
+            (directory / CONTROL_RECORD_NAME).string(), asctools::security::PathKind::FileOrNew, normalizedPath)) {
+        return false;
+    }
+    std::ofstream file(normalizedPath, std::ios::binary);
     if (!file) {
         return false;
     }
@@ -595,11 +600,12 @@ bool WriteSimtStartControl(const fs::path& directory)
 bool WriteProbeFiles(const fs::path& directory, bool simtStart)
 {
     const auto write = [&directory](const std::string& name, const void* bytes, std::size_t size) {
-        const auto pathStr = (directory / name).string();
-        if (!asctools::security::ValidatePath(pathStr, asctools::security::PathKind::FileOrNew)) {
+        std::string normalizedPath;
+        if (!asctools::security::NormalizePath(
+                (directory / name).string(), asctools::security::PathKind::FileOrNew, normalizedPath)) {
             return false;
         }
-        std::ofstream file(pathStr, std::ios::binary);
+        std::ofstream file(normalizedPath, std::ios::binary);
         file.write(static_cast<const char*>(bytes), static_cast<std::streamsize>(size));
         file.close();
         return static_cast<bool>(file);
@@ -644,7 +650,8 @@ bool Run(std::vector<std::string> arguments, const fs::path& stdoutFile = {}, bo
         const std::string output{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
         std::fwrite(output.data(), 1, output.size(), stderr);
     }
-    if (error != 0 || waited != child || WIFEXITED(status) == 0 || WEXITSTATUS(status) != 0) {
+    const bool exited = error == 0 && waited == child && WIFEXITED(status) != 0;
+    if (!exited || WEXITSTATUS(status) != 0) {
         ASCTOOL_ERROR(
             "[aclpti] kernel-end tool failed: %s spawn=%d status=%d"
             " code=%u",
@@ -855,7 +862,12 @@ static bool WriteSamplingSymbolOrdering(
         if (!Run({objdump.string(), "--syms", object.first.string()}, symbolsFile)) {
             return false;
         }
-        std::ifstream symbols(symbolsFile.string());
+        std::string normalizedPath;
+        if (!asctools::security::NormalizePath(
+                symbolsFile.string(), asctools::security::PathKind::ExistingFile, normalizedPath)) {
+            return false;
+        }
+        std::ifstream symbols(normalizedPath);
         std::string line, symbol;
         while (std::getline(symbols, line)) {
             std::istringstream fields(line);
@@ -872,7 +884,12 @@ static bool WriteSamplingSymbolOrdering(
         }
         ordering += symbol + "\n";
     }
-    std::ofstream file(orderingFile.string());
+    std::string normalizedPath;
+    if (!asctools::security::NormalizePath(
+            orderingFile.string(), asctools::security::PathKind::FileOrNew, normalizedPath)) {
+        return false;
+    }
+    std::ofstream file(normalizedPath);
     file << ordering;
     file.close();
     if (!file) {
@@ -928,7 +945,12 @@ static bool TuneProbeImage(
         return false;
     }
     if (simtStart) {
-        std::ifstream log(tuneLog.string(), std::ios::binary);
+        std::string normalizedPath;
+        std::ifstream log;
+        if (asctools::security::NormalizePath(
+                tuneLog.string(), asctools::security::PathKind::ExistingFile, normalizedPath)) {
+            log.open(normalizedPath, std::ios::binary);
+        }
         const std::string tunerOutput{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
         if (!log.is_open() || log.bad() || !HasSimtStartProbeInsertion(tunerOutput)) {
             const std::string failure = "bisheng-tune did not report an inserted SIMT stack-frame probe (ApiId 398)";
@@ -947,10 +969,12 @@ static bool ReadPatchedProbeImage(
     std::vector<char>& result)
 {
     std::string diagnostic;
-    if (!asctools::security::ValidatePath(patched.string(), asctools::security::PathKind::ExistingFile)) {
+    std::string normalizedPath;
+    if (!asctools::security::NormalizePath(
+            patched.string(), asctools::security::PathKind::ExistingFile, normalizedPath)) {
         return false;
     }
-    std::ifstream file(patched.string(), std::ios::binary);
+    std::ifstream file(normalizedPath, std::ios::binary);
     if (!file) {
         return false;
     }
@@ -989,10 +1013,11 @@ static void MapCompanionFunctions(
 
 static bool WriteProbeInput(const fs::path& input, const void* data, std::size_t size)
 {
-    if (!asctools::security::ValidatePath(input.string(), asctools::security::PathKind::FileOrNew)) {
+    std::string normalizedPath;
+    if (!asctools::security::NormalizePath(input.string(), asctools::security::PathKind::FileOrNew, normalizedPath)) {
         return false;
     }
-    std::ofstream file(input.string(), std::ios::binary);
+    std::ofstream file(normalizedPath, std::ios::binary);
     file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
     file.close();
     if (!file) {
@@ -1080,6 +1105,29 @@ bool InstrumentSimtSampling(
     return InstrumentProbe(data, size, output, probeArgumentOffset, pmSamplingMap, true);
 }
 
+bool WriteDisassemblyInput(const fs::path& input, const void* data, std::size_t size)
+{
+    std::string normalizedPath;
+    if (!asctools::security::NormalizePath(input.string(), asctools::security::PathKind::FileOrNew, normalizedPath)) {
+        return false;
+    }
+    std::ofstream file(normalizedPath, std::ios::binary);
+    file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    return static_cast<bool>(file);
+}
+
+bool ReadDisassemblyOutput(const fs::path& disassembly, std::string& text)
+{
+    std::string normalizedDisassembly;
+    if (!asctools::security::NormalizePath(
+            disassembly.string(), asctools::security::PathKind::ExistingFile, normalizedDisassembly)) {
+        return false;
+    }
+    std::ifstream file(normalizedDisassembly, std::ios::binary);
+    text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    return !file.bad();
+}
+
 bool ReadOriginalDisassembly(
     const void* data, std::size_t size, std::string& text, std::string& diagnostic, DisassemblyDetail detail)
 {
@@ -1104,17 +1152,9 @@ bool ReadOriginalDisassembly(
     }
     TemporaryDirectory temporary{pattern};
     const auto input = temporary.path / "input.o";
-    {
-        if (!asctools::security::ValidatePath(input.string(), asctools::security::PathKind::FileOrNew)) {
-            diagnostic = "cannot write device ELF for instruction mapping";
-            return false;
-        }
-        std::ofstream file(input.string(), std::ios::binary);
-        file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-        if (!file) {
-            diagnostic = "cannot write device ELF for instruction mapping";
-            return false;
-        }
+    if (!WriteDisassemblyInput(input, data, size)) {
+        diagnostic = "cannot write device ELF for instruction mapping";
+        return false;
     }
     const auto disassembly = temporary.path / "original.txt";
     std::vector<std::string> arguments{objdump.string(), "-d"};
@@ -1127,13 +1167,7 @@ bool ReadOriginalDisassembly(
         diagnostic = "llvm-objdump failed during instruction mapping";
         return false;
     }
-    if (!asctools::security::ValidatePath(disassembly.string(), asctools::security::PathKind::ExistingFile)) {
-        diagnostic = "cannot read device ELF disassembly";
-        return false;
-    }
-    std::ifstream file(disassembly.string(), std::ios::binary);
-    text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-    if (file.bad()) {
+    if (!ReadDisassemblyOutput(disassembly, text)) {
         diagnostic = "cannot read device ELF disassembly";
         return false;
     }

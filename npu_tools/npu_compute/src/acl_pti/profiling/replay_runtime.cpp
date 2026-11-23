@@ -213,7 +213,7 @@ aclptiResult ReplayRuntime::ReplayKernel(
     return status;
 }
 
-bool ReplayRuntime::IsSourceCounterStreamAbandoned(aclrtStream stream) const
+bool ReplayRuntime::IsSourceCounterStreamAbandoned(const void* stream) const
 {
     std::lock_guard<std::mutex> lock(sourceCounterStreamMutex_);
     return sourceCounterStreamAbandoned_ && abandonedSourceCounterStream_ == stream;

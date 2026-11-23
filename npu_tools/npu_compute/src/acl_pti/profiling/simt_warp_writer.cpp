@@ -9,6 +9,8 @@
  */
 #include "simt_warp_writer.h"
 
+#include "file_io.h"
+
 #include <fstream>
 
 namespace aclpti::profiling {
@@ -55,7 +57,12 @@ std::string JsonEscape(const std::string& value)
 
 bool WriteSimtWarpJson(const SimtWarpData& data, const std::string& path, std::string& error)
 {
-    std::ofstream output(path, std::ios::out | std::ios::trunc);
+    std::string normalizedPath;
+    if (!asctools::security::NormalizePath(path, asctools::security::PathKind::FileOrNew, normalizedPath)) {
+        error = "cannot open output file: " + path;
+        return false;
+    }
+    std::ofstream output(normalizedPath, std::ios::out | std::ios::trunc);
     if (!output.is_open()) {
         error = "cannot open output file: " + path;
         return false;
