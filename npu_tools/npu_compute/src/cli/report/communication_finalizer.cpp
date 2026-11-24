@@ -1620,7 +1620,8 @@ bool FinalizeCommunication(const fs::path& directory, std::vector<std::string>* 
     try {
         if (!SafePath(directory) || !fs::is_directory(directory))
             throw std::runtime_error("unsafe Communication output directory");
-        if (fs::exists(directory / "CommunicationTrace.json") || fs::exists(directory / "app_summary.jsonl"))
+        if (fs::exists(directory / "CommunicationTrace.json") ||
+            fs::exists(directory / comm::kAppCommunicationSummaryFileName))
             throw std::runtime_error("Communication outputs already exist");
         try {
             ReadSources(directory, state);
@@ -1631,7 +1632,7 @@ bool FinalizeCommunication(const fs::path& directory, std::vector<std::string>* 
         Trace trace(traceOutput);
         ProcessSources(directory, state, trace);
         if (!state.devices.empty()) {
-            TraceFileOutput summaryOutput(directory / "app_summary.jsonl");
+            TraceFileOutput summaryOutput(directory / comm::kAppCommunicationSummaryFileName);
             WriteSummaries(state, trace, summaryOutput);
             summaryOutput.Close();
             summaryOutput.Publish();

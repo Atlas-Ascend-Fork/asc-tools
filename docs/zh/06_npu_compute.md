@@ -129,7 +129,7 @@ npu-compute --replay-mode application --section Communication --no-pack --export
 
 输出`HardwareInfo.jsonl`，并为每个能确定名称和设备的成功launch生成`device<id>/op-<编码名称>/<launch_index>/summary.jsonl`，其中仅包含一条`OpInfoSummary`。同名多次调用分别保留，长名称使用`instance-<编号>`目录。各设备硬件信息在设备资源存活时缓存，设备分类记录带`Device Id`。
 
-通信采集固定启用通信时间戳、Task时间、Task L1时间、AICPU Trace和单轮基础PMU（808、1281、0x422、0x423，以及ALL_BLOCK），不重放业务Kernel。这些数据用于现有摘要的时长、计算量、并行统计和带宽公式。950原始任务字段拼成完整taskSn，并按device和采集周期与launch关联；缺失、复用或无法确认周期时，对应指标为`NA`并附`unavailable_reasons`。已收到的数据经解析后生成`CommunicationTrace.json`，展示通信与计算时间块。应用级`app_summary.jsonl`根据已关联的区间汇总通信与重叠指标。结果清单分批传输，目录输出和报告打包均支持较多算子实例。
+通信采集固定启用通信时间戳、Task时间、Task L1时间、AICPU Trace和单轮基础PMU（808、1281、0x422、0x423，以及ALL_BLOCK），不重放业务Kernel。这些数据用于现有摘要的时长、计算量、并行统计和带宽公式。950原始任务字段拼成完整taskSn，并按device和采集周期与launch关联；缺失、复用或无法确认周期时，对应指标为`NA`并附`unavailable_reasons`。已收到的数据经解析后生成`CommunicationTrace.json`，展示通信与计算时间块。应用级`app_communication_summary.jsonl`根据已关联的区间汇总通信与重叠指标。结果清单分批传输，目录输出和报告打包均支持较多算子实例。
 
 配套Runtime须保证`MsprofFinalize`在正式finalize通知前通过callback交付全部设备尾数据；正常finalize且本地采集和交付无错误时可成功，无SetDevice的正常finalize可交付完整空会话。未收到通知时`tailConfirmed=false`，应用成功时工具退出码为3；已知Start/Stop错误、丢失或处理失败不会被最终通知清除。逐算子摘要中的`collection_status`记录会话采集完整性。
 

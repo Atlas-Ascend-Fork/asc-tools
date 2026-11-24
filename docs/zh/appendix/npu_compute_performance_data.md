@@ -32,7 +32,7 @@
 
 UDS 最终清单采用有界分批帧，支持交付大量逐算子摘要。
 
-逐算子摘要沿用现有公式。`CommunicationTrace.json`展示AiCpu和CCU的通信、计算与重叠时间块。`app_summary.jsonl`按设备与模式汇总已关联的区间。多进程采集时，这两个文件放在各自的`pid-<pid>`目录。
+逐算子摘要沿用现有公式。`CommunicationTrace.json`展示AiCpu和CCU的通信、计算与重叠时间块。`app_communication_summary.jsonl`按设备与模式汇总已关联的区间。多进程采集时，这两个文件放在各自的`pid-<pid>`目录。
 
 ## ArithmeticUtilization（Cube及Vector指令占比和数量）
 

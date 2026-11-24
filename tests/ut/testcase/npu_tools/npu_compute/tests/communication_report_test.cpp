@@ -116,7 +116,7 @@ protected:
     }
     std::vector<comm::Tree> Summary()
     {
-        std::ifstream input((directory / "app_summary.jsonl").string());
+        std::ifstream input((directory / "app_communication_summary.jsonl").string());
         std::vector<comm::Tree> result;
         std::string line;
         while (std::getline(input, line)) {

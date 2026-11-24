@@ -32,7 +32,7 @@ The fixed configuration is `PROF_OP_TIMESTAMP_MASK | PROF_TASK_TIME_MASK | PROF_
 
 Bounded UDS continuation frames carry the final artifact manifest for large numbers of per-launch summaries.
 
-The per-launch summaries still use the existing formulas. `CommunicationTrace.json` contains the AiCpu and CCU communication and compute events and overlap intervals. `app_summary.jsonl` summarizes available intervals by device and mode. Multi-process reports keep these files under the corresponding `pid-<pid>` directory.
+The per-launch summaries still use the existing formulas. `CommunicationTrace.json` contains the AiCpu and CCU communication and compute events and overlap intervals. `app_communication_summary.jsonl` summarizes available intervals by device and mode. Multi-process reports keep these files under the corresponding `pid-<pid>` directory.
 
 ## ArithmeticUtilization (Cube and Vector instruction utilization and counts)
 

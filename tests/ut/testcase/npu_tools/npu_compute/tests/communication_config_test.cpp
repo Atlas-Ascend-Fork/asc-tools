@@ -81,11 +81,11 @@ int main()
     Check(ipc::DecodeConfig(ipc::EncodeConfig(wire)).sections == wire.sections);
     Check(ipc::KindForName(".communication-staging/process-uds/records-0.jsonl") == ipc::DataKind::Communication);
     Check(ipc::ArtifactTypeForName(".communication-staging/process-uds/manifest.json") == ipc::ArtifactType::Json);
-    Check(ipc::ArtifactTypeForName("app_summary.jsonl") == ipc::ArtifactType::Jsonl);
+    Check(ipc::ArtifactTypeForName("app_communication_summary.jsonl") == ipc::ArtifactType::Jsonl);
     Check(ipc::TypeForKind(ipc::DataKind::Communication) == ipc::Type::Communication);
     for (const auto* path :
          {".communication-staging/../records-0.jsonl", ".communication-staging/process-uds/result-0.json",
-          "/app_summary.jsonl", ".biu-staging/process-uds/records-0.jsonl"}) {
+          "/app_communication_summary.jsonl", ".biu-staging/process-uds/records-0.jsonl"}) {
         bool rejected = false;
         try {
             (void)ipc::KindForName(path);

@@ -299,7 +299,7 @@ aclptiResult WritePmuCsv(
     if (aicFrequencyMhz <= 0.0 || !std::isfinite(aicFrequencyMhz) || aivFrequencyMhz <= 0.0 ||
         !std::isfinite(aivFrequencyMhz)) {
         ASCTOOL_ERROR(
-            "[npu-compute] CSV write rejected: invalid config frequency=%f aicFrequency=%f aivFrequency=%f"
+            "[npu-compute] CSV write rejected: invalid config frequency=%f MHz aicFrequency=%f MHz aivFrequency=%f MHz"
             " code=%u",
             config.frequencyMhz, config.aicFrequencyMhz, config.aivFrequencyMhz, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
         return ACLPTI_ERROR_INVALID_PARAMETER;

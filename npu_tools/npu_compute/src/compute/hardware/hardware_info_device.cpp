@@ -153,7 +153,10 @@ void CollectMemoryInfo(HardwareDeviceApi& api, int32_t deviceId, MemoryInfo* mem
     if (!api.GetHbmUsage(deviceId, &freeBytes, &allocatableBytes)) {
         Diagnose(diagnostics, "GetHbmUsage failed for device " + std::to_string(deviceId));
     } else if (freeBytes > allocatableBytes) {
-        Diagnose(diagnostics, "invalid HBM usage returned for device " + std::to_string(deviceId));
+        Diagnose(
+            diagnostics, "invalid HBM usage returned for device " + std::to_string(deviceId) + ": freeBytes=" +
+                             std::to_string(freeBytes) + " allocatableBytes=" + std::to_string(allocatableBytes) +
+                             "; expected freeBytes in [0, " + std::to_string(allocatableBytes) + "] bytes");
     } else {
         memory->hbmUsedMb = static_cast<double>(allocatableBytes - freeBytes) / BYTES_PER_MB;
     }

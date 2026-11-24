@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "report/collection_file_validator.h"
+#include "communication/artifact_schema.h"
 #include "file_io.h"
 
 #include <boost/filesystem.hpp>
@@ -143,7 +144,7 @@ void ParseAppSummary(std::ifstream& input)
 bool ValidateJsonl(
     std::ifstream* input, const boost::filesystem::path& path, std::string* error, SummaryJsonlInfo* summary)
 {
-    if (path.filename() == "app_summary.jsonl") {
+    if (path.filename() == communication::kAppCommunicationSummaryFileName) {
         try {
             ParseAppSummary(*input);
             return true;

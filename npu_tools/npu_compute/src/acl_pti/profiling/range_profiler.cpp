@@ -112,6 +112,47 @@ const SectionDefinition* FindSection(std::string_view name)
     return nullptr;
 }
 
+aclptiResult ValidateProfilingConfig(const aclptiRangeProfilerSetConfigParams* params)
+{
+    if (params == nullptr) {
+        ASCTOOL_ERROR(
+            "[aclpti] profiling configuration rejected: params=null; expected non-null params code=%u",
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    if (params->numSections > ACLPTI_MAX_NUM_SECTIONS) {
+        ASCTOOL_ERROR(
+            "[aclpti] profiling configuration rejected: numSections=%zu; expected range=[0, %zu] code=%u",
+            params->numSections, ACLPTI_MAX_NUM_SECTIONS, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    if (params->numSections != 0 && params->sections == nullptr) {
+        ASCTOOL_ERROR(
+            "[aclpti] profiling configuration rejected: sections=null numSections=%zu; "
+            "expected non-null sections when numSections > 0 code=%u",
+            params->numSections, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    if (params->blockResult != ACLPTI_BLOCK_RESULT_DISABLED && params->blockResult != ACLPTI_BLOCK_RESULT_ALL &&
+        params->blockResult != ACLPTI_BLOCK_RESULT_SHRINK) {
+        ASCTOOL_ERROR(
+            "[aclpti] profiling configuration rejected: blockResult=%d; "
+            "expected DISABLED(%d), ALL(%d) or SHRINK(%d) code=%u",
+            static_cast<int>(params->blockResult), static_cast<int>(ACLPTI_BLOCK_RESULT_DISABLED),
+            static_cast<int>(ACLPTI_BLOCK_RESULT_ALL), static_cast<int>(ACLPTI_BLOCK_RESULT_SHRINK),
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    if (params->numSections == 0 && !params->collectPipeline && !params->collectPcSampling) {
+        ASCTOOL_ERROR(
+            "[aclpti] profiling configuration rejected: numSections=0 collectPipeline=false collectPcSampling=false; "
+            "expected at least one section or collectPipeline=true or collectPcSampling=true code=%u",
+            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
+        return ACLPTI_ERROR_INVALID_PARAMETER;
+    }
+    return ACLPTI_SUCCESS;
+}
+
 struct ParsedSectionConfig {
     std::vector<uint32_t> events;
     bool sourceCounter = false;
@@ -271,16 +312,9 @@ aclptiResult RangeProfiler::Shutdown()
 
 aclptiResult RangeProfiler::SetConfig(const aclptiRangeProfilerSetConfigParams* params)
 {
-    if (params == nullptr || params->numSections > ACLPTI_MAX_NUM_SECTIONS ||
-        (params->numSections != 0 && params->sections == nullptr) ||
-        (params->blockResult != ACLPTI_BLOCK_RESULT_DISABLED && params->blockResult != ACLPTI_BLOCK_RESULT_ALL &&
-         params->blockResult != ACLPTI_BLOCK_RESULT_SHRINK) ||
-        (params->numSections == 0 && !params->collectPipeline && !params->collectPcSampling)) {
-        ASCTOOL_ERROR(
-            "[aclpti] profiling configuration rejected: invalid parameters"
-            " code=%u",
-            NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
-        return ACLPTI_ERROR_INVALID_PARAMETER;
+    const aclptiResult validationStatus = ValidateProfilingConfig(params);
+    if (validationStatus != ACLPTI_SUCCESS) {
+        return validationStatus;
     }
 
     try {

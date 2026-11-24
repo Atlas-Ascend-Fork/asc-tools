@@ -539,8 +539,8 @@ void LoadCsvDeviceInfo(ReportConfig* config, bool loadFrequencies, int32_t devic
     }
     ASCTOOL_DEBUG(
         "[npu-compute] "
-        "CSV hardware config: source=DeviceApi socName=%s fallbackFrequency=%f aicFrequency=%f "
-        "aivFrequency=%f",
+        "CSV hardware config: source=DeviceApi socName=%s fallbackFrequency=%f MHz aicFrequency=%f MHz "
+        "aivFrequency=%f MHz",
         config->socName.c_str(), config->frequencyMhz, config->aicFrequencyMhz, config->aivFrequencyMhz);
 }
 

@@ -279,7 +279,8 @@ DataKind KindForName(const std::string& name)
         return DataKind::Communication;
     }
     constexpr size_t rootPathComponents = 1;
-    if (components.size() == rootPathComponents && (base == "CommunicationTrace.json" || base == "app_summary.jsonl")) {
+    if (components.size() == rootPathComponents &&
+        (base == "CommunicationTrace.json" || base == communication::kAppCommunicationSummaryFileName)) {
         return DataKind::Communication;
     }
     if (IsPipelineTraceArtifact(components, base)) {

@@ -157,23 +157,23 @@ int main()
     const std::string summary = "{\"category\":\"DeviceCommunicationSummary\",\"Scope\":\"Device\",\"Device "
                                 "Id\":0,\"Compute Duration(us)\":\"NA\",\"Communication "
                                 "Duration(us)\":\"NA\",\"Overlap Duration(us)\":\"NA\"}\n";
-    std::ofstream(report.string() + "/app_summary.jsonl") << summary;
+    std::ofstream(report.string() + "/app_communication_summary.jsonl") << summary;
     std::string error;
     std::vector<std::string> issues;
     std::vector<uint8_t> encoded;
-    Check(cli::ValidateCollectionFile(report / "app_summary.jsonl", cli::NpuRepFileType::Jsonl, &error));
+    Check(cli::ValidateCollectionFile(report / "app_communication_summary.jsonl", cli::NpuRepFileType::Jsonl, &error));
     Check(cli::PackDirectoryToRep(report, &encoded, &error, &issues));
     cli::DecodedRep decoded;
     Check(cli::DecodeRep(encoded, &decoded, &error));
     std::set<std::string> names;
     for (const auto& entry : decoded.entries)
         names.insert(entry.file_name);
-    Check(names.count("CommunicationTrace.json") && names.count("app_summary.jsonl"));
-    std::ofstream(report.string() + "/app_summary.jsonl") << summary << summary;
-    Check(!cli::ValidateCollectionFile(report / "app_summary.jsonl", cli::NpuRepFileType::Jsonl, &error));
-    std::ofstream(report.string() + "/app_summary.jsonl")
+    Check(names.count("CommunicationTrace.json") && names.count("app_communication_summary.jsonl"));
+    std::ofstream(report.string() + "/app_communication_summary.jsonl") << summary << summary;
+    Check(!cli::ValidateCollectionFile(report / "app_communication_summary.jsonl", cli::NpuRepFileType::Jsonl, &error));
+    std::ofstream(report.string() + "/app_communication_summary.jsonl")
         << "{\"category\":\"AppCommunicationSummary\",\"Scope\":\"All Devices\",\"Device Id\":\"All\","
            "\"Compute Duration(us)\":0,\"Communication Duration(us)\":0,\"Overlap "
            "Duration(us)\":0,\"Status\":\"complete\"}\n";
-    Check(!cli::ValidateCollectionFile(report / "app_summary.jsonl", cli::NpuRepFileType::Jsonl, &error));
+    Check(!cli::ValidateCollectionFile(report / "app_communication_summary.jsonl", cli::NpuRepFileType::Jsonl, &error));
 }

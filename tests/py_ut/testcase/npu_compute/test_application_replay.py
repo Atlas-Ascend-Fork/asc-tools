@@ -128,7 +128,8 @@ def test_packed_report_omits_diagnostic_artifacts(tmp_path):
     )
     assert imported.returncode == 0, imported.stdout + imported.stderr
     assert len(list(restored.rglob("CommunicationTrace.json"))) == 1
-    assert len(list(restored.rglob("app_summary.jsonl"))) == 1
+    assert len(list(restored.rglob("app_communication_summary.jsonl"))) == 1
+    assert not list(restored.rglob("app_summary.jsonl"))
     assert not list(restored.rglob("application_manifest.json"))
     assert not list(restored.rglob("application_raw.jsonl"))
     assert not list(restored.rglob(".communication-staging"))
@@ -282,7 +283,8 @@ def test_forked_application_sessions(
     assert len({path.parent.name for path in reports}) == complete_reports
     assert all(path.parent.name.startswith("pid-") for path in reports)
     summaries = [
-        json.loads(path.with_name("app_summary.jsonl").read_text()) for path in reports
+        json.loads(path.with_name("app_communication_summary.jsonl").read_text())
+        for path in reports
     ]
     assert {row["Device Id"] for row in summaries} == set(range(complete_reports))
 
@@ -321,12 +323,13 @@ def test_communication_artifacts_follow_application_sessions(
 
     traces = list(output.rglob("CommunicationTrace.json"))
     assert len(traces) == len(device_groups)
+    assert not list(output.rglob("app_summary.jsonl"))
     assert not list(output.rglob("application_manifest.json"))
     assert not list(output.rglob("application_raw.jsonl"))
     assert not list(output.rglob(".communication-staging"))
     observed_groups = []
     for path in traces:
-        summary = path.with_name("app_summary.jsonl")
+        summary = path.with_name("app_communication_summary.jsonl")
         device_ids = {
             json.loads(line)["Device Id"] for line in summary.read_text().splitlines()
         }
