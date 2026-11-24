@@ -17,7 +17,9 @@ else ()
 endif ()
 
 set(NPU_BIT_PKG_BASE "cann-asc-tools-deps_${ASC_TOOLS_VERSION}_linux-${NPU_BIT_PKG_ARCH}")
+set(NPU_BIT_ONLINE_PKG_BASE "cann-asc-tools-deps_9.3.0_linux-${NPU_BIT_PKG_ARCH}")
 set(NPU_BIT_PKG_NAME "${NPU_BIT_PKG_BASE}.tar.gz")
+set(NPU_BIT_ONLINE_PKG_NAME "${NPU_BIT_ONLINE_PKG_BASE}.tar.gz")
 set(NPU_BIT_LIB_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../libraries/npu_bit")
 set(NPU_BIT_LIB_PATH "${NPU_BIT_LIB_ROOT}/${NPU_BIT_PKG_BASE}")
 
@@ -31,14 +33,15 @@ if (NOT EXISTS "${NPU_BIT_LIB_PATH}/include/npubit.h"
     set(NPU_BIT_PKG "${CANN_3RD_LIB_PATH}/${NPU_BIT_PKG_NAME}")
 
     if(NOT EXISTS "${NPU_BIT_PKG}")
-        set(NPU_BIT_PKG_URL "https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/CANN/20261118_newest/${NPU_BIT_PKG_NAME}")
+        set(NPU_BIT_PKG "${CANN_3RD_LIB_PATH}/${NPU_BIT_ONLINE_PKG_NAME}")
+        set(NPU_BIT_PKG_URL "https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/CANN/20261118_newest/${NPU_BIT_ONLINE_PKG_NAME}")
         message(STATUS "Downloading npu_bit dependencies from ${NPU_BIT_PKG_URL}")
         include(FetchContent)
         FetchContent_Declare(
             npu_bit_deps
             URL "${NPU_BIT_PKG_URL}"
             DOWNLOAD_DIR "${CANN_3RD_LIB_PATH}"
-            DOWNLOAD_NAME "${NPU_BIT_PKG_NAME}"
+            DOWNLOAD_NAME "${NPU_BIT_ONLINE_PKG_NAME}"
             DOWNLOAD_NO_EXTRACT TRUE
         )
         FetchContent_MakeAvailable(npu_bit_deps)
