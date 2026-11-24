@@ -40,4 +40,4 @@
 
 开发归档的 README 提供完整导航，`audit.py --root <1.3.2完整包>` 验证迁移分区、全部归档材料、195 个旧节点、四份纸面案例和两项提案。安装器和 release.py 只检查技能包及其保留的全部运行时来源，不需要开发归档。完整开发测试需要仓库中的归档。
 
-当前 `knowledge build` 默认不在技能目录生成 INITIALIZATION.md；如需开发报告，显式传入 `--report-dir /absolute/external/report-directory`，建议使用 scaffolding 开发归档下的 `generated/`。冻结编译器保留在 runtime 的 `_knowledge_v1.py`，其字节与旧编译身份一致；外层入口只管理报告输出。
+当前 `knowledge build` 默认不在技能目录生成 INITIALIZATION.md；如需开发报告，显式传入 `--report-dir /absolute/external/report-directory`，建议使用 scaffolding 开发归档下的 `generated/`。冻结编译器保留在 runtime 的 `_knowledge_v1.py`；两份 `_v1` 编译器已补充版权头（正文与上游一致，见 IMPORT.md 偏差记录），当前知识产物的 generator 身份按新字节锚定，历史快照仍记录旧编译身份；外层入口只管理报告输出。

@@ -6,7 +6,7 @@
       "diagnosis-record": "sha256:6f65858a5e28e1a0a37be9733beb42b366b9a95d5579d8c1f16fdfed872cab3f",
       "diagnosis-region": "sha256:52c5b7daf1e43b85d5fa3845b6b751f01f68d1343531e47b26c8ed92ebc873bb"
     },
-    "sha256": "sha256:c67893467cd17df31303af65296cd884818d53ca4d8f800525989fdc9879781f"
+    "sha256": "sha256:c51adbe7a4b00d8014718e765c3ab16368e1e6d740b69ee6e01427c88c386198"
   },
   "graph_version": "v0007",
   "owner": "diagnosis",

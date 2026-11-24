@@ -729,21 +729,21 @@
   "bases": {
     "diagnosis": {
       "version": "v0007",
-      "sha256": "sha256:bb97332f3daf8b65de2e2d9ebbf7917ab54347b9a720822e0aa3ca27bfcb06d9",
+      "sha256": "sha256:06d1261592d5689e3415771e4d70f60ec6ec44a2f82d53fddfc20ba075712441",
       "path": "skills/ascendc-aprof-diagnosis/graph/versions/v0007/graph.json",
-      "file_sha256": "sha256:b73f4866e3f8b5e903612473df4ec98beb2213b961cfd2c7c46a1f574bc7516d"
+      "file_sha256": "sha256:39a1785e5f67a8b7ebfbbcacca7a67414f12d20c75e9288c025973bbf905b038"
     },
     "parallel-planning": {
       "version": "v0004",
-      "sha256": "sha256:eccd48a34ebd749b08c54748a022c922b51a5e40a74df81e240256df667da2e7",
+      "sha256": "sha256:9e1cc0838ab0bc608d5cb319b4134aeae639b0b189768d6ceb9499f93ae23b71",
       "path": "skills/ascendc-aprof-parallel-planning/knowledge/versions/v0004/index.json",
-      "file_sha256": "sha256:796d1f2ba89db674954e6fa43276454f516263642103901e288d1ba1510b3224"
+      "file_sha256": "sha256:c4f46fb7974cbc56c76d3370dcb0da3178a48859734a0684457b6255c63827e8"
     },
     "optimization": {
       "version": "v0007",
-      "sha256": "sha256:a8aacb15b26a68a7e681077299bab8340c4b1579425458e61e725efd5449a24c",
+      "sha256": "sha256:18864794746988b4102e4dc9ebb127b770a21d17e842ea95da0aa48e81ef089b",
       "path": "skills/ascendc-aprof-optimization/knowledge/versions/v0007/index.json",
-      "file_sha256": "sha256:560d8854fff4f4c2166c71d0f35d30fe7a7fe55741f7e9a57537556821434449"
+      "file_sha256": "sha256:6463d3b18b689bd7e50112eb58e2d1e62aedfc551811415ef5bda2e2c95edc8a"
     }
   },
   "policy": "条件化候选范围，实际P/O由内部router逐成员选择；新方案使用action-decision/v3和handoff/v4，D7测前冻结完整workload。未知性能允许合法试验，准备/保护代价须影响选择；局部ready不等于完整链。",

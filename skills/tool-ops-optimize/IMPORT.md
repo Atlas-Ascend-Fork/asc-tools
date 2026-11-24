@@ -32,6 +32,12 @@
 `_knowledge_v1.py` 按源文件字节保留。`knowledge.py` 是 1.3.2 新增的
 活跃报告管理入口，正常执行代码检查；冻结编译器位于 `_knowledge_v1.py`。
 `diagnosis.py` 为活跃的诊断入口，负责来源归档的逻辑路径兼容。
+
+> 偏差记录：`_diagnosis_v1.py` / `_knowledge_v1.py` 已按文件头门禁补充
+> AProf contributors 版权块，不再是上游 `d7c6bf69` 的原始字节；冻结清单
+> 与知识产物的 generator 身份已同步锚定新字节。上游原文仍可按固定提交
+> 获取比对；除头部 7 行版权注释外，两文件正文与上游一致。
+
 39 份来源头文件以原始字节的文本归档保存，详见[来源归档说明](references/source-archives.md)。
 
 `.gitattributes` 防止自动换行转换。格式、拼写及版权改写只对明确的
