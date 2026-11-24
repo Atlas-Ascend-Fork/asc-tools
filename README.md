@@ -26,6 +26,10 @@ Ascend C Tools是[CANN](https://hiascend.com/software/cann) （Compute Architect
 
     show_kernel_debug_data工具用于离线解析通过AscendC::DumpTensor/AscendC::print接口保存的Kernel侧算子调试信息。
 
+- **tool-comm-debug**
+
+    tool-comm-debug是面向昇腾NPU多卡通信与通算融合异常的排查与修复技能（skill），覆盖卡死超时、单rank报错退出、流与事件同步异常及通信输出错误等场景，以分层参考文档指导AI助手完成现象分流、日志与工具取证、根因定位、代码修复及多卡结果验证。
+
 - **tool-exception-dump**
 
     tool-exception-dump是面向昇腾NPU的AI Core Error系统化诊断技能（skill），基于msaicerr/asys工具管线执行与判读，以知识工作流形式指导AI助手完成场景判定、报错行定位、错误类型解码、单算子复现与证据链汇聚，输出六段式诊断报告，帮助开发者按标准路径定位算子运行中的AI Core Error根因。
@@ -54,6 +58,7 @@ Ascend C Tools是[CANN](https://hiascend.com/software/cann) （Compute Architect
 ├── npuchk                              // Ascend C Tools CPU调试检查与日志分析脚本
 ├── scripts                             // Ascend C Tools打包脚本
 ├── skills                             // Ascend C Tools skills目录（AI 助手技能）
+│   ├── tool-comm-debug                // Ascend C Tools tool-comm-debug 多卡通信调试技能
 │   ├── tool-exception-dump            // Ascend C Tools tool-exception-dump实现源代码
 │   ├── tool-npu-check                 // Ascend C Tools tool-npu-check实现源代码
 │   ├── tool-npu-compute               // Ascend C Tools tool-npu-compute实现源代码

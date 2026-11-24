@@ -1,0 +1,446 @@
+{
+  "skill_name": "tool-comm-debug",
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "title": "多卡集合通信超时与参与不对等分流",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能，基于以下题面材料完成只读诊断（不执行工程编译或设备命令）。Ascend 单机四卡运行集合通信，rank 0、1、3 在同一次 AllReduce 等待并最终超时；rank 2 的日志显示它在进入该次调用前因输入校验失败退出。其余 rank 的调用序号、通信组、count 和 dtype 一致。请区分 communication-timeout 与 single-rank-block，说明需要核对的最小证据，并按报告约定给出异常类型、异常 rank、等待位置和根因。",
+      "expected_output": "以 communication-timeout 描述等待侧症状，结合 rank 2 提前退出的证据按 single-rank-block 分流，区分出错侧、等待侧和缺席侧。报告包含异常类型、异常 rank、等待位置、根因；根因说明 rank 2 未参与本次集合通信如何导致其他 rank 等待。核对各 rank 的退出状态、最后完成动作和同序号调用，修复建议落在 rank 2 的输入校验失败及参与路径，并要求恢复后验证全部 rank 的实际输出。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "communication-timeout"
+        },
+        {
+          "type": "contains",
+          "pattern": "single-rank-block"
+        },
+        {
+          "type": "contains",
+          "pattern": "异常类型"
+        },
+        {
+          "type": "contains",
+          "pattern": "异常 rank"
+        },
+        {
+          "type": "contains",
+          "pattern": "等待"
+        },
+        {
+          "type": "contains",
+          "pattern": "根因"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "正常返回但跨轮输出错误的数据流核查",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能，基于以下材料完成只读分析（不执行工程运行命令）。Ascend 双卡自定义通信程序连续运行三轮，所有通信接口均返回成功，第一轮输出正确，后两轮部分区间残留上一轮值。源码复用接收缓冲、通知槽和累加状态。已提供完整数学契约、各轮输入和设备输出。请说明应读取的方法资料，围绕跨调用生命周期与缓冲归属组织数据流核查，并提出覆盖完整输出的验证方案。",
+      "expected_output": "从 references/method/protocol-data-flow.md 进入核查，沿输入、生产、搬运、消费到落盘输出追踪 rank 和轮次归属。检查跨调用生命周期、缓冲复用前的消费完成条件、通知发布与消费对应关系、累加状态重置、偏移单位和有效长度。利用公开数学契约比较全部要求的 rank、轮次及元素，依据实际差异定位数据首次出错的位置，并用证据支持修复结论。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "protocol-data-flow.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "缓冲"
+        },
+        {
+          "type": "contains",
+          "pattern": "轮次"
+        },
+        {
+          "type": "contains",
+          "pattern": "通知"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "用户通信引擎协议故障的八类报告接口映射",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能，仅基于以下证据完成只读诊断（不修改源码或运行命令）。两个现场均使用自研通信引擎，各 rank 均参与调用，API 参数与句柄符合契约，设备侧 stream/event 依赖正常。现场甲：引擎通知槽跨轮复用，等待方持续等待已被上一轮消费的发布。现场乙：通信完成后，本轮接收缓冲在消费前被下一轮提前覆盖，导致本轮输出损坏。请先依据 boundaries.md 判定两个现场的内部诊断家族，并说明各自为何不进设备侧 runtime B2 或 API 契约 B1。再按 SKILL.md §5 和症状文档的报告归档映射，分别填写固定八类接口的 §1 异常类型和 §4 根因，列出支持各自机制的证据。",
+      "expected_output": "第一步：两个现场均归内部第九类 comm-engine-protocol-fault。甲停在引擎通知槽的代次交接，乙错在引擎接收缓冲的跨轮复用时序；两者的设备侧 stream/event 依赖均正常，不进 runtime B2。各 rank 均参与且 API 调用符合契约，不进 B1。第二步：按固定八类接口归档。现场甲在 §1 填 stream-event-cycle，§4 根因写明用户引擎协议层（comm-engine-protocol-fault），用通知槽号、代次及发布、消费和等待记录说明为何本轮等待无法满足。现场乙在 §1 填 comm-operator-anomaly，§4 根因写明用户引擎协议层（comm-engine-protocol-fault），用接收缓冲的轮次归属、写入和消费顺序及输出差异说明下一轮如何提前覆盖本轮数据。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "comm-engine-protocol-fault"
+        },
+        {
+          "type": "contains",
+          "pattern": "stream-event-cycle"
+        },
+        {
+          "type": "contains",
+          "pattern": "comm-operator-anomaly"
+        },
+        {
+          "type": "contains",
+          "pattern": "用户引擎协议层"
+        },
+        {
+          "type": "contains",
+          "pattern": "根因"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "原生 ACLNN 与 MC2 及 MoE 准备阶段报错",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能，基于以下材料说明排查方案（不执行运行命令）。Ascend 单机多卡工程使用原生 ACLNN/MC2 通算融合和 MoE Dispatch/Combine。rank 1 在 Dispatch 的 GetWorkspaceSize 阶段首先返回 561002，该轮尚未提交设备执行；其他 rank 随后等待超时。请按阶段说明排查顺序，指出参考资料入口，并说明如何核对路由元数据、尺度与跨 rank 调用关系以及后续 Combine。",
+      "expected_output": "读取 references/method/native-fused-operators.md，区分 GetWorkspaceSize 参数与 tiling 准备、设备提交和等待完成三个阶段。保留 rank 1 的 561002 首错日志，结合现场版本的接口声明和参数约束检查 Dispatch 的 shape、dtype、路由元数据、尺度及工作区要求，依据证据解释其他 rank 的后续等待。核对 Dispatch 与 Combine 的数据契约、跨 rank 调用次序和跨流依赖，修复后验证融合链路的完整输出。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "native-fused-operators.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "Dispatch"
+        },
+        {
+          "type": "contains",
+          "pattern": "Combine"
+        },
+        {
+          "type": "contains",
+          "pattern": "rank"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "诊断工具的逻辑设备编号与物理芯片编号",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能回答以下编号映射问题（只基于已提供映射给出检查清单，不执行设备探测命令）。现场设备映射已确认：当前进程的逻辑 device id 0 对应物理 chip id 3。请分别说明 msprof、msnpureport、msaicerr、hccn_tool、hccl_test 应使用哪种编号及本例取值，并说明如何核对实际命令参数。",
+      "expected_output": "msprof、msnpureport、msaicerr 使用逻辑 device id，本例为 0；hccn_tool、hccl_test 使用物理 chip id，本例为 3。调用前将工具目标与已有设备映射逐项对应，依据现场版本的 --help 核对参数名称和支持范围，检查目标设备授权及工具执行范围。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "msprof"
+        },
+        {
+          "type": "contains",
+          "pattern": "msnpureport"
+        },
+        {
+          "type": "contains",
+          "pattern": "msaicerr"
+        },
+        {
+          "type": "contains",
+          "pattern": "逻辑"
+        },
+        {
+          "type": "contains",
+          "pattern": "hccn_tool"
+        },
+        {
+          "type": "contains",
+          "pattern": "hccl_test"
+        },
+        {
+          "type": "contains",
+          "pattern": "chip id"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "离线知识降级与独立数值核验边界",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能完成以下离线分析（不连接外部网络或执行设备命令）。当前环境离线，未配置外部知识库，也没有现成比较器或获准读取的参考实现。Ascend 双卡 AllReduce 的公开数学契约是对两卡同位置 int32 元素求和，两卡输入分别为 [1,2,3] 和 [4,5,6]，两卡设备输出均为 [5,7,9]。请说明技能如何继续工作，给出知识访问入口与现场工具参数核对方式、独立 CPU 参考计算和比较结论，并按报告约定填写自评。参考计算仅用于比较已提供的设备输出。",
+      "expected_output": "依据 references/knowledge-access.md 的降级约定，使用内置 references/INDEX.md、已授权公开 SDK 声明、现场日志和 CLI --help 继续定位。按公开求和契约独立计算 CPU 参考 [5,7,9]，逐元素比较两卡提供的输出并说明本组输入的一致性，结论范围限定于这些数据。CPU 参考仅用于比较设备输出，保持设备数据路径。报告自评写未作参考实现对照，并说明与当前判断有关的知识覆盖范围。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "knowledge-access.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "CPU 参考"
+        },
+        {
+          "type": "contains",
+          "pattern": "未作参考实现对照"
+        },
+        {
+          "type": "contains",
+          "pattern": "--help"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "反向看护：单卡纯计算性能调优",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "我的 Ascend 程序只在一张卡上运行纯计算逐元素算子，没有任何通信调用、跨卡数据交换或通信异常。输出正确，我只想提高吞吐并调整分块。请判断 tool-comm-debug 是否适用，并简短说明建议方向。",
+      "expected_output": "不适用。该需求属于单卡纯计算算子的性能调优，超出本技能范围；建议采用计算算子性能分析与分块调优流程。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "不适用"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "collective-param-mismatch"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "rank-group-mismatch"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "comm-engine-protocol-fault"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "反向看护：非 Ascend 平台的 CUDA 与 NCCL 报错",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "我使用 NVIDIA GPU、CUDA 和 NCCL，双卡集合通信超时，机器没有 Ascend 设备或 CANN 环境。请判断 tool-comm-debug 是否适用，简短说明应采用的排查方向。",
+      "expected_output": "不适用。当前需求属于 NVIDIA CUDA/NCCL 平台通信故障，超出本技能的 Ascend 平台范围；建议按对应平台的通信诊断流程排查。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "不适用"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "HcclCommInitRootInfoConfig"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "collective-param-mismatch"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "/usr/local/Ascend/driver/tools/msnpureport"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "边界分流：跨流依赖边完全缺失的数据竞争与错误分类",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能，仅根据以下源码与现象完成只读分类（不执行构建或运行命令）。Ascend 单机程序在 computeStream 上执行 aclnn 写入缓冲并在 commStream 上直接发起 HcclAllReduce 消费同一缓冲，源码中两者之间完全没有建立 aclrtRecordEvent 与 aclrtStreamWaitEvent 依赖边，也没有跨轮复用 event 的问题。程序正常退出，但部分轮次输出偶发读到未就绪数据而算错。请依据技能边界规则 B2 与决策树确定主异常类型、需枚举的异常作用点及修复方向。",
+      "expected_output": "按 references/boundaries.md 的边界规则 B2、references/method/decision-trees.md 与 references/symptoms/stream-event-cycle.md 判定，主异常类型为 stream-event-cycle（依赖缺失型）。因为跨 stream 的 producer/consumer 边界完全未建立 Record+Wait 依赖边且仅产生数据竞争与错误结果，应归入依赖缺失型并参照 references/fix/INDEX.md 补齐从 computeStream 到 commStream 的单向 Record+Wait 依赖，在报告第 3 节完整枚举写方算子/搬运、读方 collective 及缺失的依赖边。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "stream-event-cycle"
+        },
+        {
+          "type": "contains",
+          "pattern": "依赖缺失型"
+        },
+        {
+          "type": "contains",
+          "pattern": "boundaries.md"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "主异常类型为 sync-imbalance"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "边界分流：P2P 调用点标量目标越界的载体分派判定",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能，仅根据以下题面材料完成只读分类（不修改代码或执行命令）。Ascend 单机双卡程序（rank 0、1）已成功初始化 worldSize=2 通信域。rank 0 调用点对点接口 HcclSend 时传入标量参数 dstRank=5（超出当前通信域合法范围），入口检查报错 HCCL_E_PARA 后退出，rank 1 在配对等待后超时；源码未使用批次映射表构造。请依据 B1 值类参数核对次序按载体分派确定主异常类型与修复语义。",
+      "expected_output": "按 references/boundaries.md 的边界规则 B1 值类参数核对次序、references/method/decision-trees.md 与 references/symptoms/comm-operator-anomaly.md 判定，主异常类型为 comm-operator-anomaly（寻址域违反）。点对点调用点标量 dstRank 越界指向不存在对端属于单侧算子契约违反，修复语义是在 HcclSend 调用点恢复当前通信域内真实存在的目标对端。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "comm-operator-anomaly"
+        },
+        {
+          "type": "contains",
+          "pattern": "寻址域违反"
+        },
+        {
+          "type": "contains",
+          "pattern": "boundaries.md"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "主异常类型为 collective-param-mismatch"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "主异常类型为 single-rank-block"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "边界分流：集合调用标量 root 越界的载体分派判定",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能，仅根据以下题面材料完成只读分类（不修改代码或执行命令）。Ascend 单机双卡程序（worldSize=2，合法 rank 为 0、1）已成功初始化共享通信域。调用集合接口 HcclBroadcast 时传入标量寻址参数 root=5（超出通信域物理成员范围），入口返回 HCCL_E_PARA；源码未使用批次映射表构造，也未调用点对点 HcclSend/HcclRecv。请依据 B1 值类参数核对次序按载体分派确定主异常类型与修复方向。",
+      "expected_output": "按 references/boundaries.md 的边界规则 B1 值类参数核对次序第 3 条载体分派规则、references/method/decision-trees.md 与 references/symptoms/collective-param-mismatch.md 判定，集合调用点标量寻址参数 root 越界指向不存在对象属于配对/寻址错配型，无论入口返回 HCCL_E_PARA 还是等待超时，主异常类型均应判定为 collective-param-mismatch。修复方向是将各 rank 传入 HcclBroadcast 的 root 统一纠正为当前通信域内真实存在的合法成员编号，并在修复后核对双卡广播输出数值正确。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "collective-param-mismatch"
+        },
+        {
+          "type": "contains",
+          "pattern": "配对/寻址错配型"
+        },
+        {
+          "type": "contains",
+          "pattern": "boundaries.md"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "主异常类型为 comm-operator-anomaly"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "主异常类型为 single-rank-block"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "主异常类型为 rank-group-mismatch"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "边界定位：msprof 长等待方与早到等待方/晚到对端的区分",
+      "config": {
+        "eval_mode": "text",
+        "max_tokens": 120000,
+        "timeout": 300
+      },
+      "prompt": "请加载 tool-comm-debug 技能，基于以下 msprof 与日志材料完成只读定位（不执行运行或采集命令）。Ascend 双卡运行 AllReduce，msprof --hccl=on 显示 rank 0 的 wait 阶段耗时显著长于 rank 1。进一步核对同通信域、同调用序号时间戳与前序算子完成时间发现，rank 0 早先完成前序计算并进入 collective，rank 1 延迟进入。请指出依据的参考文档文件名（含 .md 后缀），并判断长等待方、迟到对端与排查下一步。",
+      "expected_output": "依据 references/tools/msprof.md 与 references/method/rank-localization.md，rank 0 的长 wait 表明 rank 0 是早到等待方（waiting rank），属于长等待方观测结果。结合同通信域、同调用序号的进入时间、前序计算完成时间及退出状态，应将排查焦点指向晚到对端 rank 1（核对前序计算耗时、主机阻塞或 notify/transport 关系），保持证据链中等待方与致因侧的一致性。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-comm-debug"
+        },
+        {
+          "type": "contains",
+          "pattern": "msprof.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "rank-localization.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "长等待方"
+        },
+        {
+          "type": "contains",
+          "pattern": "waiting rank"
+        },
+        {
+          "type": "not_contains",
+          "pattern": "将 rank 0 判为慢 rank"
+        }
+      ]
+    }
+  ]
+}
