@@ -1059,8 +1059,10 @@ TraceKernelCoreType TraceKernelCoreTypeFromMeta(uint32_t metaKernelType) noexcep
         case static_cast<uint32_t>(TraceKernelCoreType::Aicore):
             return TraceKernelCoreType::Aicore;
         case static_cast<uint32_t>(TraceKernelCoreType::Aic):
+        case static_cast<uint32_t>(TraceKernelCoreType::AicRollback):
             return TraceKernelCoreType::Aic;
         case static_cast<uint32_t>(TraceKernelCoreType::Aiv):
+        case static_cast<uint32_t>(TraceKernelCoreType::AivRollback):
             return TraceKernelCoreType::Aiv;
         case static_cast<uint32_t>(TraceKernelCoreType::MixCubeMain):
             return TraceKernelCoreType::MixCubeMain;

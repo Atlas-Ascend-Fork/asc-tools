@@ -34,6 +34,8 @@ enum class TraceKernelCoreType : uint32_t {
     Aiv = 3,
     MixCubeMain = 4,
     MixVectorMain = 5,
+    AicRollback = 6,
+    AivRollback = 7,
 };
 
 // 一次 launch 期望出现的 boundary marker 数量；known=false 时不做提前结束判定。
