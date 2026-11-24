@@ -43,12 +43,12 @@ class DumpParserLog:
         # 文件日志, 通过 _set_log_file 接口设置
         self.log_file = ""
         self.file_handler = None
-        self._set_log_file(os.path.join(os.getcwd(), DEFAULT_LOG_FILE))
+        self._set_log_file(os.path.join(os.getcwd(), DEFAULT_LOG_FILE), reset=False)
 
     def get_log_file(self) -> str:
         return self.log_file
 
-    def _set_log_file(self, log_file):
+    def _set_log_file(self, log_file, reset=True):
         if self.file_handler:
             self.logger.removeHandler(self.file_handler)
 
@@ -56,7 +56,7 @@ class DumpParserLog:
         if log_path and not os.path.isdir(log_path):
             os.makedirs(log_path)
 
-        if os.path.exists(log_file):
+        if reset and os.path.exists(log_file):
             os.remove(log_file)
         self.log_file = log_file
         self.file_handler = logging.FileHandler(

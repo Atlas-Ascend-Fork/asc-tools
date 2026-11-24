@@ -17,6 +17,8 @@ import tempfile
 import unittest
 import math
 import logging
+import json
+import subprocess
 import importlib
 from unittest.mock import MagicMock, patch, call, ANY
 
@@ -80,6 +82,63 @@ class TestAscendump(unittest.TestCase):
                 self.logger.addHandler(handler)
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
+
+    def test_write_index_dtype_replaces_previous_contents(self):
+        for cls in (DumpBinFile, FifoDumpBinFile):
+            with self.subTest(parser=cls.__name__):
+                out_dir = os.path.join(self.test_dir, cls.__name__)
+                os.makedirs(os.path.join(out_dir, "dump_data"))
+                parser = cls.__new__(cls)
+                parser.index_dtype_dt = {123456789: "float32", 987654321: "complex128"}
+                parser.write_index_dtype(out_dir)
+                parser.index_dtype_dt = {1: "i"}
+                parser.write_index_dtype(out_dir)
+                path = os.path.join(out_dir, "dump_data", "index_dtype.json")
+                with open(path) as stream:
+                    self.assertEqual(json.load(stream), {"1": "i"})
+                parser.index_dtype_dt = {}
+                parser.write_index_dtype(out_dir)
+                with open(path) as stream:
+                    self.assertEqual(json.load(stream), {"1": "i"})
+
+    def test_empty_index_does_not_create_output(self):
+        for cls in (DumpBinFile, FifoDumpBinFile):
+            with self.subTest(parser=cls.__name__):
+                parser = cls.__new__(cls)
+                parser.index_dtype_dt = {}
+                parser.write_index_dtype(self.test_dir)
+                self.assertFalse(
+                    os.path.exists(os.path.join(self.test_dir, "dump_data"))
+                )
+
+    def test_import_preserves_existing_default_log(self):
+        path = os.path.join(self.test_dir, "dump_parser.log")
+        with open(path, "wb") as stream:
+            stream.write(b"existing user log\n")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.path.abspath(ASCENDUMP_PATH)
+        result = subprocess.run(
+            [sys.executable, "-c", "import show_kernel_debug_data.dump_logger"],
+            cwd=self.test_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.isfile(path))
+        with open(path, "rb") as stream:
+            self.assertEqual(stream.read(), b"existing user log\n")
+
+    def test_explicit_log_selection_resets_existing_output(self):
+        path = os.path.join(self.test_dir, "selected.log")
+        with open(path, "w") as stream:
+            stream.write("stale log")
+        dump_parser.DUMP_PARSER_LOG.set_log_file(path)
+        dump_parser.DUMP_PARSER_LOG.error("current run")
+        with open(path) as stream:
+            contents = stream.read()
+        self.assertIn("current run", contents)
+        self.assertNotIn("stale log", contents)
 
     def _make_out_dir(self, out_dir_name):
         out_dir = os.path.join(FILE_PATH, out_dir_name)

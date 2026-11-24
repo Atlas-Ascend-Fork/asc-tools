@@ -23,7 +23,7 @@ from .data_converter import decode_bfloat16
 from .dump_logger import DUMP_PARSER_LOG
 from .printf_formatter import format_printf
 
-FILE_FLAG = os.O_WRONLY | os.O_CREAT
+FILE_FLAG = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
 FILE_MODE_640 = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP
 
 ONE_MEGA_BYTE = 1024 * 1024
@@ -1121,9 +1121,8 @@ class DumpBinFile:
         return parse_output_dir
 
     def write_index_dtype(self, output_dir):
-        if len(self.index_dtype_dt) == 0:
+        if not self.index_dtype_dt:
             DUMP_PARSER_LOG.debug("no dump index, exit...")
-            # remove index_dtype.json
             return
         json_path = os.path.join(output_dir, "dump_data", "index_dtype.json")
         with os.fdopen(os.open(json_path, FILE_FLAG, FILE_MODE_640), "w") as f:
@@ -1291,7 +1290,7 @@ class FifoDumpBinFile:
         return parse_output_dir
 
     def write_index_dtype(self, output_dir):
-        if len(self.index_dtype_dt) == 0:
+        if not self.index_dtype_dt:
             DUMP_PARSER_LOG.debug("no dump index, exit...")
             return
         json_path = os.path.join(output_dir, "dump_data", "index_dtype.json")
