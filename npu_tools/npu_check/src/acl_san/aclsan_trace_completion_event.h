@@ -12,6 +12,7 @@
 #define NPU_TOOLS_NPU_CHECK_SRC_ACL_SAN_ACLSAN_TRACE_COMPLETION_EVENT_H
 
 #include "acl/acl_rt.h"
+#include <mutex>
 
 namespace aclsan {
 
@@ -37,6 +38,7 @@ public:
 
     bool Record(const TraceCompletionEventApi& api, aclrtStream stream) noexcept
     {
+        std::lock_guard<std::mutex> lock(eventMutex_);
         if (!api.Available() || event_ != nullptr) {
             return false;
         }
@@ -57,6 +59,7 @@ public:
 
     bool Poll(const TraceCompletionEventApi& api) noexcept
     {
+        std::lock_guard<std::mutex> lock(eventMutex_);
         if (complete_ || queryFailed_ || !recorded_ || event_ == nullptr || api.query == nullptr) {
             return complete_;
         }
@@ -73,6 +76,7 @@ public:
 
     bool Release(const TraceCompletionEventApi& api, bool streamComplete) noexcept
     {
+        std::lock_guard<std::mutex> lock(eventMutex_);
         if (event_ == nullptr) {
             return true;
         }
@@ -84,11 +88,24 @@ public:
         return true;
     }
 
+    bool ObserveBeforeRelease(const TraceCompletionEventApi& api) const noexcept
+    {
+        std::unique_lock<std::mutex> lock(eventMutex_, std::try_to_lock);
+        if (!lock.owns_lock() || !recorded_) {
+            return false;
+        }
+        aclrtEventRecordedStatus status = ACL_EVENT_RECORDED_STATUS_NOT_READY;
+        return complete_ || (event_ != nullptr && api.query != nullptr && api.query(event_, &status) == ACL_SUCCESS &&
+                             status == ACL_EVENT_RECORDED_STATUS_COMPLETE);
+    }
+
     bool Complete() const noexcept { return complete_; }
+    bool CanConfirm() const noexcept { return recorded_ && !queryFailed_; }
     bool QueryFailed() const noexcept { return queryFailed_; }
     bool HasEvent() const noexcept { return event_ != nullptr; }
 
 private:
+    mutable std::mutex eventMutex_;
     aclrtEvent event_ = nullptr;
     bool uncertain_ = false;
     bool recorded_ = false;

@@ -1820,16 +1820,17 @@ bool Initcheck::AnalysisComplete() const
 std::string Initcheck::Summary() const
 {
     std::ostringstream output;
-    output << "tool=initcheck register_writes=" << stats_.registerWrites
-           << " device_operations=" << stats_.deviceOperations << " synchronizations=" << stats_.synchronizations
+    output << "tool=initcheck device_operations=" << stats_.deviceOperations
+           << " memory_events=" << stats_.deviceOperations << " sync_events=" << syncEvents_
            << " errors=" << stats_.errors << " warnings=" << stats_.warnings
+           << " analysis_complete=" << (AnalysisComplete() ? "true" : "false")
+           << " register_writes=" << stats_.registerWrites << " synchronizations=" << stats_.synchronizations
            << " malformed_events=" << stats_.malformedEvents << " failed_launches=" << stats_.failedLaunches
            << " failed_synchronizations=" << stats_.failedSynchronizations
            << " pending_memory_operations=" << pendingMemoryAccesses_.size()
            << " failed_host_writes=" << stats_.failedHostWrites
-           << " pending_launch_streams=" << pendingLaunchStreams_.size();
-    output << " sync_events=" << syncEvents_ << " pending_sync_events=" << pendingSyncEvents_.size();
-    output << " l0_memory_operations=" << l0Operations_
+           << " pending_launch_streams=" << pendingLaunchStreams_.size()
+           << " pending_sync_events=" << pendingSyncEvents_.size() << " l0_memory_operations=" << l0Operations_
            << " incomplete_memory_operations=" << (replayFailures_.size() + (memoryInvalid_ ? 1 : 0))
            << " degraded_instructions=" << degradedInstructions_;
     for (const auto& failure : replayFailures_)

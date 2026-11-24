@@ -39,6 +39,7 @@ bool Memcheck::OnDeviceMemoryCallback(AclsanCallbackId cbid, const void* data, C
         ++stats_.droppedDeviceOperations;
         return false;
     }
+    ++stats_.deviceOperations;
     constexpr uint32_t incompleteFlags = static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_ESTIMATED) |
                                          static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_TRUNCATED) |
                                          static_cast<uint32_t>(ACLSAN_DEVICE_EVENT_FLAG_DROPPED_PRIOR);
@@ -146,14 +147,15 @@ std::string Memcheck::Summary() const
 {
     const auto stats = Stats();
     std::ostringstream output;
-    output << "tool=memcheck allocations=" << stats.allocations << " frees=" << stats.frees
-           << " device_operations=" << stats.deviceOperations << " synchronizations=" << stats.synchronizationEvents
+    output << "tool=memcheck device_operations=" << stats.deviceOperations
+           << " memory_events=" << stats.deviceOperations << " sync_events=" << stats.synchronizationEvents
            << " errors=" << stats.errors << " warnings=" << stats.warnings
-           << " pending_device_operations=" << stats.pendingDeviceOperations
+           << " analysis_complete=" << (AnalysisComplete() ? "true" : "false") << " allocations=" << stats.allocations
+           << " frees=" << stats.frees << " pending_device_operations=" << stats.pendingDeviceOperations
            << " dropped_device_operations=" << stats.droppedDeviceOperations
-           << " failed_launches=" << stats.failedLaunches
-           << " failed_synchronizations=" << stats.failedSynchronizations;
-    output << " inexact_device_operations=" << stats.inexactDeviceOperations
+           << " unverified_lifetime_accesses=" << stats.unverifiedLifetimeAccesses
+           << " failed_launches=" << stats.failedLaunches << " failed_synchronizations=" << stats.failedSynchronizations
+           << " inexact_device_operations=" << stats.inexactDeviceOperations
            << " host_operations=" << stats.hostOperations
            << " incomplete_host_operations=" << stats.incompleteHostOperations
            << " unconfirmed_launches=" << (unfinishedLaunches_ ? "true" : "false");

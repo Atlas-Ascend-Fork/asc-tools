@@ -33,8 +33,10 @@ std::optional<RangeResult> ResolveGeneration(
     if (record.freed.has_value()) {
         const auto freedBefore = order.Precedes(*record.freed, entry);
         const auto freedAfter = order.Precedes(exit, *record.freed);
-        if (!freedBefore.has_value() || !freedAfter.has_value() || (!*freedBefore && !*freedAfter))
+        if (!freedBefore.has_value() || !freedAfter.has_value())
             return RangeResult{RangeStatus::AMBIGUOUS, allocation};
+        if (!*freedBefore && !*freedAfter)
+            return RangeResult{RangeStatus::AMBIGUOUS, allocation, true};
         if (*freedBefore)
             return RangeResult{RangeStatus::USE_AFTER_FREE, allocation};
     }

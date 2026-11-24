@@ -2263,11 +2263,11 @@ void DispatchPendingTrace(const std::shared_ptr<PendingTrace>& item, bool hasPre
     if (!FinalizeCollectedTrace(pending, collection, true)) {
         return;
     }
-    EraseTrace(item);
     ReleaseDeviceBuffer(pending.deviceBuffer);
     ReleaseHostInputs(pending.hostInputs);
     pending.binaryLease.reset();
     CollectRetiredTraceVariants();
+    EraseTrace(item);
 }
 
 void TraceDispatchWorker() noexcept
@@ -3073,6 +3073,28 @@ void CompleteTraceLaunch(
     RequestTracePoll();
 }
 
+// A positive observation before the application enters free establishes a
+// lifetime edge even when trace delivery on the dispatcher thread is delayed.
+uint64_t CompletedLaunchBeforeFree(uint32_t deviceId) noexcept
+{
+    try {
+        auto& state = State();
+        std::vector<std::shared_ptr<PendingTrace>> work;
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            work = state.pending;
+        }
+        for (const auto& pending : work) {
+            if (pending->deviceId == deviceId && pending->completionEvent.ObserveBeforeRelease(CompletionEventApi())) {
+                return pending->launchId;
+            }
+        }
+    } catch (...) {
+        return 0;
+    }
+    return 0;
+}
+
 uint64_t TraceStreamFrontier(const void* stream) noexcept
 {
     TraceRuntimeState& state = State();
@@ -3703,12 +3725,45 @@ void StopTraceWorker() noexcept
     }
 }
 
+// Give the collector time to retire the launches already visible to reset.
+// New launches remain admissible until the short resource-quiesce phase.
+static void WaitForCollectibleTraces(uint32_t deviceId)
+{
+    TraceRuntimeState& state = State();
+    std::vector<std::shared_ptr<PendingTrace>> work;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        work = state.pending;
+    }
+    RequestTracePoll();
+    RequestTraceDispatch();
+    const auto deadline = std::chrono::steady_clock::now() + TRACE_DRAIN_STALL_TIMEOUT;
+    for (const auto& pending : work) {
+        if (pending->deviceId != deviceId) {
+            continue;
+        }
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::unique_lock<std::mutex> lock(pending->mutex, std::try_to_lock);
+                if (lock.owns_lock() &&
+                    (!pending->committed || pending->failed || pending->quarantined || pending->abandoned ||
+                     pending->retired || !pending->completionEvent.CanConfirm())) {
+                    break;
+                }
+            }
+            std::unique_lock<std::mutex> lock(state.mutex);
+            state.wake.wait_for(lock, TRACE_POLL_INTERVAL);
+        }
+    }
+}
+
 bool QuiesceTraceDevice(int32_t deviceId, bool canBindContext, std::shared_ptr<void>& resetGuard) noexcept
 {
     if (deviceId < 0 || traceDispatchActive) {
         return false;
     }
     try {
+        WaitForCollectibleTraces(static_cast<uint32_t>(deviceId));
         const auto gate = DeviceGate(static_cast<uint32_t>(deviceId));
         auto gateLock = std::make_shared<std::unique_lock<std::shared_mutex>>(*gate, std::try_to_lock);
         if (!gateLock->owns_lock()) {

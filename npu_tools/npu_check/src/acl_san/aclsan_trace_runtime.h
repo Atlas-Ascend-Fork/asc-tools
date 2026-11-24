@@ -151,6 +151,7 @@ aclError PrepareTraceLaunch(
     PreparedTraceLaunch& prepared, const aclrtLaunchKernelCfg* config = nullptr, bool pureSimt = false) noexcept;
 void CompleteTraceLaunch(
     PreparedTraceLaunch&& prepared, aclrtFuncHandle function, aclrtStream stream, aclError launchResult) noexcept;
+uint64_t CompletedLaunchBeforeFree(uint32_t deviceId) noexcept;
 uint64_t TraceStreamFrontier(const void* stream) noexcept;
 aclError MaterializeTraceHostInputs(PreparedTraceLaunch& prepared) noexcept;
 // 按 stream 收尾尚未由 completion 事件路径发布完成的 launch；同步成功后的兜底，避免遗留 launch 阻塞同流后续 launch。

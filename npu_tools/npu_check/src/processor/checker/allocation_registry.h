@@ -50,6 +50,7 @@ enum class RangeStatus : uint8_t {
 struct RangeResult {
     RangeStatus status = RangeStatus::UNKNOWN;
     std::optional<Allocation> allocation;
+    bool freeOrderUnknown = false;
 };
 
 // Session ledger for device allocations. Every allocation exists exactly once: the

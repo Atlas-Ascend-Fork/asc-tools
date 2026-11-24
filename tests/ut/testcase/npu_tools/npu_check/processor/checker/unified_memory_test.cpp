@@ -596,7 +596,9 @@ TEST(UnifiedMemoryTest, UnorderedFreeCannotBeMisreportedAsDefiniteUseAfterFree)
         1, 1, ACLSAN_DEVICE_PIPE_MTE3, ACLSAN_DEVICE_MEMORY_SPACE_GM, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE, 0x10000, 128);
     s.Sync();
     EXPECT_TRUE(s.reports.empty());
-    EXPECT_FALSE(s.bounds.AnalysisComplete());
+    EXPECT_TRUE(s.bounds.AnalysisComplete());
+    EXPECT_EQ(s.bounds.Stats().unverifiedLifetimeAccesses, 1U);
+    EXPECT_EQ(s.bounds.Stats().droppedDeviceOperations, 0U);
 }
 
 TEST(UnifiedMemoryTest, EveryUnconditionalAtomicModeReadsOldBytesAndInitializesItsResult)

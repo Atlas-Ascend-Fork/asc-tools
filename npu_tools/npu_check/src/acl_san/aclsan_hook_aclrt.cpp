@@ -615,11 +615,13 @@ aclError aclrtFreeHook(void* deviceAddress) noexcept
     uint32_t deviceId;
     const bool hasDeviceId = GetCurrentDeviceId(deviceId);
     const auto original = GetOriginalRuntimeFunction<aclrtFreeFunc>(ACL_RT_API_aclrtFree, "aclrtFree");
+    const uint64_t completed = hasDeviceId ? aclsan::CompletedLaunchBeforeFree(deviceId) : 0;
     const aclError result = original(deviceAddress);
     if (!hasDeviceId) {
         return result;
     }
-    const AclsanResourceData callbackData = MakeDeviceResourceData("aclrtFree", result, deviceAddress, 0, deviceId);
+    AclsanResourceData callbackData = MakeDeviceResourceData("aclrtFree", result, deviceAddress, 0, deviceId);
+    callbackData.common.correlationId = completed;
     aclsan::AclsanCallbackDispatcher::DispatchResource(ACLSAN_CBID_RESOURCE_MEMORY_FREE, callbackData);
     return result;
 }

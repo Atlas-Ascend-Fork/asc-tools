@@ -436,6 +436,15 @@ std::vector<NpuCheckMemcheckReport> Memcheck::CheckAccess(
         range = standaloneSimt ? allocations->Classify(data.header.deviceId, address, preload ? 1 : bytes) :
                                  analysis_->ClassifyAccessRange(data, address, preload ? 1 : bytes);
     }
+    if (range.freeOrderUnknown && range.allocation) {
+        ++stats_.unverifiedLifetimeAccesses;
+        const auto& allocation = *range.allocation;
+        const uint64_t offset = address - allocation.base;
+        const uint64_t width = preload ? 1U : bytes;
+        range.status = address >= allocation.base && offset <= allocation.bytes && width <= allocation.bytes - offset ?
+                           RangeStatus::VALID :
+                           RangeStatus::OUT_OF_BOUNDS;
+    }
     if (range.status == RangeStatus::VALID) {
         return {};
     }
@@ -506,7 +515,6 @@ std::vector<NpuCheckMemcheckReport> Memcheck::QueueDeviceMemoryAccess(const Acls
     if (data.memorySpace != ACLSAN_DEVICE_MEMORY_SPACE_GM && CubeCapacity(data.memorySpace) == 0) {
         return {};
     }
-    ++stats_.deviceOperations;
     if (!analysis_->Managed()) {
         pendingDeviceAccesses_.push_back(data);
         ++stats_.pendingDeviceOperations;

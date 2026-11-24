@@ -64,6 +64,12 @@ bool MemoryAnalysis::HostEvent(AclsanCallbackDomain domain, AclsanCallbackId id,
             complete_ = false;
         return true;
     }
+    if (domain == ACLSAN_CB_DOMAIN_RESOURCE && id == ACLSAN_CBID_RESOURCE_MEMORY_FREE && common.correlationId != 0) {
+        const auto completed = boundaries_.find(common.correlationId);
+        if (completed != boundaries_.end()) {
+            order_.JoinNode(order_.ThreadActor(std::this_thread::get_id()), completed->second.second);
+        }
+    }
     const auto node = HostNode();
     currentHostNode_ = node;
     if (domain == ACLSAN_CB_DOMAIN_LAUNCH)

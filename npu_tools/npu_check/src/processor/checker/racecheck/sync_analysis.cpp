@@ -1043,15 +1043,16 @@ bool Racechecker::AnalysisComplete() const { return !incomplete_ && launches_.em
 std::string Racechecker::Summary() const
 {
     std::ostringstream s;
-    s << "tool=racecheck launches=" << launchesCount_ << " memory_events=" << memoryEvents_
-      << " sync_events=" << syncEvents_ << " host_operations=" << hostEvents_ << " raw=" << raw_
-      << " skipped_memory_events=" << skippedMemoryEvents_ << " skipped_sync_events=" << skippedSyncEvents_
-      << " unsupported_ub_events=" << unsupportedUbEvents_ << " war=" << war_ << " waw=" << waw_
-      << " atomic_semantic=" << atomic_ << " graph_nodes_peak=" << graphNodesPeak_
+    const uint64_t errors = raw_ + war_ + waw_ + atomic_;
+    s << "tool=racecheck device_operations=" << memoryEvents_ << " memory_events=" << memoryEvents_
+      << " sync_events=" << syncEvents_ << " errors=" << errors << " warnings=" << warnings_
+      << " analysis_complete=" << (AnalysisComplete() ? "true" : "false") << " launches=" << launchesCount_
+      << " host_operations=" << hostEvents_ << " raw=" << raw_ << " skipped_memory_events=" << skippedMemoryEvents_
+      << " skipped_sync_events=" << skippedSyncEvents_ << " unsupported_ub_events=" << unsupportedUbEvents_
+      << " war=" << war_ << " waw=" << waw_ << " atomic_semantic=" << atomic_ << " graph_nodes_peak=" << graphNodesPeak_
       << " graph_edges_peak=" << graphEdgesPeak_ << " graph_query_work_peak=" << graphQueryWorkPeak_
       << " state_accounted_bytes_peak=" << stateBytesPeak_ << " state_segments_peak=" << stateSegmentsPeak_
-      << " pending_launches=" << launches_.size() << " analysis_complete=" << (AnalysisComplete() ? "true" : "false")
-      << " warnings=" << warnings_ << " errors=" << (raw_ + war_ + waw_ + atomic_);
+      << " pending_launches=" << launches_.size();
     for (const auto& reason : reasons_)
         s << " " << reason.first << "=" << reason.second;
     return s.str();
