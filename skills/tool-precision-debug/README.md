@@ -58,82 +58,90 @@ flowchart TB
 | --- | --- |
 | 诊断方法 | 错误分布分析、观察点设计、语义二分、逐层误差分析、数值对照与设备探针 |
 | 经验知识 | 可复用的故障机制、算子族精度风险和历史诊断案例，按知识目录与 Markdown 链接查阅 |
-| CANN 知识查询 | `knowledge-query` 查询架构、示例和类似算子；`ascendc-api-knowledge-query` 查询 Ascend C API |
+| CANN 知识查询 | `knowledge-query` 查询架构、示例和类似算子；`ascendc-api-knowledge-query` 查询 Ascend C API；`runtime-api-knowledge-query` 查询 Host 侧 CANN Runtime API |
 | 调试工具指引 | DumpTensor、show_kernel_debug_data、msobjdump、msSanitizer 等工具的选用与操作方法 |
 
 ## 使用指南
 
 ### 安装
 
-安装内容包括 `tool-precision-debug`、`knowledge-query` 和 `ascendc-api-knowledge-query`。默认安装到当前目录 `.`，以下命令可直接复制执行。需要更改安装目录时，将 `.` 改为已有项目的路径，例如 `/path/to/project`。省略目录参数时也使用当前目录。
+安装内容包括纯净版 `tool-precision-debug`（仅 `SKILL.md`、`references/`、`evals/`，不含本 `README.md` 与 `install.sh`）以及 `cannbot-knowledge` 的 3 个查询 Skill（`knowledge-query`、`ascendc-api-knowledge-query`、`runtime-api-knowledge-query`）。
 
-安装到 Codex：
+- **交互式引导安装（推荐）**：直接运行下方命令，脚本会在终端依次引导你选择**目标客户端**（`codex`、`gemini`、`opencode`、`claude`）与**安装位置**（当前项目 / 全局 / 自定义目录），默认使用全局共享的 `~/.cannbot/cannbot-knowledge` 并在确认摘要中明确提示：
 
 ```bash
-curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- codex .
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash
 ```
 
-安装到 Claude Code：
+- **非交互直装（通过参数跳过提示）**：`codex`、`gemini`、`opencode` 共用 `.agents/skills/`；`claude` 单独使用 `.claude/skills/`，与前者同选时自动建立软链共享：
 
 ```bash
-curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- claude .
+# 默认装入当前项目 ./.agents/skills/（跳过提示）
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- --yes
+
+# 仅安装到 Claude Code（直装 ./.claude/skills/，不建 .agents/skills/）
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- --clients claude
+
+# 同时适配全部 4 个客户端（codex / gemini / opencode / claude）
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- --clients all
 ```
 
-安装到 OpenCode：
+- **安装到其他项目目录或自定义目录**：
 
 ```bash
-curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- opencode .
+# 指定目标项目目录
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- --project /path/to/project
+
+# 安装到自定义目录
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- --target /path/to/my-skills
 ```
 
 本地已有文件时，在本 README 所在目录执行：
 
 ```bash
-bash scripts/install.sh codex .
+bash scripts/install.sh
 ```
 
 ### 全局安装
 
-需要在当前用户的所有项目中使用时，显式添加 `--global`。
-
-Codex：
+需要在当前用户的所有项目中使用时，添加 `--global`：
 
 ```bash
-curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- codex --global
+# 全局安装到 ~/.agents/skills/（支持 Codex、Gemini CLI、OpenCode）
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- --global
+
+# 全局安装并同时适配 Claude Code（~/.agents/skills/ + ~/.claude/skills/ 软链）
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- --global --clients all
+
+# 仅全局安装到 Claude Code（~/.claude/skills/）
+curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- --global --clients claude
 ```
 
-Claude Code：
-
-```bash
-curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- claude --global
-```
-
-OpenCode：
-
-```bash
-curl -fsSL https://raw.gitcode.com/cann/asc-tools/raw/master/skills/tool-precision-debug/scripts/install.sh | bash -s -- opencode --global
-```
-
-| 客户端 | 默认全局 Skill 入口 |
-| --- | --- |
-| [Codex](https://learn.chatgpt.com/docs/build-skills) | `~/.agents/skills/` |
-| [Claude Code](https://code.claude.com/docs/en/skills) | `~/.claude/skills/` |
-| [OpenCode](https://opencode.ai/docs/skills/) | `~/.config/opencode/skills/` |
-
-已有 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG_DIR` 或 `XDG_CONFIG_HOME` 设置时，安装器使用对应配置目录。全局安装的精度 Skill 实体位于 `~/.asc-tools/tool-precision-debug/`，知识库默认位于 `~/.cannbot/cannbot-knowledge/`，只为所选客户端建立入口。查询时按当前任务指定目标平台。
+| 客户端 | 项目级目录 | 全局目录 |
+| --- | --- | --- |
+| Codex / Gemini CLI / OpenCode | `./.agents/skills/` | `~/.agents/skills/` |
+| Claude Code | `./.claude/skills/` | `~/.claude/skills/`（支持 `CLAUDE_CONFIG_DIR`） |
 
 ### 安装选项与检查
 
 | 常用选项 | 用途 |
 | --- | --- |
-| `--global` | 为当前用户全局安装，与项目目录参数互斥 |
-| `--python` | 后接 Python 可执行文件，指定安装时使用的环境 |
-| `--knowledge-root` | 后接已有完整知识库的目录，直接复用 |
-| `--offline` | 使用已准备好的本地文件和依赖安装 |
-| `--update` | 更新通过在线安装获取的内容 |
+| `--clients <list\|all>` | 指定目标客户端：`codex,gemini,opencode,claude` 或 `all`（默认 `codex,gemini,opencode`） |
+| `--project <dir>` | 指定项目目录（默认当前目录） |
+| `--global` | 为当前用户全局安装，与 `--project`、`--target` 互斥 |
+| `--target <dir>` | 直接安装到自定义目录 |
+| `--python <bin>` | 指定 Python >= 3.10 解释器（默认自动探测或读取 `CANNBOT_PYTHON`） |
+| `--knowledge-root <dir>` | 复用已有本地完整 `cannbot-knowledge` 仓库（默认 `~/.cannbot/cannbot-knowledge`） |
+| `--without-knowledge` | 仅安装 `tool-precision-debug`，不准备知识库与查询 Skill |
+| `--offline` | 离线模式：仅复用已有本地文件与 Python 依赖，不联网更新 |
+| `--force` | 覆盖目标目录中已存在但非本 Skill 的同名目录 |
+| `-y, --yes` | 非交互模式：直接按默认值安装，不弹出选择提示 |
 
-这些选项同样支持 curl 安装命令。更多选项见 `bash scripts/install.sh --help`。
+这些选项同样支持 `curl ... | bash -s --` 命令。完整参数见 `bash scripts/install.sh --help`。
 
-默认的项目安装将精度调试 Skill 放在 `.asc-tools/tool-precision-debug/`，其中直接包含 `SKILL.md`、`references/` 和 `evals/`，知识库下载到 `.cannbot/cannbot-knowledge/`，知识配置保存在 `.cannbot/knowledge.env`。Codex 和 OpenCode 共用 `.agents/skills/` 入口，OpenCode 不再额外创建 `.opencode/skills/`；Claude Code 另建 `.claude/skills/` 链接。OpenCode 项目重装会清理指向同一份已安装 Skill 的旧链接，保留其他内容；复用的知识仓不会自动搬迁。
+> **关于更新与 `cannbot-knowledge` 共享目录**：
+> - **安装与更新使用同一条命令**：后续 `tool-precision-debug` 或 `cannbot-knowledge` 有新版本时，直接重跑安装命令（不加 `--offline`）即可自动拉取最新 Skill、fast-forward 更新共享知识仓，并在卡片变化时自动重建检索索引（耗时步骤自带动态进度与计时提示）。
+> - 知识仓默认存放于全局共享目录 **`~/.cannbot/cannbot-knowledge`**，多项目通过软链共用同一份知识库与索引；任一项目触发更新后，本机所有项目共享的知识库同步生效。如需按项目隔离或复用本地已有知识仓，可通过 `--knowledge-root` 指定。
 
 安装或更新后，在目标项目中重新打开客户端，确认可以使用 `tool-precision-debug`。需要确认知识查询是否可用时，可以让 Agent 执行：
 
