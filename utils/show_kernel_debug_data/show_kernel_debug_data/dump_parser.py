@@ -1031,18 +1031,32 @@ class DumpBinFile:
         if not search_result or not os.path.exists(search_result[0]):
             return dump_bin
         msaccucmp_file = os.path.realpath(search_result[0])
-        cmd = f'python3 "{msaccucmp_file}" convert -d "{dump_bin}" -t bin -out "{temp_dir}"'
+        cmd = [
+            "python3",
+            msaccucmp_file,
+            "convert",
+            "-d",
+            dump_bin,
+            "-t",
+            "bin",
+            "-out",
+            temp_dir,
+        ]
         log_file_tmp = DUMP_PARSER_LOG.get_log_file()
         with open(log_file_tmp, "a+") as f:
             try:
-                subprocess.run(
+                result = subprocess.run(
                     cmd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
-                    shell=True,
+                    shell=False,
                     encoding="utf-8",
                     timeout=120,
                 )
+                if result.returncode != 0:
+                    DUMP_PARSER_LOG.error(
+                        f"Command {cmd} failed with return code {result.returncode}, dump_bin={dump_bin}."
+                    )
             except subprocess.TimeoutExpired:
                 DUMP_PARSER_LOG.error(f"Command {cmd} TIME OUT.")
         dump_result_re = os.path.join(temp_dir, f"{dump_file_name}.space.*.bin")

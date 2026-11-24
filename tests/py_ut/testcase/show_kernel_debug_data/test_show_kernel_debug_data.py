@@ -238,6 +238,7 @@ class TestAscendump(unittest.TestCase):
     @patch("subprocess.run")
     def test_pre_process(self, run_mock, glob_mock, get_install_path_mock, show_mock):
         get_install_path_mock.return_value = "/cann"
+        run_mock.return_value.returncode = 0
         data_path = self._make_out_dir("test_parse_time_stamp")
         test_dump_file = os.path.join(data_path, "test_dump_file.bin")
         with open(test_dump_file, "wb+") as f:
@@ -251,6 +252,60 @@ class TestAscendump(unittest.TestCase):
         self.assertEqual(os.path.basename(dump_file.dump_bin), "test_dump_file.bin")
         run_mock.assert_called_once()
         self._clean_out_dir(data_path)
+
+    @patch("show_kernel_debug_data.dump_parser.get_install_path", return_value="/cann")
+    @patch("show_kernel_debug_data.dump_parser.glob.glob")
+    @patch("show_kernel_debug_data.dump_parser.subprocess.run")
+    def test_pre_process_does_not_interpret_shell_metacharacters(
+        self, run_mock, glob_mock, get_install_path_mock
+    ):
+        msaccucmp_file = os.path.realpath(sys.executable)
+        dump_path = "/input/dump$(printf marker).bin"
+        glob_mock.side_effect = [[msaccucmp_file], []]
+        run_mock.return_value.returncode = 0
+
+        dump_file = DumpBinFile(dump_path)
+
+        get_install_path_mock.assert_called_once_with()
+        self.assertEqual(dump_file.dump_bin, dump_path)
+        run_mock.assert_called_once()
+        args, kwargs = run_mock.call_args
+        self.assertEqual(
+            args[0],
+            [
+                "python3",
+                msaccucmp_file,
+                "convert",
+                "-d",
+                dump_path,
+                "-t",
+                "bin",
+                "-out",
+                "/input/predump",
+            ],
+        )
+        self.assertIs(kwargs["shell"], False)
+
+    @patch("show_kernel_debug_data.dump_parser.get_install_path", return_value="/cann")
+    @patch("show_kernel_debug_data.dump_parser.glob.glob")
+    @patch("show_kernel_debug_data.dump_parser.subprocess.run")
+    def test_pre_process_logs_conversion_failure(
+        self, run_mock, glob_mock, get_install_path_mock
+    ):
+        msaccucmp_file = os.path.realpath(sys.executable)
+        dump_path = "/input/failed-dump.bin"
+        glob_mock.side_effect = [[msaccucmp_file], []]
+        run_mock.return_value.returncode = 2
+
+        dump_file = DumpBinFile(dump_path)
+
+        self.assertEqual(dump_file.dump_bin, dump_path)
+        with open(
+            dump_parser.DUMP_PARSER_LOG.get_log_file(), encoding="utf-8"
+        ) as log_file:
+            log_text = log_file.read()
+        self.assertIn("return code 2", log_text)
+        self.assertIn(f"dump_bin={dump_path}", log_text)
 
     def test_data_converter_bf16(self):
         self.assertEqual(data_converter.decode_bfloat16(123), 1.1295766027432919e-38)
