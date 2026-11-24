@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yeswecann.example/schemas/runtime-result.schema.json",
+  "title": "Ascend C Runtime repair result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "first_failure",
+    "hypothesis_id",
+    "minimal_change",
+    "verification",
+    "next_route",
+    "evidence_refs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "runtime-result/2.0"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "UNVERIFIED",
+        "UNRESOLVED"
+      ]
+    },
+    "first_failure": {
+      "description": "The earliest reproducible Runtime failure and its evidence.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "hypothesis_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "minimal_change": {
+      "description": "The smallest source change made or proposed.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verifier_integrity",
+        "build",
+        "npu",
+        "stable_runs"
+      ],
+      "properties": {
+        "verifier_integrity": {"enum": ["PASS", "FAIL", "UNVERIFIED"]},
+        "build": {"enum": ["PASS", "FAIL", "UNVERIFIED"]},
+        "npu": {"enum": ["PASS", "FAIL", "UNVERIFIED"]},
+        "stable_runs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "next_route": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "allOf": [{
+    "if": {"properties": {"status": {"const": "PASS"}}, "required": ["status"]},
+    "then": {"properties": {
+      "verification": {"properties": {
+        "verifier_integrity": {"const": "PASS"},
+        "build": {"const": "PASS"},
+        "npu": {"const": "PASS"},
+        "stable_runs": {"minimum": 3}
+      }},
+      "evidence_refs": {"minItems": 1},
+      "next_route": {"type": "null"}
+    }}
+  }]
+}

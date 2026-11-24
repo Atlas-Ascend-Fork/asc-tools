@@ -1,0 +1,495 @@
+{
+  "skill_name": "tool-runtime-debug",
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "title": "输出所有权：descriptor 与读回地址不一致",
+      "expectations": [],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我调用一个 aclnn 算子，Host API 返回成功，但同步后读回的输出数据错误，像是没有被算子写过。我怀疑 descriptor 绑定了错误的输出地址。只根据已提供的信息和可读取文件排查，不执行外部工具。",
+      "expected_output": "回复应聚焦输出参数与所有权：对照输出 descriptor 绑定的 device 地址、D2H 读回源地址、分配记录和后续消费者，形成一个由实际地址与数据观察支持的假设。明确地址相同只适用于当前直接输出数据流，不推广到所有操作；不得据此建议重装环境或修改验证器。该题只有文本信息且未执行验证，必须报告 verification.stable_runs 为 0，将 verifier_integrity、build、npu 标为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。输出还必须只包含 runtime-result/2.0 的八个顶层字段：schema_version、status、first_failure、hypothesis_id、minimal_change、verification、next_route、evidence_refs；verification 仅包含 verifier_integrity、build、npu、stable_runs 四个字段。schema_version: runtime-result/2.0，verification.stable_runs: 0，verification.verifier_integrity: UNVERIFIED、verification.build: UNVERIFIED、verification.npu: UNVERIFIED；verification 不得报告 PASS，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 2,
+      "title": "Event 时序：wait 与 record 顺序可疑",
+      "expectations": [],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我在两个 stream 之间用 aclrtStreamWaitEvent 建立依赖，先调用 wait，之后才在另一个 stream 上 record 同一个 event，程序偶发输出不对。只根据已提供的信息和可读取文件判断这条依赖是否有证据，不执行外部工具。",
+      "expected_output": "回复应指出要先核对 Event 是否已在实际生产 Stream 上记录、wait 使用的是否为同一个 Event，以及提交与观察的顺序。先 wait 后 record 不能在缺乏目标 API 证据时被当作有效完成依赖；应建议按文档支持的顺序建立依赖，并用同步边界验证，不能用 Host sleep 伪同步。该题只有文本信息且未执行验证，必须报告 verification.stable_runs 为 0，将 verifier_integrity、build、npu 标为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。输出还必须只包含 runtime-result/2.0 的八个顶层字段：schema_version、status、first_failure、hypothesis_id、minimal_change、verification、next_route、evidence_refs；verification 仅包含 verifier_integrity、build、npu、stable_runs 四个字段。schema_version: runtime-result/2.0，verification.stable_runs: 0，verification.verifier_integrity: UNVERIFIED、verification.build: UNVERIFIED、verification.npu: UNVERIFIED；verification 不得报告 PASS，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 3,
+      "title": "Memcpy 容量：目的缓冲区小于请求字节数",
+      "expectations": [],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我的程序在 aclrtMemcpy 处崩溃或拷贝后相邻内存被覆盖。API 返回成功，我想确认是否因为目的缓冲区不够大。只根据已提供的信息和可读取文件排查，不执行外部工具。",
+      "expected_output": "回复应先根据实际指针地址空间确认拷贝方向，再对照目标版本声明核对目的地实际分配容量、destMax 和 count 的单位。若证据显示目的地容量不足，只修复这一处容量关系；不要先改 tensor descriptor，也不能缩小传输量来掩盖越界。该题只有文本信息且未执行验证，必须报告 verification.stable_runs 为 0，将 verifier_integrity、build、npu 标为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。输出还必须只包含 runtime-result/2.0 的八个顶层字段：schema_version、status、first_failure、hypothesis_id、minimal_change、verification、next_route、evidence_refs；verification 仅包含 verifier_integrity、build、npu、stable_runs 四个字段。schema_version: runtime-result/2.0，verification.stable_runs: 0，verification.verifier_integrity: UNVERIFIED、verification.build: UNVERIFIED、verification.npu: UNVERIFIED；verification 不得报告 PASS，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 4,
+      "title": "Workspace 交接：查询、分配与执行参数不一致",
+      "expectations": [],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "调用 aclnn 算子时 workspace query 返回非零 size。我分配了 workspace，但执行调用可能传入 nullptr 或另一个地址，size 也可能变化。只根据已提供的信息和可读取文件排查，不执行外部工具。",
+      "expected_output": "回复应把 workspace 交接作为一个参数合同，逐点对照 query 返回的 size、分配地址，以及执行调用传入的地址、size 和 executor。若 query size 非零，执行调用应使用对应的分配地址和未改动的 size；建议先比对三处代码，再只修复有证据支持的交接问题，不连带改 executor 或其他参数。该题只有文本信息且未执行验证，必须报告 verification.stable_runs 为 0，将 verifier_integrity、build、npu 标为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。输出还必须只包含 runtime-result/2.0 的八个顶层字段：schema_version、status、first_failure、hypothesis_id、minimal_change、verification、next_route、evidence_refs；verification 仅包含 verifier_integrity、build、npu、stable_runs 四个字段。schema_version: runtime-result/2.0，verification.stable_runs: 0，verification.verifier_integrity: UNVERIFIED、verification.build: UNVERIFIED、verification.npu: UNVERIFIED；verification 不得报告 PASS，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 5,
+      "title": "异步生命周期：Host 缓冲区可能提前失效",
+      "expectations": [],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我把栈上的局部数组作为 H2D 异步拷贝源，调用返回后函数结束，偶发设备读到错误数据或程序崩溃。这可能是缓冲区生命周期问题吗？只根据已提供的信息和可读取文件排查，不执行外部工具。",
+      "expected_output": "回复应把 Host 缓冲区在异步操作完成前失效列为与异步指针使用相符的安全假设，并明确它仍须由目标 API 和内存类型确认。最小方向是让缓冲区活到对应完成边界之后，不能用 sleep；不得把页锁定与非页锁定 Host 内存的返回语义混为一谈。该题只有文本信息且未执行验证，必须报告 verification.stable_runs 为 0，将 verifier_integrity、build、npu 标为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。输出还必须只包含 runtime-result/2.0 的八个顶层字段：schema_version、status、first_failure、hypothesis_id、minimal_change、verification、next_route、evidence_refs；verification 仅包含 verifier_integrity、build、npu、stable_runs 四个字段。schema_version: runtime-result/2.0，verification.stable_runs: 0，verification.verifier_integrity: UNVERIFIED、verification.build: UNVERIFIED、verification.npu: UNVERIFIED；verification 不得报告 PASS，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 6,
+      "title": "资源释放：重复释放或提前释放",
+      "expectations": [],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "程序在收尾时崩溃。我怀疑同一 device 指针被调用两次 aclrtFree，或 Stream 上还有未完成工作时内存已释放。只根据已提供的信息和可读取文件排查，不执行外部工具。",
+      "expected_output": "回复应建立资源账本，记录分配点、owner、全部消费者、完成边界和释放函数；先确认消费者完成，再检查是否有重复释放或分配/释放 API 不配对。不要对 owner 不明的资源猜测性释放，也不要修改验证器或失败分支。该题只有文本信息且未执行验证，必须报告 verification.stable_runs 为 0，将 verifier_integrity、build、npu 标为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。输出还必须只包含 runtime-result/2.0 的八个顶层字段：schema_version、status、first_failure、hypothesis_id、minimal_change、verification、next_route、evidence_refs；verification 仅包含 verifier_integrity、build、npu、stable_runs 四个字段。schema_version: runtime-result/2.0，verification.stable_runs: 0，verification.verifier_integrity: UNVERIFIED、verification.build: UNVERIFIED、verification.npu: UNVERIFIED；verification 不得报告 PASS，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 7,
+      "title": "域外停止：证据转向 Precision 或 AI Core",
+      "expectations": [],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "算子输出错误，ACL/ACLNN 调用均返回成功。但进一步证据更像数值精度误差，也有线索指向 AI Core 上的 kernel 行为。是否继续按 Runtime 合同修？只根据已提供的信息和可读取文件判断，不执行外部工具。",
+      "expected_output": "回复应先判断最早失败证据是否仍在 Runtime。若证据已转为纯 Precision 或 AI Core，应停止 Runtime 修改，并在 next_route 写中性领域名称；不要把两个领域的修法合进一个补丁。单独的参数错误码不能作为换域依据。该题只有文本信息且未执行验证，必须报告 verification.stable_runs 为 0，将 verifier_integrity、build、npu 标为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。输出还必须只包含 runtime-result/2.0 的八个顶层字段：schema_version、status、first_failure、hypothesis_id、minimal_change、verification、next_route、evidence_refs；verification 仅包含 verifier_integrity、build、npu、stable_runs 四个字段。schema_version: runtime-result/2.0，verification.stable_runs: 0，verification.verifier_integrity: UNVERIFIED、verification.build: UNVERIFIED、verification.npu: UNVERIFIED；verification 不得报告 PASS，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 8,
+      "title": "基础技能：环境疑点与缺失退路",
+      "expectations": [],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我在 aclrtCreateContext 或 aclrtCreateStream 处失败，怀疑设备状态或环境配置。应使用什么基础技能？如果技能不可用该如何处理？只根据已提供的信息和可读取文件回答，不执行外部工具。",
+      "expected_output": "回复应在当前宿主提供该技能时使用 CANNBot 的 ascendc-env-check 技能核对设备可见性或环境问题；不可用时只使用用户明确提供的环境事实，缺少事实就报告 UNRESOLVED。不得自动下载、安装或扫描本机技能目录。该题只有文本信息且未执行验证，必须报告 verification.stable_runs 为 0，将 verifier_integrity、build、npu 标为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。输出还必须只包含 runtime-result/2.0 的八个顶层字段：schema_version、status、first_failure、hypothesis_id、minimal_change、verification、next_route、evidence_refs；verification 仅包含 verifier_integrity、build、npu、stable_runs 四个字段。schema_version: runtime-result/2.0，verification.stable_runs: 0，verification.verifier_integrity: UNVERIFIED、verification.build: UNVERIFIED、verification.npu: UNVERIFIED；verification 不得报告 PASS，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 9,
+      "title": "外链看护：错误证据与分流",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/en/canncommercial/800/apiref/appdevgapi/aclpythondevg_01_0009.html",
+          "description": "给出 aclGetRecentErrMsg 的 CANN 商用版 8.0.0 官方链接"
+        },
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/aolapi/operatorlist_00423.html",
+          "description": "给出 ACLNN 公共返回码的 CANN 社区版 9.1.0 官方链接"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "外链看护：错误证据与分流。请只根据 references/error-evidence-and-routing.md 回答：核对 aclGetRecentErrMsg 与 ACLNN 公共返回码时应引用哪些官方文档？给出实际链接和版本，不访问外链。",
+      "expected_output": "回复应从该参考文档的来源部分给出 aclGetRecentErrMsg（CANN 商用版 8.0.0）与 ACLNN 公共返回码（CANN 社区版 9.1.0）的 hiascend.com 官方链接，并说明链接只用于追溯版本来源，不代替当前安装环境中的头文件、日志和实际返回码证据。"
+    },
+    {
+      "id": 10,
+      "title": "外链看护：输出与所有权",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0101.html",
+          "description": "给出 aclrtMallocHost 的 CANN 商用版 9.0.0 官方链接"
+        },
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/en/canncommercial/800/apiref/aolapi/operatorlist_00019.html",
+          "description": "给出 aclCreateTensor 的 CANN 商用版 8.0.0 官方链接"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "外链看护：输出与所有权。请只根据 references/output-and-ownership.md 回答：核对 Host 输出参数返回行为与 Tensor 绑定用户数据地址时应引用哪些官方文档？给出实际链接和版本，不访问外链。",
+      "expected_output": "回复应从该参考文档的来源部分给出 aclrtMallocHost（CANN 商用版 9.0.0）与 aclCreateTensor（CANN 商用版 8.0.0）的 hiascend.com 官方链接，并说明这些链接用于核对接口契约和版本范围，不表示当前输出地址已经验证正确。"
+    },
+    {
+      "id": 11,
+      "title": "外链看护：上下文、Stream 与 Event",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0061.html",
+          "description": "给出 aclrtSetCurrentContext 的 CANN 商用版 9.0.0 官方链接"
+        },
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0091.html",
+          "description": "给出 aclrtStreamWaitEvent 的 CANN 商用版 9.0.0 官方链接"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "外链看护：上下文、Stream 与 Event。请只根据 references/context-stream-event.md 回答：核对当前 Context 与 Stream 依赖关系时应引用哪些官方文档？给出实际链接和版本，不访问外链。",
+      "expected_output": "回复应从该参考文档的来源部分给出 aclrtSetCurrentContext 与 aclrtStreamWaitEvent（均为 CANN 商用版 9.0.0）的 hiascend.com 官方链接，并说明使用其他 CANN 版本时必须改查对应版本页面。"
+    },
+    {
+      "id": 12,
+      "title": "外链看护：内存与容量",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0105.html",
+          "description": "给出 aclrtMemcpy 的 CANN 商用版 9.0.0 官方链接"
+        },
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0101.html",
+          "description": "给出 aclrtMallocHost 的 CANN 商用版 9.0.0 官方链接"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "外链看护：内存与容量。请只根据 references/memory-and-capacity.md 回答：核对拷贝容量、方向和 Host 分配时应引用哪些官方文档？给出实际链接和版本，不访问外链。",
+      "expected_output": "回复应从该参考文档的来源部分给出 aclrtMemcpy 与 aclrtMallocHost（均为 CANN 商用版 9.0.0）的 hiascend.com 官方链接，并说明容量、方向和字节单位仍要以目标版本页面及实际源码参数为准。"
+    },
+    {
+      "id": 13,
+      "title": "外链看护：异步与可观察性",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0106.html",
+          "description": "给出 aclrtMemcpyAsync 的 CANN 商用版 9.0.0 官方链接"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "外链看护：异步与可观察性。请只根据 references/async-observability.md 回答：核对异步拷贝返回边界时应引用哪份官方文档？给出实际链接和版本，不访问外链。",
+      "expected_output": "回复应从该参考文档的来源部分给出 aclrtMemcpyAsync（CANN 商用版 9.0.0）的 hiascend.com 官方链接，并说明返回成功只按该版本文档解释，不能自动推出 Host 缓冲区已经可以释放。"
+    },
+    {
+      "id": 14,
+      "title": "外链看护：资源生命周期",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0102.html",
+          "description": "给出 aclrtFreeHost 的 CANN 商用版 9.0.0 官方链接"
+        },
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/runtimeapi/aclcppdevg_03_0101.html",
+          "description": "给出 aclrtMallocHost 的 CANN 商用版 9.0.0 官方链接"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "外链看护：资源生命周期。请只根据 references/resource-lifecycle.md 回答：核对 Host 内存分配与释放配对应引用哪些官方文档？给出实际链接和版本，不访问外链。",
+      "expected_output": "回复应从该参考文档的来源部分给出 aclrtFreeHost 与 aclrtMallocHost（均为 CANN 商用版 9.0.0）的 hiascend.com 官方链接，并说明释放前仍要核对消费者完成证据和目标版本语义。"
+    },
+    {
+      "id": 15,
+      "title": "外链看护：Kernel 包来源追溯",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/aolapi/operatorlist_00423.html",
+          "description": "给出 ACLNN 公共返回码的 CANN 社区版 9.1.0 官方链接"
+        },
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/920beta2/programug/Ascendcopdevg/docs/zh/guide/programming_guide/advanced_programming/aclnn_operator_development/invocation/single_operator_api_call.md",
+          "description": "给出单算子 API 调用的 CANN 社区版 9.2.0-beta.2 官方链接"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "外链看护：Kernel 包来源追溯。请只根据 references/kernel-package-provenance.md 回答：核对 ACLNN 内部异常码与自定义算子包部署时应引用哪些官方文档？给出实际链接和版本，不访问外链。",
+      "expected_output": "回复应从该参考文档的来源部分给出 ACLNN 公共返回码（CANN 社区版 9.1.0）与单算子 API 调用（CANN 社区版 9.2.0-beta.2）的 hiascend.com 官方链接，并说明实际加载路径仍必须来自当前安装环境和日志。"
+    },
+    {
+      "id": 16,
+      "title": "触发：ACL/ACLNN 返回码异常",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "161002",
+          "description": "回复保留实际返回码"
+        },
+        {
+          "type": "contains",
+          "pattern": "first_failure",
+          "description": "回复记录最早失败调用"
+        },
+        {
+          "type": "contains",
+          "pattern": "UNVERIFIED",
+          "description": "未执行验证时不得报告 PASS"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "我的 aclrtMemcpy 返回 161002，目标缓冲区、源地址和字节数都有嫌疑。请从 Host Runtime 角度给出最小排查路径。只根据已提供的信息和可读取文件判断，不执行外部工具。",
+      "expected_output": "回复应把 161002 和 aclrtMemcpy 保存为 first_failure 的核心证据，先核对目标版本 API 契约、拷贝方向、目的地容量、源地址有效性和字节数单位，形成一个可被参数证据推翻的单项假设；不得直接修改验证器或同时修改多处。该题未执行验证，必须报告 verification.stable_runs 为 0，verifier_integrity、build、npu 均为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED，并使用 runtime-result/2.0 的八个顶层字段。"
+    },
+    {
+      "id": 17,
+      "title": "触发：Kernel 包来源可疑",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "561003",
+          "description": "回复识别 Kernel 查找失败证据"
+        },
+        {
+          "type": "contains",
+          "pattern": "kernel-package-provenance",
+          "description": "回复选择 Kernel 包来源追溯参考"
+        },
+        {
+          "type": "contains",
+          "pattern": "UNVERIFIED",
+          "description": "未验证当前加载路径时不得报告 PASS"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "自定义 ACLNN 算子重新编译部署后仍返回 561003，日志疑似加载了旧自定义包。请从 Host Runtime 角度判断下一步。只根据已提供的信息和可读取文件判断，不执行外部工具。",
+      "expected_output": "回复应读取 kernel-package-provenance 主题，记录 561003、当前安装路径、算子包部署路径、实际加载日志和二进制来源，形成“加载旧包或路径不一致”的可证伪假设；不得用重装、清空缓存或多处猜测性修改代替来源核对。该题未验证当前加载路径，必须报告 stable_runs 为 0，verifier_integrity、build、npu 均为 UNVERIFIED，status 只能为 UNVERIFIED 或 UNRESOLVED。"
+    },
+    {
+      "id": 18,
+      "title": "反向触发：编译错误不进入 Runtime",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "compile",
+          "description": "next_route 指向编译领域"
+        },
+        {
+          "type": "contains",
+          "pattern": "minimal_change",
+          "description": "输出保留最小修改字段"
+        },
+        {
+          "type": "contains",
+          "pattern": "UNRESOLVED",
+          "description": "缺少编译专项证据时不能宣称修复"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "ccec 在编译 Ascend C 算子时已经报告语法错误，尚未生成可执行程序。有人建议继续按 Host Runtime 调试 API 调用。是否应该继续 Runtime 修复？只根据已提供的信息和可读取文件判断，不执行外部工具。",
+      "expected_output": "回复应停止 Runtime 修复，保留编译错误作为最早失败证据，并将 next_route 设为 compile；不得修改 Host Runtime 参数来绕过编译失败。输出仍使用 runtime-result/2.0 合同，minimal_change 说明未做 Runtime 修改，status 在缺少编译专项处理结果时为 UNRESOLVED。"
+    },
+    {
+      "id": 19,
+      "title": "反向触发：多卡通信等待不进入 Runtime",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "multi_card",
+          "description": "next_route 指向多卡通信领域"
+        },
+        {
+          "type": "contains",
+          "pattern": "minimal_change",
+          "description": "输出保留最小修改字段"
+        },
+        {
+          "type": "contains",
+          "pattern": "UNRESOLVED",
+          "description": "缺少多卡定位证据时不能宣称修复"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "两个 rank 的 HCCL AllReduce 在通信等待点超时，单卡 ACL Runtime 调用均已成功。是否继续按 Host Runtime 单卡修复？只根据已提供的信息和可读取文件判断，不执行外部工具。",
+      "expected_output": "回复应停止 Runtime 修复，保留 rank、通信算子和等待点证据，并将 next_route 设为 multi_card；不得把通信等待问题改写成单卡 API 参数问题。输出仍使用 runtime-result/2.0 合同，minimal_change 说明未做 Runtime 修改，status 在缺少多卡定位结果时为 UNRESOLVED。"
+    },
+    {
+      "id": 20,
+      "title": "引用版本：明确指定 CANN 8.0.0",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/en/canncommercial/800/apiref/appdevgapi/aclcppdevg_03_0061.html",
+          "description": "使用目标 8.0.0 的 Context 链接"
+        },
+        {
+          "type": "contains",
+          "pattern": "https://www.hiascend.com/document/detail/en/canncommercial/800/apiref/appdevgapi/aclcppdevg_03_0091.html",
+          "description": "使用目标 8.0.0 的 Stream 等待链接"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "请只根据 references/context-stream-event.md 回答：目标环境明确为 CANN 商用版 8.0.0，核对 aclrtSetCurrentContext 与 aclrtStreamWaitEvent 时应引用哪些官方文档？给出实际链接和版本，不访问外链。",
+      "expected_output": "引用 S-SET-CONTEXT-800 与 S-WAIT-EVENT-800 的 CANN 商用版 8.0.0 链接；明确指定的目标版本优先于本页默认 9.0.0，不以 9.0.0 链接替代目标版本，也不声称已核实用户设备。"
+    },
+    {
+      "id": 21,
+      "title": "引用版本：缺少 CANN 9.3.0 官方来源",
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "9.3.0",
+          "description": "保留用户明确指定的版本"
+        }
+      ],
+      "files": [],
+      "config": {
+        "max_tokens": 100000,
+        "ascend_platforms": [
+          "A2",
+          "A5"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "请只根据 references/context-stream-event.md 回答：目标环境明确为 CANN 9.3.0，核对 aclrtSetCurrentContext 与 aclrtStreamWaitEvent 时应引用哪些官方文档？不访问外链；没有对应来源时说明缺口和下一步。",
+      "expected_output": "说明本页未提供 9.3.0 官方来源，不能给出已核实的该版本链接；应核对目标版本官方文档或安装头文件。不得拼接 930 路径、把 9.0.0 默认版本当成 9.3.0，或从相邻版本推断接口语义。只有文本查阅，不声称设备验证通过。"
+    }
+  ]
+}
