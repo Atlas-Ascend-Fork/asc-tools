@@ -11,6 +11,8 @@
 #ifndef DATA_UTILS_H
 #define DATA_UTILS_H
 
+#include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -39,7 +41,7 @@ inline bool ReadFile(const std::string& filePath, size_t bufferSize, void* buffe
 
     std::ifstream file(filePath, std::ios::binary);
     if (!file.is_open()) {
-        ERROR_LOG("Open file failed. path = %s", filePath.c_str());
+        ERROR_LOG("Open file failed. path = %s, errno = %d, reason = %s", filePath.c_str(), errno, strerror(errno));
         return false;
     }
 
@@ -48,14 +50,16 @@ inline bool ReadFile(const std::string& filePath, size_t bufferSize, void* buffe
     file.seekg(0, std::ios::beg);
 
     if (fileSize != bufferSize) {
-        ERROR_LOG("file size %zu != expected size %zu", fileSize, bufferSize);
+        ERROR_LOG("file size %zu != expected size %zu. path = %s", fileSize, bufferSize, filePath.c_str());
         file.close();
         return false;
     }
 
     file.read(static_cast<char*>(buffer), bufferSize);
     if (!file) {
-        ERROR_LOG("Read file failed");
+        ERROR_LOG(
+            "Read file failed. path = %s, gcount = %lld, read state = %s", filePath.c_str(),
+            static_cast<long long>(file.gcount()), (file.bad() ? "bad" : (file.eof() ? "eof" : "fail")));
         file.close();
         return false;
     }
@@ -80,14 +84,21 @@ inline bool WriteFile(const std::string& filePath, const void* buffer, size_t si
 
     int fd = open(filePath.c_str(), O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        ERROR_LOG("Open file failed. path = %s", filePath.c_str());
+        ERROR_LOG("Open file failed. path = %s, errno = %d, reason = %s", filePath.c_str(), errno, strerror(errno));
         return false;
     }
 
     ssize_t writeSize = write(fd, buffer, size);
-    close(fd);
-    if (static_cast<size_t>(writeSize) != size) {
-        ERROR_LOG("Write file Failed.");
+    int writeErrno = errno;
+    if (writeSize < 0 || static_cast<size_t>(writeSize) != size) {
+        ERROR_LOG(
+            "Write file failed. path = %s, writeSize = %lld, expected size = %zu, errno = %d, reason = %s",
+            filePath.c_str(), static_cast<long long>(writeSize), size, writeErrno, strerror(writeErrno));
+        close(fd);
+        return false;
+    }
+    if (close(fd) != 0) {
+        ERROR_LOG("Close file failed. path = %s, errno = %d, reason = %s", filePath.c_str(), errno, strerror(errno));
         return false;
     }
 
