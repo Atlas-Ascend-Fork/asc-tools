@@ -9,7 +9,17 @@ For a tool usage demonstration, refer to the [show_kernel_debug_data example](..
 - **Command-Line Method**
 
     ```sh
-    show_kernel_debug_data  `<bin_file_path>`  [`<output_path>`]
+    show_kernel_debug_data "<bin_file_path>" ["<output_path>"]
+    ```
+
+    Replace the placeholders with actual paths. For example:
+
+    ```sh
+    # Single-file input
+    show_kernel_debug_data "./input/dump_workspace.bin" "./output"
+
+    # Directory input: recursively process .bin files
+    show_kernel_debug_data "../output" "./dump_info_output"
     ```
 
     | Parameter | Required/Optional | Description |

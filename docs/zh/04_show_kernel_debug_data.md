@@ -9,7 +9,17 @@ kernel侧算子调试信息（AscendC::DumpTensor, AscendC::printf等）可通�
 - **命令行方式**
 
     ```
-    show_kernel_debug_data  `<bin_file_path>`  [`<output_path>`]
+    show_kernel_debug_data "<bin_file_path>" ["<output_path>"]
+    ```
+
+    将占位符替换为实际路径。例如：
+
+    ```bash
+    # 单文件输入
+    show_kernel_debug_data "./input/dump_workspace.bin" "./output"
+
+    # 目录输入：递归处理目录内的 .bin 文件
+    show_kernel_debug_data "../output" "./dump_info_output"
     ```
 
     | 参数 | 可选/必选 | 说明 |
