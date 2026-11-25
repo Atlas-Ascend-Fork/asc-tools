@@ -1156,7 +1156,7 @@ class ObjDump:
             )
             self._move_file_to_outdir_ascend_kernel(kernel_obj_infos)
         elif self.obj_type == ObjType.TYPE_ASCEND_META:
-            print("[WARNING]: nothing to extra in single op elf file")
+            print("[WARNING]: Nothing to extract from a single-operator ELF file.")
         elif self.obj_type == ObjType.TYPE_AICORE_BINARY:
             self._move_extracted_aicore_binary_to_outdir()
 
