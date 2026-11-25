@@ -777,14 +777,14 @@ RuntimeHandlerSet BuildKernelRuntimeHandlers()
     handlers.launchSIMTKernelWithHostArgs = &AclrtLaunchSIMTKernelWithHostArgsHandler;
     handlers.launchKernelWithArgsArray = &AclrtLaunchKernelWithArgsArrayHandler;
     handlers.launchSIMTKernelWithArgsArray = &AclrtLaunchSIMTKernelWithArgsArrayHandler;
-    handlers.memcpy = &AclrtMemcpyHandler;
+    handlers.memoryCopyHandler = &AclrtMemcpyHandler;
     handlers.binaryLoadFromData = &AclrtBinaryLoadFromDataHandler;
     handlers.binaryLoadFromFile = &AclrtBinaryLoadFromFileHandler;
     handlers.binaryGetFunction = &AclrtBinaryGetFunctionHandler;
     handlers.malloc = &AclrtMallocHandler;
     handlers.mallocAlign32 = &AclrtMallocAlign32Handler;
     handlers.mallocWithCfg = &AclrtMallocWithCfgHandler;
-    handlers.memset = &AclrtMemsetHandler;
+    handlers.memorySetHandler = &AclrtMemsetHandler;
     handlers.free = &AclrtFreeHandler;
     handlers.binaryGetFunctionByEntry = &AclrtBinaryGetFunctionByEntryHandler;
     handlers.launchKernel = &AclrtLaunchKernelHandler;

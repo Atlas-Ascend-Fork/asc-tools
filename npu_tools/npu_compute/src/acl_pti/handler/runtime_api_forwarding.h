@@ -313,14 +313,14 @@ RuntimeHandlerSet MakeForwardingHandlers()
     handlers.launchSIMTKernelWithHostArgs = &ForwardAclrtLaunchSIMTKernelWithHostArgs<CallPolicy>;
     handlers.launchKernelWithArgsArray = &ForwardAclrtLaunchKernelWithArgsArray<CallPolicy>;
     handlers.launchSIMTKernelWithArgsArray = &ForwardAclrtLaunchSIMTKernelWithArgsArray<CallPolicy>;
-    handlers.memcpy = &ForwardAclrtMemcpy<CallPolicy>;
+    handlers.memoryCopyHandler = &ForwardAclrtMemcpy<CallPolicy>;
     handlers.binaryLoadFromData = &ForwardAclrtBinaryLoadFromData<CallPolicy>;
     handlers.binaryLoadFromFile = &ForwardAclrtBinaryLoadFromFile<CallPolicy>;
     handlers.binaryGetFunction = &ForwardAclrtBinaryGetFunction<CallPolicy>;
     handlers.malloc = &ForwardAclrtMalloc<CallPolicy>;
     handlers.mallocAlign32 = &ForwardAclrtMallocAlign32<CallPolicy>;
     handlers.mallocWithCfg = &ForwardAclrtMallocWithCfg<CallPolicy>;
-    handlers.memset = &ForwardAclrtMemset<CallPolicy>;
+    handlers.memorySetHandler = &ForwardAclrtMemset<CallPolicy>;
     handlers.free = &ForwardAclrtFree<CallPolicy>;
     handlers.createStream = &ForwardAclrtCreateStream<CallPolicy>;
     handlers.destroyStream = &ForwardAclrtDestroyStream<CallPolicy>;
