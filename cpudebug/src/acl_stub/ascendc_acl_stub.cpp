@@ -313,13 +313,13 @@ static int callback(struct dl_phdr_info* info, size_t size, void* data)
     std::string soName = std::string(info->dlpi_name);
     if (soName.find("libascendcl.so") != std::string::npos) {
         printf(
-            "[ERROR] The support of ACL interfaces in CPU debug is limited; Only the following list is supported currently.\n\
-        [aclprofInit, aclprofSetConfig, aclprofStart, aclprofStop, aclprofFinalize, aclInit, aclFinalize,\n\
-        aclrtGetVersion, aclDataTypeSize, aclFloat16ToFloat, aclFloatToFloat16, aclrtSetDevice, aclrtResetDevice,\n\
-        aclrtCreateStream, aclrtCreateStreamWithConfig, aclrtDestroyStream, aclrtDestroyStreamForce, aclrtSynchronizeStream,\n\
-        aclrtMalloc, aclrtFree, aclrtMallocHost, aclrtFreeHost, aclrtMemset, aclrtMemsetAsync, aclrtMemcpy, aclrtMemcpyAsync,\n\
-        aclrtMemcpy2d, aclrtMemcpy2dAsync, aclrtCreateContext, aclrtDestroyContext, aclrtBinaryLoadFromData,\n\
-        aclrtSynchronizeDevice]\n");
+            "[ERROR] CPU debug supports only these ACL interfaces: "
+            "[aclprofInit, aclprofSetConfig, aclprofStart, aclprofStop, aclprofFinalize, aclInit, aclFinalize, "
+            "aclrtGetVersion, aclDataTypeSize, aclFloat16ToFloat, aclFloatToFloat16, aclrtSetDevice, aclrtResetDevice, "
+            "aclrtCreateStream, aclrtCreateStreamWithConfig, aclrtDestroyStream, aclrtDestroyStreamForce, "
+            "aclrtSynchronizeStream, aclrtMalloc, aclrtFree, aclrtMallocHost, aclrtFreeHost, aclrtMemset, "
+            "aclrtMemsetAsync, aclrtMemcpy, aclrtMemcpyAsync, aclrtMemcpy2d, aclrtMemcpy2dAsync, aclrtCreateContext, "
+            "aclrtDestroyContext, aclrtBinaryLoadFromData, aclrtSynchronizeDevice]\n");
         abort();
     }
     return 0;

@@ -834,7 +834,7 @@ class DumpCoreContent:
         for index in self.dump_tensor_map.keys():
             index_output_dir = os.path.join(core_output_dir, f"index_{index}")
             os.makedirs(index_output_dir, exist_ok=True)
-            DUMP_PARSER_LOG.info(
+            DUMP_PARSER_LOG.debug(
                 f"write index {index} tensor to dir: {index_output_dir}"
             )
             self._write_dump_tensor_by_loop(index, index_output_dir)
@@ -1088,7 +1088,8 @@ class DumpBinFile:
 
             if block_info.reserved == 7:
                 DUMP_PARSER_LOG.warning(
-                    f"block.{block_id} remain space is NOT enough for last dump !!!"
+                    f"block.{block_id} dump buffer has insufficient space for a record "
+                    f"(remaining={block_info.remain_size} bytes, total={block_info.total_size} bytes)."
                 )
 
             if not block_info.is_valid():
@@ -1418,7 +1419,7 @@ def parse_dump_bin(bin_file_path, output_path, parse_output_dir=None, init_logge
         dump_file.show_print()
         return 0
     except Exception:
-        print(f"parse dump workspace bin occur exception, bin_file: {dump_bin}")
+        print(f"Failed to process dump file [{dump_bin}].")
         import traceback
 
         traceback.print_exc()
