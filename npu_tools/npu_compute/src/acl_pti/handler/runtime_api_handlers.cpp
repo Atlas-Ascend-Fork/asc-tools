@@ -71,7 +71,8 @@ bool RegisterRuntimeApiHandlers(RuntimeHandlerMode mode)
             acltoolRegisterAclrtLaunchKernelWithArgsArrayCallbacks, handlers.launchKernelWithArgsArray) &&
         RegisterRuntimeHandler<ACL_RT_API_aclrtLaunchSIMTKernelWithArgsArray>(
             acltoolRegisterAclrtLaunchSIMTKernelWithArgsArrayCallbacks, handlers.launchSIMTKernelWithArgsArray) &&
-        RegisterRuntimeHandler<ACL_RT_API_aclrtMemcpy>(acltoolRegisterAclrtMemcpyCallbacks, handlers.memcpy) &&
+        RegisterRuntimeHandler<ACL_RT_API_aclrtMemcpy>(
+            acltoolRegisterAclrtMemcpyCallbacks, handlers.memoryCopyHandler) &&
         RegisterRuntimeHandler<ACL_RT_API_aclrtBinaryLoadFromData>(
             acltoolRegisterAclrtBinaryLoadFromDataCallbacks, handlers.binaryLoadFromData) &&
         RegisterRuntimeHandler<ACL_RT_API_aclrtBinaryLoadFromFile>(
@@ -83,7 +84,8 @@ bool RegisterRuntimeApiHandlers(RuntimeHandlerMode mode)
             acltoolRegisterAclrtMallocAlign32Callbacks, handlers.mallocAlign32) &&
         RegisterRuntimeHandler<ACL_RT_API_aclrtMallocWithCfg>(
             acltoolRegisterAclrtMallocWithCfgCallbacks, handlers.mallocWithCfg) &&
-        RegisterRuntimeHandler<ACL_RT_API_aclrtMemset>(acltoolRegisterAclrtMemsetCallbacks, handlers.memset) &&
+        RegisterRuntimeHandler<ACL_RT_API_aclrtMemset>(
+            acltoolRegisterAclrtMemsetCallbacks, handlers.memorySetHandler) &&
         RegisterRuntimeHandler<ACL_RT_API_aclrtFree>(acltoolRegisterAclrtFreeCallbacks, handlers.free) &&
         RegisterRuntimeHandler<ACL_RT_API_aclrtCreateStream>(
             acltoolRegisterAclrtCreateStreamCallbacks, handlers.createStream) &&

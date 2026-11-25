@@ -20,14 +20,14 @@ struct RuntimeHandlerSet {
     aclrtLaunchSIMTKernelWithHostArgsFunc launchSIMTKernelWithHostArgs = nullptr;
     aclrtLaunchKernelWithArgsArrayFunc launchKernelWithArgsArray = nullptr;
     aclrtLaunchSIMTKernelWithArgsArrayFunc launchSIMTKernelWithArgsArray = nullptr;
-    aclrtMemcpyFunc memcpy = nullptr;
+    aclrtMemcpyFunc memoryCopyHandler = nullptr;
     aclrtBinaryLoadFromDataFunc binaryLoadFromData = nullptr;
     aclrtBinaryLoadFromFileFunc binaryLoadFromFile = nullptr;
     aclrtBinaryGetFunctionFunc binaryGetFunction = nullptr;
     aclrtMallocFunc malloc = nullptr;
     aclrtMallocAlign32Func mallocAlign32 = nullptr;
     aclrtMallocWithCfgFunc mallocWithCfg = nullptr;
-    aclrtMemsetFunc memset = nullptr;
+    aclrtMemsetFunc memorySetHandler = nullptr;
     aclrtFreeFunc free = nullptr;
     aclrtCreateStreamFunc createStream = nullptr;
     aclrtDestroyStreamFunc destroyStream = nullptr;
