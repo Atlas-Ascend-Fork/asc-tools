@@ -63,6 +63,7 @@ private:
     void LeaveCallback();
     void QueueSynchronization(const void* cbdata) noexcept;
     void DrainSynchronizations(CheckerReportList& reports);
+    void CountDeviceCallbackLocked(AclsanCallbackId cbid, const void* cbdata);
     void ProcessCallbackLocked(
         AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata, CheckerReportList& reports);
     void NotifyCheckersLocked(
@@ -115,6 +116,12 @@ private:
     std::shared_ptr<MemoryAnalysis> memoryAnalysis_;
     std::vector<std::unique_ptr<Checker>> checkers_;
     std::atomic<uint64_t> callbackCount_{0};
+    uint64_t deviceOperations_ = 0;
+    uint64_t memoryEvents_ = 0;
+    uint64_t syncEvents_ = 0;
+    uint64_t simdVfMemEvents_ = 0;
+    uint64_t simdVfSyncEvents_ = 0;
+    uint64_t simtVfMemEvents_ = 0;
     uint64_t malformedCallbacks_ = 0;
     uint64_t frameworkErrors_ = 0;
     std::vector<std::string> frameworkErrorReasons_;

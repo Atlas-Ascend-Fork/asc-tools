@@ -76,7 +76,6 @@ add_test(NAME npu_check_simt_tests COMMAND npu_check_simt_tests)
 add_executable(npu_check_memstate_allocation_tests
   "${NPU_CHECK_TEST_ROOT}/shared/gtest_main.cpp"
   "${NPU_CHECK_TEST_ROOT}/shared/log_capture.cpp" "checker/mem_state_tracker_allocation_test.cpp"
-  "${NPU_CHECK_SOURCE_DIR}/checker/racecheck.cpp"
   "${NPU_CHECK_SOURCE_DIR}/checker/racecheck/sync_analysis.cpp"
   "${NPU_CHECK_SOURCE_DIR}/checker/racecheck/happens_before_graph.cpp"
   "${NPU_CHECK_SOURCE_DIR}/checker/racecheck/types.cpp"

@@ -121,6 +121,12 @@ bool ToolManager::ConfigureSanitizer(std::string& error)
         error = "configure enabled no tool";
         return false;
     }
+    deviceOperations_ = 0;
+    memoryEvents_ = 0;
+    syncEvents_ = 0;
+    simdVfMemEvents_ = 0;
+    simdVfSyncEvents_ = 0;
+    simtVfMemEvents_ = 0;
     memoryAnalysis_ = std::make_shared<MemoryAnalysis>(true);
     for (const auto& tool : configure_.tools) {
         auto checker = CreateChecker(tool.toolId, memoryAnalysis_);
@@ -435,9 +441,47 @@ void ToolManager::DrainOperatorExecutions(CheckerReportList& reports)
     }
 }
 
+void ToolManager::CountDeviceCallbackLocked(AclsanCallbackId cbid, const void* cbdata)
+{
+    if (cbid == ACLSAN_CBID_DEVICE_VF) {
+        return; // VF lifecycle markers are not device instructions.
+    }
+    ++deviceOperations_;
+    switch (cbid) {
+        case ACLSAN_CBID_DEVICE_MEMORY_ACCESS:
+            ++memoryEvents_;
+            if (static_cast<const AclsanDeviceMemoryAccessData*>(cbdata)->vfInstrValid != 0U) {
+                ++simdVfMemEvents_;
+            }
+            break;
+        case ACLSAN_CBID_DEVICE_SIMT_MEMORY_ACCESS:
+            ++memoryEvents_;
+            // Launch-level loss markers have no instruction identity.
+            if (static_cast<const AclsanDeviceEventHeader*>(cbdata)->instrExecId != 0U) {
+                ++simtVfMemEvents_;
+            }
+            break;
+        case ACLSAN_CBID_DEVICE_SYNC:
+            ++syncEvents_;
+            break;
+        case ACLSAN_CBID_DEVICE_PIPE_BARRIER:
+            ++syncEvents_;
+            if (static_cast<const AclsanDeviceBarrierData*>(cbdata)->barrierKind == ACLSAN_DEVICE_BARRIER_LOCAL_MEM) {
+                ++simdVfSyncEvents_;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 void ToolManager::ProcessCallbackLocked(
     AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* cbdata, CheckerReportList& reports)
 {
+    if (domain == ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION) {
+        // Count arrivals before analysis or fan-out. Rejected records are also reported as malformed.
+        CountDeviceCallbackLocked(cbid, cbdata);
+    }
     if (IsSimtUbMemcheckCallback(domain, cbid, cbdata)) {
         NotifyCheckersLocked(domain, cbid, cbdata, reports);
         return;
@@ -627,13 +671,12 @@ std::string ToolManager::BuildAndLogSummaryMessage() const
     }
     const auto callbackCount = callbackCount_.load();
     const auto droppedMessages = server_.DroppedMessages();
-    ASCTOOL_INFO(
-        "session summary: %scallbacks=%llu malformed_callbacks=%llu framework_errors=%llu dropped_messages=%llu",
-        output.str().c_str(), static_cast<unsigned long long>(callbackCount),
-        static_cast<unsigned long long>(malformedCallbacks_), static_cast<unsigned long long>(frameworkErrors_),
-        static_cast<unsigned long long>(droppedMessages));
     output << "callbacks=" << callbackCount << " malformed_callbacks=" << malformedCallbacks_
-           << " framework_errors=" << frameworkErrors_ << " dropped_messages=" << droppedMessages;
+           << " framework_errors=" << frameworkErrors_ << " dropped_messages=" << droppedMessages
+           << " device_operations=" << deviceOperations_ << " memory_events=" << memoryEvents_
+           << " sync_events=" << syncEvents_ << " simd_vf_mem_event=" << simdVfMemEvents_
+           << " simd_vf_sync_event=" << simdVfSyncEvents_ << " simt_vf_mem_event=" << simtVfMemEvents_;
+    ASCTOOL_INFO("session summary: %s", output.str().c_str());
     return output.str();
 }
 

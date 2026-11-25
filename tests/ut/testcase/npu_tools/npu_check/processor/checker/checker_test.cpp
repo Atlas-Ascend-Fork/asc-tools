@@ -181,7 +181,6 @@ TEST(CheckerTest, BothProduceReportsFromTheSameSynchronization)
     for (const auto& checker : checkers) {
         EXPECT_TRUE(checker->HasErrors());
         EXPECT_TRUE(checker->AnalysisComplete());
-        EXPECT_NE(checker->Summary().find("synchronizations=1"), std::string::npos);
     }
 }
 

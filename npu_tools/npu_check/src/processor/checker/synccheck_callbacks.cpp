@@ -133,13 +133,11 @@ std::string SyncLedger::Summary() const
                             stats.participantMismatches + stats.sequenceMismatches + stats.invalidArguments +
                             stats.unconsumedSyncTokenReports + stats.waitWithoutSyncTokens;
     std::ostringstream output;
-    output << "tool=synccheck device_operations=0 memory_events=0 sync_events=" << stats.syncEvents
-           << " errors=" << errors << " warnings=0"
+    output << "tool=synccheck errors=" << errors << " warnings=0"
            << " analysis_complete=" << (AnalysisComplete() ? "true" : "false")
-           << " synchronizations=" << stats.synchronizationEvents << " matched_pairs=" << stats.matchedPairs
-           << " duplicate_opens=" << stats.duplicateOpens << " unmatched_closes=" << stats.unmatchedCloses
-           << " unconsumed_opens=" << stats.unconsumedOpens << " pending_opens=" << stats.pendingOpens
-           << " matched_cross_rounds=" << stats.matchedCrossRounds
+           << " matched_pairs=" << stats.matchedPairs << " duplicate_opens=" << stats.duplicateOpens
+           << " unmatched_closes=" << stats.unmatchedCloses << " unconsumed_opens=" << stats.unconsumedOpens
+           << " pending_opens=" << stats.pendingOpens << " matched_cross_rounds=" << stats.matchedCrossRounds
            << " produced_cross_tokens=" << stats.producedCrossTokens
            << " consumed_cross_tokens=" << stats.consumedCrossTokens
            << " unconsumed_sync_tokens=" << stats.unconsumedSyncTokens

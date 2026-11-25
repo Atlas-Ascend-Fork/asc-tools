@@ -230,7 +230,6 @@ void Racechecker::StoreVfEvent(Launch& state, const AclsanDeviceVfData& vf)
 
 bool Racechecker::AcceptMemoryEvent(Launch& state, const AclsanDeviceMemoryAccessData& a)
 {
-    ++memoryEvents_;
     const auto& h = a.header;
     constexpr auto paddingFlag = static_cast<uint32_t>(ACLSAN_DEVICE_MEMORY_FLAG_HARDWARE_PADDING);
     const bool exact = h.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT && a.vectorMask0 == 0U && a.vectorMask1 == 0U &&
@@ -252,7 +251,6 @@ bool Racechecker::AcceptMemoryEvent(Launch& state, const AclsanDeviceMemoryAcces
 
 bool Racechecker::AcceptBarrierEvent(Launch& state, const AclsanDeviceBarrierData& barrier)
 {
-    ++syncEvents_;
     const auto& h = barrier.header;
     if (barrier.barrierKind == ACLSAN_DEVICE_BARRIER_LOCAL_MEM && h.flags == ACLSAN_DEVICE_EVENT_FLAG_EXACT &&
         h.size >= sizeof(AclsanDeviceBarrierData)) {
@@ -274,7 +272,6 @@ bool Racechecker::AcceptBarrierEvent(Launch& state, const AclsanDeviceBarrierDat
 
 bool Racechecker::AcceptSyncEvent(Launch& state, const AclsanDeviceSyncData& s)
 {
-    ++syncEvents_;
     const auto& h = s.header;
     if (s.scope == ACLSAN_DEVICE_SYNC_SCOPE_PIPE && s.syncKind == ACLSAN_DEVICE_SYNC_KIND_SET_WAIT_FLAG &&
         s.srcPipe == ACLSAN_DEVICE_PIPE_MATRIX && s.dstPipe == ACLSAN_DEVICE_PIPE_FIXPIPE &&
@@ -1044,8 +1041,7 @@ std::string Racechecker::Summary() const
 {
     std::ostringstream s;
     const uint64_t errors = raw_ + war_ + waw_ + atomic_;
-    s << "tool=racecheck device_operations=" << memoryEvents_ << " memory_events=" << memoryEvents_
-      << " sync_events=" << syncEvents_ << " errors=" << errors << " warnings=" << warnings_
+    s << "tool=racecheck errors=" << errors << " warnings=" << warnings_
       << " analysis_complete=" << (AnalysisComplete() ? "true" : "false") << " launches=" << launchesCount_
       << " host_operations=" << hostEvents_ << " raw=" << raw_ << " skipped_memory_events=" << skippedMemoryEvents_
       << " skipped_sync_events=" << skippedSyncEvents_ << " unsupported_ub_events=" << unsupportedUbEvents_

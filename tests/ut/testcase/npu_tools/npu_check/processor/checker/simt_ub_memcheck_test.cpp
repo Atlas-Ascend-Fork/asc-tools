@@ -80,15 +80,11 @@ TEST(SimtUbMemcheckTest, LegacyGmPrefixAcceptedByInitcheck)
     EXPECT_EQ(reports.size(), 1U);
 }
 
-TEST(SimtUbMemcheckTest, LegacyGmPrefixAcceptedByStreamingRacecheckAndTracker)
+TEST(SimtUbMemcheckTest, LegacyGmPrefixAcceptedByTracker)
 {
     auto buffer = LegacyGmWrite();
     const auto& data = *reinterpret_cast<const AclsanDeviceMemoryAccessData*>(buffer.get());
     EXPECT_NO_THROW(racecheck::PrepareAccess(data));
-    Racecheck checker;
-    CheckerReportList reports;
-    EXPECT_TRUE(checker.OnCallback(
-        ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, buffer.get(), reports));
 }
 
 TEST(SimtUbMemcheckTest, LegacyGmPrefixAcceptedByProductionRacecheck)
@@ -550,7 +546,8 @@ TEST(SimtUbMemcheckTest, OrdinaryScalarAndDmaUbWritesCheckPartitionBoundaries)
         access.address = scenario.address;
         access.layoutKind = ACLSAN_MEM_LAYOUT_RANGE;
         access.layout.range.bytes = scenario.bytes;
-        checker.QueueDeviceMemoryAccess(access);
+        ASSERT_TRUE(checker.OnCallback(
+            ACLSAN_CB_DOMAIN_DEVICE_INSTRUCTION, ACLSAN_CBID_DEVICE_MEMORY_ACCESS, &access, callbacks));
         const auto reports = checker.OnSynchronization();
         EXPECT_EQ(reports.size(), 1U);
         EXPECT_EQ(checker.Stats().deviceOperations, 1U);
