@@ -28,6 +28,7 @@ struct BinaryInstrumentationConfig {
     std::string toolchainRoot;
     std::string workDirectory;
     std::string cacheDirectory;
+    std::string saveTempsDirectory;
     bool strict = false;
     bool keepTemp = false;
     bool useCompleteProbeSet = false;

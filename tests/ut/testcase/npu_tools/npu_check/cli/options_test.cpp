@@ -115,6 +115,32 @@ TEST(OptionsTest, HelpWithValidOptionsSucceeds)
     EXPECT_TRUE(result.options.application.empty());
 }
 
+TEST(OptionsTest, AcceptsHiddenSaveTempsDirectory)
+{
+    const auto result = Parse({"npu-check", "--save-temps=.", kSampleApp});
+    ASSERT_TRUE(result.ok) << result.error;
+    const boost::filesystem::path directory(result.options.saveTempsDir);
+    EXPECT_TRUE(directory.is_absolute());
+    EXPECT_TRUE(boost::filesystem::equivalent(directory, boost::filesystem::current_path()));
+    EXPECT_EQ(Usage().find("--save-temps"), std::string::npos);
+
+    const auto missing = Parse({"npu-check", "--save-temps=", kSampleApp});
+    EXPECT_FALSE(missing.ok);
+    EXPECT_EQ(missing.error, "--save-temps requires a valid directory path");
+}
+
+TEST(OptionsTest, RejectsMissingOrNonDirectorySaveTempsPath)
+{
+    const TemporaryFile existing;
+    const auto missing = boost::filesystem::path(existing.Path().string() + "-missing");
+    for (const auto& path : {existing.Path(), existing.Path() / "probes", missing, missing / "probes"}) {
+        const auto result = Parse({"npu-check", "--save-temps=" + path.string(), kSampleApp});
+        EXPECT_FALSE(result.ok) << path;
+        EXPECT_EQ(result.error, "--save-temps requires a valid directory path") << path;
+    }
+    EXPECT_FALSE(boost::filesystem::exists(missing));
+}
+
 // -h 与应用同时出现时两者都保留：由调用方决定先打帮助还是直接跑。
 TEST(OptionsTest, HelpCoexistsWithApplication)
 {

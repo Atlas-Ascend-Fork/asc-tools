@@ -58,6 +58,7 @@ struct DbiRequest {
     std::string toolchainRoot;
     std::string workDirectory;
     std::string cacheDirectory;
+    std::string saveTempsDirectory;
     bool strict = false;
     bool keepTemp = false;
     std::vector<std::string> extraTuneArgs;

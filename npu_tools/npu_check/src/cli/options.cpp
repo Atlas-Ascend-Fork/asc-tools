@@ -345,6 +345,16 @@ bool ParseOptions(int argc, char** argv, Options& options, std::string& error)
             options.workDir = AbsolutePath(value);
             continue;
         }
+        constexpr std::string_view saveTempsOption = "--save-temps=";
+        if (argument.compare(0, saveTempsOption.size(), saveTempsOption) == 0) {
+            options.saveTempsDir = AbsolutePath(argument.substr(saveTempsOption.size()));
+            boost::system::error_code ec;
+            if (!boost::filesystem::is_directory(options.saveTempsDir, ec)) {
+                error = "--save-temps requires a valid directory path";
+                return false;
+            }
+            continue;
+        }
         if (IsNumericOption(argument)) {
             if (!NeedValue(argc, argv, i, value, error) || !ParseNumericOption(argument, value, options, error)) {
                 return false;

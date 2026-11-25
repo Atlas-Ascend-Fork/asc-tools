@@ -11,6 +11,7 @@
 #include "securec.h"
 #include "dbi/kernel_param_metadata.h"
 #include "device_instr/soc_version.h"
+#include "wire_protocol.h"
 
 #include <unistd.h>
 
@@ -71,6 +72,7 @@ DbiRequest MakeRequest(
     request.toolchainRoot = config.toolchainRoot;
     request.workDirectory = work;
     request.cacheDirectory = config.cacheDirectory.empty() ? work + "/probe-cache" : config.cacheDirectory;
+    request.saveTempsDirectory = config.saveTempsDirectory;
     request.strict = config.strict;
     request.keepTemp = config.keepTemp;
     request.useCompleteProbeSet = config.useCompleteProbeSet;
@@ -247,6 +249,9 @@ bool BuildRuntimeInstrumentationConfig(
     config.useCompleteProbeSet = useCompleteProbeSet;
     const char* keepTemp = std::getenv("NPU_CHECK_DBI_KEEP_TEMP");
     config.keepTemp = keepTemp != nullptr && std::strcmp(keepTemp, "1") == 0;
+    if (const char* saveTempsDirectory = std::getenv(npucheck::ipc::SAVE_TEMPS_DIR_ENV)) {
+        config.saveTempsDirectory = saveTempsDirectory;
+    }
     config.tuneArgs.emplace_back("--append-hbmout-paraminfo");
     return true;
 }

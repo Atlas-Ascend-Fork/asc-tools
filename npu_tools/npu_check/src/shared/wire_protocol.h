@@ -55,6 +55,7 @@ constexpr int MAX_HANDSHAKE_TIMEOUT_MS = 120000;
 // 工作目录：probe 缓存落在这里。改用注册表编码之后，
 // Configure 只承载工具与子选项，不再承载路径，因此这类字段改由环境变量传递。
 constexpr const char* WORK_DIR_ENV = "NPU_CHECK_WORK_DIR";
+constexpr const char* SAVE_TEMPS_DIR_ENV = "NPU_CHECK_SAVE_TEMPS_DIR";
 
 // 消息类型。
 //

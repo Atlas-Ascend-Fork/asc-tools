@@ -614,6 +614,7 @@ bool PrepareSession(
     // 工作目录经环境变量下发：Configure 改用注册表编码后只承载工具与子选项，
     // 路径这类与协议无关的部署信息不再占线路。
     (void)setenv(npucheck::ipc::WORK_DIR_ENV, workDir.c_str(), 1);
+    (void)setenv(npucheck::ipc::SAVE_TEMPS_DIR_ENV, options.saveTempsDir.c_str(), 1);
     auto arguments = options.application;
     auto argv = BuildArgv(arguments);
     execvp(argv[0], argv.data());

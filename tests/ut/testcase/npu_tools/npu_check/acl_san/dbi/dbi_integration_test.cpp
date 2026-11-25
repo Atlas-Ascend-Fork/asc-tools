@@ -143,11 +143,43 @@ TEST(DbiIntegrationTest, CompilesLinksAndPatchesSelectedProbeSet)
     }
 
     request.outputKernel = (root / "second-patched.o").string();
-    request.workDirectory = (root / "second-work").string();
+    request.workDirectory = (root / "second work").string();
+    request.saveTempsDirectory = (root / "probe files").string();
+    ASSERT_TRUE(boost::filesystem::create_directory(request.saveTempsDirectory));
+    testing::internal::CaptureStderr();
     const DbiResult cachedResult = RunDbiPipeline(request);
+    const std::string savedConsole = testing::internal::GetCapturedStderr();
     EXPECT_TRUE(cachedResult.success) << cachedResult.stage << ": " << cachedResult.diagnostic;
     EXPECT_EQ(cachedResult.patchedPath, request.outputKernel);
     EXPECT_TRUE(boost::filesystem::is_regular_file(request.outputKernel));
+
+    auto savedEntry = boost::filesystem::directory_iterator(request.saveTempsDirectory);
+    ASSERT_NE(savedEntry, boost::filesystem::directory_iterator{});
+    const auto saved = savedEntry->path();
+    EXPECT_EQ(++savedEntry, boost::filesystem::directory_iterator{});
+    EXPECT_EQ(ReadFile(saved / "kernel.o"), "kernel\n");
+    EXPECT_EQ(ReadFile(saved / "probe.o"), "fake-ld.lld\n");
+    EXPECT_EQ(ReadFile(saved / "kernel_with_probe.o"), "fake-ld.lld\n");
+    EXPECT_GT(boost::filesystem::file_size(saved / "ctrl.bin"), 0U);
+    EXPECT_EQ(ReadFile(saved / "tuned.o"), "fake-bisheng-tune\n");
+    EXPECT_EQ(ReadFile(saved / "patched.o"), ReadFile(request.outputKernel));
+    const std::string tuneLog = ReadFile(saved / "bisheng-tune.log");
+    const std::string command = tuneLog.substr(0, tuneLog.find('\n'));
+    const std::string commandStart =
+        (toolBin / "bisheng-tune").string() + " --action=instru-probe --tune-argsize=24 --instru-memprobe ";
+    EXPECT_EQ(command.find(commandStart), 0U);
+    EXPECT_EQ(command.find('"'), std::string::npos);
+    const auto tuneInput = boost::filesystem::path(request.workDirectory) / "kernel_with_probe.o";
+    EXPECT_NE(command.find(" " + tuneInput.string() + " "), std::string::npos);
+    EXPECT_NE(command.find(" --dbi-config="), std::string::npos);
+    EXPECT_NE(command.find(" -o="), std::string::npos);
+    for (const char* file :
+         {"kernel.o", "probe.o", "kernel_with_probe.o", "ctrl.bin", "tuned.o", "patched.o", "bisheng-tune.log"}) {
+        EXPECT_NE(tuneLog.find(std::string("# ") + file + " - "), std::string::npos) << file;
+    }
+    EXPECT_NE(tuneLog.find("internal npu-check steps"), std::string::npos);
+    EXPECT_NE(savedConsole.find(saved.string()), std::string::npos);
+    EXPECT_NE(savedConsole.find("npu_check: " + command + "\n"), std::string::npos);
 
     const std::string commands = ReadFile(root / "commands.log");
     EXPECT_NE(commands.find("bisheng <-xcce>"), std::string::npos) << commands;
@@ -389,11 +421,20 @@ TEST(DbiIntegrationTest, DoesNotAcceptStalePatchedOutputWhenTuneCreatesNothing)
     request.toolchainRoot = (root / "toolchain").string();
     request.workDirectory = (root / "work").string();
     request.cacheDirectory = (root / "cache").string();
+    request.saveTempsDirectory = (root / "saved").string();
+    ASSERT_TRUE(boost::filesystem::create_directory(request.saveTempsDirectory));
 
     const DbiResult result = RunDbiPipeline(request);
     EXPECT_FALSE(result.success);
     EXPECT_EQ(result.stage, "bisheng-tune");
     EXPECT_EQ(ReadFile(request.outputKernel), "stale\n");
+    auto savedEntry = boost::filesystem::directory_iterator(request.saveTempsDirectory);
+    ASSERT_NE(savedEntry, boost::filesystem::directory_iterator{});
+    const auto saved = savedEntry->path();
+    EXPECT_TRUE(boost::filesystem::is_regular_file(saved / "bisheng-tune.log"));
+    EXPECT_TRUE(boost::filesystem::is_regular_file(saved / "ctrl.bin"));
+    EXPECT_FALSE(boost::filesystem::exists(saved / "tuned.o"));
+    EXPECT_FALSE(boost::filesystem::exists(saved / "patched.o"));
 
     unsetenv("DBI_FAKE_SKIP_OUTPUT");
     unsetenv("DBI_FAKE_LOG");

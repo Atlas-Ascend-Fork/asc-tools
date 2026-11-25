@@ -20,12 +20,14 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <system_error>
 #include <fcntl.h>
@@ -412,15 +414,23 @@ void LogToolOutput(const std::string& stage, const char* stream, const std::stri
     }
 }
 
+std::string FormatToolCommand(const std::vector<std::string>& arguments)
+{
+    std::string command;
+    for (const auto& argument : arguments) {
+        if (!command.empty()) {
+            command += ' ';
+        }
+        command += argument;
+    }
+    return command;
+}
+
 bool RunChecked(
     const std::string& stage, const std::vector<std::string>& arguments, DbiResult& result,
     std::string* standardOutput = nullptr)
 {
-    std::ostringstream command;
-    for (const auto& argument : arguments) {
-        command << std::quoted(argument) << ' ';
-    }
-    LogToolOutput(stage, "command", command.str());
+    LogToolOutput(stage, "command", FormatToolCommand(arguments));
     const ToolResult toolResult = RunTool(arguments);
     ASCTOOL_DEBUG("DBI stage=%s exit=%d", stage.c_str(), toolResult.exitCode);
     LogToolOutput(stage, "stdout", toolResult.standardOutput);
@@ -1068,6 +1078,63 @@ bool MergeKernelWithProbe(
     return true;
 }
 
+std::optional<boost::filesystem::path> CreateSaveTempsDirectory(const std::string& root)
+{
+    std::string pattern = (boost::filesystem::path(root) / "dbi-XXXXXX").string();
+    if (mkdtemp(pattern.data()) == nullptr) {
+        dprintf(
+            STDERR_FILENO, "npu_check: --save-temps cannot create a subdirectory in '%s': %s\n", root.c_str(),
+            std::strerror(errno));
+        return std::nullopt;
+    }
+    return boost::filesystem::path(pattern);
+}
+
+void SaveTempArtifact(const boost::filesystem::path& directory, const boost::filesystem::path& source, const char* name)
+{
+    const auto destination = directory / name;
+    TemporaryFile cleanup(destination);
+    boost::system::error_code error;
+    boost::filesystem::copy_file(source, destination, error);
+    if (error) {
+        dprintf(
+            STDERR_FILENO, "npu_check: --save-temps cannot copy '%s' to '%s': %s\n", source.c_str(),
+            destination.c_str(), error.message().c_str());
+        return;
+    }
+    cleanup.Release();
+}
+
+void SaveTuneInputs(
+    const boost::filesystem::path& directory, const DbiRequest& request, const ProbeArtifacts& artifacts,
+    const MergedKernel& merged, const std::vector<std::string>& tuneArguments)
+{
+    SaveTempArtifact(directory, request.inputKernel, "kernel.o");
+    SaveTempArtifact(directory, artifacts.probeObject, "probe.o");
+    SaveTempArtifact(directory, merged.path, "kernel_with_probe.o");
+    SaveTempArtifact(directory, artifacts.ctrlBin, "ctrl.bin");
+
+    const std::string command = FormatToolCommand(tuneArguments);
+    constexpr char FILE_DESCRIPTIONS[] =
+        "\n\n"
+        "# Saved files (when available)\n"
+        "# kernel.o - Original kernel object before linking and instrumentation.\n"
+        "# probe.o - Probe object linked into the kernel.\n"
+        "# kernel_with_probe.o - Kernel linked with probe.o, used as input to bisheng-tune.\n"
+        "# ctrl.bin - Probe configuration passed to bisheng-tune via --dbi-config.\n"
+        "# tuned.o - Direct output from bisheng-tune.\n"
+        "# patched.o - Final instrumented kernel after any required npu-check metadata updates.\n"
+        "# bisheng-tune.log - The actual bisheng-tune command and these file descriptions.\n"
+        "# Some internal npu-check steps are omitted, including kernel parameter metadata fixes.\n";
+    const auto logPath = directory / "bisheng-tune.log";
+    if (!WriteReplaceFile(logPath, command + FILE_DESCRIPTIONS)) {
+        dprintf(STDERR_FILENO, "npu_check: --save-temps cannot write '%s'\n", logPath.c_str());
+    }
+    dprintf(
+        STDERR_FILENO, "npu_check: DBI temporary files directory: %s\nnpu_check: %s\n", directory.c_str(),
+        command.c_str());
+}
+
 void InstrumentMergedKernel(
     const DbiRequest& request, const ToolchainPaths& tools, const ProbeArtifacts& artifacts, const MergedKernel& merged,
     DbiResult& result)
@@ -1097,12 +1164,20 @@ void InstrumentMergedKernel(
         }
         tuneArguments.emplace_back("--tiling-key=" + std::to_string(*request.tilingKey));
     }
+    const auto savedDirectory =
+        request.saveTempsDirectory.empty() ? std::nullopt : CreateSaveTempsDirectory(request.saveTempsDirectory);
+    if (savedDirectory) {
+        SaveTuneInputs(*savedDirectory, request, artifacts, merged, tuneArguments);
+    }
     if (!RunChecked("bisheng-tune", tuneArguments, result) || !IsNonEmptyFile(stagedOutput)) {
         if (result.diagnostic.empty()) {
             result.stage = "bisheng-tune";
             result.diagnostic = "bisheng-tune did not create " + stagedOutput.string();
         }
         return;
+    }
+    if (savedDirectory) {
+        SaveTempArtifact(*savedDirectory, stagedOutput, "tuned.o");
     }
     // 调用ArgsArray场景会传入--append-hbmout-paraminfo参数。
     // 此时还需要额外修改插桩后.o的meta段使得与DBI的统一偏移保持一致
@@ -1132,6 +1207,9 @@ void InstrumentMergedKernel(
         return;
     }
     outputCleanup.Release();
+    if (savedDirectory) {
+        SaveTempArtifact(*savedDirectory, request.outputKernel, "patched.o");
+    }
     result.success = true;
     result.patchedPath = request.outputKernel;
     result.stage = "complete";
