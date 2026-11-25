@@ -2215,5 +2215,88 @@ class TestAscendump(unittest.TestCase):
             self.assertEqual(dump_parser.execute_parse(), 255)
 
 
+class TestParserLogMessage(unittest.TestCase):
+    def test_log_path_only_when_file_exists(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = os.path.join(temp_dir, "input")
+            os.mkdir(input_dir)
+            value = (
+                struct.pack("IIQ", 0, 0, 16) + struct.pack("q", 42) + b"value=%d\n\0"
+            )
+            tlv = struct.pack("II", DumpType.SCALAR_TYPE.value, len(value)) + value
+            header = struct.pack(
+                FifoBlockInfo.get_format(),
+                FifoBlockInfo.get_size() + len(tlv),
+                0,
+                1,
+                0,
+                0xAE86,
+                1,
+                0,
+                0,
+                *([0] * 6),
+            )
+            good_bin = os.path.join(input_dir, "a.bin")
+            with open(good_bin, "wb") as output:
+                output.write(header + tlv)
+
+            def run_parser(source, level, name):
+                env = os.environ.copy()
+                env["PYTHONPATH"] = ASCENDUMP_PATH
+                env.pop("ASCEND_GLOBAL_LOG_LEVEL", None)
+                if level is not None:
+                    env["ASCEND_GLOBAL_LOG_LEVEL"] = level
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "show_kernel_debug_data",
+                        source,
+                        os.path.join(temp_dir, name),
+                    ],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                output_dir = os.path.join(temp_dir, name)
+                parser_dir = next(
+                    os.path.join(output_dir, entry)
+                    for entry in os.listdir(output_dir)
+                    if entry.startswith("PARSER_")
+                )
+                return result, os.path.join(parser_dir, "parser.log")
+
+            default, default_log = run_parser(input_dir, None, "default")
+            self.assertEqual(default.returncode, 0)
+            self.assertIn("value=42", default.stdout)
+            self.assertNotIn("parser log saved to", default.stdout)
+            self.assertFalse(os.path.exists(default_log))
+
+            info, info_log = run_parser(input_dir, "1", "info")
+            self.assertEqual(info.returncode, 0)
+            self.assertIn(f"parser log saved to {info_log}", info.stdout)
+            with open(info_log, encoding="utf-8") as log_file:
+                self.assertIn("value=42", log_file.read())
+            single_default, single_default_log = run_parser(
+                good_bin, None, "single_default"
+            )
+            self.assertEqual(single_default.returncode, 0)
+            self.assertNotIn("parser log saved to", single_default.stdout)
+            self.assertFalse(os.path.exists(single_default_log))
+
+            single_info, single_info_log = run_parser(good_bin, "1", "single_info")
+            self.assertEqual(single_info.returncode, 0)
+            self.assertIn(f"parser log saved to {single_info_log}", single_info.stdout)
+
+            bad_bin = os.path.join(input_dir, "b.bin")
+            with open(bad_bin, "wb") as output:
+                output.write(b"\0")
+            failed, failed_log = run_parser(input_dir, "1", "failed")
+            self.assertEqual(failed.returncode, 255)
+            self.assertIn(f"parser log saved to {failed_log}", failed.stdout)
+            self.assertTrue(os.path.isfile(failed_log))
+
+
 if __name__ == "__main__":
     unittest.main()

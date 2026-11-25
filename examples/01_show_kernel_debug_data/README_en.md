@@ -98,14 +98,12 @@ Execute the following commands in the `build` directory to parse the kernel-side
 
 ```bash
 mkdir -p dump_info_output
-show_kernel_debug_data ../output dump_info_output
+ASCEND_GLOBAL_LOG_LEVEL=1 show_kernel_debug_data ../output dump_info_output
 ```
 
 The following print information can be observed in the terminal:
 
 ```bash
-log file saves to  ./dump_info_output/PARSER_20251022074515310995/parser.log
-write dump workspace result: ./dump_info_output/PARSER_20251022074515310995/dump_data
 ================ block.0 begin ==============
 fmt string int: 291
 fmt string int: 291
@@ -119,6 +117,7 @@ fmt string int: 291
 fmt string float: 3.140000
 fmt string float: 3.140000
 ================ block.7 end ================
+parser log saved to /path/to/build/dump_info_output/PARSER_20251022074515310995/parser.log
 ```
 
 The parsed result directory structure is as follows:
@@ -134,7 +133,7 @@ dump_info_output
     │   ├── 1
     │   ├── ...
     │   └── index_dtype.json
-    └── parser.log
+    └── parser.log # The default log level is ERROR. This file is created when an error is logged. To include normal parsing logs, run export ASCEND_GLOBAL_LOG_LEVEL=1 (INFO) before running the parsing tool.
 ```
 
 The directories `0`, `1`, ..., `7` under `dump_data` correspond to the print information of the 8 cores respectively. `index0`, `index1`, and `index2` correspond to the prints with the second parameter `desc=0`, `desc=1`, and `desc=2` of `DumpTensor` in the example code, namely `xLocal`, `yLocal`, and `zLocal`.

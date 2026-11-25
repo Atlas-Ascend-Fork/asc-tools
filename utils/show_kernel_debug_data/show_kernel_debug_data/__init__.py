@@ -57,5 +57,6 @@ def show_kernel_debug_data(bin_file_path: str, output_path: str = "./"):
                 parse_output_dir=parser_output_dir,
                 init_logger=False,
             )
+        DUMP_PARSER_LOG.show_log_file()
     else:
         parse_dump_bin(dump_bins[0], output_path)

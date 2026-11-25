@@ -27,6 +27,8 @@ kernel侧算子调试信息（AscendC::DumpTensor, AscendC::printf等）可通�
     |bin_file_path| 必选 | kernel侧调试信息落盘路径，支持bin文件或目录。目录模式下会递归收集`.bin`文件并统一解析。 |
     |output_path| 可选 | 解析结果保存路径，例如`"/output_dir"`。默认是当前命令行执行目录。若目录不存在，工具会自动创建。 |
 
+    `parser.log`用于保存工具的解析日志。默认日志级别为ERROR，该级别下，工具仅在写入错误日志时生成该文件。如需记录正常解析日志，请在运行工具前将环境变量[ASCEND_GLOBAL_LOG_LEVEL](https://gitcode.com/cann/runtime/blob/master/docs/zh/env_vars/ASCEND_GLOBAL_LOG_LEVEL.md)设置为`1`（INFO）。
+
 - **API方式**
 
     show\_kernel\_debug\_data接口说明：
@@ -85,7 +87,7 @@ kernel侧算子调试信息（AscendC::DumpTensor, AscendC::printf等）可通�
         - all：导出以下所有类型调测的输出数据。
         - printf: 导出AscendC::printf/PRINTF调测的输出数据。
         - tensor: 导出AscendC::DumpTensor调测的输出数据。
-        - assert: 导出ascend_assert调测的输出数据。
+        - assert: 导出assert/ascendc_assert的调测输出。
         - timestamp: 导出AscendC::PrintTimeStamp获取的时间戳信息。
     - dump_path：启用算子Kernel调测信息Dump功能时，dump_path必须配置，支持配置绝对路径或相对路径。
 
