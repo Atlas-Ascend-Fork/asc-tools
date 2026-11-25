@@ -27,6 +27,8 @@ For a tool usage demonstration, refer to the [show_kernel_debug_data example](..
     |bin_file_path| Required | The path where kernel-side debugging information is saved. Supports bin files or directories. In directory mode, `.bin` files are recursively collected and parsed together. |
     |output_path| Optional | The path to save parsing results, e.g., `"/output_dir"`. Defaults to the current command-line working directory. The tool will automatically create the directory if it does not exist. |
 
+    `parser.log` stores the tool’s parsing logs. The default log level is ERROR. At this level, the tool creates the file only when it writes an error log. To record normal parsing logs, set [ASCEND_GLOBAL_LOG_LEVEL](https://gitcode.com/cann/runtime/blob/master/docs/en/env_vars/ASCEND_GLOBAL_LOG_LEVEL.md) to `1` (INFO) before running the tool.
+
 - **API Method**
 
     show\_kernel\_debug\_data API description:
@@ -87,7 +89,7 @@ For a tool usage demonstration, refer to the [show_kernel_debug_data example](..
         - all: Export output data from all of the following debugging types.
         - printf: Export output data from AscendC::printf/PRINTF debugging.
         - tensor: Export output data from AscendC::DumpTensor debugging.
-        - assert: Export output data from ascend_assert debugging.
+        - assert: Export debug output from assert/ascendc_assert.
         - timestamp: Export timestamp information obtained via AscendC::PrintTimeStamp.
     - dump_path: When enabling the operator Kernel debugging information Dump function, dump_path must be configured. Both absolute and relative paths are supported.
 

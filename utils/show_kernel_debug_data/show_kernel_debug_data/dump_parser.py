@@ -1423,6 +1423,9 @@ def parse_dump_bin(bin_file_path, output_path, parse_output_dir=None, init_logge
 
         traceback.print_exc()
         return 255
+    finally:
+        if init_logger:
+            DUMP_PARSER_LOG.show_log_file()
 
 
 def _validate_and_prepare(bin_file_path, output_path):
@@ -1513,7 +1516,9 @@ def execute_parse():
                 init_logger=False,
             )
             if ret != 0:
+                DUMP_PARSER_LOG.show_log_file()
                 return ret
+        DUMP_PARSER_LOG.show_log_file()
     else:
         ret = parse_dump_bin(dump_bins[0], output_path)
         if ret != 0:

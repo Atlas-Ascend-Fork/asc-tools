@@ -98,14 +98,12 @@
 
 ```bash
 mkdir -p dump_info_output
-show_kernel_debug_data ../output dump_info_output
+ASCEND_GLOBAL_LOG_LEVEL=1 show_kernel_debug_data ../output dump_info_output
 ```
 
 终端可观察到如下打印信息：
 
 ```bash
-log file saves to  ./dump_info_output/PARSER_20251022074515310995/parser.log
-write dump workspace result: ./dump_info_output/PARSER_20251022074515310995/dump_data
 ================ block.0 begin ==============
 fmt string int: 291
 fmt string int: 291
@@ -119,6 +117,7 @@ fmt string int: 291
 fmt string float: 3.140000
 fmt string float: 3.140000
 ================ block.7 end ================
+parser log saved to /path/to/build/dump_info_output/PARSER_20251022074515310995/parser.log
 ```
 
 解析结果目录结构如下：
@@ -134,7 +133,7 @@ dump_info_output
     │   ├── 1
     │   ├── ...
     │   └── index_dtype.json
-    └── parser.log
+    └── parser.log # 默认日志级别为 ERROR，有错误日志写入时才生成。若需查看正常解析日志，请在运行解析工具前执行 export ASCEND_GLOBAL_LOG_LEVEL=1（INFO）。
 ```
 
 `dump_data`目录下的`0`、`1`、...、`7`分别对应8个核的打印信息。`index0`、`index1`、`index2`分别对应样例代码中`DumpTensor`第二个参数`desc=0`、`desc=1`、`desc=2`的打印，即`xLocal`、`yLocal`、`zLocal`。
