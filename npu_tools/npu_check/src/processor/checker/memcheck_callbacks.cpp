@@ -147,9 +147,7 @@ std::string Memcheck::Summary() const
 {
     const auto stats = Stats();
     std::ostringstream output;
-    output << "tool=memcheck device_operations=" << stats.deviceOperations
-           << " memory_events=" << stats.deviceOperations << " sync_events=" << stats.synchronizationEvents
-           << " errors=" << stats.errors << " warnings=" << stats.warnings
+    output << "tool=memcheck errors=" << stats.errors << " warnings=" << stats.warnings
            << " analysis_complete=" << (AnalysisComplete() ? "true" : "false") << " allocations=" << stats.allocations
            << " frees=" << stats.frees << " pending_device_operations=" << stats.pendingDeviceOperations
            << " dropped_device_operations=" << stats.droppedDeviceOperations

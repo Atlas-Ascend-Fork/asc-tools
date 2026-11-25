@@ -167,7 +167,6 @@ private:
     std::map<uint64_t, std::set<std::string>> replayReasons_;
     std::map<std::string, uint64_t> replayFailures_;
     std::set<uint32_t> uncertainDevices_;
-    uint64_t syncEvents_ = 0;
     uint64_t degradedInstructions_ = 0;
 };
 

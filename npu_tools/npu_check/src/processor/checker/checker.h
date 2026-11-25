@@ -40,7 +40,7 @@ public:
         AclsanCallbackDomain domain, AclsanCallbackId cbid, const void* data, CheckerReportList& reports) = 0;
     // Called after callbacks are drained; pending work must not silently disappear.
     virtual void Finalize([[maybe_unused]] CheckerReportList& reports) {}
-    // 输出分析结果摘要，供工具管理器在分析结束时输出
+    // 输出 checker 专属摘要；会话级 device CBData 计数由 ToolManager 追加。
     virtual std::string Summary() const = 0;
     // 检查是否检测到错误
     virtual bool HasErrors() const = 0;

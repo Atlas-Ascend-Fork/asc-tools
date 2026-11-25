@@ -640,7 +640,6 @@ bool Initcheck::OnDeviceSync(AclsanCallbackId cbid, const void* data)
         replayReasons_[h.launchId].insert("invalid_sync_record");
         return false;
     }
-    ++syncEvents_;
     if (h.flags != ACLSAN_DEVICE_EVENT_FLAG_NONE && h.flags != ACLSAN_DEVICE_EVENT_FLAG_EXACT) {
         replayReasons_[h.launchId].insert("sync_coverage_unknown");
         return true;
@@ -1820,12 +1819,10 @@ bool Initcheck::AnalysisComplete() const
 std::string Initcheck::Summary() const
 {
     std::ostringstream output;
-    output << "tool=initcheck device_operations=" << stats_.deviceOperations
-           << " memory_events=" << stats_.deviceOperations << " sync_events=" << syncEvents_
-           << " errors=" << stats_.errors << " warnings=" << stats_.warnings
+    output << "tool=initcheck errors=" << stats_.errors << " warnings=" << stats_.warnings
            << " analysis_complete=" << (AnalysisComplete() ? "true" : "false")
-           << " register_writes=" << stats_.registerWrites << " synchronizations=" << stats_.synchronizations
-           << " malformed_events=" << stats_.malformedEvents << " failed_launches=" << stats_.failedLaunches
+           << " register_writes=" << stats_.registerWrites << " malformed_events=" << stats_.malformedEvents
+           << " failed_launches=" << stats_.failedLaunches
            << " failed_synchronizations=" << stats_.failedSynchronizations
            << " pending_memory_operations=" << pendingMemoryAccesses_.size()
            << " failed_host_writes=" << stats_.failedHostWrites
