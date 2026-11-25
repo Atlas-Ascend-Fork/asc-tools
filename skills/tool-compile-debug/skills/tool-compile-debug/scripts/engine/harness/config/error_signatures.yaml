@@ -1,0 +1,279 @@
+# General compiler, CMake, linker, and packager diagnostic syntax signatures.
+# Domain knowledge is never embedded here; unresolved API/architecture questions
+# are routed to host cannbot-knowledge query skills and active SDK headers.
+- id: filename_too_long
+  regex: CMake Error at .*makeself\.cmake|file name is too long \(cannot be split\)|file name is too long \(max 256\)
+  phase: package
+  category: package_error
+  claims_cmake_envelope: true
+  example_message: 'CMake Error at /work/proj/makeself.cmake:12 (message): file name is too long (cannot be split)'
+- id: asc_package_config_not_found
+  regex: Could not find a package configuration file provided by ["'.]?ASC["'.]?
+  phase: cmake_configure
+  category: environment
+  claims_cmake_envelope: true
+  example_message: 'Could not find a package configuration file provided by "ASC" with any of the following names:'
+- id: soc_version_unsupported
+  regex: SOC_VERSION \S+ is unsupported|SOC_VERSION.*does not support
+  phase: cmake_configure
+  category: environment
+  claims_cmake_envelope: true
+  example_message: SOC_VERSION UnsupportedSocName is unsupported
+- id: cann_env_path_missing
+  regex: (?:ASCEND_HOME_PATH|ASCEND_CANN_PACKAGE_PATH|ASC_DIR).*(?:not set|not found|does not exist|no such)
+  phase: cmake_configure
+  category: environment
+  claims_cmake_envelope: true
+  example_message: 'CMake Error: ASCEND_HOME_PATH is not set or does not exist'
+- id: cmake_error
+  regex: 'CMake Error at|CMake Error:'
+  phase: cmake_configure
+  category: cmake_config
+  example_message: 'CMake Error at /work/proj/CMakeLists.txt:5 (find_package): Could not find required package'
+- id: no_rule_to_make_target
+  regex: No rule to make target
+  phase: cmake_generate
+  category: cmake_config
+  example_message: No rule to make target 'proj/kernel.cpp', needed by 'proj/CMakeFiles/tgt.dir/kernel.cpp.o'
+- id: error_opening_object_file
+  regex: 'error opening ''.*\.o(\.d)?'': No such file'
+  phase: cmake_generate
+  category: cmake_config
+  example_message: 'error opening ''CMakeFiles/tgt.dir/kernel.cpp.o.d'': No such file or directory'
+- id: header_missing
+  regex: 'fatal error: .*: No such file or directory|fatal error: .* file not found|fatal error C1083:'
+  phase: unknown_compile
+  category: header_missing
+  example_message: 'fatal error: kernel_operator.h: No such file or directory'
+- id: undefined_reference
+  regex: undefined reference to
+  phase: link
+  category: link_error
+  example_message: undefined reference to `custom_kernel_entry'
+- id: lld_undefined_symbol
+  regex: 'ld\.lld:\s*error:\s*undefined symbol:'
+  phase: link
+  category: link_error
+  example_message: 'ld.lld: error: undefined symbol: custom_kernel_entry(unsigned char*)'
+- id: cannot_find_library
+  regex: cannot find -l|unable to find library -l|No such file or directory.*\.so
+  phase: link
+  category: link_error
+  example_message: cannot find -lascendcl
+- id: linker_command_failed
+  regex: linker command failed with exit code
+  phase: link
+  category: link_error
+  example_message: 'bisheng: error: linker command failed with exit code 1 (use -v to see invocation)'
+- id: template_depth_limit
+  regex: recursive template instantiation exceeded maximum depth|template instantiation depth exceeds
+  phase: kernel_compile
+  category: compiler_limit
+  example_message: 'fatal error: recursive template instantiation exceeded maximum depth of 1024'
+- id: jump_range
+  regex: out of jump/jumpc imm range|jump.*range
+  phase: kernel_compile
+  category: compiler_limit
+  example_message: 'fatal error: out of jump/jumpc imm range'
+- id: static_assert_capacity_exceeded
+  regex: 'static assertion failed.*(?:\bexceed(?:s|ing)?\b|\boverflow\b|<=[^:]*\b\w*SIZE\b)'
+  phase: kernel_compile
+  category: compiler_limit
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前有效声明、完整静态断言表达式、编译命令及任务契约；涉及架构容量或规格约束时由宿主加载 ascendc-api-knowledge-query 或 knowledge-query 查询，读取正文并核实际SDK。不靠缩减功能或更换目标绕过断言。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'static assertion failed due to requirement ''TILE_BYTES <= ArchScope::MAX_SIZE'': tile size exceeding limit'
+- id: static_assert_unsupported_specialization
+  regex: 'static assertion failed.*(?:\bnot support(?:ed)?\b|\bunsupported\b|can ?not find.*specialization|\bdependent_false\b)'
+  phase: kernel_compile
+  category: api_incompatible
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前有效声明、模板特化条件、目标架构编译参数及任务契约；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。匹配消息本身不决定替换API、dtype、布局或目标。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'static assertion failed due to requirement ''dependent_false<ArchTag>'': unsupported specialization on current target'
+- id: static_assert_contract_violation
+  regex: static assertion failed
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前有效声明、调用参数、静态断言条件及任务契约；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。匹配消息本身不决定替换API、调整模板、dtype、布局或目标。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'static assertion failed due to requirement ''0 != 0'': invalid template parameter contract'
+- id: namespace_member_or_template_missing
+  regex: no (?:member|template|type) named '\w+' in namespace '[\w:]+'
+  phase: kernel_compile
+  category: api_incompatible
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前有效头文件声明、命名空间导出、宏门控与编译命令；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK，不凭编译器近名建议盲改接口。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: no template named 'TargetOpImpl' in namespace 'AscendC'; did you mean 'OtherOpImpl'?
+- id: record_member_missing
+  regex: no (?:member|template|type) named '\w+' in '(?:const |volatile )*[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+(?:<[^']*)?'
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前SDK类/结构体实际定义、构造函数与成员签名；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。匹配消息本身不决定替换类型或删除字段。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: no member named 'extraField' in 'AscendC::ConfigParams<float>'
+- id: unqualified_template_not_found
+  regex: no template named '[A-Za-z_]\w*'
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前编译域头文件包含、命名空间限定与语言约束；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: no template named 'type_trait_helper'; did you mean 'ns::type_trait_helper'?
+- id: template_argument_arity_mismatch
+  regex: too (?:many|few) template arguments for (?:class|function|alias|variable) template
+  phase: kernel_compile
+  category: template_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前SDK模板声明形参列表、默认模板参数与版本契约；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: too many template arguments for class template 'BufferHandle'
+- id: undefined_template_instantiation
+  regex: implicit instantiation of undefined template
+  phase: kernel_compile
+  category: api_incompatible
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前有效模板定义头文件、显式特化集合与目标架构约束；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: implicit instantiation of undefined template 'AscendC::DispatchTrait<float>'
+- id: no_matching_member_function_call
+  regex: no matching member function for call to '[\w:]+'
+  phase: kernel_compile
+  category: template_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断及编译器 candidate notes 核当前SDK成员函数重载签名、实参类型及数量；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: no matching member function for call to 'ConfigureBuffer'
+- id: unknown_type_with_suggestion
+  regex: unknown type name '[A-Za-z_]\w*'; did you mean '[A-Za-z_][\w:]*'
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前编译命令（Host CXX vs Device ASC）、必需头文件及目标类型支持；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，不把标量类型盲改为向量或近名类型。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: unknown type name 'scalar_fp_t'; did you mean 'scalar_fp2_t'?
+- id: undeclared_identifier_qualified_suggestion
+  regex: use of undeclared identifier '[A-Za-z_]\w*'; did you mean '[A-Za-z_]\w*::[\w:]+'
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前头文件中的命名空间层级、枚举作用域与导出别名；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: use of undeclared identifier 'BLOCK_FACTOR'; did you mean 'ArchNs::BLOCK_FACTOR'?
+- id: undeclared_c_float_suffix_builtin
+  regex: use of undeclared identifier '([a-z][a-z0-9_]*)[fl]'; did you mean '\1'
+  case_sensitive: true
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核当前核函数执行域（标量 vs 向量指令 API）及设备端数学接口支持；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，不盲目替换为 Host 标准库同名函数。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: use of undeclared identifier 'compute_valf'; did you mean 'compute_val'?
+- id: host_fn_from_aicore
+  regex: calling a __host__ function\([^)]*\) from a __aicore__ function
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核被调函数的修饰符（__aicore__ / inline）、头文件归属及核函数语言限制；领域知识不足时由宿主加载 ascendc-api-knowledge-query 或 knowledge-query 查询，保持原有计算契约。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: 'calling a __host__ function("host_helper") from a __aicore__ function("device_entry") is not allowed'
+- id: aicore_forbidden_cpp_construct
+  regex: cannot use '[^']+' in (?:\[aicore\]|__global__ __aicore__ function|aicore function)|exception specification is not allowed in __aicore__|Induction variable must have a type \w+
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核设备侧 __aicore__ 编译域语法与控制流约束；领域知识不足时由宿主加载 ascendc-api-knowledge-query 或 knowledge-query 查询，读取正文并核实际SDK。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: cannot use 'throw' in __global__ __aicore__ function
+- id: gm_address_space_conversion_mismatch
+  regex: (?:cannot initialize a variable of type|reinterpret_cast from|no viable conversion|assigning to).*__gm__
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  conditional_advice: 依据原始诊断核全局内存地址空间限定（__gm__ 指针、缓冲区封装接口与标量解引用契约）；领域知识不足时由宿主加载 ascendc-api-knowledge-query 查询，读取正文并核实际SDK。
+  applicability_reasons:
+  - current_call_contract_unverified
+  evidence_scope: compiler_diagnostic
+  example_message: cannot initialize a variable of type '__gm__ float *' with an lvalue of type 'uint8_t *'
+- id: type_alias_redefinition_conflict
+  regex: type alias redefinition with different types
+  phase: kernel_compile
+  category: kernel_compile_error
+  claims_compiler_diagnostic: true
+  example_message: type alias redefinition with different types ('AliasType<int>' vs 'AliasType<float>')
+- id: template_error
+  regex: template|instantiation|required from|no matching function|ambiguous|invalid conversion|no viable conversion|no type named
+  phase: unknown_compile
+  category: template_error
+  example_message: no matching function for call to 'Compute(int&, int&)'
+- id: compiler_unsupported_arch_or_option
+  regex: Unsupported NPU architecture|no aicore arch specified|Cannot find option named|No valid NPU architecture or soc is specified
+  phase: kernel_compile
+  category: unfriendly_error_code
+  example_message: 'error: Unsupported NPU architecture 3510'
+- id: internal_compiler_error
+  regex: internal compiler error|Segmentation fault|compiler.*crash|Stack dump|error in backend:\s*Cannot select
+  phase: kernel_compile
+  category: compiler_internal
+  example_message: 'internal compiler error: in finish_function at ../../gcc/cp/semantics.c:1234'
+- id: cann_error_code_generic
+  regex: \b[EWIZ1-9A-Z][0-9A-Z][0-9]{4}\b
+  phase: unknown
+  category: cann_error_code
+  example_message: 'EI0001: operator params check failed'
+- id: cann_internal_code
+  regex: \b[EWIZ1-9A-Z][0-9A-Z]9[0-9]{3}\b
+  phase: unknown
+  category: compiler_internal_or_cann_internal
+  action: start_minimize_and_probe_workflow
+  example_message: 'EI9001: internal compiler assertion failed'
+- id: schema_consistency
+  regex: generated code is stale|prototype .*schema|opcheck|host[_ -]?kernel.*arg|input_desc missing|required dtype|schema_consistency
+  phase: host_compile
+  category: schema_consistency
+  example_message: generated code is stale, please regenerate tiling json
+- id: package_artifact_missing
+  regex: msobjdump:.*no .*kernel|kernel metadata missing|package failed
+  phase: package
+  category: package_error
+  example_message: 'msobjdump: error: no custom kernel found in the package'
+- id: json_not_generated
+  regex: \.json.*not generated|not generated.*\.json|failed to generate.*json
+  phase: package
+  category: package_error
+  example_message: 'error: kernel_meta.json not generated'
+- id: make_downstream
+  regex: 'g?make(\[[0-9]+\])?: \*\*\* .* Error [0-9]+|ninja: build stopped'
+  category: downstream_error
+  example_message: 'gmake[1]: *** [CMakeFiles/tgt.dir/all] Error 2'

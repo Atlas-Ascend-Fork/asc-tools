@@ -1,0 +1,7 @@
+# Product support requirement; no API compatibility claims or SDK download table.
+schema_version: 2
+floor: "9.0.0"
+knowledge_provider: cannbot-knowledge
+required_cann_lines: ["9.0", "9.1", "9.2"]
+required_npu_families: ["910", "950"]
+policy: "CANN >= 9.0; actual API applicability requires knowledge and installed SDK evidence."

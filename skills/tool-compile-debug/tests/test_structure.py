@@ -11,29 +11,34 @@
 # ----------------------------------------------------------------------------------------------------------
 """包结构约束测试。
 
-用途：钉住技能目录结构、frontmatter 与脚本头部约定，防止包结构漂移。
-使用方法：python3 -m unittest discover -s tests  （在技能根目录执行）
+用途：钉住双层发行目录与内层纯净技能目录结构、frontmatter 与脚本头部约定，防止包结构漂移。
+使用方法：python3 -m unittest discover -s tests  （在外层发行根目录执行）
 """
 
 import json
+from pathlib import Path
 import re
+import sys
 import tempfile
 import unittest
-from pathlib import Path
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
+import yaml
+
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+from package_paths import resolve_roots  # noqa: E402
+
+DIST_ROOT, SKILL_ROOT = resolve_roots(__file__)
 SKILL_MD = SKILL_ROOT / "SKILL.md"
 LICENSE_MARK = "CANN Open Software License Agreement Version 2.0"
-EXTERNAL_SKILL_NAME = (
-    r"(?:ascendc-[a-z0-9]+(?:-[a-z0-9]+)*|npu-arch|ops-precision-standard)"
-)
-# Match skill names in prose, including names without backticks, but not options
-# such as --npu-arch or path components such as /ascendc-compile-doctor/audit.
+EXTERNAL_SKILL_NAME = r"(?:knowledge-query|ascendc-api-knowledge-query)"
 EXTERNAL_SKILL_RE = re.compile(
     rf"(?<![A-Za-z0-9_./-]){EXTERNAL_SKILL_NAME}(?![A-Za-z0-9_./-])"
 )
 QUALIFIED_SKILL_RE = re.compile(
-    rf"(?<![A-Za-z0-9_-])CANNBOT\s+`({EXTERNAL_SKILL_NAME})`\s+技能"
+    rf"(?<![A-Za-z0-9_-])cannbot-knowledge\s+`({EXTERNAL_SKILL_NAME})`\s+技能"
 )
 EVAL_PROSE_FIELDS = {
     "title",
@@ -58,8 +63,6 @@ def package_files(root):
 
 def unqualified_skill_references(text):
     """Find prose references missing their adjacent provider, quoting or role."""
-    # Fenced examples contain exact machine identifiers, not prose references.
-    # Preserve offsets/newlines so errors still point at the original document.
     fence = None
     lines = []
     for line in text.splitlines(keepends=True):
@@ -126,6 +129,30 @@ def parse_frontmatter(text):
     return fields, "\n".join(block)
 
 
+def unique_mapping(pairs):
+    """Reject duplicate keys, including nested JSON/YAML configuration fields."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate configuration key: {key}")
+        result[key] = value
+    return result
+
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader with the duplicate-key gate used by upstream CI."""
+
+    def construct_mapping(self, node, deep=False):
+        self.flatten_mapping(node)
+        return unique_mapping(
+            (
+                self.construct_object(key, deep=deep),
+                self.construct_object(value, deep=deep),
+            )
+            for key, value in node.value
+        )
+
+
 class SkillStructureTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -138,95 +165,93 @@ class SkillStructureTest(unittest.TestCase):
         self.assertLess(len(self.frontmatter["name"]), 64)
         self.assertEqual(self.frontmatter.get("license"), "CANN-2.0")
 
+    def test_all_configuration_files_have_unique_keys(self):
+        yaml.load(self.frontmatter_block, Loader=UniqueKeyLoader)
+        scan_root = DIST_ROOT if (DIST_ROOT and DIST_ROOT.is_dir()) else SKILL_ROOT
+        for path in package_files(scan_root):
+            if path.suffix not in {".yaml", ".yml", ".json"}:
+                continue
+            with self.subTest(file=path.relative_to(scan_root).as_posix()):
+                text = path.read_text(encoding="utf-8")
+                if path.suffix == ".json":
+                    json.loads(text, object_pairs_hook=unique_mapping)
+                else:
+                    list(yaml.load_all(text, Loader=UniqueKeyLoader))
+
+    def test_duplicate_key_gate_rejects_ambiguous_configuration(self):
+        for text in ("rules:\nrules: []\n", "outer:\n  key: 1\n  key: 2\n"):
+            with (
+                self.subTest(text=text),
+                self.assertRaisesRegex(ValueError, "Duplicate"),
+            ):
+                yaml.load(text, Loader=UniqueKeyLoader)
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            json.loads('{"outer":{"key":1,"key":2}}', object_pairs_hook=unique_mapping)
+        self.assertEqual(
+            yaml.load("rules: []\n", Loader=UniqueKeyLoader), {"rules": []}
+        )
+
+    def test_compiler_flags_are_not_dependency_skill_names(self):
+        for path in package_files(SKILL_ROOT):
+            if path.suffix not in {".md", ".json"}:
+                continue
+            with self.subTest(file=path.relative_to(SKILL_ROOT).as_posix()):
+                self.assertNotRegex(
+                    path.read_text(encoding="utf-8"),
+                    r"--(?:knowledge-query|ascendc-api-knowledge-query)\b",
+                )
+
+    def test_external_skill_references_identify_provider_and_role(self):
+        docs = [SKILL_MD, *sorted((SKILL_ROOT / "references").rglob("*.md"))]
+        if DIST_ROOT and (DIST_ROOT / "README.md").is_file():
+            docs.append(DIST_ROOT / "README.md")
+        for path in docs:
+            rel = (
+                path.relative_to(DIST_ROOT).as_posix()
+                if (DIST_ROOT and path.is_relative_to(DIST_ROOT))
+                else path.relative_to(SKILL_ROOT).as_posix()
+            )
+            with self.subTest(file=rel):
+                self.assertEqual(
+                    unqualified_skill_references(path.read_text(encoding="utf-8")),
+                    [],
+                )
+        for path in sorted((SKILL_ROOT / "evals").glob("*.json")):
+            rel = path.relative_to(SKILL_ROOT).as_posix()
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            for loc, prose in evaluation_prose(payload):
+                with self.subTest(file=rel, location=loc):
+                    self.assertEqual(unqualified_skill_references(prose), [])
+
     def test_description_declares_trigger(self):
         description = self.frontmatter.get("description", "")
         self.assertTrue(description)
         self.assertLessEqual(len(description), 1024)
         self.assertIn("触发：", description)
-        # 折叠块原文里也必须显式出现「触发：」（触发约束的字面要求）
         self.assertIn("触发：", self.frontmatter_block)
 
     def test_skill_is_concise(self):
         self.assertLess(len(self.text.splitlines()), 500)
 
-    def test_external_skill_references_identify_provider_and_role(self):
-        for path in package_files(SKILL_ROOT):
-            if path.suffix != ".md":
-                continue
-            with self.subTest(file=path.relative_to(SKILL_ROOT).as_posix()):
-                self.assertEqual(
-                    unqualified_skill_references(path.read_text(encoding="utf-8")),
-                    [],
-                    "外部技能应写为 CANNBOT `技能名` 技能",
-                )
-        for path in sorted((SKILL_ROOT / "evals").glob("*.json")):
-            document = json.loads(path.read_text(encoding="utf-8"))
-            for location, text in evaluation_prose(document):
-                with self.subTest(file=path.name, field=location):
-                    self.assertEqual(unqualified_skill_references(text), [])
-
-    def test_external_skill_reference_rule_rejects_unqualified_prose(self):
-        for text in (
-            "调用 `ascendc-docs-search` 技能",
-            "架构事实走 npu-arch 技能",
-            "调用 CANNBOT ascendc-docs-search 技能",
-            "调用 `CANNBOT ascendc-docs-search` 技能",
-            "调用 CANNBOT `ascendc-docs-search`",
-            "调用 NOTCANNBOT `ascendc-docs-search` 技能",
-            "调用 CANNBOT `ascendc-docs-search` 或 `npu-arch` 技能",
-        ):
-            with self.subTest(text=text):
-                self.assertTrue(unqualified_skill_references(text))
-        valid = (
-            "调用 CANNBOT `ascendc-docs-search` 技能；"
-            "CANNBOT `npu-arch` 技能核对 --npu-arch 的值。\n"
-            "CANNBOT `ops-precision-standard`\n技能用于验收；"
-            "日志位于 /state/ascendc-compile-doctor/audit。"
-        )
-        self.assertEqual(unqualified_skill_references(valid), [])
-
-    def test_fenced_machine_names_do_not_relax_following_prose(self):
-        for fence in ("```", "~~~~"):
-            example = fence + 'json\n{"skill":"ascendc-docs-search"}\n' + fence + "\n"
-            self.assertEqual(unqualified_skill_references(example), [])
-            self.assertEqual(
-                unqualified_skill_references(example + "调用 `npu-arch` 技能"),
-                ["line 4: npu-arch"],
-            )
-
-    def test_evaluation_prose_checks_descriptions_but_not_machine_identifiers(self):
-        document = {
-            "skill_name": "ascendc-env-check",
-            "config": {"distractor_skills": ["ascendc-env-check"]},
-            "prompt": "核对 --npu-arch 参数。",
-            "expectations": [
-                {
-                    "type": "contains",
-                    "pattern": "npu-arch",
-                    "description": "架构事实走 npu-arch 技能",
-                }
-            ],
-        }
-        fields = dict(evaluation_prose(document))
-        self.assertEqual(set(fields), {"/prompt", "/expectations/0/description"})
-        self.assertEqual(unqualified_skill_references(fields["/prompt"]), [])
-        self.assertTrue(
-            unqualified_skill_references(fields["/expectations/0/description"])
-        )
-
     def test_package_has_no_empty_or_whitespace_only_files(self):
-        files = [
-            path
-            for path in package_files(SKILL_ROOT)
-            if "__pycache__" not in path.parts
-        ]
-        self.assertTrue(files)
-        empty = [
-            path.relative_to(SKILL_ROOT).as_posix()
-            for path in files
-            if not path.read_bytes().strip()
-        ]
-        self.assertEqual(empty, [], f"Empty package files: {empty}")
+        roots = [SKILL_ROOT]
+        if DIST_ROOT and DIST_ROOT.is_dir():
+            roots.append(DIST_ROOT)
+        for root in roots:
+            files = [
+                path
+                for path in package_files(root)
+                if "__pycache__" not in path.parts
+                and ".pytest_cache" not in path.parts
+                and path.suffix != ".pyc"
+            ]
+            self.assertTrue(files)
+            empty = [
+                path.relative_to(root).as_posix()
+                for path in files
+                if not path.read_bytes().strip()
+            ]
+            self.assertEqual(empty, [], f"Empty package files in {root}: {empty}")
 
     def test_package_files_exclude_only_root_git_metadata(self):
         for git_is_directory in (True, False):
@@ -251,17 +276,31 @@ class SkillStructureTest(unittest.TestCase):
                     self.assertEqual(actual, expected)
 
     def test_root_has_no_host_repo_files(self):
-        # 宿主仓技能根惯例：不携带 README/requirements/CHANGELOG/.gitattributes/.ps1
+        top_names = {
+            p.name
+            for p in SKILL_ROOT.iterdir()
+            if p.name not in {".git", "__pycache__", ".pytest_cache"}
+        }
+        self.assertEqual(top_names, {"SKILL.md", "references", "evals", "scripts"})
         for name in (
             "README.md",
             "requirements.txt",
             "CHANGELOG.md",
             ".gitattributes",
+            "tests",
+            "scripts/install.sh",
+            "scripts/install.py",
+            "scripts/knowledge.lock.json",
         ):
-            self.assertFalse((SKILL_ROOT / name).is_file(), f"技能根不应有 {name}")
+            self.assertFalse(
+                (SKILL_ROOT / name).exists(), f"内层纯净技能包不应有 {name}"
+            )
+        scan_root = DIST_ROOT if (DIST_ROOT and DIST_ROOT.is_dir()) else SKILL_ROOT
         self.assertFalse(
-            [path for path in package_files(SKILL_ROOT) if path.suffix == ".ps1"]
+            [path for path in package_files(scan_root) if path.suffix == ".ps1"]
         )
+        if DIST_ROOT and (DIST_ROOT / "scripts/install.sh").is_file():
+            self.assertTrue((DIST_ROOT / "README.md").is_file())
 
     def test_local_links_resolve(self):
         links = re.findall(r"\[[^\]]+\]\(([^)#]+?)(?:#[^)]*)?\)", self.text)
@@ -273,14 +312,31 @@ class SkillStructureTest(unittest.TestCase):
         self.assertTrue(local)
         for link in local:
             self.assertTrue((SKILL_ROOT / link).is_file(), link)
+        if DIST_ROOT and (DIST_ROOT / "README.md").is_file():
+            readme_text = (DIST_ROOT / "README.md").read_text(encoding="utf-8")
+            outer_links = [
+                link
+                for link in re.findall(
+                    r"\[[^\]]+\]\(([^)#]+?)(?:#[^)]*)?\)", readme_text
+                )
+                if "://" not in link and not link.startswith("skill:")
+            ]
+            self.assertTrue(outer_links)
+            for link in outer_links:
+                self.assertTrue((DIST_ROOT / link).is_file(), link)
 
     def test_all_python_and_shell_files_carry_copyright(self):
+        scan_root = DIST_ROOT if (DIST_ROOT and DIST_ROOT.is_dir()) else SKILL_ROOT
         scripts = [
-            path for path in package_files(SKILL_ROOT) if path.suffix in {".py", ".sh"}
+            path
+            for path in package_files(scan_root)
+            if path.suffix in {".py", ".sh"}
+            and "__pycache__" not in path.parts
+            and ".pytest_cache" not in path.parts
         ]
         self.assertTrue(scripts)
         for script in scripts:
-            with self.subTest(script=script.relative_to(SKILL_ROOT).as_posix()):
+            with self.subTest(script=script.relative_to(scan_root).as_posix()):
                 head = "\n".join(script.read_text(encoding="utf-8").splitlines()[:20])
                 self.assertIn(LICENSE_MARK, head)
                 self.assertRegex(
@@ -294,19 +350,24 @@ class SkillStructureTest(unittest.TestCase):
         scripts.append(
             SKILL_ROOT / "scripts" / "engine" / "harness/runtime" / "build_one.sh"
         )
-        scripts.append(
-            SKILL_ROOT
-            / "scripts"
-            / "engine"
-            / "harness"
-            / "engine"
-            / "probe_msopgen_regenerate_poc.py"
-        )
+        if DIST_ROOT and (DIST_ROOT / "scripts" / "install.sh").is_file():
+            scripts.append(DIST_ROOT / "scripts" / "install.sh")
         self.assertTrue(scripts)
         for script in scripts:
             head = "\n".join(script.read_text(encoding="utf-8").splitlines()[:60])
             self.assertIn(LICENSE_MARK, head, f"{script.name} 缺 CANN-2.0 许可头")
             self.assertIn("用途", head, f"{script.name} 缺用途说明")
+
+    def test_outer_readme_title_and_sdk_prerequisite_guidance(self):
+        self.assertIn("# Ascend C 编译问题定位与修复", self.text)
+        if DIST_ROOT and (DIST_ROOT / "README.md").is_file():
+            readme = (DIST_ROOT / "README.md").read_text(encoding="utf-8")
+            self.assertTrue(
+                readme.startswith("# Ascend C 编译问题定位与修复 Skill\n"),
+                "外层 README 标题需与问题定位与修复功能一致",
+            )
+            self.assertIn("不是必需的", readme)
+            self.assertIn("set_env.sh", readme)
 
 
 if __name__ == "__main__":

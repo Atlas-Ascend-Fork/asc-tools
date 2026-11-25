@@ -17,10 +17,18 @@
 
 import copy
 import json
-import unittest
 from pathlib import Path
+import sys
+import unittest
 
-EVALS_PATH = Path(__file__).resolve().parents[1] / "evals" / "trigger-evals.json"
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+from package_paths import resolve_roots  # noqa: E402
+
+_, _SKILL_ROOT = resolve_roots(__file__)
+EVALS_PATH = _SKILL_ROOT / "evals" / "trigger-evals.json"
 DOCUMENT_KEYS = {"skill_name", "eval_mode", "cases"}
 CASE_KEYS = {"id", "context", "prompt", "should_trigger", "reason", "category"}
 

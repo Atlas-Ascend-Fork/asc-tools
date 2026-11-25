@@ -25,7 +25,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+from package_paths import resolve_roots  # noqa: E402
+
+DIST_ROOT, SKILL_ROOT = resolve_roots(__file__)
 SCRIPTS = SKILL_ROOT / "scripts"
 
 
@@ -447,20 +453,17 @@ with patch.dict(scope['main'].__globals__, {{
             for pattern in ("*.py", "*.sh")
             for path in SCRIPTS.rglob(pattern)
         }
-        knowledge = {
+        configs = {
             path.relative_to(SKILL_ROOT).as_posix()
-            for path in (SCRIPTS / "engine/harness/knowledge").glob("*.yaml")
-            if path.name != "api_signatures.yaml"
+            for path in (SCRIPTS / "engine/harness/config").glob("*.yaml")
         }
-        # The API KB deliberately supports either a single file or shards;
-        # dedicated tests verify both layouts and incomplete shard rejection.
-        self.assertEqual((runtime | knowledge) - required, set())
+        self.assertEqual((runtime | configs) - required, set())
 
     def test_selfcheck_and_preflight_reject_missing_lazy_capabilities(self):
         for relative in (
             "scripts/engine/harness/engine/inspect_context.py",
             "scripts/engine/harness/engine/repair_memory.py",
-            "scripts/engine/harness/knowledge/compile_mechanisms.yaml",
+            "scripts/engine/harness/config/compile_mechanisms.yaml",
         ):
             with self.subTest(missing=relative):
                 with tempfile.TemporaryDirectory(
@@ -622,42 +625,6 @@ with patch.dict(scope['main'].__globals__, {{
                             payload["errors"],
                         )
 
-    def test_incomplete_shards_fail_selfcheck_and_preflight_engine_check(self):
-        with tempfile.TemporaryDirectory(prefix="compile-debug-incomplete-") as raw:
-            package = Path(raw) / "tool-compile-debug"
-            copy_package(package)
-            shards = (
-                package / "scripts" / "engine" / "harness/knowledge" / "api_signatures"
-            )
-            parts = sorted(shards.glob("part-*.yaml"))
-            if not parts:
-                self.skipTest("本包使用单文件知识库")
-            parts[-1].unlink()
-            result = run_python(
-                [str(package / "scripts" / "face_selfcheck.py"), "--json"]
-            )
-            self.assertEqual(result.returncode, 1, result.stderr)
-            payload = json.loads(result.stdout)
-            self.assertFalse(payload["ok"])
-            self.assertTrue(
-                any("shard file set mismatch" in e for e in payload["errors"])
-            )
-
-            script = str(package / "scripts" / "preflight.py")
-            code = (
-                "import json, runpy; "
-                f"scope = runpy.run_path({script!r}); "
-                "checks = scope['_base_checks'](); "
-                "ok = scope['_check_engine'](checks); "
-                "print(json.dumps(checks)); raise SystemExit(0 if ok else 1)"
-            )
-            result = run_python(["-c", code])
-            self.assertEqual(result.returncode, 1, result.stderr)
-            payload = json.loads(result.stdout)
-            self.assertTrue(
-                any("shard file set mismatch" in e for e in payload["errors"])
-            )
-
     def test_all_python_scripts_compile(self):
         targets = sorted(SCRIPTS.rglob("*.py"))
         self.assertGreater(len(targets), 20)
@@ -722,7 +689,7 @@ print(json.dumps({{'loaded': loaded, 'failures': failures}}))
 import json, sys, unittest
 before = sys.dont_write_bytecode
 loader = unittest.TestLoader()
-suite = loader.discover({str(SKILL_ROOT / "tests")!r})
+suite = loader.discover({str(TESTS_DIR)!r})
 print(json.dumps({{'before': before, 'after': sys.dont_write_bytecode,
                   'errors': loader.errors, 'tests': suite.countTestCases()}}))
 """
@@ -735,11 +702,28 @@ print(json.dumps({{'before': before, 'after': sys.dont_write_bytecode,
         self.assertGreater(report["tests"], 0)
 
     def test_shell_wrappers_pass_syntax_check(self):
-        bash = shutil.which("bash")
+        candidates = (
+            [
+                "C:/Program Files/Git/bin/bash.exe",
+                "C:/Program Files (x86)/Git/bin/bash.exe",
+            ]
+            if os.name == "nt"
+            else [shutil.which("bash")]
+        )
+        bash = None
+        for cand in candidates:
+            if not cand or not Path(cand).is_file():
+                continue
+            probe = subprocess.run([cand, "-c", ":"], capture_output=True, text=True)
+            if probe.returncode == 0:
+                bash = cand
+                break
         if bash is None:
-            self.skipTest("bash 不可用（Windows 无 Git Bash 时跳过语法检查）")
+            self.skipTest("bash 不可用（Windows 无可用 Git Bash 时跳过语法检查）")
         wrappers = sorted(SCRIPTS.glob("*.sh"))
         wrappers.append(SCRIPTS / "engine" / "harness/runtime/build_one.sh")
+        if DIST_ROOT and (DIST_ROOT / "scripts" / "install.sh").is_file():
+            wrappers.append(DIST_ROOT / "scripts" / "install.sh")
         self.assertGreaterEqual(len(wrappers), 4)
         for wrapper in wrappers:
             result = subprocess.run(

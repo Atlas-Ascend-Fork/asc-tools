@@ -15,11 +15,19 @@
 使用方法：python3 -m unittest discover -s tests   （在技能根目录执行）
 """
 
+import copy
 import json
-import unittest
 from pathlib import Path
+import sys
+import unittest
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+from package_paths import resolve_roots  # noqa: E402
+
+_, SKILL_ROOT = resolve_roots(__file__)
 EVALS_PATH = SKILL_ROOT / "evals" / "evals.json"
 SKILL_NAME = "tool-compile-debug"
 REVIEW_REQUEST = (
@@ -41,10 +49,8 @@ TRIGGER_TERM_PATTERNS = (
 )
 # distractor 只允许取宿主仓真实技能名（防臆造引用）
 KNOWN_DISTRACTORS = {
-    "ascendc-runtime-debug",
-    "ascendc-env-check",
-    "ascendc-precision-debug",
-    "ascendc-crash-debug",
+    "knowledge-query",
+    "ascendc-api-knowledge-query",
 }
 ALLOWED_EXPECTATION_TYPES = {"contains", "not_contains", "skill_activated"}
 REQUIRED_CASE_KEYS = {
@@ -71,10 +77,21 @@ REJECTED_ADVICE = {
 }
 
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate evaluation field: {key}")
+        result[key] = value
+    return result
+
+
 class EvalsSchemaTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.doc = json.loads(EVALS_PATH.read_text(encoding="utf-8"))
+        cls.doc = json.loads(
+            EVALS_PATH.read_text(encoding="utf-8"), object_pairs_hook=unique_object
+        )
         cls.evals = cls.doc["evals"]
 
     def test_top_level_shape(self):
@@ -89,6 +106,87 @@ class EvalsSchemaTest(unittest.TestCase):
             self.assertEqual(set(case), REQUIRED_CASE_KEYS)
             self.assertTrue(case["prompt"].strip(), case["id"])
             self.assertTrue(case["expected_output"].strip(), case["id"])
+
+    def validate_case_contract(self, case):
+        self.assertIs(type(case["id"]), int)
+        self.assertGreater(case["id"], 0)
+        for field in ("title", "prompt", "expected_output"):
+            self.assertIsInstance(case[field], str)
+            self.assertTrue(case[field].strip())
+        self.assertEqual(
+            case["files"], [], "Text decision cases must not expose answer files"
+        )
+        config = case["config"]
+        self.assertIsInstance(config, dict)
+        self.assertEqual(config["eval_mode"], "text")
+        self.assertIs(type(config["max_tokens"]), int)
+        self.assertGreater(config["max_tokens"], 0)
+        self.assertIsInstance(config["max_tokens_by_model"], dict)
+        for model, value in config["max_tokens_by_model"].items():
+            self.assertTrue(isinstance(model, str) and model.strip())
+            self.assertIs(type(value), int)
+            self.assertGreater(value, 0)
+        self.assertEqual(set(config["distractor_skills"]), KNOWN_DISTRACTORS)
+        self.assertEqual(len(config["distractor_skills"]), len(KNOWN_DISTRACTORS))
+
+    def test_strict_case_contract(self):
+        for case in self.evals:
+            with self.subTest(case=case["id"]):
+                self.validate_case_contract(case)
+
+    def test_rejects_bad_types_budgets_and_duplicate_fields(self):
+        for raw in ('{"id":1,"id":2}', '{"config":{"max_tokens":1,"max_tokens":2}}'):
+            with self.assertRaises(ValueError):
+                json.loads(raw, object_pairs_hook=unique_object)
+        mutations = (("id", True), ("id", 0), ("title", ""), ("files", ["answer.json"]))
+        for field, value in mutations:
+            case = copy.deepcopy(self.evals[0])
+            case[field] = value
+            with (
+                self.subTest(field=field, value=value),
+                self.assertRaises(AssertionError),
+            ):
+                self.validate_case_contract(case)
+        for value in (False, 0, -1, "100"):
+            case = copy.deepcopy(self.evals[0])
+            case["config"]["max_tokens"] = value
+            with self.subTest(budget=value), self.assertRaises(AssertionError):
+                self.validate_case_contract(case)
+
+    def test_current_knowledge_contract_and_compiler_option(self):
+        cases = {case["id"]: case for case in self.evals}
+        self.assertIn("旧版1.0.1", cases[2]["prompt"])
+        self.assertIn("--npu-arch=dav-3510", cases[10]["prompt"])
+        self.assertNotIn("--knowledge-query", json.dumps(self.doc, ensure_ascii=False))
+        self.assertIn(
+            "knowledge_applicability=requires_card_and_current_sdk_evidence",
+            cases[8]["expected_output"],
+        )
+        for stale in (
+            "resolution=ahead",
+            "verified_live",
+            "ceiling=9.1.0",
+            "随包9.0快照",
+        ):
+            self.assertNotIn(stale, json.dumps(self.doc, ensure_ascii=False))
+        # Current instructions and reference answers must name the new
+        # provider; explicit references to the old installation stay valid.
+        for case in self.evals:
+            self.assertNotRegex(
+                case["expected_output"], r"(?<!旧)CANNBOT(?!-knowledge)", case["id"]
+            )
+        current_resources = [
+            *(SKILL_ROOT / "references").rglob("*.md"),
+            *(SKILL_ROOT / "scripts/engine/harness/config").glob("*.yaml"),
+        ]
+        for path in current_resources:
+            self.assertNotRegex(
+                path.read_text(encoding="utf-8"),
+                r"(?<!旧)CANNBOT(?!-knowledge)",
+                str(path.relative_to(SKILL_ROOT)),
+            )
+        for ident in (73, 74, 75, 76):
+            self.validate_review_setup(cases[ident])
 
     def test_expectation_types_and_self_activation(self):
         for case in self.evals:

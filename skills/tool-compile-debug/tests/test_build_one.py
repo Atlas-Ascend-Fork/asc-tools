@@ -11,13 +11,20 @@
 """用途：验证构建失败立即停止、错误码传播和日志留存，无需安装 CANN。"""
 
 import os
+from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
-from pathlib import Path
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+from package_paths import resolve_roots  # noqa: E402
+
+_, SKILL_ROOT = resolve_roots(__file__)
 BUILD_ONE = SKILL_ROOT / "scripts/engine/harness/runtime/build_one.sh"
 BASH = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
 COMMAND_TIMEOUT_SECONDS = 20

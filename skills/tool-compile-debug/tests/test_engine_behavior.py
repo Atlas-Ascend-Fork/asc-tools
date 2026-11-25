@@ -31,7 +31,13 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+from package_paths import resolve_roots  # noqa: E402
+
+_, SKILL_ROOT = resolve_roots(__file__)
 ENGINE_MODULES = SKILL_ROOT / "scripts" / "engine" / "harness/engine"
 ENGINE_NAME = "harness.engine"
 
@@ -55,6 +61,61 @@ def load_bundled_engine():
 PIPELINE = load_bundled_engine()
 VERIFY = PIPELINE.verify_runner
 EVIDENCE = importlib.import_module(f"{ENGINE_NAME}.verification_evidence")
+
+
+class DocumentedKnowledgeContractTest(unittest.TestCase):
+    def test_probe_reports_link_to_existing_packaged_references(self):
+        cause_tree = importlib.import_module(f"{ENGINE_NAME}.cause_tree")
+        scenarios = (
+            ("optimization_sensitive_or_compiler_limit", "probe_O0", "passed"),
+            ("compiler_backend_after_preprocess", "probe_preprocess_only", "passed"),
+            ("reproducible_compile_failure", "probe_direct_kernel_compile", "failed"),
+        )
+        for likely, probe, status in scenarios:
+            with self.subTest(likely=likely):
+                tree = cause_tree.build_cause_tree(
+                    [],
+                    category="compiler_internal",
+                    phase="kernel_compile",
+                    normalized={},
+                    probes={
+                        "interpretation": {"likely": likely},
+                        "probes": [{"name": probe, "status": status}],
+                    },
+                )
+                leaves = [
+                    leaf for leaf in tree["leaves"] if leaf["kind"] == "compiler_probe"
+                ]
+                self.assertTrue(leaves)
+                for leaf in leaves:
+                    reference = (SKILL_ROOT / leaf["reference"]).resolve()
+                    self.assertTrue(reference.is_relative_to(SKILL_ROOT.resolve()))
+                    self.assertTrue(reference.is_file(), leaf["reference"])
+
+    def test_version_statuses_match_documented_protocol(self):
+        gate = importlib.import_module(f"{ENGINE_NAME}.version_gate")
+        text = (SKILL_ROOT / "references/json-schemas.md").read_text(encoding="utf-8")
+        for log, env, resolution, status in (
+            (None, None, "unknown", "unknown"),
+            ("8.0.RC1", None, "below_floor", "mismatch"),
+            ("9.0.0", "9.1.0", "version_conflict", "mismatch"),
+            ("9.2.0-beta.2", None, "supported", "match"),
+        ):
+            with self.subTest(log=log, env=env):
+                value = gate.classify(log, env)
+                self.assertEqual(
+                    (value["resolution"], value["status"]), (resolution, status)
+                )
+                self.assertIn(f"`{resolution}`", text)
+                self.assertIn(f"`{status}`", text)
+        self.assertIn("requires_card_and_current_sdk_evidence", text)
+
+    def test_symbol_query_documentation_does_not_advertise_retired_results(self):
+        text = (SKILL_ROOT / "references/json-schemas.md").read_text(encoding="utf-8")
+        self.assertIn("unexecuted_knowledge_request", text)
+        self.assertIn("status=not_queried", text)
+        for retired in ("api.query", "matching_symbol_count", "filtered_count"):
+            self.assertNotIn(retired, text)
 
 
 class TemporaryProjectTest(unittest.TestCase):
@@ -115,6 +176,39 @@ class CommandEchoBehaviorTest(TemporaryProjectTest):
 
 
 class DiagnosisBehaviorTest(TemporaryProjectTest):
+    def test_light_api_diagnostic_requests_knowledge_without_guessing_replacement(self):
+        log = self.workspace / "api-failure.log"
+        log.write_text(
+            "kernel.cpp:3:4: error: no template named 'MatmulImpl' in namespace 'AscendC'; did you mean 'MulImpl'?\n",
+            encoding="utf-8",
+        )
+        output = self.workspace / "diagnosis"
+        with (
+            patch.object(
+                PIPELINE, "collect_context", side_effect=AssertionError("source read")
+            ),
+            patch.object(
+                PIPELINE, "detect_cann", side_effect=AssertionError("environment probe")
+            ),
+            patch(
+                "subprocess.run",
+                side_effect=AssertionError("query or compiler execution"),
+            ),
+        ):
+            bundle = PIPELINE.run_bundle(
+                self.project, log, output, soc="Ascend950", context_mode="light"
+            )
+            result = PIPELINE.build_stdout_summary(output, bundle, "offline-api-test")
+        self.assertIsNone(result["fast_path"])
+        self.assertEqual(result["diagnostic_guidance"][0]["applicability"], "unknown")
+        request = result["knowledge_requests"][0]
+        self.assertEqual(request["skill"], "ascendc-api-knowledge-query")
+        self.assertEqual(request["subject"], "MatmulImpl")
+        self.assertEqual(request["target"], "Ascend950")
+        self.assertEqual(request["status"], "not_queried")
+        self.assertIsNone(request["platform"])
+        self.assertFalse(result["verify"]["build_invoked"])
+
     def test_default_cli_parses_log_without_source_environment_or_build(self):
         log = self.workspace / "failure.log"
         log.write_text("unit.cpp:1:1: error: expected ';'\n", encoding="utf-8")
@@ -530,6 +624,122 @@ class VerificationBehaviorTest(TemporaryProjectTest):
         self.assertFalse(result["build_invoked"])
         self.assertEqual(result["transition"], "verification_not_run")
         self.assertEqual(self.source_snapshot(), before)
+
+
+class WorkspaceHygieneBehaviorTest(TemporaryProjectTest):
+    def setUp(self):
+        super().setUp()
+        self.collector = importlib.import_module(
+            f"{ENGINE_NAME}.build_context_collector"
+        )
+        self.inspect_module = importlib.import_module(f"{ENGINE_NAME}.inspect_context")
+        self.write_source("CMakeLists.txt", "project(demo)\n")
+        self.write_source("unit.cpp", "int value = 0;\n")
+
+    def test_git_directory_and_gitfile_keep_clean_workspace_complete(self):
+        git_dir = self.project / ".git"
+        (git_dir / "objects").mkdir(parents=True)
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        (self.project / "build").mkdir()
+        (self.project / "build" / "CMakeCache.txt").write_text("", encoding="utf-8")
+
+        result = self.inspect_module.inspect(self.project, question="build")
+        summary = self.inspect_module.summarize(result)
+        hygiene = result["build"]["workspace_hygiene"]
+        self.assertEqual(hygiene["status"], "clean")
+        self.assertTrue(hygiene["scan_complete"])
+        self.assertTrue(hygiene["clean_for_capture"])
+        self.assertEqual(hygiene["ignored_paths"], [".git"])
+        self.assertNotIn("truncation_reason", hygiene)
+        self.assertFalse(
+            any(
+                gap.get("reason", "").startswith("workspace_hygiene_")
+                for gap in result["evidence"]["gaps"]
+            )
+        )
+        self.assertEqual(
+            summary["workspace_hygiene"],
+            {
+                "status": "clean",
+                "scan_complete": True,
+                "clean_for_capture": True,
+                "symlink_count": 0,
+                "candidate_generated_count": 0,
+            },
+        )
+
+        # Git worktrees store .git as a regular pointer file rather than a directory.
+        (git_dir / "HEAD").unlink()
+        (git_dir / "objects").rmdir()
+        git_dir.rmdir()
+        self.write_source(".git", "gitdir: /tmp/repo/.git/worktrees/demo\n")
+
+        worktree_result = self.inspect_module.inspect(self.project, question="build")
+        worktree_hygiene = worktree_result["build"]["workspace_hygiene"]
+        self.assertEqual(worktree_hygiene["status"], "clean")
+        self.assertTrue(worktree_hygiene["scan_complete"])
+        self.assertTrue(worktree_hygiene["clean_for_capture"])
+        self.assertEqual(worktree_hygiene["ignored_paths"], [".git"])
+        self.assertNotIn("truncation_reason", worktree_hygiene)
+        self.assertFalse(
+            any(
+                gap.get("reason", "").startswith("workspace_hygiene_")
+                for gap in worktree_result["evidence"]["gaps"]
+            )
+        )
+
+    def test_git_ignore_preserves_artifacts_symlinks_and_budget_truncation(self):
+        (self.project / ".git").mkdir()
+        (self.project / "build_out").mkdir()
+        dirty = self.collector._workspace_hygiene(self.project)
+        self.assertEqual(dirty["status"], "attention_required")
+        self.assertTrue(dirty["scan_complete"])
+        self.assertFalse(dirty["clean_for_capture"])
+        self.assertEqual(dirty["ignored_paths"], [".git"])
+        self.assertIn("build_out", dirty["candidate_generated_paths"])
+
+        (self.project / "build_out").rmdir()
+        # Keep root entry count (4: .git, CMakeLists.txt, src, unit.cpp) below max_entries
+        # so .git is scanned deterministically regardless of filesystem scandir order.
+        for idx in range(4):
+            self.write_source(f"src/extra_{idx}.cpp", "int x = 1;\n")
+        truncated = self.collector._workspace_hygiene(self.project, max_entries=5)
+        self.assertEqual(truncated["status"], "incomplete")
+        self.assertFalse(truncated["scan_complete"])
+        self.assertIsNone(truncated["clean_for_capture"])
+        self.assertEqual(truncated["ignored_paths"], [".git"])
+        self.assertEqual(truncated["truncation_reason"], "entry_budget_exceeded")
+
+        dir_truncated = self.collector._workspace_hygiene(self.project, max_dirs=1)
+        self.assertEqual(dir_truncated["status"], "incomplete")
+        self.assertFalse(dir_truncated["scan_complete"])
+        self.assertIsNone(dir_truncated["clean_for_capture"])
+        self.assertEqual(dir_truncated["ignored_paths"], [".git"])
+        self.assertEqual(
+            dir_truncated["truncation_reason"], "directory_budget_exceeded"
+        )
+
+        class _FakeGitLink:
+            name = ".git"
+            path = str(self.project / ".git")
+
+            def is_symlink(self):
+                return True
+
+        class _FakeScandir:
+            def __enter__(self):
+                return iter([_FakeGitLink()])
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch.object(self.collector.os, "scandir", lambda _p: _FakeScandir()):
+            linked = self.collector._workspace_hygiene(self.project)
+        self.assertEqual(linked["status"], "attention_required")
+        self.assertTrue(linked["scan_complete"])
+        self.assertFalse(linked["clean_for_capture"])
+        self.assertEqual(linked["ignored_paths"], [])
+        self.assertEqual(linked["symlinks_outside_build"], [".git"])
 
 
 if __name__ == "__main__":
