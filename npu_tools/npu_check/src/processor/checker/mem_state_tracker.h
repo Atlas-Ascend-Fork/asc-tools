@@ -70,7 +70,14 @@ struct VfExternalState {
     std::vector<CbIndex> readers;
     std::vector<CbIndex> writers;
     std::array<std::vector<CbIndex>, VfHistory::ATOMIC_WRITER_GROUP_COUNT> atomicWriters{};
-    std::map<race::VfKey, VfHistory> groups{};
+    using Groups = std::map<race::VfKey, VfHistory>;
+    Groups groups{};
+    // Sum of capacities owned by the per-group atomic writer vectors.
+    size_t groupAtomicCapacity = 0;
+
+    VfExternalState() = default;
+    VfExternalState(const VfExternalState& other);
+    VfExternalState& operator=(const VfExternalState&) = delete;
 };
 struct MemState {
     static constexpr size_t ATOMIC_WRITER_GROUP_COUNT = VfHistory::ATOMIC_WRITER_GROUP_COUNT;
@@ -147,8 +154,9 @@ public:
     // prepared 必须由同一条不可变 records[cbIndex] 解析，且覆盖整个串行处理过程。
     // 不保存 prepared 的引用；省略该参数的接口会在本次调用内自行解析。
     std::vector<AccessPair> CheckPotentialRace(CbIndex cbIndex, const racecheck::PreparedAccess& prepared) const;
-    // Only a proven Before relation permits skipping a distinct dynamic VF history group.
-    using VfGroupPrecedes = std::function<bool(const race::VfKey&)>;
+    // Return the current iterator to keep it, or advance across groups proven Before the target.
+    using VfGroupPrecedes = std::function<VfExternalState::Groups::const_iterator(
+        const VfExternalState::Groups&, VfExternalState::Groups::const_iterator)>;
     std::vector<AccessPair> CheckPotentialRace(
         CbIndex cbIndex, const racecheck::PreparedAccess& prepared, const VfGroupPrecedes& vfGroupPrecedes) const;
     // 调用方在外部判序后提供完整且不变的已确认冲突候选子集，

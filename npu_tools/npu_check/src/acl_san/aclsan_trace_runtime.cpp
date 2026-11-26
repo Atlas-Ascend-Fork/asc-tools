@@ -64,13 +64,11 @@
 namespace aclsan {
 namespace {
 
-constexpr size_t TRACE_GLOBAL_BUDGET = 512U * 1024U * 1024U;
-constexpr size_t SIMT_TRACE_GLOBAL_BUDGET = 32U * 1024U * 1024U;
-constexpr size_t SIMT_TRACE_LAUNCH_BUDGET = 4U * 1024U * 1024U;
+constexpr size_t TRACE_GLOBAL_BUDGET = SIZE_MAX;
+constexpr size_t SIMT_TRACE_GLOBAL_BUDGET = SIZE_MAX;
+constexpr size_t SIMT_TRACE_LAUNCH_BUDGET = SIZE_MAX;
 constexpr size_t SIMT_TRACE_BATCH_LIMIT = 256U;
-constexpr uint32_t TRACE_SLOT_DEFAULT_RINGS = 4U;
-constexpr uint32_t TRACE_SLOT_MAX_RINGS = 16U;
-constexpr uint32_t TRACE_SLOT_DEFAULT_RECORD_LIMIT = TRACE_SLOT_DEFAULT_RINGS * ASCSAN_TRACE_RECORDS_PER_CORE;
+constexpr size_t TRACE_SLOT_RECORD_LIMIT = SIZE_MAX;
 constexpr uint32_t TRACE_ENQUEUE_FAILURE_LIMIT = 3U;
 constexpr int32_t TRACE_SYNC_ATTEMPT_LIMIT = 3;
 constexpr uint32_t TRACE_SLOTS = ASCSAN_PHYSICAL_CORE_SLOT_COUNT;
@@ -164,8 +162,8 @@ struct PendingTrace {
     std::array<uint32_t, TRACE_SLOTS> dispatched{};
     std::array<uint32_t, TRACE_SLOTS> lastWrite{};
     std::array<uint32_t, TRACE_SLOTS> lastDropped{};
-    uint32_t slotRecordLimit = TRACE_SLOT_DEFAULT_RECORD_LIMIT;
-    std::array<uint32_t, TRACE_SLOTS> queued{};
+    size_t slotRecordLimit = TRACE_SLOT_RECORD_LIMIT;
+    std::array<size_t, TRACE_SLOTS> queued{};
     std::array<std::deque<TraceBatch>, TRACE_SLOTS> batches;
     std::array<AclsanTraceControl, TRACE_SLOTS> controls{};
     std::array<AclsanTraceReadLine, TRACE_SLOTS> reads{};
@@ -1911,18 +1909,6 @@ void PublishOperatorExecution(PendingTrace& pending, bool finalizing, bool parti
         static_cast<unsigned long long>(data.launchId), aicEnds, aicExpected, aivEnds, aivExpected, data.flags);
 }
 
-uint32_t TraceSlotRecordLimit(const TraceKernelCoreExpectation& expectation) noexcept
-{
-    const uint32_t activeSlots = expectation.aicCores + expectation.aivCores;
-    if (!expectation.known || activeSlots == 0U) {
-        return TRACE_SLOT_DEFAULT_RECORD_LIMIT;
-    }
-    constexpr size_t ringBytes = ASCSAN_TRACE_RECORDS_PER_CORE * sizeof(AclsanRawTraceRecord);
-    const size_t fairRings = TRACE_GLOBAL_BUDGET / ringBytes / activeSlots;
-    return static_cast<uint32_t>(std::clamp<size_t>(fairRings, TRACE_SLOT_DEFAULT_RINGS, TRACE_SLOT_MAX_RINGS)) *
-           ASCSAN_TRACE_RECORDS_PER_CORE;
-}
-
 bool CopyTraceSlot(PendingTrace& pending, uint32_t slot, uint32_t count)
 {
     if (count == 0U || count > pending.slotRecordLimit - pending.queued[slot]) {
@@ -2022,7 +2008,8 @@ bool PollTrace(PendingTrace& pending)
         if (available == 0U) {
             continue;
         }
-        const uint32_t count = std::min(available, pending.slotRecordLimit - pending.queued[slot]);
+        const uint32_t count =
+            static_cast<uint32_t>(std::min<size_t>(available, pending.slotRecordLimit - pending.queued[slot]));
         if (count == 0U) {
             ++pending.slotBackpressure;
             continue;
@@ -3051,7 +3038,6 @@ void CompleteTraceLaunch(
         pending->pureSimt = prepared.pureSimt;
         RetainSimtTraceBuffer(*pending, prepared.hostBuffer);
         pending->hibitHandle = std::move(prepared.hibitHandle);
-        pending->slotRecordLimit = TraceSlotRecordLimit(prepared.kernelEndExpectation);
         pending->kernelEndTracker.Reset(prepared.kernelEndExpectation);
         const auto& completionApi = CompletionEventApi();
         if (!pending->completionEvent.Record(completionApi, stream) && completionApi.Available()) {
@@ -3116,7 +3102,7 @@ struct TraceBatchOwner {
         std::vector<AclsanRawTraceRecord>().swap(batch.records);
         {
             std::lock_guard<std::mutex> lock(pending.mutex);
-            pending.queued[batch.slot] -= static_cast<uint32_t>(count);
+            pending.queued[batch.slot] -= count;
             pending.queuedRecordCount -= count;
         }
         State().queuedBytes.fetch_sub(count * sizeof(AclsanRawTraceRecord), std::memory_order_relaxed);
@@ -3390,7 +3376,7 @@ void LogTraceQueueStats(const PendingTrace& pending) noexcept
 {
     ASCTOOL_INFO(
         "acl_san trace: launch=%llu queue_high_water_bytes=%zu global_queue_high_water_bytes=%zu "
-        "raw_budget_bytes=%zu slot_record_limit=%u dropped=%llu slot_backpressure=%llu budget_backpressure=%llu "
+        "raw_budget_bytes=%zu slot_record_limit=%zu dropped=%llu slot_backpressure=%llu budget_backpressure=%llu "
         "polls=%llu max_poll_gap_us=%llu max_dispatch_batch_us=%llu",
         static_cast<unsigned long long>(pending.launchId), pending.queueHighWaterBytes,
         State().queueHighWaterBytes.load(std::memory_order_relaxed), TRACE_GLOBAL_BUDGET, pending.slotRecordLimit,

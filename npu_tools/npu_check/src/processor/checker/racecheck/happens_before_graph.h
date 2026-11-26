@@ -48,6 +48,12 @@ public:
     // A build and each checker replay own independent work allowances. Resetting
     // this allowance never restores missing observations or changes graph validity.
     void BeginAnalysis(size_t workBudget);
+    enum class BoundaryDirection { FromBoundary, ToBoundary };
+    // Rows are graph nodes and columns are boundary indices packed into words.
+    // A set bit represents a dependency path or the boundary node itself.
+    static constexpr size_t BOUNDARY_WORD_BITS = 64;
+    std::vector<uint64_t> BuildBoundaryReachability(
+        const std::vector<size_t>& boundaries, BoundaryDirection direction, size_t byteBudget, size_t workBudget) const;
     const std::vector<size_t>& Order() const { return order_; }
     // Candidate visitation only: a topological position is never an HB proof.
     std::optional<size_t> TraversalRank(size_t node) const
@@ -73,6 +79,8 @@ private:
         size_t lastReachable = 0;
         size_t subtreeFirst = 0;
     };
+    void PropagateBoundaryWords(
+        size_t node, size_t words, BoundaryDirection direction, std::vector<uint64_t>& table) const;
     void BuildReachabilityIntervals();
     bool MayReach(size_t from, size_t to) const;
     bool HasPathWitness(size_t from, size_t to) const;

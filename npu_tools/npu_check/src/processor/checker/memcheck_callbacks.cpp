@@ -106,7 +106,7 @@ bool Memcheck::OnCallback(
         } else if (analysis_->Managed() && event->launchId != 0) {
             observedLaunches_.insert(event->launchId);
         } else if (!analysis_->Managed() && event->launchId != 0) {
-            constexpr size_t MAX_PENDING_LAUNCH_SNAPSHOTS = 1024;
+            constexpr size_t MAX_PENDING_LAUNCH_SNAPSHOTS = SIZE_MAX;
             if (launchAllocations_.size() >= MAX_PENDING_LAUNCH_SNAPSHOTS) {
                 ++stats_.droppedDeviceOperations;
             } else {

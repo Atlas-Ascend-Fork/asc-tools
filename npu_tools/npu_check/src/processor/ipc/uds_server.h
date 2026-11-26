@@ -103,7 +103,7 @@ private:
     bool closing_ = false;
     bool transportComplete_ = true;
     uint64_t droppedMessages_ = 0;
-    static constexpr size_t MAX_QUEUED_MESSAGES = 1024;
+    static constexpr size_t MAX_QUEUED_MESSAGES = SIZE_MAX;
     // listen 的 backlog。抽象地址没有权限位，任何进程都能发起 connect，取 1 会让一个
     // 抢先连接就堵死真正的 CLI，因此留出余量并配合循环 accept 丢弃不合格连接。
     static constexpr int LISTEN_BACKLOG = 8;

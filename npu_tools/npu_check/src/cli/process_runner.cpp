@@ -706,8 +706,9 @@ void ReceiveReport(
                 output.Detail("UDS payload failed: " + receiveError);
                 break;
             }
-            // 上限与注入库侧共用同一个常量：对端异常时不能让 CLI 一直吃内存。
-            if (received.result.size() + message.size() > npucheck::ipc::MAX_RESULT_BYTES) {
+            // Check the remaining capacity before adding the next frame.
+            if (message.size() >
+                std::min(received.result.max_size(), npucheck::ipc::MAX_RESULT_BYTES) - received.result.size()) {
                 received.protocolComplete = false;
                 output.Detail("result exceeds the maximum report size");
                 break;

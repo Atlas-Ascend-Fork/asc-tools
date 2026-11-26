@@ -29,7 +29,7 @@ constexpr size_t MAX_PAYLOAD_SIZE = 64 * 1024;
 constexpr size_t MAX_FRAME_SIZE = WIRE_HEADER_SIZE + MAX_PAYLOAD_SIZE; // 65572
 // 单次会话的报告总长上限。两侧共用同一个常量：发送侧据此决定何时停止追加并置
 // FLAG_TRUNCATED，接收侧据此拒绝超量的分片序列，避免对端异常时把 CLI 的内存吃光。
-constexpr size_t MAX_RESULT_BYTES = 64u * 1024u * 1024u;
+constexpr size_t MAX_RESULT_BYTES = SIZE_MAX;
 
 // 帧头 flags 的位定义。
 // bit 0-3 是 must-understand 的语义位，bit 4-7 保留且必须为 0（接收端发现非零即协议

@@ -11,6 +11,7 @@
 #include "checker/racecheck/happens_before_graph.h"
 #include <algorithm>
 #include <limits>
+#include <new>
 
 namespace npucheck::race {
 HappensBeforeGraph::HappensBeforeGraph(size_t edgeBudget, size_t workBudget, size_t cacheBudget)
@@ -20,6 +21,54 @@ void HappensBeforeGraph::BeginAnalysis(size_t workBudget)
 {
     analysisWork_ = 0;
     analysisBudget_ = workBudget;
+}
+std::vector<uint64_t> HappensBeforeGraph::BuildBoundaryReachability(
+    const std::vector<size_t>& boundaries, BoundaryDirection direction, size_t byteBudget, size_t workBudget) const
+{
+    if (!sealed_ || !valid_ || boundaries.empty() ||
+        std::any_of(boundaries.begin(), boundaries.end(), [this](size_t node) { return node >= edges_.size(); })) {
+        return {};
+    }
+    const size_t words = (boundaries.size() - 1) / BOUNDARY_WORD_BITS + 1;
+    if (edges_.size() > byteBudget / sizeof(uint64_t) / words || edges_.size() > workBudget / words ||
+        edgeCount_ > workBudget / words - edges_.size()) {
+        return {};
+    }
+    try {
+        std::vector<uint64_t> table;
+        if (edges_.size() > table.max_size() / words) {
+            return {};
+        }
+        table.resize(edges_.size() * words);
+        for (size_t i = 0; i < boundaries.size(); ++i) {
+            table[boundaries[i] * words + i / BOUNDARY_WORD_BITS] |= uint64_t{1} << (i % BOUNDARY_WORD_BITS);
+        }
+        if (direction == BoundaryDirection::FromBoundary) {
+            for (auto node : order_) {
+                PropagateBoundaryWords(node, words, direction, table);
+            }
+        } else {
+            for (auto it = order_.rbegin(); it != order_.rend(); ++it) {
+                PropagateBoundaryWords(*it, words, direction, table);
+            }
+        }
+        return table;
+    } catch (const std::bad_alloc&) {
+        return {};
+    }
+}
+
+void HappensBeforeGraph::PropagateBoundaryWords(
+    size_t node, size_t words, BoundaryDirection direction, std::vector<uint64_t>& table) const
+{
+    for (const auto& edge : edges_[node]) {
+        const bool forward = direction == BoundaryDirection::FromBoundary;
+        const auto source = (forward ? node : edge.target) * words;
+        const auto target = (forward ? edge.target : node) * words;
+        for (size_t word = 0; word < words; ++word) {
+            table[target + word] |= table[source + word];
+        }
+    }
 }
 bool HappensBeforeGraph::SpendWork(size_t& queryWork)
 {
