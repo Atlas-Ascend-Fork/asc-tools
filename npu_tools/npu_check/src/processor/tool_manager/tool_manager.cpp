@@ -26,8 +26,8 @@
 namespace npucheck {
 namespace {
 
-constexpr size_t MAX_DEFERRED_SYNCHRONIZATIONS = 65536;
-constexpr size_t MAX_DEFERRED_OPERATORS = 65536;
+constexpr size_t MAX_DEFERRED_SYNCHRONIZATIONS = SIZE_MAX;
+constexpr size_t MAX_DEFERRED_OPERATORS = SIZE_MAX;
 
 std::string StatusMessage(const char* operation, AclsanStatus status)
 {

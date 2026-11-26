@@ -153,6 +153,43 @@ TEST_F(MemStateTrackerTest, VfModesUseOrdinaryReadWriteConflictSemantics)
     }
 }
 
+TEST_F(MemStateTrackerTest, VfAtomicCapacityMatchesScanAfterGrowthClearAndSplit)
+{
+    constexpr uint64_t activeGroup = 1;
+    constexpr uint64_t splitGroup = 2;
+    constexpr uint64_t fullRange = 64;
+    constexpr uint64_t splitPoint = 32;
+    constexpr size_t growthAccesses = 5;
+    MemStateTracker vfTracker{records, racecheck::MemStateTrackerMode::VfExternal};
+    const auto append = [&](AclsanDeviceMemoryAccessMode mode, uint64_t group, uint64_t begin) {
+        const auto index = Add(mode, begin, fullRange, 0, ACLSAN_DEVICE_MEMORY_SPACE_UB);
+        records[index].header.launchId = 1;
+        records[index].header.instrExecId = group;
+        records[index].vfInstrValid = 1;
+        records[index].vfInstrExecSeq = index;
+        vfTracker.UpdateMemState(index, {});
+        for (const auto& table : vfTracker.Tables()) {
+            for (const auto& segment : table.second) {
+                const auto& external = *segment.second.vfExternal;
+                size_t expected = 0;
+                for (const auto& history : external.groups) {
+                    expected += history.second.atomicWriters.capacity();
+                }
+                EXPECT_EQ(external.groupAtomicCapacity, expected);
+            }
+        }
+    };
+    for (size_t i = 0; i < growthAccesses; ++i) {
+        append(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, activeGroup, 0);
+    }
+    append(ACLSAN_DEVICE_MEMORY_ACCESS_VF_VECTOR_WRITE, activeGroup, 0);
+    append(ACLSAN_DEVICE_MEMORY_ACCESS_ATOMIC_WRITE_ADD, splitGroup, splitPoint);
+    ASSERT_EQ(vfTracker.Tables().begin()->second.size(), 2U);
+    const auto& segments = vfTracker.Tables().begin()->second;
+    EXPECT_GT(segments.begin()->second.vfExternal->groupAtomicCapacity, 1U);
+    EXPECT_EQ(segments.rbegin()->second.vfExternal->groupAtomicCapacity, 1U);
+}
+
 TEST_F(MemStateTrackerTest, FirstAccessIsReadOnlyUntilUpdate)
 {
     for (auto mode :

@@ -1574,7 +1574,7 @@ bool Initcheck::OnRegisterState(const AclsanDeviceRegisterStateData& data)
         data.header.deviceId, data.header.launchId, data.header.executor.blockType, data.header.executor.blockId};
     initializedRegisters_[key] |= UINT64_C(1) << data.regId;
     if (data.regId == ACLSAN_DEVICE_REGISTER_FPC) {
-        constexpr size_t MAX_UNIT_FLAG_REGISTERS = 100000;
+        constexpr size_t MAX_UNIT_FLAG_REGISTERS = SIZE_MAX;
         auto& registers = unitFlagRegisters_[data.header.launchId];
         if (registers.size() >= MAX_UNIT_FLAG_REGISTERS)
             replayReasons_[data.header.launchId].insert("event_budget");

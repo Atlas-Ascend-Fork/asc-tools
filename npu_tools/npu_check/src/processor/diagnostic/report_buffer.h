@@ -26,7 +26,7 @@ namespace npucheck::diagnostic {
 // 而不是丢弃整份报告 —— 已经查出来的问题仍然要交付给用户，只是标明它不完整。
 class ReportBuffer {
 public:
-    ReportBuffer() = default;
+    explicit ReportBuffer(size_t limit = npucheck::ipc::MAX_RESULT_BYTES) noexcept : limit_(limit) {}
     ReportBuffer(const ReportBuffer&) = delete;
     ReportBuffer& operator=(const ReportBuffer&) = delete;
 
@@ -47,6 +47,7 @@ public:
     size_t Size() const noexcept;
 
 private:
+    const size_t limit_;
     mutable std::mutex mutex_;
     std::string buffer_;
     bool truncated_ = false;

@@ -18,6 +18,7 @@
 #include "npu_tool_log.h"
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <limits>
 #include <set>
 #include <sstream>
@@ -415,6 +416,10 @@ class Racechecker::LaunchProcessor {
     HappensBeforeGraph& graph;
     std::vector<Access>& accesses;
     size_t comparisons = 0;
+    std::map<size_t, size_t> vfEntries, vfCompletions;
+    std::vector<uint64_t> toVf, fromVf;
+    std::vector<race::VfKey> vfKeys;
+    size_t boundaryWords = 0;
 
 public:
     LaunchProcessor(Racechecker& owner, Launch& data, CheckerReportList& output)
@@ -443,6 +448,7 @@ public:
             return;
         }
         race::AnalysisPhaseTimer phase(launch.id, "memory_replay");
+        BuildVfReachability();
         struct Publication {
             Racechecker& checker;
             uint64_t raw, war, waw, atomic;
@@ -474,6 +480,71 @@ public:
     }
 
 private:
+    void BuildVfReachability()
+    {
+        // Limit optional indexing independently of the on-demand search budget.
+        constexpr size_t MIN_VF_GROUPS = 64;
+        constexpr size_t TABLE_BYTE_BUDGET = SIZE_MAX;
+        constexpr size_t TABLE_WORD_WORK_BUDGET = SIZE_MAX;
+        const auto count = dependency.vfBoundaries.size();
+        if (count < MIN_VF_GROUPS) {
+            return;
+        }
+        std::vector<size_t> entries, completions;
+        entries.reserve(count);
+        completions.reserve(count);
+        for (const auto& [key, boundary] : dependency.vfBoundaries) {
+            vfEntries.emplace(boundary.entry, entries.size());
+            vfCompletions.emplace(boundary.completion, completions.size());
+            entries.push_back(boundary.entry);
+            completions.push_back(boundary.completion);
+        }
+        using Direction = HappensBeforeGraph::BoundaryDirection;
+        fromVf = graph.BuildBoundaryReachability(
+            completions, Direction::FromBoundary, TABLE_BYTE_BUDGET, TABLE_WORD_WORK_BUDGET);
+        toVf =
+            graph.BuildBoundaryReachability(entries, Direction::ToBoundary, TABLE_BYTE_BUDGET, TABLE_WORD_WORK_BUDGET);
+        boundaryWords = (count - 1) / HappensBeforeGraph::BOUNDARY_WORD_BITS + 1;
+        if (!fromVf.empty()) {
+            vfKeys.reserve(count);
+            for (const auto& entry : dependency.vfBoundaries) {
+                vfKeys.push_back(entry.first);
+            }
+        }
+    }
+
+    // Columns follow VfKey order, just like each segment's history map.
+    size_t FirstUnprovenVf(size_t target, size_t first) const
+    {
+        constexpr auto bits = HappensBeforeGraph::BOUNDARY_WORD_BITS;
+        const auto same = vfCompletions.find(target);
+        const size_t end = same != vfCompletions.end() && same->second >= first ? same->second : vfKeys.size();
+        while (first < end) {
+            const auto missing = ~fromVf[target * boundaryWords + first / bits] >> (first % bits);
+            if (missing != 0) {
+                return std::min(end, first + static_cast<size_t>(__builtin_ctzll(missing)));
+            }
+            first += bits - first % bits;
+        }
+        return std::min(first, end);
+    }
+
+    std::optional<bool> BoundaryPrecedes(size_t from, size_t to) const
+    {
+        constexpr auto bits = HappensBeforeGraph::BOUNDARY_WORD_BITS;
+        const auto source = vfCompletions.find(from);
+        if (!fromVf.empty() && source != vfCompletions.end()) {
+            const auto col = source->second;
+            return from != to && (fromVf[to * boundaryWords + col / bits] & (uint64_t{1} << (col % bits))) != 0U;
+        }
+        const auto target = vfEntries.find(to);
+        if (!toVf.empty() && target != vfEntries.end()) {
+            const auto col = target->second;
+            return from != to && (toVf[from * boundaryWords + col / bits] & (uint64_t{1} << (col % bits))) != 0U;
+        }
+        return std::nullopt;
+    }
+
     HappensBeforeGraph::Relation CompareNodes(size_t previous, size_t current)
     {
         using Relation = HappensBeforeGraph::Relation;
@@ -497,7 +568,8 @@ private:
         const auto to = target ? dependency.vfBoundaries.at(*target).entry : (forward ? rhs.node : lhs.node);
         if (graph.TraversalRank(from) >= graph.TraversalRank(to))
             return Relation::Unordered;
-        const auto relation = graph.Compare(from, to);
+        const auto cached = BoundaryPrecedes(from, to);
+        const auto relation = cached ? (*cached ? Relation::Before : Relation::Unordered) : graph.Compare(from, to);
         if (relation == Relation::Before && !forward)
             return Relation::After;
         return relation;
@@ -576,6 +648,12 @@ private:
             if (orderedVfGroups.count(key) != 0)
                 return true;
             const auto source = processor.dependency.vfBoundaries.at(key).completion;
+            if (const auto precedes = processor.BoundaryPrecedes(source, target)) {
+                if (*precedes && orderedVfGroups.size() < processor.limits_.ReplayOrderCacheEntryBudget()) {
+                    orderedVfGroups.insert(key);
+                }
+                return *precedes;
+            }
             if (processor.comparisons >= processor.limits_.CandidateComparisonBudget())
                 return false;
             ++processor.comparisons;
@@ -627,15 +705,14 @@ private:
                 history += writers.capacity();
             if (state.vfExternal) {
                 const auto& external = *state.vfExternal;
-                groupBytes += sizeof(VfExternalState) + SEGMENT_NODE_ALLOWANCE;
+                // Preserve the existing replay budget model, excluding the accounting field itself.
+                groupBytes += sizeof(VfExternalState) - sizeof(external.groupAtomicCapacity) + SEGMENT_NODE_ALLOWANCE;
                 history += external.readers.capacity() + external.writers.capacity();
                 for (const auto& writers : external.atomicWriters)
                     history += writers.capacity();
-                for (const auto& group : external.groups) {
-                    groupBytes += sizeof(decltype(external.groups)::value_type) + SEGMENT_NODE_ALLOWANCE;
-                    groupBytes += group.second.atomicWriters.capacity() *
-                                  sizeof(decltype(group.second.atomicWriters)::value_type);
-                }
+                groupBytes +=
+                    external.groups.size() * (sizeof(VfExternalState::Groups::value_type) + SEGMENT_NODE_ALLOWANCE);
+                groupBytes += external.groupAtomicCapacity * sizeof(decltype(VfHistory::atomicWriters)::value_type);
             }
             return sizeof(MemState) + SEGMENT_NODE_ALLOWANCE + groupBytes + history * sizeof(CbIndex);
         }
@@ -718,14 +795,32 @@ private:
             return true;
         }
 
+        VfExternalState::Groups::const_iterator SkipOrderedVfGroups(
+            const VfExternalState::Groups& groups, VfExternalState::Groups::const_iterator current, size_t target)
+        {
+            const auto& keys = processor.vfKeys;
+            if (!keys.empty()) {
+                const auto key = std::lower_bound(keys.begin(), keys.end(), current->first);
+                if (key != keys.end() && *key == current->first) {
+                    const size_t first = static_cast<size_t>(key - keys.begin());
+                    const size_t next = processor.FirstUnprovenVf(target, first);
+                    if (next == first) {
+                        return current;
+                    }
+                    return next == keys.size() ? groups.end() : groups.lower_bound(keys[next]);
+                }
+            }
+            return VfGroupPrecedes(current->first, target) ? std::next(current) : current;
+        }
+
         bool CheckVfAccess(size_t index, const racecheck::PreparedAccess& prepared, ConflictBatch& batch)
         {
             const auto key = race::DynamicVfKey(records[index]);
             const auto target =
                 key.has_value() ? processor.dependency.vfBoundaries.at(*key).entry : processor.accesses[index].node;
             SetVfOrderTarget(target);
-            const MemStateTracker::VfGroupPrecedes precedes = [this, target](const race::VfKey& source) {
-                return VfGroupPrecedes(source, target);
+            const MemStateTracker::VfGroupPrecedes precedes = [this, target](const auto& groups, auto current) {
+                return SkipOrderedVfGroups(groups, current, target);
             };
             return CheckAccess(vfMemory, index, prepared, batch, true, &precedes);
         }

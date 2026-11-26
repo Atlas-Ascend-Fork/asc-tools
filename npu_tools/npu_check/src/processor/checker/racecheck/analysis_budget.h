@@ -19,17 +19,17 @@
 namespace npucheck::race {
 // Defaults cover multi-core traces. Equal default values do not imply shared counters.
 inline constexpr size_t DEFAULT_EVENT_BUDGET = SIZE_MAX; // 条数受限会导致VF场景下数据量大时采集数据不完整导致失败
-inline constexpr size_t DEFAULT_SEGMENT_BUDGET = 8'388'608;
-inline constexpr size_t DEFAULT_EDGE_BUDGET = 16'777'216;
-inline constexpr size_t DEFAULT_COMPARISON_BUDGET = 10'000'000;
-inline constexpr size_t DEFAULT_QUERY_WORK_BUDGET = 10'000'000;
-inline constexpr size_t DEFAULT_QUERY_CACHE_BUDGET = 65'536;
-inline constexpr size_t DEFAULT_ANALYSIS_WORK_BUDGET = 100'000'000;
-inline constexpr size_t DEFAULT_STATE_SEGMENT_BUDGET = 1'048'576;
-inline constexpr size_t DEFAULT_STATE_BYTE_BUDGET = 536'870'912;       // 512 MiB of live replay state.
-inline constexpr size_t DEFAULT_RACE_REPORT_BYTE_BUDGET = 268'435'456; // 256 MiB of report objects.
-inline constexpr size_t DEFAULT_RANGE_STORAGE_INTERVAL_BUDGET = 8'388'608;
-inline constexpr size_t DEFAULT_RANGE_GEOMETRY_KEY_BUDGET = 65'536;
+inline constexpr size_t DEFAULT_SEGMENT_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_EDGE_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_COMPARISON_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_QUERY_WORK_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_QUERY_CACHE_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_ANALYSIS_WORK_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_STATE_SEGMENT_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_STATE_BYTE_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_RACE_REPORT_BYTE_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_RANGE_STORAGE_INTERVAL_BUDGET = SIZE_MAX;
+inline constexpr size_t DEFAULT_RANGE_GEOMETRY_KEY_BUDGET = SIZE_MAX;
 
 // Compatibility inputs: multiple scopes can use the same configured value,
 // but each scope accounts for its own usage. Consumers use the named accessors.

@@ -98,7 +98,7 @@ private:
     MemcheckStats stats_{};
     uint64_t nextReportId_ = 1;
     uint64_t nextGroupId_ = 1;
-    static constexpr size_t MAX_PENDING_DEVICE_OPERATIONS = 1U << 20U;
+    static constexpr size_t MAX_PENDING_DEVICE_OPERATIONS = SIZE_MAX;
 };
 
 } // namespace npucheck

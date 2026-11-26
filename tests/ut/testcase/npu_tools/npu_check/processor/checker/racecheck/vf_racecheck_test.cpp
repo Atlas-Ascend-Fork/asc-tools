@@ -278,7 +278,8 @@ TEST(VfRacecheck, ReplayedVfAccessesRetainFirstWriteWitness)
     external.header.pipeline = ACLSAN_DEVICE_PIPE_MTE2;
     h.Add(external);
     h.Add(Access(10, 0, 0, VLD));
-    h.Add(Access(10, 1, 1, VST));
+    const auto firstWrite = Access(10, 1, 1, VST);
+    h.Add(firstWrite);
     h.Add(Access(10, 2, 2, VLD));
     h.Add(Access(10, 3, 3, VST));
     h.Complete(10, 4, 4);
@@ -290,6 +291,7 @@ TEST(VfRacecheck, ReplayedVfAccessesRetainFirstWriteWitness)
     const auto& vf = report.previous.vfInstrValid ? report.previous : report.current;
     EXPECT_EQ(vf.accessMode, VST);
     EXPECT_EQ(vf.vfInstrExecSeq, 1U);
+    EXPECT_EQ(vf.header.pc, firstWrite.header.pc);
     EXPECT_EQ(report.checkRange.begin, 0U);
     EXPECT_EQ(report.checkRange.end, 64U);
 }

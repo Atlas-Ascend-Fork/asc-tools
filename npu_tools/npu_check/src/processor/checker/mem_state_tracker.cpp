@@ -347,6 +347,15 @@ std::vector<FailedRange> FailureRanges(const std::vector<AccessPair>& conflicts)
 } // namespace npucheck::racecheck
 
 namespace npucheck {
+VfExternalState::VfExternalState(const VfExternalState& other)
+    : readers(other.readers), writers(other.writers), atomicWriters(other.atomicWriters), groups(other.groups)
+{
+    // Copies can have different vector capacities, for example after a group switches to an ordinary write.
+    for (const auto& entry : groups) {
+        groupAtomicCapacity += entry.second.atomicWriters.capacity();
+    }
+}
+
 MemState::MemState(uint64_t begin, uint64_t end, MemOpState state) noexcept : begin(begin), end(end), state(state) {}
 
 MemState::MemState(const MemState& other)
@@ -498,14 +507,19 @@ void VisitVfCandidates(
     if (currentKey) {
         VisitReadWriteHistory(external.readers, external.writers, external.atomicWriters, mode, visitor);
     }
-    for (const auto& entry : external.groups) {
-        if (currentKey && entry.first == *currentKey) {
+    for (auto it = external.groups.begin(); it != external.groups.end();) {
+        if (currentKey && it->first == *currentKey) {
+            ++it;
             continue;
         }
-        if (vfGroupPrecedes != nullptr && (*vfGroupPrecedes)(entry.first)) {
-            continue;
+        if (vfGroupPrecedes != nullptr) {
+            const auto next = (*vfGroupPrecedes)(external.groups, it);
+            if (next != it) {
+                it = next;
+                continue;
+            }
         }
-        const auto& history = entry.second;
+        const auto& history = (it++)->second;
         if (history.witness && (history.writes || normalized != ACLSAN_DEVICE_MEMORY_ACCESS_READ)) {
             visitor(*history.witness);
         }
@@ -670,7 +684,9 @@ void ApplyVf(MemState& segment, const AclsanDeviceMemoryAccessData& data, bool n
                         [](auto value, const auto& entry) { return value < entry.first; });
                     const auto item = std::make_pair(mode, index);
                     if (newIndex || std::find(writers.begin(), end, item) == end) {
+                        const size_t oldCapacity = writers.capacity();
                         writers.insert(end, item);
+                        external.groupAtomicCapacity += writers.capacity() - oldCapacity;
                     }
                     segment.state = MemOpState::AtomicWrite;
                 }

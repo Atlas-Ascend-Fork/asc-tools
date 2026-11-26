@@ -45,22 +45,24 @@ TEST(ReportBufferTest, AppendingEmptyTextIsANoOp)
 // 触及上限时截到边界为止并置 truncated，而不是丢弃整份报告：已经查出来的问题仍要交付。
 TEST(ReportBufferTest, TruncatesAtTheSizeLimitAndKeepsWhatFits)
 {
-    ReportBuffer buffer;
-    const std::string block(1024u * 1024u, 'x');
+    constexpr size_t LIMIT = 23;
+    constexpr size_t BLOCK_SIZE = 8;
+    ReportBuffer buffer(LIMIT);
+    const std::string block(BLOCK_SIZE, 'x');
     size_t written = 0;
     while (buffer.Append(block)) {
         written += block.size();
-        ASSERT_LE(written, npucheck::ipc::MAX_RESULT_BYTES);
+        ASSERT_LE(written, LIMIT);
     }
 
     EXPECT_TRUE(buffer.Truncated());
     EXPECT_FALSE(buffer.Failed());
     // 恰好停在上限上：既没有越界，也没有因为最后一段放不下就整段丢弃。
-    EXPECT_EQ(buffer.Size(), npucheck::ipc::MAX_RESULT_BYTES);
+    EXPECT_EQ(buffer.Size(), LIMIT);
 
     // 已经截断之后继续追加只会被拒绝，不改变已有内容。
     EXPECT_FALSE(buffer.Append("tail"));
-    EXPECT_EQ(buffer.Size(), npucheck::ipc::MAX_RESULT_BYTES);
+    EXPECT_EQ(buffer.Size(), LIMIT);
 }
 
 // 诊断在多个 callback 线程上产生，追加必须是线程安全的。
