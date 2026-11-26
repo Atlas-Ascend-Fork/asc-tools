@@ -62,6 +62,9 @@ from pathlib import Path
 SCHEMA = "opstune.collect-cases/1.0"
 HERE = Path(__file__).resolve().parent
 COLLECT_BOARD = HERE / "collect_board.sh"
+# 精度哨兵（跨文件契约，单点定义在 ops-verdict/scripts/delta_compare.py 的
+# PRECISION_UNVERIFIED）：本脚本与 batch_pipeline 均按此占位写 perf_data.csv。
+PRECISION_UNVERIFIED = "unverified"
 
 
 def load_cases(path: str) -> list[dict]:
@@ -325,9 +328,13 @@ def main() -> int:
         )
         w.writeheader()
         for r in perf_rows:
-            w.writerow(
-                {**r, "precision": r["precision"] or "pass"}
-            )  # 精度列由 Phase 4 实施后填真值
+            w.writerow({**r, "precision": r["precision"] or PRECISION_UNVERIFIED})
+            # 精度哨兵：collect 侧未跑精度验证（Phase 4 实施后才产真值）——
+            # 占位写 unverified（非 pass）：pass 会被 delta_compare 第三道精度
+            # 门禁当作「已验证」放行，整条 --from-collect 直连链路可以产出
+            # KEEP 归档而精度从未测过（伪 Green 形态）。unverified 经 snapshot
+            # 落入快照 → delta_compare 降级结论为 PROVISIONAL 并 stderr WARN，
+            # 逼 Phase 4 填真值后才升级正式结论。
 
     # ---- collect_summary.json（伪 Green 防护：failed/partial 如实呈现）----
     failed = [s for s in status_rows if s["status"] in ("failed", "partial")]

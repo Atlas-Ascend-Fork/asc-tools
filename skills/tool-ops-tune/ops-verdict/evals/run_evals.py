@@ -15,13 +15,14 @@
   没有守护力。判定已经进脚本（verdict.py），评测必须跟着进脚本：
   任何阈值/规则变更必须先过本回归全绿。
 
-用例分两组（共 40 条）：
+用例分两组（共 43 条）：
   - E1-E26：verdict.py 判定回归（fixture → 断言 findings/verdict；含 R 值
     临界值双侧守护 E12b/E12c——区间重叠只在边界值暴露）
-  - S1-S14：门禁脚本回归（snapshot/delta_compare/batch/加载校验/边界）——
+  - S1-S17：门禁脚本回归（snapshot/delta_compare/batch/加载校验/边界）——
     Step 4 的结论门禁（KEEP/REVERT 判错 = 错误归档）与加载校验负例的
     回归网；S13/S14 守护 batch_pipeline 结论分类
-    与 delta_compare 口径键缺失留痕（issue #308）
+    与 delta_compare 口径键缺失留痕（issue #308）；S15-S17 守护精度三态
+    门禁（unverified 降级 / fail 拒绝 / 枚举外值 fail-closed）
 
 用法：
   python3 evals/run_evals.py            # 全部用例
@@ -522,6 +523,21 @@ SCRIPT_CASES = [
         "id": "S14-delta-hard-missing-warn",
         "desc": "issue #308 问题 2：HARD 键单侧缺失（baseline 无 device_id）→ 不阻断但 stderr WARN 留痕",
     },
+    {
+        "id": "S15-precision-unverified-provisional",
+        "desc": "精度哨兵：两侧 precision=unverified（collect 占位）→ 不阻断、结论降级"
+        "PROVISIONAL 且 stderr WARN——pass 占位会让第三道精度门禁永真放行（伪 Green）",
+    },
+    {
+        "id": "S16-precision-fail-still-rejects",
+        "desc": "精度门禁回归：任一侧 fail 仍 exit 2（哨兵引入不放松 fail 的硬拒绝）",
+    },
+    {
+        "id": "S17-precision-missing-invalid-rejects",
+        "desc": "精度白名单回归（检视 P1，fail-closed）：precision 缺失/枚举外值"
+        "（None/PASS/na）→ exit 2——黑名单形态会把无 precision 的手写 result.json"
+        " 静默放行为正式结论",
+    },
 ]
 
 
@@ -847,6 +863,83 @@ def run_script_case(case: dict, verbose: bool) -> tuple[bool, list[str]]:
                 errs.append(
                     f"stderr 应含 device_id WARN 留痕，实际 stderr：{p.stderr[:200]}"
                 )
+        elif cid == "S15-precision-unverified-provisional":
+            # 精度哨兵：两侧 unverified（collect_cases 占位形态）→ rc 0 放行但
+            # 结论降级 PROVISIONAL（comparison.md 留痕）+ stderr WARN——
+            # 修复前占位为 pass，第三道精度门禁永真放行（伪 Green：
+            # --from-collect 链路可产出 KEEP 归档而精度从未验证）。
+            b = _mk_snap(td, "baseline", precision="unverified")
+            a = _mk_snap(td, "after", precision="unverified", kernel_avg_us=50.0)
+            p = _run_delta(td, b, a)
+            comp = (Path(td) / "comp.md").read_text(encoding="utf-8")
+            if p.returncode != 0:
+                errs.append(f"unverified 应放行（rc={p.returncode}）：{p.stderr[:120]}")
+            # 断言收紧（检视意见）：裸 "PROVISIONAL" 在报告头静态文案行恒出现
+            # （「（工程现有测试口径；unverified=未验证，结论 PROVISIONAL）」），
+            # 不能作降级证据——只认「## 结论」段的加粗行前缀
+            concl = [
+                ln.strip()
+                for ln in comp.splitlines()
+                if ln.strip().startswith("**PROVISIONAL（精度未验证）：")
+            ]
+            if not concl:
+                errs.append(
+                    "结论行应带 **PROVISIONAL（精度未验证）： 前缀（报告头静态文案不算）"
+                )
+            elif not any(
+                ln.startswith("**PROVISIONAL（精度未验证）：提升") for ln in concl
+            ):
+                errs.append(f"提升结论应带前缀，实际结论行：{concl[0][:80]}")
+            # 降级后不存在裸 **提升 结论行（前缀插在 ** 与结论词之间）——
+            # 旧写法 "**提升 in comp" 守卫恒假使断言空转
+            if any(ln.strip().startswith("**提升") for ln in comp.splitlines()):
+                errs.append("存在无前缀的裸 **提升 结论行（降级未生效或部分回退）")
+            if "PROVISIONAL" not in p.stderr or "WARN" not in p.stderr:
+                errs.append(f"stderr 应含精度未验证 WARN，实际：{p.stderr[:200]}")
+        elif cid == "S16-precision-fail-still-rejects":
+            # fail 语义不因哨兵引入而放松：任一侧 fail → exit 2 硬拒绝
+            b = _mk_snap(td, "baseline")
+            a = _mk_snap(td, "after", precision="fail", kernel_avg_us=50.0)
+            p = _run_delta(td, b, a)
+            if p.returncode != 2 or "精度" not in p.stderr:
+                errs.append(f"fail 应 exit 2 且 stderr 含精度（rc={p.returncode}）")
+        elif cid == "S17-precision-missing-invalid-rejects":
+            # 白名单判定（检视 P1）：precision 缺失（手写/旧版 result.json 形态）
+            # 与非法值（PASS/na）须与 fail 同判 exit 2——此前黑名单形态下
+            # rc 0 无 WARN 直接产出正式「提升」结论（实测复现）
+            import json as _json
+
+            for tag, over in (
+                ("缺失", {}),
+                ("非法值", {"precision": "na"}),
+            ):
+                snap = {
+                    "op": "gelu",
+                    "variant": "after",
+                    "soc": "a5",
+                    "kernel_avg_us": 50.0,
+                    "timing_method": "event",
+                    "baseline_kind": "self_before_after",
+                    "cann_version": "8.3.0",
+                    "device_id": "0",
+                    "shape": "8448x4096",
+                    "dtype": "fp16",
+                    "format": "ND",
+                    "warmup": 5,
+                    "repeat": 20,
+                }
+                snap.update(over)
+                a_path = Path(td) / f"after_{tag}.json"
+                a_path.write_text(
+                    _json.dumps(snap, ensure_ascii=False), encoding="utf-8"
+                )
+                b = _mk_snap(td, "baseline")
+                p = _run_delta(td, b, str(a_path))
+                if p.returncode != 2 or "precision" not in (p.stderr or ""):
+                    errs.append(
+                        f"precision {tag} 应 exit 2 且 stderr 含 precision"
+                        f"（rc={p.returncode}，stderr={p.stderr[:150] if p.stderr else ''}）"
+                    )
     if verbose and errs:
         for e in errs:
             print(f"       ✗ {e}")

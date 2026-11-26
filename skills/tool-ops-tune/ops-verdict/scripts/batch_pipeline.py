@@ -58,6 +58,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SNAPSHOT = HERE / "snapshot.py"
 DELTA_COMPARE = HERE / "delta_compare.py"
+# 跨文件契约（从 delta_compare.py 同步）：unverified 哨兵与 PROVISIONAL 前缀
+# 的单点定义在 delta_compare.py（PRECISION_UNVERIFIED / PROV_MARK），本模块与
+# render_html.py 的剥离字面量必须与其保持一致——措辞改动须三处同步。
+PRECISION_UNVERIFIED = "unverified"
+PROV_PREFIX = "**PROVISIONAL（精度未验证）："  # = "**" + delta_compare.PROV_MARK
 
 HARD_KEYS = (
     "op",
@@ -98,7 +103,9 @@ def load_perf(path: str) -> dict[tuple[str, str], dict]:
                 continue
             out[key] = {
                 "kernel_avg_us": float(row["kernel_avg_us"]),
-                "precision": row.get("precision", "pass"),
+                # 空精度 → unverified 哨兵（非 pass）：与 collect_cases 占位同语义
+                # ——pass 会让 delta_compare 第三道精度门禁永真放行（伪 Green）
+                "precision": row.get("precision") or PRECISION_UNVERIFIED,
                 "kernel_p50_us": float(row["kernel_p50_us"])
                 if row.get("kernel_p50_us")
                 else None,
@@ -179,6 +186,10 @@ def run_compare(base: Path, after: Path, out_md: Path) -> tuple[int, str]:
         capture_output=True,
         text=True,
     )
+    # delta_compare 的 stderr（口径 WARN / 精度哨兵 WARN）透传——审计留痕
+    # 不进 stdout（stdout 被 parse 消费），但吞掉会让直连链路只见结论不见告警
+    if proc.stderr:
+        sys.stderr.write(proc.stderr)
     return proc.returncode, proc.stdout
 
 
@@ -200,6 +211,11 @@ def parse_conclusion(md_text: str) -> tuple[str, float | None]:
                 pass
     for line in md_text.splitlines():
         s = line.strip()
+        # 精度哨兵降级标记（delta_compare 对 unverified 快照的产出）：剥前缀后
+        # 按结论词分类——分类语义不变，降级可见性走 precision 列（unverified）；
+        # 前缀字面量走 PROV_PREFIX（与 delta_compare PROV_MARK 同步契约）
+        if s.startswith("**PROVISIONAL"):
+            s = "**" + s[len(PROV_PREFIX):]
         if s.startswith("**提升"):
             return "KEEP", speedup
         if s.startswith("**劣化"):

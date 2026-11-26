@@ -15,7 +15,9 @@
   - 口径指纹思想：性能结论只有在同口径下才可比。
   - HARD_KEYS（环境/口径 12 字段）不一致禁止比较；MECHANISM_KEYS（tiling_key/block_dim）
     是优化本身的变量 → 降级 WARN 并写进报告（对优化本质的建模）。
-  - 精度门禁第三道（脚本化）：precision != pass → 本快照可保存，但禁止进入性能结论。
+  - 精度门禁第三道（脚本化，三态）：precision=fail → 本快照可保存，但
+    delta_compare 将 exit 2 拒绝生成性能结论；unverified（collect 占位哨兵）→
+    快照可参与比较，delta_compare 将结论降级为 PROVISIONAL（精度未验证）。
 
 用法：
   python3 snapshot.py --op gelu --variant baseline --mode board --soc a5 \
@@ -91,8 +93,9 @@ def main() -> int:
     ap.add_argument(
         "--precision",
         required=True,
-        choices=["pass", "fail"],
-        help="精度门禁结果（工程现有测试口径，禁止自创容差）",
+        choices=["pass", "fail", "unverified"],
+        help="精度门禁结果（工程现有测试口径，禁止自创容差）；"
+        "unverified=尚未跑精度验证（collect 侧占位哨兵，delta_compare 将降级结论）",
     )
     ap.add_argument("--kernel-avg-us", type=float, default=None)
     ap.add_argument(
@@ -188,9 +191,16 @@ def main() -> int:
         json.dumps(snap, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     print(f"snapshot → {out}")
-    if args.precision != "pass":
+    if args.precision == "fail":
         print(
-            "⚠ 精度门禁未通过：本快照禁止用于性能结论（delta_compare 将拒绝生成对比）",
+            "⚠ 精度门禁未通过：本快照禁止用于性能结论"
+            "（delta_compare 将 exit 2 拒绝生成对比）",
+            file=sys.stderr,
+        )
+    elif args.precision == "unverified":
+        print(
+            "⚠ 精度未验证（collect 占位哨兵）：本快照可参与比较，"
+            "但 delta_compare 将把结论降级为 PROVISIONAL（精度未验证）",
             file=sys.stderr,
         )
     return 0

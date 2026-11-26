@@ -40,7 +40,7 @@ Step 5 产出，回灌 ops-mechanism 案例库的候选（经评审后入库）�
 | `mechanism` | ✅ | 实施的机制名 |
 | `speedup_measured` | ✅ | 实测加速比（comparison.md 的 KEEP 轮） |
 | `speedup_est` | ✅ | 候选方案卡的预估值（校准对照） |
-| `precision` | ✅ | `pass`（fail 的轮次禁止产出条目） |
+| `precision` | ✅ | `pass` / `unverified`（fail 的轮次禁止产出条目；unverified=collect 占位哨兵，delta_compare 降级 PROVISIONAL） |
 | `rollback_happened` | ✅ | bool（是否有回滚；回滚原因写入 notes） |
 | `notes` | — | 适用边界 / 警示（如「仅 fp16 大 shape 验证」） |
 | `generated_at` | ✅ | ISO 8601 |

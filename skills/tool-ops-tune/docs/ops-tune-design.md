@@ -95,7 +95,7 @@ INSUFFICIENT_DATA，**绝不因数据缺失而判「无 bound」**（None 不冒
 
 **决策**：`snapshot.py` 每次测量落口径指纹（HARD_KEYS 12 字段 + MECHANISM_KEYS 2 字段 +
 精度指纹 + status 三态）；`delta_compare.py` 三道硬校验（任一失败 exit 2 拒绝生成对比）：
-①口径硬校验（HARD_KEYS 不一致 → 拒绝比较）；②精度门禁（任一侧 precision ≠ pass → 拒绝）；
+①口径硬校验（HARD_KEYS 不一致 → 拒绝比较）；②精度门禁（任一侧 precision=fail 或缺失/非法 → 拒绝；unverified 哨兵 → 结论降级 PROVISIONAL）；
 ③噪声带三段结论（speedup > 1.05 KEEP / < 0.95 REVERT / 带内 → repeat 翻倍复测不宣称）。
 
 **语义细节**：`tiling_key` / `block_dim` 是分核/tiling 类优化**本身就会改变**的变量，从

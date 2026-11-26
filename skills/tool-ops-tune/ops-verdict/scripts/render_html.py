@@ -44,6 +44,9 @@ from pathlib import Path
 # 单一常量承载三处引用（conclusion_of 数值交叉校验 + speedup_color 两侧色带），
 # 改动噪声带口径只改这一处。
 NOISE_BAND = 0.05
+# PROVISIONAL 前缀契约（与 delta_compare.py PROV_MARK / batch_pipeline.py
+# PROV_PREFIX 同步）：delta_compare 产出的结论行前缀，剥离后按结论词分类。
+PROV_PREFIX = "**PROVISIONAL（精度未验证）："
 
 
 def load_matrix(matrix_dir: Path) -> dict:
@@ -76,6 +79,11 @@ def conclusion_of(comp_md: str | None, speedup: float | None) -> str:
         verdict = None
         for line in comp_md.splitlines():
             s = line.strip()
+            # PROVISIONAL（精度未验证）前缀：delta_compare 精度哨兵降级标记
+            # （unverified 占位）——剥前缀后按结论词分类，分类语义不变；
+            # 降级可见性走 snapshot 的 precision=unverified 列，不混入分类
+            if s.startswith("**PROVISIONAL"):
+                s = "**" + s[len(PROV_PREFIX):]
             if s.startswith("**提升"):
                 verdict = "KEEP"
                 break
@@ -244,6 +252,13 @@ def render(data: dict, title: str) -> str:
             st = statuses.get((cid, v), "MISSING")
             color = speedup_color(sp)
             txt = f"{sp:.3f}x" if sp else "—"
+            # 精度哨兵可见性（检视 P3）：热力表此前无 precision 通道，降级结论
+            # 与正式结论在报告层零差别——unverified 的 cell 加 * 标记 + tooltip
+            # 注明（悬停可见），不改变分类/配色语义
+            prec = (cases[cid].get(v) or {}).get("precision")
+            if prec == "unverified":
+                txt += " *"
+                st = f"{st}（精度未验证 PROVISIONAL）"
             parts.append(
                 f"<td class='sp' style='background:{color}' title='{html.escape(st)}'>"
                 f"{txt}</td>"
@@ -252,7 +267,8 @@ def render(data: dict, title: str) -> str:
     parts.append("</table>")
     parts.append(
         "<p class='meta'>着色：绿=KEEP（越深收益越大）；红=REVERT；"
-        "浅灰=噪声带内；深灰=无数据。悬停看结论。</p>"
+        "浅灰=噪声带内；深灰=无数据。悬停看结论；<b>*</b>=精度未验证"
+        "（precision=unverified，结论 PROVISIONAL）。</p>"
     )
 
     # 逐 case 明细折叠

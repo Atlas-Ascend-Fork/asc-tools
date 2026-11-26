@@ -15,7 +15,9 @@
   - HARD_KEYS 口径不一致 → exit 2 拒绝比较（性能数字在口径漂移下无意义）。
   - MECHANISM_KEYS（tiling_key/block_dim）默认 WARN 写入报告；--strict 恢复禁比
     （分核/tiling 类优化本身就会改变这两个字段——这是对优化本质的建模）。
-  - 精度门禁（第三道，脚本化）：任一侧 precision != pass → exit 2。
+  - 精度门禁（第三道，脚本化，三态）：precision 枚举外取值（含键缺失 None）→ exit 2
+    （fail-closed 值域校验——precision 直读边界外 result.json，非法值不得静默放行）；
+    == fail → exit 2；unverified（collect 侧占位哨兵，精度未验证）→ 结论降级 PROVISIONAL + WARN。
   - 噪声带三段结论（实测纪律）：±5% 内不判收益也不判劣化 → 加采样轮次。
 
 用法：
@@ -47,6 +49,14 @@ HARD_KEYS = (
 )
 MECHANISM_KEYS = ("tiling_key", "block_dim")
 NOISE_BAND = 0.05  # ±5%：噪声带内不归因（run 间噪声 >5% 时小于噪声的收益不得宣称）
+
+# 精度三态口径（pass / fail / unverified）与 PROVISIONAL 前缀契约：
+# prov_mark 产出行形态为 f"**{prov_mark}结论词...**"（见下方 md 列表 f"**{conclusion}**"），
+# batch_pipeline.parse_conclusion / render_html.conclusion_of 按同一 PROV_MARK 剥离前缀——
+# 三处必须同步，改措辞须连同消费方一起改（跨文件契约）。
+PRECISION_STATES = ("pass", "fail", "unverified")
+PRECISION_UNVERIFIED = "unverified"
+PROV_MARK = "PROVISIONAL（精度未验证）："  # 结论行前缀（不含 **；行首 ** 由 md 模板加）
 
 
 def load(p: str) -> dict:
@@ -116,13 +126,50 @@ def main() -> int:
         )
 
     # ---- 门禁 2：精度门禁（第三道）----
-    if base.get("precision") != "pass" or after.get("precision") != "pass":
+    # unverified 哨兵（collect_cases 占位产出）：精度未测过 ≠ 精度通过——
+    # 此前空精度被上游补成 pass，本门禁永真放行（伪 Green：--from-collect
+    # 直连链路可产出 KEEP 归档而精度从未验证）。unverified 不阻断（采集期
+    # 精度本就未跑），但结论降级 PROVISIONAL 并 stderr WARN——填真值
+    # （pass/fail）重比后才升级正式结论。
+    # 值域校验（fail-closed）：precision 直读边界外 result.json（--snapshots
+    # 手工对/文件被改/旧工具产出），键缺失（None）或枚举外取值（拼写错误）
+    # 必须显式拒绝——只拦 fail 的黑名单形态会让非法值静默当作已验证放行，
+    # 在伪 Green 防护位上开新后门。
+    precision_states = (base.get("precision"), after.get("precision"))
+    unverified_side = [
+        n
+        for n, s in (("baseline", base), ("after", after))
+        if s.get("precision") == PRECISION_UNVERIFIED
+    ]
+    # 白名单判定（检视 P1，fail-closed）：缺失/未知值与 fail 同判 exit 2——
+    # 黑名单（仅拒 fail）会把缺 precision 的手写/旧版 result.json 静默放行为
+    # 正式结论，比修复前的「非 pass 即拒绝」更宽松（伪 Green 换入口复现）。
+    # 合法三态走 PRECISION_STATES 单点定义。
+    if any(s not in PRECISION_STATES for s in precision_states):
         print(
-            "ERROR: 只有精度均为 pass 的结果才能生成性能结论 "
-            f"(baseline={base.get('precision')}, after={after.get('precision')})",
+            "ERROR: precision 取值非法，必须为 pass/fail/unverified（unverified"
+            " 哨兵除外，降级 PROVISIONAL） "
+            f"(baseline={base.get('precision')!r}, after={after.get('precision')!r})",
             file=sys.stderr,
         )
         return 2
+    if any(s == "fail" for s in precision_states):
+        print(
+            "ERROR: 精度门禁未通过（precision=fail 的结果禁止生成性能结论） "
+            f"(baseline={base.get('precision')}, after={after.get('precision')})；"
+            "unverified 不拒绝但降级为 PROVISIONAL",
+            file=sys.stderr,
+        )
+        return 2
+    if unverified_side:
+        print(
+            "WARN: 精度未验证（"
+            + "/".join(unverified_side)
+            + " 侧 precision=unverified）："
+            "结论降级为 PROVISIONAL——Phase 4 精度验证填真值"
+            "（改 perf_data.csv 后重跑本对比）后方可作为正式归档依据",
+            file=sys.stderr,
+        )
 
     # 机制变量 WARN ----
     mech_warns = [
@@ -137,21 +184,29 @@ def main() -> int:
     speedup = fmt_speedup(b_us, a_us)
 
     # ---- 三段结论 ----
+    provisional = bool(unverified_side)
+    prov_mark = PROV_MARK if provisional else ""
     if speedup is None:
-        conclusion = "UNRESOLVED：缺少可比的 kernel_avg_us（或标记为 partial/dry_run）"
+        conclusion = (
+            f"{prov_mark}UNRESOLVED：缺少可比的 kernel_avg_us"
+            "（或标记为 partial/dry_run）"
+        )
         action = "补齐性能数据或更换计时口径后重比"
     elif speedup > 1 + args.noise_band:
         conclusion = (
-            f"提升：speedup={speedup:.3f}x（>{1 + args.noise_band:.2f} 超出噪声带）"
+            f"{prov_mark}提升：speedup={speedup:.3f}x"
+            f"（>{1 + args.noise_band:.2f} 超出噪声带）"
         )
         action = "KEEP：该轮保留，进入下一轮单变量迭代"
     elif speedup < 1 - args.noise_band:
-        conclusion = f"劣化：speedup={speedup:.3f}x（<{1 - args.noise_band:.2f}）"
+        conclusion = (
+            f"{prov_mark}劣化：speedup={speedup:.3f}x（<{1 - args.noise_band:.2f}）"
+        )
         action = "REVERT：回滚本轮改动；回滚后须复跑确认回到基线水平再进入下一轮"
     else:
         conclusion = (
-            f"噪声带内（{speedup:.3f}x，±{args.noise_band * 100:.0f}% 内）："
-            "不判收益也不判劣化"
+            f"{prov_mark}噪声带内（{speedup:.3f}x，"
+            f"±{args.noise_band * 100:.0f}% 内）：不判收益也不判劣化"
         )
         # F9：repeat 是 HARD key——翻倍复测必须「以新 repeat 同步重采基线与优化侧、
         # 重建快照（新目录）后再比」，直接翻倍 after 会被口径硬校验 exit 2 拒绝
@@ -207,7 +262,8 @@ def main() -> int:
         f"- 生成时间：{datetime.datetime.now().isoformat(timespec='seconds')}",
         f"- 口径：{base.get('soc')} / CANN {base.get('cann_version')} / device {base.get('device_id')}"
         f" / timing={base.get('timing_method')} / warmup={base.get('warmup')} repeat={base.get('repeat')}",
-        f"- 精度：baseline={base.get('precision')}  after={after.get('precision')}（工程现有测试口径）",
+        f"- 精度：baseline={base.get('precision')}  after={after.get('precision')}"
+        f"（工程现有测试口径；unverified=未验证，结论 PROVISIONAL）",
         "",
         "## 结论",
         "",
