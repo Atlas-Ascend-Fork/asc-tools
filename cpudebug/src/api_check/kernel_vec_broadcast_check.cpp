@@ -21,7 +21,7 @@ namespace check {
 bool TikcppVecBroadCastCheck::CheckSrcTensorOverflow(const std::string& errMsg)
 {
     if (param_.srcDtypeBytes == 0) {
-        CHECK_LOG_ERROR("src dtype bytes is zeros");
+        CHECK_LOG_ERROR("src dtype byte size is zero");
         return false;
     }
     if ((static_cast<uint32_t>(param_.repeatTimes) * static_cast<uint32_t>(PlatFormParams::BLK_NUM_PER_REP)) >

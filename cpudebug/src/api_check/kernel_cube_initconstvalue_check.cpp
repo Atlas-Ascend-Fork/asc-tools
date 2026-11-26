@@ -39,8 +39,10 @@ bool TikcppCubeInitConstValueCheck::CheckAllLowLevel()
 #endif
     uint64_t bufferSize = ((blockNum + dstGap) * repeatTimes - dstGap) * blockLen;
     if (param_.dstSize < bufferSize) {
-        CHECK_LOG_ERROR("Failed to check dstLocal tensor calculate size overflow in InitConstValue, please check "
-                        "value of repeatTimes, blockNum, dstGap");
+        CHECK_LOG_ERROR(
+            "Failed to check dstLocal tensor calculated size in InitConstValue: calculated size %llu bytes "
+            "exceeds dstSize %llu bytes; please check repeatTimes, blockNum, dstGap",
+            static_cast<unsigned long long>(bufferSize), static_cast<unsigned long long>(param_.dstSize));
         return false;
     }
 

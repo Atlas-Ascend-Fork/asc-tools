@@ -192,7 +192,8 @@ void* GmAlloc(size_t size)
     size_t pageSize = getpagesize();
     size_t alignedExtraPageSize = pageSize * 2 + pageSize - 1; // 2 pages for header and tail
     if (size > (SIZE_MAX - alignedExtraPageSize)) {
-        std::cerr << "GmAlloc Error: input size overflow detected." << std::endl;
+        std::cerr << "GmAlloc Error: input size " << size << " exceeds maximum allowed size "
+                  << (SIZE_MAX - alignedExtraPageSize) << " bytes." << std::endl;
         raise(SIGABRT);
     }
     size_t newSize = (size + alignedExtraPageSize) & (~(pageSize - 1)); // align to multiple page size
@@ -293,7 +294,7 @@ void CheckGmValied(int argn, uint64_t* argv)
         }
         ShmMemT* mem = reinterpret_cast<ShmMemT*>(GmGetHeader((void*)argv[i]));
         if (mem->magicCode != 0xdeadbeef) {
-            std::cout << "The address of args are not allocate by AscendC::GmAlloc!" << std::endl;
+            std::cout << "The address of args was not allocated by AscendC::GmAlloc!" << std::endl;
             raise(SIGABRT);
         }
     }
@@ -306,7 +307,10 @@ void CheckBlockdimForFfts(uint64_t numBlocks)
     if ((g_kernelMode == KernelMode::MIX_MODE && numBlocks > MAX_CORE_NUM_V220) ||
         (g_kernelMode == KernelMode::AIC_MODE && numBlocks > MAX_CORE_NUM_V220) ||
         (g_kernelMode == KernelMode::AIV_MODE && numBlocks > MAX_CORE_NUM_V220 * AIV_IN_GROUP_CORE_NUM)) {
-        std::cout << "The input numBlocks " << numBlocks << " exceed max core num of ascend910B1!" << std::endl;
+        const int32_t maxCoreNum =
+            g_kernelMode == KernelMode::AIV_MODE ? MAX_CORE_NUM_V220 * AIV_IN_GROUP_CORE_NUM : MAX_CORE_NUM_V220;
+        std::cout << "The input numBlocks " << numBlocks << " exceeds max core num " << maxCoreNum << " of ascend910B1!"
+                  << std::endl;
         raise(SIGABRT);
     }
 #endif

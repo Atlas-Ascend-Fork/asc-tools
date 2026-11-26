@@ -24,7 +24,7 @@ bool TikcppDataCopySliceCheck::CheckSliceInfoParamters(const std::string& errMsg
         if (param_.dstSliceInfo[i].burstLen != param_.srcSliceInfo[i].burstLen) {
             CHECK_LOG_ERROR(
                 "%s, "
-                "dstSliceInfo[%u]'s busrt len (%u) should be equal to SliceInfo[%u]'s busrt len (%u)",
+                "dstSliceInfo[%u]'s burst len (%u) should be equal to SliceInfo[%u]'s burst len (%u)",
                 errMsg.c_str(), i, param_.dstSliceInfo[i].burstLen, i, param_.srcSliceInfo[i].burstLen);
             return false;
         }
@@ -32,7 +32,7 @@ bool TikcppDataCopySliceCheck::CheckSliceInfoParamters(const std::string& errMsg
         if (i > 0 && param_.dstSliceInfo[i].burstLen != 1) {
             CHECK_LOG_ERROR(
                 "%s, "
-                "dim[%u]'s dstSliceInfo's busrt len should be equal to 1, but get (%u)",
+                "dim[%u]'s dstSliceInfo's burst len should be equal to 1, but get (%u)",
                 errMsg.c_str(), i, param_.dstSliceInfo[i].burstLen);
             return false;
         }
@@ -40,7 +40,7 @@ bool TikcppDataCopySliceCheck::CheckSliceInfoParamters(const std::string& errMsg
         if (param_.dstSliceInfo[i].startIndex >= param_.dstSliceInfo[i].endIndex) {
             CHECK_LOG_ERROR(
                 "%s, "
-                "dstSliceInfo[%u]'s start index (%u) should be lee than dstSliceInfo[%u]'s end index (%u)",
+                "dstSliceInfo[%u]'s start index (%u) should be less than dstSliceInfo[%u]'s end index (%u)",
                 errMsg.c_str(), i, param_.dstSliceInfo[i].startIndex, i, param_.dstSliceInfo[i].endIndex);
             return false;
         }
@@ -56,7 +56,7 @@ bool TikcppDataCopySliceCheck::CheckSliceInfoParamters(const std::string& errMsg
         if (param_.srcSliceInfo[i].startIndex >= param_.srcSliceInfo[i].endIndex) {
             CHECK_LOG_ERROR(
                 "%s, "
-                "srcSliceInfo[%u]'s start index (%u) should be lee than srcSliceInfo[%u]'s end index (%u)",
+                "srcSliceInfo[%u]'s start index (%u) should be less than srcSliceInfo[%u]'s end index (%u)",
                 errMsg.c_str(), i, param_.srcSliceInfo[i].startIndex, i, param_.srcSliceInfo[i].endIndex);
             return false;
         }
@@ -102,7 +102,7 @@ bool TikcppDataCopySliceCheck::CheckDataCopyIntrsParamters(const std::string& er
     if (totalLen % oneSliceLen != 0) {
         CHECK_LOG_ERROR(
             "%s, "
-            "construct datacopy intrs paramters block count failed, please check srcSliceInfo[0].burstLen(%u), "
+            "construct datacopy intrs parameters block count failed, please check srcSliceInfo[0].burstLen(%u), "
             "srcSliceInfo[0].startIndex(%u), srcSliceInfo[0].endIndex(%u), srcSliceInfo[0].stride(%u)",
             errMsg.c_str(), param_.srcSliceInfo[0].burstLen, param_.srcSliceInfo[0].startIndex,
             param_.srcSliceInfo[0].endIndex, param_.srcSliceInfo[0].stride);
