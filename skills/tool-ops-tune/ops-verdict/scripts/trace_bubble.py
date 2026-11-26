@@ -173,8 +173,26 @@ def analyze_core(events: list[Event]) -> dict:
 
     # 空泡分类（粗粒度四类，对齐空泡分析体系一级分类）：
     # 主 pipe 空泡窗口内看谁 busy → 归因
-    def coverage(ivs, s, e) -> float:
-        return intersect_len(ivs, [(s, e)]) / (e - s) if e > s else 0.0
+    # 窗口覆盖查询走二分定位（区间集已排序不相交）：线性扫描是 O(gaps×intervals)
+    # 平方复杂度——30k 事件实测 31s，真实大 trace（10万+ 事件）单核分析进分钟级。
+    import bisect
+
+    def coverage(ivs, starts, ends, s, e) -> float:
+        """[s,e] 窗口在区间集上的覆盖比例（bisect 定位首个可能相交区间，向左走查）。
+
+        区间集来自 busy_intervals（合并后有序且互不相交），ends 亦有序——
+        二分找到最后一个 start <= e 的区间，向左走查到 end <= s 即止，
+        命中区间数即实际相交数，无重叠退化情形。
+        """
+        if e <= s:
+            return 0.0
+        i = bisect.bisect_right(starts, e) - 1
+        total = 0.0
+        while i >= 0 and ends[i] > s:
+            if starts[i] < e:
+                total += min(ends[i], e) - max(starts[i], s)
+            i -= 1
+        return total / (e - s)
 
     other_pipes = [
         p
@@ -182,6 +200,9 @@ def analyze_core(events: list[Event]) -> dict:
         if p in pipes
     ]
     other_ivs = {p: busy_intervals(events, p) for p in other_pipes}
+    # 各 pipe 区间集的 start/end 平行数组（bisect 的二分底座）
+    other_starts = {p: [iv[0] for iv in ivs] for p, ivs in other_ivs.items()}
+    other_ends = {p: [iv[1] for iv in ivs] for p, ivs in other_ivs.items()}
     # 主 pipe gap 列表
     gaps = []
     for i in range(len(main_ivs) - 1):
@@ -199,7 +220,7 @@ def analyze_core(events: list[Event]) -> dict:
         total_gap += w
         best, best_cov = None, 0.0
         for p in other_pipes:
-            cov = coverage(other_ivs[p], s, e)
+            cov = coverage(other_ivs[p], other_starts[p], other_ends[p], s, e)
             if cov > best_cov:
                 best, best_cov = p, cov
         if best in ("MTE2", "MTE3", "MTE1") and best_cov > 0.3:
