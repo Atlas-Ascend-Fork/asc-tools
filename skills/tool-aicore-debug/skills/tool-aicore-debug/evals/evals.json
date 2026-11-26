@@ -1,0 +1,446 @@
+{
+  "skill_name": "tool-aicore-debug",
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "title": "控制张量负值与底层指针属性校验路由（0x800000 / 507014）",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "算子在正数 group_list 下通过，传入 group_list=[-1] 或主机缓冲时触发 MTE 0x800000（部分版本报 507014 超时），测试要求返回 161002。请用 tool-aicore-debug 说明表象分类、命中的修复文档与标准改法。",
+      "expected_output": "按报错识别硬件表象分类（全局显存访问异常或核函数超时挂死），经 references/index.md 命中 references/guides/host_pointer_and_control_tensor.md；在 op_api 结合 GetPlacement() 与 aclrtPointerGetAttributes 安全读取 group_list，校验元素非负及前缀和/总和 <= M，违约返回 161002，严禁在 GetWorkspaceSize 调用 AllocTensor 或在主控直接解引用设备指针，缺陷根因分类为主控入参校验缺失。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "host_pointer_and_control_tensor.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "aclrtPointerGetAttributes"
+        },
+        {
+          "type": "contains",
+          "pattern": "161002"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "变长序列单调性与 S1<=S2 跨张量契约路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "变长注意力算子在非单调 cu_seqlens 或 S1 > S2 时报 0x800000 或 0x10000 地址未对齐。请用 tool-aicore-debug 给出索引路由与修复要点。",
+      "expected_output": "经 references/index.md 命中 references/guides/host_seqlen_and_dim_contract.md；在主控校验累积序列非负、单调不减且末项 <= 总行数，同时校验 S1 <= S2 及双侧序列元素个数相等，违约在主控返回错误码，并在核内补充有效行长 <= 0 守卫。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "host_seqlen_and_dim_contract.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "单调"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "固定规格上限、维度对齐倍数与超大 headDim 拆分路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "矩阵分解算子 m=8192 通过而 m=8193 报 UB 越界；另一分组量化算子 N=64 通过而 N=60 报 0x10000。请用 tool-aicore-debug 说明命中文档与处理准则。",
+      "expected_output": "经 references/index.md 命中 references/guides/host_spec_bound_and_align_guard.md；对照算子规格常数（如固定缓冲 8192）与维度对齐要求（如 8 倍数），在主控同族全部注册入口直接返回参数非法错误码拦截；若属测试要求支持的合法超大 headDim 则防止分片数整除归零并改为行内多趟循环。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "host_spec_bound_and_align_guard.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "主控入参校验缺失"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "主控模板阈值漏等号与全局切分状态污染路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "算子 exit_code=0，K=1024 和 K=4096 精度正常，唯独 K=2048 精度崩坏；且多形状连续调用时后轮偶发选错 tilingKey。请用 tool-aicore-debug 定位。",
+      "expected_output": "硬件表象分类为无硬件报错的静默结果或返回码异常，经 references/index.md 命中 references/guides/host_tiling_state_and_threshold.md；核查 op_host 模板准入条件是否把 >= 2048 误写为 > 2048，并将文件级全局/static 可变切分状态移入每次调用独立零初始化的局部结构体，缺陷根因分类为主控切分计算或状态错误。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "host_tiling_state_and_threshold.md"
+        },
+        {
+          "type": "contains",
+          "pattern": ">="
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "大尺寸窗口 32 位乘法溢出、有符号索引过滤与分页容量钳制路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "自适应池化在 W=131073 时报 0x4000000000000000 UB 越界；另一分页索引算子在 seqused_k 超块池容量且 cmpRatio=2 时静默产出越界索引（测试均要求正常返回 0）。请用 tool-aicore-debug 给出修法。",
+      "expected_output": "经 references/index.md 命中 references/guides/mem_window_overflow_and_index_clamp.md；池化窗口避免 32 位 idx * inLen 溢出，改用 int64_t 或商余分解 idx*(inLen/outLen) + (idx*(inLen%outLen))/outLen；分页键值有效长度须在乘以 cmpRatio 之后与物理块池容量 kvCache.dim0 * blockSize 取 min 钳制，严禁在主控报错拒绝。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "mem_window_overflow_and_index_clamp.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "cmpRatio"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "十进制 errcode=124 与进程超时 exit_code=124 碰撞区分及 DataCopyPad 跨度",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "算子运行时 stderr 报 EZ9999，十进制 errcode=124（进程退出码为 1）。请用 tool-aicore-debug 区分它与 exit_code=124 的差异并给出修复文档与公式。",
+      "expected_output": "stderr 十进制标量 errcode=124 属于片上缓存越界（P2，DataCopyPad 或普通 MTE 写 UB 越界），与操作系统超时 exit_code=124（P4 核函数超时挂死）完全独立；经 references/index.md 命中 references/guides/mem_datacopy_and_pad_constraints.md，按每行 32B 向上对齐公式 rowBytes = AlignUp(blockLenBytes + (leftPadding + rightPadding) * sizeof(T), 32) 核算 UB 分配。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "mem_datacopy_and_pad_constraints.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "AlignUp"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "UB 多队列双缓冲总容量预算与列向二次切分路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "量化算子在列宽较大时报 errcode=154 UB 越界，CheckSplit 把单次行数保底置为 1 后依然越界。请用 tool-aicore-debug 给出命中文档与改法。",
+      "expected_output": "命中 references/guides/mem_ub_and_stack_bounds.md；汇总双缓冲输入、FP32 中间缓冲与 int8 输出队列的总字节预算，当单行总字节超过可用 UB 时必须对列维增加列向二次切分循环，并严格区分 InitBuffer（字节）与 AllocTensor（元素）。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "mem_ub_and_stack_bounds.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "InitBuffer"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "LoadData3D 参数约束与 errcode=41 对称 Padding 挂起路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "卷积类算子在小特征图配大卷积核时出现 errcode=41 并伴随核函数挂起超时。请用 tool-aicore-debug 说明根因与修复准则。",
+      "expected_output": "识别为核函数超时挂死（P4），经 references/index.md 命中 references/guides/mem_loaddata_2d_3d_constraints.md；核查 LoadData3D 补齐后特征图必须满足 l1H + padTop + padBottom >= effFilterH 且 l1W + padLeft + padRight >= effFilterW，几何不可行时直接在主控返回失败错误码，严禁对倒置区间做 clamp。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "mem_loaddata_2d_3d_constraints.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "41"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "errcode=141 Fixpipe 写 GM 越界碰撞区分与矩阵跨度核算",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "矩阵算子报 EZ9999 且标量 errcode=141。请用 tool-aicore-debug 说明碰撞区分方式、命中文档与目标 GM 跨度公式。",
+      "expected_output": "识别为全局显存访问异常（P1），命中 references/guides/mem_fixpipe_and_cube_bounds.md；追溯 SetAtomicAdd 与 SetAtomicNone 生效区间区分原子累加写越界与普通 Fixpipe 写越界，并按 (ndNum - 1) * matrixStrideBytes + (mSize - 1) * rowStrideBytes + rowBytes 核算目标 GM 范围及尾块实际 mSize/nSize。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "mem_fixpipe_and_cube_bounds.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "SetAtomicAdd"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "宽块双槽流水（L1B_STAGES）与后端阶段跨核死锁全链路修复",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "分块注意力算子 K=128 通过，K=256 时报 507014 超时挂死；只把前段 L1B_STAGES 改为 2 后大用例依然超时。请用 tool-aicore-debug 给出排查指南。",
+      "expected_output": "识别为核函数超时挂死（P4），命中 references/guides/sync_pipeline_and_wide_tile_deadlock.md；除前段切换 L1B_STAGES=2 双槽外，必须联查同一算子后续跨核阶段（如 Post-WU / FwdH）将单次宽块收敛至 <= 128 并保持 AIC 与 AIV 握手循环次数一致，缺陷根因分类为核函数流水同步或缓存一致性缺陷。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "sync_pipeline_and_wide_tile_deadlock.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "L1B_STAGES"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "标量写 UB 缓存刷写（DcciUBImpl）、Vector 栅栏与尾块归约精度",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "融合归一化算子 exit_code=0，非 64 对齐尾块归约误差大，标量 SetValue 修正 UB 后 Vector 读取无效，且 RMS_NORM 分支 mean 副输出含脏值。请用 tool-aicore-debug 给出修复方案。",
+      "expected_output": "识别为无硬件报错的静默结果或返回码异常（P6），命中 references/guides/sync_cache_coherency_and_norm_tail.md；补齐 Duplicate 与 Add 之间的 PipeBarrier<PIPE_V>()、非对齐尾块清零掩码、标量写 UB 后的 DcciUBImpl 缓存刷写，以及 RMS_NORM 模式下非空 meanOut 零填充写回。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "sync_cache_coherency_and_norm_tail.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "DcciUBImpl"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "数值除零、定义域守卫与 FP32 升精度累加路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "算子在大数值 half 输入下输出 NaN，且空张量输入时报 errcode=3 标量除零。请用 tool-aicore-debug 给出命中文档与修法。",
+      "expected_output": "命中 references/guides/numeric_domain_and_nan_inf.md；合法空张量在主控提前返回成功避免核内分片除零，非法零属性主控返回错误码；核内将 half 升精度 Cast 到 float 累加防超 65504 溢出，分母加 eps 并保证退出前复位状态寄存器。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "numeric_domain_and_nan_inf.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "float"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "芯片架构目录锁死与裸设备二进制编译链接（0x10）路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "910B 环境裸设备核函数直接用 bisheng -x asc -c 编译出 .o 后经 binary_load_from_file 加载运行报 0x10 illegal instruction。请用 tool-aicore-debug 给出修复步骤。",
+      "expected_output": "识别为指令非法或地址未对齐（P3），命中 references/guides/arch_compile_and_bare_kernel_link.md；910B 对应 dav-c220，纯设备核函数必须加 --cce-aicore-only 编译并用 ld.lld -m aicorelinux -Ttext=0 完成重定位链接后再加载，缺陷根因分类为编译链接或芯片架构配置错误。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "arch_compile_and_bare_kernel_link.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "--cce-aicore-only"
+        },
+        {
+          "type": "contains",
+          "pattern": "ld.lld"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "上板前无日志静态预防核查路由",
+      "config": {
+        "max_tokens": 80000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "目前还没有上板运行日志，请按 tool-aicore-debug 说明如何对算子源码做上板前静态预防检查。",
+      "expected_output": "按 SKILL.md 静态预防分支进入 references/index.md 第七节，依次对照 arch_compile_and_bare_kernel_link.md（跨代字段与禁递归）、host_*.md（入参与全局状态）、mem_*.md（UB 预算与搬运对齐跨度）及 sync_*.md / numeric_domain_and_nan_inf.md（全路径同步配对、缓存刷写与寄存器复位）执行核查。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "references/index.md"
+        },
+        {
+          "type": "contains",
+          "pattern": "arch_compile_and_bare_kernel_link.md"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "反向边界：纯环境显存耗尽与 C++ 语法编译报错不触发",
+      "config": {
+        "max_tokens": 60000,
+        "ascend_platforms": [
+          "A2"
+        ],
+        "eval_mode": "text"
+      },
+      "prompt": "进程一启动还没调用算子就在初始化里报 aclrtMalloc failed: out of memory（显存被别的训练进程占满）。这属于 tool-aicore-debug 处理范围吗？",
+      "expected_output": "明确说明与算子无关的纯环境级 aclrtMalloc 显存不足（以及普通 C++ 语法编译报错、纯 rtol/atol 浮点舍入调优、性能调优）不属于 tool-aicore-debug 触发范围，建议清理占用显存的外部进程。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "contains",
+          "pattern": "不属于"
+        },
+        {
+          "type": "contains",
+          "pattern": "显存"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "P5 独立硬件数值码分类",
+      "config": {
+        "max_tokens": 80000,
+        "eval_mode": "text"
+      },
+      "prompt": "只有 errcode=3 标量除零，没有 P1~P4 证据。请说明表象与下一步。",
+      "expected_output": "应明确归为 P5 数值异常，查 numeric_domain_and_nan_inf.md；不强行归入访存或静默结果异常，不仅凭错码确认根因。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-aicore-debug",
+          "description": "加载技能并按 expected_output 复核行为及结论边界"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "P5 无硬件报错的 NaN",
+      "config": {
+        "max_tokens": 80000,
+        "eval_mode": "text"
+      },
+      "prompt": "exit_code=0，输出全 NaN，无硬件错码。请说明分类。",
+      "expected_output": "P5 数值异常优先于 P6；核对输入域、累加精度及初始化，保留候选，不声称已经定位。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-aicore-debug",
+          "description": "加载技能并按 expected_output 复核行为及结论边界"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "只定位且无设备",
+      "config": {
+        "max_tokens": 80000,
+        "eval_mode": "text"
+      },
+      "prompt": "仅定位，不修复；设备不可用，阅读六步后还没有证据支持某处缺陷。是否必须先改代码？",
+      "expected_output": "尊重只定位范围，不因六步或 40% 时间强制修改；继续可行静态分析，说明候选和缺失证据，不声称上板通过。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-aicore-debug",
+          "description": "加载技能并按 expected_output 复核行为及结论边界"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "复合码不得子串匹配",
+      "config": {
+        "max_tokens": 80000,
+        "eval_mode": "text"
+      },
+      "prompt": "只有硬件字段 0x1000000008000，应如何按索引路由？",
+      "expected_output": "完整值在 P2 列表中，归片上缓存越界并查 mem_fixpipe_and_cube_bounds.md；不能因文本含 0x10 就归 P3，复合位解释需核对目标平台。",
+      "files": [],
+      "expectations": [
+        {
+          "type": "skill_activated",
+          "pattern": "tool-aicore-debug",
+          "description": "加载技能并按 expected_output 复核行为及结论边界"
+        }
+      ]
+    }
+  ]
+}
