@@ -845,6 +845,17 @@ def main() -> int:
                     )
                     scalars[k.strip()] = None
 
+    # ---- 双口径指标警示（L0_STALL_DOMINANT 消费方）----
+    # top_stall_pct 有两个互不自知的生产者：facts_bridge（PcSampling 八状态
+    # stall 枚举，上板 DB 通道）与 trace_bubble（cannsim trace 主 pipe 空泡
+    # 四类归因）。--scalar 通道同名后到者静默覆盖先到者，且 L0 规则的 40%
+    # 阈值按 PcSampling 口径标定（L0-instruction.yaml threshold_source）——
+    # 仿真口径的 top_stall_pct 用同一阈值判定是口径混比。本引擎无法从
+    # --scalar 值分辨来源，只能落警示（判定书 + stderr），由输入方确认口径。
+    dual_caliber_scalars = []
+    if "top_stall_pct" in scalars and scalars["top_stall_pct"] is not None:
+        dual_caliber_scalars.append("top_stall_pct")
+
     if args.csv and args.db:
         print(
             "ERROR: --csv 与 --db 互斥（同一指标源选一个输入形态）",
@@ -1056,6 +1067,9 @@ def main() -> int:
         if len(kernel_groups) > 1
         else None,
         "scalars": {k: v for k, v in scalars.items()},
+        # 双口径指标警示（top_stall_pct 的生产者口径登记见 verdict 头注释；
+        # L0 规则阈值按 PcSampling 标定，trace 口径输入需人工确认可比性）
+        "dual_caliber_scalars": dual_caliber_scalars,
         "facts": facts_snapshot,
         "findings": all_findings,
         "skipped": all_skipped,
@@ -1071,6 +1085,14 @@ def main() -> int:
 
     # 人读摘要（Agent/终端共用）
     print(f"verdict: {verdict}  |  {headline}")
+    if dual_caliber_scalars:
+        print(
+            "WARN: 双口径标量 " + ", ".join(dual_caliber_scalars) + " ——"
+            " top_stall_pct 有两个生产者（PcSampling 上板采样 / cannsim trace 空泡归因），"
+            "同名 --scalar 后到者覆盖先到者；L0_STALL_DOMINANT 阈值按 PcSampling 口径标定，"
+            "trace 口径输入请先确认可比性",
+            file=sys.stderr,
+        )
     for f in all_findings:
         if f.get("status") == "HIT":
             print(

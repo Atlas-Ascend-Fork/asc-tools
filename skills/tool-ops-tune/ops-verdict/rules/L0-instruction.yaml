@@ -15,7 +15,8 @@ metrics:
     description: ICache 缺失率（PipeUtilization ai*_icache_miss_rate）
   top_stall_pct:
     source: scalar
-    description: PC 采样 top stall 枚举占比
+    description: PC 采样 top stall 枚举占比（PcSampling 口径；trace_bubble 的
+      cannsim 空泡归因同名为另一口径，阈值按本口径标定——混比前须确认可比性）
   l2_hit_rate:
     source: scalar
     description: L2Cache.csv ai*_total_hit_rate(%)

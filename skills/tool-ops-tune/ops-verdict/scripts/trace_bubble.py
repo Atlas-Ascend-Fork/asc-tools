@@ -321,6 +321,11 @@ def main() -> int:
             "bubble_pct": "主 pipe 空泡总占比（L1_LATENCY_SYNC_SUSPECT / "
             "L1_SERIAL_NO_OVERLAP 的直接证据）",
         },
+        # 双口径登记：本脚本的 top_stall_pct 是 trace 空泡归因口径，与
+        # facts_bridge 的 PcSampling 上板采样同名不同义；L0_STALL_DOMINANT
+        # 的阈值按 PcSampling 口径标定（L0-instruction.yaml threshold_source），
+        # 消费方（verdict --scalar 同名后到者覆盖）须确认口径可比性
+        "top_stall_pct_source": "cannsim-trace-空泡四类归因（≠PcSampling 口径）",
         "next": "python3 ../../ops-verdict/scripts/verdict.py --rules <L1/L0 规则包> "
         "--scalar "
         + ",".join(f"{k}={v}" for k, v in scalars.items())

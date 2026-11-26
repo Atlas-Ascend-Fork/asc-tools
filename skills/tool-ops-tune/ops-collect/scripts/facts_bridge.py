@@ -859,7 +859,9 @@ def main() -> int:
             if pcs:
                 scalars["top_stall_pct"] = pcs["top_stall_pct"]
                 sources["top_stall_pct"] = (
-                    f"{npu_db_path}::PcSampling（DB 独有数据源；CSV 通道不存在该指标）"
+                    f"{npu_db_path}::PcSampling（DB 独有数据源；CSV 通道不存在该指标；"
+                    "⚠ 双口径指标：与 trace_bubble 的 cannsim 空泡归因同名不同义，"
+                    "L0_STALL_DOMINANT 阈值按本口径标定——trace 口径输入勿混比）"
                 )
             else:
                 missing.append(

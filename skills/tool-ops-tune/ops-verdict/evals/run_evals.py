@@ -474,6 +474,21 @@ CASES = [
         ],
         "assert": {"skipped_contains": ["L2_HOST_DISPATCH_BLOCK"]},
     },
+    {
+        "id": "E25-dual-caliber-scalar-warning",
+        "desc": "双口径标量警示：--scalar 提供 top_stall_pct → verdict.json 落"
+        "dual_caliber_scalars 登记且 stderr WARN（PcSampling/trace 同名不同义，"
+        "同名输入后到者覆盖不可辨）",
+        "args": [
+            "--rules",
+            str(RULES / "L0-instruction.yaml"),
+            "--soc",
+            "a5",
+            "--scalar",
+            "top_stall_pct=45.0",
+        ],
+        "assert": {"dual_caliber_registered": ["top_stall_pct"]},
+    },
 ]
 # ---------------------------------------------------------------------------
 # 门禁脚本回归（snapshot/delta_compare 的 exit 码与三段结论边界 +
@@ -883,6 +898,15 @@ def run_case(case: dict, verbose: bool) -> tuple[bool, list[str]]:
     for rid in a.get("skipped_contains", []):
         if rid not in skipped:
             errs.append(f"应出现在 skipped: {rid}")
+    # 双口径标量登记断言（E25）：同名多生产者指标进 --scalar 时判定书必须落
+    # dual_caliber_scalars（警示由 verdict stderr 同步输出）
+    for name in a.get("dual_caliber_registered", []):
+        reg = v.get("dual_caliber_scalars") or []
+        if name not in reg:
+            errs.append(
+                f"dual_caliber_scalars 应含 {name}，实际 {reg}——同名双口径指标"
+                "（PcSampling/trace）输入不可辨源，判定书必须登记警示"
+            )
     for rid, frag in a.get("skipped_reason_contains", {}).items():
         entry = skipped.get(rid)
         if entry is None:
