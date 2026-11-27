@@ -40,8 +40,15 @@ using npucheck::ReportTool;
 
 constexpr uint32_t ALLOCATION_STATE_LIVE = 1;
 constexpr uint32_t ALLOCATION_STATE_FREED = 2;
-// Capacities are shared with initialization and range classification.
-uint64_t CubeCapacity(uint32_t space) { return npucheck::InitStateTableIndex::LocalCapacity(space); }
+uint64_t CubeCapacity(uint32_t space)
+{
+    // dav-3510 scale buffers are modeled only for bounds checking.
+    constexpr uint64_t scaleCapacityBytes = 4096;
+    if (space == ACLSAN_DEVICE_MEMORY_SPACE_L0A_MX || space == ACLSAN_DEVICE_MEMORY_SPACE_L0B_MX) {
+        return scaleCapacityBytes;
+    }
+    return npucheck::InitStateTableIndex::LocalCapacity(space);
+}
 
 NpuCheckReportMemorySpace CubeReportSpace(uint32_t space)
 {
@@ -56,6 +63,10 @@ NpuCheckReportMemorySpace CubeReportSpace(uint32_t space)
             return NpuCheckReportMemorySpace::L0_B;
         case ACLSAN_DEVICE_MEMORY_SPACE_L0C:
             return NpuCheckReportMemorySpace::L0_C;
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0A_MX:
+            return NpuCheckReportMemorySpace::L0_A_MX;
+        case ACLSAN_DEVICE_MEMORY_SPACE_L0B_MX:
+            return NpuCheckReportMemorySpace::L0_B_MX;
         default:
             return NpuCheckReportMemorySpace::UNKNOWN;
     }

@@ -335,6 +335,59 @@ TEST(ProbeSourceGeneratorCtrl, CapturesFullCtrlOperandForScalarAndDmaGroups)
     EXPECT_NE(generated.sourceMap.find("apiId=159 symbol=__npu_check_probe_set_ctrl"), std::string::npos);
 }
 
+TEST(ProbeSourceGeneratorImg2Col, UsesMatchingL0ATunerAndTraceIds)
+{
+    struct TempFile {
+        char path[64] = "/tmp/aclsan-img2col-XXXXXX";
+        ~TempFile() { std::remove(path); }
+    } file;
+    const int fd = mkstemp(file.path);
+    ASSERT_GE(fd, 0);
+    close(fd);
+
+    using namespace aclsan;
+    std::string diagnostic;
+    ASSERT_TRUE(GenerateCtrlBin(file.path, {ProbeGroup::Mte1}, diagnostic)) << diagnostic;
+    std::ifstream input(file.path, std::ios::binary);
+    const std::vector<unsigned char> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    ASSERT_GE(bytes.size(), 12U);
+    const auto read16 = [&bytes](size_t offset) -> uint16_t {
+        return static_cast<uint16_t>(bytes.at(offset) | (static_cast<uint16_t>(bytes.at(offset + 1)) << 8U));
+    };
+    const size_t bindingsEnd = 12U + read16(6);
+    ASSERT_LE(bindingsEnd + 4U, bytes.size());
+    const std::string names(bytes.begin() + bindingsEnd + 4U, bytes.end());
+    std::vector<std::string> symbols;
+    for (size_t begin = 0, end = 0; end < names.size(); ++end) {
+        if (names[end] == '\f' || names[end] == '\0') {
+            symbols.push_back(names.substr(begin, end - begin));
+            begin = end + 1;
+        }
+    }
+
+    const auto generated = GenerateProbeSource("dav-3510", ProbeGroup::Mte1);
+    ASSERT_TRUE(generated.success);
+    unsigned found = 0;
+    for (size_t offset = 12U; offset < bindingsEnd;) {
+        ASSERT_LE(offset + 6U, bindingsEnd);
+        const uint16_t id = read16(offset);
+        if (id == 153 || id == 154) {
+            const uint16_t functionId = read16(offset + 2U);
+            ASSERT_LT(functionId, symbols.size());
+            const std::string symbol =
+                id == 153 ? "__npu_check_probe_img2colv2_cbuf_to_ca_b8" : "__npu_check_probe_img2colv2_cbuf_to_ca_b16";
+            const std::string traceId = id == 153 ? "153" : "154";
+            EXPECT_EQ(symbols[functionId], symbol);
+            const auto definition = FindProbeDefinition(generated.source, symbol);
+            EXPECT_NE(definition.find("PIPE_MTE1), " + traceId + ","), std::string_view::npos);
+            ++found;
+        }
+        offset += 6U + 2U * read16(offset + 4U);
+        ASSERT_LE(offset, bindingsEnd);
+    }
+    EXPECT_EQ(found, 2U);
+}
+
 TEST(ProbeSourceGeneratorScalarAtomic, IncludesAllWidthsAndPostArgument)
 {
     const auto generated = aclsan::GenerateProbeSource("dav-3510", aclsan::ProbeGroup::Scalar);

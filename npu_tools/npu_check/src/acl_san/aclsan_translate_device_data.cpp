@@ -215,9 +215,7 @@ private:
         const ParsedTraceRecord& parsed, AclsanDevicePipeline pipeline, MemoryCbdataResult& result,
         const RegisterDependencyMask& dependencies) noexcept
     {
-        // MX loads currently decode only their L1 source. Keep the missing L0
-        // destination visible as incomplete coverage until its layout is decoded.
-        if (result.status == MemoryCbdataStatus::SUCCESS && !std::is_same_v<ParamField, aclsan::LoadL1MxParamField>) {
+        if (result.status == MemoryCbdataStatus::SUCCESS) {
             return DeviceCallbackData{std::move(result.data)};
         }
         if (result.status == MemoryCbdataStatus::NO_ACCESS) {

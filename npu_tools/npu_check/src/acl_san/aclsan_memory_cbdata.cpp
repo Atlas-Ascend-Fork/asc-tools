@@ -1487,13 +1487,43 @@ public:
 
     MemoryCbdataResult operator()(const LoadL1MxParamField& f) const noexcept
     {
+        const auto id = static_cast<InstructionId>(f.instrId);
+        if (id != InstructionId::LoadCbufToCaMx && id != InstructionId::LoadCbufToCbMx) {
+            return {MemoryCbdataStatus::INVALID_FIELD, {}};
+        }
+        if (f.hasUnknownConfig) {
+            return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
+        }
+        if (f.xStep == NO_ACCESS_COUNT || f.yStep == NO_ACCESS_COUNT) {
+            return {MemoryCbdataStatus::NO_ACCESS, {}};
+        }
+        const auto dstSpace =
+            id == InstructionId::LoadCbufToCaMx ? ACLSAN_DEVICE_MEMORY_SPACE_L0A_MX : ACLSAN_DEVICE_MEMORY_SPACE_L0B_MX;
+        return Merge(
+            LoadMxSource(f), LoadMxEndpoint(f, f.dstAddr, f.dstStride, dstSpace, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE));
+    }
+
+    MemoryCbdataResult LoadMxSource(const LoadL1MxParamField& f) const noexcept
+    {
         const uint64_t offset = (uint64_t(f.xStart) * f.srcStride + f.yStart) * CUBE_L1_BLOCK_BYTES;
         if (f.srcAddr > UINT64_MAX - offset) {
             return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
         }
+        return LoadMxEndpoint(
+            f, f.srcAddr + offset, f.srcStride, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+    }
+
+    MemoryCbdataResult LoadMxEndpoint(
+        const LoadL1MxParamField& f, uint64_t address, uint16_t stride, AclsanDeviceMemorySpace space,
+        AclsanDeviceMemoryAccessMode mode) const noexcept
+    {
+        // Only aligned, non-overlapping rows are established by the instruction evidence.
+        if (address % CUBE_L1_BLOCK_BYTES != 0 || stride < f.yStep) {
+            return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
+        }
         return Linear(
-            f.srcAddr + offset, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, f.xStep,
-            uint64_t(f.yStep) * CUBE_L1_BLOCK_BYTES, uint64_t(f.srcStride) * CUBE_L1_BLOCK_BYTES);
+            address, space, mode, f.xStep, uint64_t(f.yStep) * CUBE_L1_BLOCK_BYTES,
+            uint64_t(stride) * CUBE_L1_BLOCK_BYTES, BITS_PER_BYTE);
     }
 
     MemoryCbdataResult operator()(const MmadParamField& f) const noexcept
@@ -1681,15 +1711,16 @@ public:
         const uint32_t bits = Img2ColDataBits(instructionId);
         const uint64_t c0 = CUBE_K_BYTES / bits;
         const auto& rpt = *state_.l3dRpt[bank];
-        // For one full C0, NC1HWC0 and NHWC share the same byte layout. Other
-        // channel packing and repeated-window modes need separate validation.
-        if (f.channelSize != c0 || rpt.repeatTimes != SINGLE_ACCESS_COUNT || f.mExtension % CUBE_M_DIMENSION != 0U ||
-            f.kExtension % c0 != 0U || f.kStartPoint % c0 != 0U ||
+        // On 3510, non-transposed B8 L0A loads also accept a compact half-C0 source.
+        const bool compactHalfC0 =
+            instructionId == InstructionId::Img2ColCbufToCaB8 && !f.transpose && f.channelSize == CUBE_M_DIMENSION;
+        if ((f.channelSize != c0 && !compactHalfC0) || rpt.repeatTimes != SINGLE_ACCESS_COUNT ||
+            f.mExtension % CUBE_M_DIMENSION != 0U || f.kExtension % c0 != 0U || f.kStartPoint % c0 != 0U ||
             (f.transpose && (f.mExtension % c0 != 0U || f.kExtension % CUBE_M_DIMENSION != 0U))) {
             return {MemoryCbdataStatus::PARTIAL_COVERAGE, {}};
         }
         Img2ColWindow window{};
-        const auto status = ResolveImg2ColWindow(f, bank, c0, window);
+        const auto status = ResolveImg2ColWindow(f, bank, f.channelSize, window);
         if (status != MemoryCbdataStatus::SUCCESS) {
             return {status, {}};
         }
@@ -1730,8 +1761,13 @@ private:
         }
         const uint64_t outputW = uint64_t(availableW) / f.strideWidth + 1;
         const uint64_t outputH = uint64_t(availableH) / f.strideHeight + 1;
-        if (uint64_t(f.mStartPoint) + f.mExtension > outputW * outputH ||
-            uint64_t(f.kStartPoint) + f.kExtension > fw * fh * c0) {
+        const uint64_t outputRows = outputW * outputH;
+        const uint64_t mEnd = uint64_t(f.mStartPoint) + f.mExtension;
+        // B16 L0A rounds the final M tile up and still evaluates each window's padding.
+        const bool roundedM = f.instrId == static_cast<uint32_t>(InstructionId::Img2ColCbufToCaB16) && !f.transpose &&
+                              f.mStartPoint < outputRows &&
+                              mEnd <= CeilDiv(outputRows, CUBE_M_DIMENSION) * CUBE_M_DIMENSION;
+        if ((mEnd > outputRows && !roundedM) || uint64_t(f.kStartPoint) + f.kExtension > fw * fh * c0) {
             return MemoryCbdataStatus::PARTIAL_COVERAGE;
         }
         window = {width, height, left, top, fw, outputW};
@@ -1744,25 +1780,27 @@ private:
         const auto [width, height, left, top, fw, outputW] = window;
         const auto& rpt = *state_.l3dRpt[bank];
         const auto instructionId = static_cast<InstructionId>(f.instrId);
-        if (uint64_t(f.mExtension) * (f.kExtension / c0) >= MAX_EXPANDED_MEMORY_ACCESSES_PER_INSTRUCTION) {
+        const uint64_t channels = f.channelSize;
+        const uint64_t pixelBytes = channels * bits / BITS_PER_BYTE;
+        if (uint64_t(f.mExtension) * (f.kExtension / channels) >= MAX_EXPANDED_MEMORY_ACCESSES_PER_INSTRUCTION) {
             return {MemoryCbdataStatus::RESOURCE_EXHAUSTED, {}};
         }
         MemoryCbdataBuilder builder(context_, {bits, ACLSAN_DEVICE_SOURCE_CUBE, BLOCK_TYPE_AIC});
         for (uint64_t m = f.mStartPoint; m < uint64_t(f.mStartPoint) + f.mExtension; ++m) {
-            for (uint64_t k = f.kStartPoint / c0; k < (uint64_t(f.kStartPoint) + f.kExtension) / c0; ++k) {
+            for (uint64_t k = f.kStartPoint / channels; k < (uint64_t(f.kStartPoint) + f.kExtension) / channels; ++k) {
                 const int64_t y = int64_t((m / outputW) * f.strideHeight + (k / fw) * f.dilationFilterHeight) - top;
                 const int64_t x = int64_t((m % outputW) * f.strideWidth + (k % fw) * f.dilationFilterWidth) - left;
                 // Padding synthesizes values: it does not read outside the feature map.
                 if (y < 0 || x < 0 || uint64_t(y) >= height || uint64_t(x) >= width) {
                     continue;
                 }
-                const uint64_t offset = (uint64_t(y) * width + uint64_t(x)) * CUBE_L1_BLOCK_BYTES;
+                const uint64_t offset = (uint64_t(y) * width + uint64_t(x)) * pixelBytes;
                 if (f.srcAddr > UINT64_MAX - offset) {
                     return {MemoryCbdataStatus::ARITHMETIC_OVERFLOW, {}};
                 }
                 if (!Add(
                         builder, f.srcAddr + offset, ACLSAN_DEVICE_MEMORY_SPACE_L1, ACLSAN_DEVICE_MEMORY_ACCESS_READ, 1,
-                        CUBE_L1_BLOCK_BYTES, 0, bits)) {
+                        pixelBytes, 0, bits)) {
                     return std::move(builder).Build();
                 }
             }

@@ -101,7 +101,7 @@ TEST(CubeMemoryInitcheck, DecodedFp16LoadsAndMmadCheckBothOperandSpaces)
     }
 }
 
-TEST(CubeMemoryInitcheck, MxLoadsWithoutDecodedDestinationsPreserveIncompleteCoverage)
+TEST(CubeMemory, UnknownMxDestinationStridePreservesSourceAndIncompleteCoverage)
 {
     for (uint32_t id : {151U, 152U}) {
         ParsedTraceRecord parsed{};
@@ -181,7 +181,7 @@ TEST(CubeMemory, AllRequestedIdsProduceLocalAccesses)
             a[1] = 1 | (1ULL << 16);
         } else if (id == 151 || id == 152) {
             a[2] = (1ULL << 32) | (1ULL << 40);
-            a[3] = 1;
+            a[3] = 1 | (1ULL << 16);
         } else if (id == 158 || id == 173) {
             a[2] = (1ULL << 4) | (1ULL << 16);
         } else if (id >= 400) {
@@ -789,13 +789,86 @@ TEST(CubeMemory, SetAndMxUseIndependentRowStrides)
     ASSERT_EQ(set.data.size(), 1u);
     EXPECT_EQ(set.data[0].layout.blockRepeat.blockSize, 64u);
     EXPECT_EQ(set.data[0].layout.blockRepeat.repeatStride, 192); // Two 32-byte blocks plus four gap blocks.
-    auto mx = ConvertRaw(151, {0, 0x100, 2 | (3ULL << 16) | (2ULL << 32) | (2ULL << 40), 8});
-    ASSERT_EQ(mx.status, MemoryCbdataStatus::SUCCESS);
-    ASSERT_EQ(mx.data.size(), 1u);
-    EXPECT_EQ(mx.data[0].address, 0x360u);
-    EXPECT_EQ(mx.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
-    EXPECT_EQ(mx.data[0].layout.blockRepeat.blockSize, 64u);
-    EXPECT_EQ(mx.data[0].layout.blockRepeat.repeatStride, 256);
+    for (uint32_t id : {151u, 152u}) {
+        // The destination operand is already a scale byte offset. Source starts do not shift it.
+        auto mx = ConvertRaw(id, {0x120, 0x100, 2 | (3ULL << 16) | (2ULL << 32) | (2ULL << 40), 8 | (3ULL << 16)});
+        ASSERT_EQ(mx.status, MemoryCbdataStatus::SUCCESS);
+        ASSERT_EQ(mx.data.size(), 2u);
+        const auto& read = mx.data[0];
+        const auto& write = mx.data[1];
+        EXPECT_EQ(read.address, 0x360u);
+        EXPECT_EQ(read.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_READ);
+        ASSERT_EQ(read.layoutKind, ACLSAN_MEM_LAYOUT_BLOCK_REPEAT);
+        EXPECT_EQ(read.layout.blockRepeat.blockSize, 64u);
+        EXPECT_EQ(read.layout.blockRepeat.repeatStride, 256);
+        EXPECT_EQ(write.address, 0x120u);
+        EXPECT_EQ(write.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+        EXPECT_EQ(write.memorySpace, id == 151 ? ACLSAN_DEVICE_MEMORY_SPACE_L0A_MX : ACLSAN_DEVICE_MEMORY_SPACE_L0B_MX);
+        ASSERT_EQ(write.layoutKind, ACLSAN_MEM_LAYOUT_BLOCK_REPEAT);
+        EXPECT_EQ(write.layout.blockRepeat.blockSize, 64u);
+        EXPECT_EQ(write.layout.blockRepeat.repeatTimes, 2u);
+        EXPECT_EQ(write.layout.blockRepeat.repeatStride, 96);
+        EXPECT_EQ(write.header.flags, ACLSAN_DEVICE_EVENT_FLAG_EXACT);
+        EXPECT_EQ(write.accessIndex, 1u);
+        EXPECT_EQ(write.accessCount, 2u);
+    }
+}
+
+TEST(CubeMemory, MxScaleBoundsUseSeparateFourKiBBuffers)
+{
+    constexpr uint64_t config0 = (2ULL << 32) | (1ULL << 40);
+    for (uint32_t id : {151u, 152u}) {
+        for (uint64_t stride : {2u, 3u}) {
+            SCOPED_TRACE(stride);
+            const uint64_t lastValidBase = 4096 - (stride + 1) * 32;
+            for (uint64_t dst : {lastValidBase, lastValidBase + 32}) {
+                const auto mx = ConvertRaw(id, {dst, 0x40000, config0, 1 | (stride << 16)});
+                ASSERT_EQ(mx.status, MemoryCbdataStatus::SUCCESS);
+                ASSERT_EQ(mx.data.size(), 2u);
+                npucheck::Memcheck checker;
+                for (const auto& access : mx.data) {
+                    checker.QueueDeviceMemoryAccess(access);
+                }
+                const auto reports = checker.OnSynchronization();
+                if (dst == lastValidBase) {
+                    EXPECT_TRUE(reports.empty());
+                    continue;
+                }
+                ASSERT_EQ(reports.size(), 1u);
+                const auto& report = reports.front();
+                EXPECT_EQ(report.access.address, 4096u);
+                EXPECT_EQ(report.allocation.bytes, 4096u);
+                EXPECT_EQ(
+                    report.access.memorySpace, id == 151 ? npucheck::NpuCheckReportMemorySpace::L0_A_MX :
+                                                           npucheck::NpuCheckReportMemorySpace::L0_B_MX);
+            }
+        }
+    }
+}
+
+TEST(CubeMemory, MxUnknownConfigAndInvalidEndpointsRemainInexact)
+{
+    constexpr uint64_t config0 = (2ULL << 32) | (1ULL << 40);
+    constexpr uint64_t config1 = 1 | (3ULL << 16);
+    for (uint32_t id : {151u, 152u}) {
+        EXPECT_EQ(ConvertRaw(id, {0, 0, 1ULL << 32, config1}).status, MemoryCbdataStatus::NO_ACCESS);
+        EXPECT_EQ(ConvertRaw(id, {0, 0, 1ULL << 40, config1}).status, MemoryCbdataStatus::NO_ACCESS);
+        for (const auto& raw :
+             {std::array<uint64_t, 4>{0, 0, config0 | (1ULL << 48), config1},
+              std::array<uint64_t, 4>{0, 0, config0, config1 | (1ULL << 32)}}) {
+            const auto mx = ConvertRaw(id, raw);
+            EXPECT_EQ(mx.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
+            EXPECT_TRUE(mx.data.empty());
+        }
+        const auto misalignedDst = ConvertRaw(id, {1, 0, config0, config1});
+        EXPECT_EQ(misalignedDst.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
+        ASSERT_EQ(misalignedDst.data.size(), 1u);
+        EXPECT_EQ(misalignedDst.data[0].memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
+        const auto overflowSrc = ConvertRaw(id, {0, UINT64_MAX - 31, config0 | (1ULL << 16), config1});
+        EXPECT_EQ(overflowSrc.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
+        ASSERT_EQ(overflowSrc.data.size(), 1u);
+        EXPECT_EQ(overflowSrc.data[0].accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    }
 }
 
 TEST(CubeMemory, NdAndDnToNzWriteSameSparseDestination)
@@ -906,7 +979,7 @@ TEST(CubeMemory, AllEighteenL0LoadIdsProduceIndependentReadAndWrite)
             args[2] = (1ULL << 32) | (1ULL << 40);
             args[3] = 1 | (1ULL << 16);
         } else {
-            const uint64_t c0 = (id == 153 || id == 155) ? 16 : (id == 154 || id == 156) ? 32 : 8;
+            const uint64_t c0 = (id == 154 || id == 155) ? 16 : (id == 153 || id == 156) ? 32 : 8;
             auto& fmatrix = state.fmatrix[0].emplace();
             fmatrix.width = 4;
             fmatrix.height = 4;
@@ -1099,10 +1172,10 @@ TEST(CubeMemory, Img2ColRejectsUnverifiedChannelPackingAndRepeatedWindows)
     repeat.repeatTimes = 1;
     repeat.dstStride = 1;
     const uint64_t config = 1 | (1ULL << 6) | (1ULL << 12) | (1ULL << 20) | (1ULL << 28) | (1ULL << 36) | (32ULL << 48);
-    auto r = ConvertRaw(153, {0, 0, 16 | (16ULL << 16), config}, state);
+    auto r = ConvertRaw(154, {0, 0, 16 | (16ULL << 16), config}, state);
     EXPECT_EQ(r.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
     state.l3dRpt[0]->repeatTimes = 2;
-    r = ConvertRaw(154, {0, 0, 32 | (16ULL << 16), config}, state);
+    r = ConvertRaw(153, {0, 0, 32 | (16ULL << 16), config}, state);
     EXPECT_EQ(r.status, MemoryCbdataStatus::PARTIAL_COVERAGE);
 }
 
@@ -1117,8 +1190,8 @@ TEST(CubeMemory, Img2ColDilationAndTransposePreserveSourceSetButChangeDestinatio
     repeat.dstStride = 4;
     // 1x2 filter with width dilation 2 gives a 4x4 output image.
     const uint64_t config = 1 | (1ULL << 6) | (2ULL << 12) | (1ULL << 20) | (2ULL << 28) | (1ULL << 36) | (16ULL << 48);
-    const auto normal = ConvertRaw(153, {0, 0, 32 | (16ULL << 16), config}, state);
-    const auto transposed = ConvertRaw(153, {0, 0, 32 | (16ULL << 16), config | (1ULL << 46)}, state);
+    const auto normal = ConvertRaw(154, {0, 0, 32 | (16ULL << 16), config}, state);
+    const auto transposed = ConvertRaw(154, {0, 0, 32 | (16ULL << 16), config | (1ULL << 46)}, state);
     ASSERT_EQ(normal.status, MemoryCbdataStatus::SUCCESS);
     ASSERT_EQ(transposed.status, MemoryCbdataStatus::SUCCESS);
     ASSERT_EQ(normal.data.size(), 33u);
@@ -1142,7 +1215,7 @@ TEST(CubeMemory, Img2ColDilationAndTransposePreserveSourceSetButChangeDestinatio
 TEST(CubeMemory, L0LoadFailuresPreserveIncompleteCoverage)
 {
     ParsedTraceRecord parsed{};
-    parsed.record.instrId = 153;
+    parsed.record.instrId = 154;
     parsed.record.pipeline = ACLSAN_DEVICE_PIPE_MTE1;
     parsed.record.args[2] = 16 | (16ULL << 16);
     parsed.record.args[3] = 1 | (1ULL << 6) | (1ULL << 12) | (1ULL << 20) | (1ULL << 28) | (1ULL << 36) | (16ULL << 48);
@@ -1277,7 +1350,7 @@ TEST(CubeMemoryRegression, Img2ColZeroRepeatCannotClaimExactCoverage)
     repeat.repeatTimes = 0;
     repeat.dstStride = 1;
     const uint64_t config = 1 | (1ULL << 6) | (1ULL << 12) | (1ULL << 20) | (1ULL << 28) | (1ULL << 36) | (16ULL << 48);
-    auto result = ConvertRaw(153, {0, 0, 16 | (16ULL << 16), config}, state);
+    auto result = ConvertRaw(154, {0, 0, 16 | (16ULL << 16), config}, state);
     EXPECT_EQ(result.status, aclsan::MemoryCbdataStatus::PARTIAL_COVERAGE);
 }
 

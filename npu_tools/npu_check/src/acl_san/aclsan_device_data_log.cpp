@@ -179,10 +179,11 @@ void LogParamField(const aclsan::MmadParamField& value) noexcept
 void LogParamField(const aclsan::LoadL1MxParamField& value) noexcept
 {
     ASCTOOL_DEBUG(
-        "[param] type=LoadL1MxParamField instrId=%u src=0x%llx xStart=%u yStart=%u "
-        "xStep=%u yStep=%u srcStride=%u",
-        value.instrId, static_cast<unsigned long long>(value.srcAddr), value.xStart, value.yStart, value.xStep,
-        value.yStep, value.srcStride);
+        "[param] type=LoadL1MxParamField instrId=%u dst=0x%llx src=0x%llx xStart=%u yStart=%u "
+        "xStep=%u yStep=%u srcStride=%u dstStride=%u unknownConfig=%u",
+        value.instrId, static_cast<unsigned long long>(value.dstAddr), static_cast<unsigned long long>(value.srcAddr),
+        value.xStart, value.yStart, value.xStep, value.yStep, value.srcStride, value.dstStride,
+        static_cast<unsigned int>(value.hasUnknownConfig));
 }
 
 void LogParamField(const aclsan::SetL12DParamField& value) noexcept

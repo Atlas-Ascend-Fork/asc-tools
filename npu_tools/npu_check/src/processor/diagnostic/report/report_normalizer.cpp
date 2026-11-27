@@ -95,7 +95,8 @@ ReportRecord ToReportRecord(const NpuCheckMemcheckReport& report)
     fields["capacityContext"] = "";
     const auto space = report.access.memorySpace;
     if (space == NpuCheckReportMemorySpace::L1 || space == NpuCheckReportMemorySpace::L0_A ||
-        space == NpuCheckReportMemorySpace::L0_B || space == NpuCheckReportMemorySpace::L0_C) {
+        space == NpuCheckReportMemorySpace::L0_B || space == NpuCheckReportMemorySpace::L0_C ||
+        space == NpuCheckReportMemorySpace::L0_A_MX || space == NpuCheckReportMemorySpace::L0_B_MX) {
         fields["capacityContext"] = " (" + std::string(MemorySpaceName(space)) + " capacity " +
                                     std::to_string(report.allocation.bytes) + " bytes, valid offsets [0, " +
                                     std::to_string(report.allocation.bytes) + "))";

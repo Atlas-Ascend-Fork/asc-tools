@@ -41,6 +41,9 @@ struct LoadL1MxParamField {
     uint8_t xStep = 0;      // config0 [32:39]
     uint8_t yStep = 0;      // config0 [40:47]
     uint16_t srcStride = 0; // config1 [0:15], unit: 32B
+    uint64_t dstAddr = 0;   // byte offset in the scale buffer, already mapped by the caller
+    uint16_t dstStride = 0; // config1 [16:31], unit: 32B
+    bool hasUnknownConfig = false;
 };
 
 // 位域注释规则：
