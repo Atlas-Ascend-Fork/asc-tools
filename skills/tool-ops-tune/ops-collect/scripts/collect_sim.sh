@@ -44,14 +44,29 @@ usage() {
   sed -n '2,22p' "$0"; exit 1
 }
 
+require_option_value() {
+  local opt="$1" argc="$2" val="${3:-}" allow_dash="${4:-false}"
+  if [[ "$argc" -lt 2 || -z "$val" ]]; then
+    echo "ERROR: $opt 缺少参数值" >&2
+    usage
+  fi
+  if [[ "$allow_dash" != "true" && "$val" == -* ]]; then
+    echo "ERROR: $opt 缺少参数值（紧跟选项 ${val}）" >&2
+    usage
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --exe) EXE="$2"; shift 2 ;;
-    --args) EXE_ARGS="$2"; shift 2 ;;
-    --soc-version) SOC_VERSION="$2"; shift 2 ;;
-    --output) OUTPUT="$2"; shift 2 ;;
-    --cores) CORES="$2"; shift 2 ;;
-    --timeout) TIMEOUT="$2"; shift 2 ;;
+    --exe) require_option_value "$1" "$#" "${2:-}"; EXE="$2"; shift 2 ;;
+    --args) require_option_value "$1" "$#" "${2:-}" "true"; EXE_ARGS="$2"; shift 2 ;;
+    --soc-version) require_option_value "$1" "$#" "${2:-}"; SOC_VERSION="$2"; shift 2 ;;
+    --output) require_option_value "$1" "$#" "${2:-}"; OUTPUT="$2"; shift 2 ;;
+    --cores) require_option_value "$1" "$#" "${2:-}"; CORES="$2"; shift 2 ;;
+    --timeout)
+      require_option_value "$1" "$#" "${2:-}"
+      [[ "$2" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --timeout 必须为正整数: $2" >&2; exit 1; }
+      TIMEOUT="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
   esac
