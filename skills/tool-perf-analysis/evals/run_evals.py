@@ -11,11 +11,12 @@
 # ----------------------------------------------------------------------------------------------------------
 """run_evals.py — tool-perf-analysis 执行式回归
 
-四组用例跑全链（diagnose.py），断言 facts / verdict / report 三产物：
+五组用例覆盖诊断链和报告缓存，断言 facts / verdict / report 三产物：
   A. verify_pipeline_pm.npu-rep（950 npu-compute，仅 Pipeline+PcSampling——L0 判定路径）
   B. result.npu-rep（950 npu-compute，全量 CSV——L1/L2 判定路径）
   C. msopprof_abs/（A2 msopprof 源，--soc a2——源 B 路径）
   D. msopprof 缺 --soc → fail loud 防护
+  E. 生成 REP 容器的缓存回归（无设备依赖）
 
 fixture 策略（仓库禁止入库二进制文件）：
   - .npu-rep 为二进制采集产物，不入库。A/B 用例从本地获取，找不到即 SKIP：
@@ -25,7 +26,7 @@ fixture 策略（仓库禁止入库二进制文件）：
       ③ evals/fixtures/ 本地目录（开发者自行放置，git 不跟踪 *.npu-rep）；
       ④ 用户缓存目录 ~/.cache/tool-perf-analysis/（与 ①~③ 同名复用）。
   - C 的 CSV fixture 为纯文本，直接入库；D 不需要 fixture。
-  - fixture 缺失时 A/B 用例跳过（SKIP 计数，不计失败），C/D 照常执行。
+  - fixture 缺失时 A/B 用例跳过（SKIP 计数，不计失败），C/D/E 照常执行。
 
 退出码 0 = 全绿（SKIP 不计失败）；非 0 = 有断言失败（改动脚本后必须先过本回归再交付）。
 """
@@ -326,12 +327,28 @@ def case_d() -> None:
     check("D: 报错信息含 --soc 指引", "--soc" in (r.stderr + r.stdout))
 
 
+def case_e() -> None:
+    """Run the generated-report cache regressions through this eval entry."""
+    print("== E. unpack cache regressions ==")
+    r = subprocess.run(
+        [sys.executable, str(SKILL / "tests" / "test_unpack_cache.py")],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    print(r.stdout, end="")
+    if r.returncode:
+        print(r.stderr, file=sys.stderr)
+    check("E: generated-report cache regressions", r.returncode == 0)
+
+
 def main() -> int:
     print(f"tool-perf-analysis evals（ops-tune = {OPS_TUNE}）")
     case_a()
     case_b()
     case_c()
     case_d()
+    case_e()
     print(
         f"\n{'=' * 50}\nPASS {PASS} / FAIL {FAIL}" + (f" / SKIP {SKIP}" if SKIP else "")
     )

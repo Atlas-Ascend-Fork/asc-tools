@@ -32,7 +32,7 @@
   python3 extract_facts.py --rep <report.npu-rep> [--soc-spec <soc-spec.yaml>]
   python3 extract_facts.py --prof <PROF_xxx dir>  [--soc-spec <soc-spec.yaml>]
   可选 --kernel-name <name>（msopprof 多 kernel CSV 防混采过滤）
-       --workdir <dir>（解包临时目录，缺省 mkdtemp；已有则复用不重解）
+       --workdir <dir>（解包临时目录，缺省 mkdtemp；同内容且解包完成时复用）
 
 输出（stdout 之外的 -o 文件，schema opstune-perf-analysis.facts/1.0）：
   {
@@ -49,12 +49,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
+import os
 import sqlite3
 import statistics
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 SCHEMA = "opstune-perf-analysis.facts/1.0"
@@ -215,26 +218,84 @@ def sum_of(rows, cols):
 # ---------------------------------------------------------------- npu-rep 解包
 
 
+def _report_digest(rep_path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with rep_path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as error:
+        raise RuntimeError(f"读取 npu-rep 失败: {rep_path}: {error}") from error
+    return digest.hexdigest()
+
+
 def unpack_rep(rep_path: Path, workdir: Path) -> Path:
-    """解包 .npu-rep 到 workdir（目录已存在则复用）。返回解包产物目录。"""
-    out = workdir / rep_path.stem
-    if out.exists() and any(out.iterdir()):
-        return out
-    if out.exists():
-        out.rmdir()
-    here = Path(__file__).resolve().parent
-    script = here / "unpack_npu_rep.py"
-    r = subprocess.run(
-        [sys.executable, str(script), str(rep_path), str(out)],
-        capture_output=True,
-        text=True,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"npu-rep 解包失败: {r.stderr.strip()}")
-    # 嵌套子报告：根 rep 内若只有目录（每算子一个 opN 目录形态），取第一个含文件的子目录
+    """Reuse only completed unpacking for identical report content."""
+    digest = _report_digest(rep_path)
+    marker = workdir / f"rep-{digest}.complete"
+    out = None
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        name = data["directory"]
+        expected_files = data["files"]
+        prefix = f"rep-{digest}-"
+        if not isinstance(name, str):
+            raise ValueError("invalid cache directory")
+        suffix = name.removeprefix(prefix)
+        if (
+            name.startswith(prefix)
+            and len(suffix) == 32
+            and all(c in "0123456789abcdef" for c in suffix)
+            and isinstance(data["nonempty"], bool)
+            and isinstance(expected_files, list)
+            and all(isinstance(path, str) for path in expected_files)
+        ):
+            candidate = workdir / name
+            if candidate.is_dir() and (
+                not data["nonempty"] or any(candidate.iterdir())
+            ):
+                present = {
+                    path.relative_to(candidate).as_posix()
+                    for path in candidate.rglob("*")
+                    if path.is_file()
+                }
+                if set(expected_files) <= present:
+                    out = candidate
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
+        pass
+    if out is None:
+        here = Path(__file__).resolve().parent
+        script = here / "unpack_npu_rep.py"
+        with tempfile.TemporaryDirectory(prefix="rep-unpacking-", dir=workdir) as temp:
+            temp = Path(temp)
+            unpacked = temp / "report"
+            r = subprocess.run(
+                [sys.executable, str(script), str(rep_path), str(unpacked)],
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode != 0:
+                raise RuntimeError(f"npu-rep 解包失败: {r.stderr.strip()}")
+            if _report_digest(rep_path) != digest:
+                raise RuntimeError("npu-rep 在解包期间发生变化；请重试")
+            out = workdir / f"rep-{digest}-{uuid.uuid4().hex}"
+            metadata = {
+                "directory": out.name,
+                "nonempty": any(unpacked.iterdir()),
+                "files": sorted(
+                    path.relative_to(unpacked).as_posix()
+                    for path in unpacked.rglob("*")
+                    if path.is_file()
+                ),
+            }
+            unpacked.rename(out)
+            temp_marker = temp / "complete"
+            temp_marker.write_text(json.dumps(metadata), encoding="utf-8")
+            os.replace(temp_marker, marker)
+    # Apply the same nested-report selection after extraction and cache reuse.
     files = [p for p in out.iterdir() if p.is_file()]
     subdirs = [p for p in out.iterdir() if p.is_dir()]
-    if not files and len(subdirs) >= 1:
+    if not files and subdirs:
         return subdirs[0]
     return out
 
@@ -534,7 +595,9 @@ def main() -> int:
         help="SoC 覆盖（msopprof 产物无 HardwareInfo 时必填：a2=910B/910_93, a3=910_9x, a5=950）",
     )
     ap.add_argument("--soc-spec", default=str(default_spec))
-    ap.add_argument("--workdir", default=None, help="解包临时目录（复用不重解）")
+    ap.add_argument(
+        "--workdir", default=None, help="解包临时目录（相同内容且解包完成时复用）"
+    )
     ap.add_argument("-o", "--output", required=True, help="facts JSON 输出路径")
     args = ap.parse_args()
 
@@ -554,7 +617,7 @@ def main() -> int:
         workdir.mkdir(parents=True, exist_ok=True)
         try:
             unpacked = unpack_rep(src_arg, workdir)
-        except RuntimeError as e:
+        except (RuntimeError, OSError) as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
         opinfo, opinfo_path = load_opinfo(unpacked)
