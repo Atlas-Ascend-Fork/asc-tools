@@ -1632,6 +1632,12 @@ bool Initcheck::OnMemoryAccess(const AclsanDeviceMemoryAccessData& data, Checker
         return false;
     }
     ++stats_.deviceOperations;
+    if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0A_MX ||
+        data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0B_MX) {
+        // Scale buffers have bounds coverage, but no initialization model yet.
+        replayReasons_[data.header.launchId].insert("memory_coverage_unknown");
+        return true;
+    }
     if (data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0A || data.memorySpace == ACLSAN_DEVICE_MEMORY_SPACE_L0B)
         ++l0Operations_;
     const CoreKey core{

@@ -133,6 +133,8 @@ enum class NpuCheckReportMemorySpace {
     FB = 8,
     PRIVATE = 9,
     HOST = 10,
+    L0_A_MX = 11,
+    L0_B_MX = 12,
 };
 
 enum class NpuCheckReportAccessMode {

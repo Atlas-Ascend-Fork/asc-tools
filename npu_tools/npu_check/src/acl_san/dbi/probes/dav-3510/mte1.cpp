@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "../../ctrlbin/ctrlbin_bindings.h"
 #include "trace_record.h"
 
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_load_cbuf_to_ca_mx_2dv2(
@@ -73,24 +74,26 @@ extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_che
         reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), config, 0UL, 0UL);
 }
 
-// LOAD_L1_TO_L0A_3DV2.b8, API ID 154.
+// LOAD_L1_TO_L0A_3DV2.b8.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_img2colv2_cbuf_to_ca_b8(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
     aclsan::WriteTraceRecord(
-        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_MTE1), 154,
-        reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), config0, config1, 0UL);
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_MTE1),
+        static_cast<uint16_t>(InstrType::IMG2COLV2_CBUF_TO_CA_B8), reinterpret_cast<uint64_t>(dst),
+        reinterpret_cast<uint64_t>(src), config0, config1, 0UL);
 }
 
-// LOAD_L1_TO_L0A_3DV2.b16, API ID 153.
+// LOAD_L1_TO_L0A_3DV2.b16.
 extern __attribute__((noinline)) __attribute__((weak)) __aicore__ void __npu_check_probe_img2colv2_cbuf_to_ca_b16(
     __gm__ uint8_t* memInfo, int64_t pc, uint32_t bid, __ca__ void* dst, __cbuf__ void* src, uint64_t config0,
     uint64_t config1)
 {
     aclsan::WriteTraceRecord(
-        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_MTE1), 153,
-        reinterpret_cast<uint64_t>(dst), reinterpret_cast<uint64_t>(src), config0, config1, 0UL);
+        memInfo, pc, bid, aclsan::DeviceInstructionCategory::MemoryAccess, static_cast<uint16_t>(PIPE_MTE1),
+        static_cast<uint16_t>(InstrType::IMG2COLV2_CBUF_TO_CA_B16), reinterpret_cast<uint64_t>(dst),
+        reinterpret_cast<uint64_t>(src), config0, config1, 0UL);
 }
 
 // LOAD_L1_TO_L0A_3DV2.b32, API ID 422.

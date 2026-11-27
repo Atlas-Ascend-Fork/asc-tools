@@ -32,6 +32,10 @@ const char* MemorySpaceName(NpuCheckReportMemorySpace space)
             return "L0B";
         case NpuCheckReportMemorySpace::L0_C:
             return "L0C";
+        case NpuCheckReportMemorySpace::L0_A_MX:
+            return "L0A_MX";
+        case NpuCheckReportMemorySpace::L0_B_MX:
+            return "L0B_MX";
         case NpuCheckReportMemorySpace::BT:
             return "BT";
         case NpuCheckReportMemorySpace::FB:

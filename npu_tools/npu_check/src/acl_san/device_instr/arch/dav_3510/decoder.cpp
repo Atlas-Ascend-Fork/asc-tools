@@ -1065,8 +1065,28 @@ constexpr DecodeTable MakeDecodeTable() noexcept
     return table;
 }
 
+std::optional<DecodedInstruction> DecodeLoadL1Mx(const AclsanRawTraceRecord& record) noexcept
+{
+    const uint64_t config0 = record.args[2];
+    const uint64_t config1 = record.args[3];
+    LoadL1MxParamField field{};
+    field.instrId = record.instrId;
+    field.srcAddr = record.args[1];
+    field.dstAddr = record.args[0];
+    field.xStart = static_cast<uint16_t>(ExtractBitRange(config0, LoadL1MxLayout::X_START));
+    field.yStart = static_cast<uint16_t>(ExtractBitRange(config0, LoadL1MxLayout::Y_START));
+    field.xStep = static_cast<uint8_t>(ExtractBitRange(config0, LoadL1MxLayout::X_STEP));
+    field.yStep = static_cast<uint8_t>(ExtractBitRange(config0, LoadL1MxLayout::Y_STEP));
+    field.srcStride = static_cast<uint16_t>(ExtractBitRange(config1, LoadL1MxLayout::SRC_STRIDE));
+    field.dstStride = static_cast<uint16_t>(ExtractBitRange(config1, LoadL1MxLayout::DST_STRIDE));
+    field.hasUnknownConfig = ExtractBitRange(config0, LoadL1MxLayout::UNKNOWN_CONFIG0) != 0 ||
+                             ExtractBitRange(config1, LoadL1MxLayout::UNKNOWN_CONFIG1) != 0;
+    return DecodedInstruction{DeviceInstructionKind::LoadL1Mx, field};
+}
+
 constexpr auto DECODE_TABLE = [] {
     auto table = MakeDecodeTable();
+    RegisterDecoders(table, DecodeLoadL1Mx, InstructionId::LoadCbufToCaMx, InstructionId::LoadCbufToCbMx);
     RegisterDecoders(
         table,
         [](const AclsanRawTraceRecord& record) noexcept -> std::optional<DecodedInstruction> {
@@ -1152,7 +1172,7 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
         f.decrement = ExtractBitRange(record.args[2], LoadL1TransposeLayout::DECREMENT) != 0;
         return DecodedInstruction{DeviceInstructionKind::LoadL1Transpose, f};
     }
-    if ((record.instrId >= RawId(InstructionId::Img2ColCbufToCaB16) &&
+    if ((record.instrId >= RawId(InstructionId::Img2ColCbufToCaB8) &&
          record.instrId <= RawId(InstructionId::Img2ColCbufToCbB32)) ||
         record.instrId == RawId(InstructionId::Img2ColCbufToCaB32)) {
         Img2ColParamField f{};
@@ -1191,18 +1211,6 @@ std::optional<DecodedInstruction> Decode(const aclsan::AclsanRawTraceRecord& rec
                 ExtractBitRange(config, MmadLayout::DISABLE_GEMV) != 0,
                 ExtractBitRange(config, MmadLayout::CMATRIX_SOURCE) != 0,
                 ExtractBitRange(config, MmadLayout::CMATRIX_INIT_VAL) != 0}};
-    }
-    if (record.instrId == RawId(InstructionId::LoadCbufToCaMx) ||
-        record.instrId == RawId(InstructionId::LoadCbufToCbMx)) {
-        const uint64_t config = record.args[2];
-        return DecodedInstruction{
-            DeviceInstructionKind::LoadL1Mx,
-            LoadL1MxParamField{
-                record.instrId, record.args[1], static_cast<uint16_t>(ExtractBitRange(config, LoadL1MxLayout::X_START)),
-                static_cast<uint16_t>(ExtractBitRange(config, LoadL1MxLayout::Y_START)),
-                static_cast<uint8_t>(ExtractBitRange(config, LoadL1MxLayout::X_STEP)),
-                static_cast<uint8_t>(ExtractBitRange(config, LoadL1MxLayout::Y_STEP)),
-                static_cast<uint16_t>(ExtractBitRange(record.args[3], LoadL1MxLayout::SRC_STRIDE))}};
     }
     if (record.instrId == RawId(InstructionId::CopyCbufToUbuf)) {
         return DecodeLocalMemoryTransfer(record, LocalMemoryTransferKind::CopyCbufToUbuf);

@@ -194,6 +194,9 @@ struct LoadL1MxLayout {
     static constexpr BitRange X_STEP{32, 39};
     static constexpr BitRange Y_STEP{40, 47};
     static constexpr BitRange SRC_STRIDE{0, 15};
+    static constexpr BitRange DST_STRIDE{16, 31};
+    static constexpr BitRange UNKNOWN_CONFIG0{48, 63};
+    static constexpr BitRange UNKNOWN_CONFIG1{32, 63};
 };
 
 } // namespace aclsan::dav3510

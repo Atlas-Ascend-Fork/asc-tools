@@ -61,7 +61,10 @@ typedef enum AclsanDeviceMemorySpace {
     ACLSAN_DEVICE_MEMORY_SPACE_L0B = 5,
     ACLSAN_DEVICE_MEMORY_SPACE_L0C = 6,
     ACLSAN_DEVICE_MEMORY_SPACE_BT = 7,
-    ACLSAN_DEVICE_MEMORY_SPACE_FB = 8
+    ACLSAN_DEVICE_MEMORY_SPACE_FB = 8,
+    // Independent Cube scale buffers. Currently modeled for bounds checking.
+    ACLSAN_DEVICE_MEMORY_SPACE_L0A_MX = 9,
+    ACLSAN_DEVICE_MEMORY_SPACE_L0B_MX = 10
 } AclsanDeviceMemorySpace;
 
 typedef enum AclsanDeviceMemoryAccessMode {

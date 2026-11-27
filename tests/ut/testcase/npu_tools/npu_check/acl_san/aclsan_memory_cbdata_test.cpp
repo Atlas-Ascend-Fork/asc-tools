@@ -1558,7 +1558,7 @@ TEST(AclsanMemoryCbdata, ScalarAtomicAddressOverflowIsExplicit)
 TEST(AclsanMemoryCbdata, LocalConversionPreservesMissingRegisterCause)
 {
     aclsan::Img2ColParamField field{};
-    field.instrId = 153;
+    field.instrId = RawInstructionId(InstructionId::Img2ColCbufToCaB16);
     field.mExtension = 16;
     field.kExtension = 16;
     aclsan::MemoryRegisterState state{};
@@ -1573,6 +1573,61 @@ TEST(AclsanMemoryCbdata, LocalConversionPreservesMissingRegisterCause)
     EXPECT_EQ(result.status, aclsan::MemoryCbdataStatus::MISSING_REGISTER_STATE);
     EXPECT_EQ(result.requiredRegisterInstructionId, RawInstructionId(InstructionId::SetL3dRpt));
     EXPECT_TRUE(result.data.empty());
+}
+
+TEST(AclsanMemoryCbdata, Img2ColB8HalfC0UsesCompactDilatedSourceAndFullDestinationFractals)
+{
+    aclsan::Img2ColParamField field{};
+    field.instrId = RawInstructionId(InstructionId::Img2ColCbufToCaB8);
+    field.channelSize = 16;
+    field.mExtension = 16;
+    field.kExtension = 64;
+    field.strideWidth = field.strideHeight = 1;
+    field.filterWidth = field.filterHeight = 2;
+    field.dilationFilterWidth = field.dilationFilterHeight = 2;
+    aclsan::MemoryRegisterState state{};
+    state.fmatrix[0] = aclsan::FmatrixParamField{};
+    state.fmatrix[0]->width = state.fmatrix[0]->height = 8;
+    state.l3dRpt[0] = aclsan::L3dRptParamField{};
+    state.l3dRpt[0]->repeatTimes = state.l3dRpt[0]->dstStride = 1;
+    const aclsan::MemoryFieldToCbdataConverter converter{{}, state};
+    const auto result = converter.Convert(field);
+    ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    ASSERT_EQ(result.data.size(), 65U);
+    const auto& read = result.data[5 * 4];
+    EXPECT_EQ(read.address, 80U);
+    EXPECT_EQ(read.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L1);
+    EXPECT_EQ(read.layout.range.bytes, 16U);
+    EXPECT_EQ(result.data[6 * 4].address, 128U);
+    const auto& write = result.data.back();
+    EXPECT_EQ(write.memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L0A);
+    EXPECT_EQ(write.accessMode, ACLSAN_DEVICE_MEMORY_ACCESS_WRITE);
+    EXPECT_EQ(write.layout.range.bytes, 1024U);
+    field.kExtension = 48;
+    EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::PARTIAL_COVERAGE);
+}
+
+TEST(AclsanMemoryCbdata, Img2ColB16RoundedMTileReadsValidTailPixels)
+{
+    aclsan::Img2ColParamField field{};
+    field.instrId = RawInstructionId(InstructionId::Img2ColCbufToCaB16);
+    field.channelSize = 16;
+    field.mExtension = 80;
+    field.kExtension = 144;
+    field.strideWidth = field.strideHeight = 1;
+    field.filterWidth = field.filterHeight = 3;
+    field.dilationFilterWidth = field.dilationFilterHeight = 1;
+    aclsan::MemoryRegisterState state{};
+    state.fmatrix[0] = aclsan::FmatrixParamField{0, 9, 9, 1, 1, 1, 0};
+    state.l3dRpt[0] = aclsan::L3dRptParamField{0, 0, 1, false, 5, 0};
+    const aclsan::MemoryFieldToCbdataConverter converter{{}, state};
+    const auto result = converter.Convert(field);
+    ASSERT_EQ(result.status, aclsan::MemoryCbdataStatus::SUCCESS);
+    ASSERT_GT(result.data.size(), 3U);
+    EXPECT_EQ(result.data[result.data.size() - 2].address, (8U * 9U + 8U) * 32U);
+    EXPECT_EQ(result.data.back().memorySpace, ACLSAN_DEVICE_MEMORY_SPACE_L0A);
+    field.mExtension = 96;
+    EXPECT_EQ(converter.Convert(field).status, aclsan::MemoryCbdataStatus::PARTIAL_COVERAGE);
 }
 
 TEST(AclsanMemoryCbdata, GmOutputWithoutCtrlPublishesExactOrdinaryWrite)
