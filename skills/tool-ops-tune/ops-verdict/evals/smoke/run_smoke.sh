@@ -414,6 +414,172 @@ else
   fail "facts_bridge DB 通道端到端"
 fi
 
+# Failure atomicity is part of the same real CSV/SQLite channel contract.
+if python3 - "$REPO_ROOT" "$DB_TMP" <<'ATOMIC_DB_PY'
+import json
+import ctypes.util
+import errno
+import os
+import time
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+parent = Path(sys.argv[2]) / "csv-db-atomic-cases"
+parent.mkdir(parents=True, exist_ok=True)
+script = root / "ops-collect/scripts/csv_to_db.py"
+results = []
+
+def prior_database(path):
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE PcSampling(address INTEGER PRIMARY KEY, scoreboard_not_ready INTEGER)")
+        db.execute("INSERT INTO PcSampling VALUES(616,16320)")
+    return path.read_bytes()
+
+bad_inputs = {
+    "reserved": ("PcSampling.csv", "value\n1\n"),
+    "duplicate_columns": ("ZZBroken.csv", "aic_time(us),aic_time(ns)\n1,2\n"),
+    "wide_row": ("ZZBroken.csv", "value\n1,2\n"),
+    "empty_file": ("ZZBroken.csv", ""),
+    "bad_unit": ("ZZBroken.csv", "aic_time()\n1\n"),
+}
+for invalid, (filename, text) in bad_inputs.items():
+    for mode in ("new", "replace", "protected"):
+        case = parent / f"{invalid}-{mode}"
+        source = case / "input"
+        source.mkdir(parents=True)
+        (source / "AAValid.csv").write_text("block_id,aiv_time(us),name\n0,12.5,a\n1,NA,b\n")
+        (source / filename).write_text(text)
+        output = case / "summary.db"
+        before = prior_database(output) if mode != "new" else None
+        command = [sys.executable, str(script), "--csv-dir", str(source), "--db", str(output), "--quiet"]
+        if mode == "replace":
+            command.append("--drop-existing")
+        run = subprocess.run(command, capture_output=True, text=True)
+        preserved = not output.exists() if before is None else output.read_bytes() == before
+        residue = list(case.glob(".summary.db.*"))
+        ok = run.returncode == 1 and preserved and not residue
+        results.append({"case": f"{invalid}-{mode}", "pass": ok, "exit": run.returncode,
+                        "original_preserved_or_new_output_absent": preserved, "temporary_residue": len(residue)})
+case = parent / "concurrent-default-output"
+source = case / "input"
+source.mkdir(parents=True)
+fifo = source / "AAValid.csv"
+os.mkfifo(fifo)
+output = case / "summary.db"
+command = [sys.executable, str(script), "--csv-dir", str(source), "--db", str(output), "--quiet"]
+process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+try:
+    deadline = time.monotonic() + 10
+    while not output.exists() and not list(case.glob(".summary.db.*")):
+        if process.poll() is not None or time.monotonic() >= deadline:
+            raise RuntimeError("Converter did not reach the real CSV read handshake")
+        time.sleep(0.01)
+    before = prior_database(output)
+    while True:
+        try:
+            writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            break
+        except OSError as error:
+            if error.errno != errno.ENXIO or process.poll() is not None or time.monotonic() >= deadline:
+                raise RuntimeError("Converter did not open the real CSV FIFO") from error
+            time.sleep(0.01)
+    try:
+        os.write(writer, b"block_id,aiv_time(us),name\n0,12.5,a\n1,NA,b\n")
+    finally:
+        os.close(writer)
+    _, stderr = process.communicate(timeout=10)
+    ok = process.returncode == 1 and "拒覆盖" in stderr and output.read_bytes() == before and not list(case.glob(".summary.db.*"))
+    results.append({"case":"concurrent-default-output","pass":ok,"exit":process.returncode,
+                    "real_FIFO_and_second_SQLite_writer":True,"no_concurrent_output_clobber":output.read_bytes() == before})
+finally:
+    if process.poll() is None:
+        process.kill()
+        process.communicate()
+
+for mode in ("new", "replace", "filtered"):
+    case = parent / f"success-{mode}"
+    source = case / "input"
+    source.mkdir(parents=True)
+    (source / "AAValid.csv").write_text("block_id,aiv_time(us),name\n0,12.5,a\n1,NA,b\n")
+    output = case / "summary.db"
+    command = [sys.executable, str(script), "--csv-dir", str(source), "--db", str(output), "--quiet"]
+    if mode == "replace":
+        prior_database(output)
+        command.append("--drop-existing")
+    if mode == "filtered":
+        (source / "PcSampling.csv").write_text("value\n1\n")
+        command.extend(["--tables", "AAValid"])
+    run = subprocess.run(command, capture_output=True, text=True)
+    rows = units = None
+    if run.returncode == 0:
+        with sqlite3.connect(output) as db:
+            rows = db.execute("SELECT block_id,aiv_time,name FROM AAValid ORDER BY block_id").fetchall()
+            units = dict(db.execute("SELECT field_name,unit FROM FieldUnitMap"))
+            tables = {x[0] for x in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        ok = rows == [(0,12.5,"a"),(1,None,"b")] and units == {"block_id":None,"aiv_time":"us","name":None} and tables == {"AAValid","FieldUnitMap"}
+    else:
+        ok = False
+    results.append({"case":f"success-{mode}", "pass":ok and not list(case.glob(".summary.db.*")), "exit":run.returncode})
+
+if sys.platform.startswith("linux") and ctypes.util.find_library("seccomp"):
+    def _deny_hard_links(deny_publish):
+        lib=ctypes.CDLL('libseccomp.so.2',use_errno=True)
+        lib.seccomp_init.argtypes=[ctypes.c_uint32];lib.seccomp_init.restype=ctypes.c_void_p
+        lib.seccomp_syscall_resolve_name.argtypes=[ctypes.c_char_p];lib.seccomp_syscall_resolve_name.restype=ctypes.c_int
+        lib.seccomp_rule_add.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.c_int,ctypes.c_uint];lib.seccomp_rule_add.restype=ctypes.c_int
+        lib.seccomp_load.argtypes=[ctypes.c_void_p];lib.seccomp_load.restype=ctypes.c_int
+        lib.seccomp_release.argtypes=[ctypes.c_void_p];lib.seccomp_release.restype=None
+        ctx=lib.seccomp_init(0x7fff0000)
+        assert ctx
+        names=['link','linkat']
+        if deny_publish:names+=['rename','renameat','renameat2']
+        for name in names:
+         number=lib.seccomp_syscall_resolve_name(name.encode())
+         if number>=0:assert lib.seccomp_rule_add(ctx,0x50000|errno.EPERM,number,0)==0
+        assert lib.seccomp_load(ctx)==0
+        lib.seccomp_release(ctx)
+
+    for mode in ("new", "filtered", "publish_failure", "replace_failure"):
+        case = parent / f"kernel-link-denied-{mode}"
+        source = case / "input"
+        source.mkdir(parents=True)
+        (source / "AAValid.csv").write_text("block_id,aiv_time(us),name\n0,12.5,a\n1,NA,b\n")
+        output = case / "summary.db"
+        before = prior_database(output) if mode == "replace_failure" else None
+        command = [sys.executable, str(script), "--csv-dir", str(source), "--db", str(output), "--quiet"]
+        if mode == "filtered":
+            (source / "PcSampling.csv").write_text("value\n1\n")
+            command.extend(["--tables", "AAValid"])
+        if mode == "replace_failure":
+            command.append("--drop-existing")
+        run = subprocess.run(command, capture_output=True, text=True, timeout=15,
+                             preexec_fn=lambda: _deny_hard_links(mode.endswith("failure")))
+        if mode.endswith("failure"):
+            preserved = not output.exists() if before is None else output.read_bytes() == before
+            ok = run.returncode == 1 and preserved
+        else:
+            ok = run.returncode == 0
+            if ok:
+                with sqlite3.connect(output) as db:
+                    ok = db.execute("SELECT block_id,aiv_time,name FROM AAValid ORDER BY block_id").fetchall() == [(0,12.5,"a"),(1,None,"b")]
+        results.append({"case":f"kernel-link-denied-{mode}","pass":ok and not list(case.glob(".summary.db.*")),
+                        "exit":run.returncode,"actual_kernel_syscall_denial_no_os_link_mock":True})
+else:
+    print("SKIP: Linux libseccomp integration probes are unavailable", file=sys.stderr)
+
+report = {"total":len(results),"passed":sum(x["pass"] for x in results),"failed":sum(not x["pass"] for x in results),"actual_CLI_SQLite_no_database_stub":True,"results":results}
+print(json.dumps(report, ensure_ascii=False))
+sys.exit(0 if report["failed"] == 0 else 1)
+ATOMIC_DB_PY
+then
+  pass "csv_to_db 失败原子性（新输出不留半成品，覆盖失败保留原库）"
+else
+  fail "csv_to_db 失败原子性"
+fi
+
 echo "=== smoke 12: db_bench 等价性门禁（W1-W3 双通道数值一致）==="
 if python3 "$REPO_ROOT/ops-collect/scripts/db_bench.py" \
     --dir "$DB_TMP/fixtures" --repeat 3 \

@@ -48,6 +48,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import errno
+import os
+import tempfile
 import sqlite3
 import sys
 from pathlib import Path
@@ -187,6 +190,52 @@ def read_csv_rows(path: Path) -> tuple[list[str], list[list[str]]]:
     return names, units, rows
 
 
+def _output_exists_error(db_path: Path) -> ValueError:
+    return ValueError(
+        f"输出 DB 已存在: {db_path}（拒覆盖——若为 npu-compute 原生"
+        " summary.db，其 PcSampling 表不可从 CSV 重建；确认覆盖请加"
+        " --drop-existing，或另指定 --db 输出路径）"
+    )
+
+
+def _publish_no_clobber(temporary_path: Path, db_path: Path) -> None:
+    try:
+        os.link(temporary_path, db_path)
+        return
+    except FileExistsError:
+        raise _output_exists_error(db_path) from None
+    except OSError as error:
+        if error.errno not in {
+            errno.EPERM,
+            errno.EOPNOTSUPP,
+            errno.ENOTSUP,
+            errno.EXDEV,
+        }:
+            raise
+
+    # On filesystems without hard links, reserve only after validation is complete.
+    try:
+        descriptor = os.open(db_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    except FileExistsError:
+        raise _output_exists_error(db_path) from None
+    reservation = os.fstat(descriptor)
+    os.close(descriptor)
+    try:
+        os.replace(temporary_path, db_path)
+    except BaseException:
+        try:
+            current = os.stat(db_path, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if (current.st_dev, current.st_ino) == (
+                reservation.st_dev,
+                reservation.st_ino,
+            ):
+                db_path.unlink()
+        raise
+
+
 def convert(
     csv_dir: Path, db_path: Path, tables: list[str] | None, drop_existing: bool = False
 ) -> dict:
@@ -204,18 +253,17 @@ def convert(
     if not csv_files:
         raise ValueError(f"目录无匹配 CSV: {csv_dir}（过滤 {tables}）")
 
-    if db_path.exists():
-        if not drop_existing:
-            raise ValueError(
-                f"输出 DB 已存在: {db_path}（拒覆盖——若为 npu-compute 原生"
-                " summary.db，其 PcSampling 表不可从 CSV 重建；确认覆盖请加"
-                " --drop-existing，或另指定 --db 输出路径）"
-            )
-        db_path.unlink()
+    if db_path.exists() and not drop_existing:
+        raise _output_exists_error(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # DELETE journal：自包含单文件，无 -wal/-shm 伴随文件（npu-compute 同款）
-    db = sqlite3.connect(str(db_path))
+    temporary = tempfile.TemporaryDirectory(
+        prefix=f".{db_path.name}.", dir=db_path.parent
+    )
+    temporary_path = Path(temporary.name) / db_path.name
+    db = None
     try:
+        db = sqlite3.connect(str(temporary_path))
         db.execute("PRAGMA journal_mode=DELETE")
         db.execute(f"CREATE TABLE {UNIT_TABLE}(field_name TEXT PRIMARY KEY, unit TEXT)")
         stats = {}
@@ -257,8 +305,17 @@ def convert(
         n_units = db.execute(f"SELECT COUNT(*) FROM {UNIT_TABLE}").fetchone()[0]
         if n_units < len({u for s in stats.values() for u in [s["columns"]]}):
             pass  # FieldUnitMap 按列名去重（同名列共享一条），>= 表列数不成立为常态
-    finally:
+        # Publish only the completely converted and verified database.
         db.close()
+        db = None
+        if drop_existing:
+            os.replace(temporary_path, db_path)
+        else:
+            _publish_no_clobber(temporary_path, db_path)
+    finally:
+        if db is not None:
+            db.close()
+        temporary.cleanup()
     return stats
 
 
