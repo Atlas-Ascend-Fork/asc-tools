@@ -55,7 +55,7 @@ bool TikcppLoaddata2dCheck::CheckAllHighLevel()
         "check dst tensor buffersize failed"));
     // unit element
     if (param_.srcDtypeBytes == 0 || param_.dstDtypeBytes == 0) {
-        CHECK_LOG_ERROR("src/dst dtype bytes is zeros");
+        CHECK_LOG_ERROR("src/dst dtype byte size is zero");
         return false;
     }
     int32_t dataLen = (param_.repeatTimes - 1) * param_.srcStride + 1;
@@ -76,22 +76,22 @@ bool TikcppLoaddata2dv2Check::CheckAllHighLevel() const
     if ((param_.srcPos == static_cast<uint8_t>(HardWareIndex::L1)) &&
         ((param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0A)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0B)))) {
-        CHECK_LOG_ERROR("check dst tensor position failed,"
-                        "the src hardware pos is L1, the dst hardware pos support L0A or L0B.");
+        CHECK_LOG_ERROR("check dst tensor position failed, "
+                        "the src hardware pos is L1, the dst hardware pos supports L0A or L0B.");
         return false;
     }
     if ((param_.srcPos == static_cast<uint8_t>(HardWareIndex::GM)) &&
         ((param_.dstPos != static_cast<uint8_t>(HardWareIndex::L1)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0A)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0B)))) {
-        CHECK_LOG_ERROR("check dst tensor position failed,"
-                        "the src hardware pos is GM, the dst hardware pos support L1 or L0A or L0B.");
+        CHECK_LOG_ERROR("check dst tensor position failed, "
+                        "the src hardware pos is GM, the dst hardware pos supports L1 or L0A or L0B.");
         return false;
     }
     if ((param_.srcPos != static_cast<uint8_t>(HardWareIndex::L1)) &&
         (param_.srcPos != static_cast<uint8_t>(HardWareIndex::GM))) {
-        CHECK_LOG_ERROR("check src tensor position failed,"
-                        "the src hardware pos support L1 or GM.");
+        CHECK_LOG_ERROR("check src tensor position failed, "
+                        "the src hardware pos supports L1 or GM.");
         return false;
     }
     ASCENDC_CHECK(CheckBufferSizeOverFlow(
@@ -104,12 +104,12 @@ bool TikcppLoaddata2dv2Check::CheckAllHighLevel() const
     }
     // unit element
     if (param_.srcDtypeBytes == 0 || param_.dstDtypeBytes == 0) {
-        CHECK_LOG_ERROR("src/dst dtype bytes is zeros");
+        CHECK_LOG_ERROR("src/dst dtype byte size is zero");
         return false;
     }
     return true;
 #else
-    CHECK_LOG_ERROR("Current version don't support LoadData2dv2");
+    CHECK_LOG_ERROR("Current version doesn't support LoadData2dv2");
     return false;
 #endif
 }
@@ -118,15 +118,15 @@ bool TikcppLoaddata3dv1Check::CheckAllHighLevel() const
 {
 #if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) || (__NPU_ARCH__ == 3102) || \
                               (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102))
-    CHECK_LOG_ERROR("unsupport Loaddata3dv1");
+    CHECK_LOG_ERROR("Unsupported Loaddata3dv1");
     return false;
 #else
     if ((param_.srcPos == static_cast<uint8_t>(HardWareIndex::L1)) &&
         ((param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0A)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0B)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::UB)))) {
-        CHECK_LOG_ERROR("check dst tensor position failed,"
-                        "the src hardware pos is L1, the dst hardware pos support L0A or L0B or UB.");
+        CHECK_LOG_ERROR("check dst tensor position failed, "
+                        "the src hardware pos is L1, the dst hardware pos supports L0A or L0B or UB.");
         return false;
     }
 
@@ -141,7 +141,7 @@ bool TikcppLoaddata3dv1Check::CheckAllHighLevel() const
     // unit element
     int32_t dstLenElement;
     if (param_.dstDtypeBytes == 0) {
-        CHECK_LOG_ERROR("dst dtype bytes is zeros");
+        CHECK_LOG_ERROR("dst dtype byte size is zero");
         return false;
     }
     if (param_.repeatMode == 0) {
@@ -162,8 +162,8 @@ bool TikcppLoaddata3dv2Check::CheckAllHighLevel()
     if ((param_.srcPos == static_cast<uint8_t>(HardWareIndex::L1)) &&
         ((param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0A)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0B)))) {
-        CHECK_LOG_ERROR("check dst tensor position failed,"
-                        "the src hardware pos is L1, the dst hardware pos support L0A or L0B.");
+        CHECK_LOG_ERROR("check dst tensor position failed, "
+                        "the src hardware pos is L1, the dst hardware pos supports L0A or L0B.");
         return false;
     }
 #elif defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 2002) || (__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) || \
@@ -172,8 +172,8 @@ bool TikcppLoaddata3dv2Check::CheckAllHighLevel()
         ((param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0A)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0B)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::UB)))) {
-        CHECK_LOG_ERROR("check dst tensor position failed,"
-                        "the src hardware pos is L1, the dst hardware pos support L0A or L0B or UB.");
+        CHECK_LOG_ERROR("check dst tensor position failed, "
+                        "the src hardware pos is L1, the dst hardware pos supports L0A or L0B or UB.");
         return false;
     }
 #endif
@@ -198,8 +198,8 @@ bool TikcppLoaddata3dv2ProCheck::CheckAllHighLevel()
     if ((param_.srcPos == static_cast<uint8_t>(HardWareIndex::L1)) &&
         ((param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0A)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0B)))) {
-        CHECK_LOG_ERROR("check dst tensor position failed,"
-                        "the src hardware pos is L1, the dst hardware pos support L0A or L0B.");
+        CHECK_LOG_ERROR("check dst tensor position failed, "
+                        "the src hardware pos is L1, the dst hardware pos supports L0A or L0B.");
         return false;
     }
 #elif defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 2002) || (__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) || \
@@ -208,8 +208,8 @@ bool TikcppLoaddata3dv2ProCheck::CheckAllHighLevel()
         ((param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0A)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::L0B)) &&
          (param_.dstPos != static_cast<uint8_t>(HardWareIndex::UB)))) {
-        CHECK_LOG_ERROR("check dst tensor position failed,"
-                        "the src hardware pos is L1, the dst hardware pos support L0A or L0B or UB.");
+        CHECK_LOG_ERROR("check dst tensor position failed, "
+                        "the src hardware pos is L1, the dst hardware pos supports L0A or L0B or UB.");
         return false;
     }
 #endif

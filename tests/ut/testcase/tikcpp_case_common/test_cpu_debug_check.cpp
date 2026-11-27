@@ -47,7 +47,9 @@ TEST_F(TestCpuDebugApiCheckSuite, CpuDebugApiCheckSharedMem)
 
 TEST_F(TestCpuDebugApiCheckSuite, CpuDebugApiCheckSharedMemDeathTest)
 {
-    EXPECT_DEATH({ AscendC::GmAlloc(SIZE_MAX); }, "GmAlloc Error: input size overflow detected.");
+    EXPECT_DEATH(
+        { AscendC::GmAlloc(SIZE_MAX); },
+        "GmAlloc Error: input size [0-9]+ exceeds maximum allowed size [0-9]+ bytes\\.");
     EXPECT_DEATH(
         { AscendC::GmAlloc(184467440736432); }, "GmAlloc Error: The /tmp directory does not have enough space.");
 }

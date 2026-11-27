@@ -21,7 +21,7 @@ namespace check {
 uint32_t TikcppVecReduceCheck::AlignStartPos(const uint32_t startPos, const uint32_t byteLen) const
 {
     if (byteLen == 0) {
-        CHECK_LOG_ERROR("byteLen is %u, it shoule be greater than 0", byteLen);
+        CHECK_LOG_ERROR("byteLen is %u, it should be greater than 0", byteLen);
         return 0;
     }
     uint32_t resDiv = DivCeil(startPos * byteLen, static_cast<uint32_t>(PlatFormParams::ONE_BLK_SIZE));
@@ -37,7 +37,7 @@ bool TikcppVecReduceCheck::CheckAllDtypeBytes(const std::string& errMsg)
     if ((dstDtypeBytes != srcDtypeBytes) || (srcDtypeBytes != workDtypeBytes) || (workDtypeBytes != dstDtypeBytes)) {
         CHECK_LOG_ERROR(
             "%s, "
-            "Reduce need dst data type (%u),dst src type (%u), dst wokr type (%u) should be same",
+            "Reduce need dst data type (%u),dst src type (%u), dst work type (%u) should be same",
             errMsg.c_str(), dstDtypeBytes, srcDtypeBytes, workDtypeBytes);
         return false;
     }
@@ -112,7 +112,7 @@ bool TikcppVecReduceCheck::CheckWorkTensorOffset(const std::string& errMsg)
     }
 
     if (typeSize == 0) {
-        CHECK_LOG_ERROR("dtype bytes is zeros");
+        CHECK_LOG_ERROR("dtype byte size is zero");
         return false;
     }
 
