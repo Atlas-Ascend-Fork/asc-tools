@@ -86,6 +86,8 @@ std::size_t g_set_device_calls = 0;
 std::size_t g_reset_device_calls = 0;
 std::size_t g_get_device_calls = 0;
 std::int32_t g_current_device = -1;
+constexpr int32_t kVisibleUserDevice = 1;
+constexpr int32_t kMappedLogicDevice = 3;
 std::size_t g_soc_name_calls = 0;
 std::size_t g_start_calls = 0;
 std::size_t g_stop_calls = 0;
@@ -431,6 +433,13 @@ extern "C" aclError aclrtGetDevice(std::int32_t* deviceId)
     return ACL_SUCCESS;
 }
 
+static aclError GetMappedDeviceId(int32_t userDeviceId, int32_t* logicDeviceId)
+{
+    EXPECT_EQ(userDeviceId, kVisibleUserDevice);
+    *logicDeviceId = kMappedLogicDevice;
+    return ACL_SUCCESS;
+}
+
 extern "C" aclError ReplayTestFunctionGetBinary(aclrtFuncHandle function, aclrtBinHandle* binary) __asm__(
     "aclrtFunctionGetBinary");
 
@@ -465,6 +474,13 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
 {
     NPU_COMPUTE_ISOLATE_TEST();
     const auto& mode = GetParam();
+    const bool hasVisibleDevices = mode == "visible_devices";
+    if (hasVisibleDevices) {
+        ASSERT_EQ(setenv("ASCEND_RT_VISIBLE_DEVICES", "2,3", 1), 0);
+        ASSERT_EQ(RuntimeStubSetOriginFunction("aclrtGetLogicDevIdByUserDevId", &GetMappedDeviceId), ACL_SUCCESS);
+    }
+    const int32_t userDeviceId = hasVisibleDevices ? kVisibleUserDevice : 7;
+    const uint32_t logicDeviceId = hasVisibleDevices ? kMappedLogicDevice : 7;
     const bool useShrinkBlock = mode == "shrink";
     const bool useDebugLog = mode == "debug";
     const bool useHostArgs =
@@ -599,7 +615,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     g_empty_host_placeholders = mode == "host_empty_placeholders" ? placeholders : nullptr;
     g_expected_args_data = g_extended_host_args ? static_cast<void*>(hostArgs.data()) : &args;
 
-    ASSERT_TRUE(aclrtSetDevice(7) == 0);
+    ASSERT_TRUE(aclrtSetDevice(userDeviceId) == 0);
     ASSERT_TRUE(g_set_device_calls == 1);
     std::string profilingLog;
     aclError firstLaunchStatus = ACL_ERROR_RT_FAILURE;
@@ -678,7 +694,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(g_configs[0].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
     ASSERT_TRUE(g_configs[0].blockMode == expectedBlockMode);
     ASSERT_TRUE(g_configs[0].devNums == 1);
-    ASSERT_TRUE(g_configs[0].deviceId == 7);
+    ASSERT_TRUE(g_configs[0].deviceId == logicDeviceId);
     ASSERT_TRUE(g_configs[1].pmuEvents == expected_second);
     ASSERT_TRUE(g_configs[1].pmuEvents[0] == 1794);
     ASSERT_TRUE(g_configs[1].pmuEvents[COMPUTE_AICORE_METRICS_NUM - 1] == 1366);
@@ -686,7 +702,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(g_configs[1].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
     ASSERT_TRUE(g_configs[1].blockMode == expectedBlockMode);
     ASSERT_TRUE(g_configs[1].devNums == 1);
-    ASSERT_TRUE(g_configs[1].deviceId == 7);
+    ASSERT_TRUE(g_configs[1].deviceId == logicDeviceId);
     ASSERT_TRUE(g_configs[2].pmuEvents == expected_third);
     ASSERT_TRUE(g_configs[2].pmuEvents[0] == 1376);
     ASSERT_TRUE(g_configs[2].pmuEvents[4] == MSPROF_INVALID_AICORE_METRIC);
@@ -694,7 +710,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(g_configs[2].primaryAttr == PROF_CONFIG_ATTR_AICORE_METRICS);
     ASSERT_TRUE(g_configs[2].blockMode == expectedBlockMode);
     ASSERT_TRUE(g_configs[2].devNums == 1);
-    ASSERT_TRUE(g_configs[2].deviceId == 7);
+    ASSERT_TRUE(g_configs[2].deviceId == logicDeviceId);
     ASSERT_TRUE(g_configs[3].profSwitch == (PROF_TASK_TIME_MASK | PROF_INSTR_MASK));
     ASSERT_TRUE(g_configs[3].primaryAttr == PROF_CONFIG_ATTR_INSTR);
     ASSERT_TRUE(g_configs[3].instrMode == PROF_COMPUTE_BIU_PERF);
@@ -746,7 +762,7 @@ TEST_P(NpuComputeReplay, ReplaysAndShortCircuitsFailure)
     ASSERT_TRUE(g_start_calls == starts_before_host_args);
     ASSERT_TRUE(g_sync_calls == syncs_before_host_args);
 
-    ASSERT_TRUE(aclrtResetDevice(7) == 0);
+    ASSERT_TRUE(aclrtResetDevice(userDeviceId) == 0);
     ASSERT_TRUE(g_reset_device_calls == 1);
     ASSERT_TRUE(aclrtLaunchKernel(nullptr, 1, &args, sizeof(args), nullptr) == ACL_ERROR_PROFILING_FAILURE);
     ASSERT_TRUE(g_get_device_calls == 1);
@@ -761,7 +777,7 @@ INSTANTIATE_TEST_SUITE_P(
     Modes, NpuComputeReplay,
     testing::Values(
         "Default", "symbol", "debug", "shrink", "host", "host_tail", "host_placeholders", "host_empty_placeholders",
-        "flush_failure", "partial_flush_failure", "missing_flush", "none", "start_failure"),
+        "flush_failure", "partial_flush_failure", "missing_flush", "none", "start_failure", "visible_devices"),
     [](const testing::TestParamInfo<std::string>& info) { return info.param; });
 
 class NpuComputeManagedReplay : public testing::TestWithParam<bool> {};

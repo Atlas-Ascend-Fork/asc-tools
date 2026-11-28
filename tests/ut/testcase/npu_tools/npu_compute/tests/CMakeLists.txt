@@ -363,6 +363,8 @@ foreach(mode IN ITEMS flush_failure partial_flush_failure missing_flush none sta
   add_test(NAME npu_compute.cache_control_${mode}
     COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/${mode})
 endforeach()
+add_test(NAME npu_compute.replay_visible_devices
+  COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/visible_devices)
 add_test(NAME npu_compute.replay_symbol COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/symbol)
 add_test(NAME npu_compute.replay_debug COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/debug)
 add_test(NAME npu_compute.replay_shrink_block COMMAND acl_pti_replay_test --gtest_filter=Modes/NpuComputeReplay.ReplaysAndShortCircuitsFailure/shrink)

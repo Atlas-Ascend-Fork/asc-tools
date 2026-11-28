@@ -9,6 +9,7 @@
  */
 #include "application_profiler.h"
 #include "npu_compute_log.h"
+#include "common/runtime_device_id.h"
 #include "acl_pti/data/pmu_events.h"
 #include "acl_pti/data/raw_data_decoder.h"
 #include "injection/injection_hook.h"
@@ -239,7 +240,7 @@ struct ApplicationProfiler::Impl {
         if (!publishOnClose) {
             return;
         }
-        summary.complete = IsCollectionComplete(summary);
+        summary.complete = shutdownStatus == ACLPTI_SUCCESS && IsCollectionComplete(summary);
         // This notification follows every decoded record in the handoff order.
         try {
             ASCTOOL_INFO("[npu-compute diagnostic] application on_drained begin");
@@ -310,7 +311,11 @@ struct ApplicationProfiler::Impl {
 
     // Serialize device reference tracking through Set/Reset. Runtime may call user code reentrantly.
     std::recursive_mutex deviceMutex;
-    std::map<int32_t, uint64_t> deviceReferences;
+    struct DeviceReference {
+        uint64_t count = 0;
+        int32_t logicDeviceId = -1;
+    };
+    std::map<int32_t, DeviceReference> deviceReferences;
     std::mutex controlMutex;
     std::mutex shutdownMutex;
     std::mutex receiveMutex;
@@ -462,9 +467,19 @@ aclError ApplicationProfiler::SetDevice(aclError (*original)(int32_t), int32_t d
     const auto result = original(deviceId);
     if (result == ACL_SUCCESS) {
         try {
-            auto& references = impl_->deviceReferences[deviceId];
-            if (++references == 1) {
-                (void)impl_->StartDevice(deviceId);
+            auto& reference = impl_->deviceReferences[deviceId];
+            if (++reference.count == 1) {
+                const auto status = npucompute::ResolveLogicDeviceId(deviceId, reference.logicDeviceId);
+                if (status == ACL_SUCCESS) {
+                    (void)impl_->StartDevice(reference.logicDeviceId);
+                } else {
+                    ASCTOOL_ERROR(
+                        "[aclpti] application device mapping failed user_device=%d status=%d", deviceId, status);
+                    std::lock_guard<std::mutex> control(impl_->controlMutex);
+                    if (impl_->state == Impl::State::Prepared) {
+                        impl_->shutdownStatus = ACLPTI_ERROR_PROFILING_FAILED;
+                    }
+                }
             }
         } catch (...) {
             ASCTOOL_ERROR(
@@ -481,12 +496,13 @@ aclError ApplicationProfiler::ResetDevice(aclError (*original)(int32_t), int32_t
     if (found == impl_->deviceReferences.end()) {
         return original(deviceId);
     }
-    const bool lastRelease = force || found->second == 1;
+    const bool lastRelease = force || found->second.count == 1;
+    const auto logicDeviceId = found->second.logicDeviceId;
     // Stop before the resetting API releases the device resources.
     bool stopped = false;
-    if (lastRelease) {
+    if (lastRelease && logicDeviceId >= 0) {
         try {
-            stopped = impl_->StopDevice(deviceId) == ACLPTI_SUCCESS;
+            stopped = impl_->StopDevice(logicDeviceId) == ACLPTI_SUCCESS;
         } catch (...) {
             ASCTOOL_ERROR(
                 "[aclpti] application stop failed device=%d code=%u", deviceId, NPU_COMPUTE_LOG_CODE_UNSPECIFIED);
@@ -497,14 +513,14 @@ aclError ApplicationProfiler::ResetDevice(aclError (*original)(int32_t), int32_t
         // A synchronous device-state callback may have changed the reference map.
         const auto current = impl_->deviceReferences.find(deviceId);
         if (current != impl_->deviceReferences.end()) {
-            if (force || current->second == 1) {
+            if (force || current->second.count == 1) {
                 impl_->deviceReferences.erase(current);
             } else {
-                --current->second;
+                --current->second.count;
             }
         }
     } else if (stopped) {
-        const auto status = impl_->NotifyDeviceResetFailed(deviceId);
+        const auto status = impl_->NotifyDeviceResetFailed(logicDeviceId);
         ASCTOOL_ERROR(
             "[aclpti] application reset failed after stopping collection device=%d tracking_status=%d code=%u",
             deviceId, status, static_cast<unsigned>(result));

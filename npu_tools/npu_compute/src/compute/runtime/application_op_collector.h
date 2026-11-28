@@ -24,7 +24,7 @@ public:
     ApplicationOpSnapshot Snapshot();
 
 private:
-    const SummaryHardwareInfo& CollectHardware(int32_t device);
+    const SummaryHardwareInfo& CollectHardware(int32_t userDeviceId, int32_t logicDeviceId);
     KernelMetadataCollector metadata_;
     DeviceEpochQuery deviceEpoch_;
     aclptiSubscribeHandle subscriber_ = nullptr;

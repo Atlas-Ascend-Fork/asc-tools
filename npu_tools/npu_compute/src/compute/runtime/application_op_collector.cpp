@@ -12,6 +12,7 @@
 #include "hardware/hardware_info_host.h"
 #include "hardware/hardware_info_json.h"
 #include "npu_compute_log.h"
+#include "common/runtime_device_id.h"
 #include <array>
 
 namespace npucompute {
@@ -48,8 +49,11 @@ void ApplicationOpCollector::OnCallback(aclptiCallbackId cbid, const aclptiCallb
     if (cbid == ACLPTI_RUNTIME_CBID_aclrtSetDevice) {
         if (data.callbackSite == ACLPTI_API_EXIT && data.retval == ACL_SUCCESS && data.functionParams != nullptr) {
             const auto& params = *static_cast<const aclptiAclrtSetDeviceParams*>(data.functionParams);
-            std::lock_guard<std::mutex> lock(mutex_);
-            (void)CollectHardware(params.deviceId);
+            int32_t logicDeviceId = -1;
+            if (ResolveLogicDeviceId(params.deviceId, logicDeviceId) == ACL_SUCCESS) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                (void)CollectHardware(params.deviceId, logicDeviceId);
+            }
         }
         return;
     }
@@ -63,8 +67,13 @@ void ApplicationOpCollector::OnCallback(aclptiCallbackId cbid, const aclptiCallb
         ++snapshot_.unidentifiedLaunches;
         return;
     }
-    const int32_t device = *metadata.deviceId;
-    const auto& hardware = CollectHardware(device);
+    const int32_t userDeviceId = *metadata.deviceId;
+    int32_t device = -1;
+    if (ResolveLogicDeviceId(userDeviceId, device) != ACL_SUCCESS) {
+        ++snapshot_.unidentifiedLaunches;
+        return;
+    }
+    const auto& hardware = CollectHardware(userDeviceId, device);
     if (!metadata.name || metadata.name->empty()) {
         ++snapshot_.unidentifiedLaunches;
         return;
@@ -75,28 +84,29 @@ void ApplicationOpCollector::OnCallback(aclptiCallbackId cbid, const aclptiCallb
     op.deviceEpoch = deviceEpoch_(device);
     op.launchIndex = launchIndices_[{device, *metadata.name}]++;
     op.instanceIndex = snapshot_.ops.size();
+    metadata.deviceId = device;
     metadata.hardware = hardware;
     op.metadata = std::move(metadata);
     snapshot_.ops.push_back(std::move(op));
 }
 
-const SummaryHardwareInfo& ApplicationOpCollector::CollectHardware(int32_t device)
+const SummaryHardwareInfo& ApplicationOpCollector::CollectHardware(int32_t userDeviceId, int32_t logicDeviceId)
 {
-    auto [hardware, inserted] = hardware_.try_emplace(device);
+    auto [hardware, inserted] = hardware_.try_emplace(logicDeviceId);
     if (!inserted) {
         return hardware->second;
     }
     // The caller holds mutex_; query the selected device without changing the application's context.
     DynamicHardwareDeviceApi api(false);
-    hardware->second = CollectSummaryHardwareInfo(api, nullptr, device);
+    hardware->second = CollectSummaryHardwareInfo(api, nullptr, userDeviceId);
     HardwareInfoSnapshot hardwareSnapshot;
-    hardwareSnapshot.deviceId = device;
+    hardwareSnapshot.deviceId = logicDeviceId;
     std::string jsonl;
     std::string error;
     if (CollectHostInfo("/tmp", &hardwareSnapshot.host, nullptr) &&
         CollectDeviceInfo(
             api, &hardwareSnapshot.device, &hardwareSnapshot.cpu, &hardwareSnapshot.aiCore, &hardwareSnapshot.memory,
-            nullptr, device) &&
+            nullptr, userDeviceId) &&
         SerializeHardwareInfoJsonl(hardwareSnapshot, &jsonl, &error)) {
         snapshot_.hardwareJsonl += jsonl;
     } else {
