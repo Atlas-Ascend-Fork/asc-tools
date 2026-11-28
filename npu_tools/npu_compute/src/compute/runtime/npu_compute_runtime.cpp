@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute_log.h"
+#include "common/runtime_device_id.h"
 #include "file_io.h"
 #include "ipc/ipc.h"
 #include "runtime/npu_compute_runtime.h"
@@ -132,7 +133,9 @@ const char* SetWarpClockFrequencies(int32_t deviceId, WarpTraceTiming& timing)
 {
     DynamicHardwareDeviceApi api;
     double syscntHz = 0;
-    if (!api.GetSyscntFrequencyHz(deviceId, &syscntHz)) {
+    int32_t logicDeviceId = -1;
+    if (ResolveLogicDeviceId(deviceId, logicDeviceId) != ACL_SUCCESS ||
+        !api.GetSyscntFrequencyHz(logicDeviceId, &syscntHz)) {
         return "Device syscnt frequency unavailable";
     }
     timing.syscntMhz = syscntHz / HZ_PER_MHZ;
@@ -1389,9 +1392,10 @@ void NpuComputeRuntime::CaptureReportEnvironment()
         const auto reportDevice = device >= 0 ? device : 0;
         LoadCsvDeviceInfo(&csv_config_, !csv_frequency_override_, reportDevice);
         report_metadata_ = CollectReportMetadata(csv_config_, csv_frequency_override_, reportDevice);
-        if (pipeline_enabled_ && device >= 0) {
+        int32_t logicDeviceId = -1;
+        if (pipeline_enabled_ && device >= 0 && ResolveLogicDeviceId(device, logicDeviceId) == ACL_SUCCESS) {
             DynamicHardwareDeviceApi api(false);
-            (void)api.GetSyscntFrequencyHz(device, &syscnt_frequency_hz_);
+            (void)api.GetSyscntFrequencyHz(logicDeviceId, &syscnt_frequency_hz_);
         }
         csv_device_info_loaded_ = true;
     }

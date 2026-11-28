@@ -10,6 +10,9 @@
 #include "acl_pti/profiling/application_profiler.h"
 #include "acl_pti/data/data_types.h"
 #include "profiling/prof_api.h"
+#include <acl/acl_rt.h>
+#include <cstdlib>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <atomic>
 #include <condition_variable>
@@ -112,6 +115,41 @@ TEST_F(ApplicationProfilerTest, CommunicationUsesOneSummaryPmuRoundOnEachDevice)
     EXPECT_EQ(summary.devices.at(0).state, ApplicationDeviceState::Inactive);
     EXPECT_FALSE(summary.tailConfirmed);
     EXPECT_TRUE(summary.complete);
+}
+
+TEST_F(ApplicationProfilerTest, VisibleDeviceMappingMatchesStartStopAndRawRecords)
+{
+    struct ScopedVisibility {
+        ~ScopedVisibility() { unsetenv("ASCEND_RT_VISIBLE_DEVICES"); }
+    } visibility;
+    ASSERT_EQ(setenv("ASCEND_RT_VISIBLE_DEVICES", "2,3", 1), 0);
+    ApplicationProfiler profiler;
+    std::vector<ApplicationRawRecord> records;
+    ASSERT_EQ(
+        profiler.Initialize([&records](const auto& record) { records.push_back(record); }, [](const auto&) {}),
+        ACLPTI_SUCCESS);
+    ASSERT_EQ(ConfigureCommunication(profiler), ACLPTI_SUCCESS);
+    const auto deviceCall = [](int32_t id) {
+        EXPECT_EQ(id, 1);
+        return ACL_SUCCESS;
+    };
+    ASSERT_EQ(profiler.SetDevice(deviceCall, 1), ACL_SUCCESS);
+    ASSERT_EQ(starts.size(), 1U);
+    EXPECT_EQ(starts[0].devIdList[0], 3U);
+
+    MsprofRawData raw{};
+    raw.type = kAdditionalRawDataType;
+    raw.deviceId = 3;
+    raw.chunkSize = 1;
+    ASSERT_EQ(callback(&raw), 0);
+    EXPECT_EQ(profiler.DeviceEpoch(3), 1U);
+    ASSERT_EQ(profiler.ResetDevice(deviceCall, 1, false), ACL_SUCCESS);
+    ASSERT_EQ(profiler.Shutdown(), ACLPTI_SUCCESS);
+    ASSERT_EQ(stops.size(), 1U);
+    EXPECT_EQ(stops[0].devIdList[0], 3U);
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_EQ(records[0].deviceId, 3);
+    EXPECT_EQ(records[0].deviceEpoch, 1U);
 }
 
 TEST_F(ApplicationProfilerTest, ConfigurationIsRequiredAndFrozenByFirstStartAttempt)
@@ -743,6 +781,20 @@ TEST_F(ApplicationProfilerTest, EmptySessionCompletesOnConsumerThreadWithAndWith
 }
 
 } // namespace
+
+extern "C" aclError aclrtApiInjectionGetFunc(const char* name, aclrtApiFunc* original, aclrtApiFunc*)
+{
+    if (std::strcmp(name, "aclrtGetLogicDevIdByUserDevId") != 0 || original == nullptr) {
+        return ACL_ERROR_INVALID_PARAM;
+    }
+    const auto convert = +[](int32_t userDeviceId, int32_t* logicDeviceId) -> aclError {
+        EXPECT_EQ(userDeviceId, 1);
+        *logicDeviceId = 3;
+        return ACL_SUCCESS;
+    };
+    *original = reinterpret_cast<aclrtApiFunc>(reinterpret_cast<void*>(convert));
+    return ACL_SUCCESS;
+}
 
 extern "C" int32_t acltoolUploaderInit(MsprofRawDataCallback uploader)
 {

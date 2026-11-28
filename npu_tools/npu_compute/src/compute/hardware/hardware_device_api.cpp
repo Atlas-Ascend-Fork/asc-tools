@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "hardware/hardware_device_api.h"
+#include "common/runtime_device_id.h"
 #include "securec.h"
 
 #include <acl/acl.h>
@@ -214,6 +215,10 @@ bool DynamicHardwareDeviceApi::GetControlCpuCount(std::int32_t deviceId, uint32_
     if (deviceId < 0 || value == nullptr) {
         return false;
     }
+    int32_t logicDeviceId = -1;
+    if (ResolveLogicDeviceId(deviceId, logicDeviceId) != ACL_SUCCESS) {
+        return false;
+    }
     using Function = drvError_t (*)(uint32_t, std::int32_t, std::int32_t, std::int64_t*);
     const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", HAL_LIBRARY));
     if (function == nullptr) {
@@ -221,8 +226,8 @@ bool DynamicHardwareDeviceApi::GetControlCpuCount(std::int32_t deviceId, uint32_
     }
 
     std::int64_t count = 0;
-    if (function(static_cast<uint32_t>(deviceId), MODULE_TYPE_CCPU, INFO_TYPE_CORE_NUM, &count) != 0 || count < 0 ||
-        static_cast<uint64_t>(count) > std::numeric_limits<uint32_t>::max()) {
+    if (function(static_cast<uint32_t>(logicDeviceId), MODULE_TYPE_CCPU, INFO_TYPE_CORE_NUM, &count) != 0 ||
+        count < 0 || static_cast<uint64_t>(count) > std::numeric_limits<uint32_t>::max()) {
         return false;
     }
     *value = static_cast<uint32_t>(count);
@@ -234,6 +239,10 @@ bool DynamicHardwareDeviceApi::GetAiCpuFrequency(std::int32_t deviceId, uint32_t
     if (deviceId < 0 || value == nullptr) {
         return false;
     }
+    int32_t logicDeviceId = -1;
+    if (ResolveLogicDeviceId(deviceId, logicDeviceId) != ACL_SUCCESS) {
+        return false;
+    }
     using Function = int (*)(int, struct dsmi_aicpu_info_stru*);
     const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_aicpu_info", DSMI_LIBRARY));
     if (function == nullptr) {
@@ -241,7 +250,7 @@ bool DynamicHardwareDeviceApi::GetAiCpuFrequency(std::int32_t deviceId, uint32_t
     }
 
     struct dsmi_aicpu_info_stru information {};
-    if (function(deviceId, &information) != 0) {
+    if (function(logicDeviceId, &information) != 0) {
         return false;
     }
     *value = information.curFreq;
@@ -279,17 +288,21 @@ bool DynamicHardwareDeviceApi::ReadAiCoreFrequencies(
         return false;
     }
 
+    int32_t logicDeviceId = -1;
+    if (ResolveLogicDeviceId(deviceId, logicDeviceId) != ACL_SUCCESS) {
+        return false;
+    }
     using Function = drvError_t (*)(uint32_t, std::int32_t, std::int32_t, std::int64_t*);
     const Function function = ToFunction<Function>(impl_->Resolve("halGetDeviceInfo", HAL_LIBRARY));
     if (function == nullptr) {
         return false;
     }
 
-    const auto readFrequency = [function, deviceId, currentFirst, allowRatedFallback](
+    const auto readFrequency = [function, logicDeviceId, currentFirst, allowRatedFallback](
                                    std::int32_t moduleType, uint32_t* value) {
         std::int64_t frequency = 0;
         if (currentFirst &&
-            function(static_cast<uint32_t>(deviceId), moduleType, INFO_TYPE_CURRENT_FREQ, &frequency) ==
+            function(static_cast<uint32_t>(logicDeviceId), moduleType, INFO_TYPE_CURRENT_FREQ, &frequency) ==
                 DRV_ERROR_NONE &&
             frequency > 0 && static_cast<uint64_t>(frequency) <= std::numeric_limits<uint32_t>::max()) {
             *value = static_cast<uint32_t>(frequency);
@@ -299,7 +312,8 @@ bool DynamicHardwareDeviceApi::ReadAiCoreFrequencies(
             return false;
         }
         frequency = 0;
-        if (function(static_cast<uint32_t>(deviceId), moduleType, INFO_TYPE_FREQUE, &frequency) != DRV_ERROR_NONE ||
+        if (function(static_cast<uint32_t>(logicDeviceId), moduleType, INFO_TYPE_FREQUE, &frequency) !=
+                DRV_ERROR_NONE ||
             frequency <= 0 || static_cast<uint64_t>(frequency) > std::numeric_limits<uint32_t>::max()) {
             return false;
         }
@@ -382,6 +396,10 @@ bool DynamicHardwareDeviceApi::GetChipVersion(std::int32_t deviceId, std::string
     if (deviceId < 0 || value == nullptr) {
         return false;
     }
+    int32_t logicDeviceId = -1;
+    if (ResolveLogicDeviceId(deviceId, logicDeviceId) != ACL_SUCCESS) {
+        return false;
+    }
     using Function = int (*)(int, struct dsmi_chip_info_stru*);
     const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_chip_info", DSMI_LIBRARY));
     if (function == nullptr) {
@@ -389,7 +407,7 @@ bool DynamicHardwareDeviceApi::GetChipVersion(std::int32_t deviceId, std::string
     }
 
     struct dsmi_chip_info_stru information {};
-    if (function(deviceId, &information) != 0) {
+    if (function(logicDeviceId, &information) != 0) {
         return false;
     }
     *value = BoundedString(information.chip_ver);
@@ -437,9 +455,13 @@ bool DynamicHardwareDeviceApi::GetHbmFrequency(std::int32_t deviceId, uint32_t* 
     if (deviceId < 0 || value == nullptr) {
         return false;
     }
+    int32_t logicDeviceId = -1;
+    if (ResolveLogicDeviceId(deviceId, logicDeviceId) != ACL_SUCCESS) {
+        return false;
+    }
     using Function = int (*)(int, int, unsigned int*);
     const Function function = ToFunction<Function>(impl_->Resolve("dsmi_get_device_frequency", DSMI_LIBRARY));
-    return function != nullptr && function(deviceId, DSMI_DEVICE_TYPE_HBM, value) == 0;
+    return function != nullptr && function(logicDeviceId, DSMI_DEVICE_TYPE_HBM, value) == 0;
 }
 
 } // namespace npucompute

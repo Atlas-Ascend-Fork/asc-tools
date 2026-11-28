@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npubit_collector.h"
+#include "common/runtime_device_id.h"
 #include "injection/injection_hook.h"
 #include "npu_compute_log.h"
 #include "npubit_device.h"
@@ -97,8 +98,13 @@ bool ReadNpubitDevice(std::int32_t deviceId, NpubitDevice& device, std::string& 
         error = "NPUbit collection is unsupported for NPU architecture " + std::to_string(architecture);
         return false;
     }
+    std::int32_t logicDeviceId = -1;
+    if (npucompute::ResolveLogicDeviceId(deviceId, logicDeviceId) != ACL_SUCCESS) {
+        error = "cannot determine NPUbit logical device ID";
+        return false;
+    }
     AiCoreTopology topology{};
-    if (!ReadNpubitTopology(deviceId, topology)) {
+    if (!ReadNpubitTopology(logicDeviceId, topology)) {
         error = "cannot determine NPUbit AI core topology";
         return false;
     }

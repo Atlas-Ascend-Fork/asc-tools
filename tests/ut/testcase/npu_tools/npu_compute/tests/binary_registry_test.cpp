@@ -93,6 +93,12 @@ aclError Entry(aclrtBinHandle binary, std::uint64_t entry, aclrtFuncHandle* resu
 }
 } // namespace
 
+// Keep the Runtime lookup local to avoid linking a second copy of the binary API stubs.
+extern "C" aclError aclrtApiInjectionGetFunc(const char*, aclrtApiFunc*, aclrtApiFunc*)
+{
+    return ACL_ERROR_INVALID_PARAM;
+}
+
 extern "C" void* acltoolGetOriginalRuntimeApi(aclrtApiId id)
 {
     switch (id) {

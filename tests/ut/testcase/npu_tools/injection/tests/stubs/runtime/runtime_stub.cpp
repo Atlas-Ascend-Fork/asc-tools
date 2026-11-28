@@ -26,7 +26,7 @@
 
 namespace {
 
-constexpr std::size_t kRuntimeApiCount = 34;
+constexpr std::size_t kRuntimeApiCount = 35;
 constexpr std::size_t kSocNameCapacity = 64;
 constexpr char kDefaultSocName[] = "Ascend950PR_9599";
 
@@ -333,6 +333,7 @@ std::array<RuntimeEntry, kRuntimeApiCount> g_runtimeEntries = {{
      ToGenericFunction(&RealAclrtLaunchKernelWithConfig)},
     {"aclrtDeviceL2CacheFlush", ToGenericFunction(&RealAclrtDeviceL2CacheFlush),
      ToGenericFunction(&RealAclrtDeviceL2CacheFlush)},
+    {"aclrtGetLogicDevIdByUserDevId", nullptr, nullptr},
     {"aclrtGetFunctionName", ToGenericFunction(&RealAclrtGetFunctionName),
      ToGenericFunction(&RealAclrtGetFunctionName)},
 }};

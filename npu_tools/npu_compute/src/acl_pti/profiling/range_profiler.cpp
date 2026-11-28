@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "npu_compute_log.h"
+#include "common/runtime_device_id.h"
 #include "acl_pti/initialization.h"
 #include "range_profiler.h"
 #include "npubit_collector.h"
@@ -609,7 +610,8 @@ struct RangeProfiler::ReplayInvocation {
     const ReplayLaunchFunction& launchFunction;
     aclrtStream stream;
     const SamplingOffsetReader& readSamplingOffset;
-    std::int32_t deviceId;
+    std::int32_t userDeviceId;
+    std::int32_t logicDeviceId;
     aclrtSynchronizeStreamFunc synchronizeFunction;
     const SourceCounterSynchronize& synchronizeSourceCounter;
 };
@@ -620,20 +622,28 @@ aclptiResult RangeProfiler::ReplayKernel(
     const SourceCounterSynchronize& synchronizeSourceCounter)
 {
     try {
-        std::int32_t deviceId = -1;
+        std::int32_t userDeviceId = -1;
         aclrtSynchronizeStreamFunc synchronizeFunction = nullptr;
-        aclptiResult status =
-            PrepareReplayEnvironment(launchFunction, stream, &deviceId, &synchronizeFunction, synchronizeSourceCounter);
+        aclptiResult status = PrepareReplayEnvironment(
+            launchFunction, stream, &userDeviceId, &synchronizeFunction, synchronizeSourceCounter);
         if (status != ACLPTI_SUCCESS) {
             return status;
         }
+
+        std::int32_t logicDeviceId = -1;
+        const auto conversion = npucompute::ResolveLogicDeviceId(userDeviceId, logicDeviceId);
+        if (conversion != ACL_SUCCESS) {
+            ASCTOOL_ERROR("[aclpti] replay device mapping failed user_device=%d status=%d", userDeviceId, conversion);
+            return ACLPTI_ERROR_PROFILING_FAILED;
+        }
+        ASCTOOL_DEBUG("[aclpti] replay user_device=%d logic_device=%d", userDeviceId, logicDeviceId);
 
         const std::vector<ReplayRound> rounds = BuildReplayRounds();
         ASCTOOL_DEBUG("[aclpti] replay rounds=%zu events=%zu", rounds.size(), pmuEvents_.size());
 
         const ReplayInvocation invocation{
-            replayMemory,       binaryRegistry, originalFunction,    launchFunction,          stream,
-            readSamplingOffset, deviceId,       synchronizeFunction, synchronizeSourceCounter};
+            replayMemory,       binaryRegistry, originalFunction, launchFunction,      stream,
+            readSamplingOffset, userDeviceId,   logicDeviceId,    synchronizeFunction, synchronizeSourceCounter};
         for (std::size_t round = 0; round < rounds.size(); ++round) {
             if (managedSession_ && !initialization::CollectionOpen()) {
                 return ACLPTI_ERROR_TRACE_INCOMPLETE;
@@ -674,7 +684,7 @@ aclptiResult RangeProfiler::ReplayRoofline(const ReplayInvocation& invocation, s
     BinarySource source;
     std::size_t round = firstRound;
     aclptiResult status = ACLPTI_SUCCESS;
-    const auto beforeReplay = [this, deviceId = invocation.deviceId, &round] {
+    const auto beforeReplay = [this, deviceId = invocation.logicDeviceId, &round] {
         if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
             TryFlushL2Cache(deviceId, round);
         }
@@ -684,7 +694,7 @@ aclptiResult RangeProfiler::ReplayRoofline(const ReplayInvocation& invocation, s
     if (invocation.binaryRegistry.GetSource(invocation.originalFunction, source)) {
         status = CollectNpubitRoofline(
             source, invocation.replayMemory, invocation.launchFunction, invocation.synchronizeFunction,
-            invocation.stream, invocation.deviceId, beforeReplay, roofline);
+            invocation.stream, invocation.userDeviceId, beforeReplay, roofline);
     } else {
         roofline.errors.emplace_back("original ELF/function locator unavailable; enable collection before binary load");
     }
@@ -705,7 +715,7 @@ aclptiResult RangeProfiler::ReplaySourceCounter(const ReplayInvocation& invocati
     ASCTOOL_DEBUG(
         "[aclpti] SourceCounter replay source=%p imageBytes=%zu function=%p device=%d firstRound=%zu",
         invocation.originalFunction, source.image == nullptr ? 0U : source.image->size(), invocation.originalFunction,
-        invocation.deviceId, firstRound);
+        invocation.logicDeviceId, firstRound);
     const SourceCounterReplay replay = [&invocation, firstRound, this](aclrtFuncHandle function, std::size_t round) {
         const auto restore = invocation.replayMemory.Restore();
         if (restore != ACLPTI_SUCCESS) {
@@ -714,7 +724,7 @@ aclptiResult RangeProfiler::ReplaySourceCounter(const ReplayInvocation& invocati
             return SourceCounterReplayResult{restore, true};
         }
         if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
-            TryFlushL2Cache(invocation.deviceId, firstRound + round);
+            TryFlushL2Cache(invocation.logicDeviceId, firstRound + round);
         }
         // NPUbit writes the trace address into the object; the launch still uses business arguments.
         const auto launch = invocation.launchFunction(function, false);
@@ -734,7 +744,7 @@ aclptiResult RangeProfiler::ReplaySourceCounter(const ReplayInvocation& invocati
     };
     aclptiSourceCounterData counters;
     counters.originalElf = source.image;
-    const auto status = CollectSourceCounterData(source, invocation.deviceId, replay, counters);
+    const auto status = CollectSourceCounterData(source, invocation.userDeviceId, replay, counters);
     for (const auto& error : counters.errors) {
         ASCTOOL_WARNING("[aclpti] SourceCounter incomplete: %s", error.c_str());
     }
@@ -762,8 +772,8 @@ aclptiResult RangeProfiler::ReplaySimtWarp(const ReplayInvocation& invocation)
 
     NpubitDevice device;
     std::string deviceError;
-    if (!ReadNpubitDevice(invocation.deviceId, device, deviceError)) {
-        std::fprintf(stderr, "[SimtWarp] device %d: %s\n", invocation.deviceId, deviceError.c_str());
+    if (!ReadNpubitDevice(invocation.userDeviceId, device, deviceError)) {
+        std::fprintf(stderr, "[SimtWarp] device %d: %s\n", invocation.logicDeviceId, deviceError.c_str());
         return ACLPTI_ERROR_PROFILING_FAILED;
     }
     SimtWarpCollectOptions options;
@@ -779,7 +789,7 @@ aclptiResult RangeProfiler::ReplaySimtWarp(const ReplayInvocation& invocation)
     const auto status = CollectNpubitSimtWarp(
         source, invocation.replayMemory, invocation.launchFunction, invocation.synchronizeFunction, invocation.stream,
         options, warp);
-    warp.deviceId = invocation.deviceId;
+    warp.deviceId = invocation.userDeviceId;
     for (const auto& error : warp.errors) {
         std::fprintf(stderr, "[SimtWarp] %s\n", error.c_str());
     }
@@ -806,7 +816,7 @@ bool RangeProfiler::PrepareSamplingContext(const ReplayInvocation& invocation, P
     context->simtInstructions = {snapshot.image, &snapshot.image->instructions.simt};
     context->instructionMapError = snapshot.error;
     context->kernelName = snapshot.kernelName;
-    context->deviceId = invocation.deviceId;
+    context->deviceId = invocation.logicDeviceId;
 
     context->elfEntry = snapshot.elfEntry;
     context->originalEntry = snapshot.originalEntry;
@@ -854,7 +864,7 @@ aclptiResult RangeProfiler::ReplayProfilingRound(
     const ReplayInvocation& invocation, const ReplayRound& replayRound, std::size_t round)
 {
     ProfilingRoundConfig config{};
-    ConfigureProfilingRound(replayRound, round, invocation.deviceId, &config);
+    ConfigureProfilingRound(replayRound, round, invocation.logicDeviceId, &config);
     const bool pcSampling = replayRound.kind == data::ReplayKind::PcSampling;
     if (pcSampling && !PrepareSamplingContext(invocation, config)) {
         // Publish collection failure without replaying an unsymbolizable kernel.
@@ -887,9 +897,9 @@ aclptiResult RangeProfiler::ReplayProfilingRound(
         return status;
     }
     if (cacheControl_ == ACLPTI_CACHE_CONTROL_ALL) {
-        TryFlushL2Cache(invocation.deviceId, round);
+        TryFlushL2Cache(invocation.logicDeviceId, round);
     }
-    status = StartProfilingRound(replayRound, round, invocation.deviceId, &config);
+    status = StartProfilingRound(replayRound, round, invocation.logicDeviceId, &config);
     if (status != ACLPTI_SUCCESS) {
         return status;
     }
@@ -907,7 +917,7 @@ aclptiResult RangeProfiler::LaunchProfilingRound(
         "[aclpti] replay function round=%zu kind=%s replay_id=%llu original=%p selected=%p device=%d", round,
         pcSampling ? "PmSampling" : (pipeline ? "pipeline" : "pmu"),
         static_cast<unsigned long long>(config.prepareInfo.replayId), invocation.originalFunction, function,
-        invocation.deviceId);
+        invocation.logicDeviceId);
     aclError launchStatus = ACL_SUCCESS;
     if (instrumented && function == nullptr) {
         // The original launch validated originalFunction, but does not guarantee an
