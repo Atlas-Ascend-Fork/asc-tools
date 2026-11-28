@@ -705,7 +705,7 @@
         "eval_mode": "text"
       },
       "prompt": "请采集全部指标：目标是 ./add_custom，只生成命令，不要执行。",
-      "expected_output": "生成 npu-compute --set full ./add_custom。说明 full Set 在 basic 指标之外还包含 ResourceConflictRatio，并明确只生成命令。",
+      "expected_output": "生成 npu-compute --set full ./add_custom。说明 full Set 在 basic 指标之外依次包含 ResourceConflictRatio、PmSampling、SourceCounter、Roofline 和 Occupancy，并明确只生成命令。",
       "files": [],
       "expectations": [
         {
@@ -792,7 +792,7 @@
         "eval_mode": "text"
       },
       "prompt": "针对目标程序 ./add_custom，在 basic 指标基础上增加 ResourceConflictRatio，生成命令。",
-      "expected_output": "生成 npu-compute --set basic --section ResourceConflictRatio ./add_custom。说明该组合等价于 full 的指标集合，basic 中的 Section 保持原顺序，ResourceConflictRatio 只追加一次。",
+      "expected_output": "生成 npu-compute --set basic --section ResourceConflictRatio ./add_custom。basic 中的 Section 保持原顺序，ResourceConflictRatio 只追加一次。该组合比 full 少 PmSampling、SourceCounter、Roofline 和 Occupancy。",
       "files": [],
       "expectations": [
         {
@@ -803,7 +803,7 @@
         {
           "type": "contains",
           "pattern": "full",
-          "description": "说明结果集合与 full 等价。"
+          "description": "说明追加单项后的覆盖范围与 full 的差异。"
         },
         {
           "type": "contains",
@@ -821,7 +821,7 @@
         "eval_mode": "text"
       },
       "prompt": "查看当前 npu-compute 支持哪些集合，不要启动目标程序。",
-      "expected_output": "只执行 npu-compute --list-sets，列出 basic 和 full 及各自包含的 Section（包括 basic 的 Pipeline、PipeUtilization、Memory、MemoryL0、MemoryUB、L2Cache、ArithmeticUtilization，以及 full 额外的 ResourceConflictRatio）；--list-sets 是独立查询，不附加目标程序，也不生成采集报告。",
+      "expected_output": "只执行 npu-compute --list-sets，按实际输出列出 basic 和 full 的成员。当前 full 比 basic 多 ResourceConflictRatio、PmSampling、SourceCounter、Roofline 和 Occupancy。查询不附加目标程序，也不生成采集报告。",
       "files": [],
       "expectations": [
         {

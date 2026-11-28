@@ -51,7 +51,7 @@ def load_records(path, categories):
     except (OSError, UnicodeError) as error:
         raise InspectionError(f"读取 HardwareInfo 失败：{error}") from error
 
-    records = {}
+    records = []
     for line_number, line in enumerate(lines, start=1):
         try:
             record = json.loads(line)
@@ -68,13 +68,9 @@ def load_records(path, categories):
             raise InspectionError(f"第 {line_number} 行 category 必须是非空字符串")
         if category not in categories:
             raise InspectionError(f"未知类别：{category}")
-        if category in records:
-            raise InspectionError(f"重复类别：{category}")
-        records[category] = record
-
-    missing = [category for category in categories if category not in records]
-    if missing:
-        raise InspectionError(f"缺少类别：{', '.join(missing)}")
+        records.append(record)
+    if not records:
+        raise InspectionError(f"缺少类别：{', '.join(categories)}")
     return records
 
 
@@ -106,52 +102,102 @@ def inspect(path, catalog):
     catalog_categories = {
         category["name"]: category for category in catalog["categories"]
     }
+    device_id = catalog["device_id"]
+    device_id_field = device_id["field"]
+    device_id_name = device_id_field["name"]
     records = load_records(path, catalog_categories)
+    snapshot_size = len(catalog_categories)
+    seen_devices = set()
     output_categories = []
-    for category_name, category in catalog_categories.items():
-        record = records[category_name]
-        expected_names = [field["name"] for field in category["fields"]]
-        actual_names = list(record)
-        unknown = [name for name in actual_names if name not in expected_names]
-        missing = [name for name in expected_names if name not in actual_names]
-        errors = []
-        if unknown:
-            errors.append(f"{category_name} 未知字段：{', '.join(unknown)}")
-        if missing:
-            errors.append(f"{category_name} 缺少字段：{', '.join(missing)}")
-        if errors:
-            raise InspectionError("\n".join(errors))
-        if actual_names != expected_names:
-            raise InspectionError(f"{category_name} 字段顺序不一致")
+    for start in range(0, len(records), snapshot_size):
+        snapshot = {}
+        identifiers = set()
+        for record in records[start : start + snapshot_size]:
+            category_name = record["category"]
+            if category_name in snapshot:
+                raise InspectionError(f"重复类别：{category_name}")
+            snapshot[category_name] = record
+            if category_name in device_id["categories"]:
+                identifier = None
+                if device_id_name in record:
+                    identifier = record[device_id_name]
+                    validate_type(category_name, device_id_field, identifier)
+                identifiers.add(identifier)
 
-        output_fields = []
-        for field in category["fields"]:
-            value = record[field["name"]]
-            validate_type(category_name, field, value)
-            output_fields.append(
+        if len(identifiers) > 1:
+            raise InspectionError("同一快照的 Device Id 不一致")
+        identifier = next(iter(identifiers), None)
+        if identifier in seen_devices:
+            if identifier is None:
+                raise InspectionError("重复类别：Host Info")
+            raise InspectionError(f"重复设备快照：Device Id {identifier}")
+        seen_devices.add(identifier)
+        if len(seen_devices) > 1 and None in seen_devices:
+            raise InspectionError("多设备快照缺少 Device Id")
+
+        missing = [
+            category for category in catalog_categories if category not in snapshot
+        ]
+        if missing:
+            prefix = "" if identifier is None else f"Device Id {identifier} "
+            raise InspectionError(f"{prefix}缺少类别：{', '.join(missing)}")
+        if len(records) > snapshot_size and list(snapshot) != list(catalog_categories):
+            raise InspectionError(f"Device Id {identifier} 类别顺序不一致")
+
+        for category_name, category in catalog_categories.items():
+            fields = category["fields"]
+            if identifier is not None and category_name in device_id["categories"]:
+                fields = [fields[0], device_id_field, *fields[1:]]
+            output_categories.append(
                 {
-                    "name": field["name"],
-                    "value": value,
-                    "json_type": field["json_type"],
-                    "meaning": field["meaning"],
-                    "unit": field["unit"],
-                    "variability": field["variability"],
-                    "analysis": field["analysis"],
-                    "notes": field["notes"],
+                    "name": category_name,
+                    "description": category["description"],
+                    "fields": inspect_fields(
+                        category_name, snapshot[category_name], fields, device_id_name
+                    ),
                 }
             )
-        output_categories.append(
-            {
-                "name": category_name,
-                "description": category["description"],
-                "fields": output_fields,
-            }
-        )
     return {
         "file": str(path),
-        "record_count": len(records),
+        "record_count": len(output_categories),
         "categories": output_categories,
     }
+
+
+def inspect_fields(category_name, record, fields, device_id_name):
+    expected_names = [field["name"] for field in fields]
+    actual_names = list(record)
+    unknown = [name for name in actual_names if name not in expected_names]
+    missing = [name for name in expected_names if name not in actual_names]
+    errors = []
+    if unknown:
+        errors.append(f"{category_name} 未知字段：{', '.join(unknown)}")
+    if missing:
+        errors.append(f"{category_name} 缺少字段：{', '.join(missing)}")
+    if errors:
+        raise InspectionError("\n".join(errors))
+    if actual_names != expected_names:
+        raise InspectionError(f"{category_name} 字段顺序不一致")
+
+    output_fields = []
+    for field in fields:
+        name = field["name"]
+        value = record[name]
+        if name != device_id_name:
+            validate_type(category_name, field, value)
+        output_fields.append(
+            {
+                "name": name,
+                "value": value,
+                "json_type": field["json_type"],
+                "meaning": field["meaning"],
+                "unit": field["unit"],
+                "variability": field["variability"],
+                "analysis": field["analysis"],
+                "notes": field["notes"],
+            }
+        )
+    return output_fields
 
 
 def escape_table_cell(value):
@@ -163,7 +209,7 @@ def render_markdown(result):
         "# HardwareInfo 检查",
         "",
         f"- **文件：** `{result['file']}`",
-        f"- **类别数：** {result['record_count']}",
+        f"- **记录数：** {result['record_count']}",
     ]
     for category in result["categories"]:
         lines.extend(

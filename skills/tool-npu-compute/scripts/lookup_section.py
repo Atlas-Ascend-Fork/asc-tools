@@ -106,16 +106,22 @@ def query(catalog, selections):
 
 
 def render_entry(entry):
-    return "\n".join(
+    lines = [
+        f"## {entry['name']}",
+        "",
+        f"- **结果文件：** `{entry['result_file']}`",
+        f"- **结果类型：** `{entry['result_kind']}`",
+    ]
+    if entry.get("related_results"):
+        artifacts = "、".join(f"`{path}`" for path in entry["related_results"])
+        lines.append(f"- **相关产物（按采集条件生成）：** {artifacts}")
+    lines.extend(
         (
-            f"## {entry['name']}",
-            "",
-            f"- **结果文件：** `{entry['result_file']}`",
-            f"- **结果类型：** `{entry['result_kind']}`",
             f"- **说明：** `{entry['reference']}`",
             f"- **检查脚本：** `{entry['inspector']}`",
         )
     )
+    return "\n".join(lines)
 
 
 def render_set(set_name, members):

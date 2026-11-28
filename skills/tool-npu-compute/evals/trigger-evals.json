@@ -51,6 +51,22 @@
       "category": "directory"
     },
     {
+      "id": "positive_communication_trace",
+      "context": "",
+      "prompt": "这个 npu-compute 的 CommunicationTrace.json 里，通信和计算区间有哪些重叠？",
+      "should_trigger": true,
+      "reason": "需要解释 Application Replay 的通信产物。",
+      "category": "artifact"
+    },
+    {
+      "id": "negative_generic_roofline",
+      "context": "",
+      "prompt": "讲一下 CPU 性能分析中 Roofline 模型的横轴和纵轴。",
+      "should_trigger": false,
+      "reason": "请求解释通用模型，领域为 CPU 性能分析。",
+      "category": "other_domain"
+    },
+    {
       "id": "negative_memory_analysis",
       "context": "",
       "prompt": "这个 AscendC 算子是不是受访存带宽限制？帮我分析一下。",

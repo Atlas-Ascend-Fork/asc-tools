@@ -10,12 +10,30 @@
       "AI Core Information",
       "Memory Information"
     ],
-    "description": "每行是一个独立 JSON 对象，category 标识类别。"
+    "description": "每行是一个独立 JSON 对象，category 标识类别。采集时每个设备快照按上述顺序写入五条记录。Kernel Replay 采集首个启动对应的设备，Application Replay 为每个已观察设备依次写入一组。历史产物和未观察到设备时的 Application Replay 回退快照没有 Device Id。"
+  },
+  "device_id": {
+    "categories": [
+      "Device Info",
+      "CPU Information",
+      "AI Core Information",
+      "Memory Information"
+    ],
+    "field": {
+      "name": "Device Id",
+      "json_type": "integer",
+      "meaning": "当前硬件快照对应的 Runtime 逻辑设备编号。",
+      "unit": "无",
+      "source": "Kernel Replay 在首次 Kernel 启动时获取当前设备，查询不到时使用 0。Application Replay 使用观察到的设备编号。",
+      "variability": "随采集设备变化",
+      "analysis": "关联同设备的四类设备信息及摘要。",
+      "notes": "存在时紧随 category 写入。同一快照的四类设备记录使用相同的编号。"
+    }
   },
   "categories": [
     {
       "name": "Host Info",
-      "description": "采集主机的 CPU、内存和采集目录所在文件系统信息。",
+      "description": "采集主机的 CPU、内存和查询路径所在文件系统信息。",
       "fields": [
         {
           "name": "category",
@@ -60,11 +78,11 @@
         {
           "name": "disk total size(GB)",
           "json_type": "number",
-          "meaning": "采集目录所在文件系统的总容量。",
+          "meaning": "查询路径所在文件系统的总容量。",
           "unit": "GB",
-          "source": "statvfs 返回的文件系统总块数乘块大小后除以 1024^3。",
+          "source": "Kernel Replay 查询初始化时的当前工作目录，Application Replay 查询 /tmp。statvfs 返回的文件系统总块数乘基本块大小后除以 1024^3。",
           "variability": "文件系统配置，通常稳定",
-          "analysis": "用于确认采集数据所在文件系统的容量环境。",
+          "analysis": "用于记录采集时查询的文件系统容量。",
           "notes": "不表示所有磁盘容量，也不表示剩余空间。"
         }
       ]
@@ -212,7 +230,7 @@
           "json_type": "integer",
           "meaning": "采集时使用的 Cube Core 频率信息。",
           "unit": "MHz",
-          "source": "依次读取当前频率、固定频率，均失败时使用 1650。",
+          "source": "Cube 与 Vector 各自优先读当前频率，失败时读固定频率。任一侧两次均失败时两侧都使用 1650。未执行设备查询时保留 0。",
           "variability": "运行状态或回退值",
           "analysis": "用于记录和比较 Cube Core 频率环境。",
           "notes": "仅凭该字段不能断言 CSV 公式实际使用了完全相同的配置值。"
@@ -222,7 +240,7 @@
           "json_type": "integer",
           "meaning": "采集时使用的 Vector Core 频率信息。",
           "unit": "MHz",
-          "source": "依次读取当前频率、固定频率，均失败时使用 1650。",
+          "source": "Cube 与 Vector 各自优先读当前频率，失败时读固定频率。任一侧两次均失败时两侧都使用 1650。未执行设备查询时保留 0。",
           "variability": "运行状态或回退值",
           "analysis": "用于记录和比较 Vector Core 频率环境。",
           "notes": "仅凭该字段不能断言 CSV 公式实际使用了完全相同的配置值。"
@@ -271,7 +289,7 @@
           "source": "设备管理接口返回的 HBM 频率。",
           "variability": "运行状态，可能变化",
           "analysis": "用于记录和比较 HBM 频率环境。",
-          "notes": "不直接代入当前五种 CSV 的公开计算公式。"
+          "notes": "查询失败时保留默认值 0。"
         }
       ]
     }

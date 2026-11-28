@@ -1,10 +1,10 @@
 # npu-compute performance data
 
-This document describes the fields and calculations in Section CSV files, `summary.jsonl`, and `HardwareInfo.jsonl`. CSV files contain Block/sub-block details or Task metrics according to the collection level. The summary contains Task metrics for the selected PMU Sections, Roofline data when selected, performance hints, and an `OpInfoSummary` operator overview. HardwareInfo records host and device information.
+This document describes the fields and calculations in Section CSV files, `summary.jsonl`, and `HardwareInfo.jsonl`. CSV files contain Block/sub-block details. The summary contains Task metrics for the selected PMU Sections, Roofline data when selected, performance hints, and an `OpInfoSummary` operator overview. HardwareInfo records host and device information.
 
 | Output | Scope | Relationship to other data |
 |---|---|---|
-| Section CSV | Block/sub-block or Task | Block CSV has one row per logical execution object. Task CSV has one row per Section with both AIC/AIV metrics and omits `block_id` and `sub_block_id`. |
+| Section CSV | Block/sub-block | Current CSV output has one row per logical execution object. Task summaries are in `summary.jsonl` and omit `block_id` and `sub_block_id`. |
 | PMU Section records in the summary | Task | Cycles, counters, and data volumes correspond to cumulative totals. Ratios, hit rates, and bandwidths use cumulative inputs and their respective denominators; they are not uniformly Block averages. |
 | `Roofline` | Current kernel | Model inputs grouped by compute type and instruction bit width. All points share the kernel duration and GM traffic volume. |
 | `PerformanceHints` | Current Task | Checks from predefined rules, with separate hints for AIC/AIV where applicable. |
@@ -19,7 +19,7 @@ Matching metric names use the same units and base formulas, but their scope, fre
 
 | File | Contents |
 |---|---|
-| `HardwareInfo.jsonl` | Preserves the existing five hardware categories. Device categories carry `Device Id` for each observed device, queried while its resources are alive. Unavailable fields remain NA. |
+| `HardwareInfo.jsonl` | Contains five hardware categories per observed device. Device records carry `Device Id`, and device data is queried while its resources are alive. Unavailable hardware values can retain zero or an empty string. |
 | `device<id>/op-<encoded-name>/<launch_index>/summary.jsonl` | One `OpInfoSummary` per successful launch with an identified name and device, including repeated calls. Long names use an `instance-<index>` directory; the summary retains the original name. |
 
 `.communication-staging` holds decoded fragments, clock mappings, and host task naming metadata while the timeline is generated. Report finalization removes this directory with `--no-pack`. Packed reports exclude this directory.
@@ -55,13 +55,13 @@ NA means inapplicable to the current Core or unavailable data; it does not mean 
 | `aiv_time(us)` | Execution time on the AI Vector Core for this row, converted from total cycles using its frequency, in us. |
 | `aiv_total_cycles` | Total execution cycles on the AI Vector Core for this row. |
 | `aiv_vec_ratio` | Vector active cycles as a fraction of total AI Vector Core cycles. |
-| `aiv_vec_sfu_ratio` | Vector SFU instructions active cycles as a fraction of total AI Vector Core cycles. |
 | `aiv_simd_vf_ratio` | AIV SIMD VF instruction issue cycles as a fraction of total AIV cycles. |
+| `aiv_vec_sfu_ratio` | Vector SFU instructions active cycles as a fraction of total AI Vector Core cycles. |
 | `aiv_simt_vf_ratio` | AIV SIMT VF instruction issue cycles as a fraction of total AIV cycles. |
 | `aiv_simd_vf_time` | Total time spent issuing AIV SIMD VF instructions, in us. |
-| `aiv_simd_vf_ipc` | Average number of AIV SIMD VF instructions issued per cycle. |
+| `aiv_simd_vf_ipc` | SIMD instruction issue count divided by the number of SIMD VF instruction issue cycles. |
 | `aiv_simt_vf_time` | Total time spent issuing AIV SIMT VF instructions, in us. |
-| `aiv_simt_vf_ipc` | Average number of AIV SIMT VF instructions issued per cycle. |
+| `aiv_simt_vf_ipc` | Sum of SIMT EXU, DVG, and DCU instruction issue counts divided by four, then divided by the number of SIMT VF instruction issue cycles. |
 
 ## L2Cache (L2 cache access counts and hit rates)
 
@@ -366,7 +366,7 @@ NPU_COMPUTE_DEBUG=1 npu-compute --section PipeUtilization --section Memory ./app
 
 The category is ArithmeticUtilization, L2Cache, Memory, MemoryL0, MemoryUB, PipeUtilization, or ResourceConflictRatio. Fields use the corresponding CSV names and units, excluding block_id and sub_block_id. Each Section computes one metric record directly from the current Task's AIC/AIV counters. Unavailable fields remain present and use the exact JSON string "NA"; valid zero remains a number. Counters have no decimal places; other finite metrics have six.
 
-Each result contains one Task PMU object with separate optional AIC/AIV counters. Events for each side are merged across successful replays. Task summaries use this object directly; metrics with a missing side or required event use "NA". Task CSV files contain one row per Section with both sides and omit block_id and sub_block_id. Block CSV files retain one row per logical execution object.
+Each result contains one Task PMU object with separate optional AIC/AIV counters. Events for each side are merged across successful replays. `summary.jsonl` uses this object directly and writes `"NA"` for metrics with a missing side or required event. Block CSV files contain one row per logical execution object.
 
 ### Roofline
 
@@ -464,9 +464,9 @@ Each side prefers valid Current frequency, then valid Rated frequency; missing v
 
 HardwareInfo.jsonl contains host and device information recorded during collection, including the device model, Core counts, frequencies, and memory capacities. See the field descriptions in the following tables for details.
 
-`HardwareInfo.jsonl` is an environment snapshot with one JSON object per line. It contains five categories in this order: Host Info, Device Info, CPU Information, AI Core Information, Memory Information.
+`HardwareInfo.jsonl` stores one JSON object per line. Each snapshot has five records in the order Host Info, Device Info, CPU Information, AI Core Information, Memory Information. Kernel Replay reports the device observed at the first launch. Application Replay can write one snapshot per observed device. When known, the logical `Device Id` appears after `category` in the four device records. Use it to associate the snapshot with the per-launch summary.
 
-Total HBM capacity comes from the platform API; NPU count is the Runtime-visible device count. This is not a separate snapshot for every Kernel Device. Check `Device Id` in the summary when comparing devices. Failed queries may leave 0 or an empty string; these are not necessarily real zero values. Capacities have at most two decimal places with trailing zeros removed; frequencies and counts are integers.
+Total HBM capacity comes from the platform API. NPU count is the Runtime-visible device count. Failed queries can leave 0 or an empty string. Capacities have at most two decimal places with trailing zeros removed. Frequencies and counts are integers.
 
 ### Host Info
 
@@ -476,7 +476,7 @@ Total HBM capacity comes from the platform API; NPU count is the Runtime-visible
 | `cpu physical count` | integer | Number of physical processor packages associated with online host CPUs; not physical Core count. |
 | `cpu logical count` | integer | Configured host logical CPU count; may differ from online CPUs or application threads. |
 | `memory total size(MB)` | number | Total host physical memory, in MB; not free memory or target-process usage. |
-| `disk total size(GB)` | number | Total capacity of the filesystem at the queried path, in GB; not free space. |
+| `disk total size(GB)` | number | Total filesystem capacity in GB, queried at the process working directory for Kernel Replay and at `/tmp` for Application Replay. |
 
 ### Device Info
 
@@ -504,8 +504,10 @@ Total HBM capacity comes from the platform API; NPU count is the Runtime-visible
 | `ai core count` | integer | AI Core count as reported by the device API. |
 | `ai cube count` | integer | Number of device Cube Cores. |
 | `ai vector count` | integer | Number of device Vector Cores. |
-| `ai cube frequency(MHZ)` | integer | Cube Core frequency in MHz: current frequency first, fixed frequency on query failure, then 1650 as the final fallback. |
-| `ai vector frequency(MHZ)` | integer | Vector Core frequency in MHz: current frequency first, fixed frequency on query failure, then 1650 as the final fallback. |
+| `ai cube frequency(MHZ)` | integer | Cube Core frequency in MHz. The tool queries the current frequency, then the fixed frequency. |
+| `ai vector frequency(MHZ)` | integer | Vector Core frequency in MHz. The tool queries the current frequency, then the fixed frequency. |
+
+If either Core type has neither frequency, both fields fall back to 1650 MHz. If the tool skips device queries, both fields stay at 0.
 
 ### Memory Information
 
@@ -529,21 +531,23 @@ PipeTrace.json contains busy intervals of sampled pipelines. Use it to examine b
 | `displayTimeUnit` | string | Always `ns`, the viewer display unit. It does not change the us unit of `ts` or `dur`. |
 | `profilingType` | string | Always `op`. |
 | `schemaVersion` | integer | Current schema version: 1. |
-| `traceEvents` | array | Array of complete pipeline interval events; may be empty. |
+| `traceEvents` | array | Array of complete interval events. An empty array means no events were exported. |
 
 ### Event fields
 
 | Field | JSON type | Description |
 |---|---|---|
-| `cname` | string | Color name for the pipeline track, listed below. |
-| `dur` | number | Busy-interval duration in us, finite and non-negative. |
-| `name` | string | Pipeline name: SCALAR, VECTOR, CUBE, MTE1, MTE2, MTE3, or FIXP. |
+| `cname` | string | Event color, selected by the pipeline or the DFX Region ID. |
+| `dur` | number | Interval duration in us, finite and non-negative. |
+| `name` | string | Ordinary events use SCALAR, VECTOR, CUBE, MTE1, MTE2, MTE3, or FIXP. DFX events use `MarkStamp<regionId>` or `Region<baseRegionId>`. |
 | `ph` | string | Always `X`, denoting a complete interval event. |
 | `pid` | string | Source and Core track identifier, as described below; not an operating-system process ID. |
-| `tid` | string | Pipeline track identifier; identical to `name`. |
+| `tid` | string | Pipeline track. Ordinary events use the same value as `name`. DFX events identify their associated pipeline. |
 | `ts` | number | Interval start relative to the Replay time origin, in us, finite and non-negative. |
 
 ### Pipelines and tracks
+
+`MarkStamp<regionId>` spans one Core cycle and uses the color of its pipeline. Paired stamps can produce a `Region<baseRegionId>` interval with a color selected by `baseRegionId % 12`.
 
 | Pipeline | `cname` | Meaning |
 |---|---|---|

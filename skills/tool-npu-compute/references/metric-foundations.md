@@ -89,6 +89,8 @@ bandwidth_GB_s = bytes * 1,000,000 / 1024^3 / duration_us
 
 普通的逐行带宽在已选择 `D_op` 时使用 `D_op`，否则使用 `D_row`。活跃带宽使用相关流水活跃周期除以 Core 频率得到的时长。
 
+字段目录中的 `BW(count, bytes_per_transfer, D)` 使用 `count × bytes_per_transfer` 作为字节数，`ActiveBW(bytes, active_cycles, F)` 使用 `active_cycles / F` 作为微秒数。`DataKB` 对应上文的数据量公式，`Usage` 对应带宽利用率公式。
+
 ## 时长选择
 
 当选定的 PMU 数据集合同时包含至少一行 AIC 数据和一行 AIV 数据时，当前实现将其识别为混合 Kernel，并按以下规则从 Task Log 计算 `D_op`：

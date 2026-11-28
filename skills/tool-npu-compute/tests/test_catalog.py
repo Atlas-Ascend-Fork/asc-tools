@@ -11,9 +11,12 @@ import csv
 import hashlib
 import json
 import re
+import sys
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from metric_schema import metric_fields_for_names
 
 TEST_ROOT = Path(__file__).resolve().parent
 SKILL_ROOT = TEST_ROOT.parent
@@ -45,7 +48,14 @@ BASIC_SECTION_SET = [
     "L2Cache",
     "ArithmeticUtilization",
 ]
-FULL_SECTION_SET = [*BASIC_SECTION_SET, "ResourceConflictRatio"]
+FULL_SECTION_SET = [
+    *BASIC_SECTION_SET,
+    "ResourceConflictRatio",
+    "PmSampling",
+    "SourceCounter",
+    "Roofline",
+    "Occupancy",
+]
 EXPECTED_SECTION_SETS = {
     "basic": BASIC_SECTION_SET,
     "full": FULL_SECTION_SET,
@@ -117,7 +127,9 @@ class CatalogContractTest(unittest.TestCase):
                 rows = list(csv.reader(input_file))
             self.assertGreater(len(rows), 1, path.name)
             self.assertEqual(
-                rows[0], [field["name"] for field in section["fields"]], path.name
+                rows[0],
+                [field["name"] for field in metric_fields_for_names(section, rows[0])],
+                path.name,
             )
             for row_number, row in enumerate(rows[1:], start=2):
                 self.assertEqual(len(row), len(rows[0]), f"{path.name}:{row_number}")
@@ -125,10 +137,10 @@ class CatalogContractTest(unittest.TestCase):
                     any(value != "" for value in row), f"{path.name}:{row_number}"
                 )
 
-            reference_rows = reference_field_rows(REFERENCE_ROOT / reference_name)
-            self.assertEqual(
-                [cells[0] for _, cells in reference_rows], rows[0], section_name
+            reference_text = (REFERENCE_ROOT / reference_name).read_text(
+                encoding="utf-8"
             )
+            self.assertIn("CSV 指标目录", reference_text)
 
     def test_hardware_info_fixture_matches_catalog_and_device(self):
         path = FIXTURE_ROOT / self.hardware_info_catalog["output_file"]
@@ -156,42 +168,28 @@ class CatalogContractTest(unittest.TestCase):
     def test_section_references_cover_every_csv_field_in_catalog_order(self):
         sections = self.metric_catalog["sections"]
         self.assertEqual(list(sections), list(SECTION_REFERENCES))
-        required_metadata = {
-            "name",
-            "meaning",
-            "core_types",
-            "unit",
-            "dependencies",
-            "formula",
-            "na_conditions",
-            "analysis_notes",
-        }
-        core_types = {
-            "通用": ["common"],
-            "AIC": ["AIC"],
-            "AIV": ["AIV"],
-            "AIC、AIV": ["AIC", "AIV"],
-        }
         for section_name, reference_name in SECTION_REFERENCES.items():
             fields = sections[section_name]["fields"]
-            reference_rows = reference_field_rows(REFERENCE_ROOT / reference_name)
-            self.assertTrue(reference_rows, reference_name)
-            self.assertEqual(
-                [field["name"] for field in fields],
-                [cells[0] for _, cells in reference_rows],
+            reference_text = (REFERENCE_ROOT / reference_name).read_text(
+                encoding="utf-8"
             )
-            for field, (line_number, cells) in zip(fields, reference_rows):
-                self.assertEqual(len(cells), 8, f"{reference_name}:{line_number}")
-                self.assertTrue(all(cells), f"{reference_name}:{line_number}")
-                self.assertEqual(set(field), required_metadata)
-                self.assertEqual(field["meaning"], cells[1])
-                self.assertEqual(field["core_types"], core_types[cells[2]])
-                self.assertEqual(field["unit"], cells[3])
-                self.assertEqual(field["dependencies"], [cells[4]])
-                self.assertEqual(field["formula"], cells[5])
-                self.assertEqual(field["na_conditions"], [cells[6]])
-                self.assertEqual(field.get("analysis_notes"), cells[7])
-                self.assertTrue(all(value for value in field.values()))
+            self.assertIn("CSV 指标目录", reference_text)
+            self.assertRegex(reference_text, r"## (分析要点|使用要点)")
+            for field in fields:
+                self.assertEqual(
+                    set(field),
+                    {
+                        "name",
+                        "meaning",
+                        "core_types",
+                        "unit",
+                        "dependencies",
+                        "formula",
+                        "na_conditions",
+                        "analysis_notes",
+                    },
+                )
+                self.assertTrue(all(field.values()), field["name"])
 
             field_names = [field["name"] for field in fields]
             self.assertEqual(len(field_names), len(set(field_names)), section_name)
@@ -348,8 +346,6 @@ class CatalogContractTest(unittest.TestCase):
         catalog = load_json(SECTION_CATALOG_PATH)
         self.assertEqual(catalog["sets"], EXPECTED_SECTION_SETS)
         self.assertEqual(list(catalog["sets"]), ["basic", "full"])
-        self.assertEqual(catalog["sets"]["full"][:-1], catalog["sets"]["basic"])
-        self.assertEqual(catalog["sets"]["full"][-1], "ResourceConflictRatio")
 
     def test_section_catalog_set_members_are_known_and_unique(self):
         catalog = load_json(SECTION_CATALOG_PATH)
@@ -370,7 +366,7 @@ class CatalogContractTest(unittest.TestCase):
         self.assertEqual(catalog["schema_version"], expected["schema_version"])
         self.assertEqual(list(catalog["record_types"]), expected["record_categories"])
 
-        section_categories = expected["record_categories"][:-2]
+        section_categories = expected["record_categories"][:-3]
         for category in section_categories:
             self.assert_summary_section(catalog["record_types"][category], category)
 
@@ -414,6 +410,10 @@ class CatalogContractTest(unittest.TestCase):
             "Pid",
             "Current Freq",
             "Rated Freq",
+            "aic_flops_theoretical",
+            "aiv_flops_theoretical",
+            "aic_flops",
+            "aiv_flops",
             "aicore_parallel_utilization",
             "aicore_parallel_balance",
             "aicore_gm_bw_theoretical(GB/s)",

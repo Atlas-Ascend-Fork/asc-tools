@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""递归识别 npu-compute 报告解包后的结果文件。"""
+"""递归识别 npu-compute 结果目录中的文件。"""
 
 import argparse
 import json
@@ -26,9 +26,19 @@ ASSET_ROOT = Path(__file__).resolve().parents[1] / "assets"
 RESULT_SUBDIRECTORY_PATTERN = re.compile(
     r"^collection-p[0-9]+-(?:[0-9]{4,}|[A-Za-z0-9]{6})$"
 )
+APPLICATION_PROCESS_PATTERN = re.compile(r"pid-[0-9]+")
+APPLICATION_OPERATOR_PATTERN = r"device[0-9]+/(?:op-[A-Za-z0-9_-]*|instance-[0-9]+)"
+APPLICATION_LAUNCH_PATTERN = re.compile(
+    rf"(?:pid-[0-9]+/)?{APPLICATION_OPERATOR_PATTERN}/[0-9]+"
+)
+APPLICATION_CONTAINER_PATTERN = re.compile(
+    rf"(?:pid-[0-9]+/)?(?:device[0-9]+|{APPLICATION_OPERATOR_PATTERN})"
+)
 RESULT_SUBDIRECTORY_DESCRIPTIONS = [
     "collection-p<process-id>-<sequence>",
     "collection-p<process-id>-<unique-suffix>",
+    "pid-<process-id>",
+    "[pid-<process-id>/]device<id>/(op-<encoded-name>|instance-<id>)/<launch-index>",
 ]
 
 
@@ -38,9 +48,9 @@ class InspectionError(Exception):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="递归检查 npu-compute 报告解包后的结果。"
+        description="递归检查 npu-compute 解包或直接输出的结果目录。"
     )
-    parser.add_argument("result_path", type=Path, help="报告解包后的结果目录")
+    parser.add_argument("result_path", type=Path, help="解包或直接输出的结果目录")
     add_format_argument(parser)
     return parser.parse_args()
 
@@ -66,6 +76,13 @@ def known_result_files(
         pipe_trace_catalog["output_file"],
         summary_catalog["output_file"],
         *(section["output_file"] for section in metric_catalog["sections"].values()),
+        "Occupancy.json",
+        "SimtWarpOccupancy.json",
+        "summary.db",
+        "objdump.txt",
+        "symbolizer.json",
+        "CommunicationTrace.json",
+        "app_communication_summary.jsonl",
     }
 
 
@@ -101,12 +118,17 @@ def inspect(
                 unknown_files.append(relative)
                 continue
             if entry.is_dir():
-                if RESULT_SUBDIRECTORY_PATTERN.fullmatch(entry.name):
+                if (
+                    RESULT_SUBDIRECTORY_PATTERN.fullmatch(entry.name)
+                    or APPLICATION_PROCESS_PATTERN.fullmatch(relative)
+                    or APPLICATION_LAUNCH_PATTERN.fullmatch(relative)
+                ):
                     nested_files = []
                     result_directories[relative] = nested_files
                     walk(entry, nested_files)
                 else:
-                    unknown_files.append(relative + "/")
+                    if not APPLICATION_CONTAINER_PATTERN.fullmatch(relative):
+                        unknown_files.append(relative + "/")
                     walk(entry, None)
                 continue
             if (

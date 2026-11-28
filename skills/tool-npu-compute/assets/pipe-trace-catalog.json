@@ -14,6 +14,7 @@
     "profiling_type": "op",
     "trace_schema_version": 1,
     "timestamp_unit": "us",
+    "timestamp_origin": "每个 Replay 中所有采样通道最早的完整时间戳。",
     "event_phase": "X",
     "event_fields": [
       "cname",
@@ -52,6 +53,32 @@
       "color": "thread_state_unknown"
     }
   },
+  "dfx_events": {
+    "mark_stamp": {
+      "name_prefix": "MarkStamp",
+      "maximum_id": 4095,
+      "meaning": "标记事件。tid 和 cname 使用所属流水线的名称和颜色，dur 对应一个 Core 周期。"
+    },
+    "region": {
+      "name_prefix": "Region",
+      "maximum_id": 1023,
+      "meaning": "同一流水线上匹配的起止标记形成区域区间。tid 为所属流水线，cname 由区域编号对颜色数取模确定。",
+      "colors": [
+        "grass_green",
+        "green",
+        "pink",
+        "yellow",
+        "purple",
+        "blue",
+        "good",
+        "cyan",
+        "red",
+        "thread_state_uninterruptible",
+        "head_dump_object_type",
+        "cq_build_attempt_passed"
+      ]
+    }
+  },
   "core_tracks": [
     "cubecore",
     "veccore0",
@@ -83,6 +110,7 @@
   },
   "summary": {
     "event_count": "traceEvents 的元素数量。",
+    "dfx_event_count": "MarkStamp 和 Region 事件的数量。",
     "track_count": "不同 pid 和 tid 组合的数量。",
     "sampled_group_ids": "从事件 pid 中提取并去重、升序排列的 Group ID。",
     "sampled_group_count": "实际出现事件的 Group 数量。",
@@ -90,12 +118,12 @@
     "trace_start_us": "全部事件 ts 的最小值。",
     "trace_end_us": "全部事件 ts + dur 的最大值。",
     "trace_span_us": "trace_end_us 减去 trace_start_us。",
-    "pipeline_event_count": "按 name 统计的事件数量。",
-    "pipeline_duration_sum_us": "按 name 对 dur 求和。"
+    "pipeline_event_count": "按流水线名称统计的忙碌区间数量。",
+    "pipeline_duration_sum_us": "按流水线名称对忙碌区间 dur 求和。"
   },
   "data_boundaries": {
-    "empty_trace": "traceEvents 可以为空，表示没有写入完整流水线区间。",
-    "incomplete_interval": "缺少开始或结束的流水线区间不会写入事件。",
+    "empty_trace": "traceEvents 可以为空，表示没有写入任何事件。",
+    "incomplete_interval": "缺少开始或结束的流水线区间不会写入事件，未配对的区域标记仍可写为 MarkStamp。",
     "overlap": "不同轨道或不同来源的事件可以重叠，累计 dur 不等于 Kernel 执行时长。",
     "merged_time": "合并来源前缀只标识来源，不表示不同 Replay 构成连续的全局时间轴。"
   }

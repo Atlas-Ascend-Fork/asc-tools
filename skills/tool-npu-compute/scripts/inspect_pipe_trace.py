@@ -126,6 +126,27 @@ def require_nonnegative_number(event, name, event_number):
     return value
 
 
+def dfx_event_color(name, pipeline_color, dfx_events):
+    for event_type in dfx_events.values():
+        prefix = event_type["name_prefix"]
+        if not name.startswith(prefix):
+            continue
+        suffix = name[len(prefix) :]
+        maximum_id = event_type["maximum_id"]
+        if (
+            not suffix.isascii()
+            or not suffix.isdecimal()
+            or len(suffix) > len(str(maximum_id))
+        ):
+            break
+        event_id = int(suffix)
+        if event_id > maximum_id or str(event_id) != suffix:
+            break
+        colors = event_type.get("colors")
+        return colors[event_id % len(colors)] if colors else pipeline_color
+    raise InspectionError(f"未知流水线：{name}")
+
+
 def validate_event(event, event_number, catalog):
     if not isinstance(event, dict):
         raise InspectionError(f"第 {event_number} 个事件必须是 JSON 对象")
@@ -135,13 +156,18 @@ def validate_event(event, event_number, catalog):
 
     name = require_string(event, "name", event_number)
     tid = require_string(event, "tid", event_number)
-    if name not in catalog["pipelines"]:
-        raise InspectionError(f"未知流水线：{name}")
-    if tid != name:
+    pipelines = catalog["pipelines"]
+    is_dfx = name not in pipelines
+    if not is_dfx and tid != name:
         raise InspectionError(f"第 {event_number} 个事件 name 与 tid 不一致")
+    if tid not in pipelines:
+        raise InspectionError(f"未知流水线：{tid}")
 
     color = require_string(event, "cname", event_number)
-    if color != catalog["pipelines"][name]["color"]:
+    expected_color = pipelines[tid]["color"]
+    if is_dfx:
+        expected_color = dfx_event_color(name, expected_color, catalog["dfx_events"])
+    if color != expected_color:
         raise InspectionError(f"第 {event_number} 个事件 cname 与 {name} 不一致")
 
     phase = require_string(event, "ph", event_number)
@@ -161,6 +187,7 @@ def validate_event(event, event_number, catalog):
     duration = require_nonnegative_number(event, "dur", event_number)
     return {
         "name": name,
+        "is_dfx": is_dfx,
         "pid": pid,
         "tid": tid,
         "timestamp": timestamp,
@@ -173,7 +200,8 @@ def validate_event(event, event_number, catalog):
 def summarize_pipelines(events, catalog):
     grouped = defaultdict(list)
     for event in events:
-        grouped[event["name"]].append(event)
+        if not event["is_dfx"]:
+            grouped[event["name"]].append(event)
     return [
         {
             "name": name,
@@ -207,7 +235,7 @@ def summarize_tracks(events):
                 "trace_start_us": min(event["timestamp"] for event in track_events),
                 "trace_end_us": max(event["end"] for event in track_events),
                 "duration_sum_us": math.fsum(
-                    event["duration"] for event in track_events
+                    event["duration"] for event in track_events if not event["is_dfx"]
                 ),
             }
         )
@@ -268,6 +296,7 @@ def inspect(path, catalog):
             "timestamp_unit": catalog["format"]["timestamp_unit"],
         },
         "event_count": len(events),
+        "dfx_event_count": sum(event["is_dfx"] for event in events),
         "track_count": len(tracks),
         "trace_start_us": trace_start,
         "trace_end_us": trace_end,
@@ -288,6 +317,7 @@ def render_markdown(result):
         "",
         f"- **文件：** `{result['file']}`",
         f"- **事件数：** {result['event_count']}",
+        f"- **DFX 事件数：** {result['dfx_event_count']}",
         f"- **轨道数：** {result['track_count']}",
         f"- **采样 Group：** {', '.join(map(str, result['sampled_group_ids'])) or '无'}",
         f"- **采样 Group 数：** {result['sampled_group_count']}",

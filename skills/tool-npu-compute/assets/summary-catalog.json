@@ -129,6 +129,72 @@
         "excluded_fields": ["block_id", "sub_block_id"]
       }
     },
+    "Roofline": {
+      "description": "按 Kernel、计算类型和位宽汇总的 Roofline 数据。仅输出实际计算量大于零的点。",
+      "kind": "roofline",
+      "data_level": "kernel",
+      "category_field": {
+        "name": "category",
+        "json_types": ["string"],
+        "meaning": "记录类别",
+        "unit": "无",
+        "nullable_when": "始终可用",
+        "analysis": "固定为 Roofline"
+      },
+      "point_names": [
+        "aiv_simd_b8",
+        "aiv_simd_b16",
+        "aiv_simd_b32",
+        "aiv_simt_b8",
+        "aiv_simt_b16",
+        "aiv_simt_b32",
+        "aic_b8",
+        "aic_b16",
+        "aic_b32"
+      ],
+      "point_fields": [
+        {
+          "name": "p_peak",
+          "json_types": ["number", "NA"],
+          "meaning": "理论峰值算力",
+          "unit": "OP/s",
+          "nullable_when": "对应硬件核数不可用或结果非有限",
+          "analysis": "硬件核数 × 每周期 b8 运算数 × (8 / 位宽) × 有效频率(MHz) × 10^6。SIMD/SIMT 每周期 512 OP，Cube 每周期 16384 OP。有效频率缺失时使用 1650 MHz。"
+        },
+        {
+          "name": "b_peak",
+          "json_types": ["number"],
+          "meaning": "理论 GM 带宽参考值",
+          "unit": "GB/s",
+          "nullable_when": "始终可用",
+          "analysis": "SIMD 和 Cube 为 1600，SIMT 为 800。"
+        },
+        {
+          "name": "w",
+          "json_types": ["number", "NA"],
+          "meaning": "当前计算类型和位宽的实际运算量",
+          "unit": "OP",
+          "nullable_when": "同类运算量汇总后非有限",
+          "analysis": "同一计算类型和位宽在整个 Kernel 上的运算量。"
+        },
+        {
+          "name": "t",
+          "json_types": ["number", "NA"],
+          "meaning": "Roofline 专用重放的 Task 时长",
+          "unit": "s",
+          "nullable_when": "缺少专用重放或有效 Task 起止记录",
+          "analysis": "同一记录内的各数据点共用该时长。"
+        },
+        {
+          "name": "q",
+          "json_types": ["number", "NA"],
+          "meaning": "整个 Kernel 的逻辑 GM 读写字节数",
+          "unit": "B",
+          "nullable_when": "访存量不可用、为负或非有限",
+          "analysis": "同一记录内的各数据点共用该访存量。"
+        }
+      ]
+    },
     "PerformanceHints": {
       "description": "当前 Kernel 的 Task 级性能提示；PH01–PH05 使用 Section 汇总值，PH06 按核类型汇总同角色 Block 耗时差异；没有触发提示时 hints 为空数组。",
       "kind": "performance-hints",
@@ -162,52 +228,52 @@
           "json_types": ["string"],
           "meaning": "记录类别",
           "unit": "无",
-          "nullable_when": "不允许为 null",
+          "nullable_when": "始终可用",
           "analysis": "固定为 OpInfoSummary"
         },
         {
           "name": "Op Name",
-          "json_types": ["string", "null"],
+          "json_types": ["string", "NA"],
           "meaning": "当前 Kernel 的可读名称",
           "unit": "无",
           "nullable_when": "未获得 Kernel 名称元数据",
-          "analysis": "用于标识当前汇总对应的 Kernel"
+          "analysis": "优先输出解修饰后的 C++ 名称"
         },
         {
           "name": "Op Type",
-          "json_types": ["string", "null"],
-          "meaning": "由 Task 级 PMU 记录中的 Core 类型判定的算子类型",
+          "json_types": ["string", "NA"],
+          "meaning": "Kernel 的 Core 类型组合",
           "unit": "无",
-          "nullable_when": "没有可识别的 AIC 或 AIV Task 级 PMU 记录",
-          "analysis": "cube 表示仅 AIC，vector 表示仅 AIV，mix 表示同时包含 AIC 和 AIV"
+          "nullable_when": "缺少 Kernel 类型元数据及可识别的 AIC/AIV Task PMU",
+          "analysis": "优先使用 Kernel 类型元数据，缺失时根据 Task PMU 判定。cube 对应 AIC，vector 对应 AIV，mix 同时包含 AIC 和 AIV。"
         },
         {
           "name": "Task Duration(us)",
-          "json_types": ["number", "null"],
+          "json_types": ["number", "NA"],
           "meaning": "当前 Kernel 对应 Task 的执行时长",
           "unit": "us",
-          "nullable_when": "缺少有效 Task Log 时间区间",
-          "analysis": "用于观察 Kernel 的整体执行时长"
+          "nullable_when": "无有效 Task 起止区间，或某个重放有多个有效 Task",
+          "analysis": "取有效重放时长的中位数。存在多个重放时排除 Roofline 专用重放。"
         },
         {
           "name": "Block Dim",
-          "json_types": ["integer", "null"],
+          "json_types": ["integer", "NA"],
           "meaning": "Kernel 启动时配置的 Block 数量",
           "unit": "个",
           "nullable_when": "未获得 Block Dim 元数据",
-          "analysis": "用于理解 Kernel 的启动规模"
+          "analysis": "混合 Kernel 中表示 Cube 侧逻辑 Block 数"
         },
         {
           "name": "Mix Block Dim",
-          "json_types": ["integer", "null"],
-          "meaning": "混合 Kernel 的 Block 数量扩展字段",
+          "json_types": ["integer", "NA"],
+          "meaning": "混合 Kernel 的 Vector 侧逻辑 Block 数",
           "unit": "个",
-          "nullable_when": "当前结果未提供该值",
-          "analysis": "当前输出为 null，不用于推断混合 Kernel 的实际 Block 数量"
+          "nullable_when": "非混合 Kernel，或配比、维度缺失或无效",
+          "analysis": "AIV 配比乘 Block Dim。支持的配比为 {1,1} 和 {1,2}。"
         },
         {
           "name": "Device Id",
-          "json_types": ["integer", "null"],
+          "json_types": ["integer", "NA"],
           "meaning": "当前 Kernel 所在 Device 的逻辑编号",
           "unit": "无",
           "nullable_when": "未获得 Device 元数据",
@@ -218,72 +284,327 @@
           "json_types": ["integer"],
           "meaning": "执行当前 Kernel 的目标进程 ID",
           "unit": "无",
-          "nullable_when": "不允许为 null",
+          "nullable_when": "始终可用",
           "analysis": "用于关联目标进程"
         },
         {
           "name": "Current Freq",
-          "json_types": ["number", "null"],
-          "meaning": "计算指标时使用的当前 Core 频率",
+          "json_types": ["number", "NA"],
+          "meaning": "计算指标时使用的有效 Core 频率",
           "unit": "MHz",
-          "nullable_when": "频率无效，或混合 Kernel 的 AIC 与 AIV 当前频率不一致",
-          "analysis": "用于理解周期到时间的换算条件"
+          "nullable_when": "有效频率缺失或混合 Kernel 两侧有效频率不同。应用通信摘要还要求所需的 Task PMU。",
+          "analysis": "各侧优先取有效当前频率，其次取有效额定频率。混合 Kernel 各侧指标仍使用对应侧的有效频率。"
         },
         {
           "name": "Rated Freq",
-          "json_types": ["number", "null"],
+          "json_types": ["number", "NA"],
           "meaning": "硬件信息中记录的额定 Core 频率",
           "unit": "MHz",
-          "nullable_when": "额定频率缺失，或混合 Kernel 的 AIC 与 AIV 额定频率不一致",
+          "nullable_when": "额定频率缺失或混合 Kernel 两侧额定频率不同。应用通信摘要还要求所需的 Task PMU。",
           "analysis": "用于比较当前频率与额定频率"
         },
         {
+          "name": "aic_flops_theoretical",
+          "json_types": ["number", "NA"],
+          "meaning": "Cube FP16 理论算力",
+          "unit": "TFLOPS",
+          "nullable_when": "平台不适用，或 Cube 硬件核数或有效频率不可用",
+          "analysis": "Cube 硬件核数 × 8192 × AIC 有效频率(MHz) / 10^6，保留两位小数。"
+        },
+        {
+          "name": "aiv_flops_theoretical",
+          "json_types": ["number", "NA"],
+          "meaning": "Vector FP16 理论算力",
+          "unit": "TFLOPS",
+          "nullable_when": "平台不适用，或 Vector 硬件核数或有效频率不可用",
+          "analysis": "Vector 硬件核数 × 256 × AIV 有效频率(MHz) / 10^6，保留两位小数。"
+        },
+        {
+          "name": "aic_flops",
+          "json_types": ["number", "NA"],
+          "meaning": "Cube FP16 估算算力",
+          "unit": "TFLOPS",
+          "nullable_when": "平台或 AIC 侧不适用，缺少 Task PMU，输入无效或 Task 时长无效",
+          "analysis": "aic_total_cycles × aic_cube_fp_ratio × 8192 / (Task 时长(us) × 10^6)，保留六位小数。"
+        },
+        {
+          "name": "aiv_flops",
+          "json_types": ["number", "NA"],
+          "meaning": "Vector FP16 估算算力",
+          "unit": "TFLOPS",
+          "nullable_when": "平台或 AIV 侧不适用，缺少 Task PMU，输入无效或 Task 时长无效",
+          "analysis": "aiv_total_cycles × aiv_vec_ratio × 256 / (Task 时长(us) × 10^6)，保留六位小数。"
+        },
+        {
           "name": "aicore_parallel_utilization",
+          "json_types": ["number", "NA"],
+          "meaning": "逻辑执行对象平均执行时长占 Task 时长的百分比",
+          "unit": "%",
+          "nullable_when": "平台不适用，或缺少有效 Task 时长、预期对象数量、完整 Block 记录或有效频率",
+          "analysis": "逻辑执行对象平均时长 / Task 时长 × 100。混合 Kernel 保留 AIC/AIV 各自的执行对象。"
+        },
+        {
+          "name": "aicore_parallel_balance",
+          "json_types": ["number", "NA"],
+          "meaning": "逻辑执行对象平均时长占最长时长的百分比",
+          "unit": "%",
+          "nullable_when": "平台不适用，缺少预期对象数量、完整 Block 记录或有效频率，或最长时长为零",
+          "analysis": "逻辑执行对象平均时长 / 最长时长 × 100。计算仅依赖 Block 执行时长。"
+        },
+        {
+          "name": "aicore_gm_bw_theoretical(GB/s)",
+          "json_types": ["integer", "NA"],
+          "meaning": "计算 GM 带宽使用率时采用的理论带宽",
+          "unit": "GB/s",
+          "nullable_when": "普通 Kernel 报告未选择 Memory",
+          "analysis": "当前值为 1600 GB/s"
+        },
+        {
+          "name": "aicore_gm_read_bw(GB/s)",
+          "json_types": ["number", "NA"],
+          "meaning": "可用 AIC/AIV 主存读取带宽之和",
+          "unit": "GB/s",
+          "nullable_when": "普通 Kernel 报告未选择 Memory，或 AIC/AIV 读取带宽均不可用",
+          "analysis": "沿用 Task 级 Memory 指标，保留有可用数据的一侧。"
+        },
+        {
+          "name": "aicore_gm_write_bw(GB/s)",
+          "json_types": ["number", "NA"],
+          "meaning": "可用 AIC/AIV 主存写入带宽之和",
+          "unit": "GB/s",
+          "nullable_when": "普通 Kernel 报告未选择 Memory，或 AIC/AIV 写入带宽均不可用",
+          "analysis": "沿用 Task 级 Memory 指标，保留有可用数据的一侧。"
+        },
+        {
+          "name": "aicore_gm_bw_usage_rate(%)",
+          "json_types": ["number", "NA"],
+          "meaning": "GM 读写带宽之和占理论带宽的百分比",
+          "unit": "%",
+          "nullable_when": "GM 读取或写入带宽不可用",
+          "analysis": "按 (读取带宽 + 写入带宽) / 1600 × 100 计算"
+        }
+      ],
+      "legacy_field_overrides": {
+        "category": {
+          "nullable_when": "不允许为 null"
+        },
+        "Op Name": {
+          "json_types": ["string", "null"],
+          "analysis": "用于标识当前汇总对应的 Kernel"
+        },
+        "Op Type": {
+          "json_types": ["string", "null"],
+          "meaning": "由 Task 级 PMU 记录中的 Core 类型判定的算子类型",
+          "nullable_when": "没有可识别的 AIC 或 AIV Task 级 PMU 记录",
+          "analysis": "cube 表示仅 AIC，vector 表示仅 AIV，mix 表示同时包含 AIC 和 AIV"
+        },
+        "Task Duration(us)": {
+          "json_types": ["number", "null"],
+          "nullable_when": "缺少有效 Task Log 时间区间",
+          "analysis": "用于观察 Kernel 的整体执行时长"
+        },
+        "Block Dim": {
+          "json_types": ["integer", "null"],
+          "analysis": "用于理解 Kernel 的启动规模"
+        },
+        "Mix Block Dim": {
+          "json_types": ["integer", "null"],
+          "meaning": "混合 Kernel 的 Block 数量扩展字段",
+          "nullable_when": "当前结果未提供该值",
+          "analysis": "当前输出为 null，不用于推断混合 Kernel 的实际 Block 数量"
+        },
+        "Device Id": {
+          "json_types": ["integer", "null"]
+        },
+        "Pid": {
+          "nullable_when": "不允许为 null"
+        },
+        "Current Freq": {
+          "json_types": ["number", "null"],
+          "meaning": "计算指标时使用的当前 Core 频率",
+          "nullable_when": "频率无效，或混合 Kernel 的 AIC 与 AIV 当前频率不一致",
+          "analysis": "用于理解周期到时间的换算条件"
+        },
+        "Rated Freq": {
+          "json_types": ["number", "null"],
+          "nullable_when": "额定频率缺失，或混合 Kernel 的 AIC 与 AIV 额定频率不一致"
+        },
+        "aicore_parallel_utilization": {
           "json_types": ["number", "null"],
           "meaning": "各 Block 的 AIC Cube 与 AIV Vector 利用率之和的平均值",
           "unit": "比值",
           "nullable_when": "未选择 PipeUtilization，或缺少可用的流水线利用率数据",
           "analysis": "反映参与统计的 Block 的平均计算利用程度"
         },
-        {
-          "name": "aicore_parallel_balance",
+        "aicore_parallel_balance": {
           "json_types": ["number", "null"],
           "meaning": "根据各 Block 执行时长离散程度计算的并行均衡度",
           "unit": "比值",
           "nullable_when": "缺少有效 Block 执行时长或平均时长为零",
           "analysis": "值越接近 1 表示参与统计的 Block 时长越均衡"
         },
-        {
-          "name": "aicore_gm_bw_theoretical(GB/s)",
+        "aicore_gm_bw_theoretical(GB/s)": {
           "json_types": ["integer", "null"],
-          "meaning": "计算 GM 带宽使用率时采用的理论带宽",
-          "unit": "GB/s",
-          "nullable_when": "未选择 Memory",
-          "analysis": "当前值为 1600 GB/s"
+          "nullable_when": "未选择 Memory"
         },
-        {
-          "name": "aicore_gm_read_bw(GB/s)",
+        "aicore_gm_read_bw(GB/s)": {
           "json_types": ["number", "null"],
           "meaning": "Memory 汇总中的 AIC 与 AIV 主存读取带宽之和",
-          "unit": "GB/s",
           "nullable_when": "未选择 Memory，或 AIC 与 AIV 主存读取带宽均不可用",
           "analysis": "反映当前 Kernel 的汇总 GM 读取带宽"
         },
-        {
-          "name": "aicore_gm_write_bw(GB/s)",
+        "aicore_gm_write_bw(GB/s)": {
           "json_types": ["number", "null"],
           "meaning": "Memory 汇总中的 AIC 与 AIV 主存写入带宽之和",
-          "unit": "GB/s",
           "nullable_when": "未选择 Memory，或 AIC 与 AIV 主存写入带宽均不可用",
           "analysis": "反映当前 Kernel 的汇总 GM 写入带宽"
         },
+        "aicore_gm_bw_usage_rate(%)": {
+          "json_types": ["number", "null"]
+        },
+        "aic_flops_theoretical": null,
+        "aiv_flops_theoretical": null,
+        "aic_flops": null,
+        "aiv_flops": null
+      },
+      "pm_sampling_field": {
+        "name": "PmSamplingContexts",
+        "json_types": ["object[]"],
+        "meaning": "PM Sampling 重放及指令地址映射上下文",
+        "unit": "无",
+        "nullable_when": "没有采样上下文时省略字段",
+        "analysis": "各项的标识、指令地址和偏移使用十进制字符串。"
+      },
+      "pm_sampling_context_fields": [
         {
-          "name": "aicore_gm_bw_usage_rate(%)",
-          "json_types": ["number", "null"],
-          "meaning": "GM 读写带宽之和占理论带宽的百分比",
-          "unit": "%",
-          "nullable_when": "GM 读取或写入带宽不可用",
-          "analysis": "按 (读取带宽 + 写入带宽) / 1600 × 100 计算"
+          "name": "replay_id",
+          "json_types": ["string"],
+          "meaning": "采样对应的重放 ID",
+          "unit": "无",
+          "nullable_when": "始终可用",
+          "analysis": "区分重放"
+        },
+        {
+          "name": "original_entry",
+          "json_types": ["string"],
+          "meaning": "原始代码入口地址",
+          "unit": "无",
+          "nullable_when": "始终提供字段",
+          "analysis": "用于定位原始指令"
+        },
+        {
+          "name": "companion_entry",
+          "json_types": ["string"],
+          "meaning": "伴随代码入口地址",
+          "unit": "无",
+          "nullable_when": "始终提供字段",
+          "analysis": "用于定位采样代码"
+        },
+        {
+          "name": "pc_offset",
+          "json_types": ["string"],
+          "meaning": "采样代码到原始 Kernel 的指令地址偏移",
+          "unit": "字节",
+          "nullable_when": "始终提供字段",
+          "analysis": "用于映射采样地址"
+        }
+      ],
+      "application_fields": [
+        {
+          "name": "result_unit_id",
+          "json_types": ["string"],
+          "meaning": "逐次 launch 的结果标识",
+          "unit": "无",
+          "nullable_when": "始终可用",
+          "analysis": "组合进程 ID、逻辑设备 ID、设备周期和 Kernel 实例编号"
+        },
+        {
+          "name": "kernel_instance_id",
+          "json_types": ["string"],
+          "meaning": "当前进程的 Kernel 实例标识",
+          "unit": "无",
+          "nullable_when": "始终可用",
+          "analysis": "以 k 加实例编号表示"
+        },
+        {
+          "name": "device_epoch",
+          "json_types": ["integer"],
+          "meaning": "设备采集周期编号",
+          "unit": "无",
+          "nullable_when": "始终可用",
+          "analysis": "与设备 ID 和 Task Id 一起关联原始记录"
+        },
+        {
+          "name": "launch_index",
+          "json_types": ["integer"],
+          "meaning": "同设备、同名 Kernel 的 launch 序号",
+          "unit": "无",
+          "nullable_when": "始终可用",
+          "analysis": "用于定位逐次 launch 输出目录"
+        },
+        {
+          "name": "Task Id",
+          "json_types": ["integer", "NA"],
+          "meaning": "完整 Runtime Task ID",
+          "unit": "无",
+          "nullable_when": "缺少 Runtime Task ID",
+          "analysis": "与设备和采集周期一起关联原始记录"
+        },
+        {
+          "name": "Stream Id",
+          "json_types": ["integer", "NA"],
+          "meaning": "Runtime 报告的 Stream ID",
+          "unit": "无",
+          "nullable_when": "缺少 Runtime Stream ID",
+          "analysis": "用于标识 launch 的来源 Stream"
+        },
+        {
+          "name": "communication_time",
+          "json_types": ["NA"],
+          "meaning": "逐次 launch 通信时长",
+          "unit": "无",
+          "nullable_when": "当前固定不可用",
+          "analysis": "原因见 unavailable_reasons"
+        },
+        {
+          "name": "compute_communication_overlap_time",
+          "json_types": ["NA"],
+          "meaning": "逐次 launch 计算通信重叠时长",
+          "unit": "无",
+          "nullable_when": "当前固定不可用",
+          "analysis": "原因见 unavailable_reasons"
+        },
+        {
+          "name": "compute_overhead_time",
+          "json_types": ["NA"],
+          "meaning": "逐次 launch 计算开销时长",
+          "unit": "无",
+          "nullable_when": "当前固定不可用",
+          "analysis": "原因见 unavailable_reasons"
+        },
+        {
+          "name": "communication_semantics",
+          "json_types": ["string"],
+          "meaning": "通信时间的语义",
+          "unit": "无",
+          "nullable_when": "始终可用",
+          "analysis": "固定为 api_call"
+        },
+        {
+          "name": "collection_status",
+          "json_types": ["string"],
+          "meaning": "应用会话的采集完整性",
+          "unit": "无",
+          "nullable_when": "始终可用",
+          "analysis": "采集和尾批均确认时为 complete，其余为 partial。"
+        },
+        {
+          "name": "unavailable_reasons",
+          "json_types": ["object"],
+          "meaning": "指标名到不可用原因的映射",
+          "unit": "无",
+          "nullable_when": "始终提供字段",
+          "analysis": "原因用字符串表示，包含任务关联失败或缺少 Task PMU / 硬件数据等情况。"
         }
       ]
     }

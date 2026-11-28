@@ -19,6 +19,8 @@
   },
   "result_subdirectory_patterns": [
     "collection-p<process-id>-<sequence>",
-    "collection-p<process-id>-<unique-suffix>"
+    "collection-p<process-id>-<unique-suffix>",
+    "pid-<process-id>",
+    "[pid-<process-id>/]device<id>/(op-<encoded-name>|instance-<id>)/<launch-index>"
   ]
 }

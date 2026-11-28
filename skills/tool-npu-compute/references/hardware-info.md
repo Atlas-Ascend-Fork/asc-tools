@@ -2,11 +2,14 @@
 
 `HardwareInfo.jsonl` 记录采集时的主机和 NPU 环境快照。正常的 `npu-compute` 数据采集会生成该文件，无需把 HardwareInfo 作为 Section 单独指定。分析完整采集目录或比较多次采集结果时，应先读取该文件。
 
+内置检查脚本支持 Kernel Replay 和 Application Replay。使用 `Device Id` 关联同设备摘要。
+
 ## 文件格式
 
 - 文件采用 JSON Lines 格式，每行是一个独立 JSON 对象。
-- 当前输出顺序固定为 `Host Info`、`Device Info`、`CPU Information`、`AI Core Information`、`Memory Information`。
+- 每个快照依次写入 `Host Info`、`Device Info`、`CPU Information`、`AI Core Information`、`Memory Information`。Kernel Replay 记录首次启动时的设备。Application Replay 为每个已观察设备重复写入一组五条记录。
 - 每行的 `category` 字段标识该行类别，其他字段由类别决定。
+- 有设备编号时，四类设备记录在 `category` 之后写入整数 `Device Id`。历史文件和未观察到设备时的 Application Replay 回退快照可省略该字段。
 - 容量字段是 JSON number，最多保留两位小数并去掉末尾的零；计数和频率字段是 JSON integer。
 - 个别底层查询失败时，对应字段可能保留默认值 `0` 或空字符串。分析时应结合其他字段判断该值是否表示真实零值，不能统一当作设备确实没有该资源。
 - `Device Info` 的 `chip info` 和 `arch info` 允许以空字符串表示查询结果不可用；字段仍须存在且为字符串，纯空白值不合法。
@@ -19,7 +22,7 @@
 | `cpu physical count` | integer | 个 | 读取在线 CPU 列表，并对各 CPU 的 `physical_package_id` 去重得到的物理 CPU 封装数量 | 主机配置，通常稳定 | 表示 Socket/Package 数量，不表示物理 Core 数量 |
 | `cpu logical count` | integer | 个 | 通过 `_SC_NPROCESSORS_CONF` 获取主机配置的逻辑 CPU 数量 | 主机配置，通常稳定 | 可用于比较主机 CPU 规模，不等同于采集时实际在线或被目标程序使用的线程数 |
 | `memory total size(MB)` | number | MB | `sysinfo` 返回的主机总内存字节数除以 `1024^2` | 主机配置，通常稳定 | 表示主机物理内存总量，不表示目标程序占用量或采集时空闲量 |
-| `disk total size(GB)` | number | GB | 通过 `statvfs` 获取工具使用的文件系统容量，使用总块数乘块大小后除以 `1024^3` | 文件系统配置，通常稳定 | 表示对应文件系统的总容量，不表示所有磁盘容量，也不表示剩余空间 |
+| `disk total size(GB)` | number | GB | Kernel Replay 查询初始化时的当前工作目录，Application Replay 查询 `/tmp`。`statvfs` 返回的总块数乘基本块大小后除以 `1024^3` | 文件系统配置，通常稳定 | 表示对应文件系统的总容量 |
 
 ## Device Info
 
@@ -47,8 +50,10 @@
 | `ai core count` | integer | 个 | Runtime 设备属性返回的 AI Core 数量 | 设备配置，通常稳定 | 按设备接口原值解释，不根据 Cube/Vector 数量自行推导 |
 | `ai cube count` | integer | 个 | Runtime 设备属性返回的 Cube Core 数量 | 设备配置，通常稳定 | 用于比较 Cube 资源规模，也是读取频率信息时要求存在的计数字段 |
 | `ai vector count` | integer | 个 | Runtime 设备属性返回的 Vector Core 数量 | 设备配置，通常稳定 | 用于比较 Vector 资源规模，也是读取频率信息时要求存在的计数字段 |
-| `ai cube frequency(MHZ)` | integer | MHz | 优先读取 Cube Core 当前频率，失败时读取固定频率，再失败时使用 `1650` | 运行状态或回退值 | 可作为采集环境频率记录；仅凭该字段不能断言某个 CSV 公式实际采用了完全相同的配置值 |
-| `ai vector frequency(MHZ)` | integer | MHz | 优先读取 Vector Core 当前频率，失败时读取固定频率，再失败时使用 `1650` | 运行状态或回退值 | 可作为采集环境频率记录；仅凭该字段不能断言某个 CSV 公式实际采用了完全相同的配置值 |
+| `ai cube frequency(MHZ)` | integer | MHz | 先读取 Cube Core 当前频率，失败时读取固定频率 | 运行状态或回退值 | 用于记录采集环境的 Cube Core 频率 |
+| `ai vector frequency(MHZ)` | integer | MHz | 先读取 Vector Core 当前频率，失败时读取固定频率 | 运行状态或回退值 | 用于记录采集环境的 Vector Core 频率 |
+
+任意一侧的当前频率和固定频率均无法读取时，两个字段都回退到 `1650` MHz。未执行设备查询时，两个字段都保留 `0`。CSV 计算采用报告配置中的频率。
 
 ## Memory Information
 
@@ -57,7 +62,7 @@
 | `category` | string | 无 | 固定为 `Memory Information`，标识设备 HBM 信息行 | 固定标识 | 用于按类别解析 JSONL，不是性能指标 |
 | `hbm total(MB)` | number | MB | 平台接口返回的 HBM 总字节数除以 `1024^2` | 设备配置，通常稳定 | 表示平台报告的 HBM 总容量，可用于判断设备内存规模 |
 | `hbm used(MB)` | number | MB | Runtime 返回的 HBM 可分配总量减空闲量，再除以 `1024^2` | 采集时状态，可能变化 | 表示该 Runtime 接口可见内存池的已使用量，不应直接等同于整卡所有进程的物理 HBM 占用 |
-| `hbm frequency(MHZ)` | integer | MHz | 设备管理接口返回的 HBM 频率 | 运行状态，可能变化 | 用于记录采集时内存频率环境，不直接代入当前五种 CSV 的公开计算公式 |
+| `hbm frequency(MHZ)` | integer | MHz | 设备管理接口返回的 HBM 频率 | 运行状态，可能变化 | 用于记录采集时内存频率环境 |
 
 ## 分析流程
 

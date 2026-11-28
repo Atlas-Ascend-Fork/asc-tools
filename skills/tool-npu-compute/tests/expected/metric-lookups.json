@@ -77,12 +77,12 @@
         "output_file": "ArithmeticUtilization.csv",
         "field": {
           "name": "aiv_vec_simt_vf_ratio",
-          "meaning": "AIV SIMT VF 指令活跃周期占 AIV 总周期的比值",
+          "meaning": "AIV SIMT VF 指令发射周期占 AIV 总周期的比值",
           "core_types": ["AIV"],
           "unit": "比值",
-          "dependencies": ["AIV SIMT VF 指令活跃周期、AIV `C`"],
-          "formula": "`AIV SIMT VF 指令活跃周期 / C`",
-          "na_conditions": ["非 AIV 行、SIMT VF 指令活跃周期缺失或 `C` 为零"],
+          "dependencies": ["AIV SIMT VF 指令发射周期、AIV `C`"],
+          "formula": "`SIMT VF 指令发射周期 / C`",
+          "na_conditions": ["非 AIV 行、SIMT VF 指令发射周期缺失、`C` 为零或结果非有限"],
           "analysis_notes": "原始比值，不乘以 100"
         }
       }

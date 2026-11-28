@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cli_support import add_format_argument, configure_cli_loggers, emit_result
+from metric_schema import metric_fields_for_names
 
 LOGGER, OUTPUT_LOGGER = configure_cli_loggers(__name__)
 
@@ -53,12 +54,10 @@ def read_rows(path):
 
 
 def fields_for_header(section, header):
-    """Task CSV 省略两列 Block 标识；历史 Block CSV 保留两列。"""
-    fields = section["fields"]
+    """兼容省略两列 Block 标识的历史 Task CSV。"""
     block_fields = {"block_id", "sub_block_id"}
-    if not block_fields.intersection(header):
-        return [field for field in fields if field["name"] not in block_fields]
-    return fields
+    excluded = () if block_fields.intersection(header) else block_fields
+    return metric_fields_for_names(section, header, excluded)
 
 
 def identify_section(path, header, sections):

@@ -3,6 +3,14 @@
   "sections": {
     "ArithmeticUtilization": {
       "output_file": "ArithmeticUtilization.csv",
+      "legacy_field_names": {
+        "aiv_simd_vf_ratio": "aiv_vec_vf_ratio",
+        "aiv_simt_vf_ratio": "aiv_vec_simt_vf_ratio",
+        "aiv_simd_vf_time": null,
+        "aiv_simd_vf_ipc": null,
+        "aiv_simt_vf_time": null,
+        "aiv_simt_vf_ipc": null
+      },
       "fields": [
         {
           "name": "block_id",
@@ -135,13 +143,13 @@
           "analysis_notes": "原始比值，不乘以 100"
         },
         {
-          "name": "aiv_vec_vf_ratio",
-          "meaning": "AIV Vector VF 指令活跃周期占 AIV 总周期的比值",
+          "name": "aiv_simd_vf_ratio",
+          "meaning": "AIV SIMD VF 指令发射周期占 AIV 总周期的比值",
           "core_types": ["AIV"],
           "unit": "比值",
-          "dependencies": ["AIV VF 指令活跃周期、AIV `C`"],
-          "formula": "`AIV VF 指令活跃周期 / C`",
-          "na_conditions": ["非 AIV 行、VF 指令活跃周期缺失或 `C` 为零"],
+          "dependencies": ["AIV SIMD VF 指令发射周期、AIV `C`"],
+          "formula": "`SIMD VF 指令发射周期 / C`",
+          "na_conditions": ["非 AIV 行、SIMD VF 指令发射周期缺失、`C` 为零或结果非有限"],
           "analysis_notes": "原始比值，不乘以 100"
         },
         {
@@ -155,14 +163,54 @@
           "analysis_notes": "原始比值，不乘以 100"
         },
         {
-          "name": "aiv_vec_simt_vf_ratio",
-          "meaning": "AIV SIMT VF 指令活跃周期占 AIV 总周期的比值",
+          "name": "aiv_simt_vf_ratio",
+          "meaning": "AIV SIMT VF 指令发射周期占 AIV 总周期的比值",
           "core_types": ["AIV"],
           "unit": "比值",
-          "dependencies": ["AIV SIMT VF 指令活跃周期、AIV `C`"],
-          "formula": "`AIV SIMT VF 指令活跃周期 / C`",
-          "na_conditions": ["非 AIV 行、SIMT VF 指令活跃周期缺失或 `C` 为零"],
+          "dependencies": ["AIV SIMT VF 指令发射周期、AIV `C`"],
+          "formula": "`SIMT VF 指令发射周期 / C`",
+          "na_conditions": ["非 AIV 行、SIMT VF 指令发射周期缺失、`C` 为零或结果非有限"],
           "analysis_notes": "原始比值，不乘以 100"
+        },
+        {
+          "name": "aiv_simd_vf_time",
+          "meaning": "AIV SIMD VF 指令发射总时长",
+          "core_types": ["AIV"],
+          "unit": "us",
+          "dependencies": ["AIV SIMD VF 指令发射周期、`F_AIV`"],
+          "formula": "`SIMD VF 指令发射周期 / F_AIV`",
+          "na_conditions": ["非 AIV 行、SIMD VF 指令发射周期缺失、有效频率非正或非有限，或结果非有限"],
+          "analysis_notes": "换算使用 AIV 频率，与 Task Log 耗时无关"
+        },
+        {
+          "name": "aiv_simd_vf_ipc",
+          "meaning": "AIV SIMD VF 发射期间每周期平均发射的指令数",
+          "core_types": ["AIV"],
+          "unit": "条/周期",
+          "dependencies": ["AIV SIMD 指令发射数、SIMD VF 指令发射周期"],
+          "formula": "`SIMD 指令发射数 / SIMD VF 指令发射周期`",
+          "na_conditions": ["非 AIV 行、任一计数缺失、发射周期非正或非有限，或结果非有限"],
+          "analysis_notes": "分母为 SIMD VF 指令发射周期"
+        },
+        {
+          "name": "aiv_simt_vf_time",
+          "meaning": "AIV SIMT VF 指令发射总时长",
+          "core_types": ["AIV"],
+          "unit": "us",
+          "dependencies": ["AIV SIMT VF 指令发射周期、`F_AIV`"],
+          "formula": "`SIMT VF 指令发射周期 / F_AIV`",
+          "na_conditions": ["非 AIV 行、SIMT VF 指令发射周期缺失、有效频率非正或非有限，或结果非有限"],
+          "analysis_notes": "换算使用 AIV 频率，与 Task Log 耗时无关"
+        },
+        {
+          "name": "aiv_simt_vf_ipc",
+          "meaning": "AIV SIMT VF 发射期间每周期平均发射的指令数",
+          "core_types": ["AIV"],
+          "unit": "条/周期",
+          "dependencies": ["AIV SIMT EXU、DVG、DCU 指令发射数及 SIMT VF 指令发射周期"],
+          "formula": "`(EXU 发射数 + DVG 发射数 + DCU 发射数) / 4 / SIMT VF 指令发射周期`",
+          "na_conditions": ["非 AIV 行、任一计数缺失、发射周期非正或非有限，或结果非有限"],
+          "analysis_notes": "合计发射数按实现使用 1/4 的换算系数"
         }
       ]
     },
@@ -435,7 +483,7 @@
           "dependencies": [
             "AIC L1 写入次数、L0C 到 L1 传输次数、主存读取次数、MTE3 活跃周期、`F_AIC`"
           ],
-          "formula": "`ActiveBW(L1 写入修正计数 * 256, MTE3 活跃周期, F_AIC)`",
+          "formula": "`ActiveBW(max(0, max(0, L1 写入次数 - L0C 到 L1 传输次数) - floor(主存读取次数 / 2)) * 256, MTE3 活跃周期, F_AIC)`",
           "na_conditions": [
             "非 AIC 行、任一计算所需计数缺失、频率无效或活跃周期非正数"
           ],
@@ -1269,37 +1317,37 @@
         },
         {
           "name": "read_main_memory_datas(KB)",
-          "meaning": "当前 Core 行的主存读取数据量",
+          "meaning": "Block 级为当前 Core 的主存读取数据量，Task 级为已采集各侧的主存读取数据量之和",
           "core_types": [
             "AIC",
             "AIV"
           ],
           "unit": "KB",
           "dependencies": [
-            "当前 Core 的主存读取次数"
+            "Block 级取当前 Core 的主存读取次数，Task 级取所有已采集侧的主存读取次数"
           ],
-          "formula": "`DataKB(主存读取次数, 128)`",
+          "formula": "`DataKB(当前 Core（Block）或已采集各侧的主存读取次数之和（Task）, 128)`",
           "na_conditions": [
-            "主存读取次数缺失"
+            "Block 的当前 Core 或 Task 的任一已采集侧缺少主存读取次数，或 Task 两侧均未采集"
           ],
-          "analysis_notes": "每行按本行 Core 类型取值，不合并 AIC/AIV"
+          "analysis_notes": "当前 Task 级读取 Task PMU 计数，未采集侧贡献为零。早期混合 Kernel 摘要使用有效行的平均值，比较时核对生成版本。"
         },
         {
           "name": "write_main_memory_datas(KB)",
-          "meaning": "当前 Core 行的主存写入数据量",
+          "meaning": "Block 级为当前 Core 的主存写入数据量，Task 级为已采集各侧的主存写入数据量之和",
           "core_types": [
             "AIC",
             "AIV"
           ],
           "unit": "KB",
           "dependencies": [
-            "当前 Core 的主存写入次数"
+            "Block 级取当前 Core 的主存写入次数，Task 级取所有已采集侧的主存写入次数"
           ],
-          "formula": "`DataKB(主存写入次数, 128)`",
+          "formula": "`DataKB(当前 Core（Block）或已采集各侧的主存写入次数之和（Task）, 128)`",
           "na_conditions": [
-            "主存写入次数缺失"
+            "Block 的当前 Core 或 Task 的任一已采集侧缺少主存写入次数，或 Task 两侧均未采集"
           ],
-          "analysis_notes": "每行按本行 Core 类型取值，不合并 AIC/AIV"
+          "analysis_notes": "当前 Task 级读取 Task PMU 计数，未采集侧贡献为零。早期混合 Kernel 摘要使用有效行的平均值，比较时核对生成版本。"
         },
         {
           "name": "GM_to_L1_datas(KB)",

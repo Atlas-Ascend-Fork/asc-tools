@@ -2,6 +2,8 @@
 
 本文件说明字段解释、公式和数据可用性结论应依据哪些信息。遇到目录、参考文档、实际采集数据与代码实现不一致时，先确认差异来源，不组合不一致的信息生成结论。
 
+分析离线报告时优先确认报告生成时的 npu-compute 版本。版本已确认时，以该版本的实现和输出格式为准。版本未知时，可以报告文件中的观测值，但涉及公式、字段支持范围或 `NA` 条件的结论需要标明当前依据和版本不确定性。
+
 ## 来源优先级
 
 事实核对按以下顺序取证：
@@ -24,15 +26,10 @@
 
 ### CSV 字段与计算
 
-`npu_tools/npu_compute/src/compute/pmu/pmu_csv_writer.cpp` 是以下事实的代码依据：
+- `npu_tools/npu_compute/src/compute/report/pmu_csv_writer.cpp` 定义 CSV 的 AIC/AIV 行组织、字段顺序和数值格式。
+- `npu_tools/npu_compute/src/compute/pmu/pmu_metric_builder.cpp` 定义字段计算、混合 Kernel 的时长选择和 `NA` 条件。
 
-- CSV 表头、字段顺序和数值格式；
-- AIC、AIV 数据行的组织方式；
-- 周期、时间、比值、带宽和命中率的计算；
-- 混合 Kernel 的时长选择；
-- 字段输出 `NA` 的实现条件。
-
-字段含义、单位、依赖、计算规则和 `NA` 条件整理在各 Section reference 与 `assets/metric-catalog.json` 中。两处内容必须与 CSV 写入实现保持一致。
+机器可读字段定义见 `assets/metric-catalog.json`，各 Section reference 提供分析要点。
 
 ### HardwareInfo 字段
 

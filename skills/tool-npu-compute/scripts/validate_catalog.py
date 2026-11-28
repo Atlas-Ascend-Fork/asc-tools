@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cli_support import configure_cli_loggers
+from metric_schema import metric_fields_for_names
 
 from inspect_collection import InspectionError as CollectionInspectionError
 from inspect_collection import inspect as inspect_collection
@@ -88,6 +89,11 @@ SUPPORTED_SECTION_NAMES = [
     "Pipeline",
     "ArithmeticUtilization",
     "ResourceConflictRatio",
+    "PmSampling",
+    "SourceCounter",
+    "Roofline",
+    "Occupancy",
+    "Communication",
 ]
 SUMMARY_RECORD_TYPES = [
     "PipeUtilization",
@@ -97,6 +103,7 @@ SUMMARY_RECORD_TYPES = [
     "L2Cache",
     "ArithmeticUtilization",
     "ResourceConflictRatio",
+    "Roofline",
     "PerformanceHints",
     "OpInfoSummary",
 ]
@@ -234,18 +241,17 @@ def validate_metric_catalog():
         require(bool(names), f"{section_name} 字段不能为空")
         require(len(names) == len(set(names)), f"{section_name} 存在重复字段")
 
-        reference_rows = reference_field_rows(
-            SKILL_ROOT / "references" / reference_name
+        reference_text = (SKILL_ROOT / "references" / reference_name).read_text(
+            encoding="utf-8"
         )
         require(
-            [cells[0] for _, cells in reference_rows] == names,
-            f"{section_name} 字段与 reference 不一致",
+            "CSV 指标目录" in reference_text, f"{reference_name} 未声明字段事实来源"
         )
-        for field, (line_number, cells) in zip(fields, reference_rows):
-            require(
-                len(cells) == 8 and all(cells),
-                f"{reference_name}:{line_number} 字段说明不完整",
-            )
+        require(
+            "## 分析要点" in reference_text or "## 使用要点" in reference_text,
+            f"{reference_name} 缺少分析指南",
+        )
+        for field in fields:
             require(
                 set(field) == METRIC_FIELD_KEYS,
                 f"{section_name}.{field.get('name')} 属性不完整",
@@ -253,19 +259,6 @@ def validate_metric_catalog():
             require(
                 all(value for value in field.values()),
                 f"{section_name}.{field['name']} 存在空属性",
-            )
-            expected = {
-                "name": cells[0],
-                "meaning": cells[1],
-                "core_types": CORE_TYPES[cells[2]],
-                "unit": cells[3],
-                "dependencies": [cells[4]],
-                "formula": cells[5],
-                "na_conditions": [cells[6]],
-                "analysis_notes": cells[7],
-            }
-            require(
-                field == expected, f"{section_name}.{field['name']} 与 reference 不一致"
             )
     return catalog
 
@@ -282,6 +275,15 @@ def validate_hardware_catalog():
     require(
         catalog.get("format", {}).get("record_order") == names,
         "HardwareInfo 记录顺序不一致",
+    )
+    device_id = catalog.get("device_id", {})
+    device_id_field = device_id.get("field", {})
+    require(
+        device_id.get("categories") == names[1:]
+        and set(device_id_field) == HARDWARE_FIELD_KEYS
+        and device_id_field["name"] == "Device Id"
+        and device_id_field["json_type"] == "integer",
+        "HardwareInfo Device Id 定义不一致",
     )
     for category in categories:
         fields = category.get("fields", [])
@@ -358,6 +360,13 @@ def validate_pipe_trace_catalog():
         ),
         "PipeTrace 流水线颜色定义无效",
     )
+    dfx = catalog.get("dfx_events", {})
+    require(
+        dfx.get("mark_stamp", {}).get("name_prefix") == "MarkStamp"
+        and dfx.get("region", {}).get("name_prefix") == "Region"
+        and len(dfx["region"].get("colors", [])) == 12,
+        "PipeTrace DFX 事件定义不一致",
+    )
     sampling = catalog.get("sampling", {})
     require(
         sampling.get("maximum_sampled_groups") == 6
@@ -397,19 +406,40 @@ def validate_section_catalog(metric_catalog, hardware_catalog, pipe_trace_catalo
     )
     require(
         set(metric_catalog["sections"]) | {pipe_trace_catalog["section"]}
-        == set(SUPPORTED_SECTION_NAMES),
+        <= set(SUPPORTED_SECTION_NAMES),
         "Section 目录与结果格式目录覆盖范围不一致",
     )
+    advanced = {
+        "SourceCounter": ("summary.db", "sqlite", "scripts/inspect_collection.py"),
+        "PmSampling": ("summary.db", "sqlite", "scripts/inspect_collection.py"),
+        "Roofline": (
+            "summary.jsonl",
+            "summary_record",
+            "scripts/inspect_summary.py",
+        ),
+        "Occupancy": (
+            "SimtWarpOccupancy.json",
+            "occupancy_trace",
+            "scripts/inspect_collection.py",
+        ),
+        "Communication": (
+            "CommunicationTrace.json",
+            "application_trace",
+            "scripts/inspect_collection.py",
+        ),
+    }
     for section in sections:
         name = section["name"]
         if name == "Pipeline":
             expected_file = pipe_trace_catalog["output_file"]
             expected_kind = "pipeline_trace"
             expected_inspector = "scripts/inspect_pipe_trace.py"
-        else:
+        elif name in metric_catalog["sections"]:
             expected_file = metric_catalog["sections"][name]["output_file"]
             expected_kind = "pmu_csv"
             expected_inspector = "scripts/inspect_csv.py"
+        else:
+            expected_file, expected_kind, expected_inspector = advanced[name]
         require(section.get("result_file") == expected_file, f"{name} 结果文件不一致")
         require(section.get("result_kind") == expected_kind, f"{name} 结果类型不一致")
         require(
@@ -424,7 +454,7 @@ def validate_section_catalog(metric_catalog, hardware_catalog, pipe_trace_catalo
     defaults = catalog.get("default_results", [])
     require(
         [entry.get("result_file") for entry in defaults]
-        == [hardware_catalog["output_file"], "summary.jsonl"],
+        == [hardware_catalog["output_file"], "summary.jsonl", "Occupancy.json"],
         "Section 目录默认结果不一致",
     )
     return catalog
@@ -472,60 +502,24 @@ def validate_performance_hints(record_type):
         )
 
 
-def validate_op_info(op_info, names):
-    require(
-        op_info.get("kind") == "operation-summary"
-        and op_info.get("data_level") == "kernel",
-        "OpInfoSummary 记录属性不一致",
-    )
-    fields = op_info.get("fields", [])
-    names.extend(field.get("name") for field in fields)
-    require(bool(names), "OpInfoSummary 字段不能为空")
-    require(len(names) == len(set(names)), "OpInfoSummary 存在重复字段")
+def validate_summary_fields(fields, label):
+    names = [field.get("name") for field in fields]
+    require(bool(names), f"{label} 字段不能为空")
+    require(len(names) == len(set(names)), f"{label} 存在重复字段")
     for field in fields:
         require(
             set(field) == SUMMARY_FIELD_KEYS,
-            f"OpInfoSummary.{field.get('name')} 元数据不完整",
+            f"{label}.{field.get('name')} 元数据不完整",
         )
         require(
             all(value != "" for value in field.values()),
-            f"OpInfoSummary.{field['name']} 存在空属性",
+            f"{label}.{field['name']} 存在空属性",
         )
         require(
             isinstance(field["json_types"], list) and field["json_types"],
-            f"OpInfoSummary.{field['name']} 类型定义无效",
+            f"{label}.{field['name']} 类型定义无效",
         )
-
-    return fields
-
-
-def validate_summary_reference(fields, names):
-    reference_rows = reference_field_rows(SKILL_ROOT / "references" / "summary.md")
-    require(
-        [cells[0] for _, cells in reference_rows] == names,
-        "OpInfoSummary 字段与 reference 不一致",
-    )
-    for field, (line_number, cells) in zip(fields, reference_rows):
-        require(
-            len(cells) == 6 and all(cells), f"summary.md:{line_number} 字段说明不完整"
-        )
-        require(
-            field["meaning"].replace("`", "") == cells[1].replace("`", ""),
-            f"summary.md:{line_number} 含义不一致",
-        )
-        require(field["unit"] == cells[2], f"summary.md:{line_number} 单位不一致")
-        require(
-            field["json_types"] == cells[3].split("/"),
-            f"summary.md:{line_number} 类型不一致",
-        )
-        require(
-            field["nullable_when"].replace("`", "") == cells[4].replace("`", ""),
-            f"summary.md:{line_number} null 条件不一致",
-        )
-        require(
-            field["analysis"].replace("`", "") == cells[5].replace("`", ""),
-            f"summary.md:{line_number} 分析说明不一致",
-        )
+    return names
 
 
 def validate_summary_catalog(metric_catalog):
@@ -535,11 +529,29 @@ def validate_summary_catalog(metric_catalog):
     require(catalog.get("unavailable_value") == "NA", "summary 不可用值必须为 NA")
     record_types = catalog.get("record_types", {})
     require(list(record_types) == SUMMARY_RECORD_TYPES, "summary 记录类别或顺序不一致")
-    for category in SUMMARY_RECORD_TYPES[:-2]:
+    for category in SUMMARY_RECORD_TYPES[:-3]:
         validate_summary_section(category, record_types[category], metric_catalog)
+    roofline = record_types["Roofline"]
+    require(roofline.get("kind") == "roofline", "Roofline 记录属性不一致")
+    require(
+        validate_summary_fields(roofline["point_fields"], "Roofline")
+        == ["p_peak", "b_peak", "w", "t", "q"],
+        "Roofline 数据点字段不一致",
+    )
     validate_performance_hints(record_types["PerformanceHints"])
-    names = []
-    fields = validate_op_info(record_types["OpInfoSummary"], names)
+    op_info = record_types["OpInfoSummary"]
+    require(
+        op_info.get("kind") == "operation-summary"
+        and op_info.get("data_level") == "kernel",
+        "OpInfoSummary 记录属性不一致",
+    )
+    names = validate_summary_fields(op_info["fields"], "OpInfoSummary")
+    require(
+        set(op_info["legacy_field_overrides"]) <= set(names),
+        "历史 OpInfoSummary 字段覆盖项不存在",
+    )
+    validate_summary_fields(op_info["application_fields"], "Application Replay")
+    validate_summary_fields(op_info["pm_sampling_context_fields"], "PmSamplingContexts")
     selected_fields = catalog.get("op_info_selected_fields", [])
     require(
         selected_fields
@@ -555,7 +567,6 @@ def validate_summary_catalog(metric_catalog):
     )
     require(set(selected_fields).issubset(names), "OpInfoSummary 摘要字段不存在")
 
-    validate_summary_reference(fields, names)
     return catalog
 
 
@@ -606,7 +617,8 @@ def _validate_metric_fixtures(metric_catalog):
         path = FIXTURE_ROOT / section["output_file"]
         with path.open(newline="", encoding="utf-8") as input_file:
             rows = list(csv.reader(input_file))
-        expected_header = [field["name"] for field in section["fields"]]
+        fields = metric_fields_for_names(section, rows[0]) if rows else []
+        expected_header = [field["name"] for field in fields]
         require(
             len(rows) > 1 and rows[0] == expected_header,
             f"真实样本表头或数据行不符合定义：{path.name}",

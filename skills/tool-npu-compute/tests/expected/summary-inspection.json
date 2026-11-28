@@ -8,6 +8,7 @@
     "L2Cache",
     "ArithmeticUtilization",
     "ResourceConflictRatio",
+    "Roofline",
     "PerformanceHints",
     "OpInfoSummary"
   ],

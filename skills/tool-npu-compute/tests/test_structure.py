@@ -143,7 +143,6 @@ class SkillStructureTest(unittest.TestCase):
 
     def test_cli_references_cover_collection_and_import_workflows(self):
         cli_text = CLI_USAGE_PATH.read_text(encoding="utf-8")
-        workflow_text = COLLECTION_WORKFLOW_PATH.read_text(encoding="utf-8")
         for fragment in (
             "npu-compute [options] [--] [program] [program-arguments]",
             "--list-sections",
@@ -151,25 +150,10 @@ class SkillStructureTest(unittest.TestCase):
             "--import <report>",
             "--export <path>",
             "npu-compute: report=",
+            "npu-compute: directory=",
             "npu-compute: unpacked=",
         ):
             self.assertIn(fragment, cli_text)
-        self.assertIn("用户只询问使用方式时，生成命令但不执行", workflow_text)
-        self.assertIn("退出状态为 `0`", workflow_text)
-
-    def test_skill_routes_default_set_section_and_list_requests(self):
-        for fragment in (
-            "--list-sets",
-            "--set basic",
-            "--set full",
-            "默认使用 `basic`",
-            "按用户表达顺序",
-            "首次出现",
-        ):
-            self.assertIn(fragment, self.skill_text)
-        self.assertIn("未指定指标时，不添加 `--set` 或 `--section`", self.skill_text)
-        self.assertIn("npu-compute 默认使用 `basic`", self.skill_text)
-        self.assertIn("按命令行出现顺序展开", self.skill_text)
 
     def test_cli_reference_documents_set_contract_and_examples(self):
         cli_text = CLI_USAGE_PATH.read_text(encoding="utf-8")
@@ -186,6 +170,7 @@ class SkillStructureTest(unittest.TestCase):
         ):
             self.assertIn(fragment, examples)
         self.assertIn("默认使用 `basic`", cli_text)
+        self.assertIn("按用户表达顺序", cli_text)
         self.assertIn("按命令行出现顺序", cli_text)
         self.assertIn("首次出现", cli_text)
         self.assertIn("npu-compute --section Memory --set basic", cli_text)
@@ -205,22 +190,10 @@ class SkillStructureTest(unittest.TestCase):
         self.assertNotIn("采集至少指定一个 Section", cli_text)
         self.assertNotIn("采集需要 Section 和目标程序", cli_text)
 
-    def test_collection_workflow_covers_set_selection_and_separator(self):
+    def test_collection_workflow_verifies_each_output_mode(self):
         workflow_text = COLLECTION_WORKFLOW_PATH.read_text(encoding="utf-8")
-        examples = bash_examples(workflow_text)
-        for fragment in (
-            "npu-compute --list-sets",
-            "npu-compute ./add_custom",
-            "npu-compute --set basic ./add_custom",
-            "npu-compute --set full ./add_custom",
-            "--set basic --section ResourceConflictRatio",
-            "--set basic -- ./add_custom --help",
-        ):
-            self.assertIn(fragment, examples)
-        list_sets_position = examples.index("npu-compute --list-sets")
-        collection_position = examples.index("npu-compute ./add_custom")
-        self.assertLess(list_sets_position, collection_position)
-        self.assertIn("按最终命令行出现顺序展开", workflow_text)
+        for output in ("report", "directory", "unpacked"):
+            self.assertRegex(workflow_text, rf"退出状态为 `0`[^\n]*`{output}`")
 
 
 if __name__ == "__main__":

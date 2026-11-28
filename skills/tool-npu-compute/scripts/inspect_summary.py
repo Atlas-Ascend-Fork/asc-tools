@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cli_support import add_format_argument, configure_cli_loggers, emit_result
+from metric_schema import metric_fields_for_names
 
 LOGGER, OUTPUT_LOGGER = configure_cli_loggers(__name__)
 
@@ -92,7 +93,7 @@ def load_records(path, record_types):
     return records
 
 
-def section_fields(category, definition, metric_catalog):
+def section_fields(category, definition, metric_catalog, names):
     source = definition["metric_fields"]
     if source["catalog"] != "metric-catalog.json":
         raise InspectionError(f"{category} 使用未知字段目录：{source['catalog']}")
@@ -100,7 +101,7 @@ def section_fields(category, definition, metric_catalog):
     if section is None:
         raise InspectionError(f"{category} 的指标字段定义不存在")
     excluded = set(source["excluded_fields"])
-    return [field for field in section["fields"] if field["name"] not in excluded]
+    return metric_fields_for_names(section, names, excluded)
 
 
 def validate_field_names(category, record, expected_names):
@@ -125,6 +126,10 @@ def matches_type(value, json_type):
         return isinstance(value, str)
     if json_type == "string[]":
         return isinstance(value, list) and all(isinstance(item, str) for item in value)
+    if json_type == "object":
+        return isinstance(value, dict)
+    if json_type == "object[]":
+        return isinstance(value, list) and all(isinstance(item, dict) for item in value)
     if json_type == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if json_type == "number":
@@ -136,7 +141,7 @@ def validate_value(category, name, value, json_types, unavailable_value=None):
     if (
         unavailable_value is not None
         and value == unavailable_value
-        and "null" in json_types
+        and ("NA" in json_types or "null" in json_types)
     ):
         return
     if not any(matches_type(value, json_type) for json_type in json_types):
@@ -150,9 +155,14 @@ def validate_value(category, name, value, json_types, unavailable_value=None):
 
 
 def inspect_section(
-    category, record, definition, metric_catalog, unavailable_value=None
+    category, record, definition, metric_catalog, json_types, unavailable_value
 ):
-    fields = section_fields(category, definition, metric_catalog)
+    fields = section_fields(
+        category,
+        definition,
+        metric_catalog,
+        [name for name in record if name != "category"],
+    )
     expected_names = ["category", *(field["name"] for field in fields)]
     validate_field_names(category, record, expected_names)
     validate_value(category, "category", record["category"], ["string"])
@@ -160,14 +170,12 @@ def inspect_section(
     output_fields = []
     for field in fields:
         value = record[field["name"]]
-        validate_value(
-            category, field["name"], value, ["number", "null"], unavailable_value
-        )
+        validate_value(category, field["name"], value, json_types, unavailable_value)
         output_fields.append(
             {
                 "name": field["name"],
                 "value": value,
-                "json_types": ["number", "null"],
+                "json_types": json_types,
                 "meaning": field["meaning"],
                 "unit": field["unit"],
                 "nullable_when": field["na_conditions"],
@@ -182,22 +190,55 @@ def inspect_section(
     }
 
 
-def inspect_op_info(record, definition, selected_fields, unavailable_value=None):
-    fields = definition["fields"]
-    expected_names = [field["name"] for field in fields]
-    validate_field_names("OpInfoSummary", record, expected_names)
+def inspect_fields(category, record, fields, unavailable_value=None):
+    validate_field_names(category, record, [field["name"] for field in fields])
 
     output_fields = []
     for field in fields:
         value = record[field["name"]]
         validate_value(
-            "OpInfoSummary",
+            category,
             field["name"],
             value,
             field["json_types"],
             unavailable_value,
         )
         output_fields.append({**field, "value": value})
+    return output_fields
+
+
+def inspect_op_info(record, definition, selected_fields, unavailable_value, legacy):
+    fields = definition["fields"]
+    sampling_field = definition["pm_sampling_field"]
+    application_fields = definition["application_fields"]
+    has_sampling = sampling_field["name"] in record
+    is_application = any(field["name"] in record for field in application_fields)
+    if legacy:
+        overrides = definition["legacy_field_overrides"]
+        fields = [
+            {**field, **overrides.get(field["name"], {})}
+            for field in fields
+            if overrides.get(field["name"], {}) is not None
+        ]
+    if has_sampling:
+        fields = [*fields, sampling_field]
+    if is_application:
+        fields = [*fields, *application_fields]
+    output_fields = inspect_fields("OpInfoSummary", record, fields, unavailable_value)
+
+    if has_sampling:
+        for index, context in enumerate(record[sampling_field["name"]]):
+            inspect_fields(
+                f"OpInfoSummary.PmSamplingContexts[{index}]",
+                context,
+                definition["pm_sampling_context_fields"],
+            )
+    if is_application:
+        for name, reason in record["unavailable_reasons"].items():
+            validate_value(
+                "OpInfoSummary.unavailable_reasons", name, reason, ["string"]
+            )
+
     return {
         "description": definition["description"],
         "data_level": definition["data_level"],
@@ -206,27 +247,45 @@ def inspect_op_info(record, definition, selected_fields, unavailable_value=None)
     }
 
 
-def inspect_performance_hints(record, definition):
-    fields = definition["fields"]
-    validate_field_names(
-        "PerformanceHints", record, [field["name"] for field in fields]
-    )
-    for field in fields:
-        validate_value(
-            "PerformanceHints",
-            field["name"],
-            record[field["name"]],
-            field["json_types"],
+def inspect_roofline(record, definition, unavailable_value):
+    valid_points = [name for name in definition["point_names"] if name in record]
+    validate_field_names("Roofline", record, ["category", *valid_points])
+    points = []
+    for name in valid_points:
+        point = record[name]
+        validate_value("Roofline", name, point, ["object"])
+        fields = inspect_fields(
+            f"Roofline.{name}", point, definition["point_fields"], unavailable_value
         )
+        points.append({"name": name, "fields": fields})
+    return {"description": definition["description"], "points": points}
+
+
+def inspect_performance_hints(record, definition):
+    inspect_fields("PerformanceHints", record, definition["fields"])
     return record["hints"]
 
 
 def inspect(path, summary_catalog, metric_catalog):
     record_types = summary_catalog["record_types"]
     records = load_records(path, record_types)
+    op_info_record = records[-1][2]
+    op_info_definition = record_types["OpInfoSummary"]
+    current_only_fields = {
+        name
+        for name, override in op_info_definition["legacy_field_overrides"].items()
+        if override is None
+    }
+    current_only_fields.add(op_info_definition["pm_sampling_field"]["name"])
+    current_only_fields.update(
+        field["name"] for field in op_info_definition["application_fields"]
+    )
+    legacy = current_only_fields.isdisjoint(op_info_record)
+    section_json_types = ["number", "null" if legacy else "NA"]
     section_records = []
     op_info_summary = None
     performance_hints = None
+    roofline = None
     unavailable_value = summary_catalog.get("unavailable_value")
     for _, category, record in records:
         definition = record_types[category]
@@ -236,16 +295,24 @@ def inspect(path, summary_catalog, metric_catalog):
                 definition,
                 summary_catalog["op_info_selected_fields"],
                 unavailable_value,
+                legacy,
             )
         elif category == "PerformanceHints":
             performance_hints = inspect_performance_hints(record, definition)
+        elif category == "Roofline":
+            roofline = inspect_roofline(record, definition, unavailable_value)
         else:
             section_records.append(
                 inspect_section(
-                    category, record, definition, metric_catalog, unavailable_value
+                    category,
+                    record,
+                    definition,
+                    metric_catalog,
+                    section_json_types,
+                    unavailable_value,
                 )
             )
-    return {
+    result = {
         "file": str(path),
         "record_count": len(records),
         "section_categories": [record["category"] for record in section_records],
@@ -253,19 +320,22 @@ def inspect(path, summary_catalog, metric_catalog):
         "performance_hints": performance_hints,
         "op_info_summary": op_info_summary,
     }
+    if roofline is not None:
+        result["roofline"] = roofline
+    return result
 
 
 def escape_table_cell(value):
     if value is None:
         return "null"
-    if isinstance(value, list):
-        value = "；".join(str(item) for item in value)
+    if isinstance(value, (dict, list)):
+        value = json.dumps(value, ensure_ascii=False)
     return str(value).replace("|", "\\|").replace("\n", " ")
 
 
 def render_fields(fields):
     lines = [
-        "| 字段 | 实际值 | 类型 | 含义 | 单位 | 可为 null 的条件 | 分析说明 |",
+        "| 字段 | 实际值 | 类型 | 含义 | 单位 | 不可用条件 | 分析说明 |",
         "|---|---|---|---|---|---|---|",
     ]
     for field in fields:
@@ -295,6 +365,14 @@ def render_markdown(result):
     for record in result["section_records"]:
         lines.extend(("", f"## {record['category']}", "", record["description"], ""))
         lines.extend(render_fields(record["fields"]))
+    if "roofline" in result:
+        roofline = result["roofline"]
+        lines.extend(("", "## Roofline", "", roofline["description"]))
+        if not roofline["points"]:
+            lines.extend(("", "未获得有效计算量数据点。"))
+        for point in roofline["points"]:
+            lines.extend(("", f"### {point['name']}", ""))
+            lines.extend(render_fields(point["fields"]))
     if result["performance_hints"] is not None:
         lines.extend(("", "## PerformanceHints", ""))
         lines.extend(

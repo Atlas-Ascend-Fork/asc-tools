@@ -1,98 +1,27 @@
 {
   "schema_version": 1,
   "sets": {
-    "basic": [
-      "Pipeline",
-      "PipeUtilization",
-      "Memory",
-      "MemoryL0",
-      "MemoryUB",
-      "L2Cache",
-      "ArithmeticUtilization"
-    ],
-    "full": [
-      "Pipeline",
-      "PipeUtilization",
-      "Memory",
-      "MemoryL0",
-      "MemoryUB",
-      "L2Cache",
-      "ArithmeticUtilization",
-      "ResourceConflictRatio"
-    ]
+    "basic": ["Pipeline", "PipeUtilization", "Memory", "MemoryL0", "MemoryUB", "L2Cache", "ArithmeticUtilization"],
+    "full": ["Pipeline", "PipeUtilization", "Memory", "MemoryL0", "MemoryUB", "L2Cache", "ArithmeticUtilization", "ResourceConflictRatio", "PmSampling", "SourceCounter", "Roofline", "Occupancy"]
   },
   "sections": [
-    {
-      "name": "PipeUtilization",
-      "result_file": "PipeUtilization.csv",
-      "result_kind": "pmu_csv",
-      "reference": "references/pipe-utilization.md",
-      "inspector": "scripts/inspect_csv.py"
-    },
-    {
-      "name": "Memory",
-      "result_file": "Memory.csv",
-      "result_kind": "pmu_csv",
-      "reference": "references/memory.md",
-      "inspector": "scripts/inspect_csv.py"
-    },
-    {
-      "name": "MemoryL0",
-      "result_file": "MemoryL0.csv",
-      "result_kind": "pmu_csv",
-      "reference": "references/memory-l0.md",
-      "inspector": "scripts/inspect_csv.py"
-    },
-    {
-      "name": "MemoryUB",
-      "result_file": "MemoryUB.csv",
-      "result_kind": "pmu_csv",
-      "reference": "references/memory-ub.md",
-      "inspector": "scripts/inspect_csv.py"
-    },
-    {
-      "name": "L2Cache",
-      "result_file": "L2Cache.csv",
-      "result_kind": "pmu_csv",
-      "reference": "references/l2-cache.md",
-      "inspector": "scripts/inspect_csv.py"
-    },
-    {
-      "name": "Pipeline",
-      "result_file": "PipeTrace.json",
-      "result_kind": "pipeline_trace",
-      "reference": "references/pipeline.md",
-      "inspector": "scripts/inspect_pipe_trace.py"
-    },
-    {
-      "name": "ArithmeticUtilization",
-      "result_file": "ArithmeticUtilization.csv",
-      "result_kind": "pmu_csv",
-      "reference": "references/arithmetic-utilization.md",
-      "inspector": "scripts/inspect_csv.py"
-    },
-    {
-      "name": "ResourceConflictRatio",
-      "result_file": "ResourceConflictRatio.csv",
-      "result_kind": "pmu_csv",
-      "reference": "references/resource-conflict-ratio.md",
-      "inspector": "scripts/inspect_csv.py"
-    }
+    {"name": "PipeUtilization", "result_file": "PipeUtilization.csv", "result_kind": "pmu_csv", "reference": "references/pipe-utilization.md", "inspector": "scripts/inspect_csv.py"},
+    {"name": "Memory", "result_file": "Memory.csv", "result_kind": "pmu_csv", "reference": "references/memory.md", "inspector": "scripts/inspect_csv.py"},
+    {"name": "MemoryL0", "result_file": "MemoryL0.csv", "result_kind": "pmu_csv", "reference": "references/memory-l0.md", "inspector": "scripts/inspect_csv.py"},
+    {"name": "MemoryUB", "result_file": "MemoryUB.csv", "result_kind": "pmu_csv", "reference": "references/memory-ub.md", "inspector": "scripts/inspect_csv.py"},
+    {"name": "L2Cache", "result_file": "L2Cache.csv", "result_kind": "pmu_csv", "reference": "references/l2-cache.md", "inspector": "scripts/inspect_csv.py"},
+    {"name": "Pipeline", "result_file": "PipeTrace.json", "result_kind": "pipeline_trace", "reference": "references/pipeline.md", "inspector": "scripts/inspect_pipe_trace.py"},
+    {"name": "ArithmeticUtilization", "result_file": "ArithmeticUtilization.csv", "result_kind": "pmu_csv", "reference": "references/arithmetic-utilization.md", "inspector": "scripts/inspect_csv.py"},
+    {"name": "ResourceConflictRatio", "result_file": "ResourceConflictRatio.csv", "result_kind": "pmu_csv", "reference": "references/resource-conflict-ratio.md", "inspector": "scripts/inspect_csv.py"},
+    {"name": "PmSampling", "result_file": "summary.db", "result_kind": "sqlite", "reference": "references/advanced-sections.md", "inspector": "scripts/inspect_collection.py", "related_results": ["objdump.txt", "symbolizer.json"]},
+    {"name": "SourceCounter", "result_file": "summary.db", "result_kind": "sqlite", "reference": "references/advanced-sections.md", "inspector": "scripts/inspect_collection.py", "related_results": ["objdump.txt"]},
+    {"name": "Roofline", "result_file": "summary.jsonl", "result_kind": "summary_record", "reference": "references/advanced-sections.md", "inspector": "scripts/inspect_summary.py"},
+    {"name": "Occupancy", "result_file": "SimtWarpOccupancy.json", "result_kind": "occupancy_trace", "reference": "references/advanced-sections.md", "inspector": "scripts/inspect_collection.py"},
+    {"name": "Communication", "result_file": "CommunicationTrace.json", "result_kind": "application_trace", "reference": "references/advanced-sections.md", "inspector": "scripts/inspect_collection.py", "related_results": ["app_communication_summary.jsonl", "device<id>/op-<encoded_name>/<launch_index>/summary.jsonl", "device<id>/instance-<id>/<launch_index>/summary.jsonl"]}
   ],
   "default_results": [
-    {
-      "name": "HardwareInfo",
-      "result_file": "HardwareInfo.jsonl",
-      "result_kind": "hardware_info",
-      "reference": "references/hardware-info.md",
-      "inspector": "scripts/inspect_hardware_info.py"
-    },
-    {
-      "name": "Summary",
-      "result_file": "summary.jsonl",
-      "result_kind": "summary",
-      "reference": "references/summary.md",
-      "inspector": "scripts/inspect_summary.py"
-    }
+    {"name": "HardwareInfo", "result_file": "HardwareInfo.jsonl", "result_kind": "hardware_info", "reference": "references/hardware-info.md", "inspector": "scripts/inspect_hardware_info.py"},
+    {"name": "Summary", "result_file": "summary.jsonl", "result_kind": "summary", "reference": "references/summary.md", "inspector": "scripts/inspect_summary.py"},
+    {"name": "TaskBlockOccupancy", "result_file": "Occupancy.json", "result_kind": "occupancy_trace", "reference": "references/advanced-sections.md", "inspector": "scripts/inspect_collection.py"}
   ]
 }

@@ -4,180 +4,58 @@
 
 ```text
 npu-compute [options] [--] [program] [program-arguments]
+npu-compute --import <report> [--export <path>]
 ```
 
-采集命令由工具选项、目标程序和目标程序参数组成。工具选项写在目标程序之前；识别到目标程序后，其余参数均传递给目标程序。`--` 用于明确结束工具选项解析，下一项是目标程序。
+采集时必须指定目标程序，可用绝对路径、相对路径或 `PATH` 中的命令。工具选项必须放在目标程序之前。`--` 后第一项是目标程序，目标程序名以 `-` 开头时必须使用该分隔符。程序之后的参数原样传入，生成命令时保留每个参数的边界。脚本无执行权限时，可用对应解释器启动。
 
 ## 选项
 
 | 选项 | 含义 |
 |---|---|
-| `-h`, `--help` | 输出帮助信息。出现参数错误时，先输出错误，再输出帮助。 |
-| `--list-sets` | 输出当前安装版本支持的 Set 及其有序 Section 成员。 |
-| `--set <name>` | 选择预定义 Set。名称区分大小写，可以重复指定，也可以和 `--section` 组合。 |
-| `--list-sections` | 输出当前安装版本支持的 Section 名称。 |
-| `--section <name>` | 选择一个 Section。名称区分大小写，可重复指定；重复项按首次出现去重。 |
-| `--replay-mode <mode>` | 预留采集模式选项，当前仅支持 `kernel`；不指定时使用 `kernel`。 |
-| `-i`, `--import <report>` | 解包 npu-compute 生成的 `.npu-rep` 报告。 |
-| `-o`, `--export <path>` | 指定采集报告文件、报告父目录或解包父目录。 |
-| `--` | 结束工具选项解析。 |
+| `-h`、`--help` | 显示帮助。与其他有效选项组合时只显示帮助。 |
+| `--list-sets` | 列出当前版本的 Set 及其有序 Section 成员。 |
+| `--list-sections` | 列出当前版本的 Section。 |
+| `--set <name>` | 选择预定义的指标组集合。 |
+| `--section <name>` | 选择单个指标组。 |
+| `--replay-mode <mode>` | 默认为 `kernel`。使用 `application` 时，显式选择 `Communication` 作为唯一 Section，省略 Set 和 `--cache-control`。 |
+| `--cache-control <mode>` | 仅用于 Kernel 模式。默认 `none`，`all` 在每轮重放前尝试清理 L2。 |
+| `--no-pack` | 直接保留采集文件目录，不生成 `.npu-rep`。 |
+| `-i`、`--import <report>` | 解包已有 `.npu-rep`，可配合 `--export` 指定已有父目录。 |
+| `-o`、`--export <path>` | 指定报告文件路径或结果父目录，见下文。 |
 
-`--help` 可以和其他合法参数同时出现，此时只输出帮助。`--list-sets` 和 `--list-sections` 均为独立查询操作，不启动目标程序；与 `--help` 同时使用时只输出帮助。`--list-sets` 不接受值，也不能重复指定。
+查询选项单独使用，各自只指定一次且不带值。解包模式使用 `--import` 和可选的 `--export`。
 
-## Set 和 Section
+## 选择指标
 
-当前 Set 为：
-
-- `basic`：`Pipeline`、`PipeUtilization`、`Memory`、`MemoryL0`、`MemoryUB`、`L2Cache`、`ArithmeticUtilization`。
-- `full`：按 `basic` 的顺序包含全部成员，并在末尾增加 `ResourceConflictRatio`。
-
-Set 名称区分大小写。可运行以下命令核对实际安装版本提供的集合：
+- 少量指定指标用一个或多个 `--section`，常用指标用 `--set basic`，完整 Kernel 指标集用 `--set full`。
+- 未指定指标时，省略 `--set` 和 `--section`，工具默认使用 `basic`。显式选择指标时只采集已选 Section。
+- 名称区分大小写。按用户表达顺序生成选项。两种选项可重复、交错使用，工具按命令行出现顺序展开 Set，并按 Section 首次出现的位置去重。
+- 用当前安装版本的查询结果核对成员。离线时可查 [Section 目录](../assets/section-catalog.json)。`Communication` 仅适用于 Application Replay，在两个 Set 之外。
 
 ```bash
 npu-compute --list-sets
-```
-
-当前 Section 为：
-
-- `PipeUtilization`
-- `Memory`
-- `MemoryL0`
-- `MemoryUB`
-- `L2Cache`
-- `Pipeline`
-- `ArithmeticUtilization`
-- `ResourceConflictRatio`
-
-指定目标程序但未指定 `--set` 和 `--section` 时，默认使用 `basic`。明确指定任意 `--section` 后，不再自动补充默认 `basic`。
-
-`--set` 和 `--section` 可以重复、交错使用。工具按命令行出现顺序展开 Set，并按 Section 首次出现的位置去重。例如，`--section Memory --set basic` 会先保留 `Memory`，再追加 basic 中尚未出现的 Section。
-
-可运行以下命令核对实际安装版本支持的 Section：
-
-```bash
-npu-compute --list-sections
-```
-
-## 目标程序和参数
-
-目标程序可以使用：
-
-- 绝对路径，例如 `/opt/app/add_custom`；
-- 相对于当前工作目录的路径，例如 `./build/add_custom`；
-- 可由 `PATH` 查找到的可执行命令，例如 `python3`。
-
-这里的可执行命令可以是二进制程序，也可以是具有执行权限和有效解释器声明的脚本。脚本没有执行权限时，显式指定解释器：
-
-```bash
-npu-compute --section Memory bash run.sh
-```
-
-目标程序后的所有内容都作为目标程序参数，包括与工具选项同名的参数：
-
-```bash
-npu-compute --set basic -- ./add_custom --help --section app-value
-```
-
-`--` 显式结束 npu-compute 工具选项解析。`--` 后第一项是目标程序，其余内容全部原样传给目标程序；目标程序参数可能与工具选项同名时优先使用该形式。
-
-## 采集
-
-在线采集结束后，每个 `summary.jsonl` 校验通过时通过 stdout 展示其命中的 Task 级性能提示，并附对应的算子名和 Device；使用 `--no-pack` 时同样展示。提示同时保存在 `PerformanceHints.hints` 数组中；`--import` 保留报告内容和现有终端输出，不重新打印提示。无有效数据时通过 `NPU_COMPUTE_DEBUG=1` 查看 DebugLog 原因。
-
-输出样例和诊断日志命令见[性能数据说明：PerformanceHints](../../../docs/zh/appendix/npu_compute_performance_data.md#performancehints)。
-
-默认 basic：
-
-```bash
 npu-compute ./add_custom
-```
-
-显式 basic：
-
-```bash
 npu-compute --set basic ./add_custom
-```
-
-完整指标：
-
-```bash
 npu-compute --set full ./add_custom
-```
-
-basic 追加额外 Section：
-
-```bash
 npu-compute --set basic --section ResourceConflictRatio ./add_custom
 npu-compute --section Memory --set basic ./add_custom
+npu-compute --set basic -- ./add_custom --help --section app-value
+npu-compute --section Memory --section L2Cache bash run.sh
 ```
 
-单 Section：
+## 报告路径
+
+| 模式 | `--export` 可用值 | 终端输出 |
+|---|---|---|
+| 打包采集 | 尚不存在的 `.npu-rep` 文件路径，或用于保存自动命名报告的已有目录。 | `npu-compute: report=` |
+| `--no-pack` 采集 | 已有父目录，工具在其中创建唯一的结果子目录。 | `npu-compute: directory=` |
+| 报告解包 | 已有父目录，工具在其中创建唯一的解包子目录。 | `npu-compute: unpacked=` |
+
+省略 `--export` 时使用当前目录。父目录须已存在，已有报告不会被覆盖。
 
 ```bash
-npu-compute --section Memory ./add_custom
+npu-compute --cache-control all --section L2Cache --export ./cache.npu-rep ./add_custom
+npu-compute --replay-mode application --section Communication --no-pack --export ./results ./application
+npu-compute --import ./cache.npu-rep --export ./unpacked-results
 ```
-
-多个 Section：
-
-```bash
-npu-compute \
-  --section PipeUtilization \
-  --section Memory \
-  --section L2Cache \
-  ./add_custom
-```
-
-未指定 `--export` 时，报告以唯一名称写入当前目录。采集成功后终端输出：
-
-```text
-npu-compute: report= <报告路径>
-```
-
-### 指定报告输出
-
-指定一个尚不存在的 `.npu-rep` 文件；该文件的父目录必须存在：
-
-```bash
-npu-compute --section Memory --export ./memory.npu-rep ./add_custom
-```
-
-指定已有目录时，工具在该目录中生成唯一命名的 `.npu-rep`：
-
-```bash
-npu-compute --section Memory --export ./reports ./add_custom
-```
-
-工具不会覆盖已有报告文件。
-
-## 解包报告
-
-在当前目录创建唯一解包目录：
-
-```bash
-npu-compute --import ./memory.npu-rep
-```
-
-在指定的已有父目录中创建唯一解包目录：
-
-```bash
-npu-compute --import ./memory.npu-rep --export ./unpacked-results
-```
-
-解包成功后终端输出实际目录：
-
-```text
-npu-compute: unpacked= <目录>
-```
-
-读取该路径中的文件，不假定数据直接写在 `--export` 指定的父目录中。
-
-## 使用约束
-
-- Set 名称区分大小写。
-- Section 名称区分大小写。
-- `--list-sets` 和 `--list-sections` 用于查询，不启动目标程序，也不生成采集报告。
-- 采集需要目标程序；未指定 Set 或 Section 时默认使用 `basic`。
-- `--set` 和 `--section` 不能与 `--import` 组合。
-- `--import` 用于解包，不启动目标程序。
-- 目标程序或其脚本再次启动 npu-compute 采集时，外层采集会失败。
-- 目标程序返回非零状态或被信号终止时，不发布成功报告。

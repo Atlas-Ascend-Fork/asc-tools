@@ -236,6 +236,54 @@ class InspectCsvTest(unittest.TestCase):
                 )
                 self.assertEqual(output["columns"][0]["na_count"], len(rows) - 1)
 
+    def test_current_arithmetic_csv_with_vf_metrics_is_accepted(self):
+        header = [
+            "block_id",
+            "sub_block_id",
+            "aic_time(us)",
+            "aic_total_cycles",
+            "aic_cube_ratio",
+            "aic_cube_fp_ratio",
+            "aic_cube_int_ratio",
+            "aic_cube_total_instr_number",
+            "aic_cube_fp_instr_number",
+            "aic_cube_int_instr_number",
+            "aiv_time(us)",
+            "aiv_total_cycles",
+            "aiv_vec_ratio",
+            "aiv_simd_vf_ratio",
+            "aiv_vec_sfu_ratio",
+            "aiv_simt_vf_ratio",
+            "aiv_simd_vf_time",
+            "aiv_simd_vf_ipc",
+            "aiv_simt_vf_time",
+            "aiv_simt_vf_ipc",
+        ]
+        values = [
+            "0",
+            "vector0",
+            *(["NA"] * 8),
+            "1",
+            "1000",
+            "0.8",
+            "0.2",
+            "0",
+            "0.1",
+            "0.2",
+            "2.5",
+            "0.1",
+            "0.6",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "renamed.csv"
+            self.write_csv(path, [header, values])
+            result = self.run_inspect(path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["section"], "ArithmeticUtilization")
+        self.assertEqual([column["name"] for column in output["columns"]], header)
+        self.assertEqual(output["columns"][-2]["unit"], "us")
+
     def test_csv_with_only_one_block_column_is_rejected(self):
         rows = [row[1:] for row in self.fixture_rows("MemoryUB.csv")]
         with tempfile.TemporaryDirectory() as directory:
@@ -857,6 +905,26 @@ class LookupSectionTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), expected)
 
+    def test_markdown_lists_advanced_section_artifacts(self):
+        result = self.run_lookup(
+            "--section",
+            "PmSampling",
+            "--section",
+            "SourceCounter",
+            "--section",
+            "Communication",
+            "--format",
+            "markdown",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        sampling, source, communication = result.stdout.split("\n\n## ")[1:]
+        self.assertIn("`objdump.txt`", sampling)
+        self.assertIn("`symbolizer.json`", sampling)
+        self.assertIn("`objdump.txt`", source)
+        self.assertNotIn("`symbolizer.json`", source)
+        self.assertIn("`app_communication_summary.jsonl`", communication)
+        self.assertIn("<launch_index>/summary.jsonl`", communication)
+
     def test_unknown_section_lists_supported_names(self):
         result = self.run_lookup("--section", "memory", "--format", "json")
         self.assertEqual(result.returncode, 2)
@@ -939,7 +1007,7 @@ class LookupSectionTest(unittest.TestCase):
         output = json.loads(result.stdout)
         self.assertEqual(
             [section["name"] for section in output["sections"]],
-            self.expected["sets"]["full"],
+            [*self.expected["sets"]["basic"], "ResourceConflictRatio"],
         )
 
     def test_repeated_sets_and_sections_are_deduplicated(self):
@@ -1052,6 +1120,36 @@ class InspectSummaryTest(unittest.TestCase):
         result = self.inspect_records(self.copied_records())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIsNone(json.loads(result.stdout)["performance_hints"])
+
+    def test_arithmetic_summary_accepts_current_vf_fields(self):
+        records = self.copied_records()
+        index, legacy = next(
+            (index, record)
+            for index, record in enumerate(records)
+            if record["category"] == "ArithmeticUtilization"
+        )
+        revised_names = {
+            "aiv_vec_vf_ratio": "aiv_simd_vf_ratio",
+            "aiv_vec_simt_vf_ratio": "aiv_simt_vf_ratio",
+        }
+        current = {
+            revised_names.get(name, name): value for name, value in legacy.items()
+        }
+        current.update(
+            aiv_simd_vf_time=0.2,
+            aiv_simd_vf_ipc=2.5,
+            aiv_simt_vf_time=0.1,
+            aiv_simt_vf_ipc=0.6,
+        )
+        records[index] = current
+        result = self.inspect_records(records)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        section = next(
+            section
+            for section in json.loads(result.stdout)["section_records"]
+            if section["category"] == "ArithmeticUtilization"
+        )
+        self.assertEqual(section["fields"][-1]["value"], 0.6)
 
     def test_performance_hints_must_immediately_precede_op_info(self):
         records = self.copied_records()
@@ -1301,6 +1399,57 @@ class InspectCollectionTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
         self.assertEqual(output["unknown_files"], ["unexpected.bin"])
+
+    def test_application_results_preserve_process_and_launch_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for filename in (
+                "Occupancy.json",
+                "SimtWarpOccupancy.json",
+                "summary.db",
+                "objdump.txt",
+                "symbolizer.json",
+            ):
+                (root / filename).touch()
+            process = root / "pid-123"
+            first_launch = process / "device0" / "op-add" / "0"
+            second_launch = process / "device0" / "op-add" / "1"
+            root_launch = root / "device1" / "instance-2" / "3"
+            for launch in (first_launch, second_launch, root_launch):
+                launch.mkdir(parents=True)
+                (launch / "summary.jsonl").touch()
+            (process / "CommunicationTrace.json").touch()
+            (process / "app_communication_summary.jsonl").touch()
+            result = self.run_inspect(root)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(
+            output["root_result"]["recognized_files"],
+            [
+                "Occupancy.json",
+                "SimtWarpOccupancy.json",
+                "objdump.txt",
+                "summary.db",
+                "symbolizer.json",
+            ],
+        )
+        self.assertEqual(
+            {
+                entry["relative_path"]: entry["recognized_files"]
+                for entry in output["collection_results"]
+            },
+            {
+                "pid-123": [
+                    "CommunicationTrace.json",
+                    "app_communication_summary.jsonl",
+                ],
+                "pid-123/device0/op-add/0": ["summary.jsonl"],
+                "pid-123/device0/op-add/1": ["summary.jsonl"],
+                "device1/instance-2/3": ["summary.jsonl"],
+            },
+        )
+        self.assertEqual(output["unknown_files"], [])
 
     def test_unknown_file_in_result_subdirectory_uses_relative_path(self):
         with tempfile.TemporaryDirectory() as directory:

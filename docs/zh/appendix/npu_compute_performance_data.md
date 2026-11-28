@@ -1,10 +1,10 @@
 # npu-compute性能数据
 
-本文说明各Section CSV、`summary.jsonl`和`HardwareInfo.jsonl`的字段含义与计算方法。CSV按采集级别展示Block/sub-block明细或Task指标；summary包含所选PMU Section的Task级指标、所选的Roofline数据、性能提示及`OpInfoSummary`算子概览；HardwareInfo记录主机和设备信息。
+本文说明各Section CSV、`summary.jsonl`和`HardwareInfo.jsonl`的字段含义与计算方法。CSV展示Block/sub-block明细。summary包含所选PMU Section的Task级指标、Roofline数据、性能提示及`OpInfoSummary`算子概览。HardwareInfo记录主机和设备信息。
 
 | 输出内容 | 数据范围 | 与其他数据的关系 |
 |---|---|---|
-| Section CSV | Block/sub-block或Task | Block级每个逻辑执行对象一行；Task级每个Section一行，同时包含AIC/AIV指标，省略`block_id`和`sub_block_id`。 |
+| Section CSV | Block/sub-block | 当前CSV每个逻辑执行对象一行。Task汇总保存在`summary.jsonl`，省略`block_id`和`sub_block_id`。 |
 | summary的PMU Section记录 | Task | 周期、计数和数据量对应累计；比例、命中率和带宽按累计基础数据及相应分母重算，不能统一理解为Block均值。 |
 | `Roofline` | 当前Kernel | 按计算类型和指令数据位宽输出性能模型数据，各数据点共用Kernel耗时和GM访存量。 |
 | `PerformanceHints` | 当前Task | 按预定义规则生成的检查建议，支持AIC/AIV的规则分别成条。 |
@@ -19,7 +19,7 @@
 
 | 文件 | 内容 |
 |---|---|
-| `HardwareInfo.jsonl` | 保留原有五类硬件记录。每个已观察设备的设备分类带`Device Id`，数值在设备资源存活时读取；未查询到的项仍为NA。 |
+| `HardwareInfo.jsonl` | 每个已观察设备对应五类硬件记录。设备记录带`Device Id`，数值在设备资源存活时读取。未查询到的值可能保留0或空字符串。 |
 | `device<id>/op-<编码名称>/<launch_index>/summary.jsonl` | 每个名称和设备可确定的成功launch一条`OpInfoSummary`；重复同名调用分别输出。长名称目录回退为`instance-<编号>`，原名保留在摘要中。 |
 
 `.communication-staging`在报告生成期间暂存解码分片、时钟映射和 Host 任务命名元数据。使用`--no-pack`时，报告收尾会清理该目录。打包报告会排除该目录。
@@ -55,13 +55,13 @@ NA表示当前Core不适用或所需数据不可用，不表示数值零。
 | `aiv_time(us)` | 当前数据行对应AI Vector Core的执行时间，根据总周期数和该Core频率换算，单位为us。 |
 | `aiv_total_cycles` | 当前数据行对应AI Vector Core执行的总周期数。 |
 | `aiv_vec_ratio` | AIV Vector活跃周期占AIV总周期的比值。 |
-| `aiv_vec_sfu_ratio` | AIV Vector SFU指令活跃周期占AIV总周期的比值。 |
 | `aiv_simd_vf_ratio` | AIV SIMD VF指令发射周期占AIV总周期的比值。 |
+| `aiv_vec_sfu_ratio` | AIV Vector SFU指令活跃周期占AIV总周期的比值。 |
 | `aiv_simt_vf_ratio` | AIV SIMT VF指令发射周期占AIV总周期的比值。 |
 | `aiv_simd_vf_time` | AIV SIMD VF指令发射总时长，单位为 us。 |
-| `aiv_simd_vf_ipc` | 单位周期平均AIV SIMD VF指令发射数。 |
+| `aiv_simd_vf_ipc` | SIMD指令发射数除以SIMD VF指令发射周期数。 |
 | `aiv_simt_vf_time` | AIV SIMT VF指令发射总时长，单位为 us。 |
-| `aiv_simt_vf_ipc` | 单位周期平均AIV SIMT VF指令发射数。 |
+| `aiv_simt_vf_ipc` | SIMT EXU、DVG和DCU指令发射数之和除以4，再除以SIMT VF指令发射周期数。 |
 
 ## L2Cache（L2 Cache访问计数和命中率）
 
@@ -464,9 +464,9 @@ Memory、MemoryL0、MemoryUB中使用operation duration的带宽字段，在同�
 
 采集时的主机和设备信息保存在HardwareInfo.jsonl中，包括设备型号、Core数量、频率及内存容量等。详情介绍请参见下文各表中的字段说明。
 
-`HardwareInfo.jsonl`为采集环境快照，每行一个JSON对象。固定包含以下五个category，顺序为Host Info、Device Info、CPU Information、AI Core Information、Memory Information。
+`HardwareInfo.jsonl`每行一个JSON对象。每组快照依次包含Host Info、Device Info、CPU Information、AI Core Information、Memory Information。Kernel Replay记录首次启动所观察的设备。Application Replay可为每个已观察设备写入一组快照。设备编号已知时，四类设备记录在`category`后写入逻辑`Device Id`，可用来关联逐次launch摘要。
 
-HBM总容量来自平台接口，NPU数量为Runtime可见设备数。该文件并不是对每个Kernel实际Device分别生成的快照，跨设备比较时应结合summary中的`Device Id`。查询失败的字段可能保留0或空字符串，不能一律解释为真实零值。容量最多保留两位小数并去掉末尾零，频率和计数为整数；
+HBM总容量来自平台接口，NPU数量为Runtime可见设备数。查询失败的字段可能保留0或空字符串。容量最多保留两位小数并去掉末尾零，频率和计数为整数。
 
 ### Host Info
 
@@ -476,7 +476,7 @@ HBM总容量来自平台接口，NPU数量为Runtime可见设备数。该文件�
 | `cpu physical count` | integer | 主机在线CPU所属的物理处理器数量，即Socket/Package数量，不是物理核数量。 |
 | `cpu logical count` | integer | 主机配置的逻辑CPU数量，不一定等于当前在线CPU数量或程序线程数。 |
 | `memory total size(MB)` | number | 主机物理内存总容量，单位为MB，不是空闲内存或目标程序占用量。 |
-| `disk total size(GB)` | number | 工具查询路径所在文件系统的总容量，单位为GB，不是剩余空间。 |
+| `disk total size(GB)` | number | 查询路径所在文件系统的总容量，单位为GB。Kernel Replay查询进程工作目录，Application Replay查询`/tmp`。 |
 
 ### Device Info
 
@@ -504,8 +504,10 @@ HBM总容量来自平台接口，NPU数量为Runtime可见设备数。该文件�
 | `ai core count` | integer | 设备接口报告的AI Core数量，按接口原值记录。 |
 | `ai cube count` | integer | 设备Cube Core数量。 |
 | `ai vector count` | integer | 设备Vector Core数量。 |
-| `ai cube frequency(MHZ)` | integer | Cube Core频率，单位为MHz；优先当前频率，查询失败回退固定频率，再失败使用1650。 |
-| `ai vector frequency(MHZ)` | integer | Vector Core频率，单位为MHz；优先当前频率，查询失败回退固定频率，再失败使用1650。 |
+| `ai cube frequency(MHZ)` | integer | Cube Core频率，单位为MHz。优先查询当前频率，其次查询固定频率。 |
+| `ai vector frequency(MHZ)` | integer | Vector Core频率，单位为MHz。优先查询当前频率，其次查询固定频率。 |
+
+任一侧的两种频率均无法取得时，两侧回退到1650 MHz。跳过设备查询时，两侧保留0。
 
 ### Memory Information
 
@@ -529,21 +531,23 @@ HBM总容量来自平台接口，NPU数量为Runtime可见设备数。该文件�
 | `displayTimeUnit` | string | 固定为`ns`，是查看器展示单位；不改变`ts`和`dur`的us数据单位。 |
 | `profilingType` | string | 固定为`op`。 |
 | `schemaVersion` | integer | 当前结构版本为1。 |
-| `traceEvents` | array | 完整流水区间事件数组，允许为空。 |
+| `traceEvents` | array | 完整区间事件数组。空数组表示此次没有导出的事件。 |
 
 ### 事件字段
 
 | 字段名 | JSON类型 | 字段解释 |
 |---|---|---|
-| `cname` | string | 流水轨道的颜色名称，见下表。 |
-| `dur` | number | 忙碌区间持续时间，单位为us，有限且非负。 |
-| `name` | string | 流水名称：SCALAR、VECTOR、CUBE、MTE1、MTE2、MTE3或FIXP。 |
+| `cname` | string | 事件颜色，由对应流水或DFX Region编号决定。 |
+| `dur` | number | 区间持续时间，单位为us，有限且非负。 |
+| `name` | string | 普通事件使用SCALAR、VECTOR、CUBE、MTE1、MTE2、MTE3或FIXP。DFX事件使用`MarkStamp<regionId>`或`Region<baseRegionId>`。 |
 | `ph` | string | 固定为`X`，表示完整区间事件。 |
 | `pid` | string | 来源和Core轨道标识，格式见下文；此字段不是操作系统进程ID。 |
-| `tid` | string | 流水轨道标识，与`name`相同。 |
+| `tid` | string | 流水轨道标识。普通事件与`name`相同，DFX事件使用对应的底层流水轨道。 |
 | `ts` | number | 相对于该Replay时间原点的区间开始时间，单位为us，有限且非负。 |
 
 ### 流水和轨道
+
+`MarkStamp<regionId>`持续一个Core周期，沿用所在流水的颜色。配对的标记可生成`Region<baseRegionId>`区间，颜色由`baseRegionId % 12`选取。
 
 | 流水名称 | `cname` | 含义 |
 |---|---|---|

@@ -319,6 +319,8 @@ TRIGGER_SCENARIOS = {
     "negative_section": (False, "generic_term"),
     "negative_memory": (False, "generic_term"),
     "negative_context": (False, "context"),
+    "positive_communication_trace": (True, "artifact"),
+    "negative_generic_roofline": (False, "other_domain"),
 }
 
 

@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cli_support import add_format_argument, configure_cli_loggers, emit_result
+from metric_schema import legacy_metric_fields
 
 LOGGER, OUTPUT_LOGGER = configure_cli_loggers(__name__)
 
@@ -62,6 +63,12 @@ def query(catalog, section_name, field_name):
         return result, 0
 
     fields = {field["name"]: field for field in section["fields"]}
+    if field_name not in fields and "legacy_field_names" in section:
+        fields.update(
+            (field["name"], field)
+            for field in legacy_metric_fields(section, section["fields"])
+            if field["name"] not in fields
+        )
     if field_name not in fields:
         return None, fail(f"{section_name} 中不存在字段：{field_name}", fields)
     result["field"] = fields[field_name]
